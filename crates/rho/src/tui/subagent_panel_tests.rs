@@ -61,7 +61,7 @@ fn subagent_verdict_labels_and_styles_match_state() {
         (RunState::Starting, "starting", Theme::text()),
         (RunState::Ok, "✓ done", Theme::activity_rail_success()),
         (RunState::Error, "✗ error", Theme::activity_rail_error()),
-        (RunState::Stopped, "✗ stopped", Theme::dim()),
+        (RunState::Stopped, "✗ stopped", Theme::activity_rail_dim()),
     ];
     for (state, label, style) in cases {
         let mut agent = starting.clone();

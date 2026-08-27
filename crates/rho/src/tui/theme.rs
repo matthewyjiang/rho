@@ -519,6 +519,17 @@ impl Theme {
             .bg(background.color)
     }
 
+    /// Muted rail ink that still reads on the rail wash.
+    ///
+    /// `Theme::dim` is calibrated against the terminal surface. The rail paints a
+    /// lifted wash, and host bright-black is often the same slot as that fallback
+    /// wash, so dim-on-rail vanishes in many terminal themes.
+    pub(super) fn activity_rail_dim() -> Style {
+        let palette = Palette::current();
+        let background = palette.neutral_tool_background;
+        Self::activity_rail().fg(muted_ink_on_block(palette.dim, background))
+    }
+
     pub(super) fn activity_rail_success() -> Style {
         Self::activity_rail().fg(Palette::current().success)
     }
@@ -542,7 +553,7 @@ impl Theme {
     }
 
     pub(super) fn jump_to_bottom_shortcut() -> Style {
-        Self::activity_rail().fg(Palette::current().dim)
+        Self::activity_rail_dim()
     }
 
     pub(super) fn activity_rail_row(state: super::activity::RailRowState) -> Style {
@@ -870,6 +881,37 @@ fn apply_theme_id(id: &str, commit: bool) {
 pub(super) use theme_scheme::{
     list_themes, theme_display_name, ThemeEntry, TERMINAL_THEME_ID as THEME_TERMINAL_ID,
 };
+
+/// Prefer muted ink on a rail/panel wash; fall back to contrasting body ink
+/// when dim would collapse into the wash.
+fn muted_ink_on_block(dim: Color, background: BlockColor) -> Color {
+    if dim_readable_on(dim, background) {
+        dim
+    } else {
+        block_foreground(background.rgb)
+    }
+}
+
+fn dim_readable_on(dim: Color, background: BlockColor) -> bool {
+    if dim == background.color {
+        return false;
+    }
+    match (dim, background.rgb) {
+        (Color::Rgb(red, green, blue), Some(bg)) => {
+            let ink_luminance = Rgb::new(red, green, blue).luminance();
+            let background_luminance = bg.luminance();
+            if is_light_background(background_luminance) {
+                ink_luminance + DIM_CONTRAST_MARGIN < background_luminance
+            } else {
+                ink_luminance >= background_luminance + DIM_CONTRAST_MARGIN
+            }
+        }
+        // Named ANSI dim on an RGB wash is a lottery: host color 8 is often
+        // the surface itself.
+        (_, Some(_)) => false,
+        _ => true,
+    }
+}
 
 fn block_foreground(background: Option<Rgb>) -> Color {
     let on_light = background.is_some_and(|rgb| is_light_background(rgb.luminance()));

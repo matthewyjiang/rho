@@ -259,7 +259,7 @@ fn agent_line(
         activity: activity_text,
         activity_style,
         trailing,
-        trailing_style: Theme::dim(),
+        trailing_style: Theme::activity_rail_dim(),
         row_style,
     }
     .into_line(width)
@@ -286,9 +286,9 @@ fn overflow_line(
             Theme::dim().patch(row_style),
         )],
         activity: "/attach".into(),
-        activity_style: Theme::dim(),
+        activity_style: Theme::activity_rail_dim(),
         trailing,
-        trailing_style: Theme::dim(),
+        trailing_style: Theme::activity_rail_dim(),
         row_style,
     }
     .into_line(width)
@@ -321,7 +321,7 @@ fn agent_activity(agent: &RunningSubagent) -> (String, ratatui::style::Style) {
         ),
         RunState::Ok => ("✓ done".into(), Theme::activity_rail_success()),
         RunState::Error => ("✗ error".into(), Theme::activity_rail_error()),
-        RunState::Stopped => ("✗ stopped".into(), Theme::dim()),
+        RunState::Stopped => ("✗ stopped".into(), Theme::activity_rail_dim()),
     }
 }
 

@@ -479,7 +479,7 @@ impl LoadingSpinner {
         };
         Line::from(vec![
             Span::styled(self.frame_at(now), Theme::accent()),
-            Span::styled(rest.to_string(), Theme::dim()),
+            Span::styled(rest.to_string(), Theme::activity_rail_dim()),
         ])
     }
 }

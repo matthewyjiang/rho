@@ -192,6 +192,63 @@ fn fixed_light_scheme_uses_rgb_dim_and_surface() {
     Theme::apply_committed("terminal");
 }
 
+// Covers: rail dim must not collapse into the wash on terminal fallback or tight palettes
+// Owner: tui theme palette mapping
+#[test]
+fn activity_rail_dim_stays_readable_on_terminal_wash() {
+    let _guard = theme_test_lock();
+    Theme::apply_committed("terminal");
+    let rail = Theme::activity_rail();
+    let dim = Theme::activity_rail_dim();
+    assert_eq!(rail.bg, Some(Color::DarkGray));
+    assert_eq!(dim.bg, rail.bg);
+    assert_ne!(dim.fg, dim.bg, "dim rail text must not match the wash");
+    assert_eq!(dim.fg, Some(Color::White));
+
+    Theme::apply_committed("one-half-dark");
+    let rail = Theme::activity_rail();
+    let dim = Theme::activity_rail_dim();
+    assert_eq!(dim.bg, rail.bg);
+    assert_ne!(dim.fg, dim.bg);
+    assert_eq!(
+        dim.fg,
+        Some(Palette::current().dim),
+        "built-in schemes keep muted rail ink when it still contrasts"
+    );
+
+    Theme::apply_committed("terminal");
+}
+
+// Covers: named or too-close dim on a wash falls back to contrasting body ink
+// Owner: tui theme palette mapping
+#[test]
+fn muted_ink_on_block_falls_back_when_dim_matches_wash() {
+    let _guard = theme_test_lock();
+    Theme::apply_committed("terminal");
+    let dark_wash = BlockColor::from_rgb(Rgb::new(20, 20, 20));
+    let light_wash = BlockColor::from_rgb(Rgb::new(240, 240, 240));
+    let named_wash = BlockColor::from_color(Color::DarkGray);
+    let cases = [
+        (Color::DarkGray, named_wash, Color::White),
+        (
+            Color::Rgb(170, 170, 170),
+            dark_wash,
+            Color::Rgb(170, 170, 170),
+        ),
+        (Color::Rgb(30, 30, 30), dark_wash, Color::White),
+        (Color::DarkGray, dark_wash, Color::White),
+        (Color::Rgb(80, 80, 80), light_wash, Color::Rgb(80, 80, 80)),
+        (Color::Rgb(220, 220, 220), light_wash, Color::Black),
+    ];
+    for (dim, background, expected) in cases {
+        assert_eq!(
+            muted_ink_on_block(dim, background),
+            expected,
+            "dim={dim:?} background={background:?}"
+        );
+    }
+}
+
 // Covers: hover lift direction tracks surface luminance; non-RGB ink lifts to bold
 // Owner: tui theme palette mapping
 #[test]
