@@ -25,15 +25,48 @@ use {
 
 #[path = "statusline_path.rs"]
 pub(super) mod path;
-use path::{compact_cwd, fit_cwd, format_cwd_left};
+use path::{compact_cwd, fit_cwd_row, format_cwd_left};
 
 #[cfg(test)]
-use path::shorten_path_display;
+use path::{fit_cwd, shorten_path_display};
+
+/// Optional cwd-row suffix. Tone is resolved at paint so a theme switch
+/// recolors without waiting for another probe.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CwdExtra {
+    text: String,
+    tone: CwdExtraTone,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CwdExtraTone {
+    Success,
+    Error,
+    Dim,
+}
+
+impl CwdExtra {
+    pub(super) fn new(text: impl Into<String>, tone: CwdExtraTone) -> Self {
+        Self {
+            text: text.into(),
+            tone,
+        }
+    }
+
+    fn style(&self) -> Style {
+        match self.tone {
+            CwdExtraTone::Success => Theme::success(),
+            CwdExtraTone::Error => Theme::error(),
+            CwdExtraTone::Dim => Theme::dim(),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct StatusLineState {
     cwd: PathBuf,
     branch: Option<String>,
+    cwd_extra: Option<CwdExtra>,
     usage: Option<ModelUsage>,
     context_usage: Option<ContextUsage>,
     provider: String,
@@ -80,6 +113,7 @@ impl Default for StatusLineState {
         Self {
             cwd: PathBuf::new(),
             branch: None,
+            cwd_extra: None,
             usage: None,
             context_usage: None,
             provider: String::new(),
@@ -102,6 +136,7 @@ impl StatusLineState {
         Self {
             cwd: info.cwd.clone(),
             branch: git_branch(&info.cwd),
+            cwd_extra: None,
             usage: None,
             context_usage: None,
             provider: info.provider.clone(),
@@ -127,10 +162,24 @@ impl StatusLine {
         }
     }
 
-    pub(super) fn refresh_git_branch(&mut self) {
+    pub(super) fn branch(&self) -> Option<&str> {
+        self.state.branch.as_deref()
+    }
+
+    pub(super) fn refresh_git_branch(&mut self) -> bool {
         let branch = git_branch(&self.state.cwd);
-        if self.state.branch != branch {
-            self.state.branch = branch;
+        if self.state.branch == branch {
+            return false;
+        }
+        self.state.branch = branch;
+        self.state.cwd_extra = None;
+        self.invalidate();
+        true
+    }
+
+    pub(super) fn update_cwd_extra(&mut self, cwd_extra: Option<CwdExtra>) {
+        if self.state.cwd_extra != cwd_extra {
+            self.state.cwd_extra = cwd_extra;
             self.invalidate();
         }
     }
@@ -400,14 +449,18 @@ fn statusline_lines(
     });
     let cwd_path = compact_cwd(&state.cwd);
     let cwd_branch = state.branch.as_deref();
-    let top_left = format_cwd_left(&cwd_path, cwd_branch);
+    let cwd_extra = state.cwd_extra.as_ref();
+    let top_left = match cwd_extra {
+        Some(extra) => format!("{}{}", format_cwd_left(&cwd_path, cwd_branch), extra.text),
+        None => format_cwd_left(&cwd_path, cwd_branch),
+    };
     let top_right = goal
         .as_ref()
         .map(|candidates| fit_right_status(&top_left, candidates, width))
         .unwrap_or_default();
     let (bottom_left, bottom_right) = pack_bottom_status(state, width);
     vec![
-        render_cwd_row(&cwd_path, cwd_branch, top_right, width),
+        render_cwd_row(&cwd_path, cwd_branch, cwd_extra, top_right, width),
         render_status_row(bottom_left, bottom_right, width),
     ]
 }
@@ -684,14 +737,38 @@ fn render_status_row(
     status_fields_line(&left, &right, width)
 }
 
-fn render_cwd_row(path: &str, branch: Option<&str>, right: String, width: usize) -> Line<'static> {
-    let left = format_cwd_left(path, branch);
-    match row_side_fit(display_width(&left), &right, width) {
-        None => status_row_line(left, right, width),
+fn render_cwd_row(
+    path: &str,
+    branch: Option<&str>,
+    extra: Option<&CwdExtra>,
+    right: String,
+    width: usize,
+) -> Line<'static> {
+    let extra_text = extra.map(|extra| extra.text.as_str());
+    let extra_width = extra_text.map(display_width).unwrap_or(0);
+    let full_left = format_cwd_left(path, branch);
+    let left_width = display_width(&full_left) + extra_width;
+    let (left, right, extra) = match row_side_fit(left_width, &right, width) {
+        None => (full_left, right, extra),
         Some((left_budget, right)) => {
-            status_row_line(fit_cwd(path, branch, left_budget), right, width)
+            let (left, show_extra) = fit_cwd_row(path, branch, extra_text, left_budget);
+            (left, right, extra.filter(|_| show_extra))
         }
+    };
+    cwd_row_line(left, extra, right, width)
+}
+
+fn cwd_row_line(
+    left: String,
+    extra: Option<&CwdExtra>,
+    right: String,
+    width: usize,
+) -> Line<'static> {
+    let mut spans = vec![Span::styled(left, Theme::dim())];
+    if let Some(extra) = extra {
+        spans.push(Span::styled(extra.text.clone(), extra.style()));
     }
+    status_row_spans(spans, right, width)
 }
 
 /// Shared left/right budget math for a status row.
@@ -715,13 +792,18 @@ fn row_side_fit(left_width: usize, right: &str, width: usize) -> Option<(usize, 
     Some((left_budget, right))
 }
 
-fn status_row_line(left: String, right: String, width: usize) -> Line<'static> {
-    let style = Theme::dim();
+fn status_row_spans(mut left: Vec<Span<'static>>, right: String, width: usize) -> Line<'static> {
     if right.is_empty() {
-        return Line::from(Span::styled(left, style));
+        return Line::from(left);
     }
-    let gap = " ".repeat(width.saturating_sub(display_width(&left) + display_width(&right)));
-    Line::from(Span::styled(format!("{left}{gap}{right}"), style))
+    let left_width: usize = left
+        .iter()
+        .map(|span| display_width(span.content.as_ref()))
+        .sum();
+    let gap = " ".repeat(width.saturating_sub(left_width + display_width(&right)));
+    left.push(Span::styled(gap, Theme::dim()));
+    left.push(Span::styled(right, Theme::dim()));
+    Line::from(left)
 }
 
 fn status_fields_line(left: &[StatusField], right: &[StatusField], width: usize) -> Line<'static> {

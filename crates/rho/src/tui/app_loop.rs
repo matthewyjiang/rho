@@ -38,6 +38,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TuiResult> {
         self.start_model_metadata_fetch(agent);
+        self.start_github_pr_fetch();
         let had_recovered_messages = self.insert_recovered_history()?;
         self.maybe_offer_loaded_session_context_handoff(agent, had_recovered_messages)?;
         let open_resume_after_draw = self.info.session.open_resume_picker;
@@ -85,6 +86,10 @@ impl App {
                     .pending_herdr_graphics
                     .as_ref()
                     .is_some_and(|handle| handle.is_finished())
+                || self
+                    .pending_github_pr
+                    .as_ref()
+                    .is_some_and(|handle| handle.is_finished())
                 || self.prompt_history.load_finished()
                 || agent.startup_hydrate_pending();
             self.poll_model_metadata_fetch(agent).await;
@@ -99,6 +104,7 @@ impl App {
             self.poll_custom_provider_models();
             needs_redraw |= self.poll_syntax_warmup();
             self.poll_herdr_graphics();
+            self.poll_github_pr();
             needs_redraw |= self.poll_prompt_history();
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_interactive_login(terminal, agent).await?;
@@ -157,6 +163,7 @@ impl App {
                 || self.pending_custom_models.is_some()
                 || self.pending_syntax_warmup.is_some()
                 || self.pending_herdr_graphics.is_some()
+                || self.pending_github_pr.is_some()
                 || self.prompt_history.load_pending()
                 || self.pending_session_title.is_some()
                 || self.pending_interactive_login.is_some()
@@ -256,13 +263,7 @@ impl App {
                     self.flush_pending_paste_burst();
                     self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
                 }
-                Event::FocusGained => {
-                    self.input_ui.cancel_pointer_click_sequence();
-                    // Some Windows hosts drop application mouse tracking on focus
-                    // changes; re-assert so wheel scrolling keeps working.
-                    mouse_capture::reassert();
-                    self.statusline.refresh_git_branch();
-                }
+                Event::FocusGained => self.on_focus_gained(),
                 Event::FocusLost => {
                     self.input_ui.cancel_pointer_click_sequence();
                     self.input_ui.finalize_selection();
@@ -273,6 +274,14 @@ impl App {
             },
         }
         Ok(())
+    }
+
+    pub(super) fn on_focus_gained(&mut self) {
+        self.input_ui.cancel_pointer_click_sequence();
+        // Some Windows hosts drop application mouse tracking on focus
+        // changes; re-assert so wheel scrolling keeps working.
+        mouse_capture::reassert();
+        self.refresh_workspace_on_focus();
     }
 
     pub(super) fn event_poll_timeout(&self, idle_timeout: Duration) -> Duration {

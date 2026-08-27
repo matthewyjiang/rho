@@ -349,6 +349,28 @@ fn unchanged_statusline_reuses_rendered_lines() {
 }
 
 #[test]
+fn fit_cwd_row_drops_extra_before_branch() {
+    // Covers: cwd extra chrome must drop before the branch when the row is tight
+    // Owner: statusline cwd fit
+    let path = "proj";
+    let branch = Some("main");
+    let extra = Some(" #12");
+    let cases = [
+        (15, "proj (main)", true),
+        (14, "proj (main)", false),
+        (10, "proj", false),
+        (0, "", false),
+    ];
+    for (width, left, show_extra) in cases {
+        assert_eq!(
+            fit_cwd_row(path, branch, extra, width),
+            (left.to_string(), show_extra),
+            "width {width}"
+        );
+    }
+}
+
+#[test]
 fn git_branch_is_cached_until_explicit_refresh() {
     use std::fs;
 
