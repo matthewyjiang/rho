@@ -9,7 +9,10 @@ use super::{
 };
 use crate::{
     tools::process::{LiveProcessSummary, State},
-    tui::{activity, theme::Theme},
+    tui::{
+        activity,
+        theme::{self, Theme},
+    },
 };
 
 fn summary(id: &str, command: &str, elapsed_seconds: u64) -> LiveProcessSummary {
@@ -259,6 +262,8 @@ fn process_overflow_summary_counts_hidden_jobs() {
 // Owner: pure layout
 #[test]
 fn process_verdict_styles_paint_on_wide_rows() {
+    let _guard = theme::theme_test_lock();
+    Theme::apply_committed("one-half-dark");
     let mut panel = ProcessPanel::default();
     let now = Instant::now();
     panel.ingest(
@@ -277,6 +282,7 @@ fn process_verdict_styles_paint_on_wide_rows() {
         activity_span_style(line, "✓ exit 0"),
         Theme::activity_rail().patch(Theme::activity_rail_success())
     );
+    Theme::apply_committed("terminal");
 }
 
 // Covers: peek hits live and lingering rows, never the overflow summary or
