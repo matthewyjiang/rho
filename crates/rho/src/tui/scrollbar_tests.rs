@@ -137,3 +137,33 @@ fn scroll_chrome_scroll_by_clamps_to_bottom_without_auto_reveal() {
     assert_eq!(chrome.scroll(), HistoryScroll::Bottom);
     assert!(!chrome.should_render(now));
 }
+
+// Covers: overlay paint must not keep tool-card BOLD/wash from the row underneath
+// Owner: tui scrollbar overlay paint
+#[test]
+fn overlay_track_style_drops_tool_card_row_styles() {
+    use ratatui::buffer::Cell;
+    use ratatui::style::{Color, Modifier, Style};
+
+    let _guard = crate::tui::theme::theme_test_lock();
+    let thumb = ScrollbarThumb { top: 0, height: 1 };
+    let leftover = Style::default()
+        .fg(Color::Green)
+        .bg(Color::Rgb(20, 40, 20))
+        .add_modifier(Modifier::BOLD | Modifier::REVERSED);
+
+    for row in [0, 2] {
+        let (_, style) = track_cell(thumb, row, Theme::accent());
+        let mut dirty = Cell::EMPTY;
+        dirty.set_style(leftover);
+        dirty.set_style(style);
+        let mut clean = Cell::EMPTY;
+        clean.set_style(style);
+        assert_eq!(dirty.fg, clean.fg, "row={row}");
+        assert_eq!(dirty.bg, clean.bg, "row={row}");
+        assert_eq!(dirty.modifier, clean.modifier, "row={row}");
+        assert_ne!(dirty.bg, Color::Rgb(20, 40, 20), "row={row}");
+        assert!(!dirty.modifier.contains(Modifier::BOLD), "row={row}");
+        assert!(!dirty.modifier.contains(Modifier::REVERSED), "row={row}");
+    }
+}

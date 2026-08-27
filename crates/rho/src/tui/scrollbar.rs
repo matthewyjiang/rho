@@ -274,16 +274,27 @@ const TRACK_GLYPH: &str = "│";
 /// The thumb style stays a caller argument because the history bar brightens
 /// its thumb while dragging; the track and the glyphs are shared so every
 /// scrollbar in the UI looks the same by construction.
+///
+/// Styles reset first: history paint writes this column before the overlay,
+/// and `Cell::set_style` patches. Tool-card BOLD, diff washes, and selection
+/// reverse would otherwise leak in and make the bar look darker on those rows.
 pub(super) fn track_cell(
     thumb: ScrollbarThumb,
     row: usize,
     thumb_style: Style,
 ) -> (&'static str, Style) {
     if thumb.contains(row) {
-        (THUMB_GLYPH, thumb_style)
+        (THUMB_GLYPH, overlay_track_style(thumb_style))
     } else {
-        (TRACK_GLYPH, Theme::dim().add_modifier(Modifier::DIM))
+        (
+            TRACK_GLYPH,
+            overlay_track_style(Theme::dim().add_modifier(Modifier::DIM)),
+        )
     }
+}
+
+fn overlay_track_style(role: Style) -> Style {
+    Style::reset().patch(Theme::surface()).patch(role)
 }
 
 /// [`track_cell`] as a span, for scrollbars rendered as line content.
