@@ -48,7 +48,7 @@ Rho closes MCP sessions during normal session shutdown. The stdio transport clos
 
 ## Streamable HTTP servers
 
-Use `streamable_http` for current MCP Streamable HTTP. This is not the legacy HTTP+SSE transport. Non-loopback endpoints must use HTTPS. Loopback `http://localhost`, `127.0.0.0/8`, and `::1` endpoints are allowed for local development.
+Use `streamable_http` for current MCP Streamable HTTP. This is not the legacy HTTP+SSE transport. HTTPS is required by default unless `allow_insecure_http` is enabled. Loopback `http://localhost`, `127.0.0.0/8`, and `::1` endpoints are allowed for local development without that flag.
 
 ```toml
 [mcp.servers.remote]
@@ -59,6 +59,15 @@ headers = { X-Tenant = "public-tenant" }
 
 [mcp.servers.remote.tools]
 deny = ["delete_account"]
+```
+
+To reach a cleartext non-loopback host (a LAN IP, an internal hostname), set `allow_insecure_http = true` on that server. Headers and bearer tokens then travel unencrypted. Plugin-provided servers cannot set this flag. OAuth discovery endpoints still require HTTPS or loopback even when the MCP URL is opted in:
+
+```toml
+[mcp.servers.lan]
+transport = "streamable_http"
+url = "http://10.0.0.5:3000/mcp"
+allow_insecure_http = true
 ```
 
 `headers_from_env` maps HTTP header names to ambient variable names. Put the complete header value in the environment, such as `Bearer ...`. Rho does not store it in config or diagnostics. Automatic HTTP redirects are disabled, so configured headers cannot be replayed to another origin.
@@ -92,7 +101,7 @@ What happens on the first connection to such a server:
 
 Rules the flow holds to:
 
-- Every OAuth endpoint must use HTTPS, with the same loopback exception the MCP URL gets. A discovery document cannot move any leg of the exchange onto plaintext HTTP.
+- Every OAuth endpoint must use HTTPS, or plain HTTP only on loopback. A discovery document cannot move any leg of the exchange onto plaintext HTTP, even if the MCP URL itself sets `allow_insecure_http`.
 - A server that publishes no metadata is refused. Rho does not guess authorization endpoints from the MCP URL.
 - The authorization server metadata must carry an issuer that matches where it was discovered, and tokens minted by a previous issuer are discarded if a server is repointed.
 - The loopback listener answers one exact callback path and requires the CSRF state, so a stray browser request cannot finish the login.

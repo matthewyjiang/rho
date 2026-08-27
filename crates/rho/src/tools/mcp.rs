@@ -45,8 +45,8 @@ pub(crate) use report::{
 pub(crate) use roots::McpRoots;
 pub(crate) use sampling::{McpSamplingBridge, McpSamplingModel};
 pub(crate) use validate::{
-    parse_remote_url, validate_environment_header_names, validate_identity,
-    validate_literal_headers, validate_oauth_client, validate_stdio_environment,
+    parse_remote_url, parse_remote_url_with, validate_environment_header_names, validate_identity,
+    validate_literal_headers, validate_oauth_client, validate_stdio_environment, McpHttpSecurity,
 };
 
 use definition::McpToolDefinition;

@@ -220,6 +220,10 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                 headers_from_env: BTreeMap<String, String>,
                 #[serde(default)]
                 oauth: Option<McpOAuthConfig>,
+                /// Permit plain HTTP to a non-loopback host. Credentials on
+                /// this session then travel unencrypted.
+                #[serde(default)]
+                allow_insecure_http: bool,
             },
         }
 
@@ -264,8 +268,13 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                     headers,
                     headers_from_env,
                     oauth,
+                    allow_insecure_http,
                 } => {
-                    super::parse_remote_url(&url).map_err(serde::de::Error::custom)?;
+                    super::parse_remote_url_with(
+                        &url,
+                        super::McpHttpSecurity::from_allow_insecure_http(allow_insecure_http),
+                    )
+                    .map_err(serde::de::Error::custom)?;
                     super::validate_literal_headers(&headers).map_err(serde::de::Error::custom)?;
                     super::validate_environment_header_names(&headers_from_env)
                         .map_err(serde::de::Error::custom)?;
@@ -283,6 +292,7 @@ impl<'de> Deserialize<'de> for McpServerConfig {
                             headers,
                             headers_from_env,
                             oauth,
+                            allow_insecure_http,
                         },
                     )
                 }
@@ -326,6 +336,10 @@ pub(crate) enum McpTransport {
         /// said which credential to send.
         #[serde(skip_serializing_if = "Option::is_none")]
         oauth: Option<McpOAuthConfig>,
+        /// User opt-in for cleartext HTTP to a non-loopback host. Plugins
+        /// cannot set this. OAuth discovery still requires HTTPS or loopback.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        allow_insecure_http: bool,
     },
 }
 
