@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.0.0...rho-coding-agent-v2.1.0) (2026-08-27)
+
+
+### Features
+
+* **tui:** show the current github pr on the statusline ([#1067](https://github.com/matthewyjiang/rho/issues/1067)) ([cccee94](https://github.com/matthewyjiang/rho/commit/cccee943c17250727447f691aac6f736e4890eb7))
+
 ## [2.0.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.49.0...rho-coding-agent-v2.0.0) (2026-08-27)
 
 

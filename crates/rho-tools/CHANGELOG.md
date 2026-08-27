@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.0.0...rho-agent-tools-v1.0.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **deps:** patch h2, lopdf, webbrowser, and quick-xml CVEs ([#1069](https://github.com/matthewyjiang/rho/issues/1069)) ([453be34](https://github.com/matthewyjiang/rho/commit/453be34aadd44faa3063bf813fd14007e95c2774))
+
 ## [1.0.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v0.20.1...rho-agent-tools-v1.0.0) (2026-08-27)
 
 
