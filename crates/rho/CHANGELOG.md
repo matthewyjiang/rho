@@ -1,5 +1,44 @@
 # Changelog
 
+## [2.0.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.49.0...rho-coding-agent-v2.0.0) (2026-08-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* rho-sdk removes RunEvent::ProviderActivity and the PROVIDER_ACTIVITY_* constants, collapses ProviderStreamResetReason retryable variants into RetryableFailure { kind, retry_after }, removes ModelCallMetrics::output_tokens_per_second, adds revision to RunEvent::Failed, folds ContextEstimated into StepStarted, and replaces the stringly generation-output-token carriers with a typed ModelCallMetrics::generation_output_tokens metric and ModelEvent::GenerationOutputTokens variant. rho-providers adds ProviderId::OpenAiCompatible for config-defined hosts, folds CustomProviderOptions into CustomProviderSpec (removing the _with_lookup/ _with_options funnels), makes providers() include custom hosts (removing visible_providers), removes deprecated registry API-base re-exports and ProviderRuntime::same_family, and drops the CredentialStore parameter from OpenAiProvider::new_with_identity. rho-tools removes the edit_file tool-name alias, the write_file frontmatter alias, and the EditToolKind type alias.
+* **providers:** own HTTP transport errors and collapse reqwest onto 0.13 ([#1060](https://github.com/matthewyjiang/rho/issues/1060))
+
+### Features
+
+* **providers:** add MiniMax as a first-party Anthropic-compatible host ([#1059](https://github.com/matthewyjiang/rho/issues/1059)) ([aa71132](https://github.com/matthewyjiang/rho/commit/aa7113215ed9601dd9bf74241a031febd9ee2c85))
+* **tui:** create agents from a guided slash command ([#1057](https://github.com/matthewyjiang/rho/issues/1057)) ([b14e4d9](https://github.com/matthewyjiang/rho/commit/b14e4d9ca92c50b3c4ab7079d7cc1ed5aac3359f))
+* **tui:** queue follow-ups with Ctrl+Enter when Alt+Enter is fullscreen ([#1064](https://github.com/matthewyjiang/rho/issues/1064)) ([67cd423](https://github.com/matthewyjiang/rho/commit/67cd423e8d7f8f99e23eafea425d99df53aaa910))
+
+
+### Bug Fixes
+
+* **ci:** repair macOS stdin guard and supervised approval PTY smoke ([#1055](https://github.com/matthewyjiang/rho/issues/1055)) ([8b6654f](https://github.com/matthewyjiang/rho/commit/8b6654ff86b34cd4f2a41d11520085f0a1ea5c01))
+* **tui:** keep activity rail text readable on terminal themes ([#1065](https://github.com/matthewyjiang/rho/issues/1065)) ([98bb0eb](https://github.com/matthewyjiang/rho/commit/98bb0ebc1a6f1e72bac66925a0e424dd415de10f))
+* **tui:** keep the history scrollbar from darkening on tool cards ([#1063](https://github.com/matthewyjiang/rho/issues/1063)) ([5f69a8c](https://github.com/matthewyjiang/rho/commit/5f69a8cee685f8500e5c2bc17b41021d98ca7afa))
+
+
+### Performance Improvements
+
+* **tls:** drop OpenSSL and run rustls+ring everywhere ([#1061](https://github.com/matthewyjiang/rho/issues/1061)) ([3ab2016](https://github.com/matthewyjiang/rho/commit/3ab20166d06d805a9554786904dc16ec2544a2c7))
+
+
+### Code Refactoring
+
+* pay down all NEXT_MAJOR debt for the next major, net -986 lines ([#1062](https://github.com/matthewyjiang/rho/issues/1062)) ([0e17bdb](https://github.com/matthewyjiang/rho/commit/0e17bdb5e9fa21440fffbbe00171830ac0d1d3c2))
+* **providers:** own HTTP transport errors and collapse reqwest onto 0.13 ([#1060](https://github.com/matthewyjiang/rho/issues/1060)) ([701dd29](https://github.com/matthewyjiang/rho/commit/701dd297d1b3e17df55f9dbf6f13e9c2a1d0ccb5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 1.11.0 to 2.0.0
+
 ## [1.49.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v1.48.0...rho-coding-agent-v1.49.0) (2026-08-26)
 
 
