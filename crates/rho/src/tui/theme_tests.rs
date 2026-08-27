@@ -203,50 +203,68 @@ fn activity_rail_dim_stays_readable_on_terminal_wash() {
     assert_eq!(rail.bg, Some(Color::DarkGray));
     assert_eq!(dim.bg, rail.bg);
     assert_ne!(dim.fg, dim.bg, "dim rail text must not match the wash");
-    assert_eq!(dim.fg, Some(Color::White));
+    assert_eq!(
+        dim.fg,
+        Some(Palette::current().panel_dim),
+        "rail dim uses the palette's wash-safe muted ink"
+    );
+    assert_eq!(
+        dim.fg,
+        Some(Color::Gray),
+        "named DarkGray wash keeps a muted slot, not body white"
+    );
 
     Theme::apply_committed("one-half-dark");
     let rail = Theme::activity_rail();
     let dim = Theme::activity_rail_dim();
+    let palette = Palette::current();
     assert_eq!(dim.bg, rail.bg);
     assert_ne!(dim.fg, dim.bg);
+    assert_eq!(dim.fg, Some(palette.panel_dim));
     assert_eq!(
-        dim.fg,
-        Some(Palette::current().dim),
+        palette.panel_dim, palette.dim,
         "built-in schemes keep muted rail ink when it still contrasts"
     );
 
     Theme::apply_committed("terminal");
 }
 
-// Covers: named or too-close dim on a wash falls back to contrasting body ink
+// Covers: panel dim keeps usable muted ink and blends instead of jumping to body
 // Owner: tui theme palette mapping
 #[test]
-fn muted_ink_on_block_falls_back_when_dim_matches_wash() {
-    let _guard = theme_test_lock();
-    Theme::apply_committed("terminal");
-    let dark_wash = BlockColor::from_rgb(Rgb::new(20, 20, 20));
-    let light_wash = BlockColor::from_rgb(Rgb::new(240, 240, 240));
-    let named_wash = BlockColor::from_color(Color::DarkGray);
-    let cases = [
-        (Color::DarkGray, named_wash, Color::White),
-        (
-            Color::Rgb(170, 170, 170),
-            dark_wash,
-            Color::Rgb(170, 170, 170),
-        ),
-        (Color::Rgb(30, 30, 30), dark_wash, Color::White),
-        (Color::DarkGray, dark_wash, Color::White),
-        (Color::Rgb(80, 80, 80), light_wash, Color::Rgb(80, 80, 80)),
-        (Color::Rgb(220, 220, 220), light_wash, Color::Black),
-    ];
-    for (dim, background, expected) in cases {
-        assert_eq!(
-            muted_ink_on_block(dim, background),
-            expected,
-            "dim={dim:?} background={background:?}"
-        );
-    }
+fn panel_dim_keeps_muted_ink_instead_of_body_fallback() {
+    let dark_bg = Rgb::new(10, 10, 10);
+    let light_bg = Rgb::new(245, 245, 245);
+    let white = Rgb::new(255, 255, 255);
+    let black = Rgb::new(0, 0, 0);
+
+    let usable = Palette::from_terminal(Some(&palette(dark_bg, Some(Rgb::new(170, 170, 170)))));
+    assert_eq!(usable.dim, Color::Rgb(170, 170, 170));
+    assert_eq!(usable.panel_dim, Color::Rgb(170, 170, 170));
+    assert_ne!(usable.panel_dim, usable.neutral_tool_background.color);
+
+    let unnamed = Palette::from_terminal(None);
+    assert_eq!(unnamed.dim, Color::DarkGray);
+    assert_eq!(unnamed.neutral_tool_background.color, Color::DarkGray);
+    assert_eq!(unnamed.panel_dim, Color::Gray);
+
+    let tight = dim_on_background(Rgb::new(20, 20, 20), [Rgb::new(30, 30, 30)], white);
+    assert_eq!(tight, Color::Rgb(149, 149, 149));
+
+    let light_tight = dim_on_background(Rgb::new(240, 240, 240), [Rgb::new(220, 220, 220)], black);
+    assert_eq!(light_tight, Color::Rgb(108, 108, 108));
+
+    let light_ok = dim_on_background(Rgb::new(240, 240, 240), [Rgb::new(80, 80, 80)], black);
+    assert_eq!(light_ok, Color::Rgb(80, 80, 80));
+
+    let no_sample = Palette::from_terminal(Some(&palette(dark_bg, None)));
+    assert_eq!(no_sample.dim, Color::DarkGray);
+    assert!(matches!(no_sample.panel_dim, Color::Rgb(_, _, _)));
+    assert_ne!(no_sample.panel_dim, no_sample.neutral_tool_background.color);
+
+    let light = Palette::from_terminal(Some(&palette(light_bg, Some(Rgb::new(80, 80, 80)))));
+    assert_eq!(light.dim, Color::Rgb(80, 80, 80));
+    assert_eq!(light.panel_dim, Color::Rgb(80, 80, 80));
 }
 
 // Covers: hover lift direction tracks surface luminance; non-RGB ink lifts to bold
