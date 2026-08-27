@@ -35,6 +35,8 @@ const DIM_MIN_LUMINANCE_ON_DARK: f32 = 0.12;
 const DIM_MAX_LUMINANCE_ON_LIGHT: f32 = 0.45;
 // Minimum luminance gap so muted text neither matches the wash nor the body.
 const DIM_CONTRAST_MARGIN: f32 = 0.08;
+// Last-resort muted ink: pull body toward the wash so chrome stays dim, not body.
+const DIM_BLEND_ALPHA: f32 = 0.55;
 // Status/role ink (warning, success, ...) vs surface. Bright yellow on light
 // surfaces is the usual failure; require a clear darker/lighter separation.
 const ROLE_INK_MARGIN: f32 = 0.22;
@@ -133,22 +135,28 @@ impl TerminalPalette {
     }
 }
 
-/// Dim ink for a fixed RGB scheme. Never returns named ANSI fallbacks.
-fn scheme_dim_foreground(scheme: &ColorScheme) -> Color {
-    let background = scheme.background;
-    let background_luminance = background.luminance();
-    let candidates = [
+fn scheme_dim_candidates(scheme: &ColorScheme) -> [Rgb; 3] {
+    [
         scheme_ansi(scheme, AnsiColor::BrightBlack),
         scheme.ansi[0], // black (ANSI 0 has no AnsiColor variant)
         scheme.foreground,
-    ];
+    ]
+}
+
+/// Prefer a candidate that is muted and readable on `background`; otherwise stay
+/// muted by blending body ink into the wash instead of jumping to full contrast.
+fn dim_on_background(
+    background: Rgb,
+    candidates: impl IntoIterator<Item = Rgb>,
+    body: Rgb,
+) -> Color {
+    let background_luminance = background.luminance();
     for candidate in candidates {
         if candidate.is_usable_dim(background_luminance) {
             return candidate.color();
         }
     }
-    // Last resort: pull foreground toward the surface so chrome stays muted.
-    background.blend_toward(scheme.foreground, 0.55).color()
+    background.blend_toward(body, DIM_BLEND_ALPHA).color()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -170,6 +178,27 @@ impl BlockColor {
     }
 }
 
+fn panel_dim_from_terminal(
+    dim: Color,
+    panel: BlockColor,
+    terminal: Option<&TerminalPalette>,
+) -> Color {
+    let Some(background) = panel.rgb else {
+        // Named collision with no RGB: keep a muted slot, not body white.
+        return if dim == panel.color { Color::Gray } else { dim };
+    };
+    let body = if is_light_background(background.luminance()) {
+        Rgb::new(0, 0, 0)
+    } else {
+        Rgb::new(255, 255, 255)
+    };
+    dim_on_background(
+        background,
+        terminal.and_then(|palette| palette.ansi.get(&AnsiColor::BrightBlack).copied()),
+        body,
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Palette {
     /// Body text. `None` keeps the host default foreground (terminal theme).
@@ -177,6 +206,8 @@ struct Palette {
     /// Full-screen surface. `None` keeps the host default background.
     surface: Option<Color>,
     dim: Color,
+    /// Muted ink that still reads on `neutral_tool_background`.
+    panel_dim: Color,
     accent: Color,
     success: Color,
     warning: Color,
@@ -209,10 +240,18 @@ impl Palette {
     fn from_terminal(terminal: Option<&TerminalPalette>) -> Self {
         let surface = terminal.map(|palette| palette.background);
         let (diff_add_wash, diff_del_wash) = theme_diff::terminal_diff_washes(terminal);
+        let dim = terminal.map_or(Color::DarkGray, TerminalPalette::dim_foreground);
+        let panel = blended_or_fallback(
+            terminal,
+            AnsiColor::White,
+            NEUTRAL_TOOL_BACKGROUND_ALPHA,
+            BlockColor::from_color(Color::DarkGray),
+        );
         Self {
             text: None,
             surface: None,
-            dim: terminal.map_or(Color::DarkGray, TerminalPalette::dim_foreground),
+            dim,
+            panel_dim: panel_dim_from_terminal(dim, panel, terminal),
             // Prefer sampled RGB when the host answered palette queries so brand,
             // version, and status colors track the real terminal theme instead of
             // generic named ANSI (which often looks "hardcoded").
@@ -221,20 +260,10 @@ impl Palette {
             warning: role_ink(sampled_or_named(terminal, AnsiColor::Yellow), surface),
             error: role_ink(sampled_or_named(terminal, AnsiColor::Red), surface),
             skill: role_ink(sampled_or_named(terminal, AnsiColor::Magenta), surface),
-            user_background: blended_or_fallback(
-                terminal,
-                AnsiColor::White,
-                USER_BACKGROUND_ALPHA,
-                BlockColor::from_color(Color::DarkGray),
-            ),
+            user_background: panel,
             // Same blend recipe as user prompts today; keep a dedicated field so
             // tool chrome can diverge later without rewriting call sites.
-            neutral_tool_background: blended_or_fallback(
-                terminal,
-                AnsiColor::White,
-                NEUTRAL_TOOL_BACKGROUND_ALPHA,
-                BlockColor::from_color(Color::DarkGray),
-            ),
+            neutral_tool_background: panel,
             diff_add_wash,
             diff_del_wash,
         }
@@ -244,10 +273,17 @@ impl Palette {
         let panel = scheme_panel_background(scheme);
         let surface = scheme.background;
         let (diff_add_wash, diff_del_wash) = theme_diff::scheme_diff_washes(scheme);
+        let dim_candidates = scheme_dim_candidates(scheme);
+        let dim = dim_on_background(scheme.background, dim_candidates, scheme.foreground);
+        let panel_dim = match panel.rgb {
+            Some(background) => dim_on_background(background, dim_candidates, scheme.foreground),
+            None => dim,
+        };
         Self {
             text: Some(scheme.foreground.color()),
             surface: Some(scheme.background.color()),
-            dim: scheme_dim_foreground(scheme),
+            dim,
+            panel_dim,
             accent: role_ink(scheme_ansi(scheme, AnsiColor::Cyan).color(), Some(surface)),
             success: role_ink(scheme_ansi(scheme, AnsiColor::Green).color(), Some(surface)),
             warning: role_ink(
@@ -519,6 +555,14 @@ impl Theme {
             .bg(background.color)
     }
 
+    /// Muted rail ink that still reads on the rail wash.
+    ///
+    /// Foreground only: `RailRow::into_line()` patches this onto `row_style`, so a
+    /// background here would replace the hovered/pressed wash.
+    pub(super) fn activity_rail_dim() -> Style {
+        Style::default().fg(Palette::current().panel_dim)
+    }
+
     pub(super) fn activity_rail_success() -> Style {
         Self::activity_rail().fg(Palette::current().success)
     }
@@ -542,7 +586,7 @@ impl Theme {
     }
 
     pub(super) fn jump_to_bottom_shortcut() -> Style {
-        Self::activity_rail().fg(Palette::current().dim)
+        Self::activity_rail().fg(Palette::current().panel_dim)
     }
 
     pub(super) fn activity_rail_row(state: super::activity::RailRowState) -> Style {

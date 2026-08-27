@@ -198,7 +198,9 @@ fn process_line(
     };
     let trailing_style = match row_state {
         activity::RailRowState::Idle => process_trailing_style(process),
-        activity::RailRowState::Hovered | activity::RailRowState::Pressed => Theme::dim(),
+        activity::RailRowState::Hovered | activity::RailRowState::Pressed => {
+            Theme::activity_rail_dim()
+        }
     };
     let row_style = Theme::activity_rail_row(row_state);
     let (activity_text, activity_style) = process_activity(process);
@@ -226,9 +228,9 @@ fn summary_line(label: String, connector: &'static str, width: usize) -> Line<'s
         connector,
         identity: vec![Span::styled(label, Theme::dim().patch(row_style))],
         activity: String::new(),
-        activity_style: Theme::dim(),
+        activity_style: Theme::activity_rail_dim(),
         trailing: String::new(),
-        trailing_style: Theme::dim(),
+        trailing_style: Theme::activity_rail_dim(),
         row_style,
     }
     .into_line(width)
@@ -276,7 +278,7 @@ fn process_trailing_style(process: &LiveProcessSummary) -> ratatui::style::Style
         Some(quiet) if process.state.is_live() && quiet >= QUIET_WARN_AFTER => {
             Theme::activity_rail_warning()
         }
-        _ => Theme::dim(),
+        _ => Theme::activity_rail_dim(),
     }
 }
 
