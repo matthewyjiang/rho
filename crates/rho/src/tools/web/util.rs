@@ -1,6 +1,7 @@
 use std::{sync::LazyLock, time::Duration};
 
 use regex::Regex;
+use rustls_platform_verifier::BuilderVerifierExt;
 use url::Url;
 
 use rho_tools::tool::ToolError;
@@ -34,7 +35,7 @@ pub(super) fn http_client() -> reqwest::Client {
 }
 
 /// Client for one content fetch, wired to connect only to the addresses that
-/// passed the SSRF checks for that target. It shares [`TLS_CONNECTOR`] with
+/// passed the SSRF checks for that target. It shares [`TLS_CONFIG`] with
 /// every other client, so building one per fetch costs microseconds.
 ///
 /// The override replaces DNS for this hostname alone, so the request keeps the
@@ -47,23 +48,32 @@ pub(super) fn pinned_http_client(target: &VettedTarget) -> Result<reqwest::Clien
         .map_err(|error| ToolError::Message(format!("failed to build HTTP client: {error}")))
 }
 
-/// One TLS connector for the process.
+/// One rustls client config for the process.
 ///
-/// Building it loads the system trust store, which costs about 7ms, and a
-/// content fetch needs its own client to pin the connection. Sharing the
-/// connector keeps that client build in the microseconds. `None` means TLS is
+/// Building it loads the system trust store, which costs a few milliseconds,
+/// and a content fetch needs its own client to pin the connection. Sharing the
+/// config keeps that client build in the microseconds. `None` means TLS is
 /// unavailable, and reqwest then reports the same failure it would have
-/// reported for a connector it built itself.
-static TLS_CONNECTOR: LazyLock<Option<native_tls::TlsConnector>> =
-    LazyLock::new(|| native_tls::TlsConnector::new().ok());
+/// reported for a config it built itself.
+static TLS_CONFIG: LazyLock<Option<rustls::ClientConfig>> = LazyLock::new(rustls_client_config);
+
+fn rustls_client_config() -> Option<rustls::ClientConfig> {
+    rho_providers::ensure_rustls_ring_provider();
+    let mut config = rustls::ClientConfig::builder()
+        .with_platform_verifier()
+        .ok()?
+        .with_no_client_auth();
+    config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    Some(config)
+}
 
 fn client_builder() -> reqwest::ClientBuilder {
-    let builder = reqwest::Client::builder()
+    let builder = crate::reqwest_client_builder()
         .timeout(HTTP_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy();
-    match TLS_CONNECTOR.as_ref() {
-        Some(tls) => builder.use_preconfigured_tls(tls.clone()),
+    match TLS_CONFIG.as_ref() {
+        Some(tls) => builder.tls_backend_preconfigured(tls.clone()),
         None => builder,
     }
 }

@@ -360,7 +360,7 @@ impl App {
             let store = self.credential_store.clone();
             let client = self
                 .usage_limits_client
-                .get_or_init(reqwest::Client::new)
+                .get_or_init(crate::reqwest_client)
                 .clone();
             self.pending_usage_limits.push(PendingUsageFetch {
                 kind,

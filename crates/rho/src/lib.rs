@@ -54,3 +54,15 @@ pub use cli::Cli;
 pub use rho_providers as providers_lib;
 pub use rho_sdk as sdk;
 pub use rho_tools as tools_lib;
+
+// Same pair as `rho_providers::tls`: keep the constructors crate-private here
+// rather than growing the published providers surface.
+pub(crate) fn reqwest_client() -> reqwest::Client {
+    rho_providers::ensure_rustls_ring_provider();
+    reqwest::Client::new()
+}
+
+pub(crate) fn reqwest_client_builder() -> reqwest::ClientBuilder {
+    rho_providers::ensure_rustls_ring_provider();
+    reqwest::Client::builder()
+}

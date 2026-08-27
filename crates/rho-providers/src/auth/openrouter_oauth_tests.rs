@@ -207,7 +207,7 @@ async fn key_exchange_posts_expected_json_and_returns_key() {
     let (endpoint, captured) = capture_json_request("200 OK", r#"{"key":"openrouter-key"}"#).await;
 
     let key = exchange_code_with_endpoint(
-        &reqwest::Client::new(),
+        &crate::reqwest_client(),
         "authorization-code",
         "pkce-verifier",
         &endpoint,
@@ -238,7 +238,7 @@ async fn key_exchange_reports_status_without_exposing_secrets() {
         capture_json_request("403 Forbidden", r#"{"error":"invalid secret-code"}"#).await;
 
     let error = exchange_code_with_endpoint(
-        &reqwest::Client::new(),
+        &crate::reqwest_client(),
         "secret-code",
         "secret-verifier",
         &endpoint,
@@ -262,7 +262,7 @@ async fn key_exchange_rejects_missing_or_blank_key() {
         let (endpoint, captured) = capture_json_request("200 OK", body).await;
 
         let error = exchange_code_with_endpoint(
-            &reqwest::Client::new(),
+            &crate::reqwest_client(),
             "authorization-code",
             "pkce-verifier",
             &endpoint,
@@ -280,7 +280,7 @@ async fn key_exchange_rejects_invalid_json_without_exposing_body() {
     let (endpoint, captured) = capture_json_request("200 OK", "response-secret").await;
 
     let error = exchange_code_with_endpoint(
-        &reqwest::Client::new(),
+        &crate::reqwest_client(),
         "authorization-code",
         "pkce-verifier",
         &endpoint,

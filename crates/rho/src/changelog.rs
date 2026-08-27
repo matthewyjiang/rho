@@ -138,7 +138,7 @@ fn fetch_remote_changelog(tag: &str) -> impl std::future::Future<Output = anyhow
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static("rho-coding-agent"));
         headers.insert(ACCEPT, HeaderValue::from_static("text/plain"));
-        let client = reqwest::Client::builder()
+        let client = crate::reqwest_client_builder()
             .default_headers(headers)
             .timeout(FETCH_TIMEOUT)
             .build()?;

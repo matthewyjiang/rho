@@ -287,7 +287,7 @@ fn pkce_challenge(verifier: &str) -> String {
 }
 
 fn http_client() -> Result<reqwest::Client, CodexOAuthError> {
-    reqwest::Client::builder()
+    crate::reqwest_client_builder()
         .timeout(REQUEST_TIMEOUT)
         .build()
         .map_err(CodexOAuthError::from)
@@ -794,7 +794,7 @@ mod tests {
             stream.write_all(reply.as_bytes()).await.unwrap();
         });
 
-        let login = start_codex_device_login_with_endpoint(&reqwest::Client::new(), &endpoint)
+        let login = start_codex_device_login_with_endpoint(&crate::reqwest_client(), &endpoint)
             .await
             .unwrap();
 
@@ -848,7 +848,7 @@ mod tests {
         });
 
         let tokens = complete_codex_device_login_with_exchange_endpoint(
-            &reqwest::Client::new(),
+            &crate::reqwest_client(),
             CodexDeviceLogin {
                 user_code: "ABCD-EFGH".into(),
                 verification_uri: "https://auth.openai.com/codex/device".into(),

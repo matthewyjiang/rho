@@ -145,7 +145,7 @@ impl UsageEndpoint {
     #[cfg(test)]
     fn with_url(url: String) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: crate::reqwest_client(),
             url,
         }
     }

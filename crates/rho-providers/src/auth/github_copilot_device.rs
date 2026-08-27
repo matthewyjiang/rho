@@ -101,7 +101,7 @@ pub async fn start_github_copilot_device_login(
 }
 
 fn http_client() -> Result<reqwest::Client, GitHubCopilotDeviceError> {
-    reqwest::Client::builder()
+    crate::reqwest_client_builder()
         .timeout(REQUEST_TIMEOUT)
         .build()
         .map_err(GitHubCopilotDeviceError::from)
@@ -313,7 +313,7 @@ mod tests {
         });
 
         let login =
-            start_github_copilot_device_login_with_endpoint(&reqwest::Client::new(), &endpoint)
+            start_github_copilot_device_login_with_endpoint(&crate::reqwest_client(), &endpoint)
                 .await
                 .unwrap();
 
@@ -354,7 +354,7 @@ mod tests {
         });
 
         let tokens = complete_github_copilot_device_login_with_endpoint(
-            &reqwest::Client::new(),
+            &crate::reqwest_client(),
             GitHubCopilotDeviceLogin {
                 user_code: "ABCD-EFGH".into(),
                 verification_uri: "https://github.com/login/device".into(),
@@ -392,7 +392,7 @@ mod tests {
         });
 
         let err = complete_github_copilot_device_login_with_endpoint(
-            &reqwest::Client::new(),
+            &crate::reqwest_client(),
             GitHubCopilotDeviceLogin {
                 user_code: "ABCD-EFGH".into(),
                 verification_uri: "https://github.com/login/device".into(),

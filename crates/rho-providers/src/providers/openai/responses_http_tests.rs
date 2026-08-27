@@ -127,7 +127,7 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
         Box::new(|_| (200, r#"{"ok":true}"#.into())),
     ])
     .await;
-    let client = reqwest::Client::new();
+    let client = crate::reqwest_client();
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
     let http = transport(&client, &base, &store, &refreshed);
@@ -178,7 +178,7 @@ async fn keyless_create_and_compact_omit_authorization() {
         Box::new(|_| (200, r#"{"ok":true}"#.into())),
     ])
     .await;
-    let client = reqwest::Client::new();
+    let client = crate::reqwest_client();
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
     let http = transport(&client, &base, &store, &refreshed);
@@ -218,7 +218,7 @@ async fn codex_create_and_compact_send_expected_headers_and_paths() {
         Box::new(|_| (200, r#"{"ok":true}"#.into())),
     ])
     .await;
-    let client = reqwest::Client::new();
+    let client = crate::reqwest_client();
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
     let auth = Auth::Codex {
@@ -305,7 +305,7 @@ async fn codex_compact_401_refresh_reports_auth_failed_attempt_and_retries() {
         }
     });
 
-    let client = reqwest::Client::new();
+    let client = crate::reqwest_client();
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
     let auth = Auth::Codex {
@@ -371,7 +371,7 @@ async fn cancellation_during_send_returns_interrupted() {
         std::future::pending::<()>().await;
     });
 
-    let client = reqwest::Client::new();
+    let client = crate::reqwest_client();
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
     let auth = Auth::ApiKey("sk-test".into());
@@ -420,7 +420,7 @@ async fn cancellation_during_refresh_returns_interrupted() {
         let _ = stream.read(&mut buf).await;
     });
 
-    let client = reqwest::Client::builder()
+    let client = crate::reqwest_client_builder()
         .timeout(Duration::from_secs(5))
         .build()
         .unwrap();
@@ -485,7 +485,7 @@ async fn refresh_failure_retains_authentication_failed_attempt() {
         let _ = stream.shutdown().await;
     });
 
-    let client = reqwest::Client::new();
+    let client = crate::reqwest_client();
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
     let auth = Auth::Codex {
@@ -557,7 +557,7 @@ async fn retry_send_failure_retains_authentication_failed_attempt() {
         }
     });
 
-    let client = reqwest::Client::new();
+    let client = crate::reqwest_client();
     let store = MemoryCredentialStore::default();
     let refreshed = std::sync::Mutex::new(None);
     let auth = Auth::Codex {

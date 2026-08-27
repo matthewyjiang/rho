@@ -341,7 +341,7 @@ fn auth_matches_mode(auth: &Auth, mode: OpenAiRuntimeAuth) -> bool {
 }
 
 fn provider_http_client(timeout: Option<Duration>) -> Result<reqwest::Client, ModelError> {
-    let mut builder = reqwest::Client::builder().connect_timeout(CONNECT_TIMEOUT);
+    let mut builder = crate::reqwest_client_builder().connect_timeout(CONNECT_TIMEOUT);
     if let Some(timeout) = timeout {
         builder = builder.timeout(timeout);
     }

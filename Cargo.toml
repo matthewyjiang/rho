@@ -4,19 +4,24 @@ exclude = ["fixtures/downstream", "fixtures/publish-boundary"]
 resolver = "2"
 
 [workspace.dependencies]
-# 0.13 defaults to rustls + aws-lc. native-tls keeps today's certificate store
-# until #976. native-tls includes ALPN, so the http2 feature can negotiate;
-# that is intentional. query/form are optional in 0.13; charset/http2/
+# 0.13 defaults to rustls + aws-lc. rustls-no-provider plus an explicit rustls
+# ring dependency keep one crypto provider; the rustls feature would compile
+# aws-lc alongside ring. query/form are optional in 0.13; charset/http2/
 # system-proxy replace the 0.12 defaults we still want.
 reqwest = { version = "0.13", default-features = false, features = [
     "charset",
     "form",
     "http2",
     "json",
-    "native-tls",
     "query",
+    "rustls-no-provider",
     "stream",
     "system-proxy",
+] }
+rustls = { version = "0.23", default-features = false, features = [
+    "ring",
+    "std",
+    "tls12",
 ] }
 
 # Thin LTO + one codegen unit shrink the release binary 90.7 MB -> 56.6 MB and

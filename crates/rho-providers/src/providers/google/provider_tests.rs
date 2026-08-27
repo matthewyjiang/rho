@@ -53,7 +53,7 @@ async fn complete_turn_uses_google_header_and_generate_content_endpoint() {
     let provider = GoogleProvider::new_with_transport(
         "gemini-2.5-pro".into(),
         "secret-key".into(),
-        reqwest::Client::new(),
+        crate::reqwest_client(),
         format!("http://{address}/v1beta"),
     );
     let messages = [Message::user_text("hi")];
@@ -116,7 +116,7 @@ async fn stream_turn_parses_sse_and_uses_stream_endpoint() {
     let provider = GoogleProvider::new_with_transport(
         "gemini-2.5-flash".into(),
         "secret-key".into(),
-        reqwest::Client::new(),
+        crate::reqwest_client(),
         format!("http://{address}/v1beta"),
     );
     let messages = [Message::user_text("hi")];

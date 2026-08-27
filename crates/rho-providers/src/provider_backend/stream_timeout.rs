@@ -13,7 +13,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// of a read timeout allows non-streaming requests to run as long as needed.
 #[cfg(test)]
 pub(crate) fn provider_client() -> reqwest::Client {
-    reqwest::Client::builder()
+    crate::reqwest_client_builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .build()
         .expect("provider HTTP client configuration should be valid")

@@ -261,7 +261,7 @@ fn authorized_client(manager: AuthorizationManager) -> anyhow::Result<McpHttpCli
 /// so headers and bearer tokens cannot be replayed to a redirect target, and
 /// no idle pooling, which stalls on Linux delayed ACK.
 fn transport_http_client() -> anyhow::Result<reqwest::Client> {
-    reqwest::Client::builder()
+    crate::reqwest_client_builder()
         .pool_max_idle_per_host(0)
         .redirect(reqwest::redirect::Policy::none())
         .build()

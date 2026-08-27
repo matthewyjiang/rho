@@ -46,6 +46,7 @@ pub mod provider;
 pub mod provider_backend;
 pub mod providers;
 pub mod reasoning;
+mod tls;
 
 pub use credentials::{
     open_credential_store, probe_credential_store, CredentialError, CredentialResult,
@@ -59,3 +60,5 @@ pub use providers::{
     build_automation_provider, build_sdk_provider, build_sdk_provider_with_source,
     ProviderBuildOptions, UnavailableProvider,
 };
+pub use tls::ensure_rustls_ring_provider;
+pub(crate) use tls::{reqwest_client, reqwest_client_builder};
