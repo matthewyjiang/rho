@@ -556,8 +556,11 @@ impl Theme {
     }
 
     /// Muted rail ink that still reads on the rail wash.
+    ///
+    /// Foreground only: `RailRow::into_line()` patches this onto `row_style`, so a
+    /// background here would replace the hovered/pressed wash.
     pub(super) fn activity_rail_dim() -> Style {
-        Self::activity_rail().fg(Palette::current().panel_dim)
+        Style::default().fg(Palette::current().panel_dim)
     }
 
     pub(super) fn activity_rail_success() -> Style {
@@ -583,7 +586,7 @@ impl Theme {
     }
 
     pub(super) fn jump_to_bottom_shortcut() -> Style {
-        Self::activity_rail_dim()
+        Self::activity_rail().fg(Palette::current().panel_dim)
     }
 
     pub(super) fn activity_rail_row(state: super::activity::RailRowState) -> Style {

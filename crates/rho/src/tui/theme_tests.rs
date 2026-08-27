@@ -192,7 +192,7 @@ fn fixed_light_scheme_uses_rgb_dim_and_surface() {
     Theme::apply_committed("terminal");
 }
 
-// Covers: rail dim must not collapse into the wash on terminal fallback or tight palettes
+// Covers: rail dim stays readable on wash and is ink-only so pressed rows keep their background
 // Owner: tui theme palette mapping
 #[test]
 fn activity_rail_dim_stays_readable_on_terminal_wash() {
@@ -201,8 +201,8 @@ fn activity_rail_dim_stays_readable_on_terminal_wash() {
     let rail = Theme::activity_rail();
     let dim = Theme::activity_rail_dim();
     assert_eq!(rail.bg, Some(Color::DarkGray));
-    assert_eq!(dim.bg, rail.bg);
-    assert_ne!(dim.fg, dim.bg, "dim rail text must not match the wash");
+    assert_eq!(dim.bg, None, "dim is ink-only so row wash can win");
+    assert_ne!(dim.fg, rail.bg, "dim rail text must not match the wash");
     assert_eq!(
         dim.fg,
         Some(Palette::current().panel_dim),
@@ -213,13 +213,19 @@ fn activity_rail_dim_stays_readable_on_terminal_wash() {
         Some(Color::Gray),
         "named DarkGray wash keeps a muted slot, not body white"
     );
+    let pressed = Theme::activity_rail_row(crate::tui::activity::RailRowState::Pressed);
+    assert_eq!(
+        pressed.patch(dim).bg,
+        pressed.bg,
+        "pressed accent wash must survive dim activity/trailing spans"
+    );
 
     Theme::apply_committed("one-half-dark");
     let rail = Theme::activity_rail();
     let dim = Theme::activity_rail_dim();
     let palette = Palette::current();
-    assert_eq!(dim.bg, rail.bg);
-    assert_ne!(dim.fg, dim.bg);
+    assert_eq!(dim.bg, None);
+    assert_ne!(dim.fg, rail.bg);
     assert_eq!(dim.fg, Some(palette.panel_dim));
     assert_eq!(
         palette.panel_dim, palette.dim,
