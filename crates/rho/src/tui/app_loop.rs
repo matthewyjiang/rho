@@ -263,13 +263,7 @@ impl App {
                     self.flush_pending_paste_burst();
                     self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
                 }
-                Event::FocusGained => {
-                    self.input_ui.cancel_pointer_click_sequence();
-                    // Some Windows hosts drop application mouse tracking on focus
-                    // changes; re-assert so wheel scrolling keeps working.
-                    mouse_capture::reassert();
-                    self.refresh_workspace_git();
-                }
+                Event::FocusGained => self.on_focus_gained(),
                 Event::FocusLost => {
                     self.input_ui.cancel_pointer_click_sequence();
                     self.input_ui.finalize_selection();
@@ -280,6 +274,14 @@ impl App {
             },
         }
         Ok(())
+    }
+
+    pub(super) fn on_focus_gained(&mut self) {
+        self.input_ui.cancel_pointer_click_sequence();
+        // Some Windows hosts drop application mouse tracking on focus
+        // changes; re-assert so wheel scrolling keeps working.
+        mouse_capture::reassert();
+        self.refresh_workspace_on_focus();
     }
 
     pub(super) fn event_poll_timeout(&self, idle_timeout: Duration) -> Duration {

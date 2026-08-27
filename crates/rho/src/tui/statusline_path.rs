@@ -38,28 +38,56 @@ pub(super) fn format_cwd_left(path: &str, branch: Option<&str>) -> String {
 /// 3. drop branch
 /// 4. shortened path (may end-truncate a too-long final segment)
 pub(super) fn fit_cwd(path: &str, branch: Option<&str>, width: usize) -> String {
+    fit_cwd_keeping_basename(path, branch, width)
+        .unwrap_or_else(|| shorten_path_display(path, width))
+}
+
+/// Fit cwd path, optional branch, and optional extra chrome into `width`.
+///
+/// Extra is dropped first. After that, [`fit_cwd`] owns the remaining
+/// degradation (branch, then path).
+pub(super) fn fit_cwd_row(
+    path: &str,
+    branch: Option<&str>,
+    extra: Option<&str>,
+    width: usize,
+) -> (String, bool) {
     if width == 0 {
-        return String::new();
+        return (String::new(), false);
     }
-
-    let full = format_cwd_left(path, branch);
-    if display_width(&full) <= width {
-        return full;
-    }
-
-    if let Some(branch) = branch {
-        let suffix = format!(" ({branch})");
-        let suffix_width = display_width(&suffix);
-        if suffix_width < width {
-            let path_budget = width - suffix_width;
-            if let Some(shortened) = shorten_path_keeping_basename(path, path_budget) {
-                return format!("{shortened}{suffix}");
+    if let Some(extra) = extra {
+        let extra_width = display_width(extra);
+        if extra_width > 0 && extra_width < width {
+            let path_budget = width - extra_width;
+            if let Some(left) = fit_cwd_keeping_basename(path, branch, path_budget) {
+                return (left, true);
             }
         }
-        // Branch is optional chrome; drop it before mangling the basename.
     }
+    (fit_cwd(path, branch, width), false)
+}
 
-    shorten_path_display(path, width)
+/// Full path+branch, or shortened path + branch while the basename stays intact.
+/// Returns `None` when that would require dropping the branch or mangling the
+/// basename; [`fit_cwd`] then falls back to dropping the branch.
+fn fit_cwd_keeping_basename(path: &str, branch: Option<&str>, width: usize) -> Option<String> {
+    if width == 0 {
+        return None;
+    }
+    let full = format_cwd_left(path, branch);
+    if display_width(&full) <= width {
+        return Some(full);
+    }
+    let Some(branch) = branch else {
+        return shorten_path_keeping_basename(path, width);
+    };
+    let suffix = format!(" ({branch})");
+    let suffix_width = display_width(&suffix);
+    if suffix_width >= width {
+        return None;
+    }
+    let shortened = shorten_path_keeping_basename(path, width - suffix_width)?;
+    Some(format!("{shortened}{suffix}"))
 }
 
 fn shorten_path_keeping_basename(path: &str, width: usize) -> Option<String> {

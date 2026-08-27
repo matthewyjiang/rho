@@ -1,39 +1,52 @@
 //! Current-branch GitHub pull request for the statusline.
 //!
-//! Probe order: git repo, GitHub-based remote, then `gh pr view`. Lookup runs
-//! off the UI thread; missing `gh`, non-GitHub remotes, and matrix fixtures
-//! stay silent.
+//! `gh pr view` runs off the UI thread. Missing `gh`, a failed or timed-out
+//! probe, and matrix fixtures stay silent. `gh pr view` exits non-zero when
+//! there is no PR, so that cannot be distinguished from a crash; a failed
+//! refresh does not clear a chip that already painted.
 
-use std::{
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-};
+use std::{path::Path, process::Stdio, time::Duration};
 
 use futures_util::FutureExt;
 use serde::Deserialize;
 
-use super::{smoke_injection, workspace, App};
+use super::{
+    smoke_injection,
+    statusline::{CwdExtra, CwdExtraTone},
+    workspace, App,
+};
 
 const GH_PR_FIELDS: &str = "number,reviewDecision,mergeStateStatus,statusCheckRollup";
 
-/// Current-branch pull request shown next to the cwd path.
+/// Budget for `gh pr view` so a hung CLI cannot pin the TUI poll loop.
+///
+/// Measured five serial in-tree calls: 701–1123ms (median 1036ms). 8s is a
+/// tripwire (~7× max observed), not a latency target.
+const GH_PR_VIEW_BUDGET: Duration = Duration::from_secs(8);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct GithubPr {
-    pub number: u64,
-    pub tone: Option<GithubPrTone>,
+struct GithubPr {
+    number: u64,
+    tone: Option<GithubPrTone>,
 }
 
-/// Green = ready to merge; red = conflicts, failing checks, or requested changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum GithubPrTone {
+enum GithubPrTone {
     Ready,
     Issues,
 }
 
 #[derive(Debug)]
+enum GithubPrProbe {
+    /// `gh` missing, timed out, non-zero (including no PR), or unreadable JSON.
+    Unavailable,
+    Found(GithubPr),
+}
+
+#[derive(Debug)]
 pub(super) struct GithubPrLookup {
-    pub branch: Option<String>,
-    pub pr: Option<GithubPr>,
+    branch: Option<String>,
+    probe: GithubPrProbe,
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,8 +56,12 @@ struct GhPrView {
     review_decision: Option<String>,
     #[serde(default, rename = "mergeStateStatus")]
     merge_state_status: String,
-    #[serde(default, rename = "statusCheckRollup")]
-    status_check_rollup: Option<Vec<GhCheck>>,
+    #[serde(
+        default,
+        rename = "statusCheckRollup",
+        deserialize_with = "deserialize_check_rollup"
+    )]
+    status_check_rollup: Vec<GhCheck>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -55,73 +72,50 @@ struct GhCheck {
     state: String,
 }
 
-pub(super) fn lookup(cwd: &Path) -> GithubPrLookup {
+fn deserialize_check_rollup<'de, D>(deserializer: D) -> Result<Vec<GhCheck>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Rollup {
+        List(Vec<GhCheck>),
+        Other(serde::de::IgnoredAny),
+    }
+    Ok(match Option::<Rollup>::deserialize(deserializer)? {
+        Some(Rollup::List(checks)) => checks,
+        Some(Rollup::Other(_)) | None => Vec::new(),
+    })
+}
+
+async fn lookup(cwd: &Path) -> GithubPrLookup {
     GithubPrLookup {
         branch: workspace::git_branch(cwd),
-        pr: probe(cwd),
+        probe: probe(cwd).await,
     }
 }
 
-fn probe(cwd: &Path) -> Option<GithubPr> {
-    if !should_probe(cwd) {
-        return None;
-    }
-    let output = Command::new("gh")
+async fn probe(cwd: &Path) -> GithubPrProbe {
+    let Some(gh) = crate::executable::find_on_path("gh") else {
+        return GithubPrProbe::Unavailable;
+    };
+    let mut command = tokio::process::Command::new(gh);
+    command
         .args(["pr", "view", "--json", GH_PR_FIELDS])
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+        .kill_on_drop(true);
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(_) => return GithubPrProbe::Unavailable,
+    };
+    match tokio::time::timeout(GH_PR_VIEW_BUDGET, child.wait_with_output()).await {
+        Ok(Ok(output)) if output.status.success() => parse_gh_pr_view(&output.stdout)
+            .map_or(GithubPrProbe::Unavailable, GithubPrProbe::Found),
+        _ => GithubPrProbe::Unavailable,
     }
-    parse_gh_pr_view(&output.stdout)
-}
-
-fn should_probe(cwd: &Path) -> bool {
-    let remotes = workspace::git_remote_urls(cwd);
-    !remotes.is_empty()
-        && remotes.iter().any(|url| remote_is_github(url))
-        && crate::executable::find_on_path("gh").is_some()
-}
-
-fn remote_is_github(url: &str) -> bool {
-    remote_host(url).is_some_and(host_is_github)
-}
-
-fn remote_host(url: &str) -> Option<&str> {
-    let url = url.trim();
-    if url.is_empty() {
-        return None;
-    }
-    if let Some((_, rest)) = url.split_once("://") {
-        let hostport_path = rest.rsplit_once('@').map_or(rest, |(_, host)| host);
-        let hostport = hostport_path.split(['/', '?']).next()?;
-        return host_from_hostport(hostport);
-    }
-    let hostpath = url.rsplit_once('@').map_or(url, |(_, host)| host);
-    let host = hostpath.split(':').next()?.trim();
-    if host.is_empty() || host.contains('/') {
-        None
-    } else {
-        Some(host)
-    }
-}
-
-fn host_from_hostport(hostport: &str) -> Option<&str> {
-    if let Some(rest) = hostport.strip_prefix('[') {
-        return rest.split(']').next().filter(|host| !host.is_empty());
-    }
-    hostport.split(':').next().filter(|host| !host.is_empty())
-}
-
-fn host_is_github(host: &str) -> bool {
-    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
-    host == "github.com"
-        || host.ends_with(".ghe.com")
-        || host.split('.').any(|label| label == "github")
 }
 
 fn parse_gh_pr_view(bytes: &[u8]) -> Option<GithubPr> {
@@ -141,11 +135,7 @@ fn tone_from_view(view: &GhPrView) -> Option<GithubPrTone> {
     let merge = view.merge_state_status.to_ascii_uppercase();
     let issues = review == "CHANGES_REQUESTED"
         || merge == "DIRTY"
-        || view
-            .status_check_rollup
-            .iter()
-            .flatten()
-            .any(check_has_issues);
+        || view.status_check_rollup.iter().any(check_has_issues);
     if issues {
         Some(GithubPrTone::Issues)
     } else if merge == "CLEAN" {
@@ -164,13 +154,64 @@ fn check_has_issues(check: &GhCheck) -> bool {
     ) || matches!(state.as_str(), "FAILURE" | "ERROR")
 }
 
+/// Paint only a probe that still matches the statusline branch and found a PR.
+/// Stale and unavailable results leave a painted chip alone.
+fn pr_for_current_branch(current: Option<&str>, lookup: GithubPrLookup) -> Option<GithubPr> {
+    if current != lookup.branch.as_deref() {
+        return None;
+    }
+    match lookup.probe {
+        GithubPrProbe::Found(pr) => Some(pr),
+        GithubPrProbe::Unavailable => None,
+    }
+}
+
+fn cwd_extra(pr: &GithubPr) -> CwdExtra {
+    CwdExtra::new(
+        format!(" #{}", pr.number),
+        match pr.tone {
+            Some(GithubPrTone::Ready) => CwdExtraTone::Success,
+            Some(GithubPrTone::Issues) => CwdExtraTone::Error,
+            None => CwdExtraTone::Dim,
+        },
+    )
+}
+
 impl App {
     pub(super) fn start_github_pr_fetch(&mut self) {
-        if smoke_injection::matrix_enabled() || self.pending_github_pr.is_some() {
+        if smoke_injection::matrix_enabled()
+            || self.pending_github_pr.is_some()
+            || self.statusline.branch().is_none()
+        {
             return;
         }
-        let cwd: PathBuf = self.info.runtime.cwd.clone();
-        self.pending_github_pr = Some(tokio::task::spawn_blocking(move || lookup(&cwd)));
+        let cwd = self.info.runtime.cwd.clone();
+        self.pending_github_pr = Some(tokio::spawn(async move { lookup(&cwd).await }));
+    }
+
+    fn restart_github_pr_fetch(&mut self) {
+        if let Some(handle) = self.pending_github_pr.take() {
+            handle.abort();
+        }
+        self.start_github_pr_fetch();
+    }
+
+    /// Focus: HEAD may have moved in the background, and PR checks/review
+    /// may have changed too.
+    pub(super) fn refresh_workspace_on_focus(&mut self) {
+        if self.statusline.refresh_git_branch() {
+            self.restart_github_pr_fetch();
+        } else {
+            self.start_github_pr_fetch();
+        }
+    }
+
+    /// After a command that can move HEAD. Do not spawn `gh` unless the
+    /// branch actually changed; every tool finish is too expensive.
+    pub(super) fn refresh_git_after_command(&mut self) {
+        if self.statusline.refresh_git_branch() {
+            self.restart_github_pr_fetch();
+        }
     }
 
     pub(super) fn poll_github_pr(&mut self) {
@@ -182,17 +223,10 @@ impl App {
         };
         self.pending_github_pr = None;
         if let Ok(lookup) = result {
-            self.statusline.apply_github_pr_lookup(lookup);
-        }
-    }
-
-    pub(super) fn refresh_workspace_git(&mut self) {
-        if self.statusline.refresh_git_branch() {
-            if let Some(handle) = self.pending_github_pr.take() {
-                handle.abort();
+            if let Some(pr) = pr_for_current_branch(self.statusline.branch(), lookup) {
+                self.statusline.update_cwd_extra(Some(cwd_extra(&pr)));
             }
         }
-        self.start_github_pr_fetch();
     }
 }
 

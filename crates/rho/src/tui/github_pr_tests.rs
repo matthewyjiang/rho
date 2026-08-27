@@ -1,60 +1,8 @@
 use pretty_assertions::assert_eq;
 
 use super::{
-    host_is_github, parse_gh_pr_view, remote_host, remote_is_github, GithubPr, GithubPrTone,
+    parse_gh_pr_view, pr_for_current_branch, GithubPr, GithubPrLookup, GithubPrProbe, GithubPrTone,
 };
-
-#[test]
-fn remote_host_parses_git_url_shapes() {
-    // Covers: GitHub detection must read host from scp, ssh, and https remotes
-    // Owner: github pr probe
-    let cases = [
-        ("git@github.com:org/repo.git", Some("github.com")),
-        ("org-123@github.com:org/repo.git", Some("github.com")),
-        ("ssh://git@github.com/org/repo.git", Some("github.com")),
-        ("https://github.com/org/repo.git", Some("github.com")),
-        (
-            "https://user:token@github.com/org/repo.git",
-            Some("github.com"),
-        ),
-        (
-            "ssh://git@github.example.com:22/org/repo.git",
-            Some("github.example.com"),
-        ),
-        ("/local/path/to/repo", None),
-        ("file:///local/path/to/repo", None),
-    ];
-    for (url, expected) in cases {
-        assert_eq!(remote_host(url), expected, "{url}");
-    }
-}
-
-#[test]
-fn remote_is_github_accepts_github_and_ghe_hosts() {
-    // Covers: GitHub.com, github-labeled hosts, and GHE Cloud must probe; others must not
-    // Owner: github pr probe
-    let github = [
-        "git@github.com:org/repo.git",
-        "https://github.com/org/repo.git",
-        "https://gist.github.com/org/repo.git",
-        "git@github.mycompany.com:org/repo.git",
-        "https://company.ghe.com/org/repo.git",
-    ];
-    let other = [
-        "git@gitlab.com:org/repo.git",
-        "https://bitbucket.org/org/repo.git",
-        "git@git.mycompany.com:org/repo.git",
-        "/local/path/to/repo",
-    ];
-    for url in github {
-        assert!(remote_is_github(url), "{url}");
-    }
-    for url in other {
-        assert!(!remote_is_github(url), "{url}");
-    }
-    assert!(host_is_github("github.com"));
-    assert!(!host_is_github("notgithub.com"));
-}
 
 #[test]
 fn parse_gh_pr_view_maps_ready_and_issue_tones() {
@@ -96,9 +44,56 @@ fn parse_gh_pr_view_maps_ready_and_issue_tones() {
                 tone: None,
             }),
         ),
+        (
+            r#"{"number":5,"reviewDecision":null,"mergeStateStatus":"CLEAN","statusCheckRollup":{"not":"an array"}}"#,
+            Some(GithubPr {
+                number: 5,
+                tone: Some(GithubPrTone::Ready),
+            }),
+        ),
         ("not json", None),
+        (r#"{"reviewDecision":null}"#, None),
     ];
     for (json, expected) in cases {
         assert_eq!(parse_gh_pr_view(json.as_bytes()), expected, "{json}");
+    }
+}
+
+#[test]
+fn pr_for_current_branch_ignores_stale_or_unavailable_lookups() {
+    // Covers: another branch, or a failed/no-PR probe, must not paint or clear
+    // Owner: github pr probe
+    let pr = GithubPr {
+        number: 7,
+        tone: Some(GithubPrTone::Ready),
+    };
+    let cases = [
+        (
+            Some("main"),
+            GithubPrLookup {
+                branch: Some("main".into()),
+                probe: GithubPrProbe::Found(pr.clone()),
+            },
+            Some(pr.clone()),
+        ),
+        (
+            Some("main"),
+            GithubPrLookup {
+                branch: Some("feature".into()),
+                probe: GithubPrProbe::Found(pr.clone()),
+            },
+            None,
+        ),
+        (
+            Some("main"),
+            GithubPrLookup {
+                branch: Some("main".into()),
+                probe: GithubPrProbe::Unavailable,
+            },
+            None,
+        ),
+    ];
+    for (current, lookup, expected) in cases {
+        assert_eq!(pr_for_current_branch(current, lookup), expected);
     }
 }

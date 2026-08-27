@@ -15,7 +15,7 @@ use super::{
     command_palette::selected_command,
     commands::{self, CommandId, CommandInvocation},
     config_editor::{ConfigNumberInput, ConfigNumberKey, ConfigTextKey},
-    config_picker, mouse_capture,
+    config_picker,
     palette::ActivePalette,
     paste_burst::normalize_paste,
     App, ApprovalKeyOutcome, ComposerMode, Entry, HistoryDirection, InputSubmissionMode,
@@ -837,11 +837,7 @@ impl App {
                         self.flush_pending_paste_burst();
                         self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
                     }
-                    Event::FocusGained => {
-                        self.input_ui.cancel_pointer_click_sequence();
-                        mouse_capture::reassert();
-                        self.refresh_workspace_git();
-                    }
+                    Event::FocusGained => self.on_focus_gained(),
                     Event::FocusLost => {
                         self.input_ui.cancel_pointer_click_sequence();
                         self.input_ui.finalize_selection();
