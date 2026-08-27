@@ -95,7 +95,7 @@ async fn code_exchange_echoes_xai_pkce_challenge() {
         build_oauth_request_with_values("state".into(), "verifier".into(), "nonce".into());
 
     let tokens = exchange_code_with_endpoint(
-        &reqwest::Client::new(),
+        &crate::reqwest_client(),
         "authorization-code",
         &request,
         &endpoint,
@@ -124,7 +124,7 @@ async fn device_setup_sends_client_and_offline_scopes() {
     )
     .await;
 
-    let login = start_xai_device_login_with_endpoint(&reqwest::Client::new(), &endpoint)
+    let login = start_xai_device_login_with_endpoint(&crate::reqwest_client(), &endpoint)
         .await
         .unwrap();
 

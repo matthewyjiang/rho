@@ -457,7 +457,7 @@ mod tests {
         tokens.copilot_token_endpoint = Some(url.clone());
 
         let material =
-            refresh_copilot_token_with_store(&reqwest::Client::new(), &store, &mut tokens)
+            refresh_copilot_token_with_store(&crate::reqwest_client(), &store, &mut tokens)
                 .await
                 .unwrap();
 
@@ -520,7 +520,7 @@ mod tests {
         let auth =
             GitHubCopilotAuthManager::new_with_env_token(store, Some(String::new())).unwrap();
         let material = auth
-            .force_refresh(&reqwest::Client::new())
+            .force_refresh(&crate::reqwest_client())
             .await
             .unwrap()
             .unwrap();
@@ -545,7 +545,7 @@ mod tests {
         let mut tokens = tokens(None, None, None);
         tokens.copilot_token_endpoint = Some(url);
 
-        let err = refresh_copilot_token_with_store(&reqwest::Client::new(), &store, &mut tokens)
+        let err = refresh_copilot_token_with_store(&crate::reqwest_client(), &store, &mut tokens)
             .await
             .unwrap_err();
 

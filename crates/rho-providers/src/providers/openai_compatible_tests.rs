@@ -56,7 +56,7 @@ async fn moonshot_posts_chat_completions_with_bearer_auth() {
     });
 
     let mut provider = OpenAiCompatibleProvider::new(
-        reqwest::Client::new(),
+        crate::reqwest_client(),
         "moonshot",
         "kimi-k3".into(),
         OpenAiCompatibleDialect::Moonshot,
@@ -116,7 +116,7 @@ async fn openrouter_posts_reasoning_to_chat_completions() {
     });
 
     let provider = OpenAiCompatibleProvider::new(
-        reqwest::Client::new(),
+        crate::reqwest_client(),
         "openrouter",
         "anthropic/claude-sonnet-4".into(),
         OpenAiCompatibleDialect::OpenRouter,
@@ -174,7 +174,7 @@ fn kimi_code_k3_serializes_each_reasoning_mode_as_a_whole_request() {
 #[test]
 fn kimi_code_k3_serializes_an_unnormalized_effort_as_is() {
     let mut provider = OpenAiCompatibleProvider::new(
-        reqwest::Client::new(),
+        crate::reqwest_client(),
         "kimi-code",
         "k3".into(),
         OpenAiCompatibleDialect::KimiCode,
@@ -218,7 +218,7 @@ fn kimi_code_k3_serializes_an_unnormalized_effort_as_is() {
 #[test]
 fn chat_completions_forwards_prompt_cache_key_when_present() {
     let provider = OpenAiCompatibleProvider::new(
-        reqwest::Client::new(),
+        crate::reqwest_client(),
         "cliproxyapi",
         "xai/grok-4.6".into(),
         OpenAiCompatibleDialect::Custom,
@@ -370,7 +370,7 @@ fn openrouter_omits_reasoning_for_non_configurable_models() {
 #[test]
 fn ollama_cloud_metadata_drives_top_level_reasoning_effort() {
     let mut provider = OpenAiCompatibleProvider::new(
-        reqwest::Client::new(),
+        crate::reqwest_client(),
         "ollama-cloud",
         "glm-5.2".into(),
         OpenAiCompatibleDialect::Standard,
@@ -521,7 +521,7 @@ fn standard_request_reasoning_effort(
     reasoning_level: crate::reasoning::ReasoningLevel,
 ) -> Option<String> {
     let client = OpenAiCompatibleProvider::new(
-        reqwest::Client::new(),
+        crate::reqwest_client(),
         provider,
         "unlisted-local".into(),
         OpenAiCompatibleDialect::Standard,
@@ -564,7 +564,7 @@ fn request_body(
         OpenAiCompatibleDialect::KimiCode => "kimi-code",
     };
     let mut provider = OpenAiCompatibleProvider::new(
-        reqwest::Client::new(),
+        crate::reqwest_client(),
         provider_name,
         model.into(),
         dialect,
@@ -599,7 +599,7 @@ fn request_body(
 #[test]
 fn poolside_request_body_uses_namespaced_model_and_thinking_control() {
     let provider = OpenAiCompatibleProvider::new(
-        reqwest::Client::new(),
+        crate::reqwest_client(),
         "poolside",
         "laguna-m.1".into(),
         OpenAiCompatibleDialect::Poolside,
@@ -778,7 +778,7 @@ async fn poolside_stream_events(
         stream.write_all(response.as_bytes()).await.unwrap();
     });
     let provider = OpenAiCompatibleProvider::new(
-        reqwest::Client::new(),
+        crate::reqwest_client(),
         "poolside",
         "laguna-m.1".into(),
         OpenAiCompatibleDialect::Poolside,
@@ -839,7 +839,7 @@ async fn standard_dialect_streams_without_auth_or_usage() {
         stream.write_all(response.as_bytes()).await.unwrap();
     });
     let provider = OpenAiCompatibleProvider::new(
-        reqwest::Client::new(),
+        crate::reqwest_client(),
         "ollama",
         "qwen3-coder".into(),
         OpenAiCompatibleDialect::Standard,
@@ -906,7 +906,7 @@ async fn standard_dialect_converts_tool_calls_and_http_errors() {
         }
     });
     let provider = OpenAiCompatibleProvider::new(
-        reqwest::Client::new(),
+        crate::reqwest_client(),
         "ollama",
         "qwen3-coder".into(),
         OpenAiCompatibleDialect::Standard,

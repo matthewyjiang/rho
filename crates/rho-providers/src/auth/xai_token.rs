@@ -91,7 +91,7 @@ impl XaiAuthManager {
         tokens: XaiTokens,
     ) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: crate::reqwest_client(),
             store,
             source,
             tokens: Mutex::new(tokens),

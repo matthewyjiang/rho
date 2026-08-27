@@ -740,6 +740,12 @@ pub(crate) fn handle_codex_sse_value(
                 }
                 on_event(ModelEvent::Usage(report.usage))?;
             }
+        } else if state.reasoning_streamed {
+            if let Some(on_event) = on_event.as_mut() {
+                on_event(ModelEvent::GenerationOutputTokens(
+                    rho_sdk::model::GenerationOutputTokens::Unavailable,
+                ))?;
+            }
         }
         // The completed envelope is authoritative, but may restate items already
         // handled by output_item.done. Reconcile each item independently so one

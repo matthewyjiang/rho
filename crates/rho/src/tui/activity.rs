@@ -241,6 +241,8 @@ impl ProviderRetryHint {
             ProviderStreamResetReason::RetryableFailure { kind, retry_after } => {
                 (Some(kind), retry_after.filter(|delay| !delay.is_zero()))
             }
+            ProviderStreamResetReason::InvalidResponse => (None, None),
+            // Required while the SDK enum stays `#[non_exhaustive]`.
             _ => (None, None),
         };
         let rate_limited = kind == Some(ProviderErrorKind::RateLimit);

@@ -599,7 +599,9 @@ async fn bind_local() -> (tokio::net::TcpListener, std::net::SocketAddr) {
 async fn connection_refused_error(secret: &str) -> reqwest::Error {
     let (listener, address) = bind_local().await;
     drop(listener);
-    reqwest::get(secret_url(address, secret))
+    crate::reqwest_client()
+        .get(secret_url(address, secret))
+        .send()
         .await
         .expect_err("closed listener should refuse the connection")
 }
@@ -611,7 +613,7 @@ async fn request_timeout_error(secret: &str) -> reqwest::Error {
         std::future::pending::<()>().await;
         drop(socket);
     });
-    let client = reqwest::Client::builder()
+    let client = crate::reqwest_client_builder()
         .timeout(std::time::Duration::from_millis(10))
         .build()
         .expect("timeout client");
@@ -625,7 +627,7 @@ async fn request_timeout_error(secret: &str) -> reqwest::Error {
 }
 
 fn builder_error() -> reqwest::Error {
-    reqwest::Client::new()
+    crate::reqwest_client()
         .get("not-a-url")
         .build()
         .expect_err("invalid URL should fail request construction")

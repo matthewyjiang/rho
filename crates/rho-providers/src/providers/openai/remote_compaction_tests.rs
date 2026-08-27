@@ -179,7 +179,7 @@ async fn compact_with_http_malformed_retry_response_preserves_failed_attempts() 
         }
     });
 
-    let client = reqwest::Client::builder()
+    let client = crate::reqwest_client_builder()
         .timeout(Duration::from_secs(5))
         .build()
         .unwrap();

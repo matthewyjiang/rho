@@ -33,5 +33,22 @@
       "packages": ["rho-coding-agent", "rho-providers"],
       "reason": "tools remain below providers and independent from the application"
     }
+  ],
+  "forbidden_source_patterns": [
+    {
+      "roots": ["crates/rho/src", "crates/rho-providers/src"],
+      "sequences": [
+        ["reqwest", "::", "Client", "::", "new"],
+        ["reqwest", "::", "Client", "::", "builder"],
+        ["reqwest", "::", "Client", "::", "default"],
+        ["reqwest", "::", "ClientBuilder", "::", "new"],
+        ["reqwest", "::", "get"]
+      ],
+      "allow": [
+        "crates/rho/src/lib.rs",
+        "crates/rho-providers/src/tls.rs"
+      ],
+      "reason": "reqwest rustls-no-provider panics unless ring is installed; use reqwest_client / reqwest_client_builder"
+    }
   ]
 }

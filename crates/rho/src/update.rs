@@ -477,7 +477,7 @@ pub(crate) async fn latest_release_tag() -> anyhow::Result<String> {
         ACCEPT,
         HeaderValue::from_static("application/vnd.github+json"),
     );
-    let client = reqwest::Client::builder()
+    let client = crate::reqwest_client_builder()
         .default_headers(headers)
         .timeout(Duration::from_secs(10))
         .build()?;

@@ -50,7 +50,9 @@ async fn fetch_google_models(
     api_key: String,
     endpoint: &str,
 ) -> Result<Vec<ProviderModel>, ModelError> {
-    let client = reqwest::Client::builder().timeout(LIST_TIMEOUT).build()?;
+    let client = crate::reqwest_client_builder()
+        .timeout(LIST_TIMEOUT)
+        .build()?;
     let mut models = Vec::new();
     let mut page_token = None::<String>;
     let mut seen_page_tokens = HashSet::new();

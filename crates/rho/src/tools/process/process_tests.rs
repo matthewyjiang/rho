@@ -531,7 +531,7 @@ async fn local_server_e2e_start_poll_access_no_duplicate_and_stop() {
     let url = format!("http://127.0.0.1:{port}/Cargo.toml");
     let body = tokio::time::timeout(Duration::from_secs(15), async {
         loop {
-            if let Ok(response) = reqwest::get(&url).await {
+            if let Ok(response) = crate::reqwest_client().get(&url).send().await {
                 break response.text().await.unwrap();
             }
             tokio::time::sleep(Duration::from_millis(5)).await;

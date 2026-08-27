@@ -78,9 +78,8 @@ fn transcript_appends_pending_capability_details_at_end() {
         .split("pending_capability:")
         .nth(1)
         .expect("pending capability section");
-    assert!(pending_section.contains("write"));
+    assert!(pending_section.contains("built-in tool write"));
     assert!(pending_section.contains("config.toml"));
-    assert!(pending_section.contains("write"));
     assert!(pending_section.contains("agent requested a write after reading config"));
     assert_eq!(
         transcript.rfind("pending_capability:"),

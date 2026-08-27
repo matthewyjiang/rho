@@ -138,7 +138,7 @@ fn build_oauth_request_with_endpoint(
 }
 
 fn http_client() -> Result<reqwest::Client, OpenRouterOAuthError> {
-    reqwest::Client::builder()
+    crate::reqwest_client_builder()
         .timeout(REQUEST_TIMEOUT)
         .user_agent(crate::rho_user_agent())
         .build()

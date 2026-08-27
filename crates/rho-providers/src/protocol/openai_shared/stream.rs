@@ -213,6 +213,10 @@ impl ChatStreamAccumulator {
         );
         if let Some(tokens) = generation {
             on_event(ModelEvent::GenerationOutputTokens(tokens))?;
+        } else if self.reasoning_delta_streamed {
+            on_event(ModelEvent::GenerationOutputTokens(
+                rho_sdk::model::GenerationOutputTokens::Unavailable,
+            ))?;
         }
         if let Some(usage) = self.usage_snapshot {
             on_event(ModelEvent::Usage(usage.into_model_usage()))?;

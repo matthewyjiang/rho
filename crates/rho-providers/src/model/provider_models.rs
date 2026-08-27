@@ -556,7 +556,7 @@ fn parse_github_copilot_models(
 }
 
 fn provider_models_client() -> Result<reqwest::Client, ModelError> {
-    Ok(reqwest::Client::builder()
+    Ok(crate::reqwest_client_builder()
         .timeout(Duration::from_secs(5))
         .build()?)
 }
