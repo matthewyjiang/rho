@@ -332,8 +332,10 @@ mod tests {
             "Ctrl+Enter"
         );
 
-        let mut remapped = Keybindings::default();
-        remapped.queue_prompt = "ctrl+k".parse().unwrap();
+        let remapped = Keybindings {
+            queue_prompt: "ctrl+k".parse().unwrap(),
+            ..Keybindings::default()
+        };
         let ctrl_k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL);
         assert!(remapped.queue_prompt_matches(ctrl_k));
         assert!(remapped.queue_prompt_matches(ctrl_enter));
