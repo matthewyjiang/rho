@@ -156,6 +156,7 @@ mod skill_picker;
 mod startup_prompt;
 // Always compiled: display_version() is used in release TUI chrome.
 // Matrix/herdr injection paths stay no-ops outside debug builds.
+mod github_pr;
 mod smoke_injection;
 mod status_overlay;
 mod statusline;
@@ -532,6 +533,7 @@ struct App {
     pending_syntax_warmup: Option<tokio::task::JoinHandle<()>>,
     prompt_history: prompt_history::PromptHistory,
     pending_herdr_graphics: Option<tokio::task::JoinHandle<HerdrGraphicsCapability>>,
+    pending_github_pr: Option<tokio::task::JoinHandle<github_pr::GithubPrLookup>>,
     /// Turns held until MCP connect settles.
     held_turns: VecDeque<idle_input::HeldTurn>,
     compact_follow_up: compact_work::CompactFollowUp,

@@ -642,7 +642,7 @@ impl super::App {
             None,
             None,
         )));
-        self.statusline.refresh_git_branch();
+        self.refresh_workspace_git();
         self.set_status(if output.ok {
             if task.mode.included_in_context() {
                 "shell output pending context insertion".to_string()

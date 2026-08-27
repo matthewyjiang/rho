@@ -349,6 +349,43 @@ fn unchanged_statusline_reuses_rendered_lines() {
 }
 
 #[test]
+fn github_pr_number_uses_status_tone() {
+    // Covers: PR number must carry ready/issues/ambient severity, not dim chrome
+    // Owner: statusline render
+    let cases = [
+        (Some(GithubPrTone::Ready), Theme::success()),
+        (Some(GithubPrTone::Issues), Theme::error()),
+        (None, Theme::dim()),
+    ];
+    for (tone, style) in cases {
+        let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
+        statusline.update_github_pr(Some(GithubPr { number: 12, tone }));
+        let line = statusline.lines(80, None)[0].clone();
+        assert_eq!(
+            span_style(&line, " #12"),
+            Some(style),
+            "tone {tone:?} must color #12: {line:?}"
+        );
+    }
+}
+
+#[test]
+fn stale_github_pr_lookup_for_other_branch_is_ignored() {
+    // Covers: a gh result for a previous branch must not paint the current row
+    // Owner: statusline render
+    let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
+    statusline.state.branch = Some("main".into());
+    statusline.apply_github_pr_lookup(GithubPrLookup {
+        branch: Some("feature".into()),
+        pr: Some(GithubPr {
+            number: 7,
+            tone: Some(GithubPrTone::Ready),
+        }),
+    });
+    assert_eq!(statusline.state.github_pr, None);
+}
+
+#[test]
 fn git_branch_is_cached_until_explicit_refresh() {
     use std::fs;
 

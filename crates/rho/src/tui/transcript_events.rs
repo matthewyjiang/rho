@@ -349,7 +349,7 @@ impl App {
                 mut card,
                 image_asset,
             } => {
-                self.statusline.refresh_git_branch();
+                self.refresh_workspace_git();
                 let expanded = self.turn.tool_finished(&call_id);
                 self.turn
                     .set_activity_phase(if self.turn.tool_calls().is_running() {

@@ -6,6 +6,7 @@ use ratatui::{
 };
 
 use super::{
+    github_pr::{GithubPr, GithubPrLookup, GithubPrTone},
     render::{display_width, truncate_one_line},
     theme::Theme,
     usage_cost::{
@@ -34,6 +35,7 @@ use path::shorten_path_display;
 pub(super) struct StatusLineState {
     cwd: PathBuf,
     branch: Option<String>,
+    github_pr: Option<GithubPr>,
     usage: Option<ModelUsage>,
     context_usage: Option<ContextUsage>,
     provider: String,
@@ -80,6 +82,7 @@ impl Default for StatusLineState {
         Self {
             cwd: PathBuf::new(),
             branch: None,
+            github_pr: None,
             usage: None,
             context_usage: None,
             provider: String::new(),
@@ -102,6 +105,7 @@ impl StatusLineState {
         Self {
             cwd: info.cwd.clone(),
             branch: git_branch(&info.cwd),
+            github_pr: None,
             usage: None,
             context_usage: None,
             provider: info.provider.clone(),
@@ -127,12 +131,29 @@ impl StatusLine {
         }
     }
 
-    pub(super) fn refresh_git_branch(&mut self) {
+    pub(super) fn refresh_git_branch(&mut self) -> bool {
         let branch = git_branch(&self.state.cwd);
-        if self.state.branch != branch {
-            self.state.branch = branch;
+        if self.state.branch == branch {
+            return false;
+        }
+        self.state.branch = branch;
+        self.state.github_pr = None;
+        self.invalidate();
+        true
+    }
+
+    pub(super) fn update_github_pr(&mut self, github_pr: Option<GithubPr>) {
+        if self.state.github_pr != github_pr {
+            self.state.github_pr = github_pr;
             self.invalidate();
         }
+    }
+
+    pub(super) fn apply_github_pr_lookup(&mut self, lookup: GithubPrLookup) {
+        if self.state.branch != lookup.branch {
+            return;
+        }
+        self.update_github_pr(lookup.pr);
     }
 
     pub(super) fn update_model(&mut self, info: &RuntimeModelView) {
@@ -400,14 +421,15 @@ fn statusline_lines(
     });
     let cwd_path = compact_cwd(&state.cwd);
     let cwd_branch = state.branch.as_deref();
-    let top_left = format_cwd_left(&cwd_path, cwd_branch);
+    let cwd_pr = state.github_pr.as_ref();
+    let top_left = cwd_left_text(&cwd_path, cwd_branch, cwd_pr);
     let top_right = goal
         .as_ref()
         .map(|candidates| fit_right_status(&top_left, candidates, width))
         .unwrap_or_default();
     let (bottom_left, bottom_right) = pack_bottom_status(state, width);
     vec![
-        render_cwd_row(&cwd_path, cwd_branch, top_right, width),
+        render_cwd_row(&cwd_path, cwd_branch, cwd_pr, top_right, width),
         render_status_row(bottom_left, bottom_right, width),
     ]
 }
@@ -684,14 +706,79 @@ fn render_status_row(
     status_fields_line(&left, &right, width)
 }
 
-fn render_cwd_row(path: &str, branch: Option<&str>, right: String, width: usize) -> Line<'static> {
-    let left = format_cwd_left(path, branch);
-    match row_side_fit(display_width(&left), &right, width) {
-        None => status_row_line(left, right, width),
-        Some((left_budget, right)) => {
-            status_row_line(fit_cwd(path, branch, left_budget), right, width)
-        }
+fn github_pr_label(pr: &GithubPr) -> String {
+    format!(" #{}", pr.number)
+}
+
+fn cwd_left_text(path: &str, branch: Option<&str>, pr: Option<&GithubPr>) -> String {
+    match pr {
+        Some(pr) => format!("{}{}", format_cwd_left(path, branch), github_pr_label(pr)),
+        None => format_cwd_left(path, branch),
     }
+}
+
+fn github_pr_style(tone: Option<GithubPrTone>) -> Style {
+    match tone {
+        Some(GithubPrTone::Ready) => Theme::success(),
+        Some(GithubPrTone::Issues) => Theme::error(),
+        None => Theme::dim(),
+    }
+}
+
+fn render_cwd_row(
+    path: &str,
+    branch: Option<&str>,
+    pr: Option<&GithubPr>,
+    right: String,
+    width: usize,
+) -> Line<'static> {
+    let pr_label = pr.map(github_pr_label);
+    let pr_width = pr_label
+        .as_ref()
+        .map(|label| display_width(label))
+        .unwrap_or(0);
+    let left = format_cwd_left(path, branch);
+    let left_width = display_width(&left) + pr_width;
+    let (left, right, pr) = match row_side_fit(left_width, &right, width) {
+        None => (left, right, pr.zip(pr_label)),
+        Some((left_budget, right)) => {
+            let show_pr = pr_width > 0 && left_budget > pr_width;
+            let path_budget = if show_pr {
+                left_budget - pr_width
+            } else {
+                left_budget
+            };
+            (
+                fit_cwd(path, branch, path_budget),
+                right,
+                show_pr.then(|| pr.zip(pr_label)).flatten(),
+            )
+        }
+    };
+    cwd_row_line(left, pr, right, width)
+}
+
+fn cwd_row_line(
+    left: String,
+    pr: Option<(&GithubPr, String)>,
+    right: String,
+    width: usize,
+) -> Line<'static> {
+    let Some((pr, label)) = pr else {
+        return status_row_line(left, right, width);
+    };
+    let left_width = display_width(&left) + display_width(&label);
+    let mut spans = vec![
+        Span::styled(left, Theme::dim()),
+        Span::styled(label, github_pr_style(pr.tone)),
+    ];
+    if right.is_empty() {
+        return Line::from(spans);
+    }
+    let gap = " ".repeat(width.saturating_sub(left_width + display_width(&right)));
+    spans.push(Span::styled(gap, Theme::dim()));
+    spans.push(Span::styled(right, Theme::dim()));
+    Line::from(spans)
 }
 
 /// Shared left/right budget math for a status row.
