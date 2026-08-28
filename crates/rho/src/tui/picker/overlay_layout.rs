@@ -2,12 +2,12 @@
 //!
 //! This module owns every measurement the overlay renderer and the overlay
 //! input router both depend on, so a chrome change cannot leave the two out of
-//! step. Rendering lives in [`super::picker_overlay`].
+//! step. Rendering lives in [`super::overlay`].
 
 use ratatui::layout::{Position, Rect};
 
-use super::{
-    display_width,
+use crate::tui::{
+    render::display_width,
     scrollbar::{scrollbar_thumb, HistoryScrollbar, ScrollbarThumb},
 };
 
@@ -15,14 +15,14 @@ const TWO_COLUMN_MIN_INNER_WIDTH: usize = 60;
 const MIN_NAV_WIDTH: usize = 14;
 const MAX_NAV_WIDTH: usize = 28;
 /// Column rule drawn between the side-by-side panes.
-pub(super) const SEPARATOR: &str = " │ ";
+pub(in crate::tui) const SEPARATOR: &str = " │ ";
 /// Border rows the renderer draws above and below the inner chrome.
-pub(super) const TOP_BORDER_ROWS: usize = 1;
-pub(super) const BOTTOM_BORDER_ROWS: usize = 1;
+pub(in crate::tui) const TOP_BORDER_ROWS: usize = 1;
+pub(in crate::tui) const BOTTOM_BORDER_ROWS: usize = 1;
 /// Rows inside the border above the body: search, divider, pane header.
-pub(super) const HEADER_CHROME_ROWS: usize = 3;
+pub(in crate::tui) const HEADER_CHROME_ROWS: usize = 3;
 /// Rows inside the border below the body: status divider, footer.
-pub(super) const FOOTER_CHROME_ROWS: usize = 2;
+pub(in crate::tui) const FOOTER_CHROME_ROWS: usize = 2;
 /// Rows consumed inside the border by chrome, above and below the body.
 const INNER_CHROME_ROWS: usize = HEADER_CHROME_ROWS + FOOTER_CHROME_ROWS;
 /// Column reserved beside the detail text for its scrollbar, so wrapped text
@@ -37,13 +37,13 @@ const MIN_NAV_ONLY_BODY_ROWS: usize = 3;
 
 /// Responsive arrangement of nav + detail. Only used when a detail pane exists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OverlayOrientation {
+pub(in crate::tui) enum OverlayOrientation {
     SideBySide,
     Stacked,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OverlayPanes {
+pub(in crate::tui) enum OverlayPanes {
     NavOnly {
         nav_width: usize,
         nav_viewport_rows: usize,
@@ -58,24 +58,24 @@ pub(super) enum OverlayPanes {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct OverlayLayout {
-    pub(super) outer: Rect,
-    pub(super) inner_width: usize,
-    pub(super) inner_height: usize,
-    pub(super) body_rows: usize,
-    pub(super) panes: OverlayPanes,
+pub(in crate::tui) struct OverlayLayout {
+    pub(in crate::tui) outer: Rect,
+    pub(in crate::tui) inner_width: usize,
+    pub(in crate::tui) inner_height: usize,
+    pub(in crate::tui) body_rows: usize,
+    pub(in crate::tui) panes: OverlayPanes,
 }
 
 /// Canonical visibility and position of one picker overlay scrollbar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct OverlayScrollbarState {
+pub(in crate::tui) struct OverlayScrollbarState {
     content_len: usize,
     viewport_rows: usize,
     top_line: usize,
 }
 
 impl OverlayScrollbarState {
-    pub(super) fn nav(
+    pub(in crate::tui) fn nav(
         pane_width: usize,
         content_len: usize,
         viewport_rows: usize,
@@ -87,7 +87,7 @@ impl OverlayScrollbarState {
         Self::visible(content_len, viewport_rows, top_line)
     }
 
-    pub(super) fn detail(
+    pub(in crate::tui) fn detail(
         content_len: usize,
         viewport_rows: usize,
         top_line: usize,
@@ -104,7 +104,7 @@ impl OverlayScrollbarState {
         })
     }
 
-    pub(super) fn thumb(self) -> ScrollbarThumb {
+    pub(in crate::tui) fn thumb(self) -> ScrollbarThumb {
         scrollbar_thumb(
             self.content_len,
             self.viewport_rows,
@@ -114,13 +114,13 @@ impl OverlayScrollbarState {
         .expect("visible scrollbar state has a thumb")
     }
 
-    pub(super) fn hitbox(self, rect: Rect) -> HistoryScrollbar {
+    pub(in crate::tui) fn hitbox(self, rect: Rect) -> HistoryScrollbar {
         HistoryScrollbar::new(rect, self.content_len, self.top_line)
             .expect("visible scrollbar state has a hitbox")
     }
 }
 
-pub(super) fn clamp_overlay_scroll(
+pub(in crate::tui) fn clamp_overlay_scroll(
     top_line: usize,
     content_len: usize,
     viewport_rows: usize,
@@ -129,7 +129,7 @@ pub(super) fn clamp_overlay_scroll(
 }
 
 impl OverlayLayout {
-    pub(super) fn detail_viewport(self) -> Option<DetailViewport> {
+    pub(in crate::tui) fn detail_viewport(self) -> Option<DetailViewport> {
         match self.panes {
             OverlayPanes::NavOnly { .. } => None,
             OverlayPanes::NavAndDetail {
@@ -143,7 +143,7 @@ impl OverlayLayout {
         }
     }
 
-    pub(super) fn scroll_targets(self) -> OverlayScrollTargets {
+    pub(in crate::tui) fn scroll_targets(self) -> OverlayScrollTargets {
         OverlayScrollTargets {
             nav_rows: self.nav_viewport_rows().max(1),
             detail: self.detail_viewport(),
@@ -152,7 +152,7 @@ impl OverlayLayout {
 
     /// Screen row of the first body row, derived from the same chrome counts the
     /// renderer builds its header rows from.
-    pub(super) fn body_top(self) -> u16 {
+    pub(in crate::tui) fn body_top(self) -> u16 {
         self.outer
             .y
             .saturating_add(as_u16(TOP_BORDER_ROWS.saturating_add(HEADER_CHROME_ROWS)))
@@ -161,7 +161,7 @@ impl OverlayLayout {
     /// Column of the side-by-side pane rule, measured from the overlay's left
     /// border. Shared by the border rules and by hit testing so the drawn rule
     /// and the pane boundary can never drift apart.
-    pub(super) fn divider_col(self) -> Option<usize> {
+    pub(in crate::tui) fn divider_col(self) -> Option<usize> {
         match self.panes {
             OverlayPanes::NavAndDetail {
                 orientation: OverlayOrientation::SideBySide,
@@ -182,7 +182,7 @@ impl OverlayLayout {
     /// Overlay pane and pane-local row under a screen position, for wheel,
     /// click, and hover routing. `None` when the position sits outside the
     /// body rows (chrome, or off the overlay).
-    pub(super) fn pane_hit(self, column: u16, row: u16) -> Option<PaneHit> {
+    pub(in crate::tui) fn pane_hit(self, column: u16, row: u16) -> Option<PaneHit> {
         let outer = self.outer;
         if !outer.contains(Position { x: column, y: row }) {
             return None;
@@ -246,14 +246,14 @@ impl OverlayLayout {
         usize::from(self.body_rows > 2)
     }
 
-    pub(super) fn nav_width(self) -> usize {
+    pub(in crate::tui) fn nav_width(self) -> usize {
         match self.panes {
             OverlayPanes::NavOnly { nav_width, .. }
             | OverlayPanes::NavAndDetail { nav_width, .. } => nav_width,
         }
     }
 
-    pub(super) fn nav_viewport_rows(self) -> usize {
+    pub(in crate::tui) fn nav_viewport_rows(self) -> usize {
         match self.panes {
             OverlayPanes::NavOnly {
                 nav_viewport_rows, ..
@@ -265,7 +265,7 @@ impl OverlayLayout {
     }
 
     /// Screen rectangle covering the nav item rows (inside the border).
-    pub(super) fn nav_body_rect(self) -> Rect {
+    pub(in crate::tui) fn nav_body_rect(self) -> Rect {
         let x = self.outer.x.saturating_add(1);
         let width = as_u16(self.nav_width().max(1));
         let height = as_u16(self.nav_viewport_rows().max(1));
@@ -287,7 +287,7 @@ impl OverlayLayout {
     }
 
     /// Screen rectangle covering the detail pane rows (inside the border).
-    pub(super) fn detail_body_rect(self) -> Option<Rect> {
+    pub(in crate::tui) fn detail_body_rect(self) -> Option<Rect> {
         let viewport = self.detail_viewport()?;
         let x = match self.panes {
             OverlayPanes::NavOnly { .. } => return None,
@@ -325,41 +325,41 @@ impl OverlayLayout {
 /// Scroll geometry for an open overlay: nav viewport rows plus the detail
 /// viewport when a detail pane exists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct OverlayScrollTargets {
-    pub(super) nav_rows: usize,
-    pub(super) detail: Option<DetailViewport>,
+pub(in crate::tui) struct OverlayScrollTargets {
+    pub(in crate::tui) nav_rows: usize,
+    pub(in crate::tui) detail: Option<DetailViewport>,
 }
 
 /// One of the two overlay panes, for focus and wheel routing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum OverlayPane {
+pub(in crate::tui) enum OverlayPane {
     Nav,
     Detail,
 }
 
 /// A body position resolved to a pane plus the row within that pane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct PaneHit {
-    pub(super) pane: OverlayPane,
-    pub(super) pane_row: usize,
+pub(in crate::tui) struct PaneHit {
+    pub(in crate::tui) pane: OverlayPane,
+    pub(in crate::tui) pane_row: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct DetailViewport {
-    pub(super) width: usize,
-    pub(super) rows: usize,
+pub(in crate::tui) struct DetailViewport {
+    pub(in crate::tui) width: usize,
+    pub(in crate::tui) rows: usize,
 }
 
 /// Content hints that drive the overlay's outer size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct OverlaySizing {
-    pub(super) has_details: bool,
+pub(in crate::tui) struct OverlaySizing {
+    pub(in crate::tui) has_details: bool,
     /// Item rows plus section headers, counted over the full item set (not the
     /// filtered matches) so the box does not resize while typing.
-    pub(super) nav_rows: usize,
+    pub(in crate::tui) nav_rows: usize,
 }
 
-pub(super) fn picker_overlay_layout(area: Rect, sizing: OverlaySizing) -> OverlayLayout {
+pub(in crate::tui) fn picker_overlay_layout(area: Rect, sizing: OverlaySizing) -> OverlayLayout {
     layout_for_outer(outer_rect(area, sizing), sizing.has_details)
 }
 
@@ -463,5 +463,5 @@ fn as_u16(value: usize) -> u16 {
 }
 
 #[cfg(test)]
-#[path = "picker_overlay_layout_tests.rs"]
+#[path = "overlay_layout_tests.rs"]
 mod tests;

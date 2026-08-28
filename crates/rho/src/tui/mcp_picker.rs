@@ -3,8 +3,7 @@
 use crate::tools::mcp::{McpCatalog, McpServerReport, McpServerStatus, McpSessionReport};
 
 use super::{
-    picker_overlay::OverlayChrome, PickerAction, PickerBadge, PickerBadgeTone, PickerItem,
-    PickerLayout, UiPicker,
+    picker::OverlayChrome, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, UiPicker,
 };
 
 pub(super) struct McpPickerContext<'a> {
@@ -26,7 +25,7 @@ pub(super) fn picker(context: McpPickerContext<'_>) -> UiPicker {
             .map(|server| server_item(server, context.catalog)),
     );
 
-    UiPicker::new("MCP servers", items, PickerAction::ViewMcpServers)
+    UiPicker::view_mcp("MCP servers", items)
         .with_layout(PickerLayout::Overlay)
         .with_badge_placement(super::PickerBadgePlacement::Detail)
         .with_overlay_chrome(OverlayChrome {
@@ -112,6 +111,7 @@ fn mode_item(report: &McpSessionReport, config_path: &std::path::Path) -> Picker
         }),
         value: "session".into(),
         selection_verb: None,
+        allow_filter_completion: true,
     }
 }
 
@@ -168,5 +168,6 @@ fn server_item(server: &McpServerReport, catalog: &McpCatalog) -> PickerItem {
         }),
         value: server.identity.clone(),
         selection_verb: None,
+        allow_filter_completion: true,
     }
 }

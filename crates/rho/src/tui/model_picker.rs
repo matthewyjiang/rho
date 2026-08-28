@@ -1,7 +1,4 @@
-use super::{
-    PickerAction, PickerBadge, PickerBadgeTone, PickerItem, PickerKeyHints, RuntimeModelView,
-    UiPicker,
-};
+use super::{PickerBadge, PickerBadgeTone, PickerItem, PickerKeyHints, RuntimeModelView, UiPicker};
 use crate::claude_runtime::models as claude_models;
 use crate::config::CLAUDE_CLI_RUNTIME_KEY;
 use crate::keybindings::Keybindings;
@@ -78,7 +75,15 @@ pub(super) fn model_picker(
     available_auths: &[String],
     scope: ModelPickerScope,
 ) -> UiPicker {
-    model_picker_for_current(
+    conversation_model_catalog(info, available_auths, scope).into_models()
+}
+
+pub(super) fn conversation_model_catalog(
+    info: &RuntimeModelView,
+    available_auths: &[String],
+    scope: ModelPickerScope,
+) -> ModelCatalogPicker {
+    model_catalog(
         "select model",
         CurrentModel {
             provider: &info.provider,
@@ -87,7 +92,6 @@ pub(super) fn model_picker(
         },
         &info.favorite_models,
         available_auths,
-        PickerAction::SelectModel,
         scope,
         &info.keybindings,
     )
@@ -108,7 +112,7 @@ pub(super) fn model_picker_during_run(
             )
         })
         .unwrap_or((&info.provider, &info.model, "selected"));
-    model_picker_for_current(
+    model_catalog(
         "select model for next turn",
         CurrentModel {
             provider,
@@ -117,10 +121,10 @@ pub(super) fn model_picker_during_run(
         },
         &info.favorite_models,
         available_auths,
-        PickerAction::SelectModel,
         scope,
         &info.keybindings,
     )
+    .into_models()
 }
 
 pub(super) const USE_CONVERSATION_MODEL: &str = "Use conversation model";
@@ -242,7 +246,7 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
         InternalAgentSelection::RhoModel { provider, model } => (provider.as_str(), model.as_str()),
         InternalAgentSelection::ClaudeCode { .. } | InternalAgentSelection::Unset => ("", ""),
     };
-    let mut picker = model_picker_for_current(
+    let mut catalog = model_catalog(
         &format!("select model for {agent_id}"),
         CurrentModel {
             provider: rho_current.0,
@@ -251,7 +255,6 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
         },
         favorite_models,
         available_auths,
-        PickerAction::SelectInternalAgentModel,
         scope,
         keybindings,
     );
@@ -263,7 +266,7 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
     if claude_code == ClaudeCodeRows::Offered {
         leading.extend(claude_code_rows(&current));
     }
-    picker.items.splice(0..0, leading);
+    catalog.items.splice(0..0, leading);
 
     // A selected conversation row outranks `current`, which then still carries
     // the conversation model and so also names a catalog row.
@@ -275,10 +278,10 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
             current.row_value()
         }
     };
-    picker.selected = wanted_value
-        .and_then(|value| picker.items.iter().position(|item| item.value == value))
+    catalog.selected = wanted_value
+        .and_then(|value| catalog.items.iter().position(|item| item.value == value))
         .unwrap_or(0);
-    picker
+    catalog.into_internal_agent_models()
 }
 
 fn conversation_model_row(selected: bool) -> PickerItem {
@@ -293,6 +296,7 @@ fn conversation_model_row(selected: bool) -> PickerItem {
         }),
         value: USE_CONVERSATION_MODEL.into(),
         selection_verb: None,
+        allow_filter_completion: false,
     }
 }
 
@@ -320,6 +324,7 @@ fn claude_code_rows(current: &InternalAgentSelection) -> Vec<PickerItem> {
         }),
         value: claude_code_row_value(model),
         selection_verb: None,
+        allow_filter_completion: true,
     };
     let mut rows = vec![row(
         None,
@@ -354,15 +359,41 @@ struct CurrentModel<'a> {
     badge: &'a str,
 }
 
-fn model_picker_for_current(
+pub(super) struct ModelCatalogPicker {
+    pub title: String,
+    pub items: Vec<PickerItem>,
+    pub selected: usize,
+    pub key_hints: PickerKeyHints,
+}
+
+impl ModelCatalogPicker {
+    fn into_picker(self, ctor: impl FnOnce(String, Vec<PickerItem>) -> UiPicker) -> UiPicker {
+        let mut picker = ctor(self.title, self.items).with_key_hints(self.key_hints);
+        picker.selected = self.selected;
+        picker
+    }
+
+    pub(super) fn into_models(self) -> UiPicker {
+        self.into_picker(UiPicker::models)
+    }
+
+    fn into_internal_agent_models(self) -> UiPicker {
+        self.into_picker(UiPicker::internal_agent_models)
+    }
+
+    pub(super) fn into_edit_agent(self) -> UiPicker {
+        self.into_picker(UiPicker::edit_agent)
+    }
+}
+
+fn model_catalog(
     title: &str,
     current: CurrentModel<'_>,
     favorite_models: &[String],
     available_auths: &[String],
-    action: PickerAction,
     scope: ModelPickerScope,
     keybindings: &Keybindings,
-) -> UiPicker {
+) -> ModelCatalogPicker {
     let CurrentModel {
         provider: current_provider,
         model: current_model,
@@ -377,7 +408,7 @@ fn model_picker_for_current(
     }
     let pin_key = keybindings.cycle_pinned_model.chrome_label();
     let scope_key = keybindings.toggle_tool_output.chrome_label();
-    let catalog_items = favorites::reorder_models_by_favorites(available, &favorites)
+    let items = favorites::reorder_models_by_favorites(available, &favorites)
         .into_iter()
         .map(|entry| {
             let value = rho_providers::provider::model_reference(&entry.provider, &entry.model);
@@ -410,25 +441,26 @@ fn model_picker_for_current(
                 badge,
                 value,
                 selection_verb: None,
+                allow_filter_completion: true,
             }
         })
         .collect::<Vec<_>>();
 
-    let mut picker = UiPicker::new(
-        format!("{title} · {}", effective_scope.title_suffix()),
-        catalog_items,
-        action,
-    )
-    .with_key_hints(PickerKeyHints {
-        pin_toggle: Some(pin_key),
-        scope_toggle: Some(scope_key),
-        tab_complete: true,
-        ..Default::default()
-    });
-    if let Some(index) = picker.items.iter().position(|item| item.value == current) {
-        picker.selected = index;
+    let selected = items
+        .iter()
+        .position(|item| item.value == current)
+        .unwrap_or(0);
+    ModelCatalogPicker {
+        title: format!("{title} · {}", effective_scope.title_suffix()),
+        items,
+        selected,
+        key_hints: PickerKeyHints {
+            pin_toggle: Some(pin_key),
+            scope_toggle: Some(scope_key),
+            tab_complete: true,
+            ..Default::default()
+        },
     }
-    picker
 }
 
 #[cfg(test)]

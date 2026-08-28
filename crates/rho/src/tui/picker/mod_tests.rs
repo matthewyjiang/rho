@@ -11,6 +11,7 @@ fn item(label: &str) -> PickerItem {
         badge: None,
         value: label.into(),
         selection_verb: None,
+        allow_filter_completion: true,
     }
 }
 
@@ -107,10 +108,10 @@ fn dismiss_picker_collapses_enter_and_esc() {
     );
 }
 
-// Covers: Tab must not fill the filter from the synthetic conversation-model row.
+// Covers: Tab must not fill the filter from a row that opts out of completion.
 // Owner: tui picker filter completion
 #[test]
-fn complete_filter_skips_internal_agent_conversation_model_row() {
+fn complete_filter_skips_rows_that_opt_out() {
     let mut picker = UiPicker::new(
         "select model for explorer",
         vec![
@@ -120,8 +121,9 @@ fn complete_filter_skips_internal_agent_conversation_model_row() {
                 detail: None,
                 preview: None,
                 badge: None,
-                value: super::super::model_picker::USE_CONVERSATION_MODEL.into(),
+                value: "use-conversation".into(),
                 selection_verb: None,
+                allow_filter_completion: false,
             },
             item("openai/gpt-5.5"),
         ],

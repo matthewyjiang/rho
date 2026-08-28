@@ -1,6 +1,4 @@
-use super::{
-    provider_picker, App, Entry, PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker,
-};
+use super::{provider_picker, App, Entry, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use {
     crate::config::{Config, EditTool},
     crate::permission::PermissionMode,
@@ -88,6 +86,7 @@ fn sectioned_item(
         badge: badge_text.map(badge),
         value: value.into(),
         selection_verb: None,
+        allow_filter_completion: true,
     }
 }
 
@@ -187,7 +186,7 @@ fn conversation_model_badge(info: &super::RuntimeModelView, config: &Config) -> 
 }
 
 pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> UiPicker {
-    UiPicker::new(
+    UiPicker::config(
         "Config · saves automatically",
         vec![
             item(
@@ -231,7 +230,6 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
                 PROVIDERS_CATEGORY_VALUE,
             ),
         ],
-        PickerAction::Config,
     )
     .with_confirm_verb("open")
 }
@@ -503,7 +501,7 @@ pub(super) fn category_picker(
         }
         _ => return None,
     };
-    Some(UiPicker::new(title, items, PickerAction::Config))
+    Some(UiPicker::config(title, items))
 }
 
 pub(super) fn is_category(value: &str) -> bool {
@@ -553,7 +551,7 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
 }
 
 pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
-    UiPicker::new(
+    UiPicker::config(
         "Permission mode",
         PermissionMode::ALL
             .into_iter()
@@ -568,9 +566,9 @@ pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
                 }),
                 value: format!("{PERMISSION_MODE_PREFIX}{}", candidate.as_str()),
                 selection_verb: None,
+                allow_filter_completion: true,
             })
             .collect(),
-        PickerAction::Config,
     )
 }
 
@@ -593,7 +591,7 @@ fn permission_mode_description(mode: PermissionMode) -> &'static str {
 }
 
 pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {
-    UiPicker::new(
+    UiPicker::config(
         "Inline shell",
         super::inline_shell::available_shells(&config.inline_shell)
             .into_iter()
@@ -608,14 +606,14 @@ pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {
                 }),
                 value: format!("{INLINE_SHELL_PREFIX}{shell}"),
                 selection_verb: None,
+                allow_filter_completion: true,
             })
             .collect(),
-        PickerAction::Config,
     )
 }
 
 pub(super) fn edit_tool_picker(selected: EditTool) -> UiPicker {
-    UiPicker::new(
+    UiPicker::config(
         "Edit tool",
         EditTool::all()
             .into_iter()
@@ -630,9 +628,9 @@ pub(super) fn edit_tool_picker(selected: EditTool) -> UiPicker {
                 }),
                 value: format!("{EDIT_TOOL_PREFIX}{}", edit_tool.as_str()),
                 selection_verb: None,
+                allow_filter_completion: true,
             })
             .collect(),
-        PickerAction::Config,
     )
 }
 
@@ -640,7 +638,7 @@ pub(super) fn web_search_config_picker(
     config: &Config,
     credential_store: &dyn CredentialStore,
 ) -> UiPicker {
-    UiPicker::new(
+    UiPicker::config(
         "Web search config",
         vec![
             PickerItem {
@@ -657,6 +655,7 @@ pub(super) fn web_search_config_picker(
                 }),
                 value: WEB_SEARCH_HOSTED_VALUE.into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
             PickerItem {
                 section: None,
@@ -673,6 +672,7 @@ pub(super) fn web_search_config_picker(
                 }),
                 value: WEB_SEARCH_PROVIDER_VALUE.into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
             PickerItem {
                 section: None,
@@ -686,6 +686,7 @@ pub(super) fn web_search_config_picker(
                 )),
                 value: WEB_SEARCH_OPENAI_KEY_VALUE.into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
             PickerItem {
                 section: None,
@@ -699,6 +700,7 @@ pub(super) fn web_search_config_picker(
                 )),
                 value: WEB_SEARCH_EXA_KEY_VALUE.into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
             PickerItem {
                 section: None,
@@ -712,9 +714,9 @@ pub(super) fn web_search_config_picker(
                 )),
                 value: WEB_SEARCH_BRAVE_KEY_VALUE.into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
         ],
-        PickerAction::Config,
     )
 }
 

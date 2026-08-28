@@ -1,7 +1,7 @@
 //! In-TUI editor for user-defined agent definitions.
 //!
-//! Enter on a RhoHome/Project agent opens a field editor. One [`PickerAction::EditAgent`]
-//! action covers the field list, choice sub-pickers, and model picker; session phase
+//! Enter on a RhoHome/Project agent opens a field editor. One edit-agent picker
+//! covers the field list, choice sub-pickers, and model picker; session phase
 //! decides how the selected value is interpreted. Save serializes through the agent
 //! crate helpers.
 
@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 use anyhow::anyhow;
 
 use super::{
-    agent_picker::AgentModelView, picker_overlay::OverlayChrome, render::truncate_one_line,
-    text_input::AgentField, App, ComposerMode, Entry, PickerAction, PickerBadge, PickerBadgeTone,
-    PickerItem, PickerLayout, RuntimeModelView, UiPicker,
+    agent_picker::AgentModelView, picker::OverlayChrome, render::truncate_one_line,
+    text_input::AgentField, App, ComposerMode, Entry, PickerBadge, PickerBadgeTone, PickerItem,
+    PickerLayout, RuntimeModelView, UiPicker,
 };
 
 use crate::agent::{
@@ -224,6 +224,7 @@ fn field_item(
         badge: badge_text.map(badge),
         value: value.into(),
         selection_verb: None,
+        allow_filter_completion: true,
     }
 }
 
@@ -366,18 +367,14 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
         AGENT_FIELD_CANCEL,
     ));
 
-    UiPicker::new(
-        format!("edit agent {}", draft.id),
-        items,
-        PickerAction::EditAgent,
-    )
-    .with_layout(PickerLayout::Overlay)
-    .with_confirm_verb("edit")
-    .with_overlay_chrome(OverlayChrome {
-        nav_label: " EDIT AGENT".into(),
-        detail_label: Some(" DETAILS".into()),
-        nav_keys_hint: "↑↓ fields".into(),
-    })
+    UiPicker::edit_agent(format!("edit agent {}", draft.id), items)
+        .with_layout(PickerLayout::Overlay)
+        .with_confirm_verb("edit")
+        .with_overlay_chrome(OverlayChrome {
+            nav_label: " EDIT AGENT".into(),
+            detail_label: Some(" DETAILS".into()),
+            nav_keys_hint: "↑↓ fields".into(),
+        })
 }
 
 /// Badge for the Claude model row. Unset reads as the Claude Code default
@@ -405,6 +402,7 @@ fn claude_model_choice_items(draft: &AgentDefinition, prefix: &str) -> Vec<Picke
         badge: current.is_empty().then(|| badge("selected")),
         value: prefix.to_string(),
         selection_verb: None,
+        allow_filter_completion: true,
     }];
     items.extend(
         claude_models::CLAUDE_MODEL_ALIASES
@@ -417,6 +415,7 @@ fn claude_model_choice_items(draft: &AgentDefinition, prefix: &str) -> Vec<Picke
                 badge: (current == alias.name).then(|| badge("selected")),
                 value: format!("{prefix}{}", alias.name),
                 selection_verb: None,
+                allow_filter_completion: true,
             }),
     );
     if !current.is_empty() && !claude_models::is_offered_alias(&current) {
@@ -428,6 +427,7 @@ fn claude_model_choice_items(draft: &AgentDefinition, prefix: &str) -> Vec<Picke
             badge: Some(badge("selected")),
             value: format!("{prefix}{current}"),
             selection_verb: None,
+            allow_filter_completion: true,
         });
     }
     items
@@ -521,6 +521,7 @@ fn agent_choice_picker(
                 badge: current.is_none().then(|| badge("selected")),
                 value: format!("{prefix}inherit"),
                 selection_verb: None,
+                allow_filter_completion: true,
             }];
             items.extend(levels.into_iter().map(|level| {
                 let selected = current == Some(level);
@@ -539,6 +540,7 @@ fn agent_choice_picker(
                     badge: selected.then(|| badge("selected")),
                     value: format!("{prefix}{level}"),
                     selection_verb: None,
+                    allow_filter_completion: true,
                 }
             }));
             ("reasoning", items)
@@ -561,7 +563,7 @@ fn agent_choice_picker(
             )
         }
     };
-    UiPicker::new(title, items, PickerAction::EditAgent).with_confirm_verb("set")
+    UiPicker::edit_agent(title, items).with_confirm_verb("set")
 }
 
 fn auth_choice_picker(draft: &AgentDefinition, available_auths: &[String]) -> UiPicker {
@@ -579,6 +581,7 @@ fn auth_choice_picker(draft: &AgentDefinition, available_auths: &[String]) -> Ui
         // Empty id means unset pin (display label remains "host").
         value: prefix.to_string(),
         selection_verb: None,
+        allow_filter_completion: true,
     }];
     let mut modes: Vec<(String, String)> = available_auths
         .iter()
@@ -610,9 +613,10 @@ fn auth_choice_picker(draft: &AgentDefinition, available_auths: &[String]) -> Ui
             badge: selected.then(|| badge("selected")),
             value: format!("{prefix}{id}"),
             selection_verb: None,
+            allow_filter_completion: true,
         }
     }));
-    UiPicker::new("auth", items, PickerAction::EditAgent).with_confirm_verb("set")
+    UiPicker::edit_agent("auth", items).with_confirm_verb("set")
 }
 
 fn choice_items(options: &[(&str, &str)], current: &str, value_prefix: &str) -> Vec<PickerItem> {
@@ -628,6 +632,7 @@ fn choice_items(options: &[(&str, &str)], current: &str, value_prefix: &str) -> 
                 badge: selected.then(|| badge("selected")),
                 value: format!("{value_prefix}{label}"),
                 selection_verb: None,
+                allow_filter_completion: true,
             }
         })
         .collect()

@@ -604,7 +604,7 @@ async fn logout_provider_picker_propagates_credential_store_errors() {
 
 #[test]
 fn model_picker_fuzzy_matches_and_autocompletes() {
-    let mut picker = UiPicker::new(
+    let mut picker = UiPicker::models(
         "select model",
         vec![
             PickerItem {
@@ -615,6 +615,7 @@ fn model_picker_fuzzy_matches_and_autocompletes() {
                 badge: None,
                 value: "openai/gpt-5.5".into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
             PickerItem {
                 section: None,
@@ -624,9 +625,9 @@ fn model_picker_fuzzy_matches_and_autocompletes() {
                 badge: None,
                 value: "openai-codex/gpt-5.4-mini".into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
         ],
-        PickerAction::SelectModel,
     );
 
     for ch in "ocg54m".chars() {
@@ -644,7 +645,7 @@ fn model_picker_fuzzy_matches_and_autocompletes() {
 
 #[test]
 fn picker_selection_wraps() {
-    let mut picker = UiPicker::new(
+    let mut picker = UiPicker::models(
         "select model",
         vec![
             PickerItem {
@@ -655,6 +656,7 @@ fn picker_selection_wraps() {
                 badge: None,
                 value: "model-a".into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
             PickerItem {
                 section: None,
@@ -664,9 +666,9 @@ fn picker_selection_wraps() {
                 badge: None,
                 value: "model-b".into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
         ],
-        PickerAction::SelectModel,
     );
 
     picker.select_previous();
@@ -683,7 +685,7 @@ fn favorite_save_failure_keeps_model_picker_open() {
         ConfigRepository::new(Some(config_dir.path().to_path_buf()));
     let selected_value = "openai/gpt-5.5";
     app.input_ui
-        .set_composer(ComposerMode::Picker(UiPicker::new(
+        .set_composer(ComposerMode::Picker(UiPicker::models(
             "select model",
             vec![PickerItem {
                 section: None,
@@ -693,13 +695,13 @@ fn favorite_save_failure_keeps_model_picker_open() {
                 badge: None,
                 value: selected_value.into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             }],
-            PickerAction::SelectModel,
         )));
     app.toggle_selected_model_favorite().unwrap();
 
     assert!(matches!(app.input_ui.composer(), ComposerMode::Picker(_)));
-    assert_eq!(app.active_picker_selection().unwrap().1, selected_value);
+    assert_eq!(app.active_picker_value().as_deref(), Some(selected_value));
     assert!(app.info.runtime.favorite_models.is_empty());
     assert!(matches!(app.history.last(), Some(Entry::Error(_))));
 }

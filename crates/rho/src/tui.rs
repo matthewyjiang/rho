@@ -117,10 +117,7 @@ mod pending_input;
 mod performance_benchmarks;
 mod permission_mode;
 mod picker;
-pub(in crate::tui) mod picker_input;
-mod picker_overlay;
-mod picker_overlay_layout;
-mod picker_rows;
+mod picker_actions;
 mod process_panel;
 mod process_peek;
 mod prompt_history;
@@ -223,9 +220,8 @@ use login::PendingInteractiveLogin;
 use login::SecretInput;
 use paste_burst::PasteBurstEnter;
 use picker::{
-    sort_items_by_ascii_label, OverlayFocus, OverlayScrollbarDrag, PickerAction, PickerBadge,
-    PickerBadgePlacement, PickerBadgeTone, PickerCursor, PickerItem, PickerKeyHints, PickerLayout,
-    UiPicker,
+    sort_items_by_ascii_label, PickerBadge, PickerBadgePlacement, PickerBadgeTone, PickerCursor,
+    PickerItem, PickerKeyHints, PickerLayout, UiPicker,
 };
 use process_panel::ProcessPanel;
 use prompt_turn::FailedTurn;
@@ -277,7 +273,7 @@ const MIN_COMMAND_DESCRIPTION_WIDTH: usize = 7;
 const STREAM_UI_TICK: Duration = Duration::from_millis(24);
 const STREAM_PREVIEW_MIN_CHARS: usize = 2;
 const HISTORY_SCROLLBAR_REVEAL_DURATION: Duration = Duration::from_millis(1200);
-const HISTORY_MOUSE_SCROLL_LINES: usize = 3;
+pub(in crate::tui) const HISTORY_MOUSE_SCROLL_LINES: usize = 3;
 pub struct TuiBootstrap {
     pub runtime: RuntimeModelView,
     pub session: SessionBootstrap,

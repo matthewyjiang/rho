@@ -11,7 +11,7 @@ use ratatui::{
 
 use super::{
     display_width,
-    picker_overlay_layout::{clamp_overlay_scroll, OverlayScrollbarState},
+    picker::{clamp_overlay_scroll, OverlayScrollbarState},
     render::truncate_one_line,
     scrollbar::track_span,
     styled_line, LineFill, Theme,

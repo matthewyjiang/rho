@@ -10,8 +10,10 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use super::{
-    display_width, styled_line, truncate_one_line, LineFill, PickerBadgeTone, PickerItem, Theme,
+use super::{PickerBadgeTone, PickerItem};
+use crate::tui::{
+    render::{display_width, styled_line, truncate_one_line, LineFill},
+    theme::Theme,
 };
 
 /// Widest label column an aligned list row reserves before badge and preview.
@@ -20,7 +22,7 @@ const MIN_LABEL_COLUMN: usize = 12;
 /// Longest badge text a pane-filling nav row shows before truncation.
 const NAV_BADGE_CAP: usize = 16;
 
-pub(super) fn picker_badge_style(tone: PickerBadgeTone) -> Style {
+pub(in crate::tui) fn picker_badge_style(tone: PickerBadgeTone) -> Style {
     match tone {
         PickerBadgeTone::Internal | PickerBadgeTone::Editable => Theme::accent(),
         PickerBadgeTone::Selected => Theme::warning(),
@@ -31,7 +33,7 @@ pub(super) fn picker_badge_style(tone: PickerBadgeTone) -> Style {
 
 /// How an item row uses its horizontal space.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RowWidthMode {
+pub(in crate::tui) enum RowWidthMode {
     /// The label pads to the pane width (minus badge) so the selection reads
     /// as a block. Used by the overlay nav pane.
     FillPane,
@@ -42,25 +44,25 @@ pub(super) enum RowWidthMode {
 
 /// Presentation choices for one batch of picker rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct RowLayout {
-    pub(super) width: usize,
-    pub(super) width_mode: RowWidthMode,
-    pub(super) show_badges: bool,
-    pub(super) show_preview: bool,
-    pub(super) fill: LineFill,
+pub(in crate::tui) struct RowLayout {
+    pub(in crate::tui) width: usize,
+    pub(in crate::tui) width_mode: RowWidthMode,
+    pub(in crate::tui) show_badges: bool,
+    pub(in crate::tui) show_preview: bool,
+    pub(in crate::tui) fill: LineFill,
 }
 
 /// Item and section-header rows plus the row index of the selected item.
-pub(super) struct PickerRows {
-    pub(super) rows: Vec<Line<'static>>,
-    pub(super) selected_row: usize,
+pub(in crate::tui) struct PickerRows {
+    pub(in crate::tui) rows: Vec<Line<'static>>,
+    pub(in crate::tui) selected_row: usize,
 }
 
 /// Shared label column width for aligned list rows.
 ///
 /// The widest label is taken across every item, not just the visible window,
 /// so the column does not jump while scrolling.
-pub(super) fn label_column_width(items: &[PickerItem], width: usize) -> usize {
+pub(in crate::tui) fn label_column_width(items: &[PickerItem], width: usize) -> usize {
     let reserved_preview_width = width.saturating_sub(18);
     let available_width = if reserved_preview_width >= MIN_LABEL_COLUMN {
         reserved_preview_width
@@ -82,7 +84,7 @@ pub(super) fn label_column_width(items: &[PickerItem], width: usize) -> usize {
 /// Row space is the single source of truth for counting, hit testing,
 /// scrolling, and rendering, so those four cannot disagree about where a row
 /// sits.
-pub(super) enum PickerRow<'a> {
+pub(in crate::tui) enum PickerRow<'a> {
     Header(&'a str),
     Item {
         /// Index into the full item list, not into `matching`.
@@ -93,7 +95,7 @@ pub(super) enum PickerRow<'a> {
 
 /// Walk row space: the matching items, with a header row wherever the section
 /// changes. Indices outside `items` are skipped.
-pub(super) fn rows<'a>(
+pub(in crate::tui) fn rows<'a>(
     items: &'a [PickerItem],
     matching: impl IntoIterator<Item = usize> + 'a,
 ) -> impl Iterator<Item = PickerRow<'a>> + 'a {
@@ -114,13 +116,13 @@ pub(super) fn rows<'a>(
 }
 
 /// Rows [`picker_item_rows`] will emit: matching items plus section headers.
-pub(super) fn picker_row_count(items: &[PickerItem], matching: &[usize]) -> usize {
+pub(in crate::tui) fn picker_row_count(items: &[PickerItem], matching: &[usize]) -> usize {
     rows(items, matching.iter().copied()).count()
 }
 
 /// Row-space index of the selected item among the matching rows, counting
 /// section headers.
-pub(super) fn selected_row_index(
+pub(in crate::tui) fn selected_row_index(
     items: &[PickerItem],
     matching: &[usize],
     selected: usize,
@@ -132,7 +134,7 @@ pub(super) fn selected_row_index(
 
 /// Item index shown at `row_index` in row space, or `None` for section
 /// headers and out-of-range rows.
-pub(super) fn item_index_at_row(
+pub(in crate::tui) fn item_index_at_row(
     items: &[PickerItem],
     matching: &[usize],
     row_index: usize,
@@ -146,7 +148,7 @@ pub(super) fn item_index_at_row(
 /// Build the rows for the matching items, inserting a header row whenever the
 /// section changes. `hovered_row` highlights that row-space row under the
 /// pointer.
-pub(super) fn picker_item_rows(
+pub(in crate::tui) fn picker_item_rows(
     items: &[PickerItem],
     matching: &[usize],
     selected: usize,
@@ -175,7 +177,7 @@ pub(super) fn picker_item_rows(
 
 /// First visible row when `viewport_rows` rows show and the selected row must
 /// stay on screen.
-pub(super) fn scroll_window_start(selected_row: usize, viewport_rows: usize) -> usize {
+pub(in crate::tui) fn scroll_window_start(selected_row: usize, viewport_rows: usize) -> usize {
     selected_row
         .saturating_add(1)
         .saturating_sub(viewport_rows.max(1))
@@ -197,9 +199,9 @@ fn item_line(item: &PickerItem, selected: bool, hovered: bool, layout: RowLayout
         return Line::raw("");
     }
     let marker = if selected {
-        super::composer_chrome::SELECTION_MARKER_ACTIVE
+        crate::tui::composer_chrome::SELECTION_MARKER_ACTIVE
     } else {
-        super::composer_chrome::SELECTION_MARKER_INACTIVE
+        crate::tui::composer_chrome::SELECTION_MARKER_INACTIVE
     };
     let style = if selected {
         Theme::accent()
@@ -315,5 +317,5 @@ fn aligned_column_line(
 }
 
 #[cfg(test)]
-#[path = "picker_rows_tests.rs"]
+#[path = "rows_tests.rs"]
 mod tests;

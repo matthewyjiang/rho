@@ -1,12 +1,36 @@
+//! Picker widget: filtering, input, overlay layout, and shared rendering.
+//!
+//! Feature modules supply rows, labels, and a named constructor. This module
+//! owns opening, closing, filtering, cursor movement, key handling, parent
+//! stack, and overlay paint. Feature confirm/escape lives in
+//! `crate::tui::picker_actions`.
+
 use regex::{Regex, RegexBuilder};
 use std::{
     cell::{Ref, RefCell},
     ops::Deref,
 };
 
-#[path = "picker_overlay_state.rs"]
+mod action;
+mod input;
+mod lifecycle;
+mod overlay;
+mod overlay_layout;
 mod overlay_state;
-pub(super) use overlay_state::{OverlayFocus, OverlayScrollbarDrag};
+mod rows;
+
+pub(in crate::tui) use action::{ConfigParentRow, DuringTurnSelect, PickerAction, PickerTurn};
+pub(in crate::tui) use input::{
+    apply_picker_key, overlay_scroll_targets, PickerKeyEffect, PickerMouseEvent,
+};
+use overlay::{detail_content_line_count, overlay_detail_lines};
+pub(in crate::tui) use overlay::{picker_overlay_frame, OverlayChrome};
+use overlay_layout::DetailViewport;
+pub(in crate::tui) use overlay_layout::{clamp_overlay_scroll, OverlayScrollbarState};
+pub(in crate::tui) use overlay_state::{OverlayFocus, OverlayScrollbarDrag};
+pub(in crate::tui) use rows::{
+    label_column_width, picker_item_rows, scroll_window_start, RowLayout, RowWidthMode,
+};
 
 #[derive(Debug)]
 pub(super) struct PickerMatches<'a>(Ref<'a, Vec<usize>>);
@@ -75,7 +99,7 @@ pub(super) struct UiPicker {
     pub(super) items: Vec<PickerItem>,
     pub(super) selected: usize,
     pub(super) filter: String,
-    pub(super) action: PickerAction,
+    pub(in crate::tui::picker) action: PickerAction,
     pub(super) layout: PickerLayout,
     pub(super) badge_placement: PickerBadgePlacement,
     /// Top visible detail line for overlay pickers.
@@ -96,9 +120,11 @@ pub(super) struct UiPicker {
     /// Inventory-empty copy when the filter is blank. Filter misses stay
     /// "no matches".
     empty_message: Option<String>,
+    /// Status set when this picker is restored as a parent.
+    restore_status: &'static str,
     /// When set, overrides [`PickerAction::uses_regex_filter`] for this picker.
     pub(super) force_fuzzy_filter: bool,
-    pub(super) overlay_chrome: Option<super::picker_overlay::OverlayChrome>,
+    pub(super) overlay_chrome: Option<OverlayChrome>,
     parent: Option<Box<UiPicker>>,
     matches: RefCell<PickerMatchCache>,
     detail_wrap_cache: RefCell<DetailWrapCache>,
@@ -114,6 +140,8 @@ pub(super) struct PickerItem {
     pub(super) value: String,
     /// Optional Enter verb for this row. Overrides action defaults and badge heuristics.
     pub(super) selection_verb: Option<&'static str>,
+    /// When false, Tab does not copy this row into the filter.
+    pub(super) allow_filter_completion: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -153,89 +181,6 @@ impl PickerLayout {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum PickerAction {
-    SelectModel,
-    SelectInternalAgentModel,
-    LoginGroup,
-    LoginProvider,
-    LogoutProvider,
-    SwitchAuthMode,
-    RefreshModelList,
-    InsertSkillCommand,
-    ViewAgent,
-    /// Read-only MCP server inventory. Distinct from `Dismiss` so background
-    /// refreshes can tell this picker apart without reading its title.
-    ViewMcpServers,
-    ResumeSession,
-    ManageSessions,
-    SelectTreeNode,
-    SelectRewindCheckpoint,
-    ConfirmRewindCheckpoint,
-    Config,
-    SelectTheme,
-    EditAgent,
-    Workflow,
-    AttachSubagent,
-    Dismiss,
-}
-
-impl PickerAction {
-    pub(super) fn space_confirms_selection(self) -> bool {
-        match self {
-            PickerAction::Config => true,
-            // Dismiss overlays accept regex filters, so space must type into the filter.
-            PickerAction::Dismiss
-            | PickerAction::ViewMcpServers
-            | PickerAction::SelectModel
-            | PickerAction::SelectInternalAgentModel
-            | PickerAction::LoginGroup
-            | PickerAction::LoginProvider
-            | PickerAction::LogoutProvider
-            | PickerAction::SwitchAuthMode
-            | PickerAction::RefreshModelList
-            | PickerAction::InsertSkillCommand
-            | PickerAction::ViewAgent
-            | PickerAction::ResumeSession
-            | PickerAction::ManageSessions
-            | PickerAction::SelectTreeNode
-            | PickerAction::SelectRewindCheckpoint
-            | PickerAction::ConfirmRewindCheckpoint
-            | PickerAction::SelectTheme
-            | PickerAction::EditAgent
-            | PickerAction::Workflow
-            | PickerAction::AttachSubagent => false,
-        }
-    }
-
-    /// Whether the filter uses regex matching instead of fuzzy ranking.
-    pub(super) fn uses_regex_filter(self) -> bool {
-        match self {
-            PickerAction::Config
-            | PickerAction::Dismiss
-            | PickerAction::ViewMcpServers
-            | PickerAction::ViewAgent
-            | PickerAction::InsertSkillCommand
-            | PickerAction::ResumeSession
-            | PickerAction::ManageSessions
-            | PickerAction::SelectTreeNode
-            | PickerAction::SelectRewindCheckpoint
-            | PickerAction::ConfirmRewindCheckpoint
-            | PickerAction::LoginGroup
-            | PickerAction::LoginProvider
-            | PickerAction::LogoutProvider
-            | PickerAction::SwitchAuthMode
-            | PickerAction::RefreshModelList
-            | PickerAction::EditAgent
-            | PickerAction::Workflow
-            | PickerAction::AttachSubagent => true,
-            PickerAction::SelectModel
-            | PickerAction::SelectInternalAgentModel
-            | PickerAction::SelectTheme => false,
-        }
-    }
-}
-
 pub(super) fn cmp_ascii_ignore_case(left: &str, right: &str) -> std::cmp::Ordering {
     left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase())
 }
@@ -247,8 +192,28 @@ pub(super) fn sort_items_by_ascii_label(items: &mut [PickerItem]) {
     });
 }
 
+macro_rules! picker_ctors {
+    ($($name:ident => $action:ident),+ $(,)?) => {
+        $(
+            pub(in crate::tui) fn $name(title: impl Into<String>, items: Vec<PickerItem>) -> Self {
+                Self::new(title, items, PickerAction::$action)
+            }
+        )+
+    };
+}
+
+macro_rules! picker_is {
+    ($($name:ident => $action:ident),+ $(,)?) => {
+        $(
+            pub(in crate::tui) fn $name(&self) -> bool {
+                self.action == PickerAction::$action
+            }
+        )+
+    };
+}
+
 impl UiPicker {
-    pub(super) fn new(
+    pub(in crate::tui::picker) fn new(
         title: impl Into<String>,
         items: Vec<PickerItem>,
         action: PickerAction,
@@ -270,12 +235,62 @@ impl UiPicker {
             hovered_nav_row: None,
             confirm_verb: None,
             empty_message: None,
+            restore_status: "ready",
             force_fuzzy_filter: false,
             overlay_chrome: None,
             parent: None,
             matches: RefCell::default(),
             detail_wrap_cache: RefCell::default(),
         }
+    }
+
+    picker_ctors! {
+        models => SelectModel,
+        internal_agent_models => SelectInternalAgentModel,
+        login_group => LoginGroup,
+        login_provider => LoginProvider,
+        logout_provider => LogoutProvider,
+        switch_auth_mode => SwitchAuthMode,
+        refresh_model_list => RefreshModelList,
+        insert_skill => InsertSkillCommand,
+        view_agent => ViewAgent,
+        view_mcp => ViewMcpServers,
+        resume_session => ResumeSession,
+        manage_sessions => ManageSessions,
+        tree => SelectTreeNode,
+        rewind_checkpoint => SelectRewindCheckpoint,
+        confirm_rewind => ConfirmRewindCheckpoint,
+        config => Config,
+        theme => SelectTheme,
+        edit_agent => EditAgent,
+        workflow => Workflow,
+        attach_subagent => AttachSubagent,
+        dismiss => Dismiss,
+    }
+
+    picker_is! {
+        is_config => Config,
+        is_theme => SelectTheme,
+        is_mcp_inventory => ViewMcpServers,
+        is_edit_agent => EditAgent,
+        is_attach_subagent => AttachSubagent,
+        is_conversation_model => SelectModel,
+        is_internal_agent_model => SelectInternalAgentModel,
+        is_manage_sessions => ManageSessions,
+        is_resume_session => ResumeSession,
+        is_workflow => Workflow,
+    }
+
+    pub(in crate::tui) fn is_model_list(&self) -> bool {
+        self.action.is_model_list()
+    }
+
+    pub(in crate::tui) fn space_confirms_selection(&self) -> bool {
+        self.action.space_confirms_selection()
+    }
+
+    pub(in crate::tui) fn restore_status(&self) -> &'static str {
+        self.restore_status
     }
 
     pub(super) fn with_layout(mut self, layout: PickerLayout) -> Self {
@@ -302,10 +317,7 @@ impl UiPicker {
         self
     }
 
-    pub(super) fn with_overlay_chrome(
-        mut self,
-        chrome: super::picker_overlay::OverlayChrome,
-    ) -> Self {
+    pub(super) fn with_overlay_chrome(mut self, chrome: OverlayChrome) -> Self {
         self.overlay_chrome = Some(chrome);
         self
     }
@@ -381,11 +393,7 @@ impl UiPicker {
         self.detail_scroll = 0;
     }
 
-    pub(super) fn scroll_detail_by(
-        &mut self,
-        delta: isize,
-        viewport: super::picker_overlay_layout::DetailViewport,
-    ) {
+    pub(super) fn scroll_detail_by(&mut self, delta: isize, viewport: DetailViewport) {
         if !self.has_scrollable_detail() {
             return;
         }
@@ -404,10 +412,7 @@ impl UiPicker {
         self.reset_detail_scroll();
     }
 
-    pub(super) fn scroll_detail_end(
-        &mut self,
-        viewport: super::picker_overlay_layout::DetailViewport,
-    ) {
+    pub(super) fn scroll_detail_end(&mut self, viewport: DetailViewport) {
         if !self.has_scrollable_detail() {
             return;
         }
@@ -415,11 +420,7 @@ impl UiPicker {
         self.detail_scroll = line_count.saturating_sub(viewport.rows.max(1));
     }
 
-    pub(super) fn scroll_detail_page(
-        &mut self,
-        delta_pages: isize,
-        viewport: super::picker_overlay_layout::DetailViewport,
-    ) {
+    pub(super) fn scroll_detail_page(&mut self, delta_pages: isize, viewport: DetailViewport) {
         if !self.has_scrollable_detail() {
             return;
         }
@@ -427,23 +428,17 @@ impl UiPicker {
         self.scroll_detail_by(delta_pages.saturating_mul(rows), viewport);
     }
 
-    pub(super) fn clamp_detail_scroll(
-        &mut self,
-        viewport: super::picker_overlay_layout::DetailViewport,
-    ) {
+    pub(super) fn clamp_detail_scroll(&mut self, viewport: DetailViewport) {
         if !self.has_scrollable_detail() {
             return;
         }
         let line_count = self.detail_line_count(viewport.width);
-        self.detail_scroll = super::picker_overlay::clamp_detail_scroll(
-            self.detail_scroll,
-            line_count,
-            viewport.rows,
-        );
+        self.detail_scroll =
+            overlay::clamp_detail_scroll(self.detail_scroll, line_count, viewport.rows);
     }
 
     pub(super) fn detail_line_count(&self, detail_width: usize) -> usize {
-        super::picker_overlay::detail_content_line_count(
+        detail_content_line_count(
             self.wrapped_detail_lines(detail_width).len(),
             self.selected_detail_badge().is_some(),
         )
@@ -463,7 +458,7 @@ impl UiPicker {
                 || cache.lines.is_empty() && !detail.is_empty()
         };
         if stale {
-            let lines = super::picker_overlay::overlay_detail_lines(detail, width);
+            let lines = overlay_detail_lines(detail, width);
             *self.detail_wrap_cache.borrow_mut() = DetailWrapCache {
                 selected: self.selected,
                 width,
@@ -495,28 +490,7 @@ impl UiPicker {
         if let Some(verb) = self.confirm_verb.as_deref() {
             return verb;
         }
-        match self.action {
-            PickerAction::Config => "change",
-            PickerAction::Dismiss | PickerAction::ViewMcpServers => "close",
-            PickerAction::ViewAgent => "close",
-            PickerAction::SelectModel
-            | PickerAction::SelectInternalAgentModel
-            | PickerAction::SelectTheme
-            | PickerAction::LoginGroup
-            | PickerAction::LoginProvider
-            | PickerAction::LogoutProvider
-            | PickerAction::SwitchAuthMode
-            | PickerAction::InsertSkillCommand
-            | PickerAction::ResumeSession
-            | PickerAction::ManageSessions
-            | PickerAction::SelectTreeNode
-            | PickerAction::SelectRewindCheckpoint
-            | PickerAction::ConfirmRewindCheckpoint
-            | PickerAction::EditAgent
-            | PickerAction::Workflow
-            | PickerAction::AttachSubagent => "select",
-            PickerAction::RefreshModelList => "refresh",
-        }
+        self.action.default_confirm_verb()
     }
 
     pub(super) fn action_footer(&self) -> String {
@@ -603,6 +577,11 @@ impl UiPicker {
         self
     }
 
+    pub(super) fn with_restore_status(mut self, status: &'static str) -> Self {
+        self.restore_status = status;
+        self
+    }
+
     pub(super) fn with_parent(mut self, parent: UiPicker) -> Self {
         self.parent = Some(Box::new(parent));
         self
@@ -666,7 +645,7 @@ impl UiPicker {
         let Some(item) = self.selected_item() else {
             return;
         };
-        if !self.row_allows_filter_completion(item) {
+        if !Self::row_allows_filter_completion(item) {
             return;
         }
         self.filter = if self.uses_regex_filter() {
@@ -676,13 +655,8 @@ impl UiPicker {
         };
     }
 
-    /// Whether Tab may fill the filter from this row.
-    ///
-    /// Internal-agent model pickers include a synthetic conversation-model row
-    /// that is not a filterable model reference.
-    fn row_allows_filter_completion(&self, item: &PickerItem) -> bool {
-        !(matches!(self.action, PickerAction::SelectInternalAgentModel)
-            && item.value == super::model_picker::USE_CONVERSATION_MODEL)
+    fn row_allows_filter_completion(item: &PickerItem) -> bool {
+        item.allow_filter_completion
     }
 
     pub(super) fn select_first_match(&mut self) {
@@ -881,55 +855,10 @@ fn fuzzy_character_bonus(haystack: &[char], index: usize, previous_match: Option
     bonus
 }
 
-impl super::App {
-    pub(super) fn clamp_overlay_detail_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
-        let Ok(size) = terminal.size() else {
-            return;
-        };
-        let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
-            return;
-        };
-        if !picker.has_scrollable_detail() {
-            return;
-        }
-        let layout = super::picker_overlay_layout::picker_overlay_layout(
-            ratatui::layout::Rect::new(0, 0, size.width, size.height),
-            picker.overlay_sizing(),
-        );
-        if let Some(viewport) = layout.detail_viewport() {
-            picker.clamp_detail_scroll(viewport);
-        }
-    }
-
-    pub(super) fn open_child_picker(&mut self, child: UiPicker) {
-        let previous = self.input_ui.take_composer();
-        let super::ComposerMode::Picker(parent) = previous else {
-            unreachable!("child picker requires an active parent picker")
-        };
-        self.set_status_quiet(child.title.clone());
-        self.input_ui
-            .set_composer(super::ComposerMode::Picker(child.with_parent(parent)));
-    }
-
-    pub(super) fn pop_picker_level(&mut self) -> bool {
-        let parent = match self.input_ui.composer_mut() {
-            super::ComposerMode::Picker(picker) => picker.take_parent(),
-            _ => None,
-        };
-        let Some(parent) = parent else {
-            return false;
-        };
-        self.set_status_quiet(parent.title.clone());
-        self.input_ui
-            .set_composer(super::ComposerMode::Picker(parent));
-        true
-    }
-}
-
 fn is_word_boundary(ch: char) -> bool {
     matches!(ch, '/' | '\\' | '_' | '-' | '.' | ' ')
 }
 
 #[cfg(test)]
-#[path = "picker_tests.rs"]
+#[path = "mod_tests.rs"]
 mod tests;

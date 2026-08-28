@@ -165,23 +165,24 @@ fn list_picker_lines(
         return lines;
     }
 
-    let row_layout = super::picker_rows::RowLayout {
+    let row_layout = super::picker::RowLayout {
         width,
-        width_mode: super::picker_rows::RowWidthMode::AlignedColumn(
-            super::picker_rows::label_column_width(&picker.items, width),
-        ),
+        width_mode: super::picker::RowWidthMode::AlignedColumn(super::picker::label_column_width(
+            &picker.items,
+            width,
+        )),
         show_badges: true,
         show_preview: true,
         fill: LineFill::Natural,
     };
-    let rows = super::picker_rows::picker_item_rows(
+    let rows = super::picker::picker_item_rows(
         &picker.items,
         &matching_indices,
         picker.selected,
         row_layout,
         /*hovered_row*/ None,
     );
-    let start = super::picker_rows::scroll_window_start(rows.selected_row, item_cap);
+    let start = super::picker::scroll_window_start(rows.selected_row, item_cap);
     lines.extend(rows.rows.into_iter().skip(start).take(item_cap));
 
     let selected_position = matching_indices

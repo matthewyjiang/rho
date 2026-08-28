@@ -8,10 +8,7 @@ use rho_providers::model::{
 };
 
 use super::*;
-use crate::{
-    commands::parse_command, config::InternalAgentModelConfig, tui::tests::test_app,
-    tui::PickerAction,
-};
+use crate::{commands::parse_command, config::InternalAgentModelConfig, tui::tests::test_app};
 
 fn invocation(command: &str) -> CommandInvocation {
     parse_command(command).unwrap().unwrap()
@@ -225,7 +222,7 @@ fn enabling_advisor_mode_without_a_model_opens_the_model_picker() {
                     .advisor_mode
             );
             let picker = open_picker(&app);
-            assert_eq!(picker.action, PickerAction::SelectInternalAgentModel);
+            assert!(picker.is_internal_agent_model());
             assert_eq!(
                 app.internal_agent_model_target
                     .as_ref()

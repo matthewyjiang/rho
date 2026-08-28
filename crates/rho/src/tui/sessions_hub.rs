@@ -9,10 +9,9 @@ use std::{
 use ratatui::DefaultTerminal;
 
 use super::{
-    picker_overlay::OverlayChrome, session_picker, statusline::path::compact_cwd, App,
-    ComposerMode, Entry, InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending,
-    InteractiveRuntime, PickerAction, PickerBadge, PickerBadgeTone, PickerItem, PickerKeyHints,
-    PickerLayout, Session, UiPicker,
+    picker::OverlayChrome, session_picker, statusline::path::compact_cwd, App, ComposerMode, Entry,
+    InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, InteractiveRuntime,
+    PickerBadge, PickerBadgeTone, PickerItem, PickerKeyHints, PickerLayout, Session, UiPicker,
 };
 use crate::session::{is_cross_project, DeleteOptions, SessionSummary, SessionTarget};
 
@@ -156,6 +155,7 @@ fn directory_row(
         }),
         value,
         selection_verb: Some("browse"),
+        allow_filter_completion: true,
     }
 }
 
@@ -219,6 +219,7 @@ fn session_row(
         } else {
             "resume"
         }),
+        allow_filter_completion: true,
     }
 }
 
@@ -246,11 +247,12 @@ fn cleanup_missing_workspaces_row(
         }),
         value,
         selection_verb: Some("clean up"),
+        allow_filter_completion: true,
     }
 }
 
 fn manage_sessions_picker(title: impl Into<String>, items: Vec<PickerItem>) -> UiPicker {
-    UiPicker::new(title, items, PickerAction::ManageSessions)
+    UiPicker::manage_sessions(title, items)
         .with_key_hints(PickerKeyHints {
             tab_complete: false,
             row_delete: true,
@@ -262,6 +264,7 @@ fn manage_sessions_picker(title: impl Into<String>, items: Vec<PickerItem>) -> U
             detail_label: Some(" DETAILS".into()),
             nav_keys_hint: "↑↓ items".into(),
         })
+        .with_restore_status("sessions")
 }
 
 /// Root list: every directory with its sessions, current directory first.
@@ -698,13 +701,9 @@ impl App {
             self.sessions_hub_state.clear();
             return;
         };
-        let action = parent.action;
+        let status = parent.restore_status();
         self.input_ui.set_composer(ComposerMode::Picker(*parent));
-        self.set_status(match action {
-            PickerAction::ManageSessions => "sessions",
-            PickerAction::ResumeSession => "select session",
-            _ => "ready",
-        });
+        self.set_status(status);
     }
 
     pub(super) fn refresh_sessions_location(
@@ -728,7 +727,7 @@ impl App {
 
     fn selected_sessions_item_value(&self) -> Option<String> {
         match self.input_ui.composer() {
-            ComposerMode::Picker(picker) if picker.action == PickerAction::ManageSessions => {
+            ComposerMode::Picker(picker) if picker.is_manage_sessions() => {
                 picker.selected_item().map(|item| item.value.clone())
             }
             _ => None,

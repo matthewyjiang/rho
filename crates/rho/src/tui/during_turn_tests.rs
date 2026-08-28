@@ -12,7 +12,7 @@ use crate::{
             QuestionnaireResponseChannel,
         },
         tests::test_app,
-        App, PickerAction, PickerItem, QueuedPrompt, UiPicker,
+        App, PickerItem, QueuedPrompt, UiPicker,
     },
 };
 
@@ -38,7 +38,7 @@ fn pending_approval() -> rho_sdk::PendingApproval {
 }
 
 fn model_picker() -> UiPicker {
-    UiPicker::new(
+    UiPicker::models(
         "select model",
         vec![PickerItem {
             section: None,
@@ -48,8 +48,8 @@ fn model_picker() -> UiPicker {
             badge: None,
             value: "model-a".into(),
             selection_verb: None,
+            allow_filter_completion: true,
         }],
-        PickerAction::SelectModel,
     )
 }
 

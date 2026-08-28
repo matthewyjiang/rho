@@ -15,7 +15,7 @@ use super::tool_output_ui::tool_output_toggleable;
 use super::{
     composer_chrome::ComposerDividerSlot,
     highlight_selection,
-    picker_overlay::picker_overlay_frame,
+    picker::picker_overlay_frame,
     render::{pad_display_line, padded_content_width, truncate_one_line},
     render_copy_notice,
     screen_layout::{terminal_meets_minimum, MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH},

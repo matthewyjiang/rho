@@ -9,9 +9,9 @@ use crate::{
 
 use super::{
     model_picker::{ClaudeCodeRows, ConversationModelRow, InternalAgentSelection},
-    picker_overlay::OverlayChrome,
-    ComposerMode, PickerAction, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout,
-    RuntimeModelView, UiPicker,
+    picker::OverlayChrome,
+    ComposerMode, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, RuntimeModelView,
+    UiPicker,
 };
 
 /// Where an internal-agent model picker was opened from, which decides what a
@@ -93,7 +93,7 @@ pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) ->
         .iter_with_internal()
         .map(|entry| agent_item(entry, &models))
         .collect();
-    UiPicker::new("Loaded agents", items, PickerAction::ViewAgent)
+    UiPicker::view_agent("Loaded agents", items)
         .with_layout(PickerLayout::Overlay)
         .with_overlay_chrome(OverlayChrome {
             nav_label: " AGENTS".into(),
@@ -117,6 +117,7 @@ fn agent_item(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> PickerI
         badge: agent_badge(entry.metadata.origin),
         value: definition.id.to_string(),
         selection_verb,
+        allow_filter_completion: true,
     }
 }
 

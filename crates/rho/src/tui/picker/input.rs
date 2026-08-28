@@ -2,21 +2,21 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{layout::Rect, DefaultTerminal};
 
 use super::{
-    picker_overlay_layout::{
+    overlay_layout::{
         clamp_overlay_scroll, picker_overlay_layout, OverlayLayout, OverlayPane,
         OverlayScrollTargets, OverlayScrollbarState,
     },
-    scrollbar::HistoryScrollbar,
-    App, ComposerMode, InteractiveRuntime, OverlayFocus, OverlayScrollbarDrag, UiPicker,
+    OverlayFocus, OverlayScrollbarDrag, UiPicker,
 };
+use crate::tui::{scrollbar::HistoryScrollbar, App, ComposerMode, InteractiveRuntime};
 
 /// Lines one wheel event scrolls in either overlay pane. Tied to the history
 /// wheel speed so the two cannot drift.
-const PICKER_WHEEL_LINES: isize = super::HISTORY_MOUSE_SCROLL_LINES as isize;
+const PICKER_WHEEL_LINES: isize = crate::tui::HISTORY_MOUSE_SCROLL_LINES as isize;
 
 /// Pointer events an open picker can consume.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum PickerMouseEvent {
+pub(in crate::tui) enum PickerMouseEvent {
     /// Wheel step, negative up and positive down.
     Wheel(isize),
     /// Left button press.
@@ -78,7 +78,7 @@ pub(in crate::tui) fn overlay_scroll_targets(
 fn focused_detail_viewport(
     picker: &UiPicker,
     targets: OverlayScrollTargets,
-) -> Option<super::picker_overlay_layout::DetailViewport> {
+) -> Option<super::overlay_layout::DetailViewport> {
     if !picker.detail_pane_focused() {
         return None;
     }
@@ -205,7 +205,7 @@ pub(in crate::tui) fn apply_picker_key(
 fn nav_scrollbar(picker: &UiPicker, layout: OverlayLayout) -> Option<HistoryScrollbar> {
     let viewport_rows = layout.nav_viewport_rows();
     let matching = picker.matching_indices();
-    let total_rows = super::picker_rows::picker_row_count(&picker.items, &matching);
+    let total_rows = super::rows::picker_row_count(&picker.items, &matching);
     let nav_rect = layout.nav_body_rect();
     OverlayScrollbarState::nav(
         nav_rect.width as usize,
@@ -220,7 +220,7 @@ fn detail_scrollbar(picker: &UiPicker, layout: OverlayLayout) -> Option<HistoryS
     let detail_rect = layout.detail_body_rect()?;
     let line_count = {
         let lines = picker.wrapped_detail_lines(viewport.width);
-        super::picker_overlay::detail_content_line_count(
+        super::overlay::detail_content_line_count(
             lines.len(),
             picker.selected_detail_badge().is_some(),
         )
@@ -240,7 +240,7 @@ fn apply_detail_scrollbar_top(picker: &mut UiPicker, layout: OverlayLayout, top_
     };
     let line_count = {
         let lines = picker.wrapped_detail_lines(viewport.width);
-        super::picker_overlay::detail_content_line_count(
+        super::overlay::detail_content_line_count(
             lines.len(),
             picker.selected_detail_badge().is_some(),
         )
@@ -261,7 +261,7 @@ impl App {
     /// Over an overlay the wheel moves viewports, never the selection. The
     /// pane under the pointer takes the scroll, falling back to the focused
     /// pane when the pointer sits outside the box.
-    pub(super) fn route_picker_mouse(
+    pub(in crate::tui) fn route_picker_mouse(
         &mut self,
         event: PickerMouseEvent,
         column: u16,
@@ -397,13 +397,13 @@ impl App {
         true
     }
 
-    pub(super) async fn handle_picker_key(
+    pub(in crate::tui) async fn handle_picker_key(
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer(), super::ComposerMode::Picker(_)) {
+        if !matches!(self.input_ui.composer(), ComposerMode::Picker(_)) {
             return Ok(false);
         }
         if self.toggle_attach_filter_if_requested(key) {
@@ -412,14 +412,8 @@ impl App {
 
         let space_confirms = self.picker_space_confirms_selection();
         let keybindings = self.info.runtime.keybindings.clone();
-        let delete_action = {
-            let super::ComposerMode::Picker(picker) = self.input_ui.composer() else {
-                return Ok(false);
-            };
-            picker.action
-        };
         let effect = {
-            let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
+            let ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
                 return Ok(false);
             };
             let targets = overlay_scroll_targets(picker, terminal);
@@ -442,7 +436,7 @@ impl App {
             }
             PickerKeyEffect::Escape => {
                 self.handle_picker_escape(/*running*/ false)?;
-                if matches!(self.input_ui.composer(), super::ComposerMode::Input) {
+                if matches!(self.input_ui.composer(), ComposerMode::Input) {
                     self.reconcile_auto_classifier_gate(agent).await?;
                 }
                 self.input_ui.clear_paste_burst();
@@ -464,29 +458,18 @@ impl App {
             PickerKeyEffect::DeleteRow => {
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
-                match delete_action {
-                    super::PickerAction::ResumeSession => {
-                        self.prompt_delete_selected_session()?;
-                    }
-                    super::PickerAction::ManageSessions => {
-                        self.prompt_delete_selected_sessions_item()?;
-                    }
-                    super::PickerAction::Workflow => {
-                        self.prompt_delete_selected_workflow_item()?;
-                    }
-                    _ => {}
-                }
+                self.apply_picker_row_delete()?;
                 Ok(true)
             }
         }
     }
 
-    pub(super) fn handle_running_picker_key(
+    pub(in crate::tui) async fn handle_running_picker_key(
         &mut self,
         key: KeyEvent,
         terminal: &DefaultTerminal,
     ) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer(), super::ComposerMode::Picker(_)) {
+        if !matches!(self.input_ui.composer(), ComposerMode::Picker(_)) {
             return Ok(false);
         }
         if self.toggle_attach_filter_if_requested(key) {
@@ -496,7 +479,7 @@ impl App {
         let space_confirms = self.picker_space_confirms_selection();
         let keybindings = self.info.runtime.keybindings.clone();
         let effect = {
-            let super::ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
+            let ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
                 return Ok(false);
             };
             let targets = overlay_scroll_targets(picker, terminal);
@@ -510,7 +493,7 @@ impl App {
                 Ok(true)
             }
             PickerKeyEffect::Submit => {
-                self.submit_picker_selection_during_turn()?;
+                self.submit_picker_selection_during_turn().await?;
                 Ok(true)
             }
             PickerKeyEffect::Escape => {
@@ -536,5 +519,5 @@ impl App {
 }
 
 #[cfg(test)]
-#[path = "picker_input_tests.rs"]
+#[path = "input_tests.rs"]
 mod tests;

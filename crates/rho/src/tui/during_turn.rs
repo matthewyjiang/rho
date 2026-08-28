@@ -19,8 +19,7 @@ use super::{
     palette::ActivePalette,
     paste_burst::normalize_paste,
     App, ApprovalKeyOutcome, ComposerMode, Entry, HistoryDirection, InputSubmissionMode,
-    InteractiveModelSelection, InteractiveRuntime, PasteSegment, PickerAction, QueuedPrompt,
-    StreamControl,
+    InteractiveModelSelection, InteractiveRuntime, PasteSegment, QueuedPrompt, StreamControl,
 };
 
 /// What Esc does in the live TUI.
@@ -100,7 +99,7 @@ impl App {
         if self.handle_running_text_input_key(key)? {
             return Ok(false);
         }
-        if self.handle_running_picker_key(key, terminal)? {
+        if self.handle_running_picker_key(key, terminal).await? {
             return Ok(false);
         }
         if self.handle_limits_overlay_key(key, terminal) {
@@ -483,71 +482,6 @@ impl App {
             }
             _ => Ok(false),
         }
-    }
-
-    pub(super) fn submit_picker_selection_during_turn(&mut self) -> anyhow::Result<()> {
-        let Some((action, value)) = self.active_picker_selection() else {
-            self.input_ui.set_composer(ComposerMode::Input);
-            self.set_status("running");
-            return Ok(());
-        };
-
-        let return_picker = self.take_picker_parent_after_selection(action);
-        if !matches!(action, PickerAction::Config) {
-            self.input_ui.set_composer(ComposerMode::Input);
-        }
-        match action {
-            PickerAction::InsertSkillCommand => {
-                self.input_ui
-                    .set_text_and_cursor(format!("/skill:{value}"), self.input_char_len());
-                self.input_ui.set_command_palette_dismissed(true);
-                self.set_status("skill command inserted");
-            }
-            PickerAction::ResumeSession
-            | PickerAction::ManageSessions
-            | PickerAction::SelectTreeNode
-            | PickerAction::SelectRewindCheckpoint
-            | PickerAction::ConfirmRewindCheckpoint
-            | PickerAction::Workflow => {
-                self.set_status(
-                    "workflow and session navigation are unavailable while a model turn is running",
-                );
-            }
-            PickerAction::AttachSubagent => self.submit_attach_selection(&value),
-            PickerAction::Config => self.submit_config_selection_during_turn(&value)?,
-            PickerAction::Dismiss | PickerAction::ViewMcpServers | PickerAction::ViewAgent => {
-                self.set_status("running");
-            }
-            PickerAction::SelectInternalAgentModel | PickerAction::EditAgent => {
-                self.set_status("agent editing is unavailable while a model turn is running");
-            }
-            PickerAction::SelectModel => {
-                self.refresh_available_auths();
-                match self.resolve_model_selection(
-                    &value,
-                    &self.info.runtime.provider,
-                    &self.info.runtime.auth,
-                ) {
-                    Ok(selection) => self.queue_model_selection(selection)?,
-                    Err(err) => {
-                        self.insert_entry(&Entry::Error(err.to_string()));
-                        self.set_status("model switch failed");
-                    }
-                }
-            }
-            PickerAction::SelectTheme => self.submit_theme_selection(&value)?,
-            PickerAction::LoginGroup
-            | PickerAction::LoginProvider
-            | PickerAction::LogoutProvider
-            | PickerAction::SwitchAuthMode
-            | PickerAction::RefreshModelList => {
-                self.set_status("that picker action is unavailable while a model turn is running");
-            }
-        }
-        if let Some((picker, selected_value)) = return_picker {
-            self.open_main_config_picker(selected_value, picker.filter)?;
-        }
-        Ok(())
     }
 
     pub(super) fn submit_config_selection_during_turn(

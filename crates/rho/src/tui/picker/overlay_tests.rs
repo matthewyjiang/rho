@@ -22,6 +22,7 @@ fn sample_picker(detail_a: &str, detail_b: &str) -> UiPicker {
                 }),
                 value: "explorer".into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
             PickerItem {
                 section: None,
@@ -31,6 +32,7 @@ fn sample_picker(detail_a: &str, detail_b: &str) -> UiPicker {
                 badge: None,
                 value: "worker".into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
         ],
         PickerAction::ViewAgent,
@@ -79,7 +81,7 @@ fn detail_badge_rows_never_exceed_narrow_overlay_widths() {
     for width in [8_u16, 12, 18, 24, 36, 48] {
         let frame = render_picker_overlay(&long_badge, Rect::new(0, 0, width, 20));
         for line in &frame.lines {
-            let text_width = super::super::display_width(
+            let text_width = crate::tui::render::display_width(
                 &line
                     .spans
                     .iter()
@@ -174,6 +176,7 @@ fn overflowing_panes_render_scrollbars() {
             badge: None,
             value: format!("agent-{index:02}"),
             selection_verb: None,
+            allow_filter_completion: true,
         })
         .collect();
     let picker =

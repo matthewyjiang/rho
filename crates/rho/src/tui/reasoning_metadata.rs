@@ -1,4 +1,4 @@
-use super::{config_picker, App, ComposerMode, Entry, InteractiveRuntime, PickerAction};
+use super::{config_picker, App, ComposerMode, Entry, InteractiveRuntime};
 use rho_providers::{
     model::{
         models_dev, ModelMetadata, ReasoningCapabilities, ReasoningRequestSource,
@@ -103,7 +103,7 @@ impl App {
         });
         if matches!(
             self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+            ComposerMode::Picker(picker) if picker.is_config()
         ) {
             let config = self
                 .info
