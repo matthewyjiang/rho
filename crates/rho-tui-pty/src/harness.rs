@@ -200,8 +200,11 @@ impl PtyHarness {
 
     /// Wait long enough for paste-burst detection and enter-suppression to settle.
     pub fn settle_input(&mut self) {
-        const SETTLE: Duration = Duration::from_millis(50);
-        let deadline = Instant::now() + SETTLE;
+        self.settle_for(Duration::from_millis(50));
+    }
+
+    fn settle_for(&mut self, duration: Duration) {
+        let deadline = Instant::now() + duration;
         while Instant::now() < deadline {
             let remaining = deadline.saturating_duration_since(Instant::now());
             self.poll(remaining.min(Duration::from_millis(20)));
@@ -473,6 +476,10 @@ impl PtyHarness {
         self.inject_key(&Key::Esc)?;
         self.type_text("/exit")?;
         self.wait_for_text("/exit", WaitTimeout::secs(10, "/exit in composer"))?;
+        // Under runner load the five typed chars arrive as one paste burst.
+        // Rho then suppresses Enter for 120ms, which leaves `/exit` sitting
+        // in the composer. Wait that window out before submitting.
+        self.settle_for(Duration::from_millis(160));
         self.inject_key(&Key::Enter)?;
         self.wait_for_exit(WaitTimeout::secs(15, "exit after /exit"))
     }
