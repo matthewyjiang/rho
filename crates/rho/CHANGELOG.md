@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.2.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.1.0...rho-coding-agent-v2.2.0) (2026-08-28)
+
+
+### Features
+
+* **mcp:** allow opt-in cleartext http for remote servers ([#1072](https://github.com/matthewyjiang/rho/issues/1072)) ([15abb91](https://github.com/matthewyjiang/rho/commit/15abb91d34c257be5f9d0ac841bde112f1b6a81a))
+
 ## [2.1.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.0.0...rho-coding-agent-v2.1.0) (2026-08-27)
 
 
