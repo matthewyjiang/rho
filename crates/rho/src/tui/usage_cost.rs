@@ -290,6 +290,13 @@ pub(super) fn context_fill_percent(tokens: u64, window: u64) -> f64 {
     tokens as f64 * 100.0 / window as f64
 }
 
+/// Share of the inclusive prompt served from provider cache, as a percent.
+pub(super) fn cache_hit_percent(usage: &ModelUsage) -> Option<f64> {
+    let cache_read = usage.cache_read_tokens?;
+    let prompt_tokens = usage.inclusive_prompt_tokens()?;
+    (prompt_tokens > 0).then(|| cache_read as f64 * 100.0 / prompt_tokens as f64)
+}
+
 /// Resolve provider-reported or estimated main-session cost.
 pub(super) fn resolved_usage_cost_usd_micros(
     usage: &ModelUsage,

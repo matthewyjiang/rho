@@ -144,10 +144,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
     )
     .await;
     runtime.shutdown().await;
-    let tui_result = result?;
-    if let Some(session_id) = tui_result.resume_session_id {
-        println!("\nResume this session:\n  rho --resume {session_id}\n");
-    }
+    tui::print_exit_receipt(result?.as_ref())?;
     Ok(())
 }
 

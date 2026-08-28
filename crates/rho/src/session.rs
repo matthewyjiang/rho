@@ -425,6 +425,11 @@ impl Session {
         Self::title_is_set_in_root(&session_root()?, cwd, id_prefix)
     }
 
+    /// Stored title for the resolved session, if any.
+    pub(crate) fn title(cwd: &Path, id_prefix: &str) -> anyhow::Result<Option<String>> {
+        Self::title_in_root(&session_root()?, cwd, id_prefix)
+    }
+
     /// Deletes one exact workspace-scoped session.
     pub fn delete_target(
         target: &SessionTarget,
@@ -497,10 +502,16 @@ impl Session {
         cwd: &Path,
         id_prefix: &str,
     ) -> anyhow::Result<bool> {
+        Ok(Self::title_in_root(session_root, cwd, id_prefix)?.is_some())
+    }
+
+    fn title_in_root(
+        session_root: &Path,
+        cwd: &Path,
+        id_prefix: &str,
+    ) -> anyhow::Result<Option<String>> {
         let resolved = SessionStore::new(session_root, cwd).resolve(id_prefix)?;
-        Ok(SessionStore::new(session_root, &resolved.cwd)
-            .title(&resolved.id)?
-            .is_some())
+        SessionStore::new(session_root, &resolved.cwd).title(&resolved.id)
     }
 
     fn list_in_root(session_root: &Path, cwd: &Path) -> anyhow::Result<Vec<SessionSummary>> {
