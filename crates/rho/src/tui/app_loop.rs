@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, KeyEventKind};
@@ -6,18 +5,9 @@ use ratatui::DefaultTerminal;
 
 use super::{
     media_attach, mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App,
-    BackgroundCounts, ComposerMode, HerdrState, HerdrUserWait, InteractiveRuntime, TuiResult,
+    BackgroundCounts, ComposerMode, ExitReceipt, HerdrState, HerdrUserWait, InteractiveRuntime,
     ViewModelEvent,
 };
-
-pub(super) fn print_exit_summary(summary: Option<&str>) -> std::io::Result<()> {
-    let Some(summary) = summary else {
-        return Ok(());
-    };
-    let mut stdout = std::io::stdout();
-    writeln!(stdout, "{summary}")?;
-    stdout.flush()
-}
 
 impl App {
     fn insert_recovered_history(&mut self) -> std::io::Result<bool> {
@@ -36,7 +26,7 @@ impl App {
         mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<TuiResult> {
+    ) -> anyhow::Result<Option<ExitReceipt>> {
         self.start_model_metadata_fetch(agent);
         self.start_github_pr_fetch();
         let had_recovered_messages = self.insert_recovered_history()?;
@@ -223,10 +213,7 @@ impl App {
             pending.cancel();
             let _ = (&mut pending).await;
         }
-        Ok(TuiResult {
-            resume_session_id: self.info.session.session_id.clone(),
-            exit_summary: self.exit_summary(),
-        })
+        Ok(self.exit_receipt())
     }
 
     pub(super) async fn handle_terminal_event(
@@ -498,11 +485,15 @@ impl App {
         self.usage.cache_stats.reset();
     }
 
-    pub(super) fn exit_summary(&self) -> Option<String> {
-        self.info
-            .session
-            .session_id
-            .as_ref()
-            .map(|session_id| format!("rho session saved: {session_id}"))
+    fn exit_receipt(&self) -> Option<ExitReceipt> {
+        self.info.session.session_id.as_ref().map(|session_id| {
+            ExitReceipt::capture(
+                session_id.clone(),
+                self.session_title(),
+                self.usage.cumulative_usage.as_ref(),
+                self.model_metadata.as_ref(),
+                self.usage.extra_cost_usd_micros(),
+            )
+        })
     }
 }

@@ -76,6 +76,7 @@ mod composer_layout;
 mod custom_provider_login;
 mod during_turn;
 mod exclusive_screen;
+mod exit_receipt;
 mod goal_command;
 mod help_picker;
 mod history_cache;
@@ -403,15 +404,15 @@ pub struct ApplicationServices {
     pub diagnostics: crate::diagnostics::RuntimeDiagnostics,
     pub herdr: HerdrReporter,
 }
-pub struct TuiResult {
-    pub resume_session_id: Option<String>,
-    exit_summary: Option<String>,
-}
 pub(crate) use attachment::{
     run as run_attachment, translate_run_event, AttachmentDisplaySettings,
 };
+pub(crate) use exit_receipt::{print_exit_receipt, ExitReceipt};
 
-pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::Result<TuiResult> {
+pub(crate) async fn run(
+    agent: &mut InteractiveRuntime,
+    info: TuiBootstrap,
+) -> anyhow::Result<Option<ExitReceipt>> {
     let mut terminal = ratatui::init();
     Theme::initialize_from_terminal();
     Theme::apply_committed(&info.services.theme);
@@ -467,9 +468,6 @@ pub async fn run(agent: &mut InteractiveRuntime, info: TuiBootstrap) -> anyhow::
     };
     herdr.release().await;
     ratatui::restore();
-    if let Ok(result) = &result {
-        app_loop::print_exit_summary(result.exit_summary.as_deref())?;
-    }
     result
 }
 

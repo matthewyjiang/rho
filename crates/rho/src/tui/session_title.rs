@@ -98,6 +98,14 @@ pub(super) fn sanitize_session_title(title: &str) -> Option<String> {
 }
 
 impl App {
+    /// Stored title for the current session, if the store has one.
+    pub(super) fn session_title(&self) -> Option<String> {
+        let session_id = self.info.session.session_id.as_deref()?;
+        Session::title(&self.info.runtime.cwd, session_id)
+            .ok()
+            .flatten()
+    }
+
     pub(super) fn poll_pending_session_title(&mut self) -> anyhow::Result<bool> {
         let Some(future) = self.pending_session_title.as_mut() else {
             return Ok(false);

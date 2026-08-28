@@ -7,8 +7,9 @@ use super::{
     command_block::CommandBlock,
     model_performance::ModelPerformanceSummary,
     usage_cost::{
-        context_fill_percent, display_input_tokens, format_usd, resolved_context_window,
-        resolved_usage_cost_usd_micros, session_total_cost_usd_micros, CostSource,
+        cache_hit_percent, context_fill_percent, display_input_tokens, format_usd,
+        resolved_context_window, resolved_usage_cost_usd_micros, session_total_cost_usd_micros,
+        CostSource,
     },
     workspace::git_branch,
     App, Entry,
@@ -332,12 +333,6 @@ fn push_optional_number(block: &mut CommandBlock, label: &str, value: Option<u64
     if let Some(value) = value {
         block.push_field(label, &format_number(value));
     }
-}
-
-fn cache_hit_percent(usage: &ModelUsage) -> Option<f64> {
-    let cache_read = usage.cache_read_tokens?;
-    let prompt_tokens = usage.inclusive_prompt_tokens()?;
-    (prompt_tokens > 0).then(|| cache_read as f64 * 100.0 / prompt_tokens as f64)
 }
 
 /// Single cache-hit line covering session and latest-request rates.
