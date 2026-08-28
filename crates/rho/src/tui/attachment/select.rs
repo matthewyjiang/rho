@@ -5,8 +5,8 @@ use ratatui::{widgets::Clear, DefaultTerminal, Frame};
 
 use super::super::{
     attach_picker::{self, AttachCandidate, WorkspaceRunFilter},
-    picker_input::{apply_picker_key, overlay_scroll_targets, PickerKeyEffect},
-    picker_overlay::picker_overlay_frame,
+    picker::picker_overlay_frame,
+    picker::{apply_picker_key, overlay_scroll_targets, PickerKeyEffect},
     Theme, UiPicker,
 };
 

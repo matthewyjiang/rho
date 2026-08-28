@@ -4,22 +4,22 @@
 //! stays at call sites. This module only draws a bordered overlay with a
 //! navigation list and an optional independently scrollable detail pane.
 //! Detail presence is derived from item data, not a separate layout mode.
-//! Every measurement comes from [`super::picker_overlay_layout`].
+//! Every measurement comes from [`super::overlay_layout`].
 
 use ratatui::{
     layout::{Position, Rect},
     text::{Line, Span},
 };
 
-pub(super) use super::picker_overlay_layout::clamp_overlay_scroll as clamp_detail_scroll;
-use super::picker_overlay_layout::{
+pub(in crate::tui) use super::overlay_layout::clamp_overlay_scroll as clamp_detail_scroll;
+use super::overlay_layout::{
     picker_overlay_layout, OverlayLayout, OverlayOrientation, OverlayPanes, OverlayScrollbarState,
     BOTTOM_BORDER_ROWS, FOOTER_CHROME_ROWS, HEADER_CHROME_ROWS, SEPARATOR,
 };
-use super::render::wrap_line_at_whitespace;
-use super::{
-    display_width, styled_line, truncate_one_line, LineFill, PickerBadge, PickerBadgePlacement,
-    PickerItem, Theme, UiPicker,
+use super::{PickerBadge, PickerBadgePlacement, PickerItem, UiPicker};
+use crate::tui::{
+    render::{display_width, styled_line, truncate_one_line, wrap_line_at_whitespace, LineFill},
+    theme::Theme,
 };
 
 const FILTER_PREFIX: &str = " Search  > ";
@@ -28,18 +28,18 @@ const DEFAULT_DETAIL_LABEL: &str = " DETAILS";
 const DEFAULT_NAV_KEYS_HINT: &str = "↑↓ items";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(super) struct OverlayChrome {
-    pub(super) nav_label: String,
+pub(in crate::tui) struct OverlayChrome {
+    pub(in crate::tui) nav_label: String,
     /// Only used when the overlay has a detail pane.
-    pub(super) detail_label: Option<String>,
-    pub(super) nav_keys_hint: String,
+    pub(in crate::tui) detail_label: Option<String>,
+    pub(in crate::tui) nav_keys_hint: String,
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct OverlayFrame {
-    pub(super) outer: Rect,
-    pub(super) lines: Vec<Line<'static>>,
-    pub(super) cursor: Position,
+pub(in crate::tui) struct OverlayFrame {
+    pub(in crate::tui) outer: Rect,
+    pub(in crate::tui) lines: Vec<Line<'static>>,
+    pub(in crate::tui) cursor: Position,
 }
 
 struct OverlayChromeView<'a> {
@@ -69,13 +69,13 @@ struct OverlayContent<'a> {
     chrome: OverlayChromeView<'a>,
 }
 
-pub(super) fn picker_overlay_frame(picker: &UiPicker, area: Rect) -> Option<OverlayFrame> {
+pub(in crate::tui) fn picker_overlay_frame(picker: &UiPicker, area: Rect) -> Option<OverlayFrame> {
     picker
         .is_overlay()
         .then(|| render_picker_overlay(picker, area))
 }
 
-pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFrame {
+pub(in crate::tui) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFrame {
     let layout = picker_overlay_layout(area, picker.overlay_sizing());
     // Own footer and wrap detail before matching indices so temporary match
     // cache borrows from footer/detail helpers do not overlap.
@@ -129,11 +129,11 @@ pub(super) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> OverlayFra
     }
 }
 
-pub(super) fn overlay_detail_lines(detail: &str, detail_width: usize) -> Vec<String> {
+pub(in crate::tui) fn overlay_detail_lines(detail: &str, detail_width: usize) -> Vec<String> {
     detail_wrapped_lines(detail, detail_width.max(1))
 }
 
-pub(super) fn filter_cursor_x(filter: &str, inner_width: usize) -> u16 {
+pub(in crate::tui) fn filter_cursor_x(filter: &str, inner_width: usize) -> u16 {
     display_width(FILTER_PREFIX)
         .saturating_add(display_width(filter))
         .min(inner_width.saturating_sub(1)) as u16
@@ -301,17 +301,17 @@ fn nav_item_rows(
         return rows;
     }
 
-    let total_rows = super::picker_rows::picker_row_count(content.items, content.matching);
+    let total_rows = super::rows::picker_row_count(content.items, content.matching);
     let scrollbar =
         OverlayScrollbarState::nav(width, total_rows, viewport_rows, content.nav_window_start);
     let content_width = width.saturating_sub(usize::from(scrollbar.is_some()));
-    let rows = super::picker_rows::picker_item_rows(
+    let rows = super::rows::picker_item_rows(
         content.items,
         content.matching,
         content.selected,
-        super::picker_rows::RowLayout {
+        super::rows::RowLayout {
             width: content_width,
-            width_mode: super::picker_rows::RowWidthMode::FillPane,
+            width_mode: super::rows::RowWidthMode::FillPane,
             show_badges: content.show_nav_badges,
             show_preview: false,
             fill: LineFill::PadToWidth,
@@ -338,14 +338,17 @@ fn nav_item_rows(
 fn append_scrollbar_column(rows: &mut [Line<'static>], scrollbar: OverlayScrollbarState) {
     let thumb = scrollbar.thumb();
     for (row, line) in rows.iter_mut().enumerate() {
-        line.spans
-            .push(super::scrollbar::track_span(thumb, row, Theme::accent()));
+        line.spans.push(crate::tui::scrollbar::track_span(
+            thumb,
+            row,
+            Theme::accent(),
+        ));
     }
 }
 
 const DETAIL_BADGE_ROWS: usize = 2;
 
-pub(super) fn detail_content_line_count(detail_lines: usize, has_badge: bool) -> usize {
+pub(in crate::tui) fn detail_content_line_count(detail_lines: usize, has_badge: bool) -> usize {
     detail_lines.saturating_add(usize::from(has_badge) * DETAIL_BADGE_ROWS)
 }
 
@@ -357,7 +360,7 @@ fn detail_badge_row(badge: &PickerBadge, width: usize) -> Line<'static> {
         // Extremely narrow panes: drop the label and keep a truncated badge.
         return Line::from(Span::styled(
             pad_text(&badge.text, width),
-            super::picker_rows::picker_badge_style(badge.tone),
+            super::rows::picker_badge_style(badge.tone),
         ));
     }
     let badge_budget = width.saturating_sub(label_width);
@@ -365,10 +368,7 @@ fn detail_badge_row(badge: &PickerBadge, width: usize) -> Line<'static> {
     let used_width = label_width.saturating_add(display_width(&badge_text));
     Line::from(vec![
         Span::styled(label.to_string(), Theme::dim()),
-        Span::styled(
-            badge_text,
-            super::picker_rows::picker_badge_style(badge.tone),
-        ),
+        Span::styled(badge_text, super::rows::picker_badge_style(badge.tone)),
         Span::raw(" ".repeat(width.saturating_sub(used_width))),
     ])
 }
@@ -581,7 +581,10 @@ fn fit_overlay_footer(
 }
 
 fn join_footer_segments<'a>(segments: impl IntoIterator<Item = &'a str>) -> String {
-    format!(" {}", super::composer_chrome::join_footer_parts(segments))
+    format!(
+        " {}",
+        crate::tui::composer_chrome::join_footer_parts(segments)
+    )
 }
 
 fn pane_header_line(
@@ -737,5 +740,5 @@ fn pad_text(text: &str, width: usize) -> String {
 }
 
 #[cfg(test)]
-#[path = "picker_overlay_tests.rs"]
+#[path = "overlay_tests.rs"]
 mod tests;

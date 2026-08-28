@@ -1,4 +1,4 @@
-use super::{theme::Theme, theme_picker, App, ComposerMode, Entry, PickerAction, UiPicker};
+use super::{theme::Theme, theme_picker, App, ComposerMode, Entry, UiPicker};
 
 impl App {
     pub(super) fn open_theme_picker(&mut self) -> anyhow::Result<()> {
@@ -33,7 +33,7 @@ impl App {
         let ComposerMode::Picker(picker) = self.input_ui.composer() else {
             return;
         };
-        if picker.action != PickerAction::SelectTheme {
+        if !picker.is_theme() {
             return;
         }
         let Some(item) = picker.selected_item() else {
@@ -45,11 +45,9 @@ impl App {
     }
 
     /// Leave the theme picker without applying: restore committed colors.
-    pub(super) fn cancel_theme_preview_if_leaving(&self, action: PickerAction) {
-        if action == PickerAction::SelectTheme {
-            Theme::cancel_preview();
-            Theme::clear_picker_catalog();
-        }
+    pub(super) fn cancel_theme_preview(&self) {
+        Theme::cancel_preview();
+        Theme::clear_picker_catalog();
     }
 
     pub(super) fn submit_theme_selection(&mut self, value: &str) -> anyhow::Result<()> {

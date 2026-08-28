@@ -5,7 +5,7 @@ use rho_providers::model::favorites::{CycleDirection, CycleOutcome};
 
 use super::{
     catalog, favorites, model_picker, App, ComposerMode, Entry, InteractiveModelSelection,
-    InteractiveRuntime, PickerAction, UiPicker,
+    InteractiveRuntime, UiPicker,
 };
 
 /// What a composer pin cycle resolved to.
@@ -62,35 +62,20 @@ impl App {
     /// Rebuilds the open model picker in place, keeping filter, cursor, and
     /// parent. `None` when no model picker is open.
     fn rebuilt_model_picker(&mut self, selected_value: &str, filter: String) -> Option<UiPicker> {
-        let (action, _) = self.active_picker_selection()?;
-        let mut picker = match action {
-            PickerAction::SelectModel if self.is_provider_turn_ui() => {
+        let conversation = match self.input_ui.composer() {
+            ComposerMode::Picker(picker) if picker.is_conversation_model() => true,
+            ComposerMode::Picker(picker) if picker.is_internal_agent_model() => false,
+            _ => return None,
+        };
+        let mut picker = if conversation {
+            if self.is_provider_turn_ui() {
                 self.conversation_model_picker_during_run()
+            } else {
+                self.conversation_model_picker()
             }
-            PickerAction::SelectModel => self.conversation_model_picker(),
-            PickerAction::SelectInternalAgentModel => {
-                let target = self.internal_agent_model_target.clone()?;
-                self.internal_agent_model_picker(&target.id, target.origin)
-            }
-            PickerAction::LoginGroup
-            | PickerAction::LoginProvider
-            | PickerAction::LogoutProvider
-            | PickerAction::SwitchAuthMode
-            | PickerAction::RefreshModelList
-            | PickerAction::InsertSkillCommand
-            | PickerAction::ViewAgent
-            | PickerAction::ResumeSession
-            | PickerAction::ManageSessions
-            | PickerAction::SelectTreeNode
-            | PickerAction::SelectRewindCheckpoint
-            | PickerAction::ConfirmRewindCheckpoint
-            | PickerAction::Config
-            | PickerAction::SelectTheme
-            | PickerAction::EditAgent
-            | PickerAction::Workflow
-            | PickerAction::AttachSubagent
-            | PickerAction::Dismiss
-            | PickerAction::ViewMcpServers => return None,
+        } else {
+            let target = self.internal_agent_model_target.clone()?;
+            self.internal_agent_model_picker(&target.id, target.origin)
         };
         // Taken last: the arms above can bail, and dropping the parent on a
         // rebuild that never happens would strand the user's way back.
@@ -112,19 +97,19 @@ impl App {
     }
 
     pub(super) fn toggle_model_picker_scope(&mut self) -> anyhow::Result<()> {
-        let Some((action, value)) = self.active_picker_selection() else {
-            return Ok(());
+        let (value, filter) = match self.input_ui.composer() {
+            ComposerMode::Picker(picker) if picker.is_model_list() => (
+                picker
+                    .selected_item()
+                    .map(|item| item.value.clone())
+                    .unwrap_or_default(),
+                picker.filter.clone(),
+            ),
+            _ => return Ok(()),
         };
-        if !matches!(
-            action,
-            PickerAction::SelectModel | PickerAction::SelectInternalAgentModel
-        ) {
+        if value.is_empty() {
             return Ok(());
         }
-        let filter = match self.input_ui.composer() {
-            ComposerMode::Picker(picker) => picker.filter.clone(),
-            _ => String::new(),
-        };
         self.refresh_available_auths();
         let current = self.resolved_model_picker_scope();
         let next = current.other();

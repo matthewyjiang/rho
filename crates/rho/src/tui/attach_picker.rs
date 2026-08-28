@@ -8,8 +8,8 @@ use crate::subagent::{self, RunState, RunningRun};
 use crate::title::activity_label;
 
 use super::{
-    picker_overlay::OverlayChrome, App, ComposerMode, PickerAction, PickerBadge, PickerBadgeTone,
-    PickerItem, PickerLayout, UiPicker,
+    picker::OverlayChrome, App, ComposerMode, PickerBadge, PickerBadgeTone, PickerItem,
+    PickerLayout, UiPicker,
 };
 
 const RUNNING_ONLY_KEYS_HINT: &str = "↑↓ runs · Ctrl-R show finished";
@@ -141,7 +141,7 @@ pub(super) fn picker(candidates: &[AttachCandidate], filter: WorkspaceRunFilter)
         .map(candidate_item)
         .collect();
     let running_only = matches!(filter, WorkspaceRunFilter::RunningOnly);
-    UiPicker::new("attach subagent", items, PickerAction::AttachSubagent)
+    UiPicker::attach_subagent("attach subagent", items)
         .with_layout(PickerLayout::Overlay)
         .with_badge_placement(super::PickerBadgePlacement::Navigation)
         .with_overlay_chrome(OverlayChrome {
@@ -202,7 +202,7 @@ impl App {
         let ComposerMode::Picker(picker) = self.input_ui.composer() else {
             return false;
         };
-        if picker.action != PickerAction::AttachSubagent || !is_running_filter_toggle(key) {
+        if !picker.is_attach_subagent() || !is_running_filter_toggle(key) {
             return false;
         }
         self.attach_run_filter = self.attach_run_filter.toggled();
@@ -214,7 +214,7 @@ impl App {
         let ComposerMode::Picker(open) = self.input_ui.composer() else {
             return;
         };
-        if open.action != PickerAction::AttachSubagent {
+        if !open.is_attach_subagent() {
             return;
         }
         let cursor = open.cursor();

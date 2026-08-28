@@ -4,12 +4,12 @@ use ratatui::layout::Rect;
 
 use super::{
     super::{
-        picker_overlay_layout::picker_overlay_layout, tests::test_app, ComposerMode, PickerAction,
-        PickerItem, PickerKeyHints, UiPicker,
+        overlay_layout::picker_overlay_layout, PickerAction, PickerItem, PickerKeyHints, UiPicker,
     },
     apply_picker_key, OverlayScrollTargets, OverlayScrollbarDrag, PickerKeyEffect,
     PickerMouseEvent,
 };
+use crate::tui::{tests::test_app, ComposerMode};
 
 fn keys() -> crate::keybindings::Keybindings {
     crate::keybindings::Keybindings::default()
@@ -177,7 +177,7 @@ fn overlay_picker_with_detail() -> UiPicker {
 fn detail_targets() -> Option<OverlayScrollTargets> {
     Some(OverlayScrollTargets {
         nav_rows: 10,
-        detail: Some(super::super::picker_overlay_layout::DetailViewport { width: 40, rows: 5 }),
+        detail: Some(super::super::overlay_layout::DetailViewport { width: 40, rows: 5 }),
     })
 }
 

@@ -7,8 +7,8 @@ use {
 };
 
 use super::{
-    picker_overlay::OverlayChrome, PickerAction, PickerBadge, PickerBadgePlacement,
-    PickerBadgeTone, PickerItem, PickerLayout, UiPicker,
+    picker::OverlayChrome, PickerBadge, PickerBadgePlacement, PickerBadgeTone, PickerItem,
+    PickerLayout, UiPicker,
 };
 use crate::claude_runtime::auth::ClaudeProbeSnapshot;
 use crate::clipboard::doctor_report as clipboard_doctor_report;
@@ -74,10 +74,9 @@ pub(super) fn picker(context: DoctorContext<'_>) -> UiPicker {
     checks.extend(misc_checks(&context));
     checks.sort_by_key(|check| check.section.order());
 
-    UiPicker::new(
+    UiPicker::dismiss(
         "Doctor diagnostics",
         checks.into_iter().map(PickerItem::from).collect(),
-        PickerAction::Dismiss,
     )
     .with_layout(PickerLayout::Overlay)
     .with_badge_placement(PickerBadgePlacement::Detail)

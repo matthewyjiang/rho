@@ -1,7 +1,4 @@
-use super::{
-    PickerAction, PickerBadge, PickerBadgeTone, PickerItem, PickerKeyHints, RuntimeModelView,
-    UiPicker,
-};
+use super::{PickerBadge, PickerBadgeTone, PickerItem, PickerKeyHints, RuntimeModelView, UiPicker};
 use crate::claude_runtime::models as claude_models;
 use crate::config::CLAUDE_CLI_RUNTIME_KEY;
 use crate::keybindings::Keybindings;
@@ -87,7 +84,7 @@ pub(super) fn model_picker(
         },
         &info.favorite_models,
         available_auths,
-        PickerAction::SelectModel,
+        /*internal_agent*/ false,
         scope,
         &info.keybindings,
     )
@@ -117,7 +114,7 @@ pub(super) fn model_picker_during_run(
         },
         &info.favorite_models,
         available_auths,
-        PickerAction::SelectModel,
+        /*internal_agent*/ false,
         scope,
         &info.keybindings,
     )
@@ -251,7 +248,7 @@ pub(super) fn internal_agent_model_picker(inputs: InternalAgentPickerInputs<'_>)
         },
         favorite_models,
         available_auths,
-        PickerAction::SelectInternalAgentModel,
+        /*internal_agent*/ true,
         scope,
         keybindings,
     );
@@ -359,7 +356,7 @@ fn model_picker_for_current(
     current: CurrentModel<'_>,
     favorite_models: &[String],
     available_auths: &[String],
-    action: PickerAction,
+    internal_agent: bool,
     scope: ModelPickerScope,
     keybindings: &Keybindings,
 ) -> UiPicker {
@@ -414,11 +411,12 @@ fn model_picker_for_current(
         })
         .collect::<Vec<_>>();
 
-    let mut picker = UiPicker::new(
-        format!("{title} · {}", effective_scope.title_suffix()),
-        catalog_items,
-        action,
-    )
+    let title = format!("{title} · {}", effective_scope.title_suffix());
+    let mut picker = if internal_agent {
+        UiPicker::internal_agent_models(title, catalog_items)
+    } else {
+        UiPicker::models(title, catalog_items)
+    }
     .with_key_hints(PickerKeyHints {
         pin_toggle: Some(pin_key),
         scope_toggle: Some(scope_key),

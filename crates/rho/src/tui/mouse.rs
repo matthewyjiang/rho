@@ -10,7 +10,7 @@ use ratatui::{
 use super::{
     copy_interaction::{selection_position, selection_position_clamped},
     paste_burst::word_range_at,
-    picker_input::PickerMouseEvent,
+    picker::PickerMouseEvent,
     text_selection::{screen_lines, CopyNotice, TextSelection},
     tool_card_hover::{ToolCardHit, ToolCardTarget},
     tool_output_ui::expandable_tool_entry,

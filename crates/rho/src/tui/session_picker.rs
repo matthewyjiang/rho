@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::{PickerAction, PickerItem, UiPicker};
+use super::{PickerItem, UiPicker};
 use crate::session::SessionSummary;
 
 pub(super) fn session_picker(
@@ -8,14 +8,13 @@ pub(super) fn session_picker(
     current_session_id: Option<&str>,
 ) -> UiPicker {
     let now = now_unix_secs();
-    UiPicker::new(
+    UiPicker::resume_session(
         "Resume session",
         sessions
             .into_iter()
             .filter(|session| current_session_id != Some(session.id.as_str()))
             .map(|session| session_item(session, now))
             .collect(),
-        PickerAction::ResumeSession,
     )
     .with_key_hints(super::PickerKeyHints {
         tab_complete: true,

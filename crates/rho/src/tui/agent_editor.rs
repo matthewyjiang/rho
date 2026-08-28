@@ -1,7 +1,7 @@
 //! In-TUI editor for user-defined agent definitions.
 //!
-//! Enter on a RhoHome/Project agent opens a field editor. One [`PickerAction::EditAgent`]
-//! action covers the field list, choice sub-pickers, and model picker; session phase
+//! Enter on a RhoHome/Project agent opens a field editor. One edit-agent picker
+//! covers the field list, choice sub-pickers, and model picker; session phase
 //! decides how the selected value is interpreted. Save serializes through the agent
 //! crate helpers.
 
@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 use anyhow::anyhow;
 
 use super::{
-    agent_picker::AgentModelView, picker_overlay::OverlayChrome, render::truncate_one_line,
-    text_input::AgentField, App, ComposerMode, Entry, PickerAction, PickerBadge, PickerBadgeTone,
-    PickerItem, PickerLayout, RuntimeModelView, UiPicker,
+    agent_picker::AgentModelView, picker::OverlayChrome, render::truncate_one_line,
+    text_input::AgentField, App, ComposerMode, Entry, PickerBadge, PickerBadgeTone, PickerItem,
+    PickerLayout, RuntimeModelView, UiPicker,
 };
 
 use crate::agent::{
@@ -366,18 +366,14 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
         AGENT_FIELD_CANCEL,
     ));
 
-    UiPicker::new(
-        format!("edit agent {}", draft.id),
-        items,
-        PickerAction::EditAgent,
-    )
-    .with_layout(PickerLayout::Overlay)
-    .with_confirm_verb("edit")
-    .with_overlay_chrome(OverlayChrome {
-        nav_label: " EDIT AGENT".into(),
-        detail_label: Some(" DETAILS".into()),
-        nav_keys_hint: "↑↓ fields".into(),
-    })
+    UiPicker::edit_agent(format!("edit agent {}", draft.id), items)
+        .with_layout(PickerLayout::Overlay)
+        .with_confirm_verb("edit")
+        .with_overlay_chrome(OverlayChrome {
+            nav_label: " EDIT AGENT".into(),
+            detail_label: Some(" DETAILS".into()),
+            nav_keys_hint: "↑↓ fields".into(),
+        })
 }
 
 /// Badge for the Claude model row. Unset reads as the Claude Code default
@@ -561,7 +557,7 @@ fn agent_choice_picker(
             )
         }
     };
-    UiPicker::new(title, items, PickerAction::EditAgent).with_confirm_verb("set")
+    UiPicker::edit_agent(title, items).with_confirm_verb("set")
 }
 
 fn auth_choice_picker(draft: &AgentDefinition, available_auths: &[String]) -> UiPicker {
@@ -612,7 +608,7 @@ fn auth_choice_picker(draft: &AgentDefinition, available_auths: &[String]) -> Ui
             selection_verb: None,
         }
     }));
-    UiPicker::new("auth", items, PickerAction::EditAgent).with_confirm_verb("set")
+    UiPicker::edit_agent("auth", items).with_confirm_verb("set")
 }
 
 fn choice_items(options: &[(&str, &str)], current: &str, value_prefix: &str) -> Vec<PickerItem> {

@@ -3,25 +3,21 @@ use ratatui::DefaultTerminal;
 use crate::session::tree::{NodeId, SessionTreeItem};
 
 use super::{
-    picker_overlay::OverlayChrome, App, ComposerMode, InteractiveRuntime, PickerAction,
-    PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, UiPicker, ViewModelEvent,
+    picker::OverlayChrome, App, ComposerMode, InteractiveRuntime, PickerBadge, PickerBadgeTone,
+    PickerItem, PickerLayout, UiPicker, ViewModelEvent,
 };
 
 pub(super) fn tree_picker(items: Vec<SessionTreeItem>) -> UiPicker {
     let selected = items.iter().position(|item| item.active).unwrap_or(0);
     let picker_items = items.into_iter().map(tree_item).collect();
-    let mut picker = UiPicker::new(
-        "Conversation tree",
-        picker_items,
-        PickerAction::SelectTreeNode,
-    )
-    .with_layout(PickerLayout::Overlay)
-    .with_overlay_chrome(OverlayChrome {
-        nav_label: " TREE".into(),
-        detail_label: None,
-        nav_keys_hint: "↑↓ turns".into(),
-    })
-    .with_confirm_verb("restore");
+    let mut picker = UiPicker::tree("Conversation tree", picker_items)
+        .with_layout(PickerLayout::Overlay)
+        .with_overlay_chrome(OverlayChrome {
+            nav_label: " TREE".into(),
+            detail_label: None,
+            nav_keys_hint: "↑↓ turns".into(),
+        })
+        .with_confirm_verb("restore");
     picker.selected = selected;
     picker
 }

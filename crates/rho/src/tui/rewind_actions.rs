@@ -13,8 +13,8 @@ use crate::{
 };
 
 use super::{
-    picker_overlay::OverlayChrome, App, ComposerMode, Entry, InteractiveRuntime, PickerAction,
-    PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, UiPicker,
+    picker::OverlayChrome, App, ComposerMode, Entry, InteractiveRuntime, PickerBadge,
+    PickerBadgeTone, PickerItem, PickerLayout, UiPicker,
 };
 
 impl App {
@@ -87,18 +87,14 @@ impl App {
                 }
             })
             .collect();
-        let picker = UiPicker::new(
-            "Workspace rewind",
-            items,
-            PickerAction::SelectRewindCheckpoint,
-        )
-        .with_layout(PickerLayout::Overlay)
-        .with_overlay_chrome(OverlayChrome {
-            nav_label: " REWIND".into(),
-            detail_label: Some("CHECKPOINT".into()),
-            nav_keys_hint: "↑↓ turns".into(),
-        })
-        .with_confirm_verb("preview");
+        let picker = UiPicker::rewind_checkpoint("Workspace rewind", items)
+            .with_layout(PickerLayout::Overlay)
+            .with_overlay_chrome(OverlayChrome {
+                nav_label: " REWIND".into(),
+                detail_label: Some("CHECKPOINT".into()),
+                nav_keys_hint: "↑↓ turns".into(),
+            })
+            .with_confirm_verb("preview");
         self.input_ui.set_composer(ComposerMode::Picker(picker));
         self.set_status("select workspace checkpoint");
         Ok(())
@@ -142,18 +138,14 @@ impl App {
             value: value.to_string(),
             selection_verb: None,
         };
-        let picker = UiPicker::new(
-            "Confirm workspace rewind",
-            vec![item],
-            PickerAction::ConfirmRewindCheckpoint,
-        )
-        .with_layout(PickerLayout::Overlay)
-        .with_overlay_chrome(OverlayChrome {
-            nav_label: " CONFIRM".into(),
-            detail_label: Some("RESTORE PREVIEW".into()),
-            nav_keys_hint: "Esc cancel".into(),
-        })
-        .with_confirm_verb("rewind");
+        let picker = UiPicker::confirm_rewind("Confirm workspace rewind", vec![item])
+            .with_layout(PickerLayout::Overlay)
+            .with_overlay_chrome(OverlayChrome {
+                nav_label: " CONFIRM".into(),
+                detail_label: Some("RESTORE PREVIEW".into()),
+                nav_keys_hint: "Esc cancel".into(),
+            })
+            .with_confirm_verb("rewind");
         self.input_ui.set_composer(ComposerMode::Picker(picker));
         self.set_status("confirm workspace rewind");
         Ok(())

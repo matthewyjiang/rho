@@ -39,16 +39,15 @@ impl UiPicker {
     /// when the selection leaves the window.
     pub(in crate::tui) fn nav_window_start(&self, viewport_rows: usize) -> usize {
         let matching = self.matching_indices();
-        let total = super::super::picker_rows::picker_row_count(&self.items, &matching);
+        let total = super::rows::picker_row_count(&self.items, &matching);
         let viewport_rows = viewport_rows.max(1);
         let max_start = total.saturating_sub(viewport_rows);
         let base = self.nav_scroll.min(max_start);
         if !self.nav_follows_selection {
             return base;
         }
-        let selected_row =
-            super::super::picker_rows::selected_row_index(&self.items, &matching, self.selected);
-        let lowest = super::super::picker_rows::scroll_window_start(selected_row, viewport_rows);
+        let selected_row = super::rows::selected_row_index(&self.items, &matching, self.selected);
+        let lowest = super::rows::scroll_window_start(selected_row, viewport_rows);
         let highest = selected_row.min(max_start);
         base.clamp(lowest.min(highest), highest)
     }
@@ -58,7 +57,7 @@ impl UiPicker {
         let current = self.nav_window_start(viewport_rows);
         let max_start = {
             let matching = self.matching_indices();
-            super::super::picker_rows::picker_row_count(&self.items, &matching)
+            super::rows::picker_row_count(&self.items, &matching)
                 .saturating_sub(viewport_rows.max(1))
         };
         self.nav_scroll = current.saturating_add_signed(delta).min(max_start);
@@ -69,7 +68,7 @@ impl UiPicker {
     pub(in crate::tui) fn scroll_nav_to(&mut self, top_line: usize, viewport_rows: usize) {
         let max_start = {
             let matching = self.matching_indices();
-            super::super::picker_rows::picker_row_count(&self.items, &matching)
+            super::rows::picker_row_count(&self.items, &matching)
                 .saturating_sub(viewport_rows.max(1))
         };
         self.nav_scroll = top_line.min(max_start);
@@ -100,7 +99,7 @@ impl UiPicker {
     /// Item index shown at a row-space nav row, skipping section headers.
     pub(in crate::tui) fn nav_item_at_row(&self, row_index: usize) -> Option<usize> {
         let matching = self.matching_indices();
-        super::super::picker_rows::item_index_at_row(&self.items, &matching, row_index)
+        super::rows::item_index_at_row(&self.items, &matching, row_index)
     }
 
     /// Select the item at a row-space nav row (mouse click).
@@ -124,12 +123,10 @@ impl UiPicker {
     }
 
     /// Content hints the overlay uses to size its outer box.
-    pub(in crate::tui) fn overlay_sizing(
-        &self,
-    ) -> super::super::picker_overlay_layout::OverlaySizing {
-        super::super::picker_overlay_layout::OverlaySizing {
+    pub(in crate::tui) fn overlay_sizing(&self) -> super::overlay_layout::OverlaySizing {
+        super::overlay_layout::OverlaySizing {
             has_details: self.has_item_details(),
-            nav_rows: super::super::picker_rows::rows(&self.items, 0..self.items.len()).count(),
+            nav_rows: super::rows::rows(&self.items, 0..self.items.len()).count(),
         }
     }
 }

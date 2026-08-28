@@ -5,9 +5,9 @@ use std::{cmp::Reverse, collections::BTreeMap, str::FromStr};
 use ratatui::DefaultTerminal;
 
 use super::{
-    picker_overlay::OverlayChrome, workflow_discover, App, ComposerMode, Entry, InlineChoice,
-    InlineChoiceModal, InlineChoiceOption, InlineChoicePending, PickerAction, PickerBadge,
-    PickerBadgeTone, PickerItem, PickerLayout, UiPicker,
+    picker::OverlayChrome, workflow_discover, App, ComposerMode, Entry, InlineChoice,
+    InlineChoiceModal, InlineChoiceOption, InlineChoicePending, PickerBadge, PickerBadgeTone,
+    PickerItem, PickerLayout, UiPicker,
 };
 use crate::{
     agent::AgentCapabilities,
@@ -205,7 +205,7 @@ pub(super) fn hub_picker(
         }
     }
 
-    UiPicker::new("Workflows", items, PickerAction::Workflow)
+    UiPicker::workflow("Workflows", items)
         .with_key_hints(super::PickerKeyHints {
             tab_complete: false,
             row_delete: true,
@@ -382,7 +382,7 @@ impl App {
 
     fn selected_workflow_value(&self) -> Option<String> {
         match self.input_ui.composer() {
-            ComposerMode::Picker(picker) if picker.action == PickerAction::Workflow => {
+            ComposerMode::Picker(picker) if picker.is_workflow() => {
                 picker.selected_item().map(|item| item.value.clone())
             }
             _ => None,

@@ -1,13 +1,13 @@
 use crate::keybindings::Keybindings;
 
 use super::{
-    picker_overlay::OverlayChrome, App, ComposerMode, PickerAction, PickerBadge, PickerBadgeTone,
-    PickerItem, PickerLayout, UiPicker,
+    picker::OverlayChrome, App, ComposerMode, PickerBadge, PickerBadgeTone, PickerItem,
+    PickerLayout, UiPicker,
 };
 
 pub(super) fn help_picker(keybindings: &Keybindings) -> UiPicker {
     let items = help_items(keybindings);
-    UiPicker::new("Keyboard shortcuts", items, PickerAction::Dismiss)
+    UiPicker::dismiss("Keyboard shortcuts", items)
         .with_layout(PickerLayout::Overlay)
         .with_overlay_chrome(OverlayChrome {
             nav_label: " KEYS".into(),

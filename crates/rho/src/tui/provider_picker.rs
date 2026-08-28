@@ -1,6 +1,4 @@
-use super::{
-    sort_items_by_ascii_label, PickerAction, PickerBadge, PickerBadgeTone, PickerItem, UiPicker,
-};
+use super::{sort_items_by_ascii_label, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use rho_providers::{
     auth::login_dispatch::ProviderAuthentication,
     credentials::{CredentialError, CredentialStore},
@@ -33,13 +31,11 @@ pub(super) fn login_group_picker() -> UiPicker {
         .collect::<Vec<_>>();
     items.extend(super::custom_provider_login::login_group_items());
     sort_items_by_ascii_label(&mut items);
-    UiPicker::new("Select provider to login", items, PickerAction::LoginGroup).with_key_hints(
-        super::PickerKeyHints {
-            tab_complete: true,
-            row_delete: false,
-            ..Default::default()
-        },
-    )
+    UiPicker::login_group("Select provider to login", items).with_key_hints(super::PickerKeyHints {
+        tab_complete: true,
+        row_delete: false,
+        ..Default::default()
+    })
 }
 
 /// Resolve whether a login group continues directly or opens a method picker.
@@ -86,7 +82,7 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
                 selection_verb: None,
             }),
     );
-    UiPicker::new(title, items, PickerAction::LoginProvider).with_key_hints(super::PickerKeyHints {
+    UiPicker::login_provider(title, items).with_key_hints(super::PickerKeyHints {
         tab_complete: true,
         row_delete: false,
         ..Default::default()
@@ -99,10 +95,9 @@ pub(super) fn auth_mode_picker(
     active_auth: &str,
 ) -> rho_providers::credentials::CredentialResult<UiPicker> {
     let Some(descriptor) = provider::provider_descriptor(provider_name) else {
-        return Ok(UiPicker::new(
+        return Ok(UiPicker::switch_auth_mode(
             "Switch active auth mode",
             Vec::new(),
-            PickerAction::SwitchAuthMode,
         ));
     };
 
@@ -131,10 +126,9 @@ pub(super) fn auth_mode_picker(
     }
     sort_items_by_ascii_label(&mut items);
 
-    Ok(UiPicker::new(
+    Ok(UiPicker::switch_auth_mode(
         format!("Switch {} auth mode", descriptor.display_name),
         items,
-        PickerAction::SwitchAuthMode,
     )
     .with_confirm_verb("switch"))
 }
@@ -172,7 +166,7 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
         .collect::<Vec<_>>();
     sort_items_by_ascii_label(&mut providers);
     items.extend(providers);
-    UiPicker::new("Refresh model lists", items, PickerAction::RefreshModelList)
+    UiPicker::refresh_model_list("Refresh model lists", items)
 }
 
 pub(super) fn logout_provider_picker(
@@ -185,7 +179,7 @@ pub(super) fn logout_provider_picker(
             targets.push(target);
         }
     }
-    let mut picker = provider_picker_for_targets("logout", PickerAction::LogoutProvider, targets);
+    let mut picker = provider_picker_for_targets("logout", targets);
     // Claude Code is not a Rho credential. Offer it when the caller already
     // knows the binary reports signed in so logout stays honest about the
     // global effect without probing here.
@@ -204,11 +198,7 @@ pub(super) fn logout_provider_picker(
     Ok(picker)
 }
 
-fn provider_picker_for_targets(
-    verb: &str,
-    action: PickerAction,
-    targets: Vec<catalog::LoginTarget>,
-) -> UiPicker {
+fn provider_picker_for_targets(verb: &str, targets: Vec<catalog::LoginTarget>) -> UiPicker {
     let mut items = targets
         .into_iter()
         .map(|target| {
@@ -240,7 +230,7 @@ fn provider_picker_for_targets(
         .collect::<Vec<_>>();
     sort_items_by_ascii_label(&mut items);
 
-    UiPicker::new(format!("Select provider to {verb}"), items, action).with_key_hints(
+    UiPicker::logout_provider(format!("Select provider to {verb}"), items).with_key_hints(
         super::PickerKeyHints {
             tab_complete: true,
             row_delete: false,

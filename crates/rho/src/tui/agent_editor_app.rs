@@ -297,8 +297,7 @@ impl App {
             self.open_agent_text_input(AgentField::Model, draft.model_text());
             return;
         }
-        picker.action = PickerAction::EditAgent;
-        picker = picker.with_fuzzy_filter();
+        picker = picker.into_edit_agent().with_fuzzy_filter();
         if let Some(session) = &mut self.agent_editor_session {
             session.set_phase(AgentEditPhase::PickingModel);
         }
@@ -324,14 +323,10 @@ impl App {
 
     pub(in crate::tui) fn reopen_agent_field_picker(&mut self, selected_value: &str) {
         let (filter, parent) = match self.input_ui.composer_mut() {
-            ComposerMode::Picker(picker) if picker.action == PickerAction::EditAgent => {
-                match picker.take_parent() {
-                    Some(mut field_picker) => {
-                        (field_picker.filter.clone(), field_picker.take_parent())
-                    }
-                    None => (String::new(), None),
-                }
-            }
+            ComposerMode::Picker(picker) if picker.is_edit_agent() => match picker.take_parent() {
+                Some(mut field_picker) => (field_picker.filter.clone(), field_picker.take_parent()),
+                None => (String::new(), None),
+            },
             ComposerMode::Picker(picker) => (picker.filter.clone(), picker.take_parent()),
             ComposerMode::TextInput(input) => match input.take_return_picker() {
                 Some(mut picker) => (picker.filter.clone(), picker.take_parent()),

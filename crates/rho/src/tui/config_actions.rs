@@ -4,7 +4,6 @@ use rho_providers::credentials::load_web_search_api_key;
 use super::{
     config_editor, config_picker, resolve_web_search_editor_value, App, ComposerMode,
     ConfigNumberInput, ConfigNumberKey, ConfigTextKey, ConfigToggle, Entry, InteractiveRuntime,
-    PickerAction,
 };
 
 /// Static description of one boolean `/config` row.
@@ -236,7 +235,7 @@ impl App {
     fn refresh_main_config_picker_if_open(&mut self, selected_value: &str) -> anyhow::Result<()> {
         if matches!(
             self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.action == PickerAction::Config
+            ComposerMode::Picker(picker) if picker.is_config()
         ) {
             self.refresh_main_config_picker(selected_value)?;
         }

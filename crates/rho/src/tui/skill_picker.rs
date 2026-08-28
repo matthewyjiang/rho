@@ -1,4 +1,4 @@
-use super::{PickerAction, PickerItem, UiPicker};
+use super::{PickerItem, UiPicker};
 use crate::skills::Skill;
 
 pub(super) fn skill_picker(skills: Vec<Skill>) -> UiPicker {
@@ -15,5 +15,5 @@ pub(super) fn skill_picker(skills: Vec<Skill>) -> UiPicker {
         })
         .collect::<Vec<_>>();
 
-    UiPicker::new("Loaded skills", items, PickerAction::InsertSkillCommand)
+    UiPicker::insert_skill("Loaded skills", items)
 }

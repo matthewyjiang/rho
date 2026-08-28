@@ -1,6 +1,6 @@
 use super::{
     theme::{list_themes, theme_display_name, Theme, ThemeEntry, THEME_TERMINAL_ID},
-    PickerAction, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, UiPicker,
+    PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, UiPicker,
 };
 
 pub(super) fn theme_picker(current_id: &str) -> UiPicker {
@@ -47,7 +47,7 @@ pub(super) fn theme_picker(current_id: &str) -> UiPicker {
         })
         .collect::<Vec<_>>();
 
-    let mut picker = UiPicker::new("Theme", items, PickerAction::SelectTheme)
+    let mut picker = UiPicker::theme("Theme", items)
         .with_layout(PickerLayout::Overlay)
         .with_confirm_verb("apply");
     if let Some(index) = picker.items.iter().position(|item| item.value == current) {

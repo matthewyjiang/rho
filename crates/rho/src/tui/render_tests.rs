@@ -1,5 +1,5 @@
 use super::*;
-use crate::tui::{PickerAction, PickerItem, UiPicker};
+use crate::tui::{PickerItem, UiPicker};
 use pretty_assertions::assert_eq;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
@@ -394,7 +394,7 @@ fn picker_lists_more_items_on_a_taller_viewport() {
             selection_verb: None,
         })
         .collect();
-    let picker = UiPicker::new("models", items, PickerAction::SelectModel);
+    let picker = UiPicker::models("models", items);
 
     let item_rows = |height: usize| {
         picker_lines(&picker, 80, height)
@@ -428,14 +428,12 @@ fn picker_reserves_wrapped_footer_rows() {
             selection_verb: None,
         })
         .collect();
-    let picker = UiPicker::new("select model", items, PickerAction::SelectModel).with_key_hints(
-        PickerKeyHints {
-            pin_toggle: Some("Ctrl+P".into()),
-            scope_toggle: Some("Ctrl+O".into()),
-            tab_complete: true,
-            ..Default::default()
-        },
-    );
+    let picker = UiPicker::models("select model", items).with_key_hints(PickerKeyHints {
+        pin_toggle: Some("Ctrl+P".into()),
+        scope_toggle: Some("Ctrl+O".into()),
+        tab_complete: true,
+        ..Default::default()
+    });
 
     let lines = picker_lines(&picker, 80, 18);
     let item_rows = lines

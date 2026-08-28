@@ -6,9 +6,7 @@ use rho_providers::model::models_dev::{
 };
 use rho_providers::model::ReasoningRequestSource::PersistedOrDefault;
 
-use super::{
-    reasoning_metadata, App, ComposerMode, Entry, InteractiveRuntime, PickerAction, StatusSource,
-};
+use super::{reasoning_metadata, App, ComposerMode, Entry, InteractiveRuntime, StatusSource};
 
 impl App {
     pub(super) async fn poll_startup_hydrates(
@@ -30,7 +28,7 @@ impl App {
         }
         if matches!(
             self.input_ui.composer(),
-            ComposerMode::Picker(picker) if picker.action == PickerAction::ViewMcpServers
+            ComposerMode::Picker(picker) if picker.is_mcp_inventory()
         ) {
             let _ = self.execute_mcp_command();
         }

@@ -2,7 +2,7 @@ use ratatui::DefaultTerminal;
 
 use super::{
     session_picker, App, CommandInvocation, ComposerMode, Entry, InlineChoice, InlineChoiceOption,
-    InlineChoicePending, InteractiveRuntime, PickerAction, Session, UiPicker,
+    InlineChoicePending, InteractiveRuntime, Session, UiPicker,
 };
 use crate::session::{is_cross_project, DeleteOptions, SessionHistories, SessionTarget};
 
@@ -137,18 +137,20 @@ impl App {
         &mut self,
         previous: Option<&UiPicker>,
     ) -> anyhow::Result<()> {
-        match previous.map(|picker| picker.action) {
-            Some(PickerAction::ResumeSession) => {
-                let cursor = previous.map(UiPicker::cursor);
+        match previous {
+            Some(picker) if picker.is_resume_session() => {
+                let cursor = Some(picker.cursor());
                 self.open_resume_picker()?;
-                if let (Some(cursor), ComposerMode::Picker(picker)) =
+                if let (Some(cursor), ComposerMode::Picker(open)) =
                     (cursor.as_ref(), self.input_ui.composer_mut())
                 {
-                    picker.restore_cursor(cursor);
+                    open.restore_cursor(cursor);
                 }
                 Ok(())
             }
-            Some(PickerAction::ManageSessions) => self.refresh_sessions_location(previous),
+            Some(picker) if picker.is_manage_sessions() => {
+                self.refresh_sessions_location(Some(picker))
+            }
             _ => {
                 self.input_ui.set_composer(ComposerMode::Input);
                 Ok(())
@@ -158,7 +160,7 @@ impl App {
 
     fn selected_resume_session_id(&self) -> Option<String> {
         match self.input_ui.composer() {
-            ComposerMode::Picker(picker) if picker.action == PickerAction::ResumeSession => {
+            ComposerMode::Picker(picker) if picker.is_resume_session() => {
                 picker.selected_item().map(|item| item.value.clone())
             }
             _ => None,
