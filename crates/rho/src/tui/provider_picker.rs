@@ -27,6 +27,7 @@ pub(super) fn login_group_picker() -> UiPicker {
             badge: None,
             value: group.id,
             selection_verb: None,
+            allow_filter_completion: true,
         })
         .collect::<Vec<_>>();
     items.extend(super::custom_provider_login::login_group_items());
@@ -66,6 +67,7 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
             badge: None,
             value: method.target.auth,
             selection_verb: None,
+            allow_filter_completion: true,
         })
         .collect::<Vec<_>>();
     items.extend(
@@ -80,6 +82,7 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
                 badge: None,
                 value: method.value.into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             }),
     );
     UiPicker::login_provider(title, items).with_key_hints(super::PickerKeyHints {
@@ -122,6 +125,7 @@ pub(super) fn auth_mode_picker(
             }),
             value: mode.id.into(),
             selection_verb: None,
+            allow_filter_completion: true,
         });
     }
     sort_items_by_ascii_label(&mut items);
@@ -142,6 +146,7 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
         badge: None,
         value: ALL_REFRESHABLE_PROVIDERS.into(),
         selection_verb: None,
+        allow_filter_completion: true,
     }];
     let mut providers = provider::providers()
         .iter()
@@ -162,6 +167,7 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
             badge: None,
             value: descriptor.name.into(),
             selection_verb: None,
+            allow_filter_completion: true,
         })
         .collect::<Vec<_>>();
     sort_items_by_ascii_label(&mut providers);
@@ -192,6 +198,7 @@ pub(super) fn logout_provider_picker(
             badge: None,
             value: super::claude_login::CLAUDE_CODE_TARGET.into(),
             selection_verb: None,
+            allow_filter_completion: true,
         });
         sort_items_by_ascii_label(&mut picker.items);
     }
@@ -225,6 +232,7 @@ fn provider_picker_for_targets(verb: &str, targets: Vec<catalog::LoginTarget>) -
                 badge: None,
                 value: target.auth,
                 selection_verb: None,
+                allow_filter_completion: true,
             }
         })
         .collect::<Vec<_>>();

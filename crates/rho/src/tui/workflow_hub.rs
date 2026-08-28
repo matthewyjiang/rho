@@ -50,6 +50,7 @@ fn item(
         badge: badge_text.map(|(text, tone)| badge(text, tone)),
         value: value.into(),
         selection_verb,
+        allow_filter_completion: true,
     }
 }
 

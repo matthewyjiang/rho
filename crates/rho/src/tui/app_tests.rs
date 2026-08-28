@@ -615,6 +615,7 @@ fn model_picker_fuzzy_matches_and_autocompletes() {
                 badge: None,
                 value: "openai/gpt-5.5".into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
             PickerItem {
                 section: None,
@@ -624,6 +625,7 @@ fn model_picker_fuzzy_matches_and_autocompletes() {
                 badge: None,
                 value: "openai-codex/gpt-5.4-mini".into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
         ],
     );
@@ -654,6 +656,7 @@ fn picker_selection_wraps() {
                 badge: None,
                 value: "model-a".into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
             PickerItem {
                 section: None,
@@ -663,6 +666,7 @@ fn picker_selection_wraps() {
                 badge: None,
                 value: "model-b".into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
         ],
     );
@@ -691,6 +695,7 @@ fn favorite_save_failure_keeps_model_picker_open() {
                 badge: None,
                 value: selected_value.into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             }],
         )));
     app.toggle_selected_model_favorite().unwrap();

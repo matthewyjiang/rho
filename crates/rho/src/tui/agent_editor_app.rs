@@ -292,12 +292,16 @@ impl App {
             return;
         }
         self.refresh_available_auths();
-        let mut picker = self.conversation_model_picker();
-        if picker.items.is_empty() {
+        let catalog = crate::tui::model_picker::conversation_model_catalog(
+            &self.info.runtime,
+            &self.available_auths,
+            self.resolved_model_picker_scope(),
+        );
+        if catalog.items.is_empty() {
             self.open_agent_text_input(AgentField::Model, draft.model_text());
             return;
         }
-        picker = picker.into_edit_agent().with_fuzzy_filter();
+        let picker = catalog.into_edit_agent().with_fuzzy_filter();
         if let Some(session) = &mut self.agent_editor_session {
             session.set_phase(AgentEditPhase::PickingModel);
         }
@@ -420,6 +424,28 @@ impl App {
                 )));
                 self.reopen_agent_field_picker(AGENT_FIELD_SAVE);
                 self.set_status("agent save failed");
+            }
+        }
+        Ok(())
+    }
+
+    /// Esc on an edit-agent picker: the field list cancels the editor; a nested
+    /// choice or model picker pops back to the field list.
+    pub(in crate::tui) fn handle_edit_agent_escape(&mut self) -> anyhow::Result<()> {
+        let phase = self
+            .agent_editor_session
+            .as_ref()
+            .map(|session| session.phase());
+        match phase {
+            Some(AgentEditPhase::Fields) | None => self.cancel_agent_editor(),
+            Some(_) => {
+                if self.pop_picker_level() {
+                    if let Some(session) = &mut self.agent_editor_session {
+                        session.set_phase(AgentEditPhase::Fields);
+                    }
+                } else {
+                    self.cancel_agent_editor();
+                }
             }
         }
         Ok(())

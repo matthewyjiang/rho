@@ -188,6 +188,7 @@ fn candidate_item(candidate: &AttachCandidate) -> PickerItem {
         }),
         value: candidate.run_id.clone(),
         selection_verb: Some("attach"),
+        allow_filter_completion: true,
     }
 }
 

@@ -62,20 +62,19 @@ impl App {
     /// Rebuilds the open model picker in place, keeping filter, cursor, and
     /// parent. `None` when no model picker is open.
     fn rebuilt_model_picker(&mut self, selected_value: &str, filter: String) -> Option<UiPicker> {
-        let conversation = match self.input_ui.composer() {
-            ComposerMode::Picker(picker) if picker.is_conversation_model() => true,
-            ComposerMode::Picker(picker) if picker.is_internal_agent_model() => false,
-            _ => return None,
-        };
-        let mut picker = if conversation {
-            if self.is_provider_turn_ui() {
-                self.conversation_model_picker_during_run()
-            } else {
-                self.conversation_model_picker()
+        let mut picker = match self.input_ui.composer() {
+            ComposerMode::Picker(picker) if picker.is_conversation_model() => {
+                if self.is_provider_turn_ui() {
+                    self.conversation_model_picker_during_run()
+                } else {
+                    self.conversation_model_picker()
+                }
             }
-        } else {
-            let target = self.internal_agent_model_target.clone()?;
-            self.internal_agent_model_picker(&target.id, target.origin)
+            ComposerMode::Picker(picker) if picker.is_internal_agent_model() => {
+                let target = self.internal_agent_model_target.clone()?;
+                self.internal_agent_model_picker(&target.id, target.origin)
+            }
+            _ => return None,
         };
         // Taken last: the arms above can bail, and dropping the parent on a
         // rebuild that never happens would strand the user's way back.

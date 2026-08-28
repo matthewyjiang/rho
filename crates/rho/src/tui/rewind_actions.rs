@@ -84,6 +84,7 @@ impl App {
                     }),
                     value: id,
                     selection_verb: None,
+                    allow_filter_completion: true,
                 }
             })
             .collect();
@@ -137,6 +138,7 @@ impl App {
             }),
             value: value.to_string(),
             selection_verb: None,
+            allow_filter_completion: true,
         };
         let picker = UiPicker::confirm_rewind("Confirm workspace rewind", vec![item])
             .with_layout(PickerLayout::Overlay)

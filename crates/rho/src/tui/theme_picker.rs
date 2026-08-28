@@ -43,6 +43,7 @@ pub(super) fn theme_picker(current_id: &str) -> UiPicker {
                 badge,
                 value: entry.id().to_string(),
                 selection_verb: Some("apply"),
+                allow_filter_completion: true,
             }
         })
         .collect::<Vec<_>>();

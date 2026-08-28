@@ -224,6 +224,7 @@ fn field_item(
         badge: badge_text.map(badge),
         value: value.into(),
         selection_verb: None,
+        allow_filter_completion: true,
     }
 }
 
@@ -401,6 +402,7 @@ fn claude_model_choice_items(draft: &AgentDefinition, prefix: &str) -> Vec<Picke
         badge: current.is_empty().then(|| badge("selected")),
         value: prefix.to_string(),
         selection_verb: None,
+        allow_filter_completion: true,
     }];
     items.extend(
         claude_models::CLAUDE_MODEL_ALIASES
@@ -413,6 +415,7 @@ fn claude_model_choice_items(draft: &AgentDefinition, prefix: &str) -> Vec<Picke
                 badge: (current == alias.name).then(|| badge("selected")),
                 value: format!("{prefix}{}", alias.name),
                 selection_verb: None,
+                allow_filter_completion: true,
             }),
     );
     if !current.is_empty() && !claude_models::is_offered_alias(&current) {
@@ -424,6 +427,7 @@ fn claude_model_choice_items(draft: &AgentDefinition, prefix: &str) -> Vec<Picke
             badge: Some(badge("selected")),
             value: format!("{prefix}{current}"),
             selection_verb: None,
+            allow_filter_completion: true,
         });
     }
     items
@@ -517,6 +521,7 @@ fn agent_choice_picker(
                 badge: current.is_none().then(|| badge("selected")),
                 value: format!("{prefix}inherit"),
                 selection_verb: None,
+                allow_filter_completion: true,
             }];
             items.extend(levels.into_iter().map(|level| {
                 let selected = current == Some(level);
@@ -535,6 +540,7 @@ fn agent_choice_picker(
                     badge: selected.then(|| badge("selected")),
                     value: format!("{prefix}{level}"),
                     selection_verb: None,
+                    allow_filter_completion: true,
                 }
             }));
             ("reasoning", items)
@@ -575,6 +581,7 @@ fn auth_choice_picker(draft: &AgentDefinition, available_auths: &[String]) -> Ui
         // Empty id means unset pin (display label remains "host").
         value: prefix.to_string(),
         selection_verb: None,
+        allow_filter_completion: true,
     }];
     let mut modes: Vec<(String, String)> = available_auths
         .iter()
@@ -606,6 +613,7 @@ fn auth_choice_picker(draft: &AgentDefinition, available_auths: &[String]) -> Ui
             badge: selected.then(|| badge("selected")),
             value: format!("{prefix}{id}"),
             selection_verb: None,
+            allow_filter_completion: true,
         }
     }));
     UiPicker::edit_agent("auth", items).with_confirm_verb("set")
@@ -624,6 +632,7 @@ fn choice_items(options: &[(&str, &str)], current: &str, value_prefix: &str) -> 
                 badge: selected.then(|| badge("selected")),
                 value: format!("{value_prefix}{label}"),
                 selection_verb: None,
+                allow_filter_completion: true,
             }
         })
         .collect()

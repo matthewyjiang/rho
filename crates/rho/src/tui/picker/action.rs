@@ -1,7 +1,7 @@
 //! Selection identity and action policy for an open picker.
 //!
 //! Feature modules construct a picker through [`super::UiPicker`] named
-//! constructors. Matching on [`PickerAction`] stays inside this picker module.
+//! constructors. Matching on [`PickerAction`] stays in `crate::tui::picker_actions`.
 
 /// What confirming the highlighted row should do.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,12 +31,21 @@ pub(in crate::tui) enum PickerAction {
     Dismiss,
 }
 
-/// Row-delete shortcut honored by session and workflow pickers.
+/// Whether a picker commit runs idle or during a model turn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::tui) enum PickerRowDelete {
-    ResumeSession,
-    ManageSessions,
-    Workflow,
+pub(in crate::tui) enum PickerTurn {
+    Idle,
+    DuringTurn,
+}
+
+/// Config row to re-select after a child picker closes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::tui) enum ConfigParentRow {
+    ConversationModel,
+    Theme,
+    LogoutProvider,
+    SwitchAuthMode,
+    RefreshModelList,
 }
 
 /// What confirming a row does while a model turn is running.
@@ -95,18 +104,21 @@ impl PickerAction {
         )
     }
 
-    pub(in crate::tui) fn keeps_composer_open_on_select(self) -> bool {
-        matches!(
-            self,
-            PickerAction::Config
-                | PickerAction::LoginGroup
-                | PickerAction::ViewAgent
-                | PickerAction::EditAgent
-                | PickerAction::SelectRewindCheckpoint
-                | PickerAction::ConfirmRewindCheckpoint
-                | PickerAction::Workflow
-                | PickerAction::ManageSessions
-        )
+    pub(in crate::tui) fn keeps_composer_open(self, turn: PickerTurn) -> bool {
+        match turn {
+            PickerTurn::Idle => matches!(
+                self,
+                PickerAction::Config
+                    | PickerAction::LoginGroup
+                    | PickerAction::ViewAgent
+                    | PickerAction::EditAgent
+                    | PickerAction::SelectRewindCheckpoint
+                    | PickerAction::ConfirmRewindCheckpoint
+                    | PickerAction::Workflow
+                    | PickerAction::ManageSessions
+            ),
+            PickerTurn::DuringTurn => matches!(self, PickerAction::Config),
+        }
     }
 
     pub(in crate::tui) fn during_turn_select(self) -> DuringTurnSelect {
@@ -142,12 +154,29 @@ impl PickerAction {
         }
     }
 
-    pub(in crate::tui) fn row_delete(self) -> Option<PickerRowDelete> {
+    pub(in crate::tui) fn config_parent_row(self) -> Option<ConfigParentRow> {
         match self {
-            PickerAction::ResumeSession => Some(PickerRowDelete::ResumeSession),
-            PickerAction::ManageSessions => Some(PickerRowDelete::ManageSessions),
-            PickerAction::Workflow => Some(PickerRowDelete::Workflow),
-            _ => None,
+            PickerAction::SelectModel => Some(ConfigParentRow::ConversationModel),
+            PickerAction::SelectTheme => Some(ConfigParentRow::Theme),
+            PickerAction::LogoutProvider => Some(ConfigParentRow::LogoutProvider),
+            PickerAction::SwitchAuthMode => Some(ConfigParentRow::SwitchAuthMode),
+            PickerAction::RefreshModelList => Some(ConfigParentRow::RefreshModelList),
+            PickerAction::SelectInternalAgentModel
+            | PickerAction::LoginGroup
+            | PickerAction::LoginProvider
+            | PickerAction::InsertSkillCommand
+            | PickerAction::ViewAgent
+            | PickerAction::ViewMcpServers
+            | PickerAction::ResumeSession
+            | PickerAction::ManageSessions
+            | PickerAction::SelectTreeNode
+            | PickerAction::SelectRewindCheckpoint
+            | PickerAction::ConfirmRewindCheckpoint
+            | PickerAction::Config
+            | PickerAction::EditAgent
+            | PickerAction::Workflow
+            | PickerAction::AttachSubagent
+            | PickerAction::Dismiss => None,
         }
     }
 }

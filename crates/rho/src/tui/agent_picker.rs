@@ -117,6 +117,7 @@ fn agent_item(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> PickerI
         badge: agent_badge(entry.metadata.origin),
         value: definition.id.to_string(),
         selection_verb,
+        allow_filter_completion: true,
     }
 }
 

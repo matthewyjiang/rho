@@ -117,6 +117,7 @@ mod pending_input;
 mod performance_benchmarks;
 mod permission_mode;
 mod picker;
+mod picker_actions;
 mod process_panel;
 mod process_peek;
 mod prompt_history;

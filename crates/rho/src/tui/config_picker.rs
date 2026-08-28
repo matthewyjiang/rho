@@ -86,6 +86,7 @@ fn sectioned_item(
         badge: badge_text.map(badge),
         value: value.into(),
         selection_verb: None,
+        allow_filter_completion: true,
     }
 }
 
@@ -565,6 +566,7 @@ pub(super) fn permission_mode_picker(mode: PermissionMode) -> UiPicker {
                 }),
                 value: format!("{PERMISSION_MODE_PREFIX}{}", candidate.as_str()),
                 selection_verb: None,
+                allow_filter_completion: true,
             })
             .collect(),
     )
@@ -604,6 +606,7 @@ pub(super) fn inline_shell_picker(config: &Config) -> UiPicker {
                 }),
                 value: format!("{INLINE_SHELL_PREFIX}{shell}"),
                 selection_verb: None,
+                allow_filter_completion: true,
             })
             .collect(),
     )
@@ -625,6 +628,7 @@ pub(super) fn edit_tool_picker(selected: EditTool) -> UiPicker {
                 }),
                 value: format!("{EDIT_TOOL_PREFIX}{}", edit_tool.as_str()),
                 selection_verb: None,
+                allow_filter_completion: true,
             })
             .collect(),
     )
@@ -651,6 +655,7 @@ pub(super) fn web_search_config_picker(
                 }),
                 value: WEB_SEARCH_HOSTED_VALUE.into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
             PickerItem {
                 section: None,
@@ -667,6 +672,7 @@ pub(super) fn web_search_config_picker(
                 }),
                 value: WEB_SEARCH_PROVIDER_VALUE.into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
             PickerItem {
                 section: None,
@@ -680,6 +686,7 @@ pub(super) fn web_search_config_picker(
                 )),
                 value: WEB_SEARCH_OPENAI_KEY_VALUE.into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
             PickerItem {
                 section: None,
@@ -693,6 +700,7 @@ pub(super) fn web_search_config_picker(
                 )),
                 value: WEB_SEARCH_EXA_KEY_VALUE.into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
             PickerItem {
                 section: None,
@@ -706,6 +714,7 @@ pub(super) fn web_search_config_picker(
                 )),
                 value: WEB_SEARCH_BRAVE_KEY_VALUE.into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
         ],
     )

@@ -35,6 +35,7 @@ fn tree_item(item: SessionTreeItem) -> PickerItem {
         }),
         value: item.id.to_string(),
         selection_verb: None,
+        allow_filter_completion: true,
     }
 }
 

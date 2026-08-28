@@ -155,6 +155,7 @@ fn directory_row(
         }),
         value,
         selection_verb: Some("browse"),
+        allow_filter_completion: true,
     }
 }
 
@@ -218,6 +219,7 @@ fn session_row(
         } else {
             "resume"
         }),
+        allow_filter_completion: true,
     }
 }
 
@@ -245,6 +247,7 @@ fn cleanup_missing_workspaces_row(
         }),
         value,
         selection_verb: Some("clean up"),
+        allow_filter_completion: true,
     }
 }
 
@@ -261,6 +264,7 @@ fn manage_sessions_picker(title: impl Into<String>, items: Vec<PickerItem>) -> U
             detail_label: Some(" DETAILS".into()),
             nav_keys_hint: "↑↓ items".into(),
         })
+        .with_restore_status("sessions")
 }
 
 /// Root list: every directory with its sessions, current directory first.

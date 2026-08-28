@@ -1,8 +1,9 @@
-//! Picker lifecycle, filtering, input, overlay layout, and shared rendering.
+//! Picker widget: filtering, input, overlay layout, and shared rendering.
 //!
 //! Feature modules supply rows, labels, and a named constructor. This module
 //! owns opening, closing, filtering, cursor movement, key handling, parent
-//! restoration, pin/scope rebuilds, selection routing, and overlay paint.
+//! stack, and overlay paint. Feature confirm/escape lives in
+//! `crate::tui::picker_actions`.
 
 use regex::{Regex, RegexBuilder};
 use std::{
@@ -18,7 +19,7 @@ mod overlay_layout;
 mod overlay_state;
 mod rows;
 
-pub(in crate::tui::picker) use action::{DuringTurnSelect, PickerAction, PickerRowDelete};
+pub(in crate::tui) use action::{ConfigParentRow, DuringTurnSelect, PickerAction, PickerTurn};
 pub(in crate::tui) use input::{
     apply_picker_key, overlay_scroll_targets, PickerKeyEffect, PickerMouseEvent,
 };
@@ -119,6 +120,8 @@ pub(super) struct UiPicker {
     /// Inventory-empty copy when the filter is blank. Filter misses stay
     /// "no matches".
     empty_message: Option<String>,
+    /// Status set when this picker is restored as a parent.
+    restore_status: &'static str,
     /// When set, overrides [`PickerAction::uses_regex_filter`] for this picker.
     pub(super) force_fuzzy_filter: bool,
     pub(super) overlay_chrome: Option<OverlayChrome>,
@@ -137,6 +140,8 @@ pub(super) struct PickerItem {
     pub(super) value: String,
     /// Optional Enter verb for this row. Overrides action defaults and badge heuristics.
     pub(super) selection_verb: Option<&'static str>,
+    /// When false, Tab does not copy this row into the filter.
+    pub(super) allow_filter_completion: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -230,6 +235,7 @@ impl UiPicker {
             hovered_nav_row: None,
             confirm_verb: None,
             empty_message: None,
+            restore_status: "ready",
             force_fuzzy_filter: false,
             overlay_chrome: None,
             parent: None,
@@ -262,11 +268,6 @@ impl UiPicker {
         dismiss => Dismiss,
     }
 
-    pub(in crate::tui) fn into_edit_agent(mut self) -> Self {
-        self.action = PickerAction::EditAgent;
-        self
-    }
-
     picker_is! {
         is_config => Config,
         is_theme => SelectTheme,
@@ -289,11 +290,7 @@ impl UiPicker {
     }
 
     pub(in crate::tui) fn restore_status(&self) -> &'static str {
-        match self.action {
-            PickerAction::ManageSessions => "sessions",
-            PickerAction::ResumeSession => "select session",
-            _ => "ready",
-        }
+        self.restore_status
     }
 
     pub(super) fn with_layout(mut self, layout: PickerLayout) -> Self {
@@ -580,6 +577,11 @@ impl UiPicker {
         self
     }
 
+    pub(super) fn with_restore_status(mut self, status: &'static str) -> Self {
+        self.restore_status = status;
+        self
+    }
+
     pub(super) fn with_parent(mut self, parent: UiPicker) -> Self {
         self.parent = Some(Box::new(parent));
         self
@@ -643,7 +645,7 @@ impl UiPicker {
         let Some(item) = self.selected_item() else {
             return;
         };
-        if !self.row_allows_filter_completion(item) {
+        if !Self::row_allows_filter_completion(item) {
             return;
         }
         self.filter = if self.uses_regex_filter() {
@@ -653,13 +655,8 @@ impl UiPicker {
         };
     }
 
-    /// Whether Tab may fill the filter from this row.
-    ///
-    /// Internal-agent model pickers include a synthetic conversation-model row
-    /// that is not a filterable model reference.
-    fn row_allows_filter_completion(&self, item: &PickerItem) -> bool {
-        !(matches!(self.action, PickerAction::SelectInternalAgentModel)
-            && item.value == super::model_picker::USE_CONVERSATION_MODEL)
+    fn row_allows_filter_completion(item: &PickerItem) -> bool {
+        item.allow_filter_completion
     }
 
     pub(super) fn select_first_match(&mut self) {

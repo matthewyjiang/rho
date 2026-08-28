@@ -33,6 +33,7 @@ fn item(label: &str) -> PickerItem {
         badge: None,
         value: label.into(),
         selection_verb: None,
+        allow_filter_completion: true,
     }
 }
 

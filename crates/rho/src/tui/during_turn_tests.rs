@@ -48,6 +48,7 @@ fn model_picker() -> UiPicker {
             badge: None,
             value: "model-a".into(),
             selection_verb: None,
+            allow_filter_completion: true,
         }],
     )
 }

@@ -532,6 +532,7 @@ impl From<DoctorCheck> for PickerItem {
                 },
             }),
             selection_verb: None,
+            allow_filter_completion: true,
         }
     }
 }

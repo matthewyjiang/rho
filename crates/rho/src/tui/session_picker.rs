@@ -22,6 +22,7 @@ pub(super) fn session_picker(
         ..Default::default()
     })
     .with_confirm_verb("resume")
+    .with_restore_status("select session")
 }
 
 fn session_item(session: SessionSummary, now: u64) -> PickerItem {
@@ -54,6 +55,7 @@ fn session_item(session: SessionSummary, now: u64) -> PickerItem {
         badge: None,
         value: session.id,
         selection_verb: None,
+        allow_filter_completion: true,
     }
 }
 

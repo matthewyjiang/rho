@@ -464,7 +464,7 @@ impl App {
         }
     }
 
-    pub(in crate::tui) fn handle_running_picker_key(
+    pub(in crate::tui) async fn handle_running_picker_key(
         &mut self,
         key: KeyEvent,
         terminal: &DefaultTerminal,
@@ -493,7 +493,7 @@ impl App {
                 Ok(true)
             }
             PickerKeyEffect::Submit => {
-                self.submit_picker_selection_during_turn()?;
+                self.submit_picker_selection_during_turn().await?;
                 Ok(true)
             }
             PickerKeyEffect::Escape => {

@@ -71,6 +71,7 @@ pub(super) fn login_group_items() -> [PickerItem; 2] {
             badge: None,
             value: NEW_CUSTOM_CHAT_COMPLETIONS_HOST_VALUE.into(),
             selection_verb: None,
+            allow_filter_completion: true,
         },
         PickerItem {
             section: None,
@@ -80,6 +81,7 @@ pub(super) fn login_group_items() -> [PickerItem; 2] {
             badge: None,
             value: NEW_CUSTOM_RESPONSES_HOST_VALUE.into(),
             selection_verb: None,
+            allow_filter_completion: true,
         },
     ]
 }

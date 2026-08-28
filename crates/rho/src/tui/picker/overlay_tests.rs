@@ -22,6 +22,7 @@ fn sample_picker(detail_a: &str, detail_b: &str) -> UiPicker {
                 }),
                 value: "explorer".into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
             PickerItem {
                 section: None,
@@ -31,6 +32,7 @@ fn sample_picker(detail_a: &str, detail_b: &str) -> UiPicker {
                 badge: None,
                 value: "worker".into(),
                 selection_verb: None,
+                allow_filter_completion: true,
             },
         ],
         PickerAction::ViewAgent,
@@ -174,6 +176,7 @@ fn overflowing_panes_render_scrollbars() {
             badge: None,
             value: format!("agent-{index:02}"),
             selection_verb: None,
+            allow_filter_completion: true,
         })
         .collect();
     let picker =
