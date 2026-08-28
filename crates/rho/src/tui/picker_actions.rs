@@ -94,8 +94,10 @@ impl App {
         let result = self
             .execute_picker_action(action, &value, &mut commit, idle_model_parent)
             .await;
-        let preserve_status = matches!(turn, PickerTurn::Idle) && result.is_ok();
-        self.restore_config_parent(restore_parent, preserve_status)?;
+        if result.is_ok() {
+            let preserve_status = matches!(turn, PickerTurn::Idle);
+            self.restore_config_parent(restore_parent, preserve_status)?;
+        }
         result
     }
 
