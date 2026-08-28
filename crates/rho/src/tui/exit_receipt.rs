@@ -59,9 +59,8 @@ fn format_exit_receipt(receipt: &ExitReceipt, styled: bool) -> String {
     let headline = receipt
         .title
         .as_deref()
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-        .unwrap_or(&short_id);
+        .and_then(sanitize_receipt_headline)
+        .unwrap_or(short_id.clone());
     let mut lines = vec![format!("session saved: {headline}")];
     lines.push(format!(
         "  {}  rho --resume {short_id}",
@@ -99,6 +98,14 @@ fn format_token_usage(input: Option<u64>, output: Option<u64>) -> Option<String>
         (Some(input), None) => Some(format!("{} in", format_token_count(input))),
         (None, Some(output)) => Some(format!("{} out", format_token_count(output))),
     }
+}
+
+/// Single-line stdout-safe title: first non-empty line, no control characters.
+fn sanitize_receipt_headline(title: &str) -> Option<String> {
+    let line = title.lines().map(str::trim).find(|line| !line.is_empty())?;
+    let cleaned: String = line.chars().filter(|ch| !ch.is_control()).collect();
+    let cleaned = cleaned.trim();
+    (!cleaned.is_empty()).then(|| cleaned.to_string())
 }
 
 fn padded_label(name: &str, styled: bool) -> String {

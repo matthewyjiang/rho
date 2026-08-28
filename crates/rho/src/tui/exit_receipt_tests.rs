@@ -2,8 +2,8 @@ use pretty_assertions::assert_eq;
 
 use super::{format_exit_receipt, ExitReceipt};
 
-// Covers: receipt omits empty usage, falls back from a blank title, and never
-// prints the full session id
+// Covers: receipt omits empty usage, falls back from a blank title, sanitizes
+// multiline/control titles, and never prints the full session id
 // Owner: tui exit receipt
 #[test]
 fn formats_compact_session_receipt() {
@@ -66,6 +66,20 @@ fn formats_compact_session_receipt() {
                 "session saved: untitled work\n",
                 "  resume  rho --resume abcdef12\n",
                 "  usage   50 out · 0% cache hit"
+            ),
+        ),
+        (
+            ExitReceipt {
+                session_id: full_id.into(),
+                title: Some("line one\u{07}\nline two\x1b[31m".into()),
+                total_cost_usd_micros: None,
+                input_tokens: None,
+                output_tokens: None,
+                cache_hit_percent: None,
+            },
+            concat!(
+                "session saved: line one\n",
+                "  resume  rho --resume abcdef12"
             ),
         ),
     ];
