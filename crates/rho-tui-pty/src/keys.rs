@@ -6,6 +6,8 @@ pub enum Key {
     Char(char),
     Text(String),
     Enter,
+    /// Kitty CSI-u for Escape. Bare `\x1b` waits for more bytes and races
+    /// with the next injection (bracketed paste, typed `/`, arrows).
     Esc,
     Tab,
     Backspace,
@@ -52,7 +54,7 @@ pub fn encode_key(key: &Key) -> Vec<u8> {
         }
         Key::Text(text) => text.as_bytes().to_vec(),
         Key::Enter => b"\r".to_vec(),
-        Key::Esc => b"\x1b".to_vec(),
+        Key::Esc => b"\x1b[27u".to_vec(),
         Key::Tab => b"\t".to_vec(),
         Key::Backspace => b"\x7f".to_vec(),
         Key::Up => b"\x1b[A".to_vec(),
@@ -112,6 +114,7 @@ mod tests {
     #[test]
     fn encodes_ctrl_c_and_arrows() {
         assert_eq!(encode_key(&Key::Ctrl('c')), b"\x03");
+        assert_eq!(encode_key(&Key::Esc), b"\x1b[27u");
         assert_eq!(encode_key(&Key::Up), b"\x1b[A");
         assert_eq!(encode_key(&Key::PageDown), b"\x1b[6~");
         assert_eq!(encode_key(&Key::AltUp), b"\x1b[1;3A");
