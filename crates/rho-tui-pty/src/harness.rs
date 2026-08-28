@@ -200,8 +200,11 @@ impl PtyHarness {
 
     /// Wait long enough for paste-burst detection and enter-suppression to settle.
     pub fn settle_input(&mut self) {
-        const SETTLE: Duration = Duration::from_millis(50);
-        let deadline = Instant::now() + SETTLE;
+        self.settle_for(Duration::from_millis(50));
+    }
+
+    fn settle_for(&mut self, duration: Duration) {
+        let deadline = Instant::now() + duration;
         while Instant::now() < deadline {
             let remaining = deadline.saturating_duration_since(Instant::now());
             self.poll(remaining.min(Duration::from_millis(20)));
@@ -467,17 +470,16 @@ impl PtyHarness {
 
     pub fn quit_with_exit_command(&mut self) -> Result<u32> {
         self.set_phase("quit_with_/exit");
-        // Dismiss overlays/composers, then wait until the UI is quiet. Bracketed
-        // paste starts with ESC (`\x1b[200~`); if that ESC is still treated as a
-        // cancel key, the child sees literal `[200~/exit` and never quits.
+        // Dismiss overlays, then type /exit. Bracketed paste starts with ESC
+        // (`\x1b[200~`); a short PTY read of that introducer lands as literal
+        // `[200~/exit` and the child never quits.
         self.inject_key(&Key::Esc)?;
-        self.wait_for_quiet(
-            Duration::from_millis(200),
-            WaitTimeout::secs(10, "idle before /exit"),
-        )?;
-        // Paste keeps Enter from being absorbed as a newline under runner load.
-        self.paste("/exit")?;
-        self.settle_input();
+        self.type_text("/exit")?;
+        self.wait_for_text("/exit", WaitTimeout::secs(10, "/exit in composer"))?;
+        // Under runner load the five typed chars arrive as one paste burst.
+        // Rho then suppresses Enter for 120ms, which leaves `/exit` sitting
+        // in the composer. Wait that window out before submitting.
+        self.settle_for(Duration::from_millis(160));
         self.inject_key(&Key::Enter)?;
         self.wait_for_exit(WaitTimeout::secs(15, "exit after /exit"))
     }

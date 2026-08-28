@@ -1,7 +1,5 @@
 //! `/limits` overlay dashboard scenario.
 
-use std::time::Duration;
-
 use anyhow::Result;
 
 use crate::{
@@ -36,8 +34,10 @@ const LIMITS_OVERLAY_STEPS: &[Step] = &[
     Step::Custom(assert_limits_overlay_is_single_pane),
     Step::Phase("dismiss"),
     Step::Key(Key::Esc),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
+    // Esc can sit in the input parser before the overlay redraws. WaitQuiet
+    // succeeds on a still-open static panel; wait until the title is gone.
+    Step::WaitTextGone {
+        text: "Usage limits",
         timeout: SETTLE,
     },
     Step::Custom(assert_limits_overlay_dismissed),
