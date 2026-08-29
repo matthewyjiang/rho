@@ -13,7 +13,7 @@ SDK-backed and retained baseline fixture where applicable.
 | Simple completion overhead | Scripted one-turn provider excluding simulated provider delay | Median no more than 10% or 100 microseconds above the pre-SDK fixture, whichever is larger |
 | Event delivery | 10,000 bounded provider deltas consumed by one run | At least 250,000 events/second median; p99 enqueue-to-consume latency below 5 ms |
 | History snapshot | Clone and serialize 1,000 representative messages | Median below 10 ms and peak retained allocation below 3 times serialized size |
-| Compaction orchestration | Partition, scripted summary, and atomic commit for a 1,000-message history | Median no more than 15% above the pre-SDK compaction fixture |
+| Compaction orchestration | Partition, scripted summary, and atomic commit for a 1,000-message history | Median no more than 15% or 100 microseconds above the pre-SDK compaction fixture, whichever is larger |
 | Parallel tool batch | The same representative independent multi-read batch at limits of one and four | Report both distributions and the observed speedup; the parallel run must preserve ordered results |
 | Streamed tool-argument capture | Geometric argument sizes streamed in fixed chunks, then cancelled before a final `ModelResponse` | Aborted history retains the complete tool call; median ns/byte at the largest size is at most 2x the smallest size |
 | Overlapping tool preparation | The same 64-call prepare batch at execution limits of one and four | Peak concurrent preparations equals the batch size at both limits; ordered tool results are preserved |
@@ -48,7 +48,9 @@ candidate, alternating which runs first in each pair. This keeps both
 distributions exposed to the same short-term runner conditions without changing
 either fixture. Startup also uses a 1 microsecond absolute floor on top of the
 20% relative budget so sub-microsecond timer noise on shared runners is not a
-false failure.
+false failure. Compaction uses a 100 microsecond floor on top of the 15%
+relative budget for the same reason: the 1,000-message fixture sits near 400
+microseconds, where a 15%-only gate is smaller than shared-runner jitter.
 
 ## Regression policy
 

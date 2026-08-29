@@ -24,6 +24,7 @@ mod runtime_builder;
 pub(crate) mod sdk_config;
 mod session_assembly;
 mod sessions_cli;
+pub(crate) mod side_chat;
 pub(crate) mod subagent_host_input;
 pub(crate) mod subagent_messaging;
 mod tools_prompt;

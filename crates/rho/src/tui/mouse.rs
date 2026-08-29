@@ -77,6 +77,13 @@ impl App {
                 ) {
                     return Ok(());
                 }
+                if self.scroll_side_overlay_wheel(
+                    size.width,
+                    size.height,
+                    -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
+                ) {
+                    return Ok(());
+                }
                 if self.route_picker_mouse(
                     PickerMouseEvent::Wheel(-1),
                     column,
@@ -100,6 +107,13 @@ impl App {
             MouseEventKind::ScrollDown => {
                 self.input_ui.cancel_pointer_click_sequence();
                 if self.scroll_limits_overlay_wheel(
+                    size.width,
+                    size.height,
+                    super::HISTORY_MOUSE_SCROLL_LINES as isize,
+                ) {
+                    return Ok(());
+                }
+                if self.scroll_side_overlay_wheel(
                     size.width,
                     size.height,
                     super::HISTORY_MOUSE_SCROLL_LINES as isize,

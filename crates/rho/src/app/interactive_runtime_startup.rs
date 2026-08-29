@@ -86,6 +86,7 @@ pub(super) async fn initialize(
         // Interactive sessions bind a model below, so opted-in servers may ask
         // for completions.
         mcp_sampling: crate::app::tools_prompt::McpSamplingSupport::Available,
+        mcp_attach: crate::app::tools_prompt::McpAttach::Connect,
         await_catalog_names: false,
         defer_mcp_connect: true,
         background_subagents: BackgroundSubagents::Enabled,

@@ -36,6 +36,7 @@ pub(super) async fn build_session(
         questionnaire_enabled: false,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         mcp_sampling: McpSamplingSupport::Unavailable,
+        mcp_attach: crate::app::tools_prompt::McpAttach::Connect,
         background_subagents: BackgroundSubagents::Disabled,
         diagnostics: &startup.diagnostics,
         agent: &startup.agent,

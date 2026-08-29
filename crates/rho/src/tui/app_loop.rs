@@ -98,6 +98,7 @@ impl App {
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_interactive_login(terminal, agent).await?;
             needs_redraw |= self.poll_limits_command().await?;
+            needs_redraw |= self.poll_side_chat();
             needs_redraw |= self.poll_changelog_command().await?;
             // Runs on every pass because the composer is what decides whether
             // there is anything to ask about, and it changes on key events
@@ -309,6 +310,7 @@ impl App {
                 self.input_ui.composer(),
                 ComposerMode::Limits(overlay) if overlay.is_checking()
             )
+            || self.side_chat_busy()
             || self.history.scrollbar_hovered()
             || self.history.scrollbar_drag().is_some()
             || self
@@ -341,6 +343,7 @@ impl App {
             ComposerMode::Input
             | ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
+            | ComposerMode::Side
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)

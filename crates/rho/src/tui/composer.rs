@@ -83,6 +83,7 @@ impl App {
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
+            | ComposerMode::Side
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => {}
         }
@@ -115,6 +116,7 @@ impl App {
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
+            | ComposerMode::Side
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => false,
         }
@@ -134,6 +136,7 @@ impl App {
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
+            | ComposerMode::Side
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => false,
         }
@@ -690,6 +693,9 @@ impl App {
     }
 
     pub(super) fn insert_paste(&mut self, text: &str) {
+        if self.insert_side_paste(text) {
+            return;
+        }
         match self.input_ui.composer_mut() {
             ComposerMode::Input => self.insert_pasted_input_text(text),
             ComposerMode::SecretInput(secret) => secret.insert_text(text),
@@ -698,6 +704,7 @@ impl App {
             ComposerMode::Questionnaire(questionnaire) => {
                 questionnaire.insert_text(text);
             }
+            ComposerMode::Side => {}
             ComposerMode::Approval(_)
             | ComposerMode::Picker(_)
             | ComposerMode::Limits(_)

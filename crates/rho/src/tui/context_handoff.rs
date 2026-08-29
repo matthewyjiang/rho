@@ -633,6 +633,7 @@ impl App {
         let full_id = session.id().to_string();
         let short_id = short_session_id(&full_id);
 
+        self.discard_side_chat();
         agent.resume(session).await?;
         // User already confirmed handoff when this path runs after a prompt; drop
         // the structured omission so we do not re-announce it as a string notice.

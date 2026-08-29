@@ -37,6 +37,7 @@ impl App {
             ComposerMode::Input => Theme::reasoning_input_border(self.info.runtime.reasoning),
             ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
+            | ComposerMode::Side
             | ComposerMode::Questionnaire(_)
             | ComposerMode::Approval(_)
             | ComposerMode::InlineChoice(_) => Theme::input_prompt(),
@@ -183,7 +184,7 @@ impl App {
                 lines: approval_lines(approval, width, viewport_height),
                 cursor: Position { x: 0, y: 0 },
             },
-            ComposerMode::Limits(_) => ComposerFrame {
+            ComposerMode::Limits(_) | ComposerMode::Side => ComposerFrame {
                 lines: Vec::new(),
                 cursor: Position { x: 0, y: 0 },
             },

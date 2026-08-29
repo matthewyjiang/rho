@@ -34,6 +34,8 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) mcp_elicitation: crate::tools::mcp::McpElicitationSupport,
     /// Whether this run will bind a model that opted-in MCP servers may sample.
     pub(crate) mcp_sampling: McpSamplingSupport,
+    /// Whether this run starts MCP servers from user config and Agent Plugins.
+    pub(crate) mcp_attach: McpAttach,
     /// Permanent system-prompt model labels should wait on a models.dev
     /// catalog hydrate. Interactive sessions stay cache-only on the first
     /// frame and rewrite once if the hydrate lands before the first request.
@@ -55,6 +57,15 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
 pub(crate) enum McpSamplingSupport {
     Available,
     Unavailable,
+}
+
+/// Whether this session starts MCP servers from user config and Agent Plugins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum McpAttach {
+    /// Merge plugin MCP into config and connect enabled servers.
+    Connect,
+    /// Ignore user and plugin MCP. No transports start.
+    None,
 }
 pub(crate) struct StartupInventory {
     pub(crate) mcp: crate::tools::mcp::McpSessionReport,
@@ -113,13 +124,12 @@ pub(crate) async fn assemble_tools_and_prompt(
         mcp: plugin_mcp,
         report: plugins_report,
     } = plugin_discovery;
-    let mut mcp_config = options.config.mcp.clone();
-    mcp_config.merge(plugin_mcp);
+    let mcp_config = mcp_config_for_attach(options.config, plugin_mcp, options.mcp_attach);
     let mcp_plan = if !native_runtime {
         crate::tools::mcp::McpSessionPlan::Inventory(
             crate::tools::mcp::McpLoadMode::UnsupportedAgent,
         )
-    } else if options.no_tools {
+    } else if options.no_tools || options.mcp_attach == McpAttach::None {
         crate::tools::mcp::McpSessionPlan::Inventory(crate::tools::mcp::McpLoadMode::ToolsDisabled)
     } else {
         crate::tools::mcp::McpSessionPlan::Connect
@@ -278,6 +288,21 @@ pub(crate) async fn assemble_tools_and_prompt(
         pending_mcp,
         mcp_sampling: mcp_sampling_bridge,
     })
+}
+
+pub(super) fn mcp_config_for_attach(
+    config: &Config,
+    plugin_mcp: crate::tools::mcp::config::McpConfig,
+    attach: McpAttach,
+) -> crate::tools::mcp::config::McpConfig {
+    match attach {
+        McpAttach::None => crate::tools::mcp::config::McpConfig::default(),
+        McpAttach::Connect => {
+            let mut mcp_config = config.mcp.clone();
+            mcp_config.merge(plugin_mcp);
+            mcp_config
+        }
+    }
 }
 
 #[cfg(test)]

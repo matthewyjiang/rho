@@ -32,6 +32,7 @@ pub enum CommandId {
     Title,
     Fast,
     Workflow,
+    Side,
     Exit,
 }
 
@@ -179,6 +180,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         description: "attach to a subagent run",
         argument_choices: &[],
     },
+    CommandSpec::alias("btw", "/btw [prompt]", "alias for /side", CommandId::Side),
     CommandSpec {
         id: CommandId::Changelog,
         name: "changelog",
@@ -338,6 +340,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "sessions",
         usage: "/sessions",
         description: "browse, resume, and delete saved sessions in every directory",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Side,
+        name: "side",
+        usage: "/side [prompt]",
+        description: "ask aside without changing the session",
         argument_choices: &[],
     },
     CommandSpec {
@@ -581,6 +590,15 @@ mod tests {
     }
 
     #[test]
+    fn parses_side_command_with_arguments() {
+        let invocation = parse_command("/side what is this lock").unwrap().unwrap();
+
+        assert_eq!(invocation.id, CommandId::Side);
+        assert_eq!(invocation.name, "side");
+        assert_eq!(invocation.args, "what is this lock");
+    }
+
+    #[test]
     fn parses_title_command_with_arguments() {
         let invocation = parse_command("/title My Session").unwrap().unwrap();
 
@@ -612,6 +630,8 @@ mod tests {
             ("/CLEAR", CommandId::New, "clear"),
             ("/usage", CommandId::Limits, "usage"),
             ("/create-agent", CommandId::CreateAgent, "create-agent"),
+            ("/btw", CommandId::Side, "btw"),
+            ("/BTW", CommandId::Side, "btw"),
         ];
         for (input, id, name) in cases {
             let invocation = parse_command(input).unwrap().unwrap();
@@ -625,6 +645,9 @@ mod tests {
         assert!(matching_commands("us")
             .iter()
             .any(|command| command.name == "usage"));
+        assert!(matching_commands("bt")
+            .iter()
+            .any(|command| command.name == "btw"));
     }
 
     // Covers: both documented spellings must canonicalize to CreateAgent while
