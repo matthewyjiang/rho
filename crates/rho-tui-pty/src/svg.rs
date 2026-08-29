@@ -349,14 +349,15 @@ fn resolve_color(
     match color {
         CellColor::Default => default,
         CellColor::Indexed(index) => indexed_color(index, is_fg, bold, palette),
-        // Indexed chrome remaps through the plate. Truecolor diff washes captured
-        // from the github-dark matrix sample are re-anchored on light plates.
+        // Indexed chrome remaps through the plate. Only matrix add/remove washes
+        // (blends of the github-dark well toward sampled green/red) re-anchor
+        // on light plates. Other truecolor backgrounds stay as captured.
         CellColor::Rgb(r, g, b) => {
             let rgb = Rgb::new(r, g, b);
             if is_fg {
                 rgb
             } else {
-                remap_truecolor_background(rgb, palette)
+                remap_matrix_diff_wash(rgb, palette)
             }
         }
     }
@@ -365,16 +366,21 @@ fn resolve_color(
 /// GitHub inserted-line overlay (`#2ea04326` ≈ 0.15). Used when re-anchoring
 /// a dark captured wash onto a light plate.
 const LIGHT_PLATE_WASH_ALPHA: f64 = 0x26 as f64 / 255.0;
-const LIGHT_PLATE_LUMINANCE: f32 = 0.55;
+/// Mix strengths used by `visible_diff_wash`, with slack for rounding.
+const MATRIX_WASH_T_MIN: f64 = 0.08;
+const MATRIX_WASH_T_MAX: f64 = 0.40;
 
-fn remap_truecolor_background(bg: Rgb, palette: SvgPalette) -> Rgb {
-    if !rgb_is_light(palette.default_bg) || rgb_is_light(bg) {
+fn remap_matrix_diff_wash(bg: Rgb, palette: SvgPalette) -> Rgb {
+    if !rgb_is_light(palette.default_bg) {
         return bg;
     }
-    let tint = if bg.g >= bg.r {
+    let capture = SvgPalette::github_dark();
+    let tint = if is_blend_of(bg, capture.default_bg, capture.ansi16[2]) {
         palette.ansi16[2]
-    } else {
+    } else if is_blend_of(bg, capture.default_bg, capture.ansi16[1]) {
         palette.ansi16[1]
+    } else {
+        return bg;
     };
     Rgb::new(
         blend(palette.default_bg.r, tint.r, LIGHT_PLATE_WASH_ALPHA),
@@ -383,10 +389,35 @@ fn remap_truecolor_background(bg: Rgb, palette: SvgPalette) -> Rgb {
     )
 }
 
+fn is_blend_of(value: Rgb, from: Rgb, toward: Rgb) -> bool {
+    let mut ts = [0.0; 3];
+    let mut n = 0usize;
+    for (v, f, t) in [
+        (value.r, from.r, toward.r),
+        (value.g, from.g, toward.g),
+        (value.b, from.b, toward.b),
+    ] {
+        if f == t {
+            if v.abs_diff(f) > 1 {
+                return false;
+            }
+            continue;
+        }
+        ts[n] = (f64::from(v) - f64::from(f)) / (f64::from(t) - f64::from(f));
+        n += 1;
+    }
+    if n == 0 {
+        return false;
+    }
+    let mean = ts[..n].iter().sum::<f64>() / n as f64;
+    (MATRIX_WASH_T_MIN..=MATRIX_WASH_T_MAX).contains(&mean)
+        && ts[..n].iter().all(|t| (t - mean).abs() <= 0.08)
+}
+
 fn rgb_is_light(rgb: Rgb) -> bool {
     let luminance =
         (0.2126 * f32::from(rgb.r) + 0.7152 * f32::from(rgb.g) + 0.0722 * f32::from(rgb.b)) / 255.0;
-    luminance > LIGHT_PLATE_LUMINANCE
+    luminance > 0.55
 }
 
 fn dim_color(fg: Rgb, bg: Rgb) -> Rgb {
@@ -548,18 +579,39 @@ mod tests {
         assert!(light.contains(">hello</text>"));
     }
 
-    // Covers: dark truecolor diff washes re-anchor onto the light plate well.
+    // Covers: only github-dark add/remove mixes re-anchor on the light plate;
+    // other truecolor backgrounds stay as captured.
     // Owner: pty svg renderer
     #[test]
-    fn light_palette_reanchors_dark_truecolor_wash() {
-        let mut screen = ScreenModel::new(1, 8);
-        screen.process(b"\x1b[48;2;24;55;36madd\x1b[m");
+    fn light_palette_reanchors_only_matrix_diff_washes() {
+        let capture = SvgPalette::github_dark();
+        let add_wash = Rgb::new(
+            blend(capture.default_bg.r, capture.ansi16[2].r, 0.22),
+            blend(capture.default_bg.g, capture.ansi16[2].g, 0.22),
+            blend(capture.default_bg.b, capture.ansi16[2].b, 0.22),
+        );
+        let mut wash_screen = ScreenModel::new(1, 8);
+        wash_screen.process(
+            format!(
+                "\x1b[48;2;{};{};{}madd\x1b[m",
+                add_wash.r, add_wash.g, add_wash.b
+            )
+            .as_bytes(),
+        );
         let palette = SvgPalette::primer_light();
-        let light = render_screen_svg(&screen, &SvgOptions::with_palette(palette));
-        let remapped = remap_truecolor_background(Rgb::new(24, 55, 36), palette);
-        assert_ne!(remapped, Rgb::new(24, 55, 36));
+        let light = render_screen_svg(&wash_screen, &SvgOptions::with_palette(palette));
+        let remapped = remap_matrix_diff_wash(add_wash, palette);
+        assert_ne!(remapped, add_wash);
         assert!(light.contains(&format!("fill=\"{}\"", remapped.css())));
-        assert!(!light.contains("fill=\"#183724\""));
         assert!(light.contains(">add</text>"));
+
+        let mut other = ScreenModel::new(1, 8);
+        other.process(b"\x1b[48;2;20;20;80mnav\x1b[m");
+        let other_svg = render_screen_svg(&other, &SvgOptions::with_palette(palette));
+        assert!(other_svg.contains("fill=\"#141450\""));
+        assert_eq!(
+            remap_matrix_diff_wash(Rgb::new(20, 20, 80), palette),
+            Rgb::new(20, 20, 80)
+        );
     }
 }
