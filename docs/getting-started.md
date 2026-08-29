@@ -1,6 +1,6 @@
 # Getting started
 
-Rho is a lightweight agent harness for interactive coding sessions and one-shot terminal prompts.
+Rho is a fast Rust agent harness with a small footprint and opinionated defaults. Use it for interactive coding sessions and one-shot terminal prompts.
 
 ## Quick path
 
@@ -40,4 +40,4 @@ For local project work, see [development](/development). If authentication, mode
 
 To delegate through Claude Code on a subscription, install the [Claude Code binary](/installation#claude-code-binary-optional), run `/login claude-code`, and define an agent with `runtime: claude-cli`. See [when this is useful and how to use it](/subagents/claude-cli).
 
-Built-in host and shell integrations need no plugin store: see [integrations](/integrations). [Herdr](/integrations/herdr) turns on under a Herdr pane, and [RTK](/integrations/rtk) rewrites agent shell commands when the binary is on `PATH`.
+[Herdr](/integrations/herdr) turns on under a Herdr pane, and [RTK](/integrations/rtk) rewrites agent shell commands when the binary is on `PATH`. No extra configuration. See [integrations](/integrations).

@@ -12,13 +12,13 @@ Primary readers of the docs site are developers evaluating Rho for the first tim
 
 ## Product Purpose
 
-Rho is a lightweight coding-agent harness inspired by Pi, built in Rust. It gives developers a terminal-native agent UI, one-shot automation CLI, deterministic workflows, and an embeddable headless SDK without a plugin store.
+Rho is a fast Rust agent harness with a small footprint and opinionated defaults. It gives developers a terminal-native agent UI, one-shot automation CLI, and deterministic workflows.
 
 Success for the docs site: a visitor understands what Rho is, can install and run it quickly, and can find the right guide (TUI, CLI, workflows, config, SDK) without marketing noise.
 
 ## Positioning
 
-Rho is small on purpose: a native Rust binary with coding tools, RTK, and Herdr integration built in. Differentiator: low process overhead, bring-your-own provider, and an embeddable SDK with explicit capabilities - not a heavyweight multi-surface AI product suite.
+Rho comes with the developer tools you already use, integrated with no configuration. Under Herdr it reports agent state, supports pane attach, and handles image paste. When `rtk` is on PATH, Rho rewrites shell commands with no `rtk init` and no host hooks.
 
 ## Operating Context
 
