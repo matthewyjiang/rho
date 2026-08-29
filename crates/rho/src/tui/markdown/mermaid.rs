@@ -174,8 +174,8 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
             return MermaidRender::Fallback(MermaidFallback::OutputCells);
         }
     };
-    if let Err(fallback) = validate_output(&art.plain_lines, inner_width) {
-        return fallback;
+    if let Err(reason) = validate_output(&art.plain_lines, /*max_width*/ Some(inner_width)) {
+        return MermaidRender::Fallback(reason);
     }
     MermaidRender::Rendered(art.styled_lines)
 }
@@ -216,19 +216,23 @@ fn render_clipped(
         // Bounded layout failed but the unbounded one fits: still art.
         return MermaidRender::Rendered(art.styled_lines);
     }
-    let plain_clipped: Vec<String> = art
-        .plain_lines
-        .iter()
-        .map(|line| truncate_to_display_width(line, inner_width).into_owned())
-        .collect();
-    if let Err(fallback) = validate_output(&plain_clipped, inner_width) {
-        return fallback;
-    }
-    let lines = art
+    let lines: Vec<Line<'static>> = art
         .styled_lines
         .into_iter()
         .map(|line| clip_line_to_width(line, inner_width))
         .collect();
+    let plain_clipped: Vec<String> = lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        })
+        .collect();
+    if let Err(reason) = validate_output(&plain_clipped, /*max_width*/ None) {
+        return MermaidRender::Fallback(reason);
+    }
     MermaidRender::Clipped {
         lines,
         hidden_columns,
@@ -249,8 +253,10 @@ fn clip_line_to_width(line: Line<'static>, width: usize) -> Line<'static> {
             spans.push(span);
         } else {
             let cut = truncate_to_display_width(span.content.as_ref(), width - used).into_owned();
-            used += display_width(&cut);
             spans.push(Span::styled(cut, span.style));
+            // A dropped trailing double-width grapheme can leave a leftover
+            // column. Everything after this span is past the boundary.
+            break;
         }
     }
     Line::from(spans)
@@ -287,22 +293,22 @@ fn layout_model(
     }
 }
 
-fn validate_output(lines: &[String], inner_width: usize) -> Result<(), MermaidRender> {
+fn validate_output(lines: &[String], max_width: Option<usize>) -> Result<(), MermaidFallback> {
     if lines.len() > MAX_RENDERED_LINES {
-        return Err(MermaidRender::Fallback(MermaidFallback::OutputLines));
+        return Err(MermaidFallback::OutputLines);
     }
     let mut cells = 0usize;
     for line in lines {
         if line.contains('\x1b') {
-            return Err(MermaidRender::Fallback(MermaidFallback::AnsiOutput));
+            return Err(MermaidFallback::AnsiOutput);
         }
         let width = display_width(line);
-        if width > inner_width {
-            return Err(MermaidRender::Fallback(MermaidFallback::TooWide));
+        if max_width.is_some_and(|max| width > max) {
+            return Err(MermaidFallback::TooWide);
         }
         cells = cells.saturating_add(width);
         if cells > MAX_RENDERED_CELLS {
-            return Err(MermaidRender::Fallback(MermaidFallback::OutputCells));
+            return Err(MermaidFallback::OutputCells);
         }
     }
     Ok(())

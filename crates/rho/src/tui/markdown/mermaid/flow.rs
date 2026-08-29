@@ -51,15 +51,7 @@ fn layout_flow_in(
     }
 
     let layout_graph = graph.layout_graph();
-    for wrap_width in terminal_graph::flow_wrap_widths() {
-        if !terminal_graph::flow_labels_fit(&layout_graph, wrap_width) {
-            continue;
-        }
-        match groups::render_grouped(graph, styles, max_width, wrap_width) {
-            Ok(art) => return Ok(art),
-            Err(Oversize::Width) => continue,
-            Err(Oversize::Cells) => return Err(Oversize::Cells),
-        }
-    }
-    Err(Oversize::Width)
+    terminal_graph::over_wrap_rungs(&layout_graph, |wrap_width| {
+        groups::render_grouped(graph, styles, max_width, wrap_width)
+    })
 }

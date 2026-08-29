@@ -1,6 +1,7 @@
 use super::*;
 use crate::tui::terminal_graph::{MAX_LINES, WRAP_WIDTH};
 use pretty_assertions::assert_eq;
+use ratatui::text::{Line, Span};
 
 fn plain(lines: &[ratatui::text::Line<'static>]) -> Vec<String> {
     lines
@@ -196,6 +197,18 @@ fn paints_common_approximations() {
             assert!(art.contains(needle), "{name}: missing {needle:?} in\n{art}");
         }
     }
+}
+
+// Covers: a CJK grapheme straddling the clip boundary must not free a column
+// for a later span
+// Owner: mermaid clip math
+#[test]
+fn clip_line_drops_straddling_cjk_without_bleeding_later_spans() {
+    let line = Line::from(vec![Span::raw("ab你"), Span::raw("later")]);
+    let clipped = clip_line_to_width(line, 3);
+    let text = plain(&[clipped]).join("");
+    assert_eq!(text, "ab");
+    assert!(display_width(&text) <= 3);
 }
 
 // Covers: a diagram wider than every compaction rung must clip, not dump source
