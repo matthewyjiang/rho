@@ -229,8 +229,9 @@ impl App {
                 true
             }
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
-                self.side_composer_mut()
-                    .map(|composer| composer.insert_char(ch));
+                if let Some(composer) = self.side_composer_mut() {
+                    composer.insert_char(ch);
+                }
                 true
             }
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
@@ -322,7 +323,7 @@ impl App {
             .session_id
             .as_deref()
             .and_then(|id| id.parse().ok())
-            .unwrap_or_else(SessionId::new)
+            .unwrap_or_default()
     }
 
     fn side_composer_mut(&mut self) -> Option<&mut overlay::SideComposer> {
