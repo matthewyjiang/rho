@@ -19,7 +19,7 @@ fn identity() -> HookIdentity {
     }
 }
 
-fn envelope(payload: HookPayload) -> HookEnvelope {
+fn envelope_builder() -> HookEnvelopeBuilder {
     HookEnvelopeBuilder::with_host_labels(
         identity(),
         HookHostLabels::new()
@@ -28,7 +28,17 @@ fn envelope(payload: HookPayload) -> HookEnvelope {
         Some(std::path::Path::new("/work")),
         HookPayloadBounds::default(),
     )
-    .finish(payload)
+}
+
+fn envelope(payload: HookPayload) -> HookEnvelope {
+    envelope_builder().finish(payload)
+}
+
+fn after_envelope(
+    payload: AfterToolUsePayload,
+    capability: Option<HookCapability>,
+) -> HookEnvelope {
+    envelope_builder().finish_after_tool_use(payload, capability)
 }
 
 fn tool(name: &str, call_id: Option<&str>) -> HookTool {
@@ -102,17 +112,58 @@ fn before_tool_use_wire_shape_is_stable() {
 
 #[test]
 fn after_tool_use_wire_shape_is_stable() {
-    let payload = HookPayload::AfterToolUse(AfterToolUsePayload {
-        tool: tool("edit", Some("call-2")),
-        status: HookToolStatus::Succeeded,
-        failure: None,
-        duration_ms: Some(42),
-    });
+    let envelope = after_envelope(
+        AfterToolUsePayload {
+            tool: tool("bash", Some("call-2")),
+            status: HookToolStatus::Succeeded,
+            failure: None,
+            duration_ms: Some(42),
+        },
+        Some(HookCapability::ExecuteProcess {
+            working_directory: "/work".into(),
+            executable: "bash".into(),
+            arguments: vec!["-lc".into()],
+            shell_command: Some("git push --force".into()),
+            environment: HookProcessEnvironment::InheritAll,
+        }),
+    );
 
     assert_eq!(
-        wire_shape(&envelope(payload))["payload"],
+        wire_shape(&envelope)["payload"],
+        json!({
+            "tool": { "name": "bash", "call_id": "call-2" },
+            "capability": {
+                "operation": "execute_process",
+                "working_directory": "/work",
+                "executable": "bash",
+                "arguments": ["-lc"],
+                "shell_command": "git push --force",
+                "environment": "inherit_all",
+            },
+            "status": "succeeded",
+            "failure": null,
+            "duration_ms": 42,
+        })
+    );
+}
+
+#[test]
+fn after_tool_use_without_a_capability_serializes_null() {
+    let envelope = after_envelope(
+        AfterToolUsePayload {
+            tool: tool("edit", Some("call-2")),
+            status: HookToolStatus::Succeeded,
+            failure: None,
+            duration_ms: Some(42),
+        },
+        None,
+    );
+
+    assert_eq!(
+        wire_shape(&envelope)["payload"],
         json!({
             "tool": { "name": "edit", "call_id": "call-2" },
+            "capability": null,
             "status": "succeeded",
             "failure": null,
             "duration_ms": 42,
@@ -307,12 +358,15 @@ fn an_oversized_envelope_is_refused_rather_than_silently_shortened() {
 
 #[test]
 fn accessors_report_what_was_built() {
-    let envelope = envelope(HookPayload::AfterToolUse(AfterToolUsePayload {
-        tool: tool("grep", None),
-        status: HookToolStatus::Unavailable,
-        failure: None,
-        duration_ms: None,
-    }));
+    let envelope = after_envelope(
+        AfterToolUsePayload {
+            tool: tool("grep", None),
+            status: HookToolStatus::Unavailable,
+            failure: None,
+            duration_ms: None,
+        },
+        None,
+    );
 
     assert_eq!(envelope.schema_version(), HOOK_SCHEMA_VERSION);
     assert_eq!(envelope.event(), HookEventKind::AfterToolUse);
@@ -323,6 +377,7 @@ fn accessors_report_what_was_built() {
     assert_eq!(envelope.identity(), &identity());
     assert!(!envelope.truncation().is_truncated());
     assert_eq!(envelope.payload().tool_name(), Some("grep"));
+    assert_eq!(envelope.after_tool_use_capability(), None);
     assert!(!envelope.event_id().as_str().is_empty());
 }
 

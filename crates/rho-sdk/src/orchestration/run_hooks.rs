@@ -10,6 +10,7 @@ use crate::{
         HookToolIdentity, HookToolStatus, HookWiring, RunCompletedPayload, RunFailedPayload,
     },
     tool::ToolErrorKind,
+    workspace::CapabilityRequest,
     Error, RunId, SessionId, ToolCallId,
 };
 
@@ -65,6 +66,7 @@ impl RunHooks {
         call_id: &ToolCallId,
         completion: &ToolCompletion,
         duration: Option<Duration>,
+        capability: Option<&CapabilityRequest>,
     ) {
         let (status, failure) = match completion {
             ToolCompletion::Success(_) => (HookToolStatus::Succeeded, None),
@@ -89,6 +91,7 @@ impl RunHooks {
             status,
             failure,
             duration.map(|elapsed| elapsed.as_millis() as u64),
+            capability,
         );
     }
 

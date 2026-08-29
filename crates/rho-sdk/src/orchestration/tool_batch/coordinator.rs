@@ -12,10 +12,10 @@ use crate::{
     run::RunCommand,
     session::{SessionCore, SessionState},
     tool::{
-        PreparedToolInvocation, ToolContext, ToolError, ToolErrorKind, ToolExecutionPolicy,
-        ToolFuture, ToolInvocationSource, ToolOutput, ToolProgress,
+        FirstCapability, PreparedToolInvocation, ToolContext, ToolError, ToolErrorKind,
+        ToolExecutionPolicy, ToolFuture, ToolInvocationSource, ToolOutput, ToolProgress,
     },
-    CancellationToken, Error, HostInputId, RunEvent, ToolCallId,
+    CancellationToken, CapabilityRequest, Error, HostInputId, RunEvent, ToolCallId,
 };
 
 mod preparation;
@@ -61,6 +61,15 @@ struct BatchCall<'a> {
     queued_at: Instant,
     execution_started: Option<Instant>,
     result: Option<ToolResult>,
+    first_capability: Option<FirstCapability>,
+}
+
+impl BatchCall<'_> {
+    fn first_authorized_capability(&self) -> Option<&CapabilityRequest> {
+        self.first_capability
+            .as_ref()
+            .and_then(FirstCapability::get)
+    }
 }
 
 enum WorkerEvent {
@@ -345,9 +354,13 @@ async fn resolve_without_work(
         };
         entry.result = Some(result);
         entry.state = CallState::Resolved;
-        control
-            .hooks
-            .after_tool_use(&entry.call.name, &entry.id, &completion, None);
+        control.hooks.after_tool_use(
+            &entry.call.name,
+            &entry.id,
+            &completion,
+            None,
+            entry.first_authorized_capability(),
+        );
         emit(
             control.events,
             control.cancellation,
@@ -721,9 +734,13 @@ async fn finish_call(
     };
     entry.result = Some(normalized);
     entry.state = CallState::Resolved;
-    control
-        .hooks
-        .after_tool_use(&entry.call.name, &entry.id, &completion, duration);
+    control.hooks.after_tool_use(
+        &entry.call.name,
+        &entry.id,
+        &completion,
+        duration,
+        entry.first_authorized_capability(),
+    );
     emit(
         control.events,
         control.cancellation,

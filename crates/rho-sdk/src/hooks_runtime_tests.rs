@@ -398,10 +398,71 @@ async fn after_tool_use_reports_the_call_that_a_hook_denied() {
         .iter()
         .find(|envelope| envelope.event() == HookEventKind::AfterToolUse)
         .expect("the denied call still resolved");
-    let payload = serde_json::to_value(after.payload()).unwrap();
+    let payload = serde_json::to_value(after).unwrap()["payload"].clone();
     assert_eq!(payload["tool"]["name"], json!("read_file"));
     assert_eq!(payload["tool"]["call_id"], json!("call-1"));
     assert_eq!(payload["status"], json!("failed"));
+    assert_eq!(payload["capability"]["operation"], json!("read_path"));
+    assert_eq!(payload["capability"]["path"], json!("/work/notes.txt"));
+    assert_eq!(
+        after
+            .after_tool_use_capability()
+            .map(|capability| { serde_json::to_value(capability).unwrap()["operation"].clone() }),
+        Some(json!("read_path"))
+    );
+}
+
+struct SilentTool;
+
+impl Tool for SilentTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "silent".into(),
+            description: "does nothing".into(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn call<'a>(&'a self, _invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
+        Box::pin(async move { Ok(ToolOutput::text("ok")) })
+    }
+}
+
+#[tokio::test]
+async fn a_tool_without_capabilities_reports_a_null_capability() {
+    let observer = Arc::new(RecordingObserver::default());
+    let runtime = Rho::builder()
+        .provider(ScriptedProvider::new(
+            identity(),
+            [
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                    ToolCall {
+                        id: "call-1".into(),
+                        name: "silent".into(),
+                        arguments: json!({}),
+                    },
+                )])),
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "done".into(),
+                )])),
+            ],
+        ))
+        .tool(SilentTool)
+        .workspace(Workspace::new(std::env::temp_dir()).unwrap())
+        .hook_observer_shared(observer.clone())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    session.complete("go").await.unwrap();
+
+    let seen = observer.seen.lock().unwrap();
+    let after = seen
+        .iter()
+        .find(|envelope| envelope.event() == HookEventKind::AfterToolUse)
+        .expect("the call resolved");
+    let payload = serde_json::to_value(after).unwrap()["payload"].clone();
+    assert!(payload["capability"].is_null());
+    assert_eq!(after.after_tool_use_capability(), None);
 }
 
 #[tokio::test]

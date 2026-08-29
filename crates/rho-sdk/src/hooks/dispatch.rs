@@ -3,15 +3,15 @@ use std::{
     sync::Arc,
 };
 
-use crate::{RunId, SessionId, ToolCallId};
+use crate::{workspace::CapabilityRequest, RunId, SessionId, ToolCallId};
 
 use super::{
     bounds::HookPayloadBounds,
     envelope::{HookEnvelope, HookEnvelopeBuilder, HookHostLabels, HookIdentity},
     gate::{HookDecision, PreToolUseGate, PreToolUseRequest},
     payload::{
-        bounded_failure, AfterToolUsePayload, BoundedFailure, HookFailure, HookPayload, HookTool,
-        HookToolStatus, SessionCompletedPayload, SessionFailedPayload,
+        bounded_failure, summarize_capability, AfterToolUsePayload, BoundedFailure, HookFailure,
+        HookPayload, HookTool, HookToolStatus, SessionCompletedPayload, SessionFailedPayload,
     },
 };
 
@@ -151,28 +151,35 @@ impl HookWiring {
         status: HookToolStatus,
         failure: Option<BoundedFailure<'_>>,
         duration_ms: Option<u64>,
+        capability: Option<&CapabilityRequest>,
     ) {
+        let Some(observer) = self.observer.as_ref() else {
+            return;
+        };
         let bounds = self.bounds();
-        self.observe(
+        let mut builder = self.builder(
             identity.session_id,
             identity.run_id,
             identity.workspace_root,
-            |builder| {
-                let tool = HookTool::new(
-                    identity.tool_name,
-                    Some(identity.call_id.as_str().to_owned()),
-                    bounds,
-                    builder.truncation(),
-                );
-                HookPayload::AfterToolUse(AfterToolUsePayload {
-                    tool,
-                    status,
-                    failure: failure
-                        .map(|failure| bounded_failure(failure, bounds, builder.truncation())),
-                    duration_ms,
-                })
-            },
         );
+        let tool = HookTool::new(
+            identity.tool_name,
+            Some(identity.call_id.as_str().to_owned()),
+            bounds,
+            builder.truncation(),
+        );
+        let failure = failure.map(|failure| bounded_failure(failure, bounds, builder.truncation()));
+        let capability =
+            capability.map(|request| summarize_capability(request, bounds, builder.truncation()));
+        observer.observe(builder.finish_after_tool_use(
+            AfterToolUsePayload {
+                tool,
+                status,
+                failure,
+                duration_ms,
+            },
+            capability,
+        ));
     }
 }
 

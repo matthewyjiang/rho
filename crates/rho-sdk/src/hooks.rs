@@ -39,7 +39,9 @@
 //!
 //! Envelopes carry structured capability facts built from the request the host
 //! policy already saw, not scraped argument prose. Paths and shell command text
-//! are included because a deny hook exists to inspect them. Credentials,
+//! are included because a deny hook exists to inspect them. `after_tool_use`
+//! reports the first request the call authorized via JSON `payload.capability`
+//! and [`HookEnvelope::after_tool_use_capability`]. Credentials,
 //! authorization headers, environment values, and URL query strings are not.
 //! Every envelope reports what was shortened in [`HookTruncation`].
 //! Hosts can add generic, non-secret [`HookHostLabels`] for their own execution

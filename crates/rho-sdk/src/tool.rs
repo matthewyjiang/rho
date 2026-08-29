@@ -16,8 +16,10 @@ use crate::{
     CapabilityRequest, HostInputRequest, HostInputResponse, ToolCallId, Workspace,
 };
 
+mod first_capability;
 mod preparation;
 
+pub(crate) use first_capability::FirstCapability;
 use preparation::call_prepared_for;
 pub use preparation::{
     call_prepared, AuthorizedToolContext, PreparedToolInvocation, ToolAccessMode,
@@ -345,6 +347,7 @@ pub struct ToolContext {
     call_id: Option<ToolCallId>,
     cancellation: CancellationToken,
     progress: ToolProgressSender,
+    first_capability: FirstCapability,
 }
 
 impl ToolContext {
@@ -360,6 +363,7 @@ impl ToolContext {
             call_id: None,
             cancellation,
             progress,
+            first_capability: FirstCapability::default(),
         }
     }
 
@@ -376,6 +380,7 @@ impl ToolContext {
             call_id: None,
             cancellation,
             progress,
+            first_capability: FirstCapability::default(),
         }
     }
 
@@ -422,10 +427,15 @@ impl ToolContext {
         self.workspace.as_ref().map(Workspace::root)
     }
 
+    pub(crate) fn first_capability(&self) -> FirstCapability {
+        self.first_capability.clone()
+    }
+
     pub async fn authorize(
         &self,
         request: CapabilityRequest,
     ) -> Result<AuthorizationOutcome, AuthorizationError> {
+        self.first_capability.record(&request);
         let capability = request.kind();
         tokio::select! {
             result = crate::workspace::authorize_for_call(

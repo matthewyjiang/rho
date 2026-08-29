@@ -186,6 +186,20 @@ pub struct BeforeToolUsePayload {
     pub policy: HookPolicyOutcome,
 }
 
+/// Outcome of a tool call delivered to observational hooks.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): add `capability: Option<HookCapability>` as a public
+/// field on this struct and stop carrying it on [`super::HookEnvelope`].
+///
+/// This minor keeps the existing constructor fields so downstream struct
+/// literals stay valid. Read the first authorized capability from
+/// [`super::HookEnvelope::after_tool_use_capability`] or the envelope JSON
+/// `payload.capability` key. `None` / JSON `null` means the call never
+/// authorized. Multi-capability calls still emit one `before_tool_use` per
+/// request; the after payload reports only the first. Policy denials still
+/// include the request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct AfterToolUsePayload {
     pub tool: HookTool,
