@@ -116,7 +116,9 @@ can be hours after the last run.
 
 `before_tool_use` fires per capability request, so it sees tool calls that ask
 for filesystem, process, network, skill, or instruction authority. A tool that
-requests no capability has nothing to gate.
+requests no capability has nothing to gate. `after_tool_use` reports the first
+capability that call requested (the same summary the gate saw) and `null` when
+the call requested none or failed before producing one.
 
 ### Canonical tool names
 

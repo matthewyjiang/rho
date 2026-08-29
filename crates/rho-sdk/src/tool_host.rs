@@ -19,6 +19,7 @@ use crate::{
         tool_progress_channel, Tool, ToolContext, ToolError, ToolErrorKind, ToolInvocation,
         ToolOutput, ToolPreparationContext, ToolProgress, ToolRegistry,
     },
+    workspace::CapabilityRequest,
     ApprovalAuditRecord, ApprovalHandler, ApprovalSession, CancellationToken, DenyAllPolicy,
     DenyApprovals, Error, HostInputRequest, HostInputResponse, RunId, SessionId, ToolCallId,
     Workspace, WorkspacePolicy,
@@ -496,6 +497,7 @@ impl ToolHostWorker {
         let started = Instant::now();
         let invocation = ToolInvocation::from_host(call.id.clone(), call.arguments.clone());
         let workspace = core.workspace.clone();
+        let observed_capability = context.observed_capability_slot();
         let cancellation_cleanup_timeout = Arc::new(Mutex::new(None));
         let execution_completion = Arc::clone(&cancellation_cleanup_timeout);
         let execution = async {
@@ -614,7 +616,11 @@ impl ToolHostWorker {
                 break;
             }
         }
-        observe_after_tool_use(&core, &call, &run_id, &result, started);
+        let capability = observed_capability
+            .lock()
+            .expect("observed capability lock")
+            .take();
+        observe_after_tool_use(&core, &call, &run_id, &result, started, capability.as_ref());
         result.map_err(Error::Tool)
     }
 }
@@ -649,6 +655,7 @@ fn observe_after_tool_use(
     run_id: &RunId,
     result: &Result<ToolOutput, ToolError>,
     started: Instant,
+    capability: Option<&CapabilityRequest>,
 ) {
     let (status, failure) = match result {
         Ok(_) => (HookToolStatus::Succeeded, None),
@@ -672,6 +679,7 @@ fn observe_after_tool_use(
         status,
         failure,
         Some(started.elapsed().as_millis() as u64),
+        capability,
     );
 }
 

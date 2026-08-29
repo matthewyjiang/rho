@@ -139,9 +139,11 @@ async fn prepare_call<'a>(
             queued_at: Instant::now(),
             execution_started: None,
             result: None,
+            observed_capability: Arc::default(),
         };
     };
     let (context, progress, host_input) = execution_context(scope, &id);
+    let observed_capability = context.observed_capability_slot();
     let invocation = match source {
         ToolInvocationSource::Model => ToolInvocation::new(id.clone(), call.arguments.clone()),
         ToolInvocationSource::Host => ToolInvocation::from_host(id.clone(), call.arguments.clone()),
@@ -172,6 +174,7 @@ async fn prepare_call<'a>(
         queued_at: Instant::now(),
         execution_started: None,
         result: None,
+        observed_capability,
     }
 }
 
@@ -186,6 +189,7 @@ fn interrupted_entry<'a>(call: ToolCall, id: ToolCallId) -> BatchCall<'a> {
         queued_at: Instant::now(),
         execution_started: None,
         result: None,
+        observed_capability: Arc::default(),
     }
 }
 

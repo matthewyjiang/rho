@@ -50,6 +50,7 @@ async fn cancellation_cleanup_keeps_result_completed_during_trailing_progress() 
         queued_at: Instant::now(),
         execution_started: Some(Instant::now()),
         result: None,
+        observed_capability: Arc::default(),
     }];
 
     settle_running_after_cancellation(&cancellation, &mut batch, &mut worker_rx).await;

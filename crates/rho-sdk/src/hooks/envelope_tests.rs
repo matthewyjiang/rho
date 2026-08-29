@@ -103,7 +103,43 @@ fn before_tool_use_wire_shape_is_stable() {
 #[test]
 fn after_tool_use_wire_shape_is_stable() {
     let payload = HookPayload::AfterToolUse(AfterToolUsePayload {
+        tool: tool("bash", Some("call-2")),
+        capability: Some(HookCapability::ExecuteProcess {
+            working_directory: "/work".into(),
+            executable: "bash".into(),
+            arguments: vec!["-lc".into()],
+            shell_command: Some("git push --force".into()),
+            environment: HookProcessEnvironment::InheritAll,
+        }),
+        status: HookToolStatus::Succeeded,
+        failure: None,
+        duration_ms: Some(42),
+    });
+
+    assert_eq!(
+        wire_shape(&envelope(payload))["payload"],
+        json!({
+            "tool": { "name": "bash", "call_id": "call-2" },
+            "capability": {
+                "operation": "execute_process",
+                "working_directory": "/work",
+                "executable": "bash",
+                "arguments": ["-lc"],
+                "shell_command": "git push --force",
+                "environment": "inherit_all",
+            },
+            "status": "succeeded",
+            "failure": null,
+            "duration_ms": 42,
+        })
+    );
+}
+
+#[test]
+fn after_tool_use_without_a_capability_serializes_null() {
+    let payload = HookPayload::AfterToolUse(AfterToolUsePayload {
         tool: tool("edit", Some("call-2")),
+        capability: None,
         status: HookToolStatus::Succeeded,
         failure: None,
         duration_ms: Some(42),
@@ -113,6 +149,7 @@ fn after_tool_use_wire_shape_is_stable() {
         wire_shape(&envelope(payload))["payload"],
         json!({
             "tool": { "name": "edit", "call_id": "call-2" },
+            "capability": null,
             "status": "succeeded",
             "failure": null,
             "duration_ms": 42,
@@ -309,6 +346,7 @@ fn an_oversized_envelope_is_refused_rather_than_silently_shortened() {
 fn accessors_report_what_was_built() {
     let envelope = envelope(HookPayload::AfterToolUse(AfterToolUsePayload {
         tool: tool("grep", None),
+        capability: None,
         status: HookToolStatus::Unavailable,
         failure: None,
         duration_ms: None,

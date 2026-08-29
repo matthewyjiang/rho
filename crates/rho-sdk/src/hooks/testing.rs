@@ -30,9 +30,8 @@ fn identity() -> HookIdentity {
     }
 }
 
-/// A `before_tool_use` envelope for `tool` running `command` through a shell.
-pub fn before_tool_use_envelope(tool: &str, command: &str) -> HookEnvelope {
-    let request = CapabilityRequest::process(
+fn process_request(tool: &str, command: &str) -> CapabilityRequest {
+    CapabilityRequest::process(
         ProcessExecution::new(
             "/work",
             ProcessInvocation::shell_from_path("bash", vec!["-lc".into()], command),
@@ -40,7 +39,12 @@ pub fn before_tool_use_envelope(tool: &str, command: &str) -> HookEnvelope {
             ProcessOutputLimits::new(1024, None),
         ),
         CapabilitySource::built_in_tool(tool),
-    );
+    )
+}
+
+/// A `before_tool_use` envelope for `tool` running `command` through a shell.
+pub fn before_tool_use_envelope(tool: &str, command: &str) -> HookEnvelope {
+    let request = process_request(tool, command);
     let bounds = HookPayloadBounds::default();
     let mut builder = HookEnvelopeBuilder::new(identity(), None, bounds);
     let capability = summarize_capability(&request, bounds, builder.truncation());
@@ -64,6 +68,23 @@ pub fn after_tool_use_envelope(tool: &str) -> HookEnvelope {
     let tool = HookTool::new(tool, Some("test-call".into()), bounds, builder.truncation());
     builder.finish(HookPayload::AfterToolUse(AfterToolUsePayload {
         tool,
+        capability: None,
+        status: HookToolStatus::Succeeded,
+        failure: None,
+        duration_ms: Some(1),
+    }))
+}
+
+/// An `after_tool_use` envelope for `tool` that ran `command` through a shell.
+pub fn after_tool_use_envelope_for_command(tool: &str, command: &str) -> HookEnvelope {
+    let request = process_request(tool, command);
+    let bounds = HookPayloadBounds::default();
+    let mut builder = HookEnvelopeBuilder::new(identity(), None, bounds);
+    let capability = summarize_capability(&request, bounds, builder.truncation());
+    let tool = HookTool::new(tool, Some("test-call".into()), bounds, builder.truncation());
+    builder.finish(HookPayload::AfterToolUse(AfterToolUsePayload {
+        tool,
+        capability: Some(capability),
         status: HookToolStatus::Succeeded,
         failure: None,
         duration_ms: Some(1),

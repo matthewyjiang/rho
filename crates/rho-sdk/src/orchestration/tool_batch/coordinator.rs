@@ -1,5 +1,10 @@
 use std::{
-    collections::BTreeMap, future::Future, num::NonZeroUsize, pin::Pin, sync::Arc, task::Poll,
+    collections::BTreeMap,
+    future::Future,
+    num::NonZeroUsize,
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::Poll,
     time::Instant,
 };
 
@@ -15,6 +20,7 @@ use crate::{
         PreparedToolInvocation, ToolContext, ToolError, ToolErrorKind, ToolExecutionPolicy,
         ToolFuture, ToolInvocationSource, ToolOutput, ToolProgress,
     },
+    workspace::CapabilityRequest,
     CancellationToken, Error, HostInputId, RunEvent, ToolCallId,
 };
 
@@ -61,6 +67,7 @@ struct BatchCall<'a> {
     queued_at: Instant,
     execution_started: Option<Instant>,
     result: Option<ToolResult>,
+    observed_capability: Arc<Mutex<Option<CapabilityRequest>>>,
 }
 
 enum WorkerEvent {
@@ -345,9 +352,13 @@ async fn resolve_without_work(
         };
         entry.result = Some(result);
         entry.state = CallState::Resolved;
-        control
-            .hooks
-            .after_tool_use(&entry.call.name, &entry.id, &completion, None);
+        control.hooks.after_tool_use(
+            &entry.call.name,
+            &entry.id,
+            &completion,
+            None,
+            /*capability*/ None,
+        );
         emit(
             control.events,
             control.cancellation,
@@ -721,9 +732,18 @@ async fn finish_call(
     };
     entry.result = Some(normalized);
     entry.state = CallState::Resolved;
-    control
-        .hooks
-        .after_tool_use(&entry.call.name, &entry.id, &completion, duration);
+    let capability = entry
+        .observed_capability
+        .lock()
+        .expect("observed capability lock")
+        .take();
+    control.hooks.after_tool_use(
+        &entry.call.name,
+        &entry.id,
+        &completion,
+        duration,
+        capability.as_ref(),
+    );
     emit(
         control.events,
         control.cancellation,

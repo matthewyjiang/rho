@@ -37,6 +37,28 @@ One bounded JSON document on stdin:
 }
 ```
 
+`after_tool_use` uses the same capability summary for the first request on
+that call. Multi-capability calls still emit one `before_tool_use` per
+request; the after payload reports only the first. The field is `null` when
+the call requested no capability or failed before producing one:
+
+```json
+{
+  "tool": { "name": "bash", "call_id": "call_01" },
+  "capability": {
+    "operation": "execute_process",
+    "working_directory": "/home/you/project",
+    "executable": "bash",
+    "arguments": ["-lc"],
+    "shell_command": "git push --force",
+    "environment": "inherit_except"
+  },
+  "status": "failed",
+  "failure": { "kind": "execution", "message": "…" },
+  "duration_ms": 42
+}
+```
+
 `parent_session_id` is filled in for delegated Rho subagents. A
 `runtime: claude-cli` child does not run Rho's tool loop, so it produces
 session-boundary events only.

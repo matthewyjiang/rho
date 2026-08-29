@@ -5,7 +5,7 @@ use std::{
     num::NonZeroUsize,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use serde_json::Value;
@@ -345,6 +345,7 @@ pub struct ToolContext {
     call_id: Option<ToolCallId>,
     cancellation: CancellationToken,
     progress: ToolProgressSender,
+    observed_capability: Arc<Mutex<Option<CapabilityRequest>>>,
 }
 
 impl ToolContext {
@@ -360,6 +361,7 @@ impl ToolContext {
             call_id: None,
             cancellation,
             progress,
+            observed_capability: Arc::default(),
         }
     }
 
@@ -376,6 +378,7 @@ impl ToolContext {
             call_id: None,
             cancellation,
             progress,
+            observed_capability: Arc::default(),
         }
     }
 
@@ -422,10 +425,25 @@ impl ToolContext {
         self.workspace.as_ref().map(Workspace::root)
     }
 
+    pub(crate) fn observed_capability_slot(&self) -> Arc<Mutex<Option<CapabilityRequest>>> {
+        Arc::clone(&self.observed_capability)
+    }
+
+    fn record_observed_capability(&self, request: &CapabilityRequest) {
+        let mut slot = self
+            .observed_capability
+            .lock()
+            .expect("observed capability lock");
+        if slot.is_none() {
+            *slot = Some(request.clone());
+        }
+    }
+
     pub async fn authorize(
         &self,
         request: CapabilityRequest,
     ) -> Result<AuthorizationOutcome, AuthorizationError> {
+        self.record_observed_capability(&request);
         let capability = request.kind();
         tokio::select! {
             result = crate::workspace::authorize_for_call(

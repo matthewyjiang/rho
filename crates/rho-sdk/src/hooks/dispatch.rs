@@ -3,15 +3,15 @@ use std::{
     sync::Arc,
 };
 
-use crate::{RunId, SessionId, ToolCallId};
+use crate::{workspace::CapabilityRequest, RunId, SessionId, ToolCallId};
 
 use super::{
     bounds::HookPayloadBounds,
     envelope::{HookEnvelope, HookEnvelopeBuilder, HookHostLabels, HookIdentity},
     gate::{HookDecision, PreToolUseGate, PreToolUseRequest},
     payload::{
-        bounded_failure, AfterToolUsePayload, BoundedFailure, HookFailure, HookPayload, HookTool,
-        HookToolStatus, SessionCompletedPayload, SessionFailedPayload,
+        bounded_failure, summarize_capability, AfterToolUsePayload, BoundedFailure, HookFailure,
+        HookPayload, HookTool, HookToolStatus, SessionCompletedPayload, SessionFailedPayload,
     },
 };
 
@@ -151,6 +151,7 @@ impl HookWiring {
         status: HookToolStatus,
         failure: Option<BoundedFailure<'_>>,
         duration_ms: Option<u64>,
+        capability: Option<&CapabilityRequest>,
     ) {
         let bounds = self.bounds();
         self.observe(
@@ -166,6 +167,8 @@ impl HookWiring {
                 );
                 HookPayload::AfterToolUse(AfterToolUsePayload {
                     tool,
+                    capability: capability
+                        .map(|request| summarize_capability(request, bounds, builder.truncation())),
                     status,
                     failure: failure
                         .map(|failure| bounded_failure(failure, bounds, builder.truncation())),

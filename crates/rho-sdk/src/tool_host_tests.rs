@@ -345,6 +345,9 @@ async fn provider_free_call_preserves_authorization_order_and_hook_pairing() {
     );
     assert_eq!(gate_requests[0].host_labels().get("run"), Some("host-run"));
     assert_eq!(events[0].host_labels().get("node"), Some("build"));
+    let after = serde_json::to_value(events[0].payload()).unwrap();
+    assert_eq!(after["capability"]["operation"], json!("read_path"));
+    assert_eq!(after["capability"]["path"], json!("/work/input"));
 }
 
 // Covers: a deny-only hook must stop a host call before approval and execution.
