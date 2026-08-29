@@ -281,8 +281,9 @@ pub(super) fn place_td(
         }
     }
     // Forward skips stay on the right; feedback and same-rank edges take the
-    // left. Opposite sides are the hierarchy: a loop cannot share ink with a
-    // skip, so the two stems cannot look glued together.
+    // left. Opposite sides keep those families from sharing ink. Within a
+    // side, longer spans take outer tracks so they wrap shorter hops instead
+    // of cutting through them.
     let lanes = lane_spans(graph, ranks, placed, LaneAxis::Vertical);
     let (skip_spans, back_spans): (Vec<LaneSpan>, Vec<LaneSpan>) = lanes
         .into_iter()
@@ -303,7 +304,9 @@ pub(super) fn place_td(
         assign_tracks(&back_spans)
     };
     for (idx, slot) in back_assigned {
-        edge_lane[idx] = slot;
+        // assign_tracks uses slot 0 as inner (closest to the nodes). The
+        // left gutter grows from x=0, so flip: inner sits next to the boxes.
+        edge_lane[idx] = back_count - 1 - slot;
     }
 
     let back_label_w = graph
@@ -402,8 +405,11 @@ pub(super) fn place_lr(
     let forward_pad = max_extra_label_rows(graph, edge_labels, |edge| {
         edge.from != edge.to && ranks[edge.to] == ranks[edge.from] + 1
     });
+    let skip_pad = max_extra_label_rows(graph, edge_labels, |edge| {
+        edge.from != edge.to && ranks[edge.to] > ranks[edge.from] + 1
+    });
     let back_pad = max_extra_label_rows(graph, edge_labels, |edge| {
-        edge.from != edge.to && ranks[edge.to] != ranks[edge.from] + 1
+        edge.from != edge.to && ranks[edge.to] <= ranks[edge.from]
     });
 
     let centers = assign_positions(
@@ -476,20 +482,60 @@ pub(super) fn place_lr(
             diagram_h = diagram_h.max(y + h + sizes.extra_h[idx]);
         }
     }
-    let source_anchors = placed.iter().map(|node| node.cy).collect();
+    let mut source_anchors: Vec<usize> = placed.iter().map(|node| node.cy).collect();
+
+    // Forward skips stay on the bottom; feedback and same-rank edges take
+    // the top. Opposite sides keep those families from sharing ink. Within
+    // a side, longer spans take outer tracks so they wrap shorter hops.
+    let lanes = lane_spans(graph, ranks, placed, LaneAxis::Horizontal);
+    let (skip_spans, back_spans): (Vec<LaneSpan>, Vec<LaneSpan>) = lanes
+        .into_iter()
+        .partition(|span| ranks[span.to] > ranks[span.from] + 1);
 
     let mut edge_lane = vec![0usize; graph.edges.len()];
-    let lanes = lane_spans(graph, ranks, placed, LaneAxis::Horizontal);
-    let (canvas_h, lane_base) = if lanes.is_empty() {
+    let (skip_assigned, skip_count) = if skip_spans.is_empty() {
+        (Vec::new(), 0)
+    } else {
+        assign_tracks(&skip_spans)
+    };
+    for (idx, slot) in skip_assigned {
+        edge_lane[idx] = slot;
+    }
+    let (back_assigned, back_count) = if back_spans.is_empty() {
+        (Vec::new(), 0)
+    } else {
+        assign_tracks(&back_spans)
+    };
+    for (idx, slot) in back_assigned {
+        // Slot 0 is inner. The top gutter grows from y=0, so flip.
+        edge_lane[idx] = back_count - 1 - slot;
+    }
+
+    let mut back_lane_base = 0;
+    if back_count > 0 {
+        // Labels stack up from the row above the lane. A wrapped block
+        // needs those extra rows plus the anchor row itself.
+        back_lane_base = if back_pad == 0 { 0 } else { back_pad + 1 };
+        let top_margin = back_lane_base + back_count + 1;
+        for node in placed.iter_mut() {
+            node.y += top_margin;
+            node.cy += top_margin;
+        }
+        diagram_h += top_margin;
+        for anchor in source_anchors.iter_mut() {
+            *anchor += top_margin;
+        }
+    }
+
+    let (canvas_h, lane_base) = if skip_count == 0 {
         (diagram_h, 0)
     } else {
-        let (assigned, count) = assign_tracks(&lanes);
-        for (idx, slot) in assigned {
-            edge_lane[idx] = slot;
-        }
-        // Back-route labels stack upward from the lane; keep those rows
-        // between the diagram and the first lane so boxes cannot truncate them.
-        (diagram_h + back_pad + 1 + count, diagram_h + back_pad + 1)
+        // Skip-route labels stack upward from the bottom lane; keep those
+        // rows between the diagram and the first skip lane.
+        (
+            diagram_h + skip_pad + 1 + skip_count,
+            diagram_h + skip_pad + 1,
+        )
     };
 
     RoutePlan {
@@ -498,7 +544,7 @@ pub(super) fn place_lr(
         edge_bus,
         source_anchors,
         lane_base,
-        back_lane_base: 0,
+        back_lane_base,
         edge_lane,
         edge_join: vec![0; graph.edges.len()],
     }
@@ -510,8 +556,8 @@ pub(super) struct RoutePlan {
     pub(super) edge_bus: Vec<usize>,
     pub(super) source_anchors: Vec<usize>,
     pub(super) lane_base: usize,
-    /// Left-side TD feedback lanes. Zero when the diagram has no back edges;
-    /// LR layout always leaves this at zero and keeps detours on one side.
+    /// Feedback-lane origin. Left gutter in TD, top gutter in LR. Zero when
+    /// the diagram has no back edges; skip lanes use `lane_base` instead.
     pub(super) back_lane_base: usize,
     pub(super) edge_lane: Vec<usize>,
     /// Absolute row of the target's fan-in bus for rank-skipping top-down
@@ -560,7 +606,18 @@ fn pack_tracks<T>(items: &[T], compatible: impl Fn(&T, &T) -> bool) -> (Vec<usiz
 
 fn assign_tracks(spans: &[LaneSpan]) -> (Vec<(usize, usize)>, usize) {
     let mut sorted: Vec<&LaneSpan> = spans.iter().collect();
-    sorted.sort_by_key(|span| (span.start, span.end, span.from, span.to, span.index));
+    // Shorter spans take inner tracks (slot 0, closest to the nodes). A
+    // containing hop then packs outward and wraps around them.
+    sorted.sort_by_key(|span| {
+        (
+            span.end.saturating_sub(span.start),
+            span.start,
+            span.end,
+            span.from,
+            span.to,
+            span.index,
+        )
+    });
     // Spans may share a lane when they stay two cells apart or share an
     // endpoint: shared ink then still belongs to one node.
     let (slots, count) = pack_tracks(&sorted, |member, span| {

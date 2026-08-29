@@ -361,8 +361,9 @@ fn skip_edges_join_the_shared_fan_in_bus_row() {
     );
 }
 
-// Covers: skip (forward) and back (feedback) detours take opposite sides so
-// their stems cannot share ink or sit in adjacent right-lane columns.
+// Covers: skip (forward) and back (feedback) detours take opposite sides in
+// TD and LR so their stems cannot share ink or sit in adjacent same-side
+// columns.
 // Owner: terminal graph lane hierarchy
 #[test]
 fn skip_and_back_edges_use_opposite_side_lanes() {
@@ -400,6 +401,126 @@ fn skip_and_back_edges_use_opposite_side_lanes() {
             "│      ┌─────┐".to_owned(),
             "└──────┤ end │".to_owned(),
             "       └─────┘".to_owned(),
+        ]
+    );
+
+    let lr = Graph::from_parts(
+        vec![
+            Node::rectangular("start", style),
+            Node::rectangular("mid", style),
+            Node::rectangular("end", style),
+        ],
+        vec![
+            Edge::directed(0, 1),
+            Edge::directed(1, 2),
+            Edge::directed(0, 2),
+            labeled_edge(2, 1, "no"),
+        ],
+        Direction::LeftRight,
+        RankOrdering::PreserveInput,
+    )
+    .unwrap();
+    assert_eq!(
+        lr.render(Style::default()).unwrap().plain_lines,
+        vec![
+            "                ┌──────────┐    no".to_owned(),
+            "                │          │".to_owned(),
+            "                ▼          │".to_owned(),
+            "┌───────┐    ┌─────┐    ┌──┴──┐".to_owned(),
+            "│ start ├───▶│ mid ├───▶│ end │".to_owned(),
+            "└───┬───┘    └─────┘    └─────┘".to_owned(),
+            "    │                      ▲".to_owned(),
+            "    └──────────────────────┘".to_owned(),
+        ]
+    );
+}
+
+// Covers: a long skip must wrap outside a nested shorter skip instead of
+// taking the inner lane and crossing the short hop's stem.
+// Owner: terminal graph lane hierarchy
+#[test]
+fn nested_skips_use_outer_lane_for_the_longer_span() {
+    let style = NodeStyle::default();
+    let graph = Graph::top_down(
+        vec![
+            Node::rectangular("A", style),
+            Node::rectangular("B", style),
+            Node::rectangular("M", style),
+            Node::rectangular("C", style),
+            Node::rectangular("D", style),
+        ],
+        vec![
+            Edge::directed(0, 1),
+            Edge::directed(1, 2),
+            Edge::directed(2, 3),
+            Edge::directed(3, 4),
+            Edge::directed(0, 4),
+            Edge::directed(1, 3),
+        ],
+        RankOrdering::PreserveInput,
+    )
+    .unwrap();
+
+    let art = graph.render(Style::default()).unwrap();
+    assert_eq!(
+        art.plain_lines,
+        vec![
+            " ┌───┐".to_owned(),
+            " │ A │".to_owned(),
+            " └─┬─┘".to_owned(),
+            "   ├────┐".to_owned(),
+            "   ▼    │".to_owned(),
+            " ┌───┐  │".to_owned(),
+            " │ B │  │".to_owned(),
+            " └─┬─┘  │".to_owned(),
+            "   ├───┐│".to_owned(),
+            "   ▼   ││".to_owned(),
+            " ┌───┐ ││".to_owned(),
+            " │ M │ ││".to_owned(),
+            " └─┬─┘ ││".to_owned(),
+            "   ├───┘│".to_owned(),
+            "   ▼    │".to_owned(),
+            " ┌───┐  │".to_owned(),
+            " │ C │  │".to_owned(),
+            " └─┬─┘  │".to_owned(),
+            "   ├────┘".to_owned(),
+            "   ▼".to_owned(),
+            " ┌───┐".to_owned(),
+            " │ D │".to_owned(),
+            " └───┘".to_owned(),
+        ]
+    );
+
+    let lr = Graph::from_parts(
+        vec![
+            Node::rectangular("A", style),
+            Node::rectangular("B", style),
+            Node::rectangular("M", style),
+            Node::rectangular("C", style),
+            Node::rectangular("D", style),
+        ],
+        vec![
+            Edge::directed(0, 1),
+            Edge::directed(1, 2),
+            Edge::directed(2, 3),
+            Edge::directed(3, 4),
+            Edge::directed(0, 4),
+            Edge::directed(1, 3),
+        ],
+        Direction::LeftRight,
+        RankOrdering::PreserveInput,
+    )
+    .unwrap();
+    assert_eq!(
+        lr.render(Style::default()).unwrap().plain_lines,
+        vec![
+            "".to_owned(),
+            "┌───┐    ┌───┐    ┌───┐    ┌───┐    ┌───┐".to_owned(),
+            "│ A ├───▶│ B ├───▶│ M ├───▶│ C ├───▶│ D │".to_owned(),
+            "└─┬─┘    └─┬─┘    └───┘    └───┘    └───┘".to_owned(),
+            "  │        │                 ▲        ▲".to_owned(),
+            "  │        └─────────────────┘        │".to_owned(),
+            "  └───────────────────────────────────┘".to_owned(),
         ]
     );
 }
@@ -469,7 +590,7 @@ fn wraps_td_back_edge_labels_without_dropping_words() {
     assert_wrapped_label_visible(&art_text(&graph));
 }
 
-// Covers: LR back-route labels wrap above the bottom lane instead of stacking
+// Covers: LR back-route labels wrap above the top lane instead of stacking
 // into node boxes that silently truncate the remaining words.
 // Owner: terminal graph LR placement.
 #[test]

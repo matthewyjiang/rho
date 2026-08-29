@@ -363,7 +363,8 @@ pub(in crate::tui) fn route_forward_lr(
     place_label_block(canvas, label_lines, ly.saturating_sub(1), bus + 1);
 }
 
-pub(in crate::tui) fn route_back_lr(
+/// Route a rank-skipping LR edge along a bottom lane, then up into the target.
+pub(in crate::tui) fn route_skip_lr(
     canvas: &mut Canvas,
     from: &Placed,
     to: &Placed,
@@ -388,6 +389,41 @@ pub(in crate::tui) fn route_back_lr(
     }
     if edge.head_from != Head::None {
         canvas.set(sx, sy, head_glyph(edge.head_from, '▲'), Cls::Edge);
+    }
+
+    let right = (from.x + from.w).max(to.x + to.w);
+    place_label_block(canvas, label_lines, lane_y.saturating_sub(1), right + 1);
+}
+
+/// Route an LR feedback or same-rank edge along a top lane, then down into
+/// the target. Opposite the bottom skip gutter so the two stems cannot share
+/// ink.
+pub(in crate::tui) fn route_back_lr(
+    canvas: &mut Canvas,
+    from: &Placed,
+    to: &Placed,
+    edge: &Edge,
+    lane_y: usize,
+    label_lines: &[String],
+) {
+    let sx = from.cx;
+    let sy = from.y;
+    let tx = to.cx;
+    let ty = to.y;
+    let head_row = ty.saturating_sub(1);
+
+    canvas.junction(sx, sy, U);
+    canvas.seg_v(sx, sy, lane_y);
+    canvas.seg_h(lane_y, sx, tx);
+    canvas.seg_v(tx, lane_y, head_row);
+
+    if edge.head_to == Head::None {
+        canvas.add_bits(tx, head_row, U);
+    } else {
+        canvas.set(tx, head_row, head_glyph(edge.head_to, '▼'), Cls::Edge);
+    }
+    if edge.head_from != Head::None {
+        canvas.set(sx, sy, head_glyph(edge.head_from, '▼'), Cls::Edge);
     }
 
     let right = (from.x + from.w).max(to.x + to.w);

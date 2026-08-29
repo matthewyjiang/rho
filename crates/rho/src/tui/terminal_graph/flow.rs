@@ -7,8 +7,8 @@ use super::{
     canvas::{Canvas, STY_DOT, STY_SOLID, STY_THICK},
     drawing::{
         art_node_rect, compute_ranks, draw_box, draw_compartment_box, draw_frame, route_back,
-        route_back_lr, route_forward, route_forward_lr, route_self, route_skip, wrap_label,
-        SkipPath,
+        route_back_lr, route_forward, route_forward_lr, route_self, route_skip, route_skip_lr,
+        wrap_label, SkipPath,
     },
     ordering::order_ranks,
     painter::{
@@ -376,7 +376,10 @@ pub(in crate::tui) fn layout_canvas(
                 plan.source_anchors[edge.from],
                 label_lines,
             ),
-            (false, false) => route_back_lr(&mut canvas, from, to, edge, skip_lane, label_lines),
+            (false, false) if to.rank > from.rank + 1 => {
+                route_skip_lr(&mut canvas, from, to, edge, skip_lane, label_lines)
+            }
+            (false, false) => route_back_lr(&mut canvas, from, to, edge, back_lane, label_lines),
         }
     }
 
