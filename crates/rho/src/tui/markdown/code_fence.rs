@@ -6,8 +6,8 @@ pub(in crate::tui) struct CodeFence {
     pub(super) length: usize,
 }
 
-pub(in crate::tui) struct MermaidOpeningFence {
-    pub(in crate::tui) fence: CodeFence,
+pub(super) struct MermaidOpeningFence {
+    pub(super) fence: CodeFence,
 }
 
 /// Open/closed fence tracker for streaming markdown. Carries the info-string
@@ -125,7 +125,7 @@ pub(in crate::tui) fn opening_fence_info_token(line: &str) -> Option<String> {
     rest.split_whitespace().next().map(str::to_ascii_lowercase)
 }
 
-pub(in crate::tui) fn mermaid_opening_fence(line: &str) -> Option<MermaidOpeningFence> {
+pub(super) fn mermaid_opening_fence(line: &str) -> Option<MermaidOpeningFence> {
     let fence = parse_opening_fence(line)?;
     (opening_fence_info_token(line).as_deref() == Some("mermaid"))
         .then_some(MermaidOpeningFence { fence })

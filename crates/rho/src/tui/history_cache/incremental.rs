@@ -6,8 +6,6 @@ use std::sync::Arc;
 
 use ratatui::text::Line;
 
-mod mermaid_tail;
-
 use super::{
     append_entry_segment_into, incremental_entry_source, CachedCodeBlock, CachedEntry,
     EntryContentRender,
@@ -48,7 +46,6 @@ enum IncrementalTail {
     None,
     Fence(OpenFenceTail),
     Table(OpenTableTail),
-    Mermaid(mermaid_tail::OpenMermaidTail),
 }
 
 #[derive(Clone)]
@@ -71,39 +68,19 @@ struct OpenTableTail {
 }
 
 pub(super) fn incremental_cache_for(
-    cached: &mut CachedEntry,
     entry: &Entry,
     is_last: bool,
     width: usize,
-    has_trailing_blank: bool,
-) {
+    content_line_count: usize,
+) -> Option<IncrementalEntryCache> {
     // Only the last entry can be appended to, so only its cache is ever read
     // (see `entry_appended`). Building one for every entry would re-render
     // each streamed message's stable prefix a second time.
     if !is_last {
-        return;
+        return None;
     }
-    let Some((text, render)) = incremental_entry_source(entry) else {
-        return;
-    };
-    let content_line_count = cached
-        .lines
-        .len()
-        .saturating_sub(usize::from(has_trailing_blank));
-    let mut cache = inspect_incremental(text, render, width, content_line_count);
-    if let IncrementalTail::Mermaid(tail) = &mut cache.tail {
-        let reasoning = matches!(entry, Entry::Reasoning(_));
-        mermaid_tail::overlay_diagram(
-            cached,
-            text,
-            render,
-            width,
-            has_trailing_blank,
-            reasoning,
-            tail,
-        );
-    }
-    cached.incremental = Some(cache);
+    let (text, render) = incremental_entry_source(entry)?;
+    Some(inspect_incremental(text, render, width, content_line_count))
 }
 
 /// Continue an open fence or table, or promote newly completed blocks.
@@ -175,11 +152,6 @@ fn inspect_open_tail(
     let tail = &text[tail_start..];
     if tail.is_empty() {
         return IncrementalTail::None;
-    }
-    if let Some(mermaid) =
-        mermaid_tail::open_from_source(text, tail_start, stable_line_count, width)
-    {
-        return IncrementalTail::Mermaid(mermaid);
     }
     if let Some(fence) = open_fence_from_source(
         text,
@@ -325,16 +297,6 @@ fn extend_open_tail(
         IncrementalTail::Table(tail) => {
             extend_open_table(entry, text, has_trailing_blank, tail).map(IncrementalTail::Table)
         }
-        IncrementalTail::Mermaid(tail) => mermaid_tail::extend(
-            entry,
-            text,
-            render,
-            width,
-            has_trailing_blank,
-            reasoning,
-            tail,
-        )
-        .map(IncrementalTail::Mermaid),
         IncrementalTail::None => None,
     };
     match next_tail {
@@ -377,6 +339,18 @@ fn extend_open_fence(
         return None;
     }
 
+    if tail.language.as_deref() == Some("mermaid") {
+        return extend_open_mermaid(
+            entry,
+            text,
+            render,
+            width,
+            has_trailing_blank,
+            tail,
+            new_complete,
+        );
+    }
+
     let trailing_blank = take_trailing_blank(&mut entry.lines, has_trailing_blank);
     entry.lines.truncate(tail.committed_line_count);
     entry
@@ -403,6 +377,42 @@ fn extend_open_fence(
     }
 
     refresh_fence_copy(entry, text, &tail, width);
+    if let Some(blank) = trailing_blank {
+        entry.lines.push(blank);
+    }
+    Some(tail)
+}
+
+/// Mermaid relayouts as a whole, so body lines cannot be appended like
+/// highlighted code. Markdown paints live art from the complete-line prefix.
+fn extend_open_mermaid(
+    entry: &mut CachedEntry,
+    text: &str,
+    render: EntryContentRender,
+    width: usize,
+    has_trailing_blank: bool,
+    mut tail: OpenFenceTail,
+    new_complete: usize,
+) -> Option<OpenFenceTail> {
+    if new_complete == tail.committed_end {
+        // Incomplete last-line tokens: live art ignores them. Sticky source
+        // waits for a newline so this path never re-parses mermaid per token.
+        return Some(tail);
+    }
+    tail.committed_end = new_complete;
+    let trailing_blank = take_trailing_blank(&mut entry.lines, has_trailing_blank);
+    entry.lines.truncate(tail.header_line);
+    entry
+        .code_blocks
+        .retain(|block| block.line < tail.header_line);
+    append_entry_segment_into(
+        &mut entry.lines,
+        &mut entry.code_blocks,
+        &text[tail.source_start..],
+        width,
+        render,
+    );
+    tail.committed_line_count = entry.lines.len();
     if let Some(blank) = trailing_blank {
         entry.lines.push(blank);
     }

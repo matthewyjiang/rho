@@ -818,15 +818,17 @@ fn cached_entry_from_render(
         return CachedEntry::default();
     };
     let has_trailing_blank = !(open_stream_tail && is_last);
-    let mut cached = CachedEntry {
+    let content_line_count = rendered
+        .lines
+        .len()
+        .saturating_sub(usize::from(has_trailing_blank));
+    CachedEntry {
         lines: rendered.lines,
         code_blocks: rendered.code_blocks,
         image_placement: rendered.image_placement,
-        incremental: None,
+        incremental: incremental::incremental_cache_for(entry, is_last, width, content_line_count),
         depends_on_image_height: rendered.depends_on_image_height,
-    };
-    incremental::incremental_cache_for(&mut cached, entry, is_last, width, has_trailing_blank);
-    cached
+    }
 }
 
 fn prepare_cache_entry_render(

@@ -288,15 +288,22 @@ fn mermaid_scanner_keeps_an_invalid_closer_inside_the_raw_block() {
 }
 
 #[test]
-fn open_mermaid_fence_stays_raw_until_closed() {
+fn open_mermaid_fence_paints_complete_line_prefix() {
     let mut fence_state = CodeFenceState::default();
-    let open = render_markdown("```mermaid\nflowchart LR\nA --> B", 60, &mut fence_state);
+    let open = render_markdown("```mermaid\nflowchart LR\nA --> B\n", 60, &mut fence_state);
     let open_text = open.lines.iter().map(line_text).collect::<Vec<_>>();
 
     assert!(fence_state.is_open());
-    // The header labels the open block, but the source stays raw until closed.
     assert!(open_text[0].starts_with("MERMAID"));
-    assert!(open_text.iter().any(|line| line.contains("flowchart LR")));
+    assert!(
+        !open_text.iter().any(|line| line.contains("flowchart LR")),
+        "open complete-line prefix should already be art: {open_text:?}"
+    );
+
+    let mut fence_state = CodeFenceState::default();
+    let sticky = render_markdown("```mermaid\ngantt\ntitle Plan\n", 60, &mut fence_state);
+    let sticky_text = sticky.lines.iter().map(line_text).collect::<Vec<_>>();
+    assert!(sticky_text.iter().any(|line| line.contains("gantt")));
 
     let mut fence_state = CodeFenceState::default();
     let closed = render_markdown(

@@ -116,31 +116,36 @@ fn applies_source_model_and_canvas_limits_before_or_after_painting() {
     );
 }
 
-// Covers: live mermaid streaming must retry blank/malformed prefixes and latch
-// the rest, including dropping last-good art on unsafe content.
-// Owner: mermaid streaming classification
+// Covers: live mermaid retries blank/malformed prefixes, keeps last-good art,
+// and declines sticky failures so the open fence stays source until close.
+// Owner: mermaid open prefix
 #[test]
-fn streaming_prefix_classifies_retryable_and_sticky_fallbacks() {
+fn open_prefix_paints_valid_walks_back_malformed_and_declines_sticky() {
     assert!(matches!(
-        streaming_mermaid_prefix("  \n", 80),
-        StreamingMermaidPrefix::Transient
+        render_open_prefix("flowchart LR\nA --> B", "flowchart LR\nA --> B", 80),
+        Some(ClosedPanel::Art {
+            title: "MERMAID",
+            ..
+        })
     ));
-    assert!(matches!(
-        streaming_mermaid_prefix("flowchart LR\nA -->", 80),
-        StreamingMermaidPrefix::Transient
-    ));
-    assert!(matches!(
-        streaming_mermaid_prefix("gantt\ntitle Plan", 240),
-        StreamingMermaidPrefix::Terminal
-    ));
-    assert!(matches!(
-        streaming_mermaid_prefix("flowchart LR\nclick A \"https://example.com\"", 80),
-        StreamingMermaidPrefix::Unsafe
-    ));
-    assert!(matches!(
-        streaming_mermaid_prefix("flowchart LR\nA --> B", 80),
-        StreamingMermaidPrefix::Diagram { .. }
-    ));
+    let good = "flowchart LR\nA --> B";
+    let malformed = format!("{good}\nA -->");
+    let Some(ClosedPanel::Art { lines: kept, .. }) = render_open_prefix(&malformed, &malformed, 80)
+    else {
+        panic!("malformed last line should keep last-good art");
+    };
+    let MermaidRender::Rendered(expected) = render_mermaid(good, 80) else {
+        panic!("control prefix should render");
+    };
+    assert_eq!(plain(&kept), plain(&expected));
+    assert!(render_open_prefix("  \n", "  \n", 80).is_none());
+    assert!(render_open_prefix("gantt\ntitle Plan", "gantt\ntitle Plan", 240).is_none());
+    assert!(render_open_prefix(
+        "flowchart LR\nclick A \"https://example.com\"",
+        "flowchart LR\nclick A \"https://example.com\"",
+        80
+    )
+    .is_none());
 }
 
 #[test]

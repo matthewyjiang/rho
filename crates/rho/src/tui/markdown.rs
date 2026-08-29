@@ -16,11 +16,11 @@ mod txm;
 #[cfg(test)]
 pub(crate) use mermaid::PHASE_CHAIN_FLOWCHART;
 
+use code_fence::mermaid_opening_fence;
 pub(in crate::tui) use code_fence::{
-    is_closing_fence, mermaid_opening_fence, opening_fence_info_token, parse_opening_fence,
-    update_code_block_state, CodeFence, CodeFenceState,
+    is_closing_fence, opening_fence_info_token, parse_opening_fence, update_code_block_state,
+    CodeFence, CodeFenceState,
 };
-pub(in crate::tui) use mermaid::{streaming_mermaid_prefix, StreamingMermaidPrefix};
 
 use super::markdown_image::standalone_markdown_image;
 use super::syntax::BlockHighlighter;
@@ -143,6 +143,23 @@ fn render_markdown_from_fence_state(
                     let panel = mermaid::render_closed_fence(source, width);
                     push_closed_panel(&mut lines, &mut code_blocks, copy_button, width, panel);
                     line_index = closing_index + 1;
+                    continue;
+                }
+                let body_lines = &raw_lines[line_index + 1..];
+                let copy_source = body_lines.join("\n");
+                let complete_body = if text.ends_with('\n') || body_lines.is_empty() {
+                    copy_source.clone()
+                } else {
+                    body_lines[..body_lines.len() - 1].join("\n")
+                };
+                if let Some(panel) =
+                    mermaid::render_open_prefix(&complete_body, &copy_source, width)
+                {
+                    push_closed_panel(&mut lines, &mut code_blocks, copy_button, width, panel);
+                    // Source fence is still open; later chunks re-render from the
+                    // opener rather than continuing this panel as highlighted code.
+                    state.open_fence(opening.fence, opening_fence_info_token(raw_line));
+                    line_index = raw_lines.len();
                     continue;
                 }
             }
@@ -326,34 +343,6 @@ fn is_markdown_divider(line: &str) -> bool {
 
 fn markdown_divider(width: usize) -> Line<'static> {
     Line::from(Span::styled("─".repeat(width.max(1)), Theme::dim()))
-}
-
-/// Header, centered art, and COPY metadata for a live mermaid prefix.
-pub(in crate::tui) fn mermaid_streaming_panel(
-    title: &'static str,
-    art: Vec<Line<'static>>,
-    source: String,
-    width: usize,
-) -> RenderedMarkdown {
-    let mut lines = Vec::new();
-    let mut code_blocks = Vec::new();
-    push_closed_panel(
-        &mut lines,
-        &mut code_blocks,
-        CodeBlockCopyButton::Visible,
-        width,
-        ClosedPanel::Art {
-            title,
-            lines: art,
-            source,
-        },
-    );
-    RenderedMarkdown {
-        lines,
-        code_blocks,
-        image_sources: Vec::new(),
-        image_rows: Vec::new(),
-    }
 }
 
 /// Emit a closed art panel (mermaid, display math) with header and copy state.

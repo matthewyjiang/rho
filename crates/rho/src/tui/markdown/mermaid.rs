@@ -82,57 +82,55 @@ pub(super) enum MermaidRender {
 }
 
 pub(super) fn render_closed_fence(source: String, inner_width: usize) -> ClosedPanel {
-    match render_mermaid(&source, inner_width) {
-        MermaidRender::Rendered(lines) => ClosedPanel::Art {
-            title: "MERMAID",
+    match mermaid_art(&source, inner_width) {
+        Ok((title, lines)) => ClosedPanel::Art {
+            title,
             lines,
             source,
         },
-        MermaidRender::Clipped {
-            mut lines,
-            hidden_columns,
-        } => {
-            lines.push(Line::from(Span::styled(
-                format!("▶ {hidden_columns} cols clipped"),
-                Theme::dim(),
-            )));
-            ClosedPanel::Art {
-                title: "MERMAID · CLIPPED",
-                lines,
-                source,
-            }
-        }
-        MermaidRender::Fallback(reason) => ClosedPanel::SourceFallback {
+        Err(reason) => ClosedPanel::SourceFallback {
             title: reason.panel_title(),
             source,
         },
     }
 }
 
-/// Live-stream classification of a complete-line mermaid prefix.
+/// Live mermaid for an unclosed fence.
 ///
-/// Transient failures retry on the next completed line. Terminal and unsafe
-/// failures latch the fence to source until it closes.
-#[derive(Debug)]
-pub(in crate::tui) enum StreamingMermaidPrefix {
-    Diagram {
-        title: &'static str,
-        lines: Vec<Line<'static>>,
-    },
-    Transient,
-    Terminal,
-    Unsafe,
+/// Tries the complete-line prefix, then walks back through earlier complete
+/// lines on blank/malformed so a later bad line keeps last-good art. Sticky
+/// failures (unsafe, unsupported, too large) return `None` so the caller keeps
+/// an ordinary source fence until close.
+pub(super) fn render_open_prefix(
+    complete_body: &str,
+    copy_source: &str,
+    inner_width: usize,
+) -> Option<ClosedPanel> {
+    let mut body = complete_body;
+    loop {
+        match mermaid_art(body, inner_width) {
+            Ok((title, lines)) => {
+                return Some(ClosedPanel::Art {
+                    title,
+                    lines,
+                    source: copy_source.to_string(),
+                });
+            }
+            Err(MermaidFallback::Blank | MermaidFallback::Malformed) => {
+                let (shorter, _) = body.rsplit_once('\n')?;
+                body = shorter;
+            }
+            Err(_) => return None,
+        }
+    }
 }
 
-pub(in crate::tui) fn streaming_mermaid_prefix(
+fn mermaid_art(
     source: &str,
     inner_width: usize,
-) -> StreamingMermaidPrefix {
+) -> Result<(&'static str, Vec<Line<'static>>), MermaidFallback> {
     match render_mermaid(source, inner_width) {
-        MermaidRender::Rendered(lines) => StreamingMermaidPrefix::Diagram {
-            title: "MERMAID",
-            lines,
-        },
+        MermaidRender::Rendered(lines) => Ok(("MERMAID", lines)),
         MermaidRender::Clipped {
             mut lines,
             hidden_columns,
@@ -141,26 +139,9 @@ pub(in crate::tui) fn streaming_mermaid_prefix(
                 format!("▶ {hidden_columns} cols clipped"),
                 Theme::dim(),
             )));
-            StreamingMermaidPrefix::Diagram {
-                title: "MERMAID · CLIPPED",
-                lines,
-            }
+            Ok(("MERMAID · CLIPPED", lines))
         }
-        MermaidRender::Fallback(reason) => match reason {
-            MermaidFallback::Blank | MermaidFallback::Malformed => {
-                StreamingMermaidPrefix::Transient
-            }
-            MermaidFallback::UnsafeContent => StreamingMermaidPrefix::Unsafe,
-            MermaidFallback::SourceBytes
-            | MermaidFallback::SourceLines
-            | MermaidFallback::Unsupported
-            | MermaidFallback::StructuralLimit
-            | MermaidFallback::Panic
-            | MermaidFallback::OutputLines
-            | MermaidFallback::OutputCells
-            | MermaidFallback::TooWide
-            | MermaidFallback::AnsiOutput => StreamingMermaidPrefix::Terminal,
-        },
+        MermaidRender::Fallback(reason) => Err(reason),
     }
 }
 
