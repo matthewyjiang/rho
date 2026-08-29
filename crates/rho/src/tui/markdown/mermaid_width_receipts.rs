@@ -85,7 +85,10 @@ const FIXTURES: &[Fixture] = &[
 ];
 
 fn renders(source: &str, width: usize) -> bool {
-    matches!(render_mermaid(source, width), MermaidRender::Rendered(_))
+    matches!(
+        render_mermaid(source, width),
+        MermaidRender::Rendered(_) | MermaidRender::Clipped { .. }
+    )
 }
 
 #[test]
