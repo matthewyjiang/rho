@@ -35,6 +35,31 @@ fn near_aligned(from: usize, to: usize) -> bool {
     from.abs_diff(to) <= 1
 }
 
+/// How an edge is routed relative to rank order.
+///
+/// Adjacent hops use the inter-rank bus. Skips take the trailing gutter
+/// (right in TD, bottom in LR). Back edges — feedback and same-rank — take
+/// the leading gutter (left in TD, top in LR).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum EdgeRoute {
+    SelfLoop,
+    Adjacent,
+    Skip,
+    Back,
+}
+
+pub(super) fn edge_route(edge: &Edge, ranks: &[usize]) -> EdgeRoute {
+    if edge.from == edge.to {
+        EdgeRoute::SelfLoop
+    } else if ranks[edge.to] == ranks[edge.from] + 1 {
+        EdgeRoute::Adjacent
+    } else if ranks[edge.to] > ranks[edge.from] + 1 {
+        EdgeRoute::Skip
+    } else {
+        EdgeRoute::Back
+    }
+}
+
 /// One forward edge inside a rank band, in bus track terms.
 struct BusSpan {
     start: usize,
@@ -58,7 +83,7 @@ fn bus_spans(
         .edges
         .iter()
         .enumerate()
-        .filter(|(_, e)| e.from != e.to && ranks[e.from] == r && ranks[e.to] == r + 1)
+        .filter(|(_, e)| edge_route(e, ranks) == EdgeRoute::Adjacent && ranks[e.from] == r)
         .map(|(i, e)| BusSpan {
             start: centers[e.from].min(centers[e.to]),
             end: centers[e.from].max(centers[e.to]),
@@ -87,7 +112,7 @@ fn skip_edges(graph: &Graph, ranks: &[usize], centers: &[usize]) -> Vec<SkipEdge
         .edges
         .iter()
         .enumerate()
-        .filter(|(_, e)| e.from != e.to && ranks[e.to] > ranks[e.from] + 1)
+        .filter(|(_, e)| edge_route(e, ranks) == EdgeRoute::Skip)
         .map(|(index, e)| SkipEdge {
             index,
             from: e.from,
@@ -107,10 +132,7 @@ fn td_source_anchors(graph: &Graph, ranks: &[usize], centers: &[usize]) -> Vec<u
     for edge in &graph.edges {
         let source_x = centers[edge.from];
         let target_x = centers[edge.to];
-        if edge.from != edge.to
-            && ranks[edge.to] == ranks[edge.from] + 1
-            && near_aligned(source_x, target_x)
-        {
+        if edge_route(edge, ranks) == EdgeRoute::Adjacent && near_aligned(source_x, target_x) {
             source_anchors[edge.from] = target_x;
         }
     }
@@ -132,7 +154,7 @@ fn lane_spans(graph: &Graph, ranks: &[usize], placed: &[Placed], axis: LaneAxis)
         .edges
         .iter()
         .enumerate()
-        .filter(|(_, e)| e.from != e.to && ranks[e.to] != ranks[e.from] + 1)
+        .filter(|(_, e)| matches!(edge_route(e, ranks), EdgeRoute::Skip | EdgeRoute::Back))
         .map(|(index, e)| {
             let (pf, pt) = (&placed[e.from], &placed[e.to]);
             let (start, end) = match axis {
@@ -186,7 +208,10 @@ fn label_gap_rows(
 ) -> Vec<usize> {
     let mut rows = vec![0usize; max_rank + 1];
     for (index, edge) in graph.edges.iter().enumerate() {
-        if edge.from != edge.to && ranks[edge.to] > ranks[edge.from] {
+        if matches!(
+            edge_route(edge, ranks),
+            EdgeRoute::Adjacent | EdgeRoute::Skip
+        ) {
             let extra = extra_label_rows(&edge_labels[index]);
             if extra > 0 {
                 let gap = ranks[edge.to] - 1;
@@ -207,7 +232,7 @@ pub(super) fn place_td(
     placed: &mut [Placed],
 ) -> RoutePlan {
     let centers = assign_positions(by_rank, &sizes.lay_w, GAP_X, &graph.edges, ranks);
-    let source_anchors = td_source_anchors(graph, ranks, &centers);
+    let mut source_anchors = td_source_anchors(graph, ranks, &centers);
     let skips = skip_edges(graph, ranks, &centers);
 
     let mut edge_bus = vec![0usize; graph.edges.len()];
@@ -243,10 +268,10 @@ pub(super) fn place_td(
         })
         .collect();
     let label_rows = label_gap_rows(graph, ranks, edge_labels, max_rank);
-    // Back-edge labels stack upward from the target's center in the right
-    // margin. Pad the canvas top so those rows are not clipped or dropped.
+    // Back-edge labels stack upward from the target's center in the left
+    // gutter. Pad the canvas top so those rows are not clipped or dropped.
     let back_pad = max_extra_label_rows(graph, edge_labels, |edge| {
-        edge.from != edge.to && ranks[edge.to] < ranks[edge.from]
+        edge_route(edge, ranks) == EdgeRoute::Back
     });
     let mut rank_y = vec![0usize; max_rank + 1];
     rank_y[0] = back_pad;
@@ -280,32 +305,48 @@ pub(super) fn place_td(
             }
         }
     }
+    // Forward skips stay on the right; feedback and same-rank edges take the
+    // left. Opposite sides keep those families from sharing ink. Within a
+    // side, longer spans take outer tracks so they wrap shorter hops instead
+    // of cutting through them.
+    let detours = assign_detour_lanes(graph, ranks, placed, LaneAxis::Vertical);
+
+    let back_label_w = graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| edge_route(edge, ranks) == EdgeRoute::Back)
+        .map(|(index, _)| label_block_width(&edge_labels[index]))
+        .max()
+        .unwrap_or(0);
+    let left_margin = back_lane_margin(detours.back_count, back_label_w);
+    if left_margin > 0 {
+        for node in placed.iter_mut() {
+            node.x += left_margin;
+            node.cx += left_margin;
+        }
+        diagram_w += left_margin;
+        for anchor in source_anchors.iter_mut() {
+            *anchor += left_margin;
+        }
+    }
+
     let mut content_w = diagram_w;
     for (index, e) in graph.edges.iter().enumerate() {
-        if e.from == e.to {
-            continue;
-        }
         let lw = label_block_width(&edge_labels[index]);
         if lw == 0 {
             continue;
         }
-        if ranks[e.to] == ranks[e.from] + 1 {
+        // Adjacent and skip labels sit beside the target, not in a side gutter.
+        if matches!(edge_route(e, ranks), EdgeRoute::Adjacent | EdgeRoute::Skip) {
             content_w = content_w.max(placed[e.to].cx + 2 + lw);
-        } else {
-            content_w = content_w.max(diagram_w + lw + 1);
         }
     }
 
-    let mut edge_lane = vec![0usize; graph.edges.len()];
-    let lanes = lane_spans(graph, ranks, placed, LaneAxis::Vertical);
-    let (canvas_w, lane_base) = if lanes.is_empty() {
+    let (canvas_w, skip_base) = if detours.skip_count == 0 {
         (content_w, 0)
     } else {
-        let (assigned, count) = assign_tracks(&lanes);
-        for (idx, slot) in assigned {
-            edge_lane[idx] = slot;
-        }
-        (content_w + 1 + count, content_w + 1)
+        (content_w + 1 + detours.skip_count, content_w + 1)
     };
 
     let mut edge_join = vec![0usize; graph.edges.len()];
@@ -318,8 +359,7 @@ pub(super) fn place_td(
         band_end,
         edge_bus,
         source_anchors,
-        lane_base,
-        edge_lane,
+        edge_lane: detours.into_absolute_lanes(graph, ranks, skip_base, /*back_base*/ 0),
         edge_join,
     }
 }
@@ -344,7 +384,12 @@ pub(super) fn place_lr(
         .edges
         .iter()
         .enumerate()
-        .filter(|(_, e)| e.from == e.to || ranks[e.to] == ranks[e.from] + 1)
+        .filter(|(_, e)| {
+            matches!(
+                edge_route(e, ranks),
+                EdgeRoute::SelfLoop | EdgeRoute::Adjacent
+            )
+        })
         .filter_map(|(index, e)| {
             if e.from == e.to {
                 e.label.as_ref().map(|l| l.width().min(MAX_LABEL))
@@ -359,10 +404,13 @@ pub(super) fn place_lr(
     // Wrapped forward labels stack above the target in the inter-column gap.
     // Intra-rank separation and a top pad keep those rows off sibling boxes.
     let forward_pad = max_extra_label_rows(graph, edge_labels, |edge| {
-        edge.from != edge.to && ranks[edge.to] == ranks[edge.from] + 1
+        edge_route(edge, ranks) == EdgeRoute::Adjacent
+    });
+    let skip_pad = max_extra_label_rows(graph, edge_labels, |edge| {
+        edge_route(edge, ranks) == EdgeRoute::Skip
     });
     let back_pad = max_extra_label_rows(graph, edge_labels, |edge| {
-        edge.from != edge.to && ranks[edge.to] != ranks[edge.from] + 1
+        edge_route(edge, ranks) == EdgeRoute::Back
     });
 
     let centers = assign_positions(
@@ -406,7 +454,7 @@ pub(super) fn place_lr(
         .edges
         .iter()
         .enumerate()
-        .filter(|(_, edge)| edge.from != edge.to && ranks[edge.to] != ranks[edge.from] + 1)
+        .filter(|(_, edge)| matches!(edge_route(edge, ranks), EdgeRoute::Skip | EdgeRoute::Back))
         .map(|(index, _)| label_block_width(&edge_labels[index]))
         .max()
         .unwrap_or(0);
@@ -435,20 +483,38 @@ pub(super) fn place_lr(
             diagram_h = diagram_h.max(y + h + sizes.extra_h[idx]);
         }
     }
-    let source_anchors = placed.iter().map(|node| node.cy).collect();
+    let mut source_anchors: Vec<usize> = placed.iter().map(|node| node.cy).collect();
 
-    let mut edge_lane = vec![0usize; graph.edges.len()];
-    let lanes = lane_spans(graph, ranks, placed, LaneAxis::Horizontal);
-    let (canvas_h, lane_base) = if lanes.is_empty() {
+    // Forward skips stay on the bottom; feedback and same-rank edges take
+    // the top. Opposite sides keep those families from sharing ink. Within
+    // a side, longer spans take outer tracks so they wrap shorter hops.
+    let detours = assign_detour_lanes(graph, ranks, placed, LaneAxis::Horizontal);
+
+    let mut back_base = 0;
+    if detours.back_count > 0 {
+        // Labels stack up from the row above the lane. A wrapped block
+        // needs those extra rows plus the anchor row itself.
+        back_base = if back_pad == 0 { 0 } else { back_pad + 1 };
+        let top_margin = back_base + detours.back_count + 1;
+        for node in placed.iter_mut() {
+            node.y += top_margin;
+            node.cy += top_margin;
+        }
+        diagram_h += top_margin;
+        for anchor in source_anchors.iter_mut() {
+            *anchor += top_margin;
+        }
+    }
+
+    let (canvas_h, skip_base) = if detours.skip_count == 0 {
         (diagram_h, 0)
     } else {
-        let (assigned, count) = assign_tracks(&lanes);
-        for (idx, slot) in assigned {
-            edge_lane[idx] = slot;
-        }
-        // Back-route labels stack upward from the lane; keep those rows
-        // between the diagram and the first lane so boxes cannot truncate them.
-        (diagram_h + back_pad + 1 + count, diagram_h + back_pad + 1)
+        // Skip-route labels stack upward from the bottom lane; keep those
+        // rows between the diagram and the first skip lane.
+        (
+            diagram_h + skip_pad + 1 + detours.skip_count,
+            diagram_h + skip_pad + 1,
+        )
     };
 
     RoutePlan {
@@ -456,8 +522,7 @@ pub(super) fn place_lr(
         band_end,
         edge_bus,
         source_anchors,
-        lane_base,
-        edge_lane,
+        edge_lane: detours.into_absolute_lanes(graph, ranks, skip_base, back_base),
         edge_join: vec![0; graph.edges.len()],
     }
 }
@@ -467,13 +532,27 @@ pub(super) struct RoutePlan {
     pub(super) band_end: Vec<usize>,
     pub(super) edge_bus: Vec<usize>,
     pub(super) source_anchors: Vec<usize>,
-    pub(super) lane_base: usize,
+    /// Absolute skip or back gutter coordinate for each edge. Adjacent and
+    /// self-loop edges leave this at zero; drawing reads it only for skip and
+    /// back routes.
     pub(super) edge_lane: Vec<usize>,
     /// Absolute row of the target's fan-in bus for rank-skipping top-down
     /// edges; zero for every other edge. The skip edge joins that shared row
     /// from the right lane, so joined edges share ink and separate edges do
     /// not.
     pub(super) edge_join: Vec<usize>,
+}
+
+/// Columns to the left of the nodes: one per back-lane track, a label gutter
+/// when those edges are labeled, and one column for the incoming arrow.
+fn back_lane_margin(back_count: usize, back_label_w: usize) -> usize {
+    if back_count == 0 {
+        0
+    } else if back_label_w == 0 {
+        back_count + 1
+    } else {
+        back_count + back_label_w + 2
+    }
 }
 
 /// Greedily pack items into the fewest tracks, in the given order: each item
@@ -503,7 +582,18 @@ fn pack_tracks<T>(items: &[T], compatible: impl Fn(&T, &T) -> bool) -> (Vec<usiz
 
 fn assign_tracks(spans: &[LaneSpan]) -> (Vec<(usize, usize)>, usize) {
     let mut sorted: Vec<&LaneSpan> = spans.iter().collect();
-    sorted.sort_by_key(|span| (span.start, span.end, span.from, span.to, span.index));
+    // Shorter spans take inner tracks (slot 0, closest to the nodes). A
+    // containing hop then packs outward and wraps around them.
+    sorted.sort_by_key(|span| {
+        (
+            span.end.saturating_sub(span.start),
+            span.start,
+            span.end,
+            span.from,
+            span.to,
+            span.index,
+        )
+    });
     // Spans may share a lane when they stay two cells apart or share an
     // endpoint: shared ink then still belongs to one node.
     let (slots, count) = pack_tracks(&sorted, |member, span| {
@@ -518,6 +608,60 @@ fn assign_tracks(spans: &[LaneSpan]) -> (Vec<(usize, usize)>, usize) {
         .map(|(span, slot)| (span.index, slot))
         .collect();
     (out, count)
+}
+
+struct DetourLanes {
+    edge_lane: Vec<usize>,
+    skip_count: usize,
+    back_count: usize,
+}
+
+fn assign_detour_lanes(
+    graph: &Graph,
+    ranks: &[usize],
+    placed: &[Placed],
+    axis: LaneAxis,
+) -> DetourLanes {
+    let lanes = lane_spans(graph, ranks, placed, axis);
+    let (skip_spans, back_spans): (Vec<LaneSpan>, Vec<LaneSpan>) = lanes
+        .into_iter()
+        .partition(|span| edge_route(&graph.edges[span.index], ranks) == EdgeRoute::Skip);
+
+    let mut edge_lane = vec![0usize; graph.edges.len()];
+    let (skip_assigned, skip_count) = assign_tracks(&skip_spans);
+    for (idx, slot) in skip_assigned {
+        edge_lane[idx] = slot;
+    }
+    let (back_assigned, back_count) = assign_tracks(&back_spans);
+    for (idx, slot) in back_assigned {
+        // Slot 0 is inner (closest to the nodes). Leading gutters grow from
+        // origin 0, so flip: inner sits next to the boxes.
+        edge_lane[idx] = back_count - 1 - slot;
+    }
+    DetourLanes {
+        edge_lane,
+        skip_count,
+        back_count,
+    }
+}
+
+impl DetourLanes {
+    fn into_absolute_lanes(
+        mut self,
+        graph: &Graph,
+        ranks: &[usize],
+        skip_base: usize,
+        back_base: usize,
+    ) -> Vec<usize> {
+        for (index, edge) in graph.edges.iter().enumerate() {
+            match edge_route(edge, ranks) {
+                EdgeRoute::Skip => self.edge_lane[index] += skip_base,
+                EdgeRoute::Back => self.edge_lane[index] += back_base,
+                EdgeRoute::Adjacent | EdgeRoute::SelfLoop => {}
+            }
+        }
+        self.edge_lane
+    }
 }
 
 /// A merged set of edges that must share one bus row. The source set drives

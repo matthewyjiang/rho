@@ -73,9 +73,12 @@ attach. Exotic families and malformed input stay as source.
 ### Flow and state layout
 
 Flowcharts and state diagrams keep the direction you asked for (`TD`, `LR`, and
-so on) when it fits. When the normal layout is wider than the pane, Rho wraps
-node labels and edge labels more tightly and lays the diagram out again, down
-to a readable limit. Compaction never shortens or truncates node label text.
+so on) when it fits. Detours nest by span: a longer skip travels outside a
+shorter one so the stems do not cross. Forward edges that skip ranks travel on
+the trailing side (right in `TD`, bottom in `LR`) and loops return on the
+leading side (left in `TD`, top in `LR`), so those families cannot share ink.
+When the normal layout is wider than the pane, Rho wraps node labels and edge
+labels more tightly and lays the diagram out again, down to a readable limit. Compaction never shortens or truncates node label text.
 Edge labels wrap to a few stacked rows; group titles, and sequence participant
 labels compact with an ellipsis when they cannot fit the reserved slot.
 If a horizontal flowchart still cannot fit, Rho retries top-down. If even that
