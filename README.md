@@ -2,22 +2,22 @@
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/matthewyjiang/rho)
 
-Rho is a lightweight agent harness inspired by Pi, built in Rust.
+Rho is a fast Rust agent harness with a small footprint and opinionated defaults.
 
 [![Rho terminal UI showing a request-ID middleware edit with read, edit, and test tool cards](docs/assets/rho-ui-demo.svg)](https://matthewyjiang.github.io/rho/interactive-tui)
 
 ## Why Rho
 
-- **Lightweight**: Compare the CLI process overhead and memory usage with other coding harnesses:
+- **Fast and small**: Compare CLI startup time and peak RSS with other coding harnesses:
 ![CLI startup time and peak RSS for rho versus Codex, Claude Code, OpenCode, and Pi without extensions](docs/assets/cli-overhead.svg)
 
 - **Bring your own provider**: OpenAI, Kimi, xAI, Anthropic, Gemini, Copilot, Ollama, Ollama Cloud, OpenRouter, and more. Use API keys or subscription plans.
 - **Agent orchestration**: Delegate work across providers, including [Claude Code agents](https://matthewyjiang.github.io/rho/subagents/claude-cli) backed by your Claude subscription. Setup: [agents and delegation](https://matthewyjiang.github.io/rho/subagents).
 - **Embeddable SDK**: Build headless Rust agents with explicit providers, tools, sessions, and cancellation.
 
-## Works without a plugin store
+## Your tools, no setup
 
-Rho is small on purpose. The pieces power users usually wire up later are already in the binary.
+Rho comes with the developer tools you already use, integrated with no configuration.
 
 - **Built-in [RTK](https://github.com/rtk-ai/rtk)**: when the `rtk` binary is on your PATH, Rho rewrites shell commands for you. No `rtk init`, no host hooks. Docs: [RTK](https://matthewyjiang.github.io/rho/integrations/rtk).
 - **Built-in [Herdr](https://github.com/herdrdev/herdr)**: under Herdr, Rho reports agent state, supports pane attach, and handles host image paste. No extra integration. Docs: [Herdr](https://matthewyjiang.github.io/rho/integrations/herdr).

@@ -52,7 +52,7 @@ const paths = [
           <h1 class="rho-home__title">
             <RhoWordmark size="xl" />
           </h1>
-          <p class="rho-home__text">A lightweight agent harness inspired by Pi. Built in Rust.</p>
+          <p class="rho-home__text">A fast Rust agent harness with a small footprint and opinionated defaults.</p>
           <p class="rho-home__pitch">
             Orchestrate agents across providers, including
             <a :href="withBase('/subagents/claude-cli')">Claude Code agents on your Claude subscription</a>.
@@ -133,7 +133,11 @@ const paths = [
 
     <section class="rho-home__band rho-home__band--close">
       <p class="rho-home__lede">
-        Coding tools, workflows, RTK, Herdr, and MCP ship in the binary. Plugins are optional.
+        Rho comes with the developer tools you already use.
+        <a :href="withBase('/integrations/herdr')">Herdr</a>
+        and
+        <a :href="withBase('/integrations/rtk')">RTK</a>
+        need no extra configuration.
         <a :href="withBase('/providers/')">Providers</a>
         and
         <a :href="withBase('/authentication-and-models')">authentication</a>
@@ -196,7 +200,7 @@ const paths = [
 .rho-home__text {
   margin: 0;
   /* Wider than a tight poster measure so mid breakpoints keep phrase boundaries. */
-  max-width: 16em;
+  max-width: 22em;
   font-size: clamp(1.45rem, 2.6vw, 2.05rem);
   font-weight: 700;
   line-height: 1.18;

@@ -1,6 +1,6 @@
 {
   "version": "2.2.0",
-  "description": "A lightweight agent harness inspired by Pi.",
+  "description": "A fast Rust agent harness with a small footprint and opinionated defaults.",
   "homepage": "https://github.com/matthewyjiang/rho",
   "license": "MIT",
   "architecture": {
