@@ -15,7 +15,7 @@ use super::{
         GraphArt, GraphStyles, Oversize, EDGE_LABEL_MAX_LINES, MAX_CANVAS_CELLS, MAX_LABEL,
         MAX_LINES, PAD, WRAP_WIDTH,
     },
-    placement::{place_lr, place_td},
+    placement::{edge_route, place_lr, place_td, EdgeRoute},
     Compartment, Direction, EdgeLine, Graph, RankOrdering,
 };
 
@@ -333,18 +333,17 @@ pub(in crate::tui) fn layout_canvas(
             EdgeLine::Dotted => STY_DOT,
             EdgeLine::Thick => STY_THICK,
         };
-        if edge.from == edge.to {
+        let route = edge_route(edge, &ranks);
+        if route == EdgeRoute::SelfLoop {
             route_self(&mut canvas, &placed[edge.from], edge);
             continue;
         }
         let (from, to) = (&placed[edge.from], &placed[edge.to]);
-        let adjacent = to.rank == from.rank + 1;
         let bus = plan.band_end[from.rank] + plan.edge_bus[i];
-        let skip_lane = plan.lane_base + plan.edge_lane[i];
-        let back_lane = plan.back_lane_base + plan.edge_lane[i];
+        let lane = plan.edge_lane[i];
         let label_lines = edge_labels[i].as_slice();
-        match (vertical, adjacent) {
-            (true, true) => route_forward(
+        match (vertical, route) {
+            (true, EdgeRoute::Adjacent) => route_forward(
                 &mut canvas,
                 from,
                 to,
@@ -353,21 +352,21 @@ pub(in crate::tui) fn layout_canvas(
                 plan.source_anchors[edge.from],
                 label_lines,
             ),
-            (true, false) if to.rank > from.rank + 1 => route_skip(
+            (true, EdgeRoute::Skip) => route_skip(
                 &mut canvas,
                 from,
                 to,
                 edge,
                 SkipPath {
                     exit_row: bus,
-                    lane_x: skip_lane,
+                    lane_x: lane,
                     join_row: plan.edge_join[i],
                     source_anchor: plan.source_anchors[edge.from],
                 },
                 label_lines,
             ),
-            (true, false) => route_back(&mut canvas, from, to, edge, back_lane, label_lines),
-            (false, true) => route_forward_lr(
+            (true, EdgeRoute::Back) => route_back(&mut canvas, from, to, edge, lane, label_lines),
+            (false, EdgeRoute::Adjacent) => route_forward_lr(
                 &mut canvas,
                 from,
                 to,
@@ -376,10 +375,13 @@ pub(in crate::tui) fn layout_canvas(
                 plan.source_anchors[edge.from],
                 label_lines,
             ),
-            (false, false) if to.rank > from.rank + 1 => {
-                route_skip_lr(&mut canvas, from, to, edge, skip_lane, label_lines)
+            (false, EdgeRoute::Skip) => {
+                route_skip_lr(&mut canvas, from, to, edge, lane, label_lines)
             }
-            (false, false) => route_back_lr(&mut canvas, from, to, edge, back_lane, label_lines),
+            (false, EdgeRoute::Back) => {
+                route_back_lr(&mut canvas, from, to, edge, lane, label_lines)
+            }
+            (_, EdgeRoute::SelfLoop) => continue,
         }
     }
 

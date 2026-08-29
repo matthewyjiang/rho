@@ -570,7 +570,7 @@ fn wraps_lr_forward_edge_labels_without_dropping_words() {
     assert_wrapped_label_visible(&art_text(&graph));
 }
 
-// Covers: TD back-edge labels wrap in the right-lane margin without clipping
+// Covers: TD back-edge labels wrap in the left gutter without clipping
 // off the canvas top or stopping on occupied cells.
 // Owner: terminal graph TD placement.
 #[test]
