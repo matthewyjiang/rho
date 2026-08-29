@@ -152,6 +152,7 @@ impl App {
             mcp_argument_completions:
                 super::mcp_argument_completion::McpArgumentCompletions::default(),
             plugins_report,
+            side_chat: None,
         };
         if let Some(status) = initial_status {
             app.set_status(status);

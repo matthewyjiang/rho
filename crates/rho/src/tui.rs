@@ -139,6 +139,7 @@ mod session_picker;
 mod session_title;
 mod sessions_hub;
 mod setup_screen;
+mod side_chat;
 mod syntax;
 mod syntax_warmup;
 pub(crate) use syntax_warmup::spawn_syntax_warmup;
@@ -571,6 +572,8 @@ struct App {
     mcp_argument_completions: mcp_argument_completion::McpArgumentCompletions,
     /// Agent Plugins load report captured at session start for `/doctor`.
     plugins_report: crate::plugins::PluginLoadReport,
+    /// In-memory `/side` aside. Survives overlay close until `/new` or resume.
+    side_chat: Option<side_chat::SideChat>,
 }
 
 struct PendingSubagentQuestionnaire {

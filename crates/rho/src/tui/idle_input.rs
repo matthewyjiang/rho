@@ -55,6 +55,7 @@ impl App {
             ComposerMode::TextInput(_) => self.handle_text_input_key(key),
             ComposerMode::Picker(_) => self.handle_picker_key(key, terminal, agent).await,
             ComposerMode::Limits(_) => Ok(self.handle_limits_overlay_key(key, terminal)),
+            ComposerMode::Side => Ok(self.handle_side_chat_key(key, terminal)),
             // Approvals are handled on the during-turn path, not idle input.
             ComposerMode::Approval(_) => Ok(false),
         }
@@ -74,7 +75,9 @@ impl App {
             return Ok(());
         }
 
-        if self.external_editor_shortcut_matches(key) {
+        if self.external_editor_shortcut_matches(key)
+            && !matches!(self.input_ui.composer(), ComposerMode::Side)
+        {
             self.open_composer_in_editor(terminal).await?;
             return Ok(());
         }

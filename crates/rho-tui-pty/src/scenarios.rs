@@ -28,6 +28,7 @@ mod resume_delete;
 mod resume_scrollback;
 mod runtime_info;
 mod sessions_hub;
+mod side_chat;
 mod startup;
 mod statusline;
 mod steering;
@@ -95,6 +96,9 @@ use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use resume_scrollback::RESUME_SCROLLBACK_ID;
 use runtime_info::RUNTIME_INFO_STEPS;
 use sessions_hub::{setup_sessions_hub, SESSIONS_HUB_STEPS};
+use side_chat::{
+    SIDE_BTW_SCENARIO, SIDE_DURING_TURN_SCENARIO, SIDE_OVERLAY_SCENARIO, SIDE_TOGGLE_SCENARIO,
+};
 use startup::{
     STARTUP_FIRST_FRAME_SCENARIO, STARTUP_PROMPT_STREAM_EXIT_SCENARIO, STARTUP_STREAM_EXIT_SCENARIO,
 };
@@ -590,6 +594,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO,
     HELP_OVERLAY_SCENARIO,
     LIMITS_OVERLAY_SCENARIO,
+    SIDE_OVERLAY_SCENARIO,
+    SIDE_TOGGLE_SCENARIO,
+    SIDE_BTW_SCENARIO,
+    SIDE_DURING_TURN_SCENARIO,
     SLASH_COMMAND_PALETTE_SCENARIO,
     CREATE_AGENT_COMMAND_SCENARIO,
     CREATE_AGENT_MISSING_TOOLS_SCENARIO,

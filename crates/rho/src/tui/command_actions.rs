@@ -115,6 +115,7 @@ impl App {
             CommandId::Limits => self.execute_limits_command(terminal),
             CommandId::Fast => self.execute_fast_command(invocation, agent),
             CommandId::Workflow => self.execute_workflow_command(terminal).await,
+            CommandId::Side => self.execute_side_command(invocation).await,
         }
     }
 
@@ -169,6 +170,7 @@ impl App {
         self.pending_session_title = None;
         self.session_title_locked = false;
         self.turn.set_current_turn_start(None);
+        self.discard_side_chat();
         self.history.clear_entries();
         self.history.images_mut().clear();
         self.history.set_images_dirty_from(None);

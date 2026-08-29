@@ -105,6 +105,9 @@ impl App {
         if self.handle_limits_overlay_key(key, terminal) {
             return Ok(false);
         }
+        if self.handle_side_chat_key(key, terminal) {
+            return Ok(false);
+        }
         if self
             .handle_running_command_palette_key(key, terminal)
             .await?
@@ -403,6 +406,7 @@ impl App {
                 self.start_limits_command();
                 Ok(())
             }
+            CommandId::Side => self.execute_side_command(invocation).await,
             CommandId::CreateAgent => {
                 self.set_status("agent creation is unavailable while a model turn is running");
                 Ok(())
@@ -729,7 +733,9 @@ impl App {
                                 Some(RunningEscapeAction::Overlay) | None => {}
                             }
                         }
-                        if self.external_editor_shortcut_matches(key) {
+                        if self.external_editor_shortcut_matches(key)
+                            && !matches!(self.input_ui.composer(), ComposerMode::Side)
+                        {
                             self.open_composer_in_editor(terminal)
                                 .await
                                 .map_err(RunningTerminalError::Terminal)?;

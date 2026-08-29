@@ -33,7 +33,7 @@ use crate::{
     credential_store::build_provider,
 };
 
-pub(crate) use transcript::{TranscriptBudget, DEFAULT_TRANSCRIPT_BUDGET};
+pub(crate) use transcript::{render_transcript, TranscriptBudget, DEFAULT_TRANSCRIPT_BUDGET};
 
 pub(crate) const TOOL_NAME: &str = "advisor";
 

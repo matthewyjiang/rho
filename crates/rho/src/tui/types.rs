@@ -191,6 +191,7 @@ pub(super) enum ComposerMode {
     Questionnaire(QuestionnaireComposer),
     Approval(ApprovalComposer),
     Limits(limits_command::LimitsOverlay),
+    Side,
 }
 
 impl ComposerMode {
@@ -209,7 +210,8 @@ impl ComposerMode {
             | Self::InlineChoice(_)
             | Self::Questionnaire(_)
             | Self::Approval(_)
-            | Self::Limits(_) => true,
+            | Self::Limits(_)
+            | Self::Side => true,
         }
     }
 
@@ -223,7 +225,7 @@ impl ComposerMode {
     pub(super) fn is_centered_overlay(&self) -> bool {
         match self {
             Self::Picker(picker) => picker.is_overlay(),
-            Self::Limits(_) => true,
+            Self::Limits(_) | Self::Side => true,
             _ => false,
         }
     }
