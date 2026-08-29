@@ -175,7 +175,8 @@ fn fact_wrap_breaks_on_whitespace() {
     );
 }
 
-// Covers: write/edit diff bodies syntax-highlight from the header path
+// Covers: write/edit diff bodies syntax-highlight from the header path;
+// unhighlighted tokens keep the add/remove tint
 // Owner: pure TUI (tool card diff highlighting)
 #[test]
 fn file_diff_body_highlights_rust_from_header_path() {
@@ -221,6 +222,17 @@ fn file_diff_body_highlights_rust_from_header_path() {
                 && span.style == Theme::tool_diff_chrome(DiffRowKind::Added).sign
         }),
         "expected add sign style: {:?}",
+        body.spans
+            .iter()
+            .map(|s| (s.content.as_ref(), s.style))
+            .collect::<Vec<_>>()
+    );
+    let add_plain = Theme::tool_diff_chrome(DiffRowKind::Added).plain();
+    assert!(
+        body.spans
+            .iter()
+            .any(|span| { span.content.contains("answer") && span.style.fg == add_plain.fg }),
+        "unhighlighted tokens must keep the add tint: {:?}",
         body.spans
             .iter()
             .map(|s| (s.content.as_ref(), s.style))
@@ -333,6 +345,66 @@ fn file_diff_rows_apply_soft_wash_with_fg_signs() {
         context.spans.iter().all(|span| span.style.bg.is_none()),
         "context must not wash: {:?}",
         context.spans
+    );
+
+    Theme::apply_committed("terminal");
+}
+
+// Covers: syntax roles must not drop the add/remove wash on unhighlighted tokens
+// Owner: pure TUI (tool card diff highlighting)
+#[test]
+fn file_diff_syntax_tokens_keep_row_wash() {
+    crate::tui::syntax::warm_syntax_set();
+    let _guard = crate::tui::theme::theme_test_lock();
+    Theme::apply_committed("terminal");
+    Theme::apply_committed("one-half-dark");
+
+    let card = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::FileDiff,
+        ToolHeader::call("write", Some("src/lib.rs".into())),
+    )
+    .with_body(ToolBody::Diff(vec![DiffRow::new(
+        DiffRowKind::Added,
+        Some(1),
+        "let answer = 42; // note",
+    )]));
+
+    let mut lines = Vec::new();
+    push_tool_card(
+        &mut lines, &card, /*width*/ 80, /*max_tool_output_lines*/ 32,
+        /*expanded*/ true, /*live_elapsed*/ None,
+    );
+    let body = lines
+        .iter()
+        .find(|line| line.spans.iter().any(|span| span.content.contains("let")))
+        .expect("diff body row");
+    let add = Theme::tool_diff_chrome(DiffRowKind::Added);
+    let wash = add.plain().bg.expect("scheme wash");
+
+    assert!(
+        body.spans.iter().any(|span| {
+            span.content.contains("let")
+                && span.style.fg == Theme::syntax(SyntaxRole::Keyword).fg
+                && span.style.bg == Some(wash)
+        }),
+        "keyword must keep wash: {:?}",
+        body.spans
+            .iter()
+            .map(|s| (s.content.as_ref(), s.style))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        body.spans.iter().any(|span| {
+            span.content.contains("answer")
+                && span.style.fg == Theme::text().fg
+                && span.style.bg == Some(wash)
+        }),
+        "unhighlighted tokens must sit on the wash: {:?}",
+        body.spans
+            .iter()
+            .map(|s| (s.content.as_ref(), s.style))
+            .collect::<Vec<_>>()
     );
 
     Theme::apply_committed("terminal");

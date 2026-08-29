@@ -313,7 +313,7 @@ fn hover_lift_blends_rgb_ink_toward_surface_opposite() {
     Theme::apply_committed("terminal");
 }
 
-// Covers: add/remove chrome uses role fg signs, soft wash, base content text
+// Covers: add/remove chrome uses role fg signs, soft wash, tinted plain content
 // Owner: tui theme palette mapping
 #[test]
 fn scheme_diff_chrome_washes_row_with_fg_signs() {
@@ -332,15 +332,123 @@ fn scheme_diff_chrome_washes_row_with_fg_signs() {
     assert_eq!(del.sign.fg, Some(palette.error));
     assert_eq!(add.sign.bg, Some(add_wash));
     assert_eq!(del.sign.bg, Some(del_wash));
-    // washed() carries the row wash onto column bases (content uses Theme::text).
+    // washed() carries the row wash onto column bases; plain content is body text on the wash.
     assert_eq!(add.washed(Theme::tool_diff_gutter()).bg, Some(add_wash));
+    assert_eq!(add.plain().fg, Theme::text().fg);
+    assert_eq!(add.plain().bg, Some(add_wash));
+    assert_eq!(del.plain().fg, Theme::text().fg);
+    assert_eq!(del.plain().bg, Some(del_wash));
     assert_eq!(del.washed(Theme::text()).bg, Some(del_wash));
-    // Context has no wash or role sign.
+    // Context has no wash or role sign; plain content stays body text.
     let ctx = Theme::tool_diff_chrome(rho_tools::tool_card::DiffRowKind::Context);
     assert_eq!(ctx.sign, Theme::text());
+    assert_eq!(ctx.plain(), Theme::text());
     assert_eq!(ctx.washed(Theme::text()).bg, None);
 
     Theme::apply_committed("terminal");
+}
+
+// Covers: sampled / named-scheme diff washes stay at least GitHub's 15% overlay
+// and never collapse to the surface or the solid role color.
+// Owner: tui theme palette mapping
+#[test]
+fn sampled_diff_wash_beats_github_overlay_on_light_and_dark() {
+    let _guard = theme_test_lock();
+    Theme::apply_committed("terminal");
+    const GITHUB_ALPHA: f32 = 0x26 as f32 / 255.0;
+    let schemes = [
+        "one-half-dark",
+        "one-half-light",
+        "monochrome-dark",
+        "monochrome-light",
+        "nord",
+        "dracula",
+        "gruvbox-dark",
+        "catppuccin-mocha",
+    ];
+    for id in schemes {
+        Theme::apply_committed(id);
+        let scheme = theme_scheme::resolve_fixed_scheme(id).expect(id);
+        let palette = Palette::current();
+        let add = palette.diff_add_wash.expect(id).rgb.expect("add rgb");
+        let del = palette.diff_del_wash.expect(id).rgb.expect("del rgb");
+        let bg = scheme.background;
+        let green = scheme_ansi(&scheme, AnsiColor::Green);
+        let red = scheme_ansi(&scheme, AnsiColor::Red);
+        let add_floor = bg.blend_toward(green, GITHUB_ALPHA);
+        let del_floor = bg.blend_toward(red, GITHUB_ALPHA);
+        assert_ne!(add, bg, "{id} add wash must leave the surface");
+        assert_ne!(del, bg, "{id} del wash must leave the surface");
+        assert_ne!(add, green, "{id} add wash must not be solid green");
+        assert_ne!(del, red, "{id} del wash must not be solid red");
+        assert!(
+            rgb_dist2(add, bg) >= rgb_dist2(add_floor, bg),
+            "{id} add wash weaker than GitHub 15% overlay"
+        );
+        assert!(
+            rgb_dist2(del, bg) >= rgb_dist2(del_floor, bg),
+            "{id} del wash weaker than GitHub 15% overlay"
+        );
+    }
+
+    let sampled = TerminalPalette {
+        background: Rgb::new(13, 17, 23),
+        ansi: HashMap::from([
+            (AnsiColor::Green, Rgb::new(63, 185, 80)),
+            (AnsiColor::Red, Rgb::new(255, 123, 114)),
+        ]),
+    };
+    let palette = Palette::from_terminal(Some(&sampled));
+    assert!(palette.diff_add_wash.is_some());
+    assert!(palette.diff_del_wash.is_some());
+    let add = palette.diff_add_wash.unwrap().rgb.unwrap();
+    assert_ne!(add, sampled.background);
+
+    // Near-surface ANSI green/red must still leave the background after rounding.
+    let collapsed = TerminalPalette {
+        background: Rgb::new(0, 0, 0),
+        ansi: HashMap::from([
+            (AnsiColor::Green, Rgb::new(0, 1, 0)),
+            (AnsiColor::Red, Rgb::new(1, 0, 0)),
+        ]),
+    };
+    let collapsed_palette = Palette::from_terminal(Some(&collapsed));
+    let collapsed_add = collapsed_palette
+        .diff_add_wash
+        .expect("near-surface green still washes")
+        .rgb
+        .expect("add rgb");
+    let collapsed_del = collapsed_palette
+        .diff_del_wash
+        .expect("near-surface red still washes")
+        .rgb
+        .expect("del rgb");
+    assert_ne!(collapsed_add, collapsed.background);
+    assert_ne!(collapsed_del, collapsed.background);
+
+    let matrix = crate::tui::theme_terminal::matrix_fixture_palette();
+    let matrix_palette = Palette::from_terminal(Some(&matrix));
+    assert!(
+        matrix_palette.diff_add_wash.is_some(),
+        "matrix fixture must paint add wash"
+    );
+    assert_eq!(
+        matrix_palette.diff_add_wash.unwrap().rgb.unwrap(),
+        Rgb::new(0x16, 0x2f, 0x21)
+    );
+    assert_eq!(
+        matrix_palette.diff_del_wash.unwrap().rgb.unwrap(),
+        Rgb::new(0x38, 0x24, 0x27)
+    );
+
+    Theme::apply_committed("terminal");
+}
+
+fn rgb_dist2(left: Rgb, right: Rgb) -> i32 {
+    let dr = i32::from(left.red) - i32::from(right.red);
+    let dg = i32::from(left.green) - i32::from(right.green);
+    let db = i32::from(left.blue) - i32::from(right.blue);
+    dr * dr + dg * dg + db * db
 }
 
 // Covers: brand/version roles use sampled terminal RGB, not bare Color::Cyan/Green

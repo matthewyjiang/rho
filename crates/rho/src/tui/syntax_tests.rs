@@ -1,5 +1,6 @@
 use super::*;
 use crate::tui::theme::{SyntaxRole, Theme};
+use ratatui::style::{Color, Style};
 
 fn highlighter(token: &str) -> BlockHighlighter {
     warm_syntax_set();
@@ -141,6 +142,13 @@ fn highlight_segment_style_uses_caller_plain() {
     };
     assert_eq!(keyword.style(plain), Theme::syntax(SyntaxRole::Keyword));
     assert_eq!(body.style(plain), plain);
+    let washed = Style::default().fg(Color::White).bg(Color::Rgb(12, 40, 24));
+    assert_eq!(keyword.style(washed).bg, washed.bg);
+    assert_eq!(
+        keyword.style(washed).fg,
+        Theme::syntax(SyntaxRole::Keyword).fg
+    );
+    assert_eq!(body.style(washed), washed);
 }
 
 // Covers: match overlay splits segments on pattern ranges

@@ -1,25 +1,32 @@
 //! Diff-row wash and the chrome package consumed by tool-card render.
 //!
-//! Added/removed rows get a soft green/red wash. Change kind on the sign is
-//! foreground only (`+`/`-`); content stays base text plus syntax roles.
-//! Theme owns wash + sign; render derives each column with [`DiffRowChrome::washed`].
+//! Sampled surfaces (terminal RGB or a named scheme) mix toward green/red so
+//! the row wash is actually visible on that background. The sign is add/remove
+//! foreground. Unhighlighted content sits on the wash, or uses that foreground
+//! when no RGB wash exists. Syntax roles replace fg and keep the wash.
 
 use ratatui::{style::Style, text::Span};
 use rho_tools::tool_card::DiffRowKind;
 
 use super::{
-    optional_blended, scheme_ansi, AnsiColor, BlockColor, ColorScheme, Palette, TerminalPalette,
-    Theme, USER_BACKGROUND_ALPHA,
+    is_light_background, scheme_ansi, AnsiColor, BlockColor, ColorScheme, Palette, Rgb,
+    TerminalPalette, Theme, USER_BACKGROUND_ALPHA,
 };
 
-// Diff row wash matches the panel wash strength so syntax stays readable.
-const DIFF_ROW_WASH_ALPHA: f32 = USER_BACKGROUND_ALPHA;
+/// VS Code GitHub Dark `diffEditor.insertedLineBackground` is `#2ea04326`
+/// (0x26 / 255). Chromatic mixes never go weaker than that overlay.
+const GITHUB_DIFF_LINE_ALPHA: f32 = 0x26 as f32 / 255.0;
+
+/// Cap so a tint close to the surface cannot become a solid role fill.
+/// Builtin schemes compute ~0.13–0.18; if a sampled theme hits this, raise it.
+const MAX_DIFF_WASH_ALPHA: f32 = 0.35;
 
 /// Theme facts for one diff body row: sign role and optional wash.
 ///
 /// Render patches column bases through [`Self::washed`]; content syntax is
-/// washed after highlight via [`Self::paint_content`]. Content base is always
-/// [`Theme::text`] - not a chrome field.
+/// washed after highlight via [`Self::paint_content`]. Unhighlighted content
+/// uses [`Self::plain`]: body text on the wash, or add/remove fg when there
+/// is no wash.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::tui) struct DiffRowChrome {
     /// `+`/`-` role foreground (+ wash when present).
@@ -47,6 +54,18 @@ impl DiffRowChrome {
         }
     }
 
+    /// Unhighlighted content: body text on the row wash, or add/remove fg
+    /// when the theme has no RGB wash (default `terminal` without a sample).
+    ///
+    /// Syntax roles patch onto this so the wash is not dropped.
+    pub(in crate::tui) fn plain(self) -> Style {
+        if self.wash.is_some() {
+            self.washed(Theme::text())
+        } else {
+            self.sign
+        }
+    }
+
     /// Syntax roles replace the plain style; re-apply the row wash after.
     pub(in crate::tui) fn paint_content(self, spans: &mut [Span<'static>]) {
         if self.wash.is_none() {
@@ -70,7 +89,6 @@ impl Theme {
             }
         };
         let wash = wash_fill.map(|block| Style::default().bg(block.color));
-        // Sign is role foreground only - the wash carries add/remove, not a solid gutter.
         let sign_base = sign_fg.map_or(Self::text(), |fg| Style::default().fg(fg));
         DiffRowChrome::new(sign_base, wash)
     }
@@ -80,22 +98,96 @@ pub(super) fn terminal_diff_washes(
     terminal: Option<&TerminalPalette>,
 ) -> (Option<BlockColor>, Option<BlockColor>) {
     (
-        optional_blended(terminal, AnsiColor::Green, DIFF_ROW_WASH_ALPHA),
-        optional_blended(terminal, AnsiColor::Red, DIFF_ROW_WASH_ALPHA),
+        terminal.and_then(|terminal| sampled_diff_wash(terminal, AnsiColor::Green)),
+        terminal.and_then(|terminal| sampled_diff_wash(terminal, AnsiColor::Red)),
     )
 }
 
 pub(super) fn scheme_diff_washes(scheme: &ColorScheme) -> (Option<BlockColor>, Option<BlockColor>) {
     (
-        Some(scheme_diff_background(scheme, AnsiColor::Green)),
-        Some(scheme_diff_background(scheme, AnsiColor::Red)),
+        Some(visible_diff_wash(
+            scheme.background,
+            scheme_ansi(scheme, AnsiColor::Green),
+        )),
+        Some(visible_diff_wash(
+            scheme.background,
+            scheme_ansi(scheme, AnsiColor::Red),
+        )),
     )
 }
 
-fn scheme_diff_background(scheme: &ColorScheme, color: AnsiColor) -> BlockColor {
-    BlockColor::from_rgb(
-        scheme
-            .background
-            .blend_toward(scheme_ansi(scheme, color), DIFF_ROW_WASH_ALPHA),
-    )
+fn sampled_diff_wash(terminal: &TerminalPalette, color: AnsiColor) -> Option<BlockColor> {
+    let tint = *terminal.ansi.get(&color)?;
+    Some(visible_diff_wash(terminal.background, tint))
+}
+
+/// Mix `tint` into `background` until the wash is as separated as the panel
+/// wash on this surface, and never weaker than GitHub's 15% line overlay.
+fn visible_diff_wash(background: Rgb, tint: Rgb) -> BlockColor {
+    let mixed = background.blend_toward(tint, diff_wash_alpha(background, tint));
+    BlockColor::from_rgb(separate_from_surface(background, tint, mixed))
+}
+
+/// Rounding can collapse a mix onto the surface (black + `(0,1,0)` at 0.35
+/// still rounds to black). Step one channel toward the tint so the wash
+/// remains a different RGB.
+fn separate_from_surface(background: Rgb, tint: Rgb, mixed: Rgb) -> Rgb {
+    if mixed != background {
+        return mixed;
+    }
+    let dr = i16::from(tint.red) - i16::from(background.red);
+    let dg = i16::from(tint.green) - i16::from(background.green);
+    let db = i16::from(tint.blue) - i16::from(background.blue);
+    let abs_r = dr.unsigned_abs();
+    let abs_g = dg.unsigned_abs();
+    let abs_b = db.unsigned_abs();
+    if abs_r >= abs_g && abs_r >= abs_b && dr != 0 {
+        return Rgb::new(
+            step_toward(background.red, tint.red),
+            background.green,
+            background.blue,
+        );
+    }
+    if abs_g >= abs_b && dg != 0 {
+        return Rgb::new(
+            background.red,
+            step_toward(background.green, tint.green),
+            background.blue,
+        );
+    }
+    if db != 0 {
+        return Rgb::new(
+            background.red,
+            background.green,
+            step_toward(background.blue, tint.blue),
+        );
+    }
+    mixed
+}
+
+fn step_toward(from: u8, to: u8) -> u8 {
+    if to > from {
+        from.saturating_add(1)
+    } else if to < from {
+        from.saturating_sub(1)
+    } else {
+        from
+    }
+}
+
+fn diff_wash_alpha(background: Rgb, tint: Rgb) -> f32 {
+    let panel_ink = if is_light_background(background.luminance()) {
+        Rgb::new(0, 0, 0)
+    } else {
+        Rgb::new(255, 255, 255)
+    };
+    let panel = background.blend_toward(panel_ink, USER_BACKGROUND_ALPHA);
+    let target_delta = (panel.luminance() - background.luminance()).abs();
+    let tint_span = (tint.luminance() - background.luminance()).abs();
+    let matched = if tint_span == 0.0 {
+        GITHUB_DIFF_LINE_ALPHA
+    } else {
+        target_delta / tint_span
+    };
+    matched.clamp(GITHUB_DIFF_LINE_ALPHA, MAX_DIFF_WASH_ALPHA)
 }

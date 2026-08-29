@@ -58,7 +58,7 @@ fn highlights_rust_tokens_after_file_row() {
     assert!(segments
         .iter()
         .any(|s| { s.text.contains("42") && s.role == Some(SyntaxRole::Constant) }));
-    // Plain tokens stay role-less so the painter can apply base text color.
+    // Plain tokens stay role-less so the painter can apply add/remove tint.
     let plain = Theme::text();
     assert!(segments
         .iter()

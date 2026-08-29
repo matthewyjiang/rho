@@ -7,8 +7,9 @@ use crate::screen::{CellColor, ScreenCell, ScreenModel};
 
 /// Full color contract for one static proof-plate render.
 ///
-/// Matrix captures use ANSI indexed colors. One palette owns chrome defaults and
-/// the ANSI-16 map so callers cannot mix light ANSI with dark frame colors.
+/// Matrix captures use ANSI indexed colors for most chrome so light/dark plates
+/// remap through this palette. Truecolor diff washes are re-anchored onto the
+/// plate well (dark RGB fills would otherwise land on the light plate).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SvgPalette {
     pub default_fg: Rgb,
@@ -348,10 +349,51 @@ fn resolve_color(
     match color {
         CellColor::Default => default,
         CellColor::Indexed(index) => indexed_color(index, is_fg, bold, palette),
-        // Truecolor cells keep the captured RGB. Matrix chrome is ANSI-indexed, so
-        // light/dark plates diverge through the palette map rather than RGB rewrite.
-        CellColor::Rgb(r, g, b) => Rgb::new(r, g, b),
+        // Indexed chrome remaps through the plate. Only matrix add/remove washes
+        // (blends of the github-dark well toward sampled green/red) re-anchor
+        // on light plates. Other truecolor backgrounds stay as captured.
+        CellColor::Rgb(r, g, b) => {
+            let rgb = Rgb::new(r, g, b);
+            if is_fg {
+                rgb
+            } else {
+                remap_matrix_diff_wash(rgb, palette)
+            }
+        }
     }
+}
+
+/// GitHub inserted-line overlay (`#2ea04326` ≈ 0.15). Used when re-anchoring
+/// a dark captured wash onto a light plate.
+const LIGHT_PLATE_WASH_ALPHA: f64 = 0x26 as f64 / 255.0;
+
+/// Exact add/remove washes from `matrix_fixture_palette` + `visible_diff_wash`.
+/// Keep in sync with `sampled_diff_wash_beats_github_overlay_on_light_and_dark`.
+const MATRIX_ADD_WASH: Rgb = Rgb::new(0x16, 0x2f, 0x21);
+const MATRIX_DEL_WASH: Rgb = Rgb::new(0x38, 0x24, 0x27);
+
+fn remap_matrix_diff_wash(bg: Rgb, palette: SvgPalette) -> Rgb {
+    if !rgb_is_light(palette.default_bg) {
+        return bg;
+    }
+    let tint = if bg == MATRIX_ADD_WASH {
+        palette.ansi16[2]
+    } else if bg == MATRIX_DEL_WASH {
+        palette.ansi16[1]
+    } else {
+        return bg;
+    };
+    Rgb::new(
+        blend(palette.default_bg.r, tint.r, LIGHT_PLATE_WASH_ALPHA),
+        blend(palette.default_bg.g, tint.g, LIGHT_PLATE_WASH_ALPHA),
+        blend(palette.default_bg.b, tint.b, LIGHT_PLATE_WASH_ALPHA),
+    )
+}
+
+fn rgb_is_light(rgb: Rgb) -> bool {
+    let luminance =
+        (0.2126 * f32::from(rgb.r) + 0.7152 * f32::from(rgb.g) + 0.0722 * f32::from(rgb.b)) / 255.0;
+    luminance > 0.55
 }
 
 fn dim_color(fg: Rgb, bg: Rgb) -> Rgb {
@@ -511,5 +553,38 @@ mod tests {
         assert!(light.contains(&format!("fill=\"{}\"", wash.css())));
         assert!(light.contains(&format!("fill=\"{}\"", bright_white.css())));
         assert!(light.contains(">hello</text>"));
+    }
+
+    // Covers: only the two matrix wash RGBs re-anchor on the light plate.
+    // Owner: pty svg renderer
+    #[test]
+    fn light_palette_reanchors_only_matrix_diff_washes() {
+        let palette = SvgPalette::primer_light();
+        let remapped = remap_matrix_diff_wash(MATRIX_ADD_WASH, palette);
+        assert_ne!(remapped, MATRIX_ADD_WASH);
+        let mut wash_screen = ScreenModel::new(1, 8);
+        wash_screen.process(
+            format!(
+                "\x1b[48;2;{};{};{}madd\x1b[m",
+                MATRIX_ADD_WASH.r, MATRIX_ADD_WASH.g, MATRIX_ADD_WASH.b
+            )
+            .as_bytes(),
+        );
+        let light = render_screen_svg(&wash_screen, &SvgOptions::with_palette(palette));
+        assert!(light.contains(&format!("fill=\"{}\"", remapped.css())));
+        assert!(light.contains(">add</text>"));
+
+        let capture = SvgPalette::github_dark();
+        let nearby = Rgb::new(
+            blend(capture.default_bg.r, capture.ansi16[2].r, 0.22),
+            blend(capture.default_bg.g, capture.ansi16[2].g, 0.22),
+            blend(capture.default_bg.b, capture.ansi16[2].b, 0.22),
+        );
+        assert_ne!(nearby, MATRIX_ADD_WASH);
+        assert_eq!(remap_matrix_diff_wash(nearby, palette), nearby);
+        assert_ne!(
+            remap_matrix_diff_wash(MATRIX_DEL_WASH, palette),
+            MATRIX_DEL_WASH
+        );
     }
 }
