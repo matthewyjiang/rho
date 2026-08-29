@@ -80,6 +80,27 @@ const FIXTURES: &[Fixture] = &[
             CUSTOMER ||--o{ ORDER : places\n\
             ORDER ||--|{ LINE_ITEM : contains",
     },
+    Fixture {
+        name: "gitgraph_small",
+        source: "gitGraph\n\
+            commit id: \"init\" msg: \"init\"\n\
+            branch develop\n\
+            commit id: \"parser\" msg: \"parser\"\n\
+            checkout main\n\
+            merge develop",
+    },
+    Fixture {
+        name: "gantt_small",
+        source: "gantt\n\
+            title Plan\n\
+            section Build\n\
+            Parser :p1, 3d\n\
+            Painter :after p1, 2d",
+    },
+    Fixture {
+        name: "mindmap_small",
+        source: "mindmap\n  Root\n    Child\n    Other",
+    },
 ];
 
 fn renders(source: &str, width: usize) -> bool {
