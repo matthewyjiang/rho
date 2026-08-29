@@ -35,6 +35,9 @@ fn renders_quality_supported_families_without_ansi_or_width_overflow() {
         "stateDiagram-v2\nReady --> Waiting",
         "erDiagram\nCUSTOMER ||--o{ ORDER : places\nCUSTOMER {\nstring name\n}",
         "classDiagram\nAnimal <|-- Duck\nclass Animal {\n+name: String\n+speak()\n}",
+        "gitGraph\ncommit id: \"init\" msg: \"init\"\ncommit id: \"next\" msg: \"next\"",
+        "gantt\ntitle Plan\nParser :p1, 2026-01-01, 3d",
+        "mindmap\n  Root\n    Child",
     ];
 
     for source in fixtures {
@@ -53,10 +56,7 @@ fn unsupported_families_cleanly_fall_back() {
     for source in [
         "pie\n\"Dogs\" : 5",
         "journey\nsection Work\nCode: 5: Me",
-        "gantt\ntitle Plan",
         "timeline\n2025 : Shipped",
-        "gitGraph\ncommit id: \"one\"",
-        "mindmap\n  root((Rho))",
         "quadrantChart\nFast: [0.8, 0.8]",
         "sankey-beta\nInput,Output,1",
         "xychart-beta\nx-axis [a, b]",
@@ -139,7 +139,7 @@ fn open_prefix_paints_valid_walks_back_malformed_and_declines_sticky() {
     };
     assert_eq!(plain(&kept), plain(&expected));
     assert!(render_open_prefix("  \n", "  \n", 80).is_none());
-    assert!(render_open_prefix("gantt\ntitle Plan", "gantt\ntitle Plan", 240).is_none());
+    assert!(render_open_prefix("pie\n\"Dogs\" : 5", "pie\n\"Dogs\" : 5", 240).is_none());
     assert!(render_open_prefix(
         "flowchart LR\nclick A \"https://example.com\"",
         "flowchart LR\nclick A \"https://example.com\"",
@@ -337,4 +337,93 @@ fn renders_unicode_labels_without_mismeasuring_or_reordering_cells() {
         );
         assert!(lines.iter().all(|line| display_width(line) <= 80));
     }
+}
+
+// Covers: empty gitGraph, gantt, and mindmap stay unsupported like empty sequence
+// Owner: mermaid model conversion
+#[test]
+fn empty_gitgraph_gantt_and_mindmap_stay_unsupported() {
+    for source in ["gitGraph", "gantt\ntitle Plan", "mindmap"] {
+        assert_eq!(
+            render_mermaid(source, 240),
+            MermaidRender::Fallback(MermaidFallback::Unsupported),
+            "{source}"
+        );
+    }
+}
+
+// Covers: gitGraph must show messages, tags, merges, and hide auto ids
+// Owner: mermaid gitgraph layout
+#[test]
+fn gitgraph_paints_messages_merges_and_hides_auto_ids() {
+    let art = rendered(
+        "gitGraph\n\
+            commit id: \"init\" msg: \"init\"\n\
+            branch develop\n\
+            commit id: \"parser\" msg: \"parser\" tag: \"wip\"\n\
+            checkout main\n\
+            merge develop\n\
+            commit id: \"release\" msg: \"release\"",
+        80,
+    )
+    .join("\n");
+    assert!(art.contains("init"), "{art}");
+    assert!(art.contains("parser"), "{art}");
+    assert!(art.contains("wip"), "{art}");
+    assert!(art.contains("merged branch develop into main"), "{art}");
+    assert!(art.contains("release"), "{art}");
+    assert!(art.contains('●') || art.contains('◉'), "{art}");
+
+    let unlabeled = rendered("gitGraph\ncommit\ncommit", 80).join("\n");
+    assert!(
+        !unlabeled.contains('-'),
+        "auto ids must not appear:\n{unlabeled}"
+    );
+}
+
+// Covers: gantt after-chains and sections must keep later tasks to the right
+// Owner: mermaid gantt layout
+#[test]
+fn gantt_paints_sections_and_orders_after_tasks() {
+    let lines = rendered(
+        "gantt\n\
+            title Plan\n\
+            section Build\n\
+            Parser :p1, 3d\n\
+            Painter :after p1, 2d",
+        80,
+    );
+    let art = lines.join("\n");
+    assert!(art.contains("Plan"), "{art}");
+    assert!(art.contains("Build"), "{art}");
+    let parser = lines.iter().find(|line| line.contains("Parser"));
+    let painter = lines.iter().find(|line| line.contains("Painter"));
+    let (Some(parser), Some(painter)) = (parser, painter) else {
+        panic!("missing task rows:\n{art}");
+    };
+    let parser_bar = parser.find('█').or_else(|| parser.find('░'));
+    let painter_bar = painter.find('█').or_else(|| painter.find('░'));
+    assert!(
+        matches!((parser_bar, painter_bar), (Some(left), Some(right)) if left < right),
+        "expected Parser bar left of Painter:\n{art}"
+    );
+}
+
+// Covers: mindmap children must indent under the root with tree guides
+// Owner: mermaid mindmap layout
+#[test]
+fn mindmap_paints_indented_tree() {
+    let lines = rendered("mindmap\n  Root\n    Child\n    Other", 80);
+    let art = lines.join("\n");
+    let root = lines.iter().position(|line| line.contains("Root"));
+    let child = lines.iter().position(|line| line.contains("Child"));
+    assert!(
+        matches!((root, child), (Some(top), Some(below)) if top < below),
+        "{art}"
+    );
+    let child_line = lines.iter().find(|line| line.contains("Child")).unwrap();
+    assert!(
+        child_line.contains('├') || child_line.contains('└'),
+        "child missing tree guide:\n{art}"
+    );
 }

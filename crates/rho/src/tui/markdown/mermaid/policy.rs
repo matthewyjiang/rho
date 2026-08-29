@@ -7,6 +7,9 @@ pub(super) enum DiagramPolicy {
     PaintClass,
     PaintEr,
     PaintSequence,
+    PaintGitGraph,
+    PaintGantt,
+    PaintMindmap,
     RawFallback,
 }
 
@@ -21,13 +24,13 @@ pub(super) const fn diagram_policy(kind: DiagramKind) -> DiagramPolicy {
         DiagramKind::Class => DiagramPolicy::PaintClass,
         DiagramKind::Er => DiagramPolicy::PaintEr,
         DiagramKind::Sequence => DiagramPolicy::PaintSequence,
+        DiagramKind::GitGraph => DiagramPolicy::PaintGitGraph,
+        DiagramKind::Gantt => DiagramPolicy::PaintGantt,
+        DiagramKind::Mindmap => DiagramPolicy::PaintMindmap,
         DiagramKind::Pie
-        | DiagramKind::Mindmap
         | DiagramKind::Journey
         | DiagramKind::Timeline
-        | DiagramKind::Gantt
         | DiagramKind::Requirement
-        | DiagramKind::GitGraph
         | DiagramKind::C4
         | DiagramKind::Sankey
         | DiagramKind::Quadrant

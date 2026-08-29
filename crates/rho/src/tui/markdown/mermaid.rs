@@ -10,6 +10,9 @@ use super::panel::ClosedPanel;
 use crate::tui::terminal_graph::{GraphStyles, Oversize};
 
 mod flow;
+mod gantt;
+mod gitgraph;
+mod mindmap;
 mod model;
 mod policy;
 mod security;
@@ -200,11 +203,11 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
         edge_label: style,
         node_styles: Vec::new(),
     };
-    let result = layout_model(&model, diagram_policy, &styles, Some(inner_width));
+    let result = layout_model(&model, &styles, Some(inner_width));
     let art = match result {
         Ok(art) => art,
         Err(Oversize::Width) => {
-            return render_clipped(&model, diagram_policy, &styles, inner_width);
+            return render_clipped(&model, &styles, inner_width);
         }
         Err(Oversize::Cells) => {
             return MermaidRender::Fallback(MermaidFallback::OutputCells);
@@ -227,14 +230,13 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
 /// window is future work if receipts show it matters.
 fn render_clipped(
     model: &model::TerminalModel,
-    diagram_policy: policy::DiagramPolicy,
     styles: &GraphStyles,
     inner_width: usize,
 ) -> MermaidRender {
     if inner_width < MIN_CLIP_WIDTH {
         return MermaidRender::Fallback(MermaidFallback::TooWide);
     }
-    let art = match layout_model(model, diagram_policy, styles, /*max_width*/ None) {
+    let art = match layout_model(model, styles, /*max_width*/ None) {
         Ok(art) => art,
         // Unbounded layout cannot fail on width; anything else keeps the
         // pre-clip fallback taxonomy.
@@ -300,32 +302,33 @@ fn clip_line_to_width(line: Line<'static>, width: usize) -> Line<'static> {
 
 fn layout_model(
     model: &model::TerminalModel,
-    diagram_policy: policy::DiagramPolicy,
     styles: &GraphStyles,
     max_width: Option<usize>,
 ) -> Result<MermaidArt, Oversize> {
-    match diagram_policy {
-        policy::DiagramPolicy::PaintSequence => sequence::layout_sequence(
-            model
-                .sequence
-                .as_ref()
-                .expect("sequence policy has sequence model"),
-            styles,
-            max_width,
-        ),
-        policy::DiagramPolicy::PaintClass | policy::DiagramPolicy::PaintEr => flow::render_class(
-            &model.graph,
-            model
-                .class_info
-                .as_ref()
-                .expect("class policy has class model"),
-            styles,
-            max_width,
-        ),
-        policy::DiagramPolicy::PaintFlow | policy::DiagramPolicy::PaintState => {
-            flow::layout_flow(&model.graph, styles, max_width)
+    match model {
+        model::TerminalModel::Sequence(sequence) => {
+            sequence::layout_sequence(sequence, styles, max_width)
         }
-        policy::DiagramPolicy::RawFallback => unreachable!("handled before model conversion"),
+        model::TerminalModel::Class { graph, info } => {
+            flow::render_class(graph, info, styles, max_width)
+        }
+        model::TerminalModel::Flow(graph) => flow::layout_flow(graph, styles, max_width),
+        model::TerminalModel::GitGraph(graph) => {
+            gitgraph::layout_gitgraph(graph, styles, max_width)
+        }
+        model::TerminalModel::Gantt(chart) => gantt::layout_gantt(chart, styles, max_width),
+        model::TerminalModel::Mindmap(map) => mindmap::layout_mindmap(map, styles, max_width),
+    }
+}
+
+pub(super) fn art_from_plain(plain_lines: Vec<String>, styles: &GraphStyles) -> MermaidArt {
+    let styled_lines = plain_lines
+        .iter()
+        .map(|line| Line::from(Span::styled(line.clone(), styles.node_text)))
+        .collect();
+    MermaidArt {
+        styled_lines,
+        plain_lines,
     }
 }
 
@@ -359,8 +362,9 @@ fn is_supported_header(source: &str) -> bool {
     else {
         return false;
     };
+    let header = header.trim_end_matches(':').to_ascii_lowercase();
     matches!(
-        header.to_ascii_lowercase().as_str(),
+        header.as_str(),
         "flowchart"
             | "graph"
             | "statediagram"
@@ -368,6 +372,9 @@ fn is_supported_header(source: &str) -> bool {
             | "sequencediagram"
             | "classdiagram"
             | "erdiagram"
+            | "gitgraph"
+            | "gantt"
+            | "mindmap"
     )
 }
 

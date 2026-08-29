@@ -14,7 +14,7 @@ mod painter;
 mod placement;
 
 pub(in crate::tui) use canvas::{Canvas, Cls as CellClass, D, L, R, STY_SOLID, STY_THICK, U};
-pub(in crate::tui) use drawing::{draw_box, draw_seq_text, fit_label};
+pub(in crate::tui) use drawing::{draw_box, draw_seq_text, fit_label, wrap_label};
 pub(in crate::tui) use flow::{
     art_from_layout, layout_canvas, layout_flow, over_wrap_rungs, NodeExtra, Placed,
 };

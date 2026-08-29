@@ -10,6 +10,7 @@ use crate::tui::terminal_graph::{
 };
 
 use super::{
+    gantt, gitgraph, mindmap,
     policy::{diagram_policy, DiagramPolicy},
     sequence::Sequence,
 };
@@ -56,17 +57,47 @@ pub(super) struct ClassInfo {
     pub(super) methods: Vec<String>,
 }
 
-pub(super) struct TerminalModel {
-    pub(super) graph: Graph,
-    pub(super) class_info: Option<Vec<ClassInfo>>,
-    pub(super) sequence: Option<Sequence>,
+pub(super) enum TerminalModel {
+    Flow(Graph),
+    Class { graph: Graph, info: Vec<ClassInfo> },
+    Sequence(Sequence),
+    GitGraph(gitgraph::GitGraphModel),
+    Gantt(gantt::GanttModel),
+    Mindmap(mindmap::MindmapModel),
 }
 
 pub(super) fn from_ir(ir: &mermaid_rs_renderer::Graph) -> Option<TerminalModel> {
-    if diagram_policy(ir.kind) == DiagramPolicy::RawFallback {
-        return None;
+    match diagram_policy(ir.kind) {
+        DiagramPolicy::RawFallback => None,
+        DiagramPolicy::PaintGitGraph => gitgraph::from_ir(ir).map(TerminalModel::GitGraph),
+        DiagramPolicy::PaintGantt => gantt::from_ir(ir).map(TerminalModel::Gantt),
+        DiagramPolicy::PaintMindmap => mindmap::from_ir(ir).map(TerminalModel::Mindmap),
+        DiagramPolicy::PaintSequence => {
+            let sequence = super::sequence::from_ir(ir);
+            if sequence.labels.is_empty() {
+                None
+            } else {
+                Some(TerminalModel::Sequence(sequence))
+            }
+        }
+        DiagramPolicy::PaintFlow | DiagramPolicy::PaintState => {
+            Some(TerminalModel::Flow(flow_graph(ir)))
+        }
+        DiagramPolicy::PaintClass | DiagramPolicy::PaintEr => {
+            let (graph, ids) = flow_graph_with_ids(ir);
+            Some(TerminalModel::Class {
+                info: class_info(ir, &ids),
+                graph,
+            })
+        }
     }
+}
 
+fn flow_graph(ir: &mermaid_rs_renderer::Graph) -> Graph {
+    flow_graph_with_ids(ir).0
+}
+
+fn flow_graph_with_ids(ir: &mermaid_rs_renderer::Graph) -> (Graph, Vec<&String>) {
     let mut ids = ir.nodes.keys().collect::<Vec<_>>();
     ids.sort_by_key(|id| ir.node_order.get(*id).copied().unwrap_or(usize::MAX));
     let index = ids
@@ -148,32 +179,17 @@ pub(super) fn from_ir(ir: &mermaid_rs_renderer::Graph) -> Option<TerminalModel> 
             })
             .collect(),
     );
-    let graph = Graph {
-        nodes,
-        edges,
-        index,
-        groups,
-        node_group,
-        dir: direction(ir.direction),
-    };
-
-    let class_info =
-        matches!(ir.kind, DiagramKind::Class | DiagramKind::Er).then(|| class_info(ir, &ids));
-    let sequence = match ir.kind {
-        DiagramKind::Sequence => {
-            let sequence = super::sequence::from_ir(ir);
-            if sequence.labels.is_empty() {
-                return None;
-            }
-            Some(sequence)
-        }
-        _ => None,
-    };
-    Some(TerminalModel {
-        graph,
-        class_info,
-        sequence,
-    })
+    (
+        Graph {
+            nodes,
+            edges,
+            index,
+            groups,
+            node_group,
+            dir: direction(ir.direction),
+        },
+        ids,
+    )
 }
 
 fn shape(shape: MermaidNodeShape) -> NodeShape {
@@ -287,18 +303,47 @@ fn class_info(ir: &mermaid_rs_renderer::Graph, ids: &[&String]) -> Vec<ClassInfo
 }
 
 pub(super) fn complexity(ir: &mermaid_rs_renderer::Graph) -> (usize, usize, usize, usize) {
-    let details = match diagram_policy(ir.kind) {
-        DiagramPolicy::PaintSequence => {
-            ir.sequence_notes.len() + ir.sequence_frames.len() + ir.sequence_activations.len()
+    match diagram_policy(ir.kind) {
+        DiagramPolicy::PaintSequence => (
+            ir.nodes.len(),
+            ir.edges.len(),
+            ir.subgraphs.len(),
+            ir.sequence_notes.len() + ir.sequence_frames.len() + ir.sequence_activations.len(),
+        ),
+        DiagramPolicy::PaintClass | DiagramPolicy::PaintEr => (
+            ir.nodes.len(),
+            ir.edges.len(),
+            ir.subgraphs.len(),
+            ir.nodes
+                .values()
+                .map(|node| node.label.lines().count().saturating_sub(1))
+                .sum(),
+        ),
+        DiagramPolicy::PaintGitGraph => (
+            ir.gitgraph.commits.len(),
+            ir.gitgraph
+                .commits
+                .iter()
+                .map(|commit| commit.parents.len())
+                .sum(),
+            ir.gitgraph.branches.len(),
+            ir.gitgraph
+                .commits
+                .iter()
+                .map(|commit| commit.tags.len())
+                .sum(),
+        ),
+        DiagramPolicy::PaintGantt => (
+            ir.gantt_tasks.len(),
+            ir.edges.len(),
+            ir.gantt_sections.len(),
+            0,
+        ),
+        DiagramPolicy::PaintMindmap => (ir.mindmap.nodes.len(), ir.edges.len(), 0, 0),
+        DiagramPolicy::PaintFlow | DiagramPolicy::PaintState | DiagramPolicy::RawFallback => {
+            (ir.nodes.len(), ir.edges.len(), ir.subgraphs.len(), 0)
         }
-        DiagramPolicy::PaintClass | DiagramPolicy::PaintEr => ir
-            .nodes
-            .values()
-            .map(|node| node.label.lines().count().saturating_sub(1))
-            .sum(),
-        DiagramPolicy::PaintFlow | DiagramPolicy::PaintState | DiagramPolicy::RawFallback => 0,
-    };
-    (ir.nodes.len(), ir.edges.len(), ir.subgraphs.len(), details)
+    }
 }
 
 fn composed_edge_label(kind: DiagramKind, edge: &mermaid_rs_renderer::Edge) -> Option<String> {
