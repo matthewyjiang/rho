@@ -143,11 +143,7 @@ fn build_scope(
         index_of.insert(*item, nodes.len());
         match item {
             Item::Node(node) => {
-                nodes.push(Node {
-                    label: graph.nodes[*node].label.clone(),
-                    shape: graph.nodes[*node].shape,
-                    style: graph.nodes[*node].style,
-                });
+                nodes.push(graph.nodes[*node].clone());
                 extras.push(NodeExtra::Plain);
             }
             Item::Group(group) => {
@@ -164,6 +160,7 @@ fn build_scope(
                     label: graph.groups[*group].label.clone(),
                     shape: NodeShape::Rect,
                     style: NodeStyle::default(),
+                    caption: None,
                 });
                 extras.push(NodeExtra::Frame(sub));
             }

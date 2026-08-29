@@ -237,7 +237,7 @@ pub(super) fn place_td(
         .iter()
         .map(|row| {
             row.iter()
-                .map(|&i| sizes.box_h[i] + sizes.extra_h[i])
+                .map(|&i| sizes.box_h[i] + sizes.extra_h[i] + sizes.caption_h[i])
                 .max()
                 .unwrap_or(3)
         })
@@ -264,7 +264,9 @@ pub(super) fn place_td(
             let h = sizes.box_h[idx];
             let cx = centers[idx];
             let x = cx.saturating_sub(w / 2);
-            let y = rank_y[r] + (rank_h[r] - h - sizes.extra_h[idx]) / 2;
+            let y = rank_y[r]
+                + sizes.caption_h[idx]
+                + (rank_h[r] - h - sizes.extra_h[idx] - sizes.caption_h[idx]) / 2;
             placed[idx] = Placed {
                 x,
                 y,
@@ -275,6 +277,10 @@ pub(super) fn place_td(
                 rank: r,
             };
             diagram_w = diagram_w.max(x + w);
+            if sizes.caption_w[idx] > 0 {
+                let cap_x = cx.saturating_sub(sizes.caption_w[idx] / 2);
+                diagram_w = diagram_w.max(cap_x + sizes.caption_w[idx]);
+            }
             if sizes.extra_h[idx] > 0 && sizes.self_label_w[idx] > 0 {
                 diagram_w = diagram_w.max(x + w + 2 + sizes.self_label_w[idx]);
             }
@@ -422,7 +428,9 @@ pub(super) fn place_lr(
             let w = sizes.box_w[idx];
             let h = sizes.box_h[idx];
             let cy = centers[idx];
-            let y = cy.saturating_sub((h + sizes.extra_h[idx]) / 2) + forward_pad;
+            let y = cy.saturating_sub((h + sizes.extra_h[idx] + sizes.caption_h[idx]) / 2)
+                + forward_pad
+                + sizes.caption_h[idx];
             placed[idx] = Placed {
                 x,
                 y,

@@ -114,6 +114,10 @@ pub(in crate::tui) fn draw_box(
     let text_class = node_index.map(Cls::NodeText).unwrap_or(Cls::Text);
 
     let (tl, tr, bl, br) = match shape {
+        Shape::Text => {
+            draw_text_node(canvas, p, lines, text_class);
+            return;
+        }
         Shape::Round => ('╭', '╮', '╰', '╯'),
         // A diamond's corner points make decisions distinguishable from
         // rounded process nodes even in the compact rectangular cell grid.
@@ -151,6 +155,54 @@ pub(in crate::tui) fn draw_box(
         for grapheme in text.graphemes(true) {
             cur += canvas.set_grapheme(cur, row, grapheme, text_class);
         }
+    }
+}
+
+fn occupy_rect(canvas: &mut Canvas, x: usize, y: usize, w: usize, h: usize) {
+    let right = x.saturating_add(w);
+    let bottom = y.saturating_add(h);
+    for cy in y..bottom.min(canvas.h) {
+        for cx in x..right.min(canvas.w) {
+            let i = canvas.idx(cx, cy);
+            canvas.occupied[i] = true;
+        }
+    }
+}
+
+fn draw_text_node(canvas: &mut Canvas, p: &Placed, lines: &[String], text_class: Cls) {
+    occupy_rect(canvas, p.x, p.y, p.w, p.h);
+    let inner = p.w.max(1);
+    for (li, line) in lines.iter().enumerate() {
+        let row = p.y + li;
+        if row >= canvas.h {
+            break;
+        }
+        let text = fit_label(line, inner);
+        let tw = text.width();
+        let mut cur = p.x + inner.saturating_sub(tw) / 2;
+        for grapheme in text.graphemes(true) {
+            cur += canvas.set_grapheme(cur, row, grapheme, text_class);
+        }
+    }
+}
+
+/// One-line caption in the reserved row above `p` (the node box).
+pub(in crate::tui) fn draw_caption(
+    canvas: &mut Canvas,
+    p: &Placed,
+    caption: &str,
+    node_index: Option<usize>,
+) {
+    let Some(row) = p.y.checked_sub(1) else {
+        return;
+    };
+    let text_class = node_index.map(Cls::NodeText).unwrap_or(Cls::Text);
+    let text = fit_label(caption, canvas.w.max(1));
+    let tw = text.width();
+    let mut cur = p.cx.saturating_sub(tw / 2);
+    occupy_rect(canvas, cur, row, tw.max(1), 1);
+    for grapheme in text.graphemes(true) {
+        cur += canvas.set_grapheme(cur, row, grapheme, text_class);
     }
 }
 

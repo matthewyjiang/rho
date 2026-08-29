@@ -448,3 +448,96 @@ fn mindmap_paints_indented_tree() {
         "child missing tree guide:\n{art}"
     );
 }
+
+fn has_box_corner(line: &str) -> bool {
+    line.chars()
+        .any(|c| matches!(c, '╭' | '╮' | '╰' | '╯' | '┌' | '┐' | '└' | '┘'))
+}
+
+fn marker_row(art: &[String], marker: &str) -> usize {
+    art.iter()
+        .position(|line| line.trim() == marker)
+        .unwrap_or_else(|| panic!("missing {marker:?} line in\n{}", art.join("\n")))
+}
+
+fn boxed_label_row(art: &[String], label: &str) -> usize {
+    art.iter()
+        .position(|line| line.contains(label) && line.contains('│'))
+        .unwrap_or_else(|| panic!("missing boxed {label:?} in\n{}", art.join("\n")))
+}
+
+// Covers: state [*] must not paint as an empty box; unique unlabeled start
+// captions the first state, terminal [*] is a borderless word, and fan-out
+// or labeled boot arrows keep a start stub.
+// Owner: mermaid model conversion
+#[test]
+fn state_pseudostates_use_captions_and_text_stubs() {
+    let unique = rendered(
+        "stateDiagram-v2\n[*] --> Idle\nIdle --> Working: new task\nWorking --> Idle: done",
+        80,
+    );
+    let start_row = marker_row(&unique, "start");
+    assert!(
+        !has_box_corner(&unique[start_row]),
+        "start should sit outside the box:\n{}",
+        unique.join("\n")
+    );
+    assert!(
+        unique
+            .get(start_row + 1)
+            .is_some_and(|line| has_box_corner(line)),
+        "start caption should sit on the Idle box:\n{}",
+        unique.join("\n")
+    );
+    assert!(
+        boxed_label_row(&unique, "Idle") > start_row,
+        "Idle box should be under start:\n{}",
+        unique.join("\n")
+    );
+
+    let with_end = rendered("stateDiagram-v2\n[*] --> Idle\nIdle --> [*]", 80);
+    let end_row = marker_row(&with_end, "end");
+    assert!(
+        !has_box_corner(&with_end[end_row]),
+        "end should be a borderless word:\n{}",
+        with_end.join("\n")
+    );
+
+    let fan_out = rendered("stateDiagram-v2\n[*] --> A\n[*] --> B", 80);
+    assert_eq!(
+        fan_out.iter().filter(|line| line.trim() == "start").count(),
+        1,
+        "fan-out should keep one start stub:\n{}",
+        fan_out.join("\n")
+    );
+    let start_row = marker_row(&fan_out, "start");
+    assert!(
+        !has_box_corner(&fan_out[start_row]),
+        "fan-out start should be borderless:\n{}",
+        fan_out.join("\n")
+    );
+    assert!(
+        fan_out
+            .get(start_row + 1)
+            .is_none_or(|line| !has_box_corner(line)),
+        "fan-out start must stay a stub, not a caption on A:\n{}",
+        fan_out.join("\n")
+    );
+    let _ = boxed_label_row(&fan_out, "A");
+    let _ = boxed_label_row(&fan_out, "B");
+
+    let boot = rendered("stateDiagram-v2\n[*] --> Idle: boot", 80);
+    let art = boot.join("\n");
+    assert!(art.contains("boot"), "{art}");
+    let start_row = marker_row(&boot, "start");
+    assert!(
+        !has_box_corner(&boot[start_row]),
+        "labeled start should be borderless:\n{art}"
+    );
+    assert!(
+        boot.get(start_row + 1)
+            .is_none_or(|line| !has_box_corner(line)),
+        "labeled start must stay a stub:\n{art}"
+    );
+    let _ = boxed_label_row(&boot, "Idle");
+}

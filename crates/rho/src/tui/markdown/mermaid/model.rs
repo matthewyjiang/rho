@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use mermaid_rs_renderer::{
     DiagramKind, Direction as MermaidDirection, EdgeArrowhead, EdgeDecoration, EdgeStyle,
@@ -94,6 +94,11 @@ fn flow_graph(ir: &mermaid_rs_renderer::Graph) -> Graph {
 fn flow_graph_with_ids(ir: &mermaid_rs_renderer::Graph) -> (Graph, Vec<&String>) {
     let mut ids = ir.nodes.keys().collect::<Vec<_>>();
     ids.sort_by_key(|id| ir.node_order.get(*id).copied().unwrap_or(usize::MAX));
+    let captions = if ir.kind == DiagramKind::State {
+        elide_unique_state_starts(ir, &mut ids)
+    } else {
+        HashMap::new()
+    };
     let index = ids
         .iter()
         .enumerate()
@@ -119,16 +124,23 @@ fn flow_graph_with_ids(ir: &mermaid_rs_renderer::Graph) -> (Graph, Vec<&String>)
         .iter()
         .map(|id| {
             let node = &ir.nodes[*id];
-            let mut label = match ir.kind {
-                DiagramKind::Class | DiagramKind::Er => node
-                    .label
-                    .lines()
-                    .find(|line| !line.starts_with("<<") && *line != "---")
-                    .unwrap_or(&node.label)
-                    .to_owned(),
-                _ => node.label.clone(),
-            };
-            if ir.kind == DiagramKind::State {
+            let (mut label, shape, is_marker) =
+                if ir.kind == DiagramKind::State && is_start_pseudostate(id, node.shape) {
+                    ("start".to_owned(), NodeShape::Text, true)
+                } else if ir.kind == DiagramKind::State && is_end_pseudostate(id, node.shape) {
+                    ("end".to_owned(), NodeShape::Text, true)
+                } else if matches!(ir.kind, DiagramKind::Class | DiagramKind::Er) {
+                    let label = node
+                        .label
+                        .lines()
+                        .find(|line| !line.starts_with("<<") && *line != "---")
+                        .unwrap_or(&node.label)
+                        .to_owned();
+                    (label, shape(node.shape), false)
+                } else {
+                    (node.label.clone(), shape(node.shape), false)
+                };
+            if ir.kind == DiagramKind::State && !is_marker {
                 for note in ir.state_notes.iter().filter(|note| note.target == **id) {
                     label.push_str("\n(note: ");
                     label.push_str(&note.label);
@@ -137,8 +149,9 @@ fn flow_graph_with_ids(ir: &mermaid_rs_renderer::Graph) -> (Graph, Vec<&String>)
             }
             Node {
                 label,
-                shape: shape(node.shape),
+                shape,
                 style: NodeStyle::default(),
+                caption: captions.get(*id).cloned(),
             }
         })
         .collect::<Vec<_>>();
@@ -184,6 +197,48 @@ fn flow_graph_with_ids(ir: &mermaid_rs_renderer::Graph) -> (Graph, Vec<&String>)
         },
         ids,
     )
+}
+
+/// Unique unlabeled `[*] --> State` drops the dummy start node and captions
+/// the target. Fan-out and labeled boot arrows keep a borderless `start` stub.
+fn elide_unique_state_starts(
+    ir: &mermaid_rs_renderer::Graph,
+    ids: &mut Vec<&String>,
+) -> HashMap<String, String> {
+    let mut skip = HashSet::new();
+    let mut captions = HashMap::new();
+    for (id, node) in &ir.nodes {
+        if !is_start_pseudostate(id, node.shape) {
+            continue;
+        }
+        let outgoing: Vec<_> = ir.edges.iter().filter(|edge| edge.from == *id).collect();
+        let Some(edge) = outgoing.first() else {
+            continue;
+        };
+        if outgoing.len() != 1 || composed_edge_label(DiagramKind::State, edge).is_some() {
+            continue;
+        }
+        let Some(target) = ir.nodes.get(&edge.to) else {
+            continue;
+        };
+        if is_start_pseudostate(&edge.to, target.shape)
+            || is_end_pseudostate(&edge.to, target.shape)
+        {
+            continue;
+        }
+        skip.insert(id.clone());
+        captions.insert(edge.to.clone(), "start".to_owned());
+    }
+    ids.retain(|id| !skip.contains(*id));
+    captions
+}
+
+fn is_start_pseudostate(id: &str, shape: MermaidNodeShape) -> bool {
+    shape == MermaidNodeShape::Circle && id.starts_with("__start_") && id.ends_with("__")
+}
+
+fn is_end_pseudostate(id: &str, shape: MermaidNodeShape) -> bool {
+    shape == MermaidNodeShape::DoubleCircle && id.starts_with("__end_") && id.ends_with("__")
 }
 
 fn shape(shape: MermaidNodeShape) -> NodeShape {
