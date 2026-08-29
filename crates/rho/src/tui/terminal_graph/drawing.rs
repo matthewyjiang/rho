@@ -161,6 +161,7 @@ pub(in crate::tui) fn route_forward(
     edge: &Edge,
     bus: usize,
     source_anchor: usize,
+    label_lines: &[String],
 ) {
     let tx = to.cx;
     let bx = source_anchor;
@@ -185,10 +186,7 @@ pub(in crate::tui) fn route_forward(
         canvas.set(bx, by, head_glyph(edge.head_from, '▲'), Cls::Edge);
     }
 
-    if let Some(label) = &edge.label {
-        let label_row = head_row.saturating_sub(1);
-        place_label(canvas, label, label_row, tx + 2);
-    }
+    place_label_block(canvas, label_lines, head_row.saturating_sub(1), tx + 2);
 }
 
 fn head_glyph(head: Head, arrow: char) -> char {
@@ -229,6 +227,7 @@ pub(in crate::tui) fn route_skip(
     to: &Placed,
     edge: &Edge,
     path: SkipPath,
+    label_lines: &[String],
 ) {
     let SkipPath {
         exit_row,
@@ -256,9 +255,7 @@ pub(in crate::tui) fn route_skip(
         canvas.set(bx, by, head_glyph(edge.head_from, '▲'), Cls::Edge);
     }
 
-    if let Some(label) = &edge.label {
-        place_label(canvas, label, join_row.saturating_sub(1), tx + 2);
-    }
+    place_label_block(canvas, label_lines, join_row.saturating_sub(1), tx + 2);
 }
 
 pub(in crate::tui) fn route_self(canvas: &mut Canvas, p: &Placed, edge: &Edge) {
@@ -289,7 +286,14 @@ pub(in crate::tui) fn route_self(canvas: &mut Canvas, p: &Placed, edge: &Edge) {
         canvas.set(exit_x, bottom, head_glyph(edge.head_from, '▲'), Cls::Edge);
     }
     if let Some(label) = &edge.label {
-        place_label(canvas, label, bottom + 1, p.x + p.w + 1);
+        // Self-loop labels stay single-line beside the loop; layout reserves
+        // exactly `MAX_LABEL`-capped width for them.
+        place_label_line(
+            canvas,
+            &fit_label(label, MAX_LABEL),
+            bottom + 1,
+            p.x + p.w + 1,
+        );
     }
 }
 
@@ -299,6 +303,7 @@ pub(in crate::tui) fn route_back(
     to: &Placed,
     edge: &Edge,
     lane_x: usize,
+    label_lines: &[String],
 ) {
     let sx = from.x + from.w - 1;
     let sy = from.cy;
@@ -319,14 +324,7 @@ pub(in crate::tui) fn route_back(
         canvas.set(sx, sy, head_glyph(edge.head_from, '◄'), Cls::Edge);
     }
 
-    if let Some(label) = &edge.label {
-        place_label(
-            canvas,
-            label,
-            tyc.saturating_sub(1),
-            lane_x.saturating_sub(label.width() + 1),
-        );
-    }
+    place_label_block_right(canvas, label_lines, tyc.saturating_sub(1), lane_x);
 }
 
 pub(in crate::tui) fn route_forward_lr(
@@ -336,6 +334,7 @@ pub(in crate::tui) fn route_forward_lr(
     edge: &Edge,
     bus: usize,
     source_anchor: usize,
+    label_lines: &[String],
 ) {
     let rx = from.x + from.w - 1;
     let ry = source_anchor;
@@ -360,9 +359,7 @@ pub(in crate::tui) fn route_forward_lr(
         canvas.set(rx, ry, head_glyph(edge.head_from, '◄'), Cls::Edge);
     }
 
-    if let Some(label) = &edge.label {
-        place_label(canvas, label, ly.saturating_sub(1), bus + 1);
-    }
+    place_label_block(canvas, label_lines, ly.saturating_sub(1), bus + 1);
 }
 
 pub(in crate::tui) fn route_back_lr(
@@ -371,6 +368,7 @@ pub(in crate::tui) fn route_back_lr(
     to: &Placed,
     edge: &Edge,
     lane_y: usize,
+    label_lines: &[String],
 ) {
     let sx = from.cx;
     let sy = from.y + from.h - 1;
@@ -391,13 +389,30 @@ pub(in crate::tui) fn route_back_lr(
         canvas.set(sx, sy, head_glyph(edge.head_from, '▲'), Cls::Edge);
     }
 
-    if let Some(label) = &edge.label {
-        place_label(canvas, label, lane_y.saturating_sub(1), (sx + tx) / 2);
+    let right = (from.x + from.w).max(to.x + to.w);
+    place_label_block(canvas, label_lines, lane_y.saturating_sub(1), right + 1);
+}
+
+/// Stack pre-wrapped edge-label rows upward so the last row sits on
+/// `bottom_row`. Rows that would rise above the canvas are skipped; blocked
+/// cells stop a row exactly like single-line labels.
+fn place_label_block(canvas: &mut Canvas, lines: &[String], bottom_row: usize, start_x: usize) {
+    for (index, line) in lines.iter().enumerate() {
+        let rows_above = lines.len() - 1 - index;
+        if let Some(row) = bottom_row.checked_sub(rows_above) {
+            place_label_line(canvas, line, row, start_x);
+        }
     }
 }
 
-fn place_label(canvas: &mut Canvas, label: &str, row: usize, start_x: usize) {
-    place_label_line(canvas, &fit_label(label, MAX_LABEL), row, start_x);
+/// Right-aligned variant for lane-side labels: every row ends before `end_x`.
+fn place_label_block_right(canvas: &mut Canvas, lines: &[String], bottom_row: usize, end_x: usize) {
+    for (index, line) in lines.iter().enumerate() {
+        let rows_above = lines.len() - 1 - index;
+        if let Some(row) = bottom_row.checked_sub(rows_above) {
+            place_label_line(canvas, line, row, end_x.saturating_sub(line.width() + 1));
+        }
+    }
 }
 
 fn place_label_line(canvas: &mut Canvas, label: &str, row: usize, start_x: usize) {

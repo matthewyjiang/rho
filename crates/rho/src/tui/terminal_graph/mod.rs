@@ -16,8 +16,7 @@ mod placement;
 pub(in crate::tui) use canvas::{Canvas, Cls as CellClass, D, L, R, STY_SOLID, STY_THICK, U};
 pub(in crate::tui) use drawing::{draw_box, draw_seq_text, fit_label};
 pub(in crate::tui) use flow::{
-    art_from_layout, flow_labels_fit, flow_wrap_widths, layout_canvas, layout_flow, NodeExtra,
-    Placed,
+    art_from_layout, layout_canvas, layout_flow, over_wrap_rungs, NodeExtra, Placed,
 };
 #[cfg(test)]
 pub(in crate::tui) use painter::MAX_LINES;

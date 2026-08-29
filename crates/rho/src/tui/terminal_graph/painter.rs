@@ -51,6 +51,11 @@ pub(in crate::tui) const GAP_Y: usize = 2;
 pub(in crate::tui) const WRAP_WIDTH: usize = 24;
 pub(in crate::tui) const MAX_LINES: usize = 256;
 pub(in crate::tui) const LABEL_BREAK_CHARS: [char; 4] = ['_', '-', '.', '/'];
+/// Wrapped edge labels stack at most this many rows above their arrow, so a
+/// labeled rank gap grows by a bounded amount. Three rows hold 36 columns of
+/// text even at the tightest wrap rung (12), which exceeds the previous
+/// single-line 28-column cap; longer labels keep the ellipsis.
+pub(in crate::tui) const EDGE_LABEL_MAX_LINES: usize = 3;
 pub(in crate::tui) const CONT: char = '\u{0}';
 pub(in crate::tui) const MAX_CANVAS_CELLS: usize = 2_000_000;
 

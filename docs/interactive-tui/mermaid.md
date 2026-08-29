@@ -15,11 +15,11 @@ flowchart TD
     closed -->|yes| parse[Parse with mermaid-rs-renderer]
     parse --> kind{Supported kind and safe?}
     kind -->|yes and fits pane| art[Unicode diagram art]
-    kind -->|too wide| narrow[Source plus PANE TOO NARROW]
+    kind -->|wider than pane| clip[Clipped diagram plus hidden column marker]
     kind -->|unsupported kind| raw[Source plus UNSUPPORTED]
     kind -->|other decline| other[Source plus INVALID TOO LARGE or NOT RENDERED]
     art --> resize[Relayout on width change]
-    narrow --> resize
+    clip --> resize
     raw --> resize
 ```
 
@@ -65,12 +65,15 @@ malformed input stay as source.
 
 Flowcharts and state diagrams keep the direction you asked for (`TD`, `LR`, and
 so on) when it fits. When the normal layout is wider than the pane, Rho wraps
-node labels more tightly and lays the diagram out again, down to a readable
-limit. Compaction never shortens or truncates node label text. Edge labels, group
-titles, and sequence participant labels compact with an ellipsis when they
-cannot fit the reserved slot.
+node labels and edge labels more tightly and lays the diagram out again, down
+to a readable limit. Compaction never shortens or truncates node label text.
+Edge labels wrap to a few stacked rows; group titles, and sequence participant
+labels compact with an ellipsis when they cannot fit the reserved slot.
 If a horizontal flowchart still cannot fit, Rho retries top-down. If even that
-cannot fit, the panel falls back to source with a narrow-pane title.
+cannot fit, the diagram renders clipped at the pane's right edge with a
+`MERMAID · CLIPPED` title and a marker row naming the hidden columns; `COPY`
+still yields the full source. Only extremely narrow panes (under roughly 24
+columns) fall back to source with a narrow-pane title.
 
 ## Fallback titles
 
@@ -78,7 +81,8 @@ Diagrams Rho cannot draw stay readable as source. The panel border says why:
 
 | Border title | Meaning |
 | --- | --- |
-| `MERMAID · PANE TOO NARROW` | Needs a wider pane or terminal; resize may produce art |
+| `MERMAID · CLIPPED` | Art wider than the pane, cut at the right edge; marker row counts hidden columns |
+| `MERMAID · PANE TOO NARROW` | Pane too narrow even for clipped art; resize may produce art |
 | `MERMAID · UNSUPPORTED` | Kind or construct the terminal painter will not draw |
 | `MERMAID · INVALID` | Source did not parse |
 | `MERMAID · TOO LARGE` | Source, model, or painted output exceeded a hard cap |
