@@ -31,8 +31,8 @@ fn rejected_submit_keeps_busy_and_stream() {
     pretty_assertions::assert_eq!(
         overlay.entries,
         vec![
-            SideEntry::Assistant("partial".into()),
             SideEntry::Error("could not start side chat: a turn is already running".into()),
+            SideEntry::Assistant("partial".into()),
             SideEntry::Error("could not complete side chat: provider error".into()),
         ]
     );
