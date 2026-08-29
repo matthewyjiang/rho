@@ -253,3 +253,157 @@ fn shell_start_card_includes_timeout_fact() {
     let card = start_card(&no_timeout, dir.path());
     assert_eq!(card.facts, vec![ToolFact::Timeout { seconds: None }]);
 }
+
+// Covers: MCP start cards decode the tool verb and show server + remaining
+// args, not the raw exported name or JSON blob
+// Owner: interactive presenter
+#[test]
+fn mcp_proposed_and_started_cards_use_decoded_verb_and_argument_facts() {
+    use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+
+    let mut presenter = InteractiveToolPresenter::new(std::path::PathBuf::from("."));
+    let call = ToolCall {
+        id: "call-mcp".into(),
+        name: "mcp__olive_salmon__increase_grep".into(),
+        arguments: serde_json::json!({
+            "path": "crates",
+            "output_mode": "files_with_matches",
+            "max_results": 50
+        }),
+    };
+    let expected = ToolCard::new(
+        ToolStatus::Running,
+        ToolFamily::Default,
+        ToolHeader::call("increase_grep", Some("crates".into())),
+    )
+    .with_facts(vec![
+        ToolFact::Meta {
+            text: "mcp · olive_salmon".into(),
+        },
+        ToolFact::Text {
+            text: "output_mode files_with_matches · max_results 50".into(),
+        },
+    ]);
+
+    let proposed = presenter.proposed(call);
+    assert_eq!(proposed.card, expected);
+    assert_eq!(
+        ToolKind::from_name("mcp__olive_salmon__increase_grep"),
+        ToolKind::Mcp
+    );
+
+    let started = presenter.started(
+        ToolCallId::from_string("call-mcp").unwrap(),
+        "mcp__olive_salmon__increase_grep".into(),
+        ToolMetadata::default(),
+    );
+    assert_eq!(started.card, expected);
+}
+
+// Covers: successful MCP results keep provenance/args and add a line count
+// plus the output body
+// Owner: interactive presenter
+#[test]
+fn mcp_finished_ok_card_counts_lines_and_keeps_body() {
+    use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let view = ToolView {
+        kind: ToolKind::Mcp,
+        name: "mcp__olive_salmon__increase_grep".into(),
+        arguments: serde_json::json!({
+            "path": "crates",
+            "output_mode": "files_with_matches",
+            "max_results": 50
+        }),
+        metadata: Default::default(),
+    };
+    let content = "crates/rho/src/lib.rs\ncrates/rho/src/app.rs\n";
+    let card = finished_card(&view, content, true, dir.path());
+    assert_eq!(
+        card,
+        ToolCard::new(
+            ToolStatus::Ok,
+            ToolFamily::Default,
+            ToolHeader::call("increase_grep", Some("crates".into())),
+        )
+        .with_facts(vec![
+            ToolFact::Meta {
+                text: "mcp · olive_salmon".into(),
+            },
+            ToolFact::Text {
+                text: "output_mode files_with_matches · max_results 50".into(),
+            },
+            ToolFact::Count {
+                label: "lines".into(),
+                value: 2,
+                detail: None,
+            },
+        ])
+        .with_body(ToolBody::Lines(vec![
+            "crates/rho/src/lib.rs".into(),
+            "crates/rho/src/app.rs".into(),
+        ]))
+    );
+}
+
+// Covers: failed MCP results keep server provenance and use the shared error fact
+// Owner: interactive presenter
+#[test]
+fn mcp_finished_error_card_keeps_server_fact_and_error_summary() {
+    use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let view = ToolView {
+        kind: ToolKind::Mcp,
+        name: "mcp__olive_salmon__increase_grep".into(),
+        arguments: serde_json::json!({ "path": "crates" }),
+        metadata: Default::default(),
+    };
+    let card = finished_card(&view, "server unavailable", false, dir.path());
+    assert_eq!(
+        card,
+        ToolCard::new(
+            ToolStatus::Error,
+            ToolFamily::Default,
+            ToolHeader::call("increase_grep", Some("crates".into())),
+        )
+        .with_facts(vec![
+            ToolFact::Meta {
+                text: "mcp · olive_salmon".into(),
+            },
+            ToolFact::Error {
+                text: "server unavailable".into(),
+            },
+        ])
+    );
+}
+
+// Covers: `_rho_` hex-escaped MCP names render decoded server and tool
+// Owner: interactive presenter
+#[test]
+fn mcp_escaped_exported_name_renders_decoded_server_and_tool() {
+    use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let name = "mcp___rho_6769742d687562___rho_6973737565732f6c697374";
+    let view = ToolView {
+        kind: ToolKind::from_name(name),
+        name: name.into(),
+        arguments: serde_json::json!({ "path": "crates" }),
+        metadata: Default::default(),
+    };
+    let card = start_card(&view, dir.path());
+    assert_eq!(view.kind, ToolKind::Mcp);
+    assert_eq!(
+        card,
+        ToolCard::new(
+            ToolStatus::Running,
+            ToolFamily::Default,
+            ToolHeader::call("issues/list", Some("crates".into())),
+        )
+        .with_facts(vec![ToolFact::Meta {
+            text: "mcp · git-hub".into(),
+        }])
+    );
+}

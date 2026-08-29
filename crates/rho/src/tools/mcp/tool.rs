@@ -375,28 +375,3 @@ async fn cancel_handle<R: ServiceRole>(handle: RequestHandle<R>) {
         tracing::debug!(error = %error, "could not notify MCP server of cancellation");
     }
 }
-
-pub(super) fn namespaced_tool_name(server: &str, tool: &str) -> String {
-    fn component(value: &str) -> String {
-        const ESCAPE_PREFIX: &str = "_rho_";
-        let already_safe = value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
-        // `__` joins the two components, so a component holding one would make
-        // the exported name ambiguous: server `a__b` with tool `c` would read
-        // the same as server `a` with tool `b__c`.
-        if already_safe && !value.starts_with(ESCAPE_PREFIX) && !value.contains("__") {
-            return value.to_string();
-        }
-
-        let mut encoded = String::with_capacity(ESCAPE_PREFIX.len() + value.len() * 2);
-        encoded.push_str(ESCAPE_PREFIX);
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        for byte in value.bytes() {
-            encoded.push(HEX[(byte >> 4) as usize] as char);
-            encoded.push(HEX[(byte & 0x0f) as usize] as char);
-        }
-        encoded
-    }
-    format!("mcp__{}__{}", component(server), component(tool))
-}

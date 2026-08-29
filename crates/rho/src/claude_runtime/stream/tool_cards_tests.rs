@@ -73,7 +73,7 @@ fn finished_cards_use_claude_names_and_native_dialects() {
             None,
             "items",
             ToolFamily::Default,
-            ToolHeader::call("mcp__srv__list", None),
+            ToolHeader::call("list", None),
         ),
     ];
 
@@ -88,6 +88,15 @@ fn finished_cards_use_claude_names_and_native_dialects() {
         assert_eq!(card.family, family, "{name} family");
         assert_eq!(card.header, header, "{name} header");
         assert_eq!(card.status, ToolStatus::Ok, "{name} status");
+        if name == "mcp__srv__list" {
+            assert_eq!(
+                card.facts.first(),
+                Some(&ToolFact::Meta {
+                    text: "mcp · srv".into(),
+                }),
+                "{name} server fact"
+            );
+        }
     }
 }
 
@@ -161,6 +170,121 @@ fn finished_cards_use_structured_results() {
             DiffRow::new(DiffRowKind::Removed, Some(1), "old"),
             DiffRow::new(DiffRowKind::Added, Some(1), "new"),
         ])
+    );
+}
+
+fn mcp_grep_input() -> serde_json::Value {
+    json!({
+        "path": "crates",
+        "output_mode": "files_with_matches",
+        "max_results": 50,
+    })
+}
+
+fn mcp_server_and_summary_facts() -> Vec<ToolFact> {
+    vec![
+        ToolFact::Meta {
+            text: "mcp · olive_salmon".into(),
+        },
+        ToolFact::Text {
+            text: "output_mode files_with_matches · max_results 50".into(),
+        },
+    ]
+}
+
+// Covers: running MCP cards decode the verb, promote a primary, and show
+// server provenance plus the remaining argument summary
+// Owner: claude stream tool card mapper
+#[test]
+fn mcp_running_card_shows_decoded_verb_primary_and_facts() {
+    let card = started_card(
+        &tool("mcp__olive_salmon__increase_grep", mcp_grep_input()),
+        None,
+    );
+    assert_eq!(card.status, ToolStatus::Running);
+    assert_eq!(card.family, ToolFamily::Default);
+    assert_eq!(
+        card.header,
+        ToolHeader::call("increase_grep", Some("crates".into()))
+    );
+    assert_eq!(card.facts, mcp_server_and_summary_facts());
+    assert_eq!(card.body, ToolBody::None);
+}
+
+// Covers: finished MCP ok cards keep provenance and add a line count plus
+// the output as a Lines body
+// Owner: claude stream tool card mapper
+#[test]
+fn mcp_finished_ok_card_counts_lines_and_sets_body() {
+    let card = finished_card(
+        Some(&tool("mcp__olive_salmon__increase_grep", mcp_grep_input())),
+        /*ok*/ true,
+        "a.rs\nb.rs",
+        None,
+        None,
+    );
+    assert_eq!(card.status, ToolStatus::Ok);
+    assert_eq!(
+        card.header,
+        ToolHeader::call("increase_grep", Some("crates".into()))
+    );
+    let mut facts = mcp_server_and_summary_facts();
+    facts.push(ToolFact::Count {
+        label: "lines".into(),
+        value: 2,
+        detail: None,
+    });
+    assert_eq!(card.facts, facts);
+    assert_eq!(
+        card.body,
+        ToolBody::Lines(vec!["a.rs".into(), "b.rs".into()])
+    );
+}
+
+// Covers: MCP errors still show server provenance before the error output
+// Owner: claude stream tool card mapper
+#[test]
+fn mcp_error_card_keeps_server_fact() {
+    let card = finished_card(
+        Some(&tool("mcp__olive_salmon__increase_grep", mcp_grep_input())),
+        /*ok*/ false,
+        "tool failed: timeout",
+        None,
+        None,
+    );
+    assert_eq!(card.status, ToolStatus::Error);
+    assert_eq!(
+        card.header,
+        ToolHeader::call("increase_grep", Some("crates".into()))
+    );
+    let mut facts = mcp_server_and_summary_facts();
+    facts.push(ToolFact::Error {
+        text: "tool failed: timeout".into(),
+    });
+    assert_eq!(card.facts, facts);
+}
+
+// Covers: Claude owns its MCP wire names, so components that resemble Rho's
+// private escape remain verbatim instead of being silently decoded.
+// Owner: claude stream tool card mapper
+#[test]
+fn mcp_rho_escape_shaped_components_remain_verbatim() {
+    let card = started_card(
+        &tool(
+            "mcp___rho_6162___rho_746f6f6c",
+            json!({"query": "open bugs"}),
+        ),
+        None,
+    );
+    assert_eq!(
+        card.header,
+        ToolHeader::call("_rho_746f6f6c", Some("open bugs".into()))
+    );
+    assert_eq!(
+        card.facts,
+        vec![ToolFact::Meta {
+            text: "mcp · _rho_6162".into(),
+        }]
     );
 }
 

@@ -699,6 +699,49 @@ pub(super) fn get_search_content_card(content: &str, status: ToolStatus) -> Tool
     card
 }
 
+/// Running MCP card: decoded tool verb, `mcp · server` provenance, remaining args.
+pub(super) fn mcp_preview_card(
+    name: &str,
+    arguments: Option<&serde_json::Value>,
+    status: ToolStatus,
+) -> ToolCard {
+    let Some((header, facts)) = crate::tools::mcp::display::mcp_header_and_facts(
+        name,
+        arguments,
+        crate::tools::mcp::exported_name::ExportedNameDialect::Rho,
+    ) else {
+        return draft_card(status, ToolFamily::Default, ToolHeader::call(name, None));
+    };
+    let mut card = draft_card(status, ToolFamily::Default, header);
+    for fact in facts {
+        card.push_fact(fact);
+    }
+    card
+}
+
+/// Finished MCP card: same header/facts as the running card, then result or error.
+pub(super) fn mcp_result_card(view: &ToolView, content: &str, status: ToolStatus) -> ToolCard {
+    let mut card = mcp_preview_card(&view.name, Some(&view.arguments), status);
+    if status == ToolStatus::Error {
+        push_error_output(&mut card, content);
+        return card;
+    }
+    let Some(value) = count_nonempty_lines(content) else {
+        return card;
+    };
+    card.push_fact(ToolFact::Count {
+        label: if value == 1 {
+            "line".into()
+        } else {
+            "lines".into()
+        },
+        value,
+        detail: None,
+    });
+    card.body = ToolBody::Lines(split_body_lines(content));
+    card
+}
+
 pub(super) fn generic_card(view: &ToolView, content: &str, status: ToolStatus) -> ToolCard {
     let mut card = draft_card(
         status,

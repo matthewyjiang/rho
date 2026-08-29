@@ -7,11 +7,12 @@ use super::{
         McpConfig, McpFilesystemPolicy, McpSamplingPolicy, McpServerConfig, McpToolFilter,
         McpTransport,
     },
+    exported_name::namespaced_tool_name,
     parse_remote_url, parse_remote_url_with,
     progress::McpProgressRouter,
     result::ResultExpectation,
     session::prepare_server_filesystem,
-    tool::{call_remote_tool, namespaced_tool_name, CallBudget, McpCall, MCP_TOOL_CALL_BUDGET},
+    tool::{call_remote_tool, CallBudget, McpCall, MCP_TOOL_CALL_BUDGET},
     validate::McpHttpSecurity,
     McpBundle, McpRoots, McpServerStatus, McpSessionOptions, MCP_RUNTIME_CONSTRUCTIONS,
 };

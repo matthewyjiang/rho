@@ -1,8 +1,9 @@
 //! Claude Code tool names as first-class [`ToolCard`]s.
 //!
 //! Keep Claude verbs (`Read`, `Bash`, `Glob`). Populate the same family,
-//! header dialect, facts, and body types native Rho cards use. Unknown and
-//! MCP tools degrade to a named generic card.
+//! header dialect, facts, and body types native Rho cards use. MCP tools
+//! (`mcp__server__tool`) use the parsed tool name, a server provenance fact,
+//! and argument summary. Unknown tools degrade to a named generic card.
 
 use std::path::Path;
 
@@ -15,6 +16,11 @@ use rho_tools::{
     tool_card::{
         DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
     },
+};
+
+use crate::tools::mcp::{
+    display::mcp_header_and_facts,
+    exported_name::{parse_exported_name, ExportedNameDialect},
 };
 
 use super::format::{truncate_payload_lines, MAX_TOOL_BODY_LINES};
@@ -44,6 +50,7 @@ enum ClaudeTool {
     AskUserQuestion,
     ExitPlanMode,
     EnterPlanMode,
+    Mcp,
     Other,
 }
 
@@ -66,6 +73,9 @@ impl ClaudeTool {
             "AskUserQuestion" => Self::AskUserQuestion,
             "ExitPlanMode" => Self::ExitPlanMode,
             "EnterPlanMode" => Self::EnterPlanMode,
+            _ if parse_exported_name(name, ExportedNameDialect::Conventional).is_some() => {
+                Self::Mcp
+            }
             _ => Self::Other,
         }
     }
@@ -78,7 +88,7 @@ impl ClaudeTool {
             Self::Skill => ToolFamily::Skill,
             Self::Task => ToolFamily::Agent,
             Self::AskUserQuestion | Self::ExitPlanMode | Self::EnterPlanMode => ToolFamily::Form,
-            Self::TodoWrite | Self::Other => ToolFamily::Default,
+            Self::TodoWrite | Self::Mcp | Self::Other => ToolFamily::Default,
         }
     }
 }
@@ -173,6 +183,14 @@ impl StartedClaudeTool {
                     .unwrap_or_default();
                 ToolHeader::status_first(identity, detail)
             }
+            ClaudeTool::Mcp => match mcp_header_and_facts(
+                self.name(),
+                self.input.as_ref(),
+                ExportedNameDialect::Conventional,
+            ) {
+                Some((header, _)) => header,
+                None => ToolHeader::call(self.name(), self.primary(cwd)),
+            },
             _ => ToolHeader::call(self.name(), self.primary(cwd)),
         }
     }
@@ -208,7 +226,33 @@ impl StartedClaudeTool {
                     card.push_fact(range);
                 }
             }
+            ClaudeTool::Mcp => push_mcp_facts(card, self.name(), self.input.as_ref()),
             _ => {}
+        }
+    }
+
+    /// Tool-specific facts that must survive an error result. Exhaustive so a
+    /// new tool decides intentionally whether its provenance outlives failure.
+    fn populate_error(&self, card: &mut ToolCard) {
+        match self.kind {
+            ClaudeTool::Mcp => push_mcp_facts(card, self.name(), self.input.as_ref()),
+            ClaudeTool::Bash
+            | ClaudeTool::Read
+            | ClaudeTool::Write
+            | ClaudeTool::Edit
+            | ClaudeTool::NotebookEdit
+            | ClaudeTool::Glob
+            | ClaudeTool::Grep
+            | ClaudeTool::Ls
+            | ClaudeTool::WebSearch
+            | ClaudeTool::WebFetch
+            | ClaudeTool::Skill
+            | ClaudeTool::Task
+            | ClaudeTool::TodoWrite
+            | ClaudeTool::AskUserQuestion
+            | ClaudeTool::ExitPlanMode
+            | ClaudeTool::EnterPlanMode
+            | ClaudeTool::Other => {}
         }
     }
 
@@ -261,6 +305,13 @@ impl StartedClaudeTool {
                 set_lines_body(card, content_text);
             }
             ClaudeTool::TodoWrite => push_todo_facts(card, input),
+            ClaudeTool::Mcp => {
+                push_mcp_facts(card, self.name(), input);
+                if let Some(value) = count_nonempty_lines(content_text) {
+                    card.push_fact(count_fact("line", "lines", value, None));
+                }
+                set_lines_body(card, content_text);
+            }
             _ => set_lines_body(card, content_text),
         }
     }
@@ -297,13 +348,26 @@ fn build_card(
 ) -> ToolCard {
     let mut card = ToolCard::new(status, tool.kind.family(), tool.header(cwd));
     match status {
-        ToolStatus::Error => push_error_output(&mut card, content_text),
+        ToolStatus::Error => {
+            tool.populate_error(&mut card);
+            push_error_output(&mut card, content_text);
+        }
         ToolStatus::Running => tool.populate_running(&mut card),
         ToolStatus::Ok | ToolStatus::Interrupted => {
             tool.populate_finished(&mut card, content_text, tool_use_result);
         }
     }
     card
+}
+
+fn push_mcp_facts(card: &mut ToolCard, name: &str, input: Option<&Value>) {
+    let Some((_, facts)) = mcp_header_and_facts(name, input, ExportedNameDialect::Conventional)
+    else {
+        return;
+    };
+    for fact in facts {
+        card.push_fact(fact);
+    }
 }
 
 fn push_bash_meta(card: &mut ToolCard, input: Option<&Value>) {
