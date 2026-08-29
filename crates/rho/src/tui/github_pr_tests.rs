@@ -1,8 +1,11 @@
+use std::time::{Duration, Instant};
+
 use pretty_assertions::assert_eq;
 
 use super::{
-    classify_gh_pr_view, paint_for_current_branch, parse_gh_pr_view, GithubPr, GithubPrLookup,
-    GithubPrPaint, GithubPrProbe, GithubPrTone,
+    classify_gh_pr_view, command_may_change_pr, next_poll_in, paint_for_current_branch,
+    parse_gh_pr_view, GithubPr, GithubPrLookup, GithubPrPaint, GithubPrProbe, GithubPrTone,
+    GH_PR_POLL_IDLE_STOP, GH_PR_POLL_INTERVAL,
 };
 
 #[test]
@@ -158,5 +161,96 @@ fn paint_for_current_branch_clears_confirmed_absence_only() {
     ];
     for (current, lookup, expected) in cases {
         assert_eq!(paint_for_current_branch(current, lookup), expected);
+    }
+}
+
+#[test]
+fn command_may_change_pr_detects_gh_pr_and_git_push() {
+    // Covers: gh pr / git push after flags and wrappers refetch; other git/gh do not
+    // Owner: github pr probe
+    let cases = [
+        ("gh pr create --title x", true),
+        ("gh --repo o/r pr create", true),
+        ("gh --hostname github.com pr merge", true),
+        ("/usr/bin/gh pr merge", true),
+        ("sudo gh pr create", true),
+        ("FOO=1 gh pr view", true),
+        ("cd src && gh pr create", true),
+        ("git push origin HEAD", true),
+        ("git -C repo push", true),
+        ("git --no-pager push", true),
+        ("git.exe push", true),
+        ("gh issue create", false),
+        ("git commit -m ready", false),
+        ("git --no-pager status", false),
+        ("git status", false),
+        ("ls", false),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(command_may_change_pr(command), expected, "{command}");
+    }
+}
+
+#[test]
+fn next_poll_in_follows_active_interval_and_idle_stop() {
+    // Covers: 90s active poll, skip pending/no-branch/matrix, stop after 1h idle
+    // Owner: github pr probe
+    let t0 = Instant::now();
+    let cases = [
+        (t0, None, t0, false, true, false, Some(Duration::ZERO)),
+        (
+            t0,
+            Some(t0),
+            t0,
+            false,
+            true,
+            false,
+            Some(GH_PR_POLL_INTERVAL),
+        ),
+        (
+            t0 + Duration::from_secs(30),
+            Some(t0),
+            t0,
+            false,
+            true,
+            false,
+            Some(Duration::from_secs(60)),
+        ),
+        (
+            t0 + GH_PR_POLL_INTERVAL,
+            Some(t0),
+            t0,
+            false,
+            true,
+            false,
+            Some(Duration::ZERO),
+        ),
+        (t0, Some(t0), t0, true, true, false, None),
+        (t0, Some(t0), t0, false, false, false, None),
+        (t0, Some(t0), t0, false, true, true, None),
+        (
+            t0 + GH_PR_POLL_IDLE_STOP,
+            Some(t0),
+            t0,
+            false,
+            true,
+            false,
+            None,
+        ),
+        (
+            t0 + GH_PR_POLL_IDLE_STOP,
+            Some(t0),
+            t0 + GH_PR_POLL_IDLE_STOP,
+            false,
+            true,
+            false,
+            Some(Duration::ZERO),
+        ),
+    ];
+    for (now, last_started, last_input, pending, has_branch, matrix, expected) in cases {
+        assert_eq!(
+            next_poll_in(now, last_started, last_input, pending, has_branch, matrix),
+            expected
+        );
     }
 }

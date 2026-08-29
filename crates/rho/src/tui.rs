@@ -528,6 +528,8 @@ struct App {
     prompt_history: prompt_history::PromptHistory,
     pending_herdr_graphics: Option<tokio::task::JoinHandle<HerdrGraphicsCapability>>,
     pending_github_pr: Option<tokio::task::JoinHandle<github_pr::GithubPrLookup>>,
+    github_pr_last_started: Option<Instant>,
+    github_pr_last_input: Instant,
     /// Turns held until MCP connect settles.
     held_turns: VecDeque<idle_input::HeldTurn>,
     compact_follow_up: compact_work::CompactFollowUp,

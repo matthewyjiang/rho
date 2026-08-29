@@ -349,7 +349,11 @@ impl App {
                 mut card,
                 image_asset,
             } => {
-                self.refresh_git_after_command();
+                let command = match &card.header {
+                    rho_tools::tool_card::ToolHeader::Shell { command, .. } => command.as_deref(),
+                    _ => None,
+                };
+                self.refresh_git_after_command(command);
                 let expanded = self.turn.tool_finished(&call_id);
                 self.turn
                     .set_activity_phase(if self.turn.tool_calls().is_running() {

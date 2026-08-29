@@ -1,6 +1,6 @@
 //! App construction helpers for the interactive TUI.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use rho_providers::credentials::CredentialStore;
 
@@ -127,6 +127,8 @@ impl App {
             prompt_history,
             pending_herdr_graphics: None,
             pending_github_pr: None,
+            github_pr_last_started: None,
+            github_pr_last_input: Instant::now(),
             held_turns: std::collections::VecDeque::new(),
             compact_follow_up: super::compact_work::CompactFollowUp::None,
             start_follow_ups: None,

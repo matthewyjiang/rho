@@ -350,6 +350,8 @@ impl App {
             if panel_changed {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;
             }
+            self.poll_github_pr();
+            self.maybe_refresh_github_pr_on_interval();
             if self.poll_limits_command().await? {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;
             }
