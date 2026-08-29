@@ -1,10 +1,5 @@
 use std::{
-    collections::BTreeMap,
-    future::Future,
-    num::NonZeroUsize,
-    pin::Pin,
-    sync::{Arc, Mutex},
-    task::Poll,
+    collections::BTreeMap, future::Future, num::NonZeroUsize, pin::Pin, sync::Arc, task::Poll,
     time::Instant,
 };
 
@@ -17,11 +12,10 @@ use crate::{
     run::RunCommand,
     session::{SessionCore, SessionState},
     tool::{
-        PreparedToolInvocation, ToolContext, ToolError, ToolErrorKind, ToolExecutionPolicy,
-        ToolFuture, ToolInvocationSource, ToolOutput, ToolProgress,
+        FirstCapability, PreparedToolInvocation, ToolContext, ToolError, ToolErrorKind,
+        ToolExecutionPolicy, ToolFuture, ToolInvocationSource, ToolOutput, ToolProgress,
     },
-    workspace::CapabilityRequest,
-    CancellationToken, Error, HostInputId, RunEvent, ToolCallId,
+    CancellationToken, CapabilityRequest, Error, HostInputId, RunEvent, ToolCallId,
 };
 
 mod preparation;
@@ -67,7 +61,15 @@ struct BatchCall<'a> {
     queued_at: Instant,
     execution_started: Option<Instant>,
     result: Option<ToolResult>,
-    observed_capability: Arc<Mutex<Option<CapabilityRequest>>>,
+    first_capability: Option<FirstCapability>,
+}
+
+impl BatchCall<'_> {
+    fn first_authorized_capability(&self) -> Option<&CapabilityRequest> {
+        self.first_capability
+            .as_ref()
+            .and_then(FirstCapability::get)
+    }
 }
 
 enum WorkerEvent {
@@ -357,7 +359,7 @@ async fn resolve_without_work(
             &entry.id,
             &completion,
             None,
-            /*capability*/ None,
+            entry.first_authorized_capability(),
         );
         emit(
             control.events,
@@ -732,17 +734,12 @@ async fn finish_call(
     };
     entry.result = Some(normalized);
     entry.state = CallState::Resolved;
-    let capability = entry
-        .observed_capability
-        .lock()
-        .expect("observed capability lock")
-        .take();
     control.hooks.after_tool_use(
         &entry.call.name,
         &entry.id,
         &completion,
         duration,
-        capability.as_ref(),
+        entry.first_authorized_capability(),
     );
     emit(
         control.events,

@@ -189,11 +189,11 @@ pub struct BeforeToolUsePayload {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct AfterToolUsePayload {
     pub tool: HookTool,
-    /// First capability this call requested, the same summary `before_tool_use` saw.
+    /// First capability this call passed to authorize.
     ///
-    /// `None` when the call requested no capability or failed before producing one.
-    /// Multi-capability calls report only the first; later requests still appear as
-    /// their own `before_tool_use` events.
+    /// `None` when the call never authorized. Multi-capability calls report only
+    /// the first; later requests still appear as their own `before_tool_use`
+    /// events. Present even when policy denied the request before a gate ran.
     pub capability: Option<HookCapability>,
     pub status: HookToolStatus,
     pub failure: Option<HookFailure>,

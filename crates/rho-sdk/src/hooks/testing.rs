@@ -75,22 +75,6 @@ pub fn after_tool_use_envelope(tool: &str) -> HookEnvelope {
     }))
 }
 
-/// An `after_tool_use` envelope for `tool` that ran `command` through a shell.
-pub fn after_tool_use_envelope_for_command(tool: &str, command: &str) -> HookEnvelope {
-    let request = process_request(tool, command);
-    let bounds = HookPayloadBounds::default();
-    let mut builder = HookEnvelopeBuilder::new(identity(), None, bounds);
-    let capability = summarize_capability(&request, bounds, builder.truncation());
-    let tool = HookTool::new(tool, Some("test-call".into()), bounds, builder.truncation());
-    builder.finish(HookPayload::AfterToolUse(AfterToolUsePayload {
-        tool,
-        capability: Some(capability),
-        status: HookToolStatus::Succeeded,
-        failure: None,
-        duration_ms: Some(1),
-    }))
-}
-
 /// A `run_completed` envelope for an end-turn run.
 pub fn run_completed_envelope() -> HookEnvelope {
     HookEnvelopeBuilder::new(identity(), None, HookPayloadBounds::default()).finish(

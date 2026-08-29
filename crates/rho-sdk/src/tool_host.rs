@@ -497,7 +497,7 @@ impl ToolHostWorker {
         let started = Instant::now();
         let invocation = ToolInvocation::from_host(call.id.clone(), call.arguments.clone());
         let workspace = core.workspace.clone();
-        let observed_capability = context.observed_capability_slot();
+        let first_capability = context.first_capability();
         let cancellation_cleanup_timeout = Arc::new(Mutex::new(None));
         let execution_completion = Arc::clone(&cancellation_cleanup_timeout);
         let execution = async {
@@ -616,11 +616,14 @@ impl ToolHostWorker {
                 break;
             }
         }
-        let capability = observed_capability
-            .lock()
-            .expect("observed capability lock")
-            .take();
-        observe_after_tool_use(&core, &call, &run_id, &result, started, capability.as_ref());
+        observe_after_tool_use(
+            &core,
+            &call,
+            &run_id,
+            &result,
+            started,
+            first_capability.get(),
+        );
         result.map_err(Error::Tool)
     }
 }

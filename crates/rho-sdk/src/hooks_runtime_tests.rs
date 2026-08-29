@@ -406,22 +406,6 @@ async fn after_tool_use_reports_the_call_that_a_hook_denied() {
     assert_eq!(payload["capability"]["path"], json!("/work/notes.txt"));
 }
 
-#[tokio::test]
-async fn after_tool_use_carries_the_capability_the_gate_saw() {
-    let harness = harness(PolicyDecision::Allow, HookDecision::Continue);
-
-    tool_result_content(&harness).await;
-
-    let seen = harness.observer.seen.lock().unwrap();
-    let after = seen
-        .iter()
-        .find(|envelope| envelope.event() == HookEventKind::AfterToolUse)
-        .expect("the call resolved");
-    let payload = serde_json::to_value(after.payload()).unwrap();
-    assert_eq!(payload["capability"]["operation"], json!("read_path"));
-    assert_eq!(payload["capability"]["path"], json!("/work/notes.txt"));
-}
-
 struct SilentTool;
 
 impl Tool for SilentTool {

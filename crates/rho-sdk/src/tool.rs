@@ -5,7 +5,7 @@ use std::{
     num::NonZeroUsize,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use serde_json::Value;
@@ -16,8 +16,10 @@ use crate::{
     CapabilityRequest, HostInputRequest, HostInputResponse, ToolCallId, Workspace,
 };
 
+mod first_capability;
 mod preparation;
 
+pub(crate) use first_capability::FirstCapability;
 use preparation::call_prepared_for;
 pub use preparation::{
     call_prepared, AuthorizedToolContext, PreparedToolInvocation, ToolAccessMode,
@@ -345,7 +347,7 @@ pub struct ToolContext {
     call_id: Option<ToolCallId>,
     cancellation: CancellationToken,
     progress: ToolProgressSender,
-    observed_capability: Arc<Mutex<Option<CapabilityRequest>>>,
+    first_capability: FirstCapability,
 }
 
 impl ToolContext {
@@ -361,7 +363,7 @@ impl ToolContext {
             call_id: None,
             cancellation,
             progress,
-            observed_capability: Arc::default(),
+            first_capability: FirstCapability::default(),
         }
     }
 
@@ -378,7 +380,7 @@ impl ToolContext {
             call_id: None,
             cancellation,
             progress,
-            observed_capability: Arc::default(),
+            first_capability: FirstCapability::default(),
         }
     }
 
@@ -425,25 +427,15 @@ impl ToolContext {
         self.workspace.as_ref().map(Workspace::root)
     }
 
-    pub(crate) fn observed_capability_slot(&self) -> Arc<Mutex<Option<CapabilityRequest>>> {
-        Arc::clone(&self.observed_capability)
-    }
-
-    fn record_observed_capability(&self, request: &CapabilityRequest) {
-        let mut slot = self
-            .observed_capability
-            .lock()
-            .expect("observed capability lock");
-        if slot.is_none() {
-            *slot = Some(request.clone());
-        }
+    pub(crate) fn first_capability(&self) -> FirstCapability {
+        self.first_capability.clone()
     }
 
     pub async fn authorize(
         &self,
         request: CapabilityRequest,
     ) -> Result<AuthorizationOutcome, AuthorizationError> {
-        self.record_observed_capability(&request);
+        self.first_capability.record(&request);
         let capability = request.kind();
         tokio::select! {
             result = crate::workspace::authorize_for_call(

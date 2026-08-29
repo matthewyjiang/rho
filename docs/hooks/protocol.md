@@ -37,10 +37,11 @@ One bounded JSON document on stdin:
 }
 ```
 
-`after_tool_use` uses the same capability summary for the first request on
-that call. Multi-capability calls still emit one `before_tool_use` per
-request; the after payload reports only the first. The field is `null` when
-the call requested no capability or failed before producing one:
+`after_tool_use` uses the same capability summary for the first request that
+call passed to authorize. Multi-capability calls still emit one
+`before_tool_use` per request; the after payload reports only the first. The
+field is `null` when the call never authorized. Policy denials still include
+the request:
 
 ```json
 {
