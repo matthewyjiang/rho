@@ -404,6 +404,28 @@ fn sampled_diff_wash_beats_github_overlay_on_light_and_dark() {
     let add = palette.diff_add_wash.unwrap().rgb.unwrap();
     assert_ne!(add, sampled.background);
 
+    // Near-surface ANSI green/red must still leave the background after rounding.
+    let collapsed = TerminalPalette {
+        background: Rgb::new(0, 0, 0),
+        ansi: HashMap::from([
+            (AnsiColor::Green, Rgb::new(0, 1, 0)),
+            (AnsiColor::Red, Rgb::new(1, 0, 0)),
+        ]),
+    };
+    let collapsed_palette = Palette::from_terminal(Some(&collapsed));
+    let collapsed_add = collapsed_palette
+        .diff_add_wash
+        .expect("near-surface green still washes")
+        .rgb
+        .expect("add rgb");
+    let collapsed_del = collapsed_palette
+        .diff_del_wash
+        .expect("near-surface red still washes")
+        .rgb
+        .expect("del rgb");
+    assert_ne!(collapsed_add, collapsed.background);
+    assert_ne!(collapsed_del, collapsed.background);
+
     let matrix = crate::tui::theme_terminal::matrix_fixture_palette();
     let matrix_palette = Palette::from_terminal(Some(&matrix));
     assert!(

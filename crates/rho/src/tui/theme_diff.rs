@@ -124,7 +124,55 @@ fn sampled_diff_wash(terminal: &TerminalPalette, color: AnsiColor) -> Option<Blo
 /// Mix `tint` into `background` until the wash is as separated as the panel
 /// wash on this surface, and never weaker than GitHub's 15% line overlay.
 fn visible_diff_wash(background: Rgb, tint: Rgb) -> BlockColor {
-    BlockColor::from_rgb(background.blend_toward(tint, diff_wash_alpha(background, tint)))
+    let mixed = background.blend_toward(tint, diff_wash_alpha(background, tint));
+    BlockColor::from_rgb(separate_from_surface(background, tint, mixed))
+}
+
+/// Rounding can collapse a mix onto the surface (black + `(0,1,0)` at 0.35
+/// still rounds to black). Step one channel toward the tint so the wash
+/// remains a different RGB.
+fn separate_from_surface(background: Rgb, tint: Rgb, mixed: Rgb) -> Rgb {
+    if mixed != background {
+        return mixed;
+    }
+    let dr = i16::from(tint.red) - i16::from(background.red);
+    let dg = i16::from(tint.green) - i16::from(background.green);
+    let db = i16::from(tint.blue) - i16::from(background.blue);
+    let abs_r = dr.unsigned_abs();
+    let abs_g = dg.unsigned_abs();
+    let abs_b = db.unsigned_abs();
+    if abs_r >= abs_g && abs_r >= abs_b && dr != 0 {
+        return Rgb::new(
+            step_toward(background.red, tint.red),
+            background.green,
+            background.blue,
+        );
+    }
+    if abs_g >= abs_b && dg != 0 {
+        return Rgb::new(
+            background.red,
+            step_toward(background.green, tint.green),
+            background.blue,
+        );
+    }
+    if db != 0 {
+        return Rgb::new(
+            background.red,
+            background.green,
+            step_toward(background.blue, tint.blue),
+        );
+    }
+    mixed
+}
+
+fn step_toward(from: u8, to: u8) -> u8 {
+    if to > from {
+        from.saturating_add(1)
+    } else if to < from {
+        from.saturating_sub(1)
+    } else {
+        from
+    }
 }
 
 fn diff_wash_alpha(background: Rgb, tint: Rgb) -> f32 {
