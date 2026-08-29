@@ -177,6 +177,8 @@ fn command_may_change_pr_detects_gh_pr_and_git_push() {
         ("git -C repo push", true),
         ("git --no-pager push", true),
         ("git.exe push", true),
+        ("git.ExE push", true),
+        (r"C:\Git\cmd\git.EXE push", true),
         ("gh issue create", false),
         ("git commit -m ready", false),
         ("git --no-pager status", false),

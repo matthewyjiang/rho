@@ -238,9 +238,14 @@ fn command_may_change_pr(command: &str) -> bool {
 
 fn tool_name(token: &str) -> &str {
     let name = token.rsplit(['/', '\\']).next().unwrap_or(token);
-    name.strip_suffix(".exe")
-        .or_else(|| name.strip_suffix(".EXE"))
-        .unwrap_or(name)
+    let Some(stem) = name.len().checked_sub(4).and_then(|end| name.get(..end)) else {
+        return name;
+    };
+    if name[stem.len()..].eq_ignore_ascii_case(".exe") {
+        stem
+    } else {
+        name
+    }
 }
 
 impl App {
