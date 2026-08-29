@@ -3,7 +3,7 @@ use std::{future::Future, io};
 use anyhow::{anyhow, Context};
 use crossterm::{
     cursor::{MoveTo, Show},
-    event::Event,
+    event::{DisableFocusChange, EnableFocusChange, Event},
     execute,
     style::Print,
     terminal::{disable_raw_mode, Clear, ClearType, LeaveAlternateScreen},
@@ -21,6 +21,7 @@ pub(super) struct TerminalSession {
     events: Option<TerminalEvents>,
     keyboard: Option<keyboard_modes::Enabled>,
     mouse_capture_enabled: bool,
+    focus_change_enabled: bool,
 }
 
 impl TerminalSession {
@@ -29,6 +30,7 @@ impl TerminalSession {
             events: Some(TerminalEvents::new()),
             keyboard: Some(keyboard_modes::Enabled::acquire()),
             mouse_capture_enabled: mouse_capture::enable().is_ok(),
+            focus_change_enabled: enable_focus_change().is_ok(),
         }
     }
 
@@ -84,6 +86,12 @@ impl TerminalSession {
 
     fn suspend(&mut self, handoff_status: &str) -> anyhow::Result<()> {
         let mut failures = Vec::new();
+        if self.focus_change_enabled {
+            if let Err(error) = disable_focus_change() {
+                failures.push(format!("disable focus change: {error}"));
+            }
+            self.focus_change_enabled = false;
+        }
         if self.mouse_capture_enabled {
             if let Err(error) = mouse_capture::disable() {
                 failures.push(format!("disable mouse capture: {error}"));
@@ -112,9 +120,18 @@ impl TerminalSession {
         *terminal = resumed;
         self.keyboard = Some(keyboard_modes::Enabled::acquire());
         self.mouse_capture_enabled = mouse_capture::enable().is_ok();
+        self.focus_change_enabled = enable_focus_change().is_ok();
         self.events = Some(TerminalEvents::new());
         Ok(())
     }
+}
+
+fn enable_focus_change() -> io::Result<()> {
+    execute!(io::stdout(), EnableFocusChange)
+}
+
+fn disable_focus_change() -> io::Result<()> {
+    execute!(io::stdout(), DisableFocusChange)
 }
 
 fn hand_off_terminal(handoff_status: &str) -> io::Result<()> {
@@ -141,6 +158,10 @@ impl Drop for TerminalSession {
         if self.mouse_capture_enabled {
             let _ = mouse_capture::disable();
             self.mouse_capture_enabled = false;
+        }
+        if self.focus_change_enabled {
+            let _ = disable_focus_change();
+            self.focus_change_enabled = false;
         }
     }
 }
