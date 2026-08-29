@@ -339,6 +339,18 @@ fn extend_open_fence(
         return None;
     }
 
+    if tail.language.as_deref() == Some("mermaid") {
+        return extend_open_mermaid(
+            entry,
+            text,
+            render,
+            width,
+            has_trailing_blank,
+            tail,
+            new_complete,
+        );
+    }
+
     let trailing_blank = take_trailing_blank(&mut entry.lines, has_trailing_blank);
     entry.lines.truncate(tail.committed_line_count);
     entry
@@ -365,6 +377,44 @@ fn extend_open_fence(
     }
 
     refresh_fence_copy(entry, text, &tail, width);
+    if let Some(blank) = trailing_blank {
+        entry.lines.push(blank);
+    }
+    Some(tail)
+}
+
+/// Mermaid relayouts as a whole, so body lines cannot be appended like
+/// highlighted code. Markdown paints live art from the complete-line prefix.
+fn extend_open_mermaid(
+    entry: &mut CachedEntry,
+    text: &str,
+    render: EntryContentRender,
+    width: usize,
+    has_trailing_blank: bool,
+    mut tail: OpenFenceTail,
+    new_complete: usize,
+) -> Option<OpenFenceTail> {
+    if new_complete == tail.committed_end {
+        // Incomplete last-line tokens: live art ignores them. Sticky source
+        // waits for a newline so this path never re-parses mermaid per token.
+        // COPY still follows the current partial body, like ordinary fences.
+        refresh_fence_copy(entry, text, &tail, width);
+        return Some(tail);
+    }
+    tail.committed_end = new_complete;
+    let trailing_blank = take_trailing_blank(&mut entry.lines, has_trailing_blank);
+    entry.lines.truncate(tail.header_line);
+    entry
+        .code_blocks
+        .retain(|block| block.line < tail.header_line);
+    append_entry_segment_into(
+        &mut entry.lines,
+        &mut entry.code_blocks,
+        &text[tail.source_start..],
+        width,
+        render,
+    );
+    tail.committed_line_count = entry.lines.len();
     if let Some(blank) = trailing_blank {
         entry.lines.push(blank);
     }

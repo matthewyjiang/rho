@@ -82,12 +82,55 @@ pub(super) enum MermaidRender {
 }
 
 pub(super) fn render_closed_fence(source: String, inner_width: usize) -> ClosedPanel {
-    match render_mermaid(&source, inner_width) {
-        MermaidRender::Rendered(lines) => ClosedPanel::Art {
-            title: "MERMAID",
+    match mermaid_art(&source, inner_width) {
+        Ok((title, lines)) => ClosedPanel::Art {
+            title,
             lines,
             source,
         },
+        Err(reason) => ClosedPanel::SourceFallback {
+            title: reason.panel_title(),
+            source,
+        },
+    }
+}
+
+/// Live mermaid for an unclosed fence.
+///
+/// Tries the complete-line prefix, then walks back through earlier complete
+/// lines on blank/malformed so a later bad line keeps last-good art. Sticky
+/// failures (unsafe, unsupported, too large) return `None` so the caller keeps
+/// an ordinary source fence until close.
+pub(super) fn render_open_prefix(
+    complete_body: &str,
+    copy_source: &str,
+    inner_width: usize,
+) -> Option<ClosedPanel> {
+    let mut body = complete_body;
+    loop {
+        match mermaid_art(body, inner_width) {
+            Ok((title, lines)) => {
+                return Some(ClosedPanel::Art {
+                    title,
+                    lines,
+                    source: copy_source.to_string(),
+                });
+            }
+            Err(MermaidFallback::Blank | MermaidFallback::Malformed) => {
+                let (shorter, _) = body.rsplit_once('\n')?;
+                body = shorter;
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+fn mermaid_art(
+    source: &str,
+    inner_width: usize,
+) -> Result<(&'static str, Vec<Line<'static>>), MermaidFallback> {
+    match render_mermaid(source, inner_width) {
+        MermaidRender::Rendered(lines) => Ok(("MERMAID", lines)),
         MermaidRender::Clipped {
             mut lines,
             hidden_columns,
@@ -96,16 +139,9 @@ pub(super) fn render_closed_fence(source: String, inner_width: usize) -> ClosedP
                 format!("▶ {hidden_columns} cols clipped"),
                 Theme::dim(),
             )));
-            ClosedPanel::Art {
-                title: "MERMAID · CLIPPED",
-                lines,
-                source,
-            }
+            Ok(("MERMAID · CLIPPED", lines))
         }
-        MermaidRender::Fallback(reason) => ClosedPanel::SourceFallback {
-            title: reason.panel_title(),
-            source,
-        },
+        MermaidRender::Fallback(reason) => Err(reason),
     }
 }
 

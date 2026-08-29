@@ -4,21 +4,26 @@ Parent: [Interactive TUI](/interactive-tui).
 Related: [Transcript display](/interactive-tui/transcript).
 
 Closed fenced code blocks whose first info token is `mermaid` render as
-terminal-native Unicode diagrams in the transcript. The same source also
-renders on the published docs site with Mermaid.js, so one diagram works in
-both places.
+terminal-native Unicode diagrams in the transcript. While the fence is still
+open, each completed line repaints that prefix so nodes and edges appear as
+they arrive. The same source also renders on the published docs site with
+Mermaid.js, so one diagram works in both places.
 
 ```mermaid
 flowchart TD
-    fence[Closed mermaid fence] --> closed{Fence closed?}
-    closed -->|no| code[Ordinary code block while streaming]
+    fence[Mermaid fence] --> closed{Fence closed?}
+    closed -->|no| prefix[Render complete-line prefix]
+    prefix -->|art| live[Live diagram]
+    prefix -->|malformed or blank| keep[Keep last-good or source]
+    prefix -->|too large or unsupported| source[Source until close]
     closed -->|yes| parse[Parse with mermaid-rs-renderer]
     parse --> kind{Supported kind and safe?}
     kind -->|yes and fits pane| art[Unicode diagram art]
     kind -->|wider than pane| clip[Clipped diagram plus hidden column marker]
     kind -->|unsupported kind| raw[Source plus UNSUPPORTED]
     kind -->|other decline| other[Source plus INVALID TOO LARGE or NOT RENDERED]
-    art --> resize[Relayout on width change]
+    live --> resize[Relayout on width change]
+    art --> resize
     clip --> resize
     raw --> resize
 ```
@@ -28,7 +33,7 @@ flowchart TD
 | Rule | Detail |
 | --- | --- |
 | Fence info | First token is `mermaid` (case-insensitive). Extra tokens after it are allowed |
-| Streaming | An open fence stays a normal source block until the closing fence arrives |
+| Streaming | Each completed line repaints the prefix. Valid prefixes show art immediately; a later bad line keeps the last good diagram. Closing the fence still decides the final panel |
 | Resize | Art is laid out again when the terminal or pane width changes |
 | Copy | Panel `COPY` always copies the original Mermaid source, for art and fallbacks |
 

@@ -231,17 +231,25 @@ async fn fixture_stream(
         }
         "fixture mermaid flowchart" => {
             let mut response = String::new();
-            for delta in [
-                "```mermaid\nflowchart LR\n",
-                "  P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
-                "  P2 --> P3[\"Phase 3: session delete API + CLI\"]\n",
-                "  P3 --> P4[\"Phase 4: TUI delete in resume picker\"]\n",
-                "  P3 --> P5[\"Phase 5: nest runs under session\"]\n",
-                "```\ndiagram delivered",
+            // Hold the last open-fence body so PTY can sample live art before
+            // the closing fence arrives.
+            for (delta, pause_ms) in [
+                ("```mermaid\nflowchart LR\n", 60),
+                (
+                    "  P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
+                    60,
+                ),
+                ("  P2 --> P3[\"Phase 3: session delete API + CLI\"]\n", 60),
+                (
+                    "  P3 --> P4[\"Phase 4: TUI delete in resume picker\"]\n",
+                    60,
+                ),
+                ("  P3 --> P5[\"Phase 5: nest runs under session\"]\n", 500),
+                ("```\ndiagram delivered", 60),
             ] {
                 events.send(ModelEvent::OutputDelta(delta.into())).await?;
                 response.push_str(delta);
-                fixture_sleep(&request.cancellation, Duration::from_millis(60)).await?;
+                fixture_sleep(&request.cancellation, Duration::from_millis(pause_ms)).await?;
             }
             completed(response)
         }

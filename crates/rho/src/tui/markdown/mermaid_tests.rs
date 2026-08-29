@@ -116,6 +116,38 @@ fn applies_source_model_and_canvas_limits_before_or_after_painting() {
     );
 }
 
+// Covers: live mermaid retries blank/malformed prefixes, keeps last-good art,
+// and declines sticky failures so the open fence stays source until close.
+// Owner: mermaid open prefix
+#[test]
+fn open_prefix_paints_valid_walks_back_malformed_and_declines_sticky() {
+    assert!(matches!(
+        render_open_prefix("flowchart LR\nA --> B", "flowchart LR\nA --> B", 80),
+        Some(ClosedPanel::Art {
+            title: "MERMAID",
+            ..
+        })
+    ));
+    let good = "flowchart LR\nA --> B";
+    let malformed = format!("{good}\nA -->");
+    let Some(ClosedPanel::Art { lines: kept, .. }) = render_open_prefix(&malformed, &malformed, 80)
+    else {
+        panic!("malformed last line should keep last-good art");
+    };
+    let MermaidRender::Rendered(expected) = render_mermaid(good, 80) else {
+        panic!("control prefix should render");
+    };
+    assert_eq!(plain(&kept), plain(&expected));
+    assert!(render_open_prefix("  \n", "  \n", 80).is_none());
+    assert!(render_open_prefix("gantt\ntitle Plan", "gantt\ntitle Plan", 240).is_none());
+    assert!(render_open_prefix(
+        "flowchart LR\nclick A \"https://example.com\"",
+        "flowchart LR\nclick A \"https://example.com\"",
+        80
+    )
+    .is_none());
+}
+
 #[test]
 fn rejects_blank_malformed_unsafe_and_link_bearing_sources() {
     assert_eq!(

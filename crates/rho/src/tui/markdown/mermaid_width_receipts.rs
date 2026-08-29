@@ -30,11 +30,11 @@ const FIXTURES: &[Fixture] = &[
         source: "flowchart TD\n\
             D[delta arrives] --> N{new complete line in open mermaid fence?}\n\
             N -- no --> S[skip - no diagram work]\n\
-            N -- yes --> R[render_mermaid on complete-line prefix]\n\
-            R -- rendered --> C[cache as last-good lines]\n\
-            C --> P[truncate to panel header, repaint diagram]\n\
-            R -- malformed prefix --> L[keep showing last-good render]\n\
-            F[fence closes] --> E[existing render_closed_fence path unchanged]",
+            N -- yes --> R[render_open_prefix]\n\
+            R -- art --> P[paint live panel]\n\
+            R -- malformed prefix --> L[walk back to last-good]\n\
+            R -- sticky fallback --> Src[ordinary source fence]\n\
+            F[fence closes] --> E[render_closed_fence]",
     },
     Fixture {
         name: "phase_chain_lr",
@@ -43,14 +43,12 @@ const FIXTURES: &[Fixture] = &[
     Fixture {
         name: "state_fallback_modes",
         source: "stateDiagram-v2\n\
-            [*] --> Probing\n\
-            Probing --> Probing: malformed prefix\n\
-            Probing --> Diagram: prefix renders\n\
-            Probing --> Latched: terminal fallback\n\
-            Diagram --> Latched: terminal fallback\n\
-            Probing --> Closed: fence closes\n\
-            Diagram --> Closed: fence closes\n\
-            Latched --> Closed: fence closes",
+            [*] --> Open\n\
+            Open --> Art: prefix renders\n\
+            Open --> Art: walk back last-good\n\
+            Open --> Source: sticky fallback\n\
+            Art --> Closed: fence closes\n\
+            Source --> Closed: fence closes",
     },
     Fixture {
         name: "long_edge_label",
@@ -62,12 +60,12 @@ const FIXTURES: &[Fixture] = &[
         name: "sequence_typical",
         source: "sequenceDiagram\n\
             participant TUI\n\
-            participant Cache\n\
+            participant Markdown\n\
             participant Renderer\n\
-            TUI->>Cache: delta\n\
-            Cache->>Renderer: complete prefix\n\
-            Renderer-->>Cache: art lines\n\
-            Cache-->>TUI: repaint tail",
+            TUI->>Markdown: open mermaid fence\n\
+            Markdown->>Renderer: complete prefix\n\
+            Renderer-->>Markdown: art or none\n\
+            Markdown-->>TUI: panel or source",
     },
     Fixture {
         name: "class_small",

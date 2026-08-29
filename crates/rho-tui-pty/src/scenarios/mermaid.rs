@@ -12,12 +12,11 @@ pub(super) const MERMAID_FLOWCHART_RESIZE_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
-    Step::Phase("stream_diagram"),
+    Step::Phase("stream_diagram_live"),
     Step::SubmitText("fixture mermaid flowchart"),
-    Step::WaitText {
-        text: "flowchart LR",
-        timeout: STREAM,
-    },
+    // Art must appear from complete-line prefixes before the closing fence.
+    Step::Custom(wait_until_live_streamed_diagram),
+    Step::Phase("stream_diagram"),
     Step::WaitText {
         text: "diagram delivered",
         timeout: STREAM,
@@ -55,6 +54,29 @@ pub(super) const MERMAID_FLOWCHART_RESIZE_STEPS: &[Step] = &[
     Step::Custom(wait_until_diagram_art),
     Step::ExitCommand,
 ];
+
+fn wait_until_live_streamed_diagram(harness: &mut PtyHarness) -> Result<()> {
+    let deadline = Instant::now() + STREAM.duration;
+    loop {
+        harness.poll(Duration::from_millis(25));
+        let screen = harness.screen().contents();
+        if screen.contains("diagram delivered") {
+            anyhow::bail!(
+                "closing fence arrived before live mermaid art:\n{}",
+                harness.screen().debug_dump()
+            );
+        }
+        if diagram_art_visible(harness) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "timed out waiting for live mermaid art before the closing fence:\n{}",
+                harness.screen().debug_dump()
+            );
+        }
+    }
+}
 
 fn wait_until_diagram_art(harness: &mut PtyHarness) -> Result<()> {
     let deadline = Instant::now() + SETTLE.duration;

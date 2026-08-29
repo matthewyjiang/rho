@@ -145,6 +145,23 @@ fn render_markdown_from_fence_state(
                     line_index = closing_index + 1;
                     continue;
                 }
+                let body_lines = &raw_lines[line_index + 1..];
+                let copy_source = body_lines.join("\n");
+                let complete_body = if text.ends_with('\n') || body_lines.is_empty() {
+                    copy_source.clone()
+                } else {
+                    body_lines[..body_lines.len() - 1].join("\n")
+                };
+                if let Some(panel) =
+                    mermaid::render_open_prefix(&complete_body, &copy_source, width)
+                {
+                    push_closed_panel(&mut lines, &mut code_blocks, copy_button, width, panel);
+                    // Source fence is still open; later chunks re-render from the
+                    // opener rather than continuing this panel as highlighted code.
+                    state.open_fence(opening.fence, opening_fence_info_token(raw_line));
+                    line_index = raw_lines.len();
+                    continue;
+                }
             }
             if let Some((source, consumed_lines)) =
                 math::take_closed_display_math(&raw_lines[line_index..])

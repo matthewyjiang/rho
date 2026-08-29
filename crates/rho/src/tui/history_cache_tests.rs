@@ -479,13 +479,13 @@ fn incrementally_keeps_prose_after_a_table() {
 }
 
 #[test]
-fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
+fn streams_mermaid_then_caches_the_closed_diagram_by_width() {
     // Rendered lines are compared across separate render passes; hold the lock
     // so theme-switching tests cannot restyle the second pass mid-test.
     let _guard = crate::tui::theme::theme_test_lock();
     let mut cache = HistoryLineCache::default();
     let mut entries = vec![Entry::Assistant(
-        "```mermaid\nflowchart LR\nA[Parse] --> B[Render]".into(),
+        "```mermaid\nflowchart LR\nA[Parse] --> B[Render]\n".into(),
     )];
     let mut cached_lines = Vec::new();
     cache.extend_visible_lines(
@@ -511,7 +511,7 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
     let Entry::Assistant(text) = &mut entries[0] else {
         unreachable!();
     };
-    text.push_str("\n```");
+    text.push_str("```");
     cache.entry_appended(0);
     cached_lines.clear();
     cache.extend_visible_lines(
@@ -562,6 +562,67 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
         )
     );
     assert_ne!(cached_lines, narrow_lines);
+}
+
+// Covers: mermaid tails relayout from the header so cache matches markdown,
+// including a malformed last line that walks back to last-good art.
+// Owner: history line cache (incremental append)
+#[test]
+fn incrementally_repaints_open_mermaid_from_the_header() {
+    let _guard = crate::tui::theme::theme_test_lock();
+    let mut cache = HistoryLineCache::default();
+    let mut entries = vec![Entry::Assistant("```mermaid\nflowchart LR\n".into())];
+    let _ = paint_cached(&mut cache, &entries, 80);
+
+    let Entry::Assistant(text) = &mut entries[0] else {
+        unreachable!();
+    };
+    text.push_str("A[Parse] --> B[Render]\n");
+    cache.entry_appended(0);
+    assert_eq!(
+        paint_cached(&mut cache, &entries, 80),
+        expected_entry_lines(&entries[0], 80)
+    );
+
+    let Entry::Assistant(text) = &mut entries[0] else {
+        unreachable!();
+    };
+    text.push_str("A -->\n");
+    cache.entry_appended(0);
+    assert_eq!(
+        paint_cached(&mut cache, &entries, 80),
+        expected_entry_lines(&entries[0], 80)
+    );
+}
+
+// Covers: mermaid incomplete tokens skip a live re-parse but still refresh COPY.
+// Owner: history line cache (incremental append)
+#[test]
+fn mermaid_incomplete_append_refreshes_copy_without_rerender() {
+    let mut cache = HistoryLineCache::default();
+    let mut entries = vec![Entry::Assistant(
+        "```mermaid\nflowchart LR\nA[Parse] --> B[Render]\n".into(),
+    )];
+    let before = paint_cached(&mut cache, &entries, 80);
+    assert_eq!(
+        cache.code_blocks(&entries, settings(80), &no_images)[0]
+            .text
+            .as_ref(),
+        "flowchart LR\nA[Parse] --> B[Render]"
+    );
+
+    let Entry::Assistant(text) = &mut entries[0] else {
+        unreachable!();
+    };
+    text.push_str("C[Copy]");
+    cache.entry_appended(0);
+    assert_eq!(paint_cached(&mut cache, &entries, 80), before);
+    assert_eq!(
+        cache.code_blocks(&entries, settings(80), &no_images)[0]
+            .text
+            .as_ref(),
+        "flowchart LR\nA[Parse] --> B[Render]\nC[Copy]"
+    );
 }
 
 #[test]
