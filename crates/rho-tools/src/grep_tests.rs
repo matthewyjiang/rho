@@ -270,6 +270,28 @@ fn preserves_indentation_in_match_preview() {
     );
 }
 
+// Covers: path pointing at a file must search that file, not return no matches
+// Owner: pure unit (grep path handling)
+#[test]
+fn file_path_searches_the_named_file() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "src/other.rs", "needle other\n");
+    let body = "needle nested\n";
+    write(&dir, "src/lib.rs", body);
+    let tag = compute_file_hash(body);
+    let content = call_grep(&dir, json!({"pattern": "needle", "path": "src/lib.rs"})).unwrap();
+    assert_eq!(
+        content,
+        format!(
+            "\
+[src/lib.rs#{tag}]
+1 | needle nested
+
+1 matches in 1 files"
+        )
+    );
+}
+
 // Covers: narrowed path= must emit workspace-relative chain headers edit accepts
 // Owner: pure unit (grep hashline path contract)
 #[test]
