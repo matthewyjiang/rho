@@ -113,8 +113,24 @@ pub(super) const SUPERVISED_APPROVAL_STEPS: &[Step] = &[
     // interrupted races the instant fixture response. Each outcome renders
     // different text, so accept either durable form.
     Step::Custom(wait_for_denied_or_interrupted),
+    // Abort teardown can restore composer text after Esc. Wait until the
+    // session is quiet and the input prompt is empty, then type the follow-up
+    // instead of pasting so Enter cannot land in the dying turn.
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "Type a message",
+        timeout: SETTLE,
+    },
     Step::Phase("continue_session"),
-    Step::SubmitText("fixture stream"),
+    Step::TypeText("fixture stream"),
+    Step::WaitText {
+        text: "fixture stream",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
     Step::WaitText {
         text: "assistant stream part one",
         timeout: STREAM,
