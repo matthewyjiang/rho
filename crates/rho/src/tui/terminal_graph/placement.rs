@@ -7,7 +7,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::flow::{NodeSizes, Placed};
 use super::ordering::assign_positions;
-use super::Graph;
+use super::{Edge, Graph};
 use crate::tui::terminal_graph::painter::{GAP_X, GAP_Y, MAX_LABEL};
 
 #[derive(Clone, Copy)]
@@ -155,6 +155,26 @@ fn label_block_width(lines: &[String]) -> usize {
     lines.iter().map(|line| line.width()).max().unwrap_or(0)
 }
 
+/// Extra rows a wrapped label occupies above its anchor row.
+fn extra_label_rows(lines: &[String]) -> usize {
+    lines.len().saturating_sub(1)
+}
+
+fn max_extra_label_rows(
+    graph: &Graph,
+    edge_labels: &[Vec<String>],
+    mut include: impl FnMut(&Edge) -> bool,
+) -> usize {
+    graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| include(edge))
+        .map(|(index, _)| extra_label_rows(&edge_labels[index]))
+        .max()
+        .unwrap_or(0)
+}
+
 /// Extra rows each rank gap must add so stacked edge-label rows have room
 /// above their target's head row. Single-line labels need no extra row, which
 /// keeps existing single-line geometry byte-identical.
@@ -166,10 +186,12 @@ fn label_gap_rows(
 ) -> Vec<usize> {
     let mut rows = vec![0usize; max_rank + 1];
     for (index, edge) in graph.edges.iter().enumerate() {
-        let lines = edge_labels[index].len();
-        if edge.from != edge.to && ranks[edge.to] > ranks[edge.from] && lines > 1 {
-            let gap = ranks[edge.to] - 1;
-            rows[gap] = rows[gap].max(lines - 1);
+        if edge.from != edge.to && ranks[edge.to] > ranks[edge.from] {
+            let extra = extra_label_rows(&edge_labels[index]);
+            if extra > 0 {
+                let gap = ranks[edge.to] - 1;
+                rows[gap] = rows[gap].max(extra);
+            }
         }
     }
     rows
@@ -221,7 +243,13 @@ pub(super) fn place_td(
         })
         .collect();
     let label_rows = label_gap_rows(graph, ranks, edge_labels, max_rank);
+    // Back-edge labels stack upward from the target's center in the right
+    // margin. Pad the canvas top so those rows are not clipped or dropped.
+    let back_pad = max_extra_label_rows(graph, edge_labels, |edge| {
+        edge.from != edge.to && ranks[edge.to] < ranks[edge.from]
+    });
     let mut rank_y = vec![0usize; max_rank + 1];
+    rank_y[0] = back_pad;
     for r in 1..=max_rank {
         let gap = GAP_Y.max(bus_tracks[r - 1] + 1) + label_rows[r - 1];
         rank_y[r] = rank_y[r - 1] + rank_h[r - 1] + gap;
@@ -328,7 +356,22 @@ pub(super) fn place_lr(
         .unwrap_or(0);
     let base_gap = (GAP_X + 1).max(max_label + 3);
 
-    let centers = assign_positions(by_rank, &sizes.lay_h, 1, &graph.edges, ranks);
+    // Wrapped forward labels stack above the target in the inter-column gap.
+    // Intra-rank separation and a top pad keep those rows off sibling boxes.
+    let forward_pad = max_extra_label_rows(graph, edge_labels, |edge| {
+        edge.from != edge.to && ranks[edge.to] == ranks[edge.from] + 1
+    });
+    let back_pad = max_extra_label_rows(graph, edge_labels, |edge| {
+        edge.from != edge.to && ranks[edge.to] != ranks[edge.from] + 1
+    });
+
+    let centers = assign_positions(
+        by_rank,
+        &sizes.lay_h,
+        1.max(forward_pad),
+        &graph.edges,
+        ranks,
+    );
 
     let mut edge_bus = vec![0usize; graph.edges.len()];
     let mut bus_tracks = vec![0usize; max_rank + 1];
@@ -349,7 +392,7 @@ pub(super) fn place_lr(
         let gap = base_gap.max(bus_tracks[r - 1] + 1);
         rank_x[r] = rank_x[r - 1] + col_w[r - 1] + gap;
     }
-    let canvas_w = rank_x[max_rank]
+    let mut canvas_w = rank_x[max_rank]
         + col_w[max_rank]
         + by_rank[max_rank]
             .iter()
@@ -357,6 +400,19 @@ pub(super) fn place_lr(
             .map(|&i| 2 + sizes.self_label_w[i])
             .max()
             .unwrap_or(0);
+    // Non-adjacent LR labels sit to the right of both boxes so the U-turn
+    // stems cannot truncate wrapped rows.
+    let back_label_w = graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| edge.from != edge.to && ranks[edge.to] != ranks[edge.from] + 1)
+        .map(|(index, _)| label_block_width(&edge_labels[index]))
+        .max()
+        .unwrap_or(0);
+    if back_label_w > 0 {
+        canvas_w += 1 + back_label_w;
+    }
     let band_end: Vec<usize> = (0..=max_rank).map(|r| rank_x[r] + col_w[r]).collect();
 
     let mut diagram_h = 1;
@@ -366,7 +422,7 @@ pub(super) fn place_lr(
             let w = sizes.box_w[idx];
             let h = sizes.box_h[idx];
             let cy = centers[idx];
-            let y = cy.saturating_sub((h + sizes.extra_h[idx]) / 2);
+            let y = cy.saturating_sub((h + sizes.extra_h[idx]) / 2) + forward_pad;
             placed[idx] = Placed {
                 x,
                 y,
@@ -390,7 +446,9 @@ pub(super) fn place_lr(
         for (idx, slot) in assigned {
             edge_lane[idx] = slot;
         }
-        (diagram_h + 1 + count, diagram_h + 1)
+        // Back-route labels stack upward from the lane; keep those rows
+        // between the diagram and the first lane so boxes cannot truncate them.
+        (diagram_h + back_pad + 1 + count, diagram_h + back_pad + 1)
     };
 
     RoutePlan {

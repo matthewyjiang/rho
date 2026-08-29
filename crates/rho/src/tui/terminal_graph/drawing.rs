@@ -389,7 +389,8 @@ pub(in crate::tui) fn route_back_lr(
         canvas.set(sx, sy, head_glyph(edge.head_from, '▲'), Cls::Edge);
     }
 
-    place_label_block(canvas, label_lines, lane_y.saturating_sub(1), (sx + tx) / 2);
+    let right = (from.x + from.w).max(to.x + to.w);
+    place_label_block(canvas, label_lines, lane_y.saturating_sub(1), right + 1);
 }
 
 /// Stack pre-wrapped edge-label rows upward so the last row sits on
