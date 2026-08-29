@@ -32,6 +32,12 @@ const SIDE_OVERLAY_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Custom(assert_side_overlay_open),
+    Step::Phase("type_j_inserts"),
+    Step::TypeText("just"),
+    Step::WaitText {
+        text: "just",
+        timeout: SETTLE,
+    },
     Step::Phase("dismiss"),
     Step::Key(Key::Esc),
     Step::WaitTextGone {

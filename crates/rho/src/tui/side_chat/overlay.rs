@@ -4,6 +4,7 @@ use ratatui::{
 };
 
 use super::super::{
+    line_editor::LineEditor,
     overlay_panel::{
         clamp_panel_scroll, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
         OverlayPanelFrame,
@@ -25,93 +26,16 @@ pub(super) enum SideEntry {
     Error(String),
 }
 
-#[derive(Debug)]
-pub(super) struct SideComposer {
-    text: String,
-    cursor: usize,
-}
-
-impl SideComposer {
-    fn new() -> Self {
-        Self {
-            text: String::new(),
-            cursor: 0,
-        }
-    }
-
-    pub(super) fn text(&self) -> &str {
-        &self.text
-    }
-
-    pub(super) fn cursor(&self) -> usize {
-        self.cursor
-    }
-
-    pub(super) fn is_empty(&self) -> bool {
-        self.text.is_empty()
-    }
-
-    pub(super) fn take_text(&mut self) -> String {
-        self.cursor = 0;
-        std::mem::take(&mut self.text)
-    }
-
-    pub(super) fn clear(&mut self) {
-        self.text.clear();
-        self.cursor = 0;
-    }
-
-    pub(super) fn insert_char(&mut self, ch: char) {
-        let index = self.byte_index(self.cursor);
-        self.text.insert(index, ch);
-        self.cursor += 1;
-    }
-
-    pub(super) fn insert_text(&mut self, text: &str) {
-        for ch in text.chars().filter(|ch| *ch != '\n' && *ch != '\r') {
-            self.insert_char(ch);
-        }
-    }
-
-    pub(super) fn backspace(&mut self) {
-        if self.cursor == 0 {
-            return;
-        }
-        let end = self.byte_index(self.cursor);
-        self.cursor -= 1;
-        let start = self.byte_index(self.cursor);
-        self.text.replace_range(start..end, "");
-    }
-
-    pub(super) fn move_left(&mut self) {
-        self.cursor = self.cursor.saturating_sub(1);
-    }
-
-    pub(super) fn move_right(&mut self) {
-        self.cursor = self.cursor.saturating_add(1).min(self.text.chars().count());
-    }
-
-    pub(super) fn move_home(&mut self) {
-        self.cursor = 0;
-    }
-
-    pub(super) fn move_end(&mut self) {
-        self.cursor = self.text.chars().count();
-    }
-
-    fn byte_index(&self, char_index: usize) -> usize {
-        self.text
-            .char_indices()
-            .nth(char_index)
-            .map(|(index, _)| index)
-            .unwrap_or(self.text.len())
-    }
+pub(super) struct SideScrollMetrics {
+    pub(super) body_len: usize,
+    pub(super) body_rows: usize,
+    pub(super) max_scroll: usize,
 }
 
 #[derive(Debug)]
 pub(super) struct SideOverlay {
     pub(super) entries: Vec<SideEntry>,
-    pub(super) composer: SideComposer,
+    pub(super) composer: LineEditor,
     pub(super) scroll: usize,
     pub(super) busy: bool,
     pub(super) snapshot: String,
@@ -122,7 +46,7 @@ impl SideOverlay {
     pub(super) fn new(snapshot: String) -> Self {
         Self {
             entries: Vec::new(),
-            composer: SideComposer::new(),
+            composer: LineEditor::new(""),
             scroll: 0,
             busy: false,
             snapshot,
@@ -135,11 +59,15 @@ impl SideOverlay {
         self.follow_end();
     }
 
-    pub(super) fn push_error(&mut self, text: String) {
-        self.streaming_assistant = None;
-        self.busy = false;
+    pub(super) fn push_notice(&mut self, text: String) {
         self.entries.push(SideEntry::Error(text));
         self.follow_end();
+    }
+
+    pub(super) fn fail_run(&mut self, text: String) {
+        self.commit_stream();
+        self.busy = false;
+        self.push_notice(text);
     }
 
     pub(super) fn append_assistant_delta(&mut self, delta: &str) {
@@ -160,23 +88,23 @@ impl SideOverlay {
     }
 
     pub(super) fn finish_assistant(&mut self) {
-        if let Some(text) = self.streaming_assistant.take() {
-            if !text.is_empty() {
-                self.entries.push(SideEntry::Assistant(text));
-            }
-        }
+        self.commit_stream();
         self.busy = false;
         self.follow_end();
     }
 
     pub(super) fn mark_cancelled(&mut self) {
+        self.commit_stream();
+        self.busy = false;
+        self.follow_end();
+    }
+
+    fn commit_stream(&mut self) {
         if let Some(text) = self.streaming_assistant.take() {
             if !text.is_empty() {
                 self.entries.push(SideEntry::Assistant(text));
             }
         }
-        self.busy = false;
-        self.follow_end();
     }
 
     fn follow_end(&mut self) {
@@ -191,10 +119,21 @@ impl SideOverlay {
         }
         if let Some(text) = &self.streaming_assistant {
             push_wrapped(&mut lines, text, Theme::text(), width);
-        } else if self.busy && self.streaming_assistant.is_none() {
+        } else if self.busy {
             lines.push(Line::from(Span::styled("…", Theme::dim())));
         }
         lines
+    }
+
+    pub(super) fn scroll_by(&mut self, delta: isize, metrics: &SideScrollMetrics) {
+        let current = resolve_side_scroll(self.scroll, metrics);
+        self.scroll = if delta < 0 {
+            current.saturating_sub(delta.unsigned_abs())
+        } else {
+            current
+                .saturating_add(delta as usize)
+                .min(metrics.max_scroll)
+        };
     }
 }
 
@@ -240,31 +179,59 @@ fn push_wrapped(
     }
 }
 
-pub(super) fn side_overlay_frame(overlay: &SideOverlay, area: Rect) -> Option<OverlayPanelFrame> {
-    if area.width < 8 || area.height < 8 {
-        return None;
-    }
-    let inner_width = overlay_panel_inner_width(area).max(1);
+pub(super) fn side_overlay_panel_body(
+    overlay: &SideOverlay,
+    inner_width: usize,
+) -> Vec<Line<'static>> {
     let mut body = overlay.body_lines(inner_width);
-    let input = format!("{INPUT_PREFIX}{}", overlay.composer.text());
     body.push(Line::from(Span::styled(
         "─".repeat(inner_width),
         Theme::dim(),
     )));
+    let input = format!("{INPUT_PREFIX}{}", overlay.composer.value);
     body.push(Line::from(Span::styled(
         truncate_input(&input, inner_width),
         Theme::input_prompt(),
     )));
+    body
+}
 
-    let layout = overlay_panel_layout(area, body.len());
-    let input_row = body.len().saturating_sub(1);
-    let transcript_rows = layout.body_rows.saturating_sub(2);
-    let max_scroll = input_row.saturating_sub(transcript_rows.saturating_add(1));
-    let scroll = if overlay.scroll == usize::MAX {
-        max_scroll
+pub(super) fn side_scroll_metrics(overlay: &SideOverlay, area: Rect) -> Option<SideScrollMetrics> {
+    if area.width < 8 || area.height < 8 {
+        return None;
+    }
+    let inner_width = overlay_panel_inner_width(area).max(1);
+    let body_len = side_overlay_panel_body(overlay, inner_width).len();
+    let body_rows = overlay_panel_layout(area, body_len).body_rows;
+    Some(SideScrollMetrics {
+        body_len,
+        body_rows,
+        max_scroll: side_max_scroll(body_len, body_rows),
+    })
+}
+
+fn side_max_scroll(body_len: usize, body_rows: usize) -> usize {
+    let input_row = body_len.saturating_sub(1);
+    let transcript_rows = body_rows.saturating_sub(2);
+    input_row.saturating_sub(transcript_rows.saturating_add(1))
+}
+
+fn resolve_side_scroll(scroll: usize, metrics: &SideScrollMetrics) -> usize {
+    if scroll == usize::MAX {
+        metrics.max_scroll
     } else {
-        clamp_panel_scroll(overlay.scroll, input_row.saturating_sub(1), transcript_rows)
-    };
+        let input_row = metrics.body_len.saturating_sub(1);
+        let transcript_rows = metrics.body_rows.saturating_sub(2);
+        clamp_panel_scroll(scroll, input_row.saturating_sub(1), transcript_rows)
+    }
+}
+
+pub(super) fn side_overlay_frame(overlay: &SideOverlay, area: Rect) -> Option<OverlayPanelFrame> {
+    let metrics = side_scroll_metrics(overlay, area)?;
+    let inner_width = overlay_panel_inner_width(area).max(1);
+    let body = side_overlay_panel_body(overlay, inner_width);
+    let scroll = resolve_side_scroll(overlay.scroll, &metrics);
+    let input_row = body.len().saturating_sub(1);
 
     let footer = if overlay.busy {
         FOOTER_BUSY
@@ -275,9 +242,9 @@ pub(super) fn side_overlay_frame(overlay: &SideOverlay, area: Rect) -> Option<Ov
     let cursor_x = INPUT_PREFIX
         .chars()
         .count()
-        .saturating_add(overlay.composer.cursor())
+        .saturating_add(overlay.composer.cursor)
         .min(inner_width.saturating_sub(1));
-    let input_screen_row = layout
+    let input_screen_row = metrics
         .body_rows
         .saturating_sub(1)
         .min(input_row.saturating_sub(scroll));
@@ -303,19 +270,6 @@ fn truncate_input(input: &str, width: usize) -> String {
     crate::tui::render::truncate_one_line(input, width)
 }
 
-impl SideOverlay {
-    pub(super) fn scroll_by(&mut self, delta: isize, body_rows: usize, body_len: usize) {
-        let transcript_rows = body_rows.saturating_sub(2);
-        let max_scroll = body_len.saturating_sub(transcript_rows.saturating_add(1));
-        let current = if self.scroll == usize::MAX {
-            max_scroll
-        } else {
-            self.scroll.min(max_scroll)
-        };
-        self.scroll = if delta < 0 {
-            current.saturating_sub(delta.unsigned_abs())
-        } else {
-            current.saturating_add(delta as usize).min(max_scroll)
-        };
-    }
-}
+#[cfg(test)]
+#[path = "overlay_tests.rs"]
+mod tests;

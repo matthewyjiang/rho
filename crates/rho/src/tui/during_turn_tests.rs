@@ -314,3 +314,55 @@ async fn empty_composer_abort_hint_follows_esc_policy() {
         let _ = app.cancel_inline_shells();
     }
 }
+
+// Covers: a parent approval that displaces /side must put the overlay back
+// so the next Enter stays in the aside, not the parent composer.
+// Owner: tui approval composer restore
+#[tokio::test]
+async fn finishing_approval_restores_open_side_overlay() {
+    struct Case {
+        name: &'static str,
+        setup: fn(&mut App),
+        expected_side: bool,
+    }
+
+    let cases = [
+        Case {
+            name: "side open",
+            setup: |app| app.open_side_chat(),
+            expected_side: true,
+        },
+        Case {
+            name: "side closed but retained",
+            setup: |app| {
+                app.open_side_chat();
+                app.close_side_chat();
+            },
+            expected_side: false,
+        },
+        Case {
+            name: "no side session",
+            setup: |_| {},
+            expected_side: false,
+        },
+    ];
+
+    for case in cases {
+        let mut app = test_app();
+        (case.setup)(&mut app);
+        app.open_approval(pending_approval()).await;
+        assert!(
+            matches!(app.input_ui.composer(), ComposerMode::Approval(_)),
+            "{}",
+            case.name
+        );
+        app.handle_approval_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), 80, 24)
+            .unwrap();
+        pretty_assertions::assert_eq!(
+            matches!(app.input_ui.composer(), ComposerMode::Side),
+            case.expected_side,
+            "{}",
+            case.name
+        );
+    }
+}

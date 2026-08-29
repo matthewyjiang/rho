@@ -71,14 +71,17 @@ pub(super) struct ApprovalComposer {
     active: ApprovalChoice,
     /// First visible detail line, measured from the start of the request.
     detail_offset: usize,
+    /// Reopen `/side` after this prompt if it was on screen when approval opened.
+    restore_side: bool,
 }
 
 impl ApprovalComposer {
-    fn new(pending: PendingApproval) -> Self {
+    fn new(pending: PendingApproval, restore_side: bool) -> Self {
         Self {
             pending,
             active: ApprovalChoice::Deny,
             detail_offset: 0,
+            restore_side,
         }
     }
 
@@ -122,8 +125,12 @@ impl ApprovalComposer {
 
 impl App {
     pub(super) async fn open_approval(&mut self, pending: PendingApproval) {
+        let restore_side = self.side_overlay_open();
         self.input_ui
-            .set_composer(ComposerMode::Approval(ApprovalComposer::new(pending)));
+            .set_composer(ComposerMode::Approval(ApprovalComposer::new(
+                pending,
+                restore_side,
+            )));
         self.set_status("approval requested");
         self.report_herdr_waiting_for_user(HerdrUserWait::Approval)
             .await;
@@ -191,10 +198,16 @@ impl App {
 
     fn finish_approval(&mut self, decision: Option<ApprovalDecision>) {
         let composer = self.input_ui.take_composer();
-        if let ComposerMode::Approval(mut approval) = composer {
+        let restore_side = if let ComposerMode::Approval(mut approval) = composer {
             let decision = decision.unwrap_or_else(|| approval.active.decision());
             approval.respond(decision);
             self.set_status("running");
+            approval.restore_side
+        } else {
+            false
+        };
+        if restore_side && self.side_chat.is_some() {
+            self.input_ui.set_composer(ComposerMode::Side);
         }
     }
 }

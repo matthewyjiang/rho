@@ -13,7 +13,7 @@ use super::{
     session_assembly::{
         assemble_session, ApprovalInputs, BuiltSession, SessionApproval, SessionAssemblyOptions,
     },
-    tools_prompt::McpSamplingSupport,
+    tools_prompt::{McpAttach, McpSamplingSupport},
 };
 use crate::{
     agent::{
@@ -55,6 +55,8 @@ pub(crate) enum SideChatEvent {
     ToolStarted(String),
     Finished,
     Failed(String),
+    /// A submit arrived while a turn is still running. Overlay stays busy.
+    Rejected(String),
     Cancelled,
 }
 
@@ -120,7 +122,7 @@ async fn side_chat_worker(
                     }
                     SideChatCommand::Submit(prompt) => {
                         if active.is_some() {
-                            let _ = events.send(SideChatEvent::Failed(
+                            let _ = events.send(SideChatEvent::Rejected(
                                 "could not start side chat: a turn is already running".into(),
                             ));
                             continue;
@@ -234,6 +236,7 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         questionnaire_enabled: false,
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         mcp_sampling: McpSamplingSupport::Unavailable,
+        mcp_attach: McpAttach::None,
         background_subagents: BackgroundSubagents::Disabled,
         diagnostics: &diagnostics,
         agent: &agent,

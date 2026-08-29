@@ -112,7 +112,7 @@ A single `/` as the first character opens the command palette. Any later `/` cha
 | `/fast [on\|off]` | Toggle or set the faster priority tier for supported Codex models. Fast mode saves to configuration, appears as `(fast)` after the model name, and uses credits at a higher rate. |
 | `/resume [id]` | Resume a saved session by UUID or prefix. No args opens a picker for other sessions in the current workspace. In the picker, press `d` or `Delete` to remove a session after confirmation. If the current model cannot use the session's provider-native context, Rho asks whether to resume with the session model, compact with that model first, or continue on the current model. |
 | `/sessions` | Open the session manager for every directory. Sessions group under their directory, current directory first. Press Enter on a session in the current directory to resume it, or on a directory row to narrow the list to that directory. Sessions from other directories remain available to inspect and delete, but must be resumed by starting Rho in their directory. Press `d` on a session to delete it, or on a directory row to delete the reviewed saved sessions in that directory, both after confirmation. The current session is never deleted. |
-| `/side [prompt]` | Open a side chat overlay that can see a frozen snapshot of this session (captured when the overlay first opens) and use read-only workspace tools (`list_dir`, `read_file`, `grep`, `glob`). It does not write back to the session. Empty `/side` opens the overlay, or closes it when already open (a running aside keeps going). `/side <prompt>` opens and sends. Esc cancels a running aside, or closes the overlay when idle. `/new` and resume discard it. |
+| `/side [prompt]` | Open a side chat overlay that can see a frozen snapshot of this session (captured when the overlay first opens) and use read-only workspace tools (`list_dir`, `read_file`, `grep`, `glob`). User and plugin MCP are not attached. It does not write back to the session. Empty `/side` opens the overlay, or closes it when already open (a running aside keeps going). `/side <prompt>` opens and sends. Esc cancels a running aside, or closes the overlay when idle. `/new` and resume discard it. |
 | `/btw [prompt]` | Alias for `/side`. |
 | `/tree` | Navigate completed turns and compaction states in the current session. Continuing from an older state creates a branch. |
 | `/workflow` | Open the workflow list. Start a local workflow or saved plan in the background, watch a run as a dependency graph, or press `d` to delete a plan/run. The run id is appended to chat context and completion is delivered automatically. Reopen `/workflow` and press Enter on a run to watch; use arrows or `hjkl` to move between graph nodes. |
@@ -149,7 +149,7 @@ Some commands replace the message box with a picker. Use `up` and `down` to sele
 
 `/limits` uses the same overlay chrome as those pickers, but as a single scrolling pane of usage bars rather than a two-column list. It is not a picker: `up` and `down` scroll, and `enter` or `esc` close it.
 
-`/side` (and `/btw`) uses that same overlay chrome with its own transcript and prompt. It is not a picker: `enter` sends to the aside. `esc` cancels a running aside, or closes the overlay when idle.
+`/side` (and `/btw`) uses that same overlay chrome with its own transcript and prompt. It is not a picker: `enter` sends to the aside. `esc` cancels a running aside, or closes the overlay when idle. Up and down scroll when the prompt is empty; letter keys always insert.
 
 ## Login and logout
 

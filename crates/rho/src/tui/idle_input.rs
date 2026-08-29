@@ -75,9 +75,7 @@ impl App {
             return Ok(());
         }
 
-        if self.external_editor_shortcut_matches(key)
-            && !matches!(self.input_ui.composer(), ComposerMode::Side)
-        {
+        if self.external_editor_shortcut_matches(key) {
             self.open_composer_in_editor(terminal).await?;
             return Ok(());
         }

@@ -92,4 +92,18 @@ impl LineEditor {
         let end = self.byte_index(self.cursor + 1);
         self.value.replace_range(start..end, "");
     }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.value.is_empty()
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.value.clear();
+        self.cursor = 0;
+    }
+
+    pub(super) fn take_value(&mut self) -> String {
+        self.cursor = 0;
+        std::mem::take(&mut self.value)
+    }
 }
