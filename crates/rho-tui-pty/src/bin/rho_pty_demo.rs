@@ -185,7 +185,11 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
     plan.cwd = workspace;
     // Pin the header version at the capture input so release bumps do not force
     // proof-plate regen and the plate does not show a placeholder 0.0.0.
-    plan = plan.with_env("RHO_TUI_DISPLAY_VERSION", DEMO_DISPLAY_VERSION);
+    plan = plan
+        .with_env("RHO_TUI_DISPLAY_VERSION", DEMO_DISPLAY_VERSION)
+        // Matrix PTYs have no OSC sample; this seeds GitHub-dark green/red so
+        // the proof plate can paint RGB add/remove washes.
+        .with_env("RHO_TUI_MATRIX_PALETTE", "github-dark");
     // Set the model in config only. A CLI `--model` flag forces a credentialed
     // catalog refresh and exits before matrix fixture mode can attach.
 

@@ -81,7 +81,7 @@ impl AnsiColor {
 }
 
 pub(super) fn query_terminal_palette() -> Option<TerminalPalette> {
-    if std::env::var_os("RHO_TUI_TEST_MODE").is_some_and(|value| value == "matrix") {
+    if std::env::var_os("RHO_TUI_MATRIX_PALETTE").is_some_and(|value| value == "github-dark") {
         return Some(matrix_fixture_palette());
     }
     query_terminal_palette_impl().ok().flatten()
@@ -89,9 +89,10 @@ pub(super) fn query_terminal_palette() -> Option<TerminalPalette> {
 
 /// GitHub-dark well used by the docs PTY proof plate (`SvgPalette::github_dark`).
 ///
-/// Matrix PTYs do not answer OSC palette queries, so without this sample the
-/// terminal theme never gets RGB add/remove washes. Only green/red are filled
-/// so other roles stay named ANSI and the light plate can still remap them.
+/// Matrix PTYs do not answer OSC palette queries. The proof-plate launcher
+/// sets `RHO_TUI_MATRIX_PALETTE=github-dark` so that capture gets RGB
+/// add/remove washes. Other PTY scenarios keep unsamped terminal chrome.
+/// Only green/red are filled so other roles stay named ANSI.
 pub(super) fn matrix_fixture_palette() -> TerminalPalette {
     TerminalPalette {
         background: Rgb::new(0x0d, 0x11, 0x17),
