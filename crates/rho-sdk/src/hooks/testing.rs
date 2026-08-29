@@ -66,13 +66,15 @@ pub fn after_tool_use_envelope(tool: &str) -> HookEnvelope {
     let bounds = HookPayloadBounds::default();
     let mut builder = HookEnvelopeBuilder::new(identity(), None, bounds);
     let tool = HookTool::new(tool, Some("test-call".into()), bounds, builder.truncation());
-    builder.finish(HookPayload::AfterToolUse(AfterToolUsePayload {
-        tool,
-        capability: None,
-        status: HookToolStatus::Succeeded,
-        failure: None,
-        duration_ms: Some(1),
-    }))
+    builder.finish_after_tool_use(
+        AfterToolUsePayload {
+            tool,
+            status: HookToolStatus::Succeeded,
+            failure: None,
+            duration_ms: Some(1),
+        },
+        None,
+    )
 }
 
 /// A `run_completed` envelope for an end-turn run.

@@ -398,12 +398,18 @@ async fn after_tool_use_reports_the_call_that_a_hook_denied() {
         .iter()
         .find(|envelope| envelope.event() == HookEventKind::AfterToolUse)
         .expect("the denied call still resolved");
-    let payload = serde_json::to_value(after.payload()).unwrap();
+    let payload = serde_json::to_value(after).unwrap()["payload"].clone();
     assert_eq!(payload["tool"]["name"], json!("read_file"));
     assert_eq!(payload["tool"]["call_id"], json!("call-1"));
     assert_eq!(payload["status"], json!("failed"));
     assert_eq!(payload["capability"]["operation"], json!("read_path"));
     assert_eq!(payload["capability"]["path"], json!("/work/notes.txt"));
+    assert_eq!(
+        after
+            .after_tool_use_capability()
+            .map(|capability| { serde_json::to_value(capability).unwrap()["operation"].clone() }),
+        Some(json!("read_path"))
+    );
 }
 
 struct SilentTool;
@@ -454,8 +460,9 @@ async fn a_tool_without_capabilities_reports_a_null_capability() {
         .iter()
         .find(|envelope| envelope.event() == HookEventKind::AfterToolUse)
         .expect("the call resolved");
-    let payload = serde_json::to_value(after.payload()).unwrap();
+    let payload = serde_json::to_value(after).unwrap()["payload"].clone();
     assert!(payload["capability"].is_null());
+    assert_eq!(after.after_tool_use_capability(), None);
 }
 
 #[tokio::test]

@@ -5,14 +5,17 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde::Serialize;
+use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use crate::{HookEventId, RunId, SessionId};
 
 use super::{
     bounds::{bounded_string, HookPayloadBounds, HookTruncation},
     event::HookEventKind,
-    payload::{HookPayload, HookWorkspace},
+    payload::{
+        AfterToolUsePayload, HookCapability, HookFailure, HookPayload, HookTool, HookToolStatus,
+        HookWorkspace,
+    },
 };
 
 /// Wire schema version of [`HookEnvelope`]. Handlers must reject other values.
@@ -81,7 +84,13 @@ pub struct HookIdentity {
 /// The envelope is a serialization contract: the runtime writes it, handlers
 /// read it. Everything a handler needs to attribute and bound the event lives
 /// here, and nothing secret does.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): move `after_tool_use` capability onto
+/// [`AfterToolUsePayload`] as a public field and remove
+/// [`Self::after_tool_use_capability`].
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookEnvelope {
     schema_version: u32,
     event: HookEventKind,
@@ -90,9 +99,13 @@ pub struct HookEnvelope {
     identity: HookIdentity,
     host_labels: HookHostLabels,
     workspace: HookWorkspace,
-    #[serde(rename = "bounds")]
     truncation: HookTruncation,
     payload: HookPayload,
+    /// First capability an `after_tool_use` call passed to authorize.
+    ///
+    /// Stored beside the exhaustive payload so this minor does not add a field
+    /// to [`AfterToolUsePayload`]. Serialized as `payload.capability`.
+    after_tool_use_capability: Option<HookCapability>,
 }
 
 impl HookEnvelope {
@@ -132,6 +145,18 @@ impl HookEnvelope {
         &self.payload
     }
 
+    /// First capability an `after_tool_use` call passed to authorize.
+    ///
+    /// `None` when this event is not `after_tool_use`, or when the call never
+    /// authorized. Prefer this accessor until the next major folds the field
+    /// into [`AfterToolUsePayload`].
+    pub fn after_tool_use_capability(&self) -> Option<&HookCapability> {
+        match &self.payload {
+            HookPayload::AfterToolUse(_) => self.after_tool_use_capability.as_ref(),
+            _ => None,
+        }
+    }
+
     /// Serializes the envelope, refusing to emit one larger than `bounds`.
     ///
     /// Field-level truncation happens while the payload is built; this is the
@@ -147,6 +172,43 @@ impl HookEnvelope {
             }));
         }
         Ok(encoded)
+    }
+}
+
+#[derive(Serialize)]
+struct AfterToolUseWire<'a> {
+    tool: &'a HookTool,
+    capability: Option<&'a HookCapability>,
+    status: HookToolStatus,
+    failure: &'a Option<HookFailure>,
+    duration_ms: Option<u64>,
+}
+
+impl Serialize for HookEnvelope {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut state = serializer.serialize_struct("HookEnvelope", 9)?;
+        state.serialize_field("schema_version", &self.schema_version)?;
+        state.serialize_field("event", &self.event)?;
+        state.serialize_field("event_id", &self.event_id)?;
+        state.serialize_field("timestamp_unix_ms", &self.timestamp_unix_ms)?;
+        state.serialize_field("identity", &self.identity)?;
+        state.serialize_field("host_labels", &self.host_labels)?;
+        state.serialize_field("workspace", &self.workspace)?;
+        state.serialize_field("bounds", &self.truncation)?;
+        match &self.payload {
+            HookPayload::AfterToolUse(payload) => state.serialize_field(
+                "payload",
+                &AfterToolUseWire {
+                    tool: &payload.tool,
+                    capability: self.after_tool_use_capability.as_ref(),
+                    status: payload.status,
+                    failure: &payload.failure,
+                    duration_ms: payload.duration_ms,
+                },
+            )?,
+            other => state.serialize_field("payload", other)?,
+        }
+        state.end()
     }
 }
 
@@ -261,6 +323,22 @@ impl HookEnvelopeBuilder {
     }
 
     pub(crate) fn finish(self, payload: HookPayload) -> HookEnvelope {
+        self.assemble(payload, None)
+    }
+
+    pub(crate) fn finish_after_tool_use(
+        self,
+        payload: AfterToolUsePayload,
+        capability: Option<HookCapability>,
+    ) -> HookEnvelope {
+        self.assemble(HookPayload::AfterToolUse(payload), capability)
+    }
+
+    fn assemble(
+        self,
+        payload: HookPayload,
+        after_tool_use_capability: Option<HookCapability>,
+    ) -> HookEnvelope {
         HookEnvelope {
             schema_version: HOOK_SCHEMA_VERSION,
             event: payload.event(),
@@ -271,6 +349,7 @@ impl HookEnvelopeBuilder {
             workspace: self.workspace,
             truncation: self.truncation,
             payload,
+            after_tool_use_capability,
         }
     }
 }

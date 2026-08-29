@@ -388,7 +388,6 @@ fn tool_identity_comes_from_the_capability_source() {
 fn matchers_read_tool_name_and_status_from_the_payload() {
     let after = HookPayload::AfterToolUse(AfterToolUsePayload {
         tool: tool("bash", Some("c1")),
-        capability: None,
         status: HookToolStatus::Failed,
         failure: None,
         duration_ms: Some(12),
