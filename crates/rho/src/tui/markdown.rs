@@ -16,11 +16,11 @@ mod txm;
 #[cfg(test)]
 pub(crate) use mermaid::PHASE_CHAIN_FLOWCHART;
 
-use code_fence::mermaid_opening_fence;
 pub(in crate::tui) use code_fence::{
-    is_closing_fence, opening_fence_info_token, parse_opening_fence, update_code_block_state,
-    CodeFence, CodeFenceState,
+    is_closing_fence, mermaid_opening_fence, opening_fence_info_token, parse_opening_fence,
+    update_code_block_state, CodeFence, CodeFenceState,
 };
+pub(in crate::tui) use mermaid::{streaming_mermaid_prefix, StreamingMermaidPrefix};
 
 use super::markdown_image::standalone_markdown_image;
 use super::syntax::BlockHighlighter;
@@ -326,6 +326,34 @@ fn is_markdown_divider(line: &str) -> bool {
 
 fn markdown_divider(width: usize) -> Line<'static> {
     Line::from(Span::styled("─".repeat(width.max(1)), Theme::dim()))
+}
+
+/// Header, centered art, and COPY metadata for a live mermaid prefix.
+pub(in crate::tui) fn mermaid_streaming_panel(
+    title: &'static str,
+    art: Vec<Line<'static>>,
+    source: String,
+    width: usize,
+) -> RenderedMarkdown {
+    let mut lines = Vec::new();
+    let mut code_blocks = Vec::new();
+    push_closed_panel(
+        &mut lines,
+        &mut code_blocks,
+        CodeBlockCopyButton::Visible,
+        width,
+        ClosedPanel::Art {
+            title,
+            lines: art,
+            source,
+        },
+    );
+    RenderedMarkdown {
+        lines,
+        code_blocks,
+        image_sources: Vec::new(),
+        image_rows: Vec::new(),
+    }
 }
 
 /// Emit a closed art panel (mermaid, display math) with header and copy state.

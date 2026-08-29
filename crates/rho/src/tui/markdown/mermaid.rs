@@ -109,6 +109,61 @@ pub(super) fn render_closed_fence(source: String, inner_width: usize) -> ClosedP
     }
 }
 
+/// Live-stream classification of a complete-line mermaid prefix.
+///
+/// Transient failures retry on the next completed line. Terminal and unsafe
+/// failures latch the fence to source until it closes.
+#[derive(Debug)]
+pub(in crate::tui) enum StreamingMermaidPrefix {
+    Diagram {
+        title: &'static str,
+        lines: Vec<Line<'static>>,
+    },
+    Transient,
+    Terminal,
+    Unsafe,
+}
+
+pub(in crate::tui) fn streaming_mermaid_prefix(
+    source: &str,
+    inner_width: usize,
+) -> StreamingMermaidPrefix {
+    match render_mermaid(source, inner_width) {
+        MermaidRender::Rendered(lines) => StreamingMermaidPrefix::Diagram {
+            title: "MERMAID",
+            lines,
+        },
+        MermaidRender::Clipped {
+            mut lines,
+            hidden_columns,
+        } => {
+            lines.push(Line::from(Span::styled(
+                format!("▶ {hidden_columns} cols clipped"),
+                Theme::dim(),
+            )));
+            StreamingMermaidPrefix::Diagram {
+                title: "MERMAID · CLIPPED",
+                lines,
+            }
+        }
+        MermaidRender::Fallback(reason) => match reason {
+            MermaidFallback::Blank | MermaidFallback::Malformed => {
+                StreamingMermaidPrefix::Transient
+            }
+            MermaidFallback::UnsafeContent => StreamingMermaidPrefix::Unsafe,
+            MermaidFallback::SourceBytes
+            | MermaidFallback::SourceLines
+            | MermaidFallback::Unsupported
+            | MermaidFallback::StructuralLimit
+            | MermaidFallback::Panic
+            | MermaidFallback::OutputLines
+            | MermaidFallback::OutputCells
+            | MermaidFallback::TooWide
+            | MermaidFallback::AnsiOutput => StreamingMermaidPrefix::Terminal,
+        },
+    }
+}
+
 pub(super) fn render_mermaid(source: &str, inner_width: usize) -> MermaidRender {
     match std::panic::catch_unwind(AssertUnwindSafe(|| render_inner(source, inner_width))) {
         Ok(result) => result,

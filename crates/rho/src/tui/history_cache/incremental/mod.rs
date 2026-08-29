@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use ratatui::text::Line;
 
+mod mermaid_tail;
+
 use super::{
     append_entry_segment_into, incremental_entry_source, CachedCodeBlock, CachedEntry,
     EntryContentRender,
@@ -46,6 +48,7 @@ enum IncrementalTail {
     None,
     Fence(OpenFenceTail),
     Table(OpenTableTail),
+    Mermaid(mermaid_tail::OpenMermaidTail),
 }
 
 #[derive(Clone)]
@@ -68,19 +71,39 @@ struct OpenTableTail {
 }
 
 pub(super) fn incremental_cache_for(
+    cached: &mut CachedEntry,
     entry: &Entry,
     is_last: bool,
     width: usize,
-    content_line_count: usize,
-) -> Option<IncrementalEntryCache> {
+    has_trailing_blank: bool,
+) {
     // Only the last entry can be appended to, so only its cache is ever read
     // (see `entry_appended`). Building one for every entry would re-render
     // each streamed message's stable prefix a second time.
     if !is_last {
-        return None;
+        return;
     }
-    let (text, render) = incremental_entry_source(entry)?;
-    Some(inspect_incremental(text, render, width, content_line_count))
+    let Some((text, render)) = incremental_entry_source(entry) else {
+        return;
+    };
+    let content_line_count = cached
+        .lines
+        .len()
+        .saturating_sub(usize::from(has_trailing_blank));
+    let mut cache = inspect_incremental(text, render, width, content_line_count);
+    if let IncrementalTail::Mermaid(tail) = &mut cache.tail {
+        let reasoning = matches!(entry, Entry::Reasoning(_));
+        mermaid_tail::overlay_diagram(
+            cached,
+            text,
+            render,
+            width,
+            has_trailing_blank,
+            reasoning,
+            tail,
+        );
+    }
+    cached.incremental = Some(cache);
 }
 
 /// Continue an open fence or table, or promote newly completed blocks.
@@ -152,6 +175,11 @@ fn inspect_open_tail(
     let tail = &text[tail_start..];
     if tail.is_empty() {
         return IncrementalTail::None;
+    }
+    if let Some(mermaid) =
+        mermaid_tail::open_from_source(text, tail_start, stable_line_count, width)
+    {
+        return IncrementalTail::Mermaid(mermaid);
     }
     if let Some(fence) = open_fence_from_source(
         text,
@@ -297,6 +325,16 @@ fn extend_open_tail(
         IncrementalTail::Table(tail) => {
             extend_open_table(entry, text, has_trailing_blank, tail).map(IncrementalTail::Table)
         }
+        IncrementalTail::Mermaid(tail) => mermaid_tail::extend(
+            entry,
+            text,
+            render,
+            width,
+            has_trailing_blank,
+            reasoning,
+            tail,
+        )
+        .map(IncrementalTail::Mermaid),
         IncrementalTail::None => None,
     };
     match next_tail {

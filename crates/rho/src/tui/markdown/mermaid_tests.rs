@@ -116,6 +116,33 @@ fn applies_source_model_and_canvas_limits_before_or_after_painting() {
     );
 }
 
+// Covers: live mermaid streaming must retry blank/malformed prefixes and latch
+// the rest, including dropping last-good art on unsafe content.
+// Owner: mermaid streaming classification
+#[test]
+fn streaming_prefix_classifies_retryable_and_sticky_fallbacks() {
+    assert!(matches!(
+        streaming_mermaid_prefix("  \n", 80),
+        StreamingMermaidPrefix::Transient
+    ));
+    assert!(matches!(
+        streaming_mermaid_prefix("flowchart LR\nA -->", 80),
+        StreamingMermaidPrefix::Transient
+    ));
+    assert!(matches!(
+        streaming_mermaid_prefix("gantt\ntitle Plan", 240),
+        StreamingMermaidPrefix::Terminal
+    ));
+    assert!(matches!(
+        streaming_mermaid_prefix("flowchart LR\nclick A \"https://example.com\"", 80),
+        StreamingMermaidPrefix::Unsafe
+    ));
+    assert!(matches!(
+        streaming_mermaid_prefix("flowchart LR\nA --> B", 80),
+        StreamingMermaidPrefix::Diagram { .. }
+    ));
+}
+
 #[test]
 fn rejects_blank_malformed_unsafe_and_link_bearing_sources() {
     assert_eq!(

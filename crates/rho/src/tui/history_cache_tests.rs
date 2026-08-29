@@ -479,7 +479,7 @@ fn incrementally_keeps_prose_after_a_table() {
 }
 
 #[test]
-fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
+fn streams_mermaid_then_caches_the_closed_diagram_by_width() {
     // Rendered lines are compared across separate render passes; hold the lock
     // so theme-switching tests cannot restyle the second pass mid-test.
     let _guard = crate::tui::theme::theme_test_lock();
@@ -498,15 +498,8 @@ fn streams_mermaid_as_source_then_caches_the_closed_diagram_by_width() {
         &mut cached_lines,
         &no_images,
     );
-    assert_eq!(
-        cached_lines,
-        entry_lines(
-            &entries[0],
-            80,
-            10,
-            crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT
-        )
-    );
+    // An open mermaid fence may already show live art. Closing is the source
+    // of truth and must match a full render.
 
     let Entry::Assistant(text) = &mut entries[0] else {
         unreachable!();
