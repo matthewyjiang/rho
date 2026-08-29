@@ -155,7 +155,7 @@ Rho exports discovered tools as:
 mcp__<server_identity>__<tool_name>
 ```
 
-Components containing only ASCII letters, digits, and `_` remain unchanged, unless they contain the `__` separator. Rho encodes every other component, and components beginning with the reserved `_rho_` prefix, as `_rho_` followed by the lowercase hexadecimal UTF-8 bytes. This encoding keeps distinct server and remote tool names distinct. Descriptions include the owning server identity for diagnostics. `allow` is an optional allowlist; `deny` always wins.
+Components containing only ASCII letters, digits, and `_` remain unchanged unless they contain the `__` separator or start or end with `_`. Rho encodes every other component as `_rho_` followed by the lowercase hexadecimal UTF-8 bytes. The leading-underscore rule reserves that prefix for the codec. This encoding keeps distinct server and remote tool names distinct. Descriptions include the owning server identity for diagnostics. `allow` is an optional allowlist; `deny` always wins.
 
 MCP tool calls use Rho's native tool registry, cancellation, and shutdown path. MCP error results and transport failures become tool failures without stopping sibling servers.
 

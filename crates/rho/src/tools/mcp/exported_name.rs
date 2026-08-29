@@ -34,9 +34,10 @@ fn encode_component(value: &str) -> String {
     let already_safe = value
         .bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
-    // `__` joins the two components, so a component holding one would make
-    // the exported name ambiguous. The prefix is reserved for this codec.
-    if already_safe && !value.starts_with(ESCAPE_PREFIX) && !value.contains("__") {
+    // `__` joins the components. A component containing it or beginning or ending
+    // with `_` could merge with that separator. The leading rule also reserves the
+    // escape prefix for this codec.
+    if already_safe && !value.contains("__") && !value.starts_with('_') && !value.ends_with('_') {
         return value.to_string();
     }
 
@@ -101,6 +102,10 @@ mod tests {
             ("git-hub", "issues/list"),
             ("devtools__validator", "lint"),
             ("_rho_6162", "tool"),
+            ("a_", "tool"),
+            ("a", "_tool"),
+            ("_a", "lint"),
+            ("srv", "tool_"),
         ] {
             let name = namespaced_tool_name(server, tool);
             assert_eq!(
