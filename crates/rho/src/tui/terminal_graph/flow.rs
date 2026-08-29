@@ -340,7 +340,8 @@ pub(in crate::tui) fn layout_canvas(
         let (from, to) = (&placed[edge.from], &placed[edge.to]);
         let adjacent = to.rank == from.rank + 1;
         let bus = plan.band_end[from.rank] + plan.edge_bus[i];
-        let lane = plan.lane_base + plan.edge_lane[i];
+        let skip_lane = plan.lane_base + plan.edge_lane[i];
+        let back_lane = plan.back_lane_base + plan.edge_lane[i];
         let label_lines = edge_labels[i].as_slice();
         match (vertical, adjacent) {
             (true, true) => route_forward(
@@ -359,13 +360,13 @@ pub(in crate::tui) fn layout_canvas(
                 edge,
                 SkipPath {
                     exit_row: bus,
-                    lane_x: lane,
+                    lane_x: skip_lane,
                     join_row: plan.edge_join[i],
                     source_anchor: plan.source_anchors[edge.from],
                 },
                 label_lines,
             ),
-            (true, false) => route_back(&mut canvas, from, to, edge, lane, label_lines),
+            (true, false) => route_back(&mut canvas, from, to, edge, back_lane, label_lines),
             (false, true) => route_forward_lr(
                 &mut canvas,
                 from,
@@ -375,7 +376,7 @@ pub(in crate::tui) fn layout_canvas(
                 plan.source_anchors[edge.from],
                 label_lines,
             ),
-            (false, false) => route_back_lr(&mut canvas, from, to, edge, lane, label_lines),
+            (false, false) => route_back_lr(&mut canvas, from, to, edge, skip_lane, label_lines),
         }
     }
 

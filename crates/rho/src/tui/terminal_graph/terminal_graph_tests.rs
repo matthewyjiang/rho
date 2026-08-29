@@ -361,6 +361,49 @@ fn skip_edges_join_the_shared_fan_in_bus_row() {
     );
 }
 
+// Covers: skip (forward) and back (feedback) detours take opposite sides so
+// their stems cannot share ink or sit in adjacent right-lane columns.
+// Owner: terminal graph lane hierarchy
+#[test]
+fn skip_and_back_edges_use_opposite_side_lanes() {
+    let style = NodeStyle::default();
+    let graph = Graph::top_down(
+        vec![
+            Node::rectangular("start", style),
+            Node::rectangular("mid", style),
+            Node::rectangular("end", style),
+        ],
+        vec![
+            Edge::directed(0, 1),
+            Edge::directed(1, 2),
+            Edge::directed(0, 2),
+            labeled_edge(2, 1, "no"),
+        ],
+        RankOrdering::PreserveInput,
+    )
+    .unwrap();
+
+    let art = graph.render(Style::default()).unwrap();
+    assert_eq!(
+        art.plain_lines,
+        vec![
+            "      ┌───────┐".to_owned(),
+            "      │ start │".to_owned(),
+            "      └───┬───┘".to_owned(),
+            "          ├─────┐".to_owned(),
+            "          ▼     │".to_owned(),
+            "   no  ┌─────┐  │".to_owned(),
+            "┌─────▶│ mid │  │".to_owned(),
+            "│      └──┬──┘  │".to_owned(),
+            "│         ├─────┘".to_owned(),
+            "│         ▼".to_owned(),
+            "│      ┌─────┐".to_owned(),
+            "└──────┤ end │".to_owned(),
+            "       └─────┘".to_owned(),
+        ]
+    );
+}
+
 const WRAPPED_EDGE_LABEL: &str = "when the renderer reports a width failure";
 
 fn labeled_edge(from: usize, to: usize, label: &str) -> Edge {

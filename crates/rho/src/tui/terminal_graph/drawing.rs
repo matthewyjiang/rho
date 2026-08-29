@@ -305,26 +305,27 @@ pub(in crate::tui) fn route_back(
     lane_x: usize,
     label_lines: &[String],
 ) {
-    let sx = from.x + from.w - 1;
+    let sx = from.x;
     let sy = from.cy;
-    let tx = to.x + to.w - 1;
+    let tx = to.x;
     let tyc = to.cy;
+    let head_col = tx.saturating_sub(1);
 
-    canvas.junction(sx, sy, R);
+    canvas.junction(sx, sy, L);
     canvas.seg_h(sy, sx, lane_x);
     canvas.seg_v(lane_x, sy, tyc);
-    canvas.seg_h(tyc, tx + 1, lane_x);
+    canvas.seg_h(tyc, head_col, lane_x);
 
     if edge.head_to == Head::None {
-        canvas.add_bits(tx + 1, tyc, R);
+        canvas.add_bits(head_col, tyc, L);
     } else {
-        canvas.set(tx + 1, tyc, head_glyph(edge.head_to, '◄'), Cls::Edge);
+        canvas.set(head_col, tyc, head_glyph(edge.head_to, '▶'), Cls::Edge);
     }
     if edge.head_from != Head::None {
-        canvas.set(sx, sy, head_glyph(edge.head_from, '◄'), Cls::Edge);
+        canvas.set(sx, sy, head_glyph(edge.head_from, '▶'), Cls::Edge);
     }
 
-    place_label_block_right(canvas, label_lines, tyc.saturating_sub(1), lane_x);
+    place_label_block_right(canvas, label_lines, tyc.saturating_sub(1), head_col);
 }
 
 pub(in crate::tui) fn route_forward_lr(

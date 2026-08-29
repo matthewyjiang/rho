@@ -69,9 +69,10 @@ malformed input stay as source.
 ### Flow and state layout
 
 Flowcharts and state diagrams keep the direction you asked for (`TD`, `LR`, and
-so on) when it fits. When the normal layout is wider than the pane, Rho wraps
-node labels and edge labels more tightly and lays the diagram out again, down
-to a readable limit. Compaction never shortens or truncates node label text.
+so on) when it fits. In top-down diagrams, forward edges that skip ranks travel
+on the right and loops return on the left, so those stems cannot share ink.
+When the normal layout is wider than the pane, Rho wraps node labels and edge
+labels more tightly and lays the diagram out again, down to a readable limit. Compaction never shortens or truncates node label text.
 Edge labels wrap to a few stacked rows; group titles, and sequence participant
 labels compact with an ellipsis when they cannot fit the reserved slot.
 If a horizontal flowchart still cannot fit, Rho retries top-down. If even that

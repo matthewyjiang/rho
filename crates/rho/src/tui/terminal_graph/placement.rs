@@ -207,7 +207,7 @@ pub(super) fn place_td(
     placed: &mut [Placed],
 ) -> RoutePlan {
     let centers = assign_positions(by_rank, &sizes.lay_w, GAP_X, &graph.edges, ranks);
-    let source_anchors = td_source_anchors(graph, ranks, &centers);
+    let mut source_anchors = td_source_anchors(graph, ranks, &centers);
     let skips = skip_edges(graph, ranks, &centers);
 
     let mut edge_bus = vec![0usize; graph.edges.len()];
@@ -243,8 +243,8 @@ pub(super) fn place_td(
         })
         .collect();
     let label_rows = label_gap_rows(graph, ranks, edge_labels, max_rank);
-    // Back-edge labels stack upward from the target's center in the right
-    // margin. Pad the canvas top so those rows are not clipped or dropped.
+    // Back-edge labels stack upward from the target's center in the left
+    // gutter. Pad the canvas top so those rows are not clipped or dropped.
     let back_pad = max_extra_label_rows(graph, edge_labels, |edge| {
         edge.from != edge.to && ranks[edge.to] < ranks[edge.from]
     });
@@ -280,6 +280,52 @@ pub(super) fn place_td(
             }
         }
     }
+    // Forward skips stay on the right; feedback and same-rank edges take the
+    // left. Opposite sides are the hierarchy: a loop cannot share ink with a
+    // skip, so the two stems cannot look glued together.
+    let lanes = lane_spans(graph, ranks, placed, LaneAxis::Vertical);
+    let (skip_spans, back_spans): (Vec<LaneSpan>, Vec<LaneSpan>) = lanes
+        .into_iter()
+        .partition(|span| ranks[span.to] > ranks[span.from] + 1);
+
+    let mut edge_lane = vec![0usize; graph.edges.len()];
+    let (skip_assigned, skip_count) = if skip_spans.is_empty() {
+        (Vec::new(), 0)
+    } else {
+        assign_tracks(&skip_spans)
+    };
+    for (idx, slot) in skip_assigned {
+        edge_lane[idx] = slot;
+    }
+    let (back_assigned, back_count) = if back_spans.is_empty() {
+        (Vec::new(), 0)
+    } else {
+        assign_tracks(&back_spans)
+    };
+    for (idx, slot) in back_assigned {
+        edge_lane[idx] = slot;
+    }
+
+    let back_label_w = graph
+        .edges
+        .iter()
+        .enumerate()
+        .filter(|(_, edge)| edge.from != edge.to && ranks[edge.to] <= ranks[edge.from])
+        .map(|(index, _)| label_block_width(&edge_labels[index]))
+        .max()
+        .unwrap_or(0);
+    let left_margin = back_lane_margin(back_count, back_label_w);
+    if left_margin > 0 {
+        for node in placed.iter_mut() {
+            node.x += left_margin;
+            node.cx += left_margin;
+        }
+        diagram_w += left_margin;
+        for anchor in source_anchors.iter_mut() {
+            *anchor += left_margin;
+        }
+    }
+
     let mut content_w = diagram_w;
     for (index, e) in graph.edges.iter().enumerate() {
         if e.from == e.to {
@@ -289,24 +335,18 @@ pub(super) fn place_td(
         if lw == 0 {
             continue;
         }
-        if ranks[e.to] == ranks[e.from] + 1 {
+        // Adjacent and skip labels sit beside the target, not in a side gutter.
+        if ranks[e.to] > ranks[e.from] {
             content_w = content_w.max(placed[e.to].cx + 2 + lw);
-        } else {
-            content_w = content_w.max(diagram_w + lw + 1);
         }
     }
 
-    let mut edge_lane = vec![0usize; graph.edges.len()];
-    let lanes = lane_spans(graph, ranks, placed, LaneAxis::Vertical);
-    let (canvas_w, lane_base) = if lanes.is_empty() {
+    let (canvas_w, lane_base) = if skip_count == 0 {
         (content_w, 0)
     } else {
-        let (assigned, count) = assign_tracks(&lanes);
-        for (idx, slot) in assigned {
-            edge_lane[idx] = slot;
-        }
-        (content_w + 1 + count, content_w + 1)
+        (content_w + 1 + skip_count, content_w + 1)
     };
+    let back_lane_base = 0;
 
     let mut edge_join = vec![0usize; graph.edges.len()];
     for skip in &skips {
@@ -319,6 +359,7 @@ pub(super) fn place_td(
         edge_bus,
         source_anchors,
         lane_base,
+        back_lane_base,
         edge_lane,
         edge_join,
     }
@@ -457,6 +498,7 @@ pub(super) fn place_lr(
         edge_bus,
         source_anchors,
         lane_base,
+        back_lane_base: 0,
         edge_lane,
         edge_join: vec![0; graph.edges.len()],
     }
@@ -468,12 +510,27 @@ pub(super) struct RoutePlan {
     pub(super) edge_bus: Vec<usize>,
     pub(super) source_anchors: Vec<usize>,
     pub(super) lane_base: usize,
+    /// Left-side TD feedback lanes. Zero when the diagram has no back edges;
+    /// LR layout always leaves this at zero and keeps detours on one side.
+    pub(super) back_lane_base: usize,
     pub(super) edge_lane: Vec<usize>,
     /// Absolute row of the target's fan-in bus for rank-skipping top-down
     /// edges; zero for every other edge. The skip edge joins that shared row
     /// from the right lane, so joined edges share ink and separate edges do
     /// not.
     pub(super) edge_join: Vec<usize>,
+}
+
+/// Columns to the left of the nodes: one per back-lane track, a label gutter
+/// when those edges are labeled, and one column for the incoming arrow.
+fn back_lane_margin(back_count: usize, back_label_w: usize) -> usize {
+    if back_count == 0 {
+        0
+    } else if back_label_w == 0 {
+        back_count + 1
+    } else {
+        back_count + back_label_w + 2
+    }
 }
 
 /// Greedily pack items into the fewest tracks, in the given order: each item
