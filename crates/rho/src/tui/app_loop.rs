@@ -94,8 +94,6 @@ impl App {
             self.poll_custom_provider_models();
             needs_redraw |= self.poll_syntax_warmup();
             self.poll_herdr_graphics();
-            self.poll_github_pr();
-            self.maybe_refresh_github_pr_on_interval();
             needs_redraw |= self.poll_prompt_history();
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_interactive_login(terminal, agent).await?;
@@ -171,8 +169,7 @@ impl App {
             } else if subagents_active || self.process_panel.is_active() {
                 Duration::from_millis(500)
             } else {
-                self.github_pr_next_poll_in()
-                    .unwrap_or(Duration::from_secs(3600))
+                Duration::from_secs(3600)
             };
             let redraw_on_timeout = self.animation_active(Instant::now());
             let timeout = self.event_poll_timeout(idle_timeout);
@@ -233,14 +230,12 @@ impl App {
             }
             Err(event) => match event {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    self.note_github_pr_input();
                     self.clear_selections();
                     self.subagent_panel.clear_pointer_state();
                     self.process_panel.clear_pointer_state();
                     self.handle_key(key, terminal, agent).await?;
                 }
                 Event::Paste(text) => {
-                    self.note_github_pr_input();
                     self.input_ui.cancel_pointer_click_sequence();
                     self.flush_pending_paste_burst();
                     let text = normalize_paste(&text);
@@ -272,6 +267,7 @@ impl App {
         // Some Windows hosts drop application mouse tracking on focus
         // changes; re-assert so wheel scrolling keeps working.
         mouse_capture::reassert();
+        self.refresh_workspace_on_focus();
     }
 
     pub(super) fn event_poll_timeout(&self, idle_timeout: Duration) -> Duration {
@@ -429,6 +425,7 @@ impl App {
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);
+        changed |= self.poll_github_pr();
         self.restore_mcp_hold_activity_if_needed(agent.mcp_connect_pending());
         if self.activity_status().is_some() {
             self.turn.start_loading_if_needed();

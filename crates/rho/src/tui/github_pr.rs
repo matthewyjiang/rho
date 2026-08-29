@@ -5,15 +5,9 @@
 //! is confirmed absence and clears a painted chip; other failures leave it.
 //!
 //! After startup, a probe runs when HEAD moves, when a finished shell command
-//! looks like `gh pr` or `git push`, and on a 90s timer while the session has
-//! had input in the last hour. The timer also re-reads HEAD so a checkout in
-//! another pane still updates. Terminal focus is not a trigger.
+//! looks like `gh pr` or `git push`, and when the terminal regains focus.
 
-use std::{
-    path::Path,
-    process::Stdio,
-    time::{Duration, Instant},
-};
+use std::{path::Path, process::Stdio, time::Duration};
 
 use futures_util::FutureExt;
 use serde::Deserialize;
@@ -31,16 +25,6 @@ const GH_PR_FIELDS: &str = "number,reviewDecision,mergeStateStatus,statusCheckRo
 /// Measured five serial in-tree calls: 701–1123ms (median 1036ms). 8s is a
 /// tripwire (~7× max observed), not a latency target.
 const GH_PR_VIEW_BUDGET: Duration = Duration::from_secs(8);
-
-/// Background `gh pr view` while the session is active.
-///
-/// Claude Code documents ~90s while you are in the session. One probe is ~1s
-/// (see [`GH_PR_VIEW_BUDGET`]), so 90s is ~80× that cost, not a latency guess.
-const GH_PR_POLL_INTERVAL: Duration = Duration::from_secs(90);
-
-/// Stop interval probes after this long without a key or paste. The next input
-/// starts them again. Same idle cutoff Claude Code documents.
-const GH_PR_POLL_IDLE_STOP: Duration = Duration::from_secs(3600);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct GithubPr {
@@ -224,54 +208,28 @@ fn cwd_extra(pr: &GithubPr) -> CwdExtra {
     )
 }
 
-fn next_poll_in(
-    now: Instant,
-    last_started: Option<Instant>,
-    last_input: Instant,
-    pending: bool,
-    has_branch: bool,
-    matrix: bool,
-) -> Option<Duration> {
-    if matrix || pending || !has_branch {
-        return None;
-    }
-    if now.saturating_duration_since(last_input) >= GH_PR_POLL_IDLE_STOP {
-        return None;
-    }
-    let Some(started) = last_started else {
-        return Some(Duration::ZERO);
-    };
-    Some(GH_PR_POLL_INTERVAL.saturating_sub(now.saturating_duration_since(started)))
-}
-
-/// `gh` global flags that take a value before the subcommand.
-const GH_FLAGS_WITH_VALUE: &[&str] = &["-R", "--repo", "--hostname", "--dir"];
-/// `git` global flags that take a value before the subcommand.
-const GIT_FLAGS_WITH_VALUE: &[&str] = &["-C", "-c", "--git-dir", "--work-tree"];
-
 /// True when a finished shell command likely created, closed, or retargeted
 /// the current-branch PR.
 ///
-/// One split over `command`, no allocation. Finds `gh pr` or `git push` after
-/// a path/`.exe` basename and known global flags. Not limited to argv0, so
-/// `sudo gh pr create` and `cd src && git push` match. A hit only starts a
-/// background `gh pr view`.
+/// One split over `command`, no allocation. Finds `gh` later followed by `pr`,
+/// or `git` later followed by `push`, after a path/`.exe` basename. Not limited
+/// to argv0, so `sudo gh pr create` and `cd src && git push` match. A hit only
+/// starts a background `gh pr view`.
 fn command_may_change_pr(command: &str) -> bool {
-    let mut tokens = command
+    let mut saw_gh = false;
+    let mut saw_git = false;
+    for token in command
         .split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')' | '`'))
-        .filter(|token| !token.is_empty());
-    while let Some(token) = tokens.next() {
+        .filter(|token| !token.is_empty())
+    {
         let name = tool_name(token);
         if name.eq_ignore_ascii_case("gh") {
-            if next_positional(&mut tokens, GH_FLAGS_WITH_VALUE)
-                .is_some_and(|subcommand| subcommand.eq_ignore_ascii_case("pr"))
-            {
-                return true;
-            }
-        } else if name.eq_ignore_ascii_case("git")
-            && next_positional(&mut tokens, GIT_FLAGS_WITH_VALUE)
-                .is_some_and(|subcommand| subcommand.eq_ignore_ascii_case("push"))
-        {
+            saw_gh = true;
+        } else if saw_gh && name.eq_ignore_ascii_case("pr") {
+            return true;
+        } else if name.eq_ignore_ascii_case("git") {
+            saw_git = true;
+        } else if saw_git && name.eq_ignore_ascii_case("push") {
             return true;
         }
     }
@@ -285,29 +243,6 @@ fn tool_name(token: &str) -> &str {
         .unwrap_or(name)
 }
 
-fn next_positional<'a>(
-    tokens: &mut impl Iterator<Item = &'a str>,
-    flags_with_value: &[&str],
-) -> Option<&'a str> {
-    loop {
-        let token = tokens.next()?;
-        if token == "--" {
-            return tokens.next();
-        }
-        if !token.starts_with('-') {
-            return Some(token);
-        }
-        let flag = token.split_once('=').map_or(token, |(name, _)| name);
-        if !token.contains('=')
-            && flags_with_value
-                .iter()
-                .any(|known| known.eq_ignore_ascii_case(flag))
-        {
-            tokens.next()?;
-        }
-    }
-}
-
 impl App {
     pub(super) fn start_github_pr_fetch(&mut self) {
         if smoke_injection::matrix_enabled()
@@ -317,7 +252,6 @@ impl App {
             return;
         }
         let cwd = self.info.runtime.cwd.clone();
-        self.github_pr_last_started = Some(Instant::now());
         self.pending_github_pr = Some(tokio::spawn(async move { lookup(&cwd).await }));
     }
 
@@ -328,8 +262,14 @@ impl App {
         self.start_github_pr_fetch();
     }
 
-    pub(super) fn note_github_pr_input(&mut self) {
-        self.github_pr_last_input = Instant::now();
+    /// Focus: HEAD may have moved in the background, and PR checks/review
+    /// may have changed too.
+    pub(super) fn refresh_workspace_on_focus(&mut self) {
+        if self.statusline.refresh_git_branch() {
+            self.restart_github_pr_fetch();
+        } else {
+            self.start_github_pr_fetch();
+        }
     }
 
     /// After a finished shell or tool command. Refetch when HEAD moved, or
@@ -344,42 +284,12 @@ impl App {
         }
     }
 
-    pub(super) fn maybe_refresh_github_pr_on_interval(&mut self) {
-        if next_poll_in(
-            Instant::now(),
-            self.github_pr_last_started,
-            self.github_pr_last_input,
-            self.pending_github_pr.is_some(),
-            self.statusline.branch().is_some(),
-            smoke_injection::matrix_enabled(),
-        )
-        .is_some_and(|wait| wait.is_zero())
-        {
-            if self.statusline.refresh_git_branch() {
-                self.restart_github_pr_fetch();
-            } else {
-                self.start_github_pr_fetch();
-            }
-        }
-    }
-
-    pub(super) fn github_pr_next_poll_in(&self) -> Option<Duration> {
-        next_poll_in(
-            Instant::now(),
-            self.github_pr_last_started,
-            self.github_pr_last_input,
-            self.pending_github_pr.is_some(),
-            self.statusline.branch().is_some(),
-            smoke_injection::matrix_enabled(),
-        )
-    }
-
-    pub(super) fn poll_github_pr(&mut self) {
+    pub(super) fn poll_github_pr(&mut self) -> bool {
         let Some(handle) = self.pending_github_pr.as_mut() else {
-            return;
+            return false;
         };
         let Some(result) = handle.now_or_never() else {
-            return;
+            return false;
         };
         self.pending_github_pr = None;
         if let Ok(lookup) = result {
@@ -389,6 +299,7 @@ impl App {
                 GithubPrPaint::Show(pr) => self.statusline.update_cwd_extra(Some(cwd_extra(&pr))),
             }
         }
+        true
     }
 }
 

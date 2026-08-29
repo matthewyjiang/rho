@@ -694,7 +694,6 @@ impl App {
                 }
                 Err(first_event) => match first_event {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        self.note_github_pr_input();
                         self.clear_selections();
                         self.clear_rail_pointer_state();
                         if key.code == KeyCode::Esc {
@@ -757,7 +756,6 @@ impl App {
                         }
                     }
                     Event::Paste(text) => {
-                        self.note_github_pr_input();
                         self.input_ui.cancel_pointer_click_sequence();
                         self.flush_pending_paste_burst();
                         let text = normalize_paste(&text);
