@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::{Datelike, NaiveDate};
+use chrono::{Datelike, NaiveDate, TimeDelta};
 use mermaid_rs_renderer::ir::{GanttStatus, GanttTask};
 use unicode_width::UnicodeWidthStr;
 
@@ -23,8 +23,15 @@ pub(super) struct GanttModel {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum GanttAxis {
-    Calendar { start: f32, end: f32 },
-    Relative { start: f32, end: f32 },
+    Calendar {
+        origin: NaiveDate,
+        start: f32,
+        end: f32,
+    },
+    Relative {
+        start: f32,
+        end: f32,
+    },
 }
 
 impl GanttAxis {
@@ -72,16 +79,21 @@ pub(super) fn complexity(ir: &mermaid_rs_renderer::Graph) -> (usize, usize, usiz
 /// origin + cursor. The parser lowercases `after` tokens and keeps declared
 /// ids as written, so lookup is case-insensitive.
 pub(super) fn schedule(tasks: &[GanttTask], title: Option<String>) -> GanttModel {
-    let mut parsed_starts: HashMap<String, f32> = HashMap::new();
-    let mut origin: Option<f32> = None;
+    let mut parsed_ce: HashMap<String, i32> = HashMap::new();
+    let mut origin_ce: Option<i32> = None;
     for task in tasks {
         if let Some(start) = task.start.as_deref().and_then(parse_gantt_date) {
-            let start = start.num_days_from_ce() as f32;
-            parsed_starts.insert(task_key(&task.id), start);
-            origin = Some(origin.map_or(start, |value| value.min(start)));
+            let start = start.num_days_from_ce();
+            parsed_ce.insert(task_key(&task.id), start);
+            origin_ce = Some(origin_ce.map_or(start, |value| value.min(start)));
         }
     }
-    let calendar = origin.is_some();
+    let origin_date = origin_ce.and_then(NaiveDate::from_num_days_from_ce_opt);
+    let origin_ce = origin_ce.unwrap_or(0);
+    let parsed_starts: HashMap<String, f32> = parsed_ce
+        .into_iter()
+        .map(|(id, start)| (id, (start - origin_ce) as f32))
+        .collect();
 
     let mut timing: HashMap<String, (f32, f32)> = HashMap::new();
     let mut cursor = 0.0_f32;
@@ -95,7 +107,7 @@ pub(super) fn schedule(tasks: &[GanttTask], title: Option<String>) -> GanttModel
             .as_deref()
             .and_then(parse_gantt_duration)
             .unwrap_or(DEFAULT_DURATION)
-            .max(0.1);
+            .max(0.0);
         let start = parsed_starts
             .get(&task_key(&task.id))
             .copied()
@@ -104,7 +116,7 @@ pub(super) fn schedule(tasks: &[GanttTask], title: Option<String>) -> GanttModel
                     .as_deref()
                     .and_then(|after_id| timing.get(&task_key(after_id)).map(|(_, end)| *end))
             })
-            .unwrap_or(origin.unwrap_or(0.0) + cursor);
+            .unwrap_or(cursor);
         let end = start + duration;
         timing.insert(task_key(&task.id), (start, end));
         cursor = cursor.max(end + 0.5);
@@ -131,8 +143,9 @@ pub(super) fn schedule(tasks: &[GanttTask], title: Option<String>) -> GanttModel
         time_end = time_start + 1.0;
     }
 
-    let axis = if calendar {
+    let axis = if let Some(origin) = origin_date {
         GanttAxis::Calendar {
+            origin,
             start: time_start,
             end: time_end,
         }
@@ -278,7 +291,8 @@ fn axis_footer(
 
 fn axis_label(value: f32, axis: GanttAxis) -> String {
     match axis {
-        GanttAxis::Calendar { .. } => NaiveDate::from_num_days_from_ce_opt(value.round() as i32)
+        GanttAxis::Calendar { origin, .. } => origin
+            .checked_add_signed(TimeDelta::days(value.round() as i64))
             .map(|date| date.format("%Y-%m-%d").to_string())
             .unwrap_or_else(|| format!("{}", value.round() as i32)),
         GanttAxis::Relative { start, .. } => format!("{}d", (value - start).round() as i32),

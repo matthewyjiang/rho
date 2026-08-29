@@ -25,6 +25,22 @@ fn task(
     }
 }
 
+fn task_timing(model: &super::GanttModel, name: &str) -> (f32, f32) {
+    model
+        .rows
+        .iter()
+        .find_map(|row| match row {
+            GanttRow::Task {
+                label,
+                start,
+                duration,
+                ..
+            } if label == name => Some((*start, *duration)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing task {name}"))
+}
+
 fn task_starts(model: &super::GanttModel) -> Vec<(&str, i32, i32)> {
     model
         .rows
@@ -106,6 +122,18 @@ fn schedules_dates_after_chains_and_duration_units() {
         task_starts(&mixed_case),
         vec![("Parser", 0, 2), ("Painter", 2, 2)]
     );
+
+    let subday = schedule(
+        &[
+            task("p1", "Parser", Some("2026-01-01"), Some("90m"), None),
+            task("p2", "Painter", None, Some("2d"), Some("p1")),
+        ],
+        None,
+    );
+    let (parser_start, parser_duration) = task_timing(&subday, "Parser");
+    let (painter_start, _) = task_timing(&subday, "Painter");
+    assert!((parser_duration - 90.0 / 1_440.0).abs() < 1e-6);
+    assert!((painter_start - (parser_start + parser_duration)).abs() < 1e-6);
 }
 
 // Covers: short task names must reserve the label floor and fit mid-width panes
