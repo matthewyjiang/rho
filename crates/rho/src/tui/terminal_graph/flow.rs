@@ -26,6 +26,23 @@ const FLOW_WRAP_STEP: usize = 4;
 // and route padding.
 const MIN_SELF_LOOP_WIDTH: usize = 7;
 
+fn plain_box_size(shape: NodeShape, lines: &[String]) -> (usize, usize) {
+    let width = lines
+        .iter()
+        .map(|line| line.width())
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let height = lines.len().max(1);
+    match shape {
+        // Label plus a blank row so outgoing junctions do not land on the word.
+        NodeShape::Text => (width, height + 1),
+        NodeShape::Rect | NodeShape::Round | NodeShape::Diamond => {
+            (width + 2 * PAD + 2, height + 2)
+        }
+    }
+}
+
 fn flow_wrap_widths() -> impl Iterator<Item = usize> {
     (MIN_FLOW_WRAP_WIDTH..=WRAP_WIDTH)
         .rev()
@@ -190,19 +207,7 @@ pub(in crate::tui) fn layout_canvas(
                     + 2 * PAD
                     + 2
             }
-            NodeExtra::Plain => {
-                let content = wrapped[i]
-                    .iter()
-                    .map(|line| line.width())
-                    .max()
-                    .unwrap_or(1)
-                    .max(1);
-                if graph.nodes[i].shape == NodeShape::Text {
-                    content
-                } else {
-                    content + 2 * PAD + 2
-                }
-            }
+            NodeExtra::Plain => plain_box_size(graph.nodes[i].shape, &wrapped[i]).0,
         })
         .collect();
     let box_h: Vec<usize> = (0..n)
@@ -220,17 +225,7 @@ pub(in crate::tui) fn layout_canvas(
                     + filled.saturating_sub(1)
                     + 2
             }
-            NodeExtra::Plain => {
-                if graph.nodes[i].shape == NodeShape::Text {
-                    let has_out = graph
-                        .edges
-                        .iter()
-                        .any(|edge| edge.from == i && edge.from != edge.to);
-                    wrapped[i].len().max(1) + usize::from(has_out)
-                } else {
-                    wrapped[i].len() + 2
-                }
-            }
+            NodeExtra::Plain => plain_box_size(graph.nodes[i].shape, &wrapped[i]).1,
         })
         .collect();
 

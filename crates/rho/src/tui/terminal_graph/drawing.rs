@@ -193,9 +193,9 @@ pub(in crate::tui) fn draw_caption(
     caption: &str,
     node_index: Option<usize>,
 ) {
-    let Some(row) = p.y.checked_sub(1) else {
-        return;
-    };
+    let row =
+        p.y.checked_sub(1)
+            .expect("layout must reserve a row above a captioned node");
     let text_class = node_index.map(Cls::NodeText).unwrap_or(Cls::Text);
     let text = fit_label(caption, canvas.w.max(1));
     let tw = text.width();
