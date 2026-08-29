@@ -3,6 +3,9 @@
 //! `gh pr view` runs off the UI thread. Missing `gh`, a timed-out probe, and
 //! matrix fixtures stay silent. A non-zero `gh` that reports no pull request
 //! is confirmed absence and clears a painted chip; other failures leave it.
+//!
+//! After startup, a probe runs when HEAD moves, when a finished shell command
+//! looks like `gh pr` or `git push`, and when the terminal regains focus.
 
 use std::{path::Path, process::Stdio, time::Duration};
 
@@ -205,6 +208,46 @@ fn cwd_extra(pr: &GithubPr) -> CwdExtra {
     )
 }
 
+/// True when a finished shell command likely created, closed, or retargeted
+/// the current-branch PR.
+///
+/// One split over `command`, no allocation. Finds `gh` later followed by `pr`,
+/// or `git` later followed by `push`, after a path/`.exe` basename. Not limited
+/// to argv0, so `sudo gh pr create` and `cd src && git push` match. A hit only
+/// starts a background `gh pr view`.
+fn command_may_change_pr(command: &str) -> bool {
+    let mut saw_gh = false;
+    let mut saw_git = false;
+    for token in command
+        .split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')' | '`'))
+        .filter(|token| !token.is_empty())
+    {
+        let name = tool_name(token);
+        if name.eq_ignore_ascii_case("gh") {
+            saw_gh = true;
+        } else if saw_gh && name.eq_ignore_ascii_case("pr") {
+            return true;
+        } else if name.eq_ignore_ascii_case("git") {
+            saw_git = true;
+        } else if saw_git && name.eq_ignore_ascii_case("push") {
+            return true;
+        }
+    }
+    false
+}
+
+fn tool_name(token: &str) -> &str {
+    let name = token.rsplit(['/', '\\']).next().unwrap_or(token);
+    let Some(stem) = name.len().checked_sub(4).and_then(|end| name.get(..end)) else {
+        return name;
+    };
+    if name[stem.len()..].eq_ignore_ascii_case(".exe") {
+        stem
+    } else {
+        name
+    }
+}
+
 impl App {
     pub(super) fn start_github_pr_fetch(&mut self) {
         if smoke_injection::matrix_enabled()
@@ -234,20 +277,24 @@ impl App {
         }
     }
 
-    /// After a command that can move HEAD. Do not spawn `gh` unless the
-    /// branch actually changed; every tool finish is too expensive.
-    pub(super) fn refresh_git_after_command(&mut self) {
+    /// After a finished shell or tool command. Refetch when HEAD moved, or
+    /// when the command itself can create or retarget the current-branch PR.
+    pub(super) fn refresh_git_after_command(&mut self, command: Option<&str>) {
         if self.statusline.refresh_git_branch() {
+            self.restart_github_pr_fetch();
+            return;
+        }
+        if command.is_some_and(command_may_change_pr) {
             self.restart_github_pr_fetch();
         }
     }
 
-    pub(super) fn poll_github_pr(&mut self) {
+    pub(super) fn poll_github_pr(&mut self) -> bool {
         let Some(handle) = self.pending_github_pr.as_mut() else {
-            return;
+            return false;
         };
         let Some(result) = handle.now_or_never() else {
-            return;
+            return false;
         };
         self.pending_github_pr = None;
         if let Ok(lookup) = result {
@@ -257,6 +304,7 @@ impl App {
                 GithubPrPaint::Show(pr) => self.statusline.update_cwd_extra(Some(cwd_extra(&pr))),
             }
         }
+        true
     }
 }
 

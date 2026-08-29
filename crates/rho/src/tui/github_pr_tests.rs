@@ -1,8 +1,8 @@
 use pretty_assertions::assert_eq;
 
 use super::{
-    classify_gh_pr_view, paint_for_current_branch, parse_gh_pr_view, GithubPr, GithubPrLookup,
-    GithubPrPaint, GithubPrProbe, GithubPrTone,
+    classify_gh_pr_view, command_may_change_pr, paint_for_current_branch, parse_gh_pr_view,
+    GithubPr, GithubPrLookup, GithubPrPaint, GithubPrProbe, GithubPrTone,
 };
 
 #[test]
@@ -158,5 +158,34 @@ fn paint_for_current_branch_clears_confirmed_absence_only() {
     ];
     for (current, lookup, expected) in cases {
         assert_eq!(paint_for_current_branch(current, lookup), expected);
+    }
+}
+
+#[test]
+fn command_may_change_pr_detects_gh_pr_and_git_push() {
+    // Covers: gh pr / git push after flags and wrappers refetch; other git/gh do not
+    // Owner: github pr probe
+    let cases = [
+        ("gh pr create --title x", true),
+        ("gh --repo o/r pr create", true),
+        ("gh --hostname github.com pr merge", true),
+        ("/usr/bin/gh pr merge", true),
+        ("sudo gh pr create", true),
+        ("FOO=1 gh pr view", true),
+        ("cd src && gh pr create", true),
+        ("git push origin HEAD", true),
+        ("git -C repo push", true),
+        ("git --no-pager push", true),
+        ("git.exe push", true),
+        ("git.ExE push", true),
+        (r"C:\Git\cmd\git.EXE push", true),
+        ("gh issue create", false),
+        ("git commit -m ready", false),
+        ("git --no-pager status", false),
+        ("git status", false),
+        ("ls", false),
+    ];
+    for (command, expected) in cases {
+        assert_eq!(command_may_change_pr(command), expected, "{command}");
     }
 }
