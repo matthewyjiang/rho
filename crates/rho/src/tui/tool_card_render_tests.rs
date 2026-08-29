@@ -496,6 +496,9 @@ fn toggle_check_does_not_highlight() {
 #[test]
 fn grep_body_highlights_language_and_match() {
     crate::tui::syntax::warm_syntax_set();
+    // Styles are derived from the theme at paint time and re-derived at assert
+    // time; hold the lock so theme-switching tests cannot flip them in between.
+    let _guard = crate::tui::theme::theme_test_lock();
     let card = ToolCard::new(
         ToolStatus::Ok,
         ToolFamily::FileCommand,

@@ -58,13 +58,17 @@ readable art on a core subset:
 | Sequence diagrams | Yes (core subset) |
 | Class diagrams | Yes (core subset) |
 | Entity-relationship diagrams | Yes (core subset) |
-| Pie, gantt, gitGraph, C4, mindmap, journey, timeline, and other kinds | Source fallback |
+| gitGraph | Yes (core subset; vertical lane graph) |
+| Gantt | Yes (core subset; task bars) |
+| Mindmap | Yes (core subset; indented tree) |
+| Pie, C4, journey, timeline, and other kinds | Source fallback |
 
 This is not full Mermaid.js syntax or visual parity. The painter prefers a
 readable approximation over a source dump: styles are ignored, common shapes
 map onto rectangle / round / diamond, parallel edges share a route with joined
-labels, and a too-wide `LR`/`RL` flowchart retries as `TD`. Exotic families and
-malformed input stay as source.
+labels, and a too-wide `LR`/`RL` flowchart retries as `TD`. State `[*]` markers
+paint as borderless `start` / `end` words so edges still have somewhere to
+attach. Exotic families and malformed input stay as source.
 
 ### Flow and state layout
 
@@ -124,8 +128,8 @@ Over a cap, the panel keeps the source and shows `MERMAID · TOO LARGE`.
 
 ## Writing diagrams for the TUI
 
-Prefer small graphs. Stick to flowchart, state, sequence, class, or ER shapes
-when the diagram should paint in the terminal. Common extras such as `[(db)]`
+Prefer small graphs. Stick to flowchart, state, sequence, class, ER, gitGraph,
+gantt, or mindmap shapes when the diagram should paint in the terminal. Common extras such as `[(db)]`
 nodes, `classDef`, sequence `alt`/`activate`, and long edge labels now paint
 as approximations. Larger or exotic Mermaid families still ship as readable
 source for copy-out and for the docs site.

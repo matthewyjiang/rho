@@ -301,9 +301,9 @@ fn open_mermaid_fence_paints_complete_line_prefix() {
     );
 
     let mut fence_state = CodeFenceState::default();
-    let sticky = render_markdown("```mermaid\ngantt\ntitle Plan\n", 60, &mut fence_state);
+    let sticky = render_markdown("```mermaid\npie\n\"Dogs\" : 5\n", 60, &mut fence_state);
     let sticky_text = sticky.lines.iter().map(line_text).collect::<Vec<_>>();
-    assert!(sticky_text.iter().any(|line| line.contains("gantt")));
+    assert!(sticky_text.iter().any(|line| line.contains("pie")));
 
     let mut fence_state = CodeFenceState::default();
     let closed = render_markdown(
