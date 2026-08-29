@@ -150,12 +150,38 @@ fn lane_spans(graph: &Graph, ranks: &[usize], placed: &[Placed], axis: LaneAxis)
         .collect()
 }
 
+/// Widest painted row of a wrapped edge label; zero for unlabeled edges.
+fn label_block_width(lines: &[String]) -> usize {
+    lines.iter().map(|line| line.width()).max().unwrap_or(0)
+}
+
+/// Extra rows each rank gap must add so stacked edge-label rows have room
+/// above their target's head row. Single-line labels need no extra row, which
+/// keeps existing single-line geometry byte-identical.
+fn label_gap_rows(
+    graph: &Graph,
+    ranks: &[usize],
+    edge_labels: &[Vec<String>],
+    max_rank: usize,
+) -> Vec<usize> {
+    let mut rows = vec![0usize; max_rank + 1];
+    for (index, edge) in graph.edges.iter().enumerate() {
+        let lines = edge_labels[index].len();
+        if edge.from != edge.to && ranks[edge.to] > ranks[edge.from] && lines > 1 {
+            let gap = ranks[edge.to] - 1;
+            rows[gap] = rows[gap].max(lines - 1);
+        }
+    }
+    rows
+}
+
 pub(super) fn place_td(
     ranks: &[usize],
     max_rank: usize,
     by_rank: &[Vec<usize>],
     sizes: &NodeSizes,
     graph: &Graph,
+    edge_labels: &[Vec<String>],
     placed: &mut [Placed],
 ) -> RoutePlan {
     let centers = assign_positions(by_rank, &sizes.lay_w, GAP_X, &graph.edges, ranks);
@@ -194,9 +220,10 @@ pub(super) fn place_td(
                 .unwrap_or(3)
         })
         .collect();
+    let label_rows = label_gap_rows(graph, ranks, edge_labels, max_rank);
     let mut rank_y = vec![0usize; max_rank + 1];
     for r in 1..=max_rank {
-        let gap = GAP_Y.max(bus_tracks[r - 1] + 1);
+        let gap = GAP_Y.max(bus_tracks[r - 1] + 1) + label_rows[r - 1];
         rank_y[r] = rank_y[r - 1] + rank_h[r - 1] + gap;
     }
     let canvas_h = rank_y[max_rank] + rank_h[max_rank];
@@ -226,17 +253,18 @@ pub(super) fn place_td(
         }
     }
     let mut content_w = diagram_w;
-    for e in &graph.edges {
+    for (index, e) in graph.edges.iter().enumerate() {
         if e.from == e.to {
             continue;
         }
-        if let Some(label) = &e.label {
-            let lw = label.width().min(MAX_LABEL);
-            if ranks[e.to] == ranks[e.from] + 1 {
-                content_w = content_w.max(placed[e.to].cx + 2 + lw);
-            } else {
-                content_w = content_w.max(diagram_w + lw + 1);
-            }
+        let lw = label_block_width(&edge_labels[index]);
+        if lw == 0 {
+            continue;
+        }
+        if ranks[e.to] == ranks[e.from] + 1 {
+            content_w = content_w.max(placed[e.to].cx + 2 + lw);
+        } else {
+            content_w = content_w.max(diagram_w + lw + 1);
         }
     }
 
@@ -274,6 +302,7 @@ pub(super) fn place_lr(
     by_rank: &[Vec<usize>],
     sizes: &NodeSizes,
     graph: &Graph,
+    edge_labels: &[Vec<String>],
     placed: &mut [Placed],
 ) -> RoutePlan {
     let col_w: Vec<usize> = by_rank
@@ -281,11 +310,20 @@ pub(super) fn place_lr(
         .map(|row| row.iter().map(|&i| sizes.box_w[i]).max().unwrap_or(0))
         .collect();
 
+    // Wrapped labels shrink the inter-column gap to the widest painted row;
+    // self-loop labels remain single-line beside the node.
     let max_label = graph
         .edges
         .iter()
-        .filter(|e| e.from == e.to || ranks[e.to] == ranks[e.from] + 1)
-        .filter_map(|e| e.label.as_ref().map(|l| l.width().min(MAX_LABEL)))
+        .enumerate()
+        .filter(|(_, e)| e.from == e.to || ranks[e.to] == ranks[e.from] + 1)
+        .filter_map(|(index, e)| {
+            if e.from == e.to {
+                e.label.as_ref().map(|l| l.width().min(MAX_LABEL))
+            } else {
+                Some(label_block_width(&edge_labels[index])).filter(|&w| w > 0)
+            }
+        })
         .max()
         .unwrap_or(0);
     let base_gap = (GAP_X + 1).max(max_label + 3);

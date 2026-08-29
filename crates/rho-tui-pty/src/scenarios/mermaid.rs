@@ -30,18 +30,23 @@ pub(super) const MERMAID_FLOWCHART_RESIZE_STEPS: &[Step] = &[
     Step::Custom(wait_until_diagram_art),
     Step::Phase("narrow_pane"),
     Step::Resize { rows: 40, cols: 32 },
-    // Wait for the reflowed fallback, not merely a quiet frame. Resize can leave
-    // the previous wide art clipped until history rebuilds at the new width.
-    // 32 columns truncates the header before "NARROW" to keep COPY on the row.
+    // 32 columns cannot hold even the TD relayout, but instead of a source
+    // dump the diagram now clips at the right edge under a CLIPPED title with
+    // a marker row counting the hidden columns.
     Step::WaitText {
-        text: "PANE TOO",
+        text: "cols clipped",
         timeout: SETTLE,
     },
+    Step::Custom(assert_narrow_pane_clips_art),
+    Step::Phase("tiny_pane"),
+    Step::Resize { rows: 40, cols: 20 },
+    // Below the clip floor (~24 inner columns) the source fallback remains.
+    // The panel header truncates at this width, so wait on the source itself.
     Step::WaitText {
         text: "flowchart LR",
         timeout: SETTLE,
     },
-    Step::Custom(assert_narrow_pane_explains_fallback),
+    Step::Custom(assert_tiny_pane_falls_back_to_source),
     Step::Phase("restore_pane"),
     Step::Resize {
         rows: 28,
@@ -75,21 +80,36 @@ fn diagram_art_visible(harness: &PtyHarness) -> bool {
         && screen.contains("Phase 5")
 }
 
-fn assert_narrow_pane_explains_fallback(harness: &mut PtyHarness) -> Result<()> {
+fn assert_narrow_pane_clips_art(harness: &mut PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
     ensure!(
-        screen.contains("PANE TOO"),
-        "narrow pane fallback did not explain itself:\n{}",
+        screen.contains("CLIPPED"),
+        "narrow pane did not use the clipped title:\n{}",
         harness.screen().debug_dump()
     );
     ensure!(
+        !screen.contains("flowchart LR"),
+        "narrow pane dumped source instead of clipped art:\n{}",
+        harness.screen().debug_dump()
+    );
+    ensure!(
+        screen.contains("┌") || screen.contains("╭"),
+        "narrow pane lost the diagram art:\n{}",
+        harness.screen().debug_dump()
+    );
+    Ok(())
+}
+
+fn assert_tiny_pane_falls_back_to_source(harness: &mut PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    ensure!(
         screen.contains("flowchart LR"),
-        "narrow pane fallback dropped the mermaid source:\n{}",
+        "tiny pane fallback dropped the mermaid source:\n{}",
         harness.screen().debug_dump()
     );
     ensure!(
         !screen.contains("┌") && !screen.contains("╭"),
-        "narrow pane still showed diagram art or block borders:\n{}",
+        "tiny pane still showed diagram art or block borders:\n{}",
         harness.screen().debug_dump()
     );
     Ok(())

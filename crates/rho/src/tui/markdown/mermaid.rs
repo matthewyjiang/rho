@@ -1,8 +1,11 @@
 use std::panic::AssertUnwindSafe;
 
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 
-use super::super::{render::display_width, theme::Theme};
+use super::super::{
+    render::{display_width, truncate_to_display_width},
+    theme::Theme,
+};
 use super::panel::ClosedPanel;
 use crate::tui::terminal_graph::{GraphStyles, Oversize};
 
@@ -25,6 +28,11 @@ const MAX_GROUPS: usize = 24;
 const MAX_DETAILS: usize = 1_024;
 const MAX_RENDERED_LINES: usize = 4_096;
 const MAX_RENDERED_CELLS: usize = 2_000_000;
+/// Narrowest pane where a horizontally clipped diagram still reads as one.
+/// Receipt: `mermaid_width_receipts` measures real fixtures rendering fully at
+/// 18-70 columns; below roughly one tight node box plus a border (12+4 wrap
+/// plus frame) a clipped canvas carries no structure, so source wins.
+const MIN_CLIP_WIDTH: usize = 24;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum MermaidFallback {
@@ -63,6 +71,13 @@ impl MermaidFallback {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum MermaidRender {
     Rendered(Vec<Line<'static>>),
+    /// Art laid out wider than the pane and cut at the right edge. The marker
+    /// row appended by [`render_closed_fence`] names the hidden columns; COPY
+    /// still yields the full source.
+    Clipped {
+        lines: Vec<Line<'static>>,
+        hidden_columns: usize,
+    },
     Fallback(MermaidFallback),
 }
 
@@ -73,6 +88,20 @@ pub(super) fn render_closed_fence(source: String, inner_width: usize) -> ClosedP
             lines,
             source,
         },
+        MermaidRender::Clipped {
+            mut lines,
+            hidden_columns,
+        } => {
+            lines.push(Line::from(Span::styled(
+                format!("▶ {hidden_columns} cols clipped"),
+                Theme::dim(),
+            )));
+            ClosedPanel::Art {
+                title: "MERMAID · CLIPPED",
+                lines,
+                source,
+            }
+        }
         MermaidRender::Fallback(reason) => ClosedPanel::SourceFallback {
             title: reason.panel_title(),
             source,
@@ -135,11 +164,11 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
         edge_label: style,
         node_styles: Vec::new(),
     };
-    let result = layout_model(&model, diagram_policy, &styles, inner_width);
+    let result = layout_model(&model, diagram_policy, &styles, Some(inner_width));
     let art = match result {
         Ok(art) => art,
         Err(Oversize::Width) => {
-            return MermaidRender::Fallback(MermaidFallback::TooWide);
+            return render_clipped(&model, diagram_policy, &styles, inner_width);
         }
         Err(Oversize::Cells) => {
             return MermaidRender::Fallback(MermaidFallback::OutputCells);
@@ -151,11 +180,87 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
     MermaidRender::Rendered(art.styled_lines)
 }
 
-fn layout_model(
+/// Failure-path floor: lay the diagram out without a width cap and cut it at
+/// the pane's right edge. Runs only after every bounded compaction rung fails,
+/// so fitting diagrams pay nothing. Cell/line caps still bound the unbounded
+/// layout.
+///
+/// Known limit: layout centers parents over their children, so on very wide
+/// single ranks a centered node can fall right of the window. The clip keeps
+/// the left edge because TD flow anchors entry nodes there; a follow-the-root
+/// window is future work if receipts show it matters.
+fn render_clipped(
     model: &model::TerminalModel,
     diagram_policy: policy::DiagramPolicy,
     styles: &GraphStyles,
     inner_width: usize,
+) -> MermaidRender {
+    if inner_width < MIN_CLIP_WIDTH {
+        return MermaidRender::Fallback(MermaidFallback::TooWide);
+    }
+    let art = match layout_model(model, diagram_policy, styles, /*max_width*/ None) {
+        Ok(art) => art,
+        // Unbounded layout cannot fail on width; anything else keeps the
+        // pre-clip fallback taxonomy.
+        Err(Oversize::Width) => return MermaidRender::Fallback(MermaidFallback::TooWide),
+        Err(Oversize::Cells) => return MermaidRender::Fallback(MermaidFallback::OutputCells),
+    };
+    let full_width = art
+        .plain_lines
+        .iter()
+        .map(|line| display_width(line))
+        .max()
+        .unwrap_or(0);
+    let hidden_columns = full_width.saturating_sub(inner_width);
+    if hidden_columns == 0 {
+        // Bounded layout failed but the unbounded one fits: still art.
+        return MermaidRender::Rendered(art.styled_lines);
+    }
+    let plain_clipped: Vec<String> = art
+        .plain_lines
+        .iter()
+        .map(|line| truncate_to_display_width(line, inner_width).into_owned())
+        .collect();
+    if let Err(fallback) = validate_output(&plain_clipped, inner_width) {
+        return fallback;
+    }
+    let lines = art
+        .styled_lines
+        .into_iter()
+        .map(|line| clip_line_to_width(line, inner_width))
+        .collect();
+    MermaidRender::Clipped {
+        lines,
+        hidden_columns,
+    }
+}
+
+/// Cut a styled line at a display-column boundary, preserving span styles.
+fn clip_line_to_width(line: Line<'static>, width: usize) -> Line<'static> {
+    let mut used = 0usize;
+    let mut spans = Vec::new();
+    for span in line.spans {
+        if used >= width {
+            break;
+        }
+        let span_width = display_width(span.content.as_ref());
+        if used + span_width <= width {
+            used += span_width;
+            spans.push(span);
+        } else {
+            let cut = truncate_to_display_width(span.content.as_ref(), width - used).into_owned();
+            used += display_width(&cut);
+            spans.push(Span::styled(cut, span.style));
+        }
+    }
+    Line::from(spans)
+}
+
+fn layout_model(
+    model: &model::TerminalModel,
+    diagram_policy: policy::DiagramPolicy,
+    styles: &GraphStyles,
+    max_width: Option<usize>,
 ) -> Result<MermaidArt, Oversize> {
     match diagram_policy {
         policy::DiagramPolicy::PaintSequence => sequence::layout_sequence(
@@ -164,7 +269,7 @@ fn layout_model(
                 .as_ref()
                 .expect("sequence policy has sequence model"),
             styles,
-            Some(inner_width),
+            max_width,
         ),
         policy::DiagramPolicy::PaintClass | policy::DiagramPolicy::PaintEr => flow::render_class(
             &model.graph,
@@ -173,10 +278,10 @@ fn layout_model(
                 .as_ref()
                 .expect("class policy has class model"),
             styles,
-            Some(inner_width),
+            max_width,
         ),
         policy::DiagramPolicy::PaintFlow | policy::DiagramPolicy::PaintState => {
-            flow::layout_flow(&model.graph, styles, Some(inner_width))
+            flow::layout_flow(&model.graph, styles, max_width)
         }
         policy::DiagramPolicy::RawFallback => unreachable!("handled before model conversion"),
     }
@@ -236,3 +341,7 @@ pub(crate) const PHASE_CHAIN_FLOWCHART: &str = concat!(
 #[cfg(test)]
 #[path = "mermaid_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "mermaid_width_receipts.rs"]
+mod width_receipts;

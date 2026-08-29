@@ -2,17 +2,24 @@ use super::*;
 use crate::tui::terminal_graph::{MAX_LINES, WRAP_WIDTH};
 use pretty_assertions::assert_eq;
 
+fn plain(lines: &[ratatui::text::Line<'static>]) -> Vec<String> {
+    lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        })
+        .collect()
+}
+
 fn rendered(source: &str, width: usize) -> Vec<String> {
     match render_mermaid(source, width) {
-        MermaidRender::Rendered(lines) => lines
-            .iter()
-            .map(|line| {
-                line.spans
-                    .iter()
-                    .map(|span| span.content.as_ref())
-                    .collect()
-            })
-            .collect(),
+        MermaidRender::Rendered(lines) => plain(&lines),
+        MermaidRender::Clipped { hidden_columns, .. } => {
+            panic!("unexpected clip for {source:?}: {hidden_columns} columns hidden")
+        }
         MermaidRender::Fallback(reason) => {
             panic!("unexpected fallback for {source:?}: {reason:?}")
         }
@@ -189,6 +196,57 @@ fn paints_common_approximations() {
             assert!(art.contains(needle), "{name}: missing {needle:?} in\n{art}");
         }
     }
+}
+
+// Covers: a diagram wider than every compaction rung must clip, not dump source
+// Owner: mermaid render fallback policy
+#[test]
+fn clips_oversized_diagram_instead_of_source_fallback() {
+    // Wide by construction: one rank of many siblings never compacts under
+    // any wrap rung, and TD relayout does not help a single rank.
+    let wide = format!(
+        "flowchart TD\nR[root]\n{}",
+        (0..12)
+            .map(|index| format!("R --> N{index}[sibling number {index}]"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    match render_mermaid(&wide, 60) {
+        MermaidRender::Clipped {
+            lines,
+            hidden_columns,
+        } => {
+            assert!(hidden_columns > 0);
+            let plain_lines = plain(&lines);
+            assert!(plain_lines.iter().all(|line| display_width(line) <= 60));
+            // The visible window must keep readable structure: node boxes and
+            // edge ink. (A centered parent can land outside the window; see
+            // the root-anchoring note in `render_clipped`.)
+            let art = plain_lines.join("\n");
+            assert!(art.contains("sibling number 0"), "{art}");
+            assert!(art.contains('▼'), "{art}");
+        }
+        other => panic!("expected clip, got {other:?}"),
+    }
+    // Below the clip floor the source fallback remains.
+    assert_eq!(
+        render_mermaid(&wide, MIN_CLIP_WIDTH - 1),
+        MermaidRender::Fallback(MermaidFallback::TooWide)
+    );
+}
+
+// Covers: multi-word edge labels must wrap instead of forcing a source fallback
+// Owner: terminal graph flow layout
+#[test]
+fn wraps_edge_labels_when_pane_is_tight() {
+    let source = "flowchart TD\n\
+        A[start] -->|when the renderer reports a width failure| B[fallback]";
+    let lines = rendered(source, 46);
+    let art = lines.join("\n");
+    // The label must be present across rows rather than truncated to one row.
+    assert!(art.contains("when the renderer"), "{art}");
+    assert!(art.contains("width failure"), "{art}");
+    assert!(lines.iter().all(|line| display_width(line) <= 46));
 }
 
 // Covers: a too-wide LR chain must restack as TD instead of dumping source

@@ -12,7 +12,8 @@ use super::{
     },
     ordering::order_ranks,
     painter::{
-        GraphArt, GraphStyles, Oversize, MAX_CANVAS_CELLS, MAX_LABEL, MAX_LINES, PAD, WRAP_WIDTH,
+        GraphArt, GraphStyles, Oversize, EDGE_LABEL_MAX_LINES, MAX_CANVAS_CELLS, MAX_LABEL,
+        MAX_LINES, PAD, WRAP_WIDTH,
     },
     placement::{place_lr, place_td},
     Compartment, Direction, EdgeLine, Graph, RankOrdering,
@@ -140,6 +141,20 @@ pub(in crate::tui) fn layout_canvas(
         .iter()
         .map(|node| wrap_label(&node.label, wrap_width, MAX_LINES))
         .collect();
+    // Edge labels compact with the same ladder rung as node labels so the
+    // retry loop shrinks label corridors too, not just boxes. Self-loop labels
+    // stay single-line beside their loop.
+    let edge_label_width = wrap_width.min(MAX_LABEL);
+    let edge_labels: Vec<Vec<String>> = graph
+        .edges
+        .iter()
+        .map(|edge| match &edge.label {
+            Some(label) if edge.from != edge.to => {
+                wrap_label(label, edge_label_width, EDGE_LABEL_MAX_LINES)
+            }
+            _ => Vec::new(),
+        })
+        .collect();
     let mut box_w: Vec<usize> = (0..n)
         .map(|i| match &extras[i] {
             NodeExtra::Frame(sub) => {
@@ -244,9 +259,25 @@ pub(in crate::tui) fn layout_canvas(
 
     let vertical = matches!(graph.direction, Direction::TopDown | Direction::BottomUp);
     let plan = if vertical {
-        place_td(&ranks, max_rank, &by_rank, &sizes, graph, &mut placed)
+        place_td(
+            &ranks,
+            max_rank,
+            &by_rank,
+            &sizes,
+            graph,
+            &edge_labels,
+            &mut placed,
+        )
     } else {
-        place_lr(&ranks, max_rank, &by_rank, &sizes, graph, &mut placed)
+        place_lr(
+            &ranks,
+            max_rank,
+            &by_rank,
+            &sizes,
+            graph,
+            &edge_labels,
+            &mut placed,
+        )
     };
     let (canvas_w, canvas_h) = plan.canvas;
 
@@ -300,6 +331,7 @@ pub(in crate::tui) fn layout_canvas(
         let adjacent = to.rank == from.rank + 1;
         let bus = plan.band_end[from.rank] + plan.edge_bus[i];
         let lane = plan.lane_base + plan.edge_lane[i];
+        let label_lines = edge_labels[i].as_slice();
         match (vertical, adjacent) {
             (true, true) => route_forward(
                 &mut canvas,
@@ -308,6 +340,7 @@ pub(in crate::tui) fn layout_canvas(
                 edge,
                 bus,
                 plan.source_anchors[edge.from],
+                label_lines,
             ),
             (true, false) if to.rank > from.rank + 1 => route_skip(
                 &mut canvas,
@@ -320,8 +353,9 @@ pub(in crate::tui) fn layout_canvas(
                     join_row: plan.edge_join[i],
                     source_anchor: plan.source_anchors[edge.from],
                 },
+                label_lines,
             ),
-            (true, false) => route_back(&mut canvas, from, to, edge, lane),
+            (true, false) => route_back(&mut canvas, from, to, edge, lane, label_lines),
             (false, true) => route_forward_lr(
                 &mut canvas,
                 from,
@@ -329,8 +363,9 @@ pub(in crate::tui) fn layout_canvas(
                 edge,
                 bus,
                 plan.source_anchors[edge.from],
+                label_lines,
             ),
-            (false, false) => route_back_lr(&mut canvas, from, to, edge, lane),
+            (false, false) => route_back_lr(&mut canvas, from, to, edge, lane, label_lines),
         }
     }
 
