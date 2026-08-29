@@ -404,6 +404,17 @@ fn sampled_diff_wash_beats_github_overlay_on_light_and_dark() {
     let add = palette.diff_add_wash.unwrap().rgb.unwrap();
     assert_ne!(add, sampled.background);
 
+    let matrix = crate::tui::theme_terminal::matrix_fixture_palette();
+    let matrix_palette = Palette::from_terminal(Some(&matrix));
+    assert!(
+        matrix_palette.diff_add_wash.is_some(),
+        "matrix fixture must paint add wash"
+    );
+    assert_ne!(
+        matrix_palette.diff_add_wash.unwrap().rgb.unwrap(),
+        matrix.background
+    );
+
     Theme::apply_committed("terminal");
 }
 

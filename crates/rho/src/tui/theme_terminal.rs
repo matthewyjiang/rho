@@ -81,7 +81,25 @@ impl AnsiColor {
 }
 
 pub(super) fn query_terminal_palette() -> Option<TerminalPalette> {
+    if std::env::var_os("RHO_TUI_TEST_MODE").is_some_and(|value| value == "matrix") {
+        return Some(matrix_fixture_palette());
+    }
     query_terminal_palette_impl().ok().flatten()
+}
+
+/// GitHub-dark well used by the docs PTY proof plate (`SvgPalette::github_dark`).
+///
+/// Matrix PTYs do not answer OSC palette queries, so without this sample the
+/// terminal theme never gets RGB add/remove washes. Only green/red are filled
+/// so other roles stay named ANSI and the light plate can still remap them.
+pub(super) fn matrix_fixture_palette() -> TerminalPalette {
+    TerminalPalette {
+        background: Rgb::new(0x0d, 0x11, 0x17),
+        ansi: HashMap::from([
+            (AnsiColor::Green, Rgb::new(0x3f, 0xb9, 0x50)),
+            (AnsiColor::Red, Rgb::new(0xff, 0x7b, 0x72)),
+        ]),
+    }
 }
 
 fn write_palette_queries(output: &mut impl std::io::Write) -> std::io::Result<()> {

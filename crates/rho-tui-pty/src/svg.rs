@@ -7,8 +7,9 @@ use crate::screen::{CellColor, ScreenCell, ScreenModel};
 
 /// Full color contract for one static proof-plate render.
 ///
-/// Matrix captures use ANSI indexed colors. One palette owns chrome defaults and
-/// the ANSI-16 map so callers cannot mix light ANSI with dark frame colors.
+/// Matrix captures use ANSI indexed colors for most chrome so light/dark plates
+/// remap through this palette. Truecolor diff washes are re-anchored onto the
+/// plate well (dark RGB fills would otherwise land on the light plate).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SvgPalette {
     pub default_fg: Rgb,
@@ -348,10 +349,44 @@ fn resolve_color(
     match color {
         CellColor::Default => default,
         CellColor::Indexed(index) => indexed_color(index, is_fg, bold, palette),
-        // Truecolor cells keep the captured RGB. Matrix chrome is ANSI-indexed, so
-        // light/dark plates diverge through the palette map rather than RGB rewrite.
-        CellColor::Rgb(r, g, b) => Rgb::new(r, g, b),
+        // Indexed chrome remaps through the plate. Truecolor diff washes captured
+        // from the github-dark matrix sample are re-anchored on light plates.
+        CellColor::Rgb(r, g, b) => {
+            let rgb = Rgb::new(r, g, b);
+            if is_fg {
+                rgb
+            } else {
+                remap_truecolor_background(rgb, palette)
+            }
+        }
     }
+}
+
+/// GitHub inserted-line overlay (`#2ea04326` ≈ 0.15). Used when re-anchoring
+/// a dark captured wash onto a light plate.
+const LIGHT_PLATE_WASH_ALPHA: f64 = 0x26 as f64 / 255.0;
+const LIGHT_PLATE_LUMINANCE: f32 = 0.55;
+
+fn remap_truecolor_background(bg: Rgb, palette: SvgPalette) -> Rgb {
+    if !rgb_is_light(palette.default_bg) || rgb_is_light(bg) {
+        return bg;
+    }
+    let tint = if bg.g >= bg.r {
+        palette.ansi16[2]
+    } else {
+        palette.ansi16[1]
+    };
+    Rgb::new(
+        blend(palette.default_bg.r, tint.r, LIGHT_PLATE_WASH_ALPHA),
+        blend(palette.default_bg.g, tint.g, LIGHT_PLATE_WASH_ALPHA),
+        blend(palette.default_bg.b, tint.b, LIGHT_PLATE_WASH_ALPHA),
+    )
+}
+
+fn rgb_is_light(rgb: Rgb) -> bool {
+    let luminance =
+        (0.2126 * f32::from(rgb.r) + 0.7152 * f32::from(rgb.g) + 0.0722 * f32::from(rgb.b)) / 255.0;
+    luminance > LIGHT_PLATE_LUMINANCE
 }
 
 fn dim_color(fg: Rgb, bg: Rgb) -> Rgb {
@@ -511,5 +546,20 @@ mod tests {
         assert!(light.contains(&format!("fill=\"{}\"", wash.css())));
         assert!(light.contains(&format!("fill=\"{}\"", bright_white.css())));
         assert!(light.contains(">hello</text>"));
+    }
+
+    // Covers: dark truecolor diff washes re-anchor onto the light plate well.
+    // Owner: pty svg renderer
+    #[test]
+    fn light_palette_reanchors_dark_truecolor_wash() {
+        let mut screen = ScreenModel::new(1, 8);
+        screen.process(b"\x1b[48;2;24;55;36madd\x1b[m");
+        let palette = SvgPalette::primer_light();
+        let light = render_screen_svg(&screen, &SvgOptions::with_palette(palette));
+        let remapped = remap_truecolor_background(Rgb::new(24, 55, 36), palette);
+        assert_ne!(remapped, Rgb::new(24, 55, 36));
+        assert!(light.contains(&format!("fill=\"{}\"", remapped.css())));
+        assert!(!light.contains("fill=\"#183724\""));
+        assert!(light.contains(">add</text>"));
     }
 }
