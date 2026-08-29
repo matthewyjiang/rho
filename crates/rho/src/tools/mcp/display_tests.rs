@@ -173,3 +173,64 @@ fn primary_argument_multiline_stays_within_budget() {
         assert!(display.ends_with('…'), "len {len}");
     }
 }
+
+// Covers: untrusted MCP keys, values, and name components flatten control
+// characters so headers and facts stay one terminal row.
+// Owner: mcp display helper
+#[test]
+fn display_text_flattens_control_characters() {
+    let args = json!({
+        "x\ninjected": "ok",
+        "note": "a\rb\tc",
+        "path": "crates/rho\rpayload",
+    });
+    assert_eq!(
+        primary_argument(&args),
+        Some(("path".into(), "crates/rho payload".into()))
+    );
+    assert_eq!(
+        argument_summary(&args, Some("path")).as_deref(),
+        Some("x injected ok · note a b c")
+    );
+
+    let (header, facts) = mcp_header_and_facts(
+        "mcp__olive\rsrv__grep\ttool",
+        Some(&args),
+        ExportedNameDialect::Rho,
+    )
+    .unwrap();
+    assert_eq!(
+        header,
+        ToolHeader::call("grep tool", Some("crates/rho payload".into()))
+    );
+    assert_eq!(
+        facts,
+        vec![
+            ToolFact::Meta {
+                text: "mcp · olive srv".into()
+            },
+            ToolFact::Text {
+                text: "x injected ok · note a b c".into()
+            },
+        ]
+    );
+}
+
+// Covers: truncation budgets are measured after control flattening, so a
+// string of tabs cannot overflow the header or summary fact.
+// Owner: mcp display helper
+#[test]
+fn display_text_truncates_after_control_normalization() {
+    let first = format!("{}x", "\t".repeat(80));
+    let args = json!({ "prompt": format!("{first}\nmore") });
+    let (_, display) = primary_argument(&args).unwrap();
+    assert!(display.chars().count() <= 80);
+    assert!(!display.contains(char::is_control));
+    assert!(display.ends_with('…'));
+
+    let args = json!({ "note": format!("{}y", "\r".repeat(200)) });
+    let summary = argument_summary(&args, None).unwrap();
+    assert!(summary.chars().count() <= 160);
+    assert!(!summary.contains(char::is_control));
+    assert!(summary.starts_with("note "));
+}

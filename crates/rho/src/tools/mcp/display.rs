@@ -62,7 +62,10 @@ pub(crate) fn primary_argument(arguments: &Value) -> Option<(String, String)> {
 }
 
 fn primary_display(text: &str) -> Option<String> {
-    let first = text.lines().next().unwrap_or("").trim();
+    // Take the first LF-separated line, then flatten leftover controls so a
+    // `\r` or tab cannot split the header the same way a second line would.
+    let first = one_line(text.lines().next().unwrap_or(""));
+    let first = first.trim();
     if first.is_empty() {
         return None;
     }
@@ -92,14 +95,14 @@ pub(crate) fn argument_summary(arguments: &Value, skip: Option<&str>) -> Option<
         }
         let rendered = match value {
             Value::String(text) if text.contains('\n') => continue,
-            Value::String(text) => truncate(text, MAX_ARG_VALUE_CHARS),
+            Value::String(text) => truncate(&one_line(text), MAX_ARG_VALUE_CHARS),
             Value::Bool(flag) => flag.to_string(),
             Value::Number(number) => number.to_string(),
             Value::Null => "null".into(),
             Value::Object(_) => "{…}".into(),
             Value::Array(_) => "[…]".into(),
         };
-        parts.push(format!("{key} {rendered}"));
+        parts.push(format!("{} {rendered}", one_line(key)));
     }
     if parts.is_empty() {
         return None;
@@ -126,11 +129,11 @@ pub(crate) fn mcp_header_and_facts(
     let identity = parse_exported_name(name, dialect)?;
     let primary = arguments.and_then(primary_argument);
     let header = ToolHeader::call(
-        identity.tool,
+        one_line(&identity.tool),
         primary.as_ref().map(|(_, value)| value.clone()),
     );
     let mut facts = vec![ToolFact::Meta {
-        text: server_fact_text(&identity.server),
+        text: server_fact_text(&one_line(&identity.server)),
     }];
     if let Some(text) = arguments
         .and_then(|value| argument_summary(value, primary.as_ref().map(|(key, _)| key.as_str())))
@@ -138,6 +141,18 @@ pub(crate) fn mcp_header_and_facts(
         facts.push(ToolFact::Text { text });
     }
     Some((header, facts))
+}
+
+/// Flatten control characters so untrusted MCP keys and values cannot split a
+/// header or fact into extra terminal rows. Truncation runs after this so
+/// budgets still hold.
+fn one_line(text: &str) -> String {
+    if !text.contains(char::is_control) {
+        return text.to_string();
+    }
+    text.chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect()
 }
 
 fn truncate(text: &str, max_chars: usize) -> String {
