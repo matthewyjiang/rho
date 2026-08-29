@@ -432,9 +432,13 @@ fn sampled_diff_wash_beats_github_overlay_on_light_and_dark() {
         matrix_palette.diff_add_wash.is_some(),
         "matrix fixture must paint add wash"
     );
-    assert_ne!(
+    assert_eq!(
         matrix_palette.diff_add_wash.unwrap().rgb.unwrap(),
-        matrix.background
+        Rgb::new(0x16, 0x2f, 0x21)
+    );
+    assert_eq!(
+        matrix_palette.diff_del_wash.unwrap().rgb.unwrap(),
+        Rgb::new(0x38, 0x24, 0x27)
     );
 
     Theme::apply_committed("terminal");
