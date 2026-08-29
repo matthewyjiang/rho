@@ -159,7 +159,7 @@ impl WorkspaceSearch for GrepSearch {
     fn spec() -> ToolSpec {
         ToolSpec {
             name: Self::NAME.into(),
-            description: "Searches file contents under a directory with a regular expression. Skips ignored, hidden, and binary files. Returns matches grouped by file with line numbers. Content mode shows matches as `N | text`. When the selected edit tool is hashline, each file is prefixed with a [path#TAG] snapshot header. Match text is a preview and may be truncated; use read_file when you need exact line text.".into(),
+            description: "Searches file contents under a directory or in a single file with a regular expression. Directory walks skip ignored, hidden, and binary files. Returns matches grouped by file with line numbers. Content mode shows matches as `N | text`. When the selected edit tool is hashline, each file is prefixed with a [path#TAG] snapshot header. Match text is a preview and may be truncated; use read_file when you need exact line text.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -256,7 +256,13 @@ pub(crate) fn grep_workspace(
             return ControlFlow::Break(WalkStop::Cancelled);
         }
         if let Some(glob) = &request.glob {
-            if !glob.matches(&file.relative) {
+            // File roots have an empty walk-relative path; match the named file.
+            let glob_path = if file.relative.is_empty() {
+                display_root
+            } else {
+                file.relative.as_str()
+            };
+            if !glob.matches(glob_path) {
                 return ControlFlow::Continue(());
             }
         }

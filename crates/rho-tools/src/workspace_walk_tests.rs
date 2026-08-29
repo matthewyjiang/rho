@@ -191,6 +191,30 @@ fn entries_arrive_sorted_within_each_directory() {
     );
 }
 
+// Covers: a file root must be yielded even when ignore/hidden would skip it
+// Owner: OS or process (workspace walk)
+#[test]
+fn file_root_yields_that_file_even_when_ignored_or_hidden() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join(".gitignore"), "ignored.txt\n").unwrap();
+    std::fs::write(dir.path().join("ignored.txt"), "x").unwrap();
+    std::fs::write(dir.path().join(".hidden.txt"), "x").unwrap();
+    let nested = dir.path().join("src/lib.rs");
+    std::fs::create_dir_all(nested.parent().unwrap()).unwrap();
+    std::fs::write(&nested, "x").unwrap();
+
+    let opts = options(HiddenFiles::Skip, 1_000, far_deadline());
+    for path in [
+        nested,
+        dir.path().join("ignored.txt"),
+        dir.path().join(".hidden.txt"),
+    ] {
+        let (stop, files) = collect(&path, &opts);
+        assert_eq!(stop, WalkStop::Completed);
+        assert_eq!(files, vec![String::new()]);
+    }
+}
+
 #[test]
 fn a_root_named_git_is_still_walked() {
     let dir = TempDir::new().unwrap();

@@ -24,7 +24,8 @@ pub const MAX_ENTRIES_SCANNED: usize = 200_000;
 /// Whether a walk descends into dot-files and dot-directories.
 ///
 /// The root itself is always entered, so a walk explicitly scoped to a hidden
-/// directory still yields its contents.
+/// directory still yields its contents, and a walk scoped to a file yields
+/// that file even when it is hidden or ignored.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HiddenFiles {
     Include,
@@ -59,6 +60,7 @@ pub struct WalkOptions {
 pub struct WalkedFile {
     pub absolute: PathBuf,
     /// Root-relative, `/`-separated, for display and glob matching.
+    /// Empty when `root` itself is the file.
     pub relative: String,
 }
 
@@ -76,6 +78,9 @@ pub enum WalkStop {
 /// Walks `root` honoring `.gitignore`/`.ignore`, never following symlinks,
 /// yielding regular files only. The visitor may end the walk early.
 ///
+/// A file root yields that file and does not apply ignore or hidden-file
+/// skipping. The caller named it. Directory walks still filter descendants.
+///
 /// Entries are sorted by name within each directory, so the walk order is
 /// stable across runs and platforms. Callers that cap results therefore emit a
 /// reproducible prefix rather than an arbitrary sample, and need no further
@@ -85,6 +90,16 @@ pub fn visit_files(
     options: &WalkOptions,
     mut visit: impl FnMut(WalkedFile) -> ControlFlow<WalkStop>,
 ) -> WalkStop {
+    if let Some(file) = root_file(root) {
+        if Instant::now() >= options.limits.deadline {
+            return WalkStop::Deadline;
+        }
+        return match visit(file) {
+            ControlFlow::Continue(()) => WalkStop::Completed,
+            ControlFlow::Break(stop) => stop,
+        };
+    }
+
     let mut builder = WalkBuilder::new(root);
     builder
         .follow_links(false)
@@ -119,6 +134,17 @@ pub fn visit_files(
     WalkStop::Completed
 }
 
+fn root_file(root: &Path) -> Option<WalkedFile> {
+    let metadata = std::fs::symlink_metadata(root).ok()?;
+    if !metadata.file_type().is_file() {
+        return None;
+    }
+    Some(WalkedFile {
+        absolute: root.to_path_buf(),
+        relative: String::new(),
+    })
+}
+
 fn walked_file(root: &Path, entry: Result<ignore::DirEntry, ignore::Error>) -> Option<WalkedFile> {
     let entry = entry.ok()?;
     if !entry.file_type().is_some_and(|ty| ty.is_file()) {
@@ -126,9 +152,6 @@ fn walked_file(root: &Path, entry: Result<ignore::DirEntry, ignore::Error>) -> O
     }
     let absolute = entry.into_path();
     let relative = relative_path(root, &absolute)?;
-    if relative.is_empty() {
-        return None;
-    }
     Some(WalkedFile { absolute, relative })
 }
 
