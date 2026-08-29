@@ -705,8 +705,11 @@ pub(super) fn mcp_preview_card(
     arguments: Option<&serde_json::Value>,
     status: ToolStatus,
 ) -> ToolCard {
-    let Some((header, facts)) = crate::tools::mcp::display::mcp_header_and_facts(name, arguments)
-    else {
+    let Some((header, facts)) = crate::tools::mcp::display::mcp_header_and_facts(
+        name,
+        arguments,
+        crate::tools::mcp::exported_name::ExportedNameDialect::Rho,
+    ) else {
         return draft_card(status, ToolFamily::Default, ToolHeader::call(name, None));
     };
     let mut card = draft_card(status, ToolFamily::Default, header);

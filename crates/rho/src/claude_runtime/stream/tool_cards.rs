@@ -2,7 +2,7 @@
 //!
 //! Keep Claude verbs (`Read`, `Bash`, `Glob`). Populate the same family,
 //! header dialect, facts, and body types native Rho cards use. MCP tools
-//! (`mcp__server__tool`) use the decoded tool name, a server provenance fact,
+//! (`mcp__server__tool`) use the parsed tool name, a server provenance fact,
 //! and argument summary. Unknown tools degrade to a named generic card.
 
 use std::path::Path;
@@ -18,7 +18,10 @@ use rho_tools::{
     },
 };
 
-use crate::tools::mcp::display::{mcp_header_and_facts, parse_exported_name};
+use crate::tools::mcp::{
+    display::mcp_header_and_facts,
+    exported_name::{parse_exported_name, ExportedNameDialect},
+};
 
 use super::format::{truncate_payload_lines, MAX_TOOL_BODY_LINES};
 use super::types::MAX_TOOL_PAYLOAD_CHARS;
@@ -70,7 +73,9 @@ impl ClaudeTool {
             "AskUserQuestion" => Self::AskUserQuestion,
             "ExitPlanMode" => Self::ExitPlanMode,
             "EnterPlanMode" => Self::EnterPlanMode,
-            _ if parse_exported_name(name).is_some() => Self::Mcp,
+            _ if parse_exported_name(name, ExportedNameDialect::Conventional).is_some() => {
+                Self::Mcp
+            }
             _ => Self::Other,
         }
     }
@@ -178,7 +183,11 @@ impl StartedClaudeTool {
                     .unwrap_or_default();
                 ToolHeader::status_first(identity, detail)
             }
-            ClaudeTool::Mcp => match mcp_header_and_facts(self.name(), self.input.as_ref()) {
+            ClaudeTool::Mcp => match mcp_header_and_facts(
+                self.name(),
+                self.input.as_ref(),
+                ExportedNameDialect::Conventional,
+            ) {
                 Some((header, _)) => header,
                 None => ToolHeader::call(self.name(), self.primary(cwd)),
             },
@@ -352,7 +361,8 @@ fn build_card(
 }
 
 fn push_mcp_facts(card: &mut ToolCard, name: &str, input: Option<&Value>) {
-    let Some((_, facts)) = mcp_header_and_facts(name, input) else {
+    let Some((_, facts)) = mcp_header_and_facts(name, input, ExportedNameDialect::Conventional)
+    else {
         return;
     };
     for fact in facts {

@@ -23,6 +23,7 @@ pub(crate) mod definition;
 pub(crate) mod display;
 pub(crate) mod elicitation;
 pub(crate) mod elicitation_form;
+pub(crate) mod exported_name;
 pub(crate) mod inflight;
 pub(crate) mod oauth;
 pub(crate) mod progress;
@@ -51,8 +52,9 @@ pub(crate) use validate::{
 };
 
 use definition::McpToolDefinition;
+use exported_name::namespaced_tool_name;
 use session::{ConnectResult, ConnectedServer, McpSession, SessionMaintenance};
-use tool::{namespaced_tool_name, McpTool, McpToolSlot};
+use tool::{McpTool, McpToolSlot};
 
 /// Whether this session should connect MCP servers or only inventory config.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

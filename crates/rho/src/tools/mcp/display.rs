@@ -1,59 +1,14 @@
 //! Human-readable identity and argument display for MCP tool cards.
 //!
-//! Exported MCP tool names are wire identifiers (`mcp__server__tool`, with
-//! `_rho_` hex escapes for unsafe components). Cards should show the decoded
-//! tool name as the verb, the server as a provenance fact, and a best-guess
-//! primary argument instead of a raw JSON blob.
+//! Exported MCP tool names are wire identifiers (`mcp__server__tool`). Cards
+//! show the parsed tool name as the verb, the server as a provenance fact, and
+//! a best-guess primary argument instead of a raw JSON blob. The caller selects
+//! whether Rho's private component encoding applies.
 
 use rho_tools::tool_card::{ToolFact, ToolHeader};
 use serde_json::Value;
 
-/// Decoded `server` + `tool` from one exported MCP tool name.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct McpToolIdentity {
-    pub(crate) server: String,
-    pub(crate) tool: String,
-}
-
-/// Parse `mcp__<server>__<tool>` back into display components.
-///
-/// Components encoded by [`super::tool::namespaced_tool_name`] (`_rho_` + hex)
-/// are decoded to their original text. Names from other producers (for
-/// example claude-cli's own `mcp__server__tool` convention) pass through
-/// unchanged; the first `__` after the prefix splits server from tool.
-pub(crate) fn parse_exported_name(name: &str) -> Option<McpToolIdentity> {
-    let rest = name.strip_prefix("mcp__")?;
-    let (server, tool) = rest.split_once("__")?;
-    if server.is_empty() || tool.is_empty() {
-        return None;
-    }
-    Some(McpToolIdentity {
-        server: decode_component(server),
-        tool: decode_component(tool),
-    })
-}
-
-/// Reverse the `_rho_` + hex escape from `namespaced_tool_name`. Anything that
-/// does not round-trip cleanly (odd length, non-hex, invalid UTF-8) is shown
-/// as-is rather than guessed at.
-fn decode_component(component: &str) -> String {
-    let Some(hex) = component.strip_prefix("_rho_") else {
-        return component.to_string();
-    };
-    if hex.is_empty() || hex.len() % 2 != 0 {
-        return component.to_string();
-    }
-    let mut bytes = Vec::with_capacity(hex.len() / 2);
-    for pair in hex.as_bytes().chunks(2) {
-        let hi = (pair[0] as char).to_digit(16);
-        let lo = (pair[1] as char).to_digit(16);
-        match (hi, lo) {
-            (Some(hi), Some(lo)) => bytes.push((hi * 16 + lo) as u8),
-            _ => return component.to_string(),
-        }
-    }
-    String::from_utf8(bytes).unwrap_or_else(|_| component.to_string())
-}
+use super::exported_name::{parse_exported_name, ExportedNameDialect};
 
 /// Header primary budget; matches the 80-char truncation web/fetch cards use.
 const MAX_PRIMARY_CHARS: usize = 80;
@@ -157,7 +112,7 @@ pub(crate) fn server_fact_text(server: &str) -> String {
     format!("mcp · {server}")
 }
 
-/// The shared MCP card grammar both producers render: decoded tool verb with
+/// The shared MCP card grammar both producers render: parsed tool verb with
 /// a promoted primary argument, then a `mcp · server` provenance fact, then a
 /// one-line summary of the remaining arguments.
 ///
@@ -166,8 +121,9 @@ pub(crate) fn server_fact_text(server: &str) -> String {
 pub(crate) fn mcp_header_and_facts(
     name: &str,
     arguments: Option<&Value>,
+    dialect: ExportedNameDialect,
 ) -> Option<(ToolHeader, Vec<ToolFact>)> {
-    let identity = parse_exported_name(name)?;
+    let identity = parse_exported_name(name, dialect)?;
     let primary = arguments.and_then(primary_argument);
     let header = ToolHeader::call(
         identity.tool,

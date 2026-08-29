@@ -3,9 +3,8 @@ use serde_json::json;
 
 use rho_tools::tool_card::{ToolFact, ToolHeader};
 
-use super::{
-    argument_summary, mcp_header_and_facts, parse_exported_name, primary_argument, McpToolIdentity,
-};
+use super::{argument_summary, mcp_header_and_facts, primary_argument};
+use crate::tools::mcp::exported_name::{parse_exported_name, ExportedNameDialect, McpToolIdentity};
 
 // Covers: plain exported names decode to server + tool; non-MCP names and
 // malformed shapes are rejected rather than half-parsed.
@@ -26,7 +25,11 @@ fn parse_exported_name_splits_server_and_tool() {
             server: server.into(),
             tool: tool.into(),
         });
-        assert_eq!(parse_exported_name(name), expected, "name: {name}");
+        assert_eq!(
+            parse_exported_name(name, ExportedNameDialect::Rho),
+            expected,
+            "name: {name}"
+        );
     }
 }
 
@@ -36,8 +39,11 @@ fn parse_exported_name_splits_server_and_tool() {
 #[test]
 fn parse_exported_name_decodes_rho_escapes() {
     // From mcp_tests: server "git-hub", tool "issues/list".
-    let parsed =
-        parse_exported_name("mcp___rho_6769742d687562___rho_6973737565732f6c697374").unwrap();
+    let parsed = parse_exported_name(
+        "mcp___rho_6769742d687562___rho_6973737565732f6c697374",
+        ExportedNameDialect::Rho,
+    )
+    .unwrap();
     assert_eq!(
         parsed,
         McpToolIdentity {
@@ -47,7 +53,7 @@ fn parse_exported_name_decodes_rho_escapes() {
     );
 
     // Odd-length / non-hex payloads stay as-is.
-    let parsed = parse_exported_name("mcp___rho_zz__tool").unwrap();
+    let parsed = parse_exported_name("mcp___rho_zz__tool", ExportedNameDialect::Rho).unwrap();
     assert_eq!(parsed.server, "_rho_zz");
     assert_eq!(parsed.tool, "tool");
 }
@@ -117,7 +123,8 @@ fn argument_summary_joins_scalars_and_skips_primary() {
 #[test]
 fn mcp_header_and_facts_assembles_shared_grammar() {
     let args = json!({"path": "crates", "max_results": 50});
-    let (header, facts) = mcp_header_and_facts("mcp__olive__grep", Some(&args)).unwrap();
+    let (header, facts) =
+        mcp_header_and_facts("mcp__olive__grep", Some(&args), ExportedNameDialect::Rho).unwrap();
     assert_eq!(header, ToolHeader::call("grep", Some("crates".into())));
     assert_eq!(
         facts,
@@ -132,7 +139,8 @@ fn mcp_header_and_facts_assembles_shared_grammar() {
     );
 
     // No arguments: header stays bare, provenance still present.
-    let (header, facts) = mcp_header_and_facts("mcp__olive__grep", None).unwrap();
+    let (header, facts) =
+        mcp_header_and_facts("mcp__olive__grep", None, ExportedNameDialect::Rho).unwrap();
     assert_eq!(header, ToolHeader::call("grep", None));
     assert_eq!(
         facts,
@@ -141,7 +149,10 @@ fn mcp_header_and_facts_assembles_shared_grammar() {
         }]
     );
 
-    assert_eq!(mcp_header_and_facts("bash", None), None);
+    assert_eq!(
+        mcp_header_and_facts("bash", None, ExportedNameDialect::Rho),
+        None
+    );
 }
 
 // Covers: multiline primaries stay within the 80-char budget including the

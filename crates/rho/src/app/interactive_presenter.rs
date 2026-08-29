@@ -60,7 +60,12 @@ impl ToolKind {
         if let Some(format) = rho_tools::EditFormat::from_tool_name(name) {
             return Self::Edit(format);
         }
-        if crate::tools::mcp::display::parse_exported_name(name).is_some() {
+        if crate::tools::mcp::exported_name::parse_exported_name(
+            name,
+            crate::tools::mcp::exported_name::ExportedNameDialect::Rho,
+        )
+        .is_some()
+        {
             return Self::Mcp;
         }
         match name {

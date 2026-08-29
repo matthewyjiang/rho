@@ -264,26 +264,26 @@ fn mcp_error_card_keeps_server_fact() {
     assert_eq!(card.facts, facts);
 }
 
-// Covers: `_rho_` hex-escaped MCP names decode on the card instead of the
-// raw wire identifier
+// Covers: Claude owns its MCP wire names, so components that resemble Rho's
+// private escape remain verbatim instead of being silently decoded.
 // Owner: claude stream tool card mapper
 #[test]
-fn mcp_rho_escaped_name_decodes_on_card() {
+fn mcp_rho_escape_shaped_components_remain_verbatim() {
     let card = started_card(
         &tool(
-            "mcp___rho_6769742d687562___rho_6973737565732f6c697374",
+            "mcp___rho_6162___rho_746f6f6c",
             json!({"query": "open bugs"}),
         ),
         None,
     );
     assert_eq!(
         card.header,
-        ToolHeader::call("issues/list", Some("open bugs".into()))
+        ToolHeader::call("_rho_746f6f6c", Some("open bugs".into()))
     );
     assert_eq!(
         card.facts,
         vec![ToolFact::Meta {
-            text: "mcp · git-hub".into(),
+            text: "mcp · _rho_6162".into(),
         }]
     );
 }

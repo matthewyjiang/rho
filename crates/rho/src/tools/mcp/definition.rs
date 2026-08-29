@@ -15,7 +15,7 @@ use rho_sdk::{
 };
 use rmcp::model::{Tool as RemoteTool, ToolAnnotations};
 
-use super::{config::McpTransport, result::ResultExpectation, tool::namespaced_tool_name};
+use super::{config::McpTransport, exported_name::namespaced_tool_name, result::ResultExpectation};
 
 /// Everything one exported MCP tool derives from its current declaration.
 #[derive(Clone, Debug, PartialEq)]
