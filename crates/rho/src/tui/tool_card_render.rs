@@ -827,7 +827,8 @@ fn push_diff_row(
         display_width(CHILD_CONTENT_INDENT) + display_width(&number) + sign.len() + sign_gap.len();
     let content_width = width.saturating_sub(prefix_width).max(1);
     let chrome = Theme::tool_diff_chrome(row.kind);
-    let plain = Theme::text();
+    // Unhighlighted tokens use the row wash (or add/remove fg if none).
+    let plain = chrome.plain();
     // Empty cells only need the wash; foreground is irrelevant on spaces.
     let pad = chrome.washed(Style::default());
 

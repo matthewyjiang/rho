@@ -36,13 +36,11 @@
   <text x="504.0" y="379.6" fill="#c9d1d9" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">request);                                        </text>
   <text x="24.0" y="399.6" fill="#6e7681" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">     3 </text>
   <text x="91.2" y="399.6" fill="#3fb950" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">+</text>
-  <text x="100.8" y="399.6" fill="#c9d1d9" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">     span.</text>
+  <text x="110.4" y="399.6" fill="#3fb950" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">    span.</text>
   <text x="196.8" y="399.6" fill="#d29922" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">record</text>
-  <text x="254.4" y="399.6" fill="#c9d1d9" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">(</text>
-  <text x="264.0" y="399.6" fill="#3fb950" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">&quot;request_id&quot;</text>
-  <text x="379.2" y="399.6" fill="#c9d1d9" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">, request_id.</text>
+  <text x="254.4" y="399.6" fill="#3fb950" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">(&quot;request_id&quot;, request_id.</text>
   <text x="504.0" y="399.6" fill="#d29922" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">as_str</text>
-  <text x="561.6" y="399.6" fill="#c9d1d9" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">());                                       </text>
+  <text x="561.6" y="399.6" fill="#3fb950" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">());                                       </text>
   <text x="24.0" y="419.6" fill="#6e7681" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">     4 </text>
   <text x="91.2" y="419.6" fill="#c9d1d9" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">      next.</text>
   <text x="196.8" y="419.6" fill="#d29922" font-family="DejaVu Sans Mono, Liberation Mono, Consolas, monospace" font-size="16.0" xml:space="preserve" font-variant-ligatures="none">run</text>

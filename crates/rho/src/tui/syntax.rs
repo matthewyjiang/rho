@@ -105,7 +105,8 @@ pub(in crate::tui) struct HighlightSegment {
 impl HighlightSegment {
     pub(in crate::tui) fn style(&self, plain: Style) -> Style {
         match self.role {
-            Some(role) => Theme::syntax(role),
+            // Patch so a diff row wash (or other caller bg) survives the role fg.
+            Some(role) => plain.patch(Theme::syntax(role)),
             None => plain,
         }
     }
