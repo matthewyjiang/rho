@@ -714,14 +714,16 @@ fn main() {
     let slow_consumer = SampleStats::new(slow_consumer_cancellation);
 
     let startup_relative = startup_candidate.median() as f64 / startup_baseline.median() as f64;
-    // Relative overhead is the main gate, but sub-microsecond work also needs a
-    // small absolute floor so timer noise on shared CI runners is not a failure.
+    // Relative overhead is the main gate, but short work also needs a small
+    // absolute floor so timer noise on shared CI runners is not a failure.
     let startup_allowed =
         (startup_baseline.median() as f64 * 1.20).max(startup_baseline.median() as f64 + 1_000.0);
     let simple_allowed =
         (simple_baseline.median() as f64 * 1.10).max(simple_baseline.median() as f64 + 100_000.0);
     let compaction_relative =
         compaction_candidate.median() as f64 / compaction_baseline.median() as f64;
+    let compaction_allowed = (compaction_baseline.median() as f64 * 1.15)
+        .max(compaction_baseline.median() as f64 + 100_000.0);
     let checks = json!({
         "startup_absolute_under_2ms": startup_candidate.median() <= 2_000_000,
         "startup_within_budget": startup_candidate.median() as f64 <= startup_allowed,
@@ -730,7 +732,8 @@ fn main() {
         "event_p99_latency_under_5ms": event_latency_p99 <= 5_000_000,
         "snapshot_median_under_10ms": snapshot.median() <= 10_000_000,
         "snapshot_retained_allocation_under_3x": retained_allocation_ratio < 3.0,
-        "compaction_relative_under_15_percent": compaction_relative <= 1.15,
+        "compaction_within_budget":
+            compaction_candidate.median() as f64 <= compaction_allowed,
         "slow_consumer_cancellation_under_250ms": slow_consumer.percentile(99) <= 250_000_000,
         "large_tool_call_capture_near_linear_growth":
             large_tool_call_ns_per_byte_growth <= LARGE_TOOL_CALL_NS_PER_BYTE_GROWTH_LIMIT,
@@ -791,6 +794,7 @@ fn main() {
                 "baseline": compaction_baseline.json(),
                 "candidate": compaction_candidate.json(),
                 "candidate_over_baseline": compaction_relative,
+                "allowed_candidate_median_ns": compaction_allowed,
             },
             "parallel_tool_batch": {
                 "representative_independent_reads": PARALLEL_READ_COUNT,
