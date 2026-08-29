@@ -256,7 +256,13 @@ pub(crate) fn grep_workspace(
             return ControlFlow::Break(WalkStop::Cancelled);
         }
         if let Some(glob) = &request.glob {
-            if !glob.matches(&file.relative) {
+            // File roots have an empty walk-relative path; match the named file.
+            let glob_path = if file.relative.is_empty() {
+                display_root
+            } else {
+                file.relative.as_str()
+            };
+            if !glob.matches(glob_path) {
                 return ControlFlow::Continue(());
             }
         }

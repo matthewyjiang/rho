@@ -292,6 +292,40 @@ fn file_path_searches_the_named_file() {
     );
 }
 
+// Covers: named-file path plus glob must still search a matching file
+// Owner: pure unit (grep path handling)
+#[test]
+fn file_path_applies_glob_to_the_named_file() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "src/other.rs", "needle other\n");
+    let body = "needle nested\n";
+    write(&dir, "src/lib.rs", body);
+    let tag = compute_file_hash(body);
+
+    let matched = call_grep(
+        &dir,
+        json!({"pattern": "needle", "path": "src/lib.rs", "glob": "*.rs"}),
+    )
+    .unwrap();
+    assert_eq!(
+        matched,
+        format!(
+            "\
+[src/lib.rs#{tag}]
+1 | needle nested
+
+1 matches in 1 files"
+        )
+    );
+
+    let missed = call_grep(
+        &dir,
+        json!({"pattern": "needle", "path": "src/lib.rs", "glob": "*.txt"}),
+    )
+    .unwrap();
+    assert_eq!(missed, "no matches for 'needle' under src/lib.rs");
+}
+
 // Covers: narrowed path= must emit workspace-relative chain headers edit accepts
 // Owner: pure unit (grep hashline path contract)
 #[test]
