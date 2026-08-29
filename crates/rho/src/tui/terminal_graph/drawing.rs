@@ -158,19 +158,15 @@ pub(in crate::tui) fn draw_box(
     }
 }
 
-fn occupy_rect(canvas: &mut Canvas, x: usize, y: usize, w: usize, h: usize) {
-    let right = x.saturating_add(w);
-    let bottom = y.saturating_add(h);
-    for cy in y..bottom.min(canvas.h) {
-        for cx in x..right.min(canvas.w) {
+fn draw_text_node(canvas: &mut Canvas, p: &Placed, lines: &[String], text_class: Cls) {
+    let right = p.x.saturating_add(p.w);
+    let bottom = p.y.saturating_add(p.h);
+    for cy in p.y..bottom.min(canvas.h) {
+        for cx in p.x..right.min(canvas.w) {
             let i = canvas.idx(cx, cy);
             canvas.occupied[i] = true;
         }
     }
-}
-
-fn draw_text_node(canvas: &mut Canvas, p: &Placed, lines: &[String], text_class: Cls) {
-    occupy_rect(canvas, p.x, p.y, p.w, p.h);
     let inner = p.w.max(1);
     for (li, line) in lines.iter().enumerate() {
         let row = p.y + li;
@@ -183,26 +179,6 @@ fn draw_text_node(canvas: &mut Canvas, p: &Placed, lines: &[String], text_class:
         for grapheme in text.graphemes(true) {
             cur += canvas.set_grapheme(cur, row, grapheme, text_class);
         }
-    }
-}
-
-/// One-line caption in the reserved row above `p` (the node box).
-pub(in crate::tui) fn draw_caption(
-    canvas: &mut Canvas,
-    p: &Placed,
-    caption: &str,
-    node_index: Option<usize>,
-) {
-    let row =
-        p.y.checked_sub(1)
-            .expect("layout must reserve a row above a captioned node");
-    let text_class = node_index.map(Cls::NodeText).unwrap_or(Cls::Text);
-    let text = fit_label(caption, canvas.w.max(1));
-    let tw = text.width();
-    let mut cur = p.cx.saturating_sub(tw / 2);
-    occupy_rect(canvas, cur, row, tw.max(1), 1);
-    for grapheme in text.graphemes(true) {
-        cur += canvas.set_grapheme(cur, row, grapheme, text_class);
     }
 }
 

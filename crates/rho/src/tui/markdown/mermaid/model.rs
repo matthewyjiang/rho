@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use mermaid_rs_renderer::{
     DiagramKind, Direction as MermaidDirection, EdgeArrowhead, EdgeDecoration, EdgeStyle,
@@ -94,8 +94,6 @@ fn flow_graph(ir: &mermaid_rs_renderer::Graph) -> Graph {
 fn flow_graph_with_ids(ir: &mermaid_rs_renderer::Graph) -> (Graph, Vec<&String>) {
     let mut ids = ir.nodes.keys().collect::<Vec<_>>();
     ids.sort_by_key(|id| ir.node_order.get(*id).copied().unwrap_or(usize::MAX));
-    let markers = state_marker_plan(ir);
-    ids.retain(|id| !markers.skip.contains(*id));
     let index = ids
         .iter()
         .enumerate()
@@ -119,7 +117,7 @@ fn flow_graph_with_ids(ir: &mermaid_rs_renderer::Graph) -> (Graph, Vec<&String>)
         .collect::<Vec<_>>();
     let nodes = ids
         .iter()
-        .map(|id| node_from_ir(ir, id, &markers.captions))
+        .map(|id| node_from_ir(ir, id))
         .collect::<Vec<_>>();
     let node_group = ids
         .iter()
@@ -165,70 +163,22 @@ fn flow_graph_with_ids(ir: &mermaid_rs_renderer::Graph) -> (Graph, Vec<&String>)
     )
 }
 
-struct StateMarkerPlan {
-    skip: HashSet<String>,
-    captions: HashMap<String, String>,
-}
-
-/// Unique unlabeled `[*] --> State` drops the dummy start node and captions
-/// the target. Fan-out and labeled boot arrows keep a borderless `start` stub.
-fn state_marker_plan(ir: &mermaid_rs_renderer::Graph) -> StateMarkerPlan {
-    let mut plan = StateMarkerPlan {
-        skip: HashSet::new(),
-        captions: HashMap::new(),
-    };
-    if ir.kind != DiagramKind::State {
-        return plan;
-    }
-    for (id, node) in &ir.nodes {
-        if !is_start_pseudostate(node.shape, &node.label) {
-            continue;
-        }
-        let outgoing: Vec<_> = ir.edges.iter().filter(|edge| edge.from == *id).collect();
-        let [edge] = outgoing.as_slice() else {
-            continue;
-        };
-        if composed_edge_label(DiagramKind::State, edge).is_some() {
-            continue;
-        }
-        let Some(target) = ir.nodes.get(&edge.to) else {
-            continue;
-        };
-        if is_start_pseudostate(target.shape, &target.label)
-            || is_end_pseudostate(target.shape, &target.label)
-        {
-            continue;
-        }
-        plan.skip.insert(id.clone());
-        plan.captions.insert(edge.to.clone(), "start".to_owned());
-    }
-    plan
-}
-
-fn node_from_ir(
-    ir: &mermaid_rs_renderer::Graph,
-    id: &str,
-    captions: &HashMap<String, String>,
-) -> Node {
+fn node_from_ir(ir: &mermaid_rs_renderer::Graph, id: &str) -> Node {
     let node = &ir.nodes[id];
-    let start = ir.kind == DiagramKind::State && is_start_pseudostate(node.shape, &node.label);
-    let end = ir.kind == DiagramKind::State && is_end_pseudostate(node.shape, &node.label);
-    let (mut label, shape) = if start {
-        ("start".to_owned(), NodeShape::Text)
-    } else if end {
-        ("end".to_owned(), NodeShape::Text)
-    } else if matches!(ir.kind, DiagramKind::Class | DiagramKind::Er) {
-        let label = node
-            .label
-            .lines()
-            .find(|line| !line.starts_with("<<") && *line != "---")
-            .unwrap_or(&node.label)
-            .to_owned();
-        (label, shape(node.shape))
-    } else {
-        (node.label.clone(), shape(node.shape))
+    let (mut label, shape) = match state_marker(ir.kind, node.shape, &node.label) {
+        Some(marker) => marker,
+        None if matches!(ir.kind, DiagramKind::Class | DiagramKind::Er) => {
+            let label = node
+                .label
+                .lines()
+                .find(|line| !line.starts_with("<<") && *line != "---")
+                .unwrap_or(&node.label)
+                .to_owned();
+            (label, shape(node.shape))
+        }
+        None => (node.label.clone(), shape(node.shape)),
     };
-    if ir.kind == DiagramKind::State && !start && !end {
+    if ir.kind == DiagramKind::State && !matches!(shape, NodeShape::Text) {
         for note in ir.state_notes.iter().filter(|note| note.target == id) {
             label.push_str("\n(note: ");
             label.push_str(&note.label);
@@ -239,18 +189,26 @@ fn node_from_ir(
         label,
         shape,
         style: NodeStyle::default(),
-        caption: captions.get(id).cloned(),
     }
 }
 
 /// Start/end `[*]` in the IR is an empty circle / double-circle. Fork/join
 /// bars keep an empty label too, but they are `ForkJoin`, not these shapes.
-fn is_start_pseudostate(shape: MermaidNodeShape, label: &str) -> bool {
-    shape == MermaidNodeShape::Circle && label.is_empty()
-}
-
-fn is_end_pseudostate(shape: MermaidNodeShape, label: &str) -> bool {
-    shape == MermaidNodeShape::DoubleCircle && label.is_empty()
+fn state_marker(
+    kind: DiagramKind,
+    shape: MermaidNodeShape,
+    label: &str,
+) -> Option<(String, NodeShape)> {
+    if kind != DiagramKind::State {
+        return None;
+    }
+    if shape == MermaidNodeShape::Circle && label.is_empty() {
+        Some(("start".to_owned(), NodeShape::Text))
+    } else if shape == MermaidNodeShape::DoubleCircle && label.is_empty() {
+        Some(("end".to_owned(), NodeShape::Text))
+    } else {
+        None
+    }
 }
 
 fn shape(shape: MermaidNodeShape) -> NodeShape {

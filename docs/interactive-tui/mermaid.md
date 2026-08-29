@@ -67,9 +67,8 @@ This is not full Mermaid.js syntax or visual parity. The painter prefers a
 readable approximation over a source dump: styles are ignored, common shapes
 map onto rectangle / round / diamond, parallel edges share a route with joined
 labels, and a too-wide `LR`/`RL` flowchart retries as `TD`. State `[*]` markers
-are not empty boxes: a unique unlabeled start is a `start` caption above the
-first state, and remaining start/end markers paint as borderless `start` /
-`end` words. Exotic families and malformed input stay as source.
+paint as borderless `start` / `end` words so edges still have somewhere to
+attach. Exotic families and malformed input stay as source.
 
 ### Flow and state layout
 

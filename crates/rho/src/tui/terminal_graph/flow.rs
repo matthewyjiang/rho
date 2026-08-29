@@ -6,9 +6,9 @@ use unicode_width::UnicodeWidthStr;
 use super::{
     canvas::{Canvas, STY_DOT, STY_SOLID, STY_THICK},
     drawing::{
-        art_node_rect, compute_ranks, draw_box, draw_caption, draw_compartment_box, draw_frame,
-        route_back, route_back_lr, route_forward, route_forward_lr, route_self, route_skip,
-        wrap_label, SkipPath,
+        art_node_rect, compute_ranks, draw_box, draw_compartment_box, draw_frame, route_back,
+        route_back_lr, route_forward, route_forward_lr, route_self, route_skip, wrap_label,
+        SkipPath,
     },
     ordering::order_ranks,
     painter::{
@@ -67,8 +67,6 @@ pub(super) struct NodeSizes {
     pub(super) lay_h: Vec<usize>,
     pub(super) extra_h: Vec<usize>,
     pub(super) self_label_w: Vec<usize>,
-    pub(super) caption_h: Vec<usize>,
-    pub(super) caption_w: Vec<usize>,
 }
 
 /// Intermediate layout output. The canvas is full-size and the placement
@@ -244,23 +242,9 @@ pub(in crate::tui) fn layout_canvas(
             box_w[i] = box_w[i].max(MIN_SELF_LOOP_WIDTH);
         }
     }
-    let caption_w: Vec<usize> = graph
-        .nodes
-        .iter()
-        .map(|node| {
-            node.caption
-                .as_deref()
-                .map(UnicodeWidthStr::width)
-                .unwrap_or(0)
-        })
-        .collect();
-    let caption_h: Vec<usize> = caption_w
-        .iter()
-        .map(|&width| usize::from(width > 0))
-        .collect();
     let lay_w: Vec<usize> = (0..n)
         .map(|i| {
-            box_w[i].max(caption_w[i])
+            box_w[i]
                 + if self_label_w[i] > 0 {
                     2 * (self_label_w[i] + 3)
                 } else {
@@ -268,9 +252,7 @@ pub(in crate::tui) fn layout_canvas(
                 }
         })
         .collect();
-    let lay_h: Vec<usize> = (0..n)
-        .map(|i| box_h[i] + extra_h[i] + caption_h[i])
-        .collect();
+    let lay_h: Vec<usize> = (0..n).map(|i| box_h[i] + extra_h[i]).collect();
     let sizes = NodeSizes {
         box_w,
         box_h,
@@ -278,8 +260,6 @@ pub(in crate::tui) fn layout_canvas(
         lay_h,
         extra_h,
         self_label_w,
-        caption_h,
-        caption_w,
     };
 
     let mut placed = vec![
@@ -353,14 +333,6 @@ pub(in crate::tui) fn layout_canvas(
                 graph.nodes[idx].shape,
                 /*node_index*/ Some(idx),
             ),
-        }
-        if let Some(caption) = &graph.nodes[idx].caption {
-            draw_caption(
-                &mut canvas,
-                &placed[idx],
-                caption,
-                /*node_index*/ Some(idx),
-            );
         }
     }
     for (i, edge) in graph.edges.iter().enumerate() {
