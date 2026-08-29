@@ -47,6 +47,7 @@ enum ToolKind {
     FetchContent,
     GetSearchContent,
     Questionnaire,
+    Mcp,
     Other,
 }
 
@@ -58,6 +59,9 @@ impl ToolKind {
     fn from_name_and_args(name: &str, _arguments: Option<&serde_json::Value>) -> Self {
         if let Some(format) = rho_tools::EditFormat::from_tool_name(name) {
             return Self::Edit(format);
+        }
+        if crate::tools::mcp::display::parse_exported_name(name).is_some() {
+            return Self::Mcp;
         }
         match name {
             "advisor" => Self::Advisor,
@@ -112,6 +116,7 @@ impl ToolKind {
             | Self::FetchContent
             | Self::GetSearchContent
             | Self::Questionnaire
+            | Self::Mcp
             | Self::Other => {
                 if arguments_len < PREVIEW_FULL_PARSE_LIMIT {
                     0

@@ -20,6 +20,7 @@ pub(crate) mod catalog;
 pub(crate) mod client;
 pub(crate) mod config;
 pub(crate) mod definition;
+pub(crate) mod display;
 pub(crate) mod elicitation;
 pub(crate) mod elicitation_form;
 pub(crate) mod inflight;

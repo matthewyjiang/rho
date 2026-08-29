@@ -11,8 +11,9 @@ use rho_tools::{
 mod results;
 use results::{
     count_nonempty_lines, diff_card, fetch_content_card, file_diff_card, generic_card,
-    get_search_content_card, process_result_card, push_error_output, search_result_card,
-    shell_card, shell_result_card, split_body_lines, web_search_card, EmptyDiffState,
+    get_search_content_card, mcp_preview_card, mcp_result_card, process_result_card,
+    push_error_output, search_result_card, shell_card, shell_result_card, split_body_lines,
+    web_search_card, EmptyDiffState,
 };
 
 #[path = "interactive_presenter_apply_patch.rs"]
@@ -98,12 +99,12 @@ pub(super) fn preview_card(
     status: ToolStatus,
 ) -> ToolCard {
     let Some(arguments) = arguments else {
-        let header = match kind {
-            ToolKind::Bash => ToolHeader::shell("$", None),
-            ToolKind::PowerShell => ToolHeader::shell("PS", None),
-            _ => ToolHeader::call(name, None),
+        return match kind {
+            ToolKind::Bash => kind_card(status, kind, ToolHeader::shell("$", None)),
+            ToolKind::PowerShell => kind_card(status, kind, ToolHeader::shell("PS", None)),
+            ToolKind::Mcp => mcp_preview_card(name, None, status),
+            _ => kind_card(status, kind, ToolHeader::call(name, None)),
         };
-        return kind_card(status, kind, header);
     };
     match kind {
         // Status-first like a nested agent: phase lives on the header line.
@@ -215,6 +216,7 @@ pub(super) fn preview_card(
             kind,
             ToolHeader::call("get_search_content", Some(get_search_primary(arguments))),
         ),
+        ToolKind::Mcp => mcp_preview_card(name, Some(arguments), status),
     }
 }
 
@@ -418,6 +420,7 @@ pub(super) fn finished_card(
         ToolKind::Questionnaire => {
             preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status)
         }
+        ToolKind::Mcp => mcp_result_card(view, content, status),
         ToolKind::Other => generic_card(view, content, status),
     }
 }
@@ -552,6 +555,7 @@ pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -
             ToolFamily::Web
         }
         ToolKind::Questionnaire => ToolFamily::Form,
+        ToolKind::Mcp => ToolFamily::Default,
         ToolKind::Process | ToolKind::Other => metadata
             .map(family_from_metadata)
             .unwrap_or(ToolFamily::Default),
