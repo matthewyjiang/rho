@@ -448,3 +448,71 @@ fn mindmap_paints_indented_tree() {
         "child missing tree guide:\n{art}"
     );
 }
+
+fn has_box_corner(line: &str) -> bool {
+    line.chars()
+        .any(|c| matches!(c, '╭' | '╮' | '╰' | '╯' | '┌' | '┐' | '└' | '┘'))
+}
+
+fn marker_row(art: &[String], marker: &str) -> usize {
+    art.iter()
+        .position(|line| line.trim() == marker)
+        .unwrap_or_else(|| panic!("missing {marker:?} line in\n{}", art.join("\n")))
+}
+
+fn boxed_label_row(art: &[String], label: &str) -> usize {
+    art.iter()
+        .position(|line| line.contains(label) && line.contains('│'))
+        .unwrap_or_else(|| panic!("missing boxed {label:?} in\n{}", art.join("\n")))
+}
+
+fn assert_text_stub(art: &[String], marker: &str) {
+    let row = marker_row(art, marker);
+    let joined = art.join("\n");
+    assert!(
+        !has_box_corner(&art[row]),
+        "{marker} should be borderless:\n{joined}"
+    );
+    assert!(
+        art.get(row + 1).is_none_or(|line| !has_box_corner(line)),
+        "{marker} must stay a stub, not sit on a box:\n{joined}"
+    );
+}
+
+// Covers: state [*] must not paint as an empty box; start/end stay
+// borderless stubs so fan-out and labeled boot arrows can still attach.
+// Owner: mermaid model conversion
+#[test]
+fn state_pseudostates_paint_as_text_stubs() {
+    let unique = rendered(
+        "stateDiagram-v2\n[*] --> Idle\nIdle --> Working: new task\nWorking --> Idle: done",
+        80,
+    );
+    assert_text_stub(&unique, "start");
+    assert!(
+        boxed_label_row(&unique, "Idle") > marker_row(&unique, "start"),
+        "Idle box should be under start:\n{}",
+        unique.join("\n")
+    );
+
+    let with_end = rendered("stateDiagram-v2\n[*] --> Idle\nIdle --> [*]", 80);
+    assert_text_stub(&with_end, "start");
+    assert_text_stub(&with_end, "end");
+
+    let fan_out = rendered("stateDiagram-v2\n[*] --> A\n[*] --> B", 80);
+    assert_eq!(
+        fan_out.iter().filter(|line| line.trim() == "start").count(),
+        1,
+        "fan-out should keep one start stub:\n{}",
+        fan_out.join("\n")
+    );
+    assert_text_stub(&fan_out, "start");
+    let _ = boxed_label_row(&fan_out, "A");
+    let _ = boxed_label_row(&fan_out, "B");
+
+    let boot = rendered("stateDiagram-v2\n[*] --> Idle: boot", 80);
+    let art = boot.join("\n");
+    assert!(art.contains("boot"), "{art}");
+    assert_text_stub(&boot, "start");
+    let _ = boxed_label_row(&boot, "Idle");
+}

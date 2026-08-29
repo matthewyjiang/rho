@@ -45,12 +45,16 @@ impl NodeStyle {
 }
 
 /// Shapes supported by the neutral painter. The workflow API uses rectangles;
-/// Mermaid keeps the other two shapes for its existing flowchart behavior.
+/// Mermaid keeps round and diamond boxes, plus borderless text for compact
+/// markers such as state start/end stubs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::tui) enum NodeShape {
     Rect,
     Round,
     Diamond,
+    /// Label only: no border. Used for compact markers that still need a
+    /// layout node so edges can attach.
+    Text,
 }
 
 /// The direction used by the generic rank layout.

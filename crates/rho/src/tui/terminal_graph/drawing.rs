@@ -114,6 +114,10 @@ pub(in crate::tui) fn draw_box(
     let text_class = node_index.map(Cls::NodeText).unwrap_or(Cls::Text);
 
     let (tl, tr, bl, br) = match shape {
+        Shape::Text => {
+            draw_text_node(canvas, p, lines, text_class);
+            return;
+        }
         Shape::Round => ('╭', '╮', '╰', '╯'),
         // A diamond's corner points make decisions distinguishable from
         // rounded process nodes even in the compact rectangular cell grid.
@@ -148,6 +152,30 @@ pub(in crate::tui) fn draw_box(
         let tw = text.width();
         let text_x = x + 1 + PAD + inner.saturating_sub(tw) / 2;
         let mut cur = text_x;
+        for grapheme in text.graphemes(true) {
+            cur += canvas.set_grapheme(cur, row, grapheme, text_class);
+        }
+    }
+}
+
+fn draw_text_node(canvas: &mut Canvas, p: &Placed, lines: &[String], text_class: Cls) {
+    let right = p.x.saturating_add(p.w);
+    let bottom = p.y.saturating_add(p.h);
+    for cy in p.y..bottom.min(canvas.h) {
+        for cx in p.x..right.min(canvas.w) {
+            let i = canvas.idx(cx, cy);
+            canvas.occupied[i] = true;
+        }
+    }
+    let inner = p.w.max(1);
+    for (li, line) in lines.iter().enumerate() {
+        let row = p.y + li;
+        if row >= canvas.h {
+            break;
+        }
+        let text = fit_label(line, inner);
+        let tw = text.width();
+        let mut cur = p.x + inner.saturating_sub(tw) / 2;
         for grapheme in text.graphemes(true) {
             cur += canvas.set_grapheme(cur, row, grapheme, text_class);
         }

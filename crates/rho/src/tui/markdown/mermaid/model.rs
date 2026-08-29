@@ -117,30 +117,7 @@ fn flow_graph_with_ids(ir: &mermaid_rs_renderer::Graph) -> (Graph, Vec<&String>)
         .collect::<Vec<_>>();
     let nodes = ids
         .iter()
-        .map(|id| {
-            let node = &ir.nodes[*id];
-            let mut label = match ir.kind {
-                DiagramKind::Class | DiagramKind::Er => node
-                    .label
-                    .lines()
-                    .find(|line| !line.starts_with("<<") && *line != "---")
-                    .unwrap_or(&node.label)
-                    .to_owned(),
-                _ => node.label.clone(),
-            };
-            if ir.kind == DiagramKind::State {
-                for note in ir.state_notes.iter().filter(|note| note.target == **id) {
-                    label.push_str("\n(note: ");
-                    label.push_str(&note.label);
-                    label.push(')');
-                }
-            }
-            Node {
-                label,
-                shape: shape(node.shape),
-                style: NodeStyle::default(),
-            }
-        })
+        .map(|id| node_from_ir(ir, id))
         .collect::<Vec<_>>();
     let node_group = ids
         .iter()
@@ -184,6 +161,54 @@ fn flow_graph_with_ids(ir: &mermaid_rs_renderer::Graph) -> (Graph, Vec<&String>)
         },
         ids,
     )
+}
+
+fn node_from_ir(ir: &mermaid_rs_renderer::Graph, id: &str) -> Node {
+    let node = &ir.nodes[id];
+    let (mut label, shape) = match state_marker(ir.kind, node.shape, &node.label) {
+        Some(marker) => marker,
+        None if matches!(ir.kind, DiagramKind::Class | DiagramKind::Er) => {
+            let label = node
+                .label
+                .lines()
+                .find(|line| !line.starts_with("<<") && *line != "---")
+                .unwrap_or(&node.label)
+                .to_owned();
+            (label, shape(node.shape))
+        }
+        None => (node.label.clone(), shape(node.shape)),
+    };
+    if ir.kind == DiagramKind::State && !matches!(shape, NodeShape::Text) {
+        for note in ir.state_notes.iter().filter(|note| note.target == id) {
+            label.push_str("\n(note: ");
+            label.push_str(&note.label);
+            label.push(')');
+        }
+    }
+    Node {
+        label,
+        shape,
+        style: NodeStyle::default(),
+    }
+}
+
+/// Start/end `[*]` in the IR is an empty circle / double-circle. Fork/join
+/// bars keep an empty label too, but they are `ForkJoin`, not these shapes.
+fn state_marker(
+    kind: DiagramKind,
+    shape: MermaidNodeShape,
+    label: &str,
+) -> Option<(String, NodeShape)> {
+    if kind != DiagramKind::State {
+        return None;
+    }
+    if shape == MermaidNodeShape::Circle && label.is_empty() {
+        Some(("start".to_owned(), NodeShape::Text))
+    } else if shape == MermaidNodeShape::DoubleCircle && label.is_empty() {
+        Some(("end".to_owned(), NodeShape::Text))
+    } else {
+        None
+    }
 }
 
 fn shape(shape: MermaidNodeShape) -> NodeShape {
