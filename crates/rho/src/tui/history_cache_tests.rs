@@ -595,6 +595,36 @@ fn incrementally_repaints_open_mermaid_from_the_header() {
     );
 }
 
+// Covers: mermaid incomplete tokens skip a live re-parse but still refresh COPY.
+// Owner: history line cache (incremental append)
+#[test]
+fn mermaid_incomplete_append_refreshes_copy_without_rerender() {
+    let mut cache = HistoryLineCache::default();
+    let mut entries = vec![Entry::Assistant(
+        "```mermaid\nflowchart LR\nA[Parse] --> B[Render]\n".into(),
+    )];
+    let before = paint_cached(&mut cache, &entries, 80);
+    assert_eq!(
+        cache.code_blocks(&entries, settings(80), &no_images)[0]
+            .text
+            .as_ref(),
+        "flowchart LR\nA[Parse] --> B[Render]"
+    );
+
+    let Entry::Assistant(text) = &mut entries[0] else {
+        unreachable!();
+    };
+    text.push_str("C[Copy]");
+    cache.entry_appended(0);
+    assert_eq!(paint_cached(&mut cache, &entries, 80), before);
+    assert_eq!(
+        cache.code_blocks(&entries, settings(80), &no_images)[0]
+            .text
+            .as_ref(),
+        "flowchart LR\nA[Parse] --> B[Render]\nC[Copy]"
+    );
+}
+
 #[test]
 fn resizing_keeps_mermaid_code_block_source_stable() {
     // Rendered lines are compared across separate render passes; hold the lock

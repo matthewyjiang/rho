@@ -397,6 +397,8 @@ fn extend_open_mermaid(
     if new_complete == tail.committed_end {
         // Incomplete last-line tokens: live art ignores them. Sticky source
         // waits for a newline so this path never re-parses mermaid per token.
+        // COPY still follows the current partial body, like ordinary fences.
+        refresh_fence_copy(entry, text, &tail, width);
         return Some(tail);
     }
     tail.committed_end = new_complete;
