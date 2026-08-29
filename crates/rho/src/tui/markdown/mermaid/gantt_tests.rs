@@ -1,7 +1,11 @@
 use mermaid_rs_renderer::ir::GanttTask;
 use pretty_assertions::assert_eq;
+use ratatui::style::Style;
+use unicode_width::UnicodeWidthStr;
 
-use super::{parse_gantt_date, parse_gantt_duration, schedule, GanttRow};
+use crate::tui::terminal_graph::GraphStyles;
+
+use super::{layout_gantt, parse_gantt_date, parse_gantt_duration, schedule, GanttAxis, GanttRow};
 
 fn task(
     id: &str,
@@ -41,12 +45,25 @@ fn task_starts(model: &super::GanttModel) -> Vec<(&str, i32, i32)> {
         .collect()
 }
 
+fn styles() -> GraphStyles {
+    GraphStyles {
+        border: Style::default(),
+        node_text: Style::default(),
+        edge: Style::default(),
+        edge_label: Style::default(),
+        node_styles: Vec::new(),
+    }
+}
+
 // Covers: gantt date/duration tokens and after-chains must schedule in day units
 // Owner: mermaid gantt scheduler
 #[test]
 fn schedules_dates_after_chains_and_duration_units() {
     assert_eq!(parse_gantt_duration("2d"), Some(2.0));
     assert_eq!(parse_gantt_duration("1w"), Some(7.0));
+    assert_eq!(parse_gantt_duration("90m"), Some(90.0 / 1_440.0));
+    assert_eq!(parse_gantt_duration("1M"), Some(30.0));
+    assert_eq!(parse_gantt_duration("500ms"), Some(500.0 / 86_400_000.0));
     assert!(parse_gantt_date("2026-01-01").is_some());
     assert_eq!(parse_gantt_date("soon"), None);
 
@@ -57,7 +74,7 @@ fn schedules_dates_after_chains_and_duration_units() {
         ],
         None,
     );
-    assert!(dated.has_dates);
+    assert!(matches!(dated.axis, GanttAxis::Calendar { .. }));
     let starts = task_starts(&dated);
     assert_eq!(starts.len(), 2);
     assert_eq!(starts[0].0, "Parser");
@@ -71,10 +88,42 @@ fn schedules_dates_after_chains_and_duration_units() {
         ],
         None,
     );
-    assert!(!relative.has_dates);
+    assert!(matches!(relative.axis, GanttAxis::Relative { .. }));
     assert_eq!(task_starts(&relative), vec![("One", 0, 2), ("Two", 2, 2)]);
 
     let fallback = schedule(&[task("a", "Soon", Some("soon"), Some("2d"), None)], None);
-    assert!(!fallback.has_dates);
+    assert!(matches!(fallback.axis, GanttAxis::Relative { .. }));
     assert_eq!(task_starts(&fallback), vec![("Soon", 0, 2)]);
+
+    let mixed_case = schedule(
+        &[
+            task("TaskA", "Parser", None, Some("2d"), None),
+            task("p2", "Painter", None, Some("2d"), Some("taska")),
+        ],
+        None,
+    );
+    assert_eq!(
+        task_starts(&mixed_case),
+        vec![("Parser", 0, 2), ("Painter", 2, 2)]
+    );
+}
+
+// Covers: short task names must reserve the label floor and fit mid-width panes
+// Owner: mermaid gantt layout
+#[test]
+fn short_labels_fit_mid_width_panes() {
+    let model = schedule(
+        &[
+            task("p1", "Parser", None, Some("3d"), None),
+            task("p2", "Painter", None, Some("2d"), Some("p1")),
+        ],
+        Some("Plan".to_string()),
+    );
+    let art = layout_gantt(&model, &styles(), Some(50)).expect("short labels should fit");
+    assert!(
+        art.plain_lines.iter().all(|line| line.width() <= 50),
+        "{:?}",
+        art.plain_lines
+    );
+    assert!(art.plain_lines.iter().any(|line| line.contains("Parser")));
 }

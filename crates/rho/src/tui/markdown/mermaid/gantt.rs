@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use chrono::{Datelike, NaiveDate};
 use mermaid_rs_renderer::ir::{GanttStatus, GanttTask};
 use unicode_width::UnicodeWidthStr;
 
@@ -17,9 +18,31 @@ const DEFAULT_DURATION: f32 = 3.0;
 pub(super) struct GanttModel {
     pub(super) title: Option<String>,
     pub(super) rows: Vec<GanttRow>,
-    pub(super) axis_start: f32,
-    pub(super) axis_end: f32,
-    pub(super) has_dates: bool,
+    pub(super) axis: GanttAxis,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum GanttAxis {
+    Calendar { start: f32, end: f32 },
+    Relative { start: f32, end: f32 },
+}
+
+impl GanttAxis {
+    fn start(self) -> f32 {
+        match self {
+            Self::Calendar { start, .. } | Self::Relative { start, .. } => start,
+        }
+    }
+
+    fn end(self) -> f32 {
+        match self {
+            Self::Calendar { end, .. } | Self::Relative { end, .. } => end,
+        }
+    }
+
+    fn span(self) -> f32 {
+        (self.end() - self.start()).max(1.0)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -40,23 +63,32 @@ pub(super) fn from_ir(ir: &mermaid_rs_renderer::Graph) -> Option<GanttModel> {
     Some(schedule(&ir.gantt_tasks, ir.gantt_title.clone()))
 }
 
+pub(super) fn complexity(ir: &mermaid_rs_renderer::Graph) -> (usize, usize, usize, usize) {
+    (ir.gantt_tasks.len(), 0, ir.gantt_sections.len(), 0)
+}
+
+/// After-chain rules follow mermaid-rs-renderer 0.3.1: a task starts at its
+/// parsed date, else at the end of the `after` predecessor, else at
+/// origin + cursor. The parser lowercases `after` tokens and keeps declared
+/// ids as written, so lookup is case-insensitive.
 pub(super) fn schedule(tasks: &[GanttTask], title: Option<String>) -> GanttModel {
     let mut parsed_starts: HashMap<String, f32> = HashMap::new();
     let mut origin: Option<f32> = None;
     for task in tasks {
         if let Some(start) = task.start.as_deref().and_then(parse_gantt_date) {
-            let start = start as f32;
-            parsed_starts.insert(task.id.clone(), start);
+            let start = start.num_days_from_ce() as f32;
+            parsed_starts.insert(task_key(&task.id), start);
             origin = Some(origin.map_or(start, |value| value.min(start)));
         }
     }
-    let has_dates = origin.is_some();
+    let calendar = origin.is_some();
 
     let mut timing: HashMap<String, (f32, f32)> = HashMap::new();
     let mut cursor = 0.0_f32;
     let mut time_start = f32::MAX;
     let mut time_end = f32::MIN;
-    let mut computed = Vec::with_capacity(tasks.len());
+    let mut rows = Vec::new();
+    let mut current_section: Option<String> = None;
     for task in tasks {
         let duration = task
             .duration
@@ -64,30 +96,32 @@ pub(super) fn schedule(tasks: &[GanttTask], title: Option<String>) -> GanttModel
             .and_then(parse_gantt_duration)
             .unwrap_or(DEFAULT_DURATION)
             .max(0.1);
-        let mut start = parsed_starts.get(&task.id).copied();
-        if start.is_none() {
-            if let Some(end) = task
-                .after
-                .as_deref()
-                .and_then(|after_id| timing.get(after_id).map(|(_, end)| *end))
-            {
-                start = Some(end);
-            }
-        }
-        let fallback_base = origin.unwrap_or(0.0);
-        let start = start.unwrap_or(fallback_base + cursor);
+        let start = parsed_starts
+            .get(&task_key(&task.id))
+            .copied()
+            .or_else(|| {
+                task.after
+                    .as_deref()
+                    .and_then(|after_id| timing.get(&task_key(after_id)).map(|(_, end)| *end))
+            })
+            .unwrap_or(origin.unwrap_or(0.0) + cursor);
         let end = start + duration;
-        timing.insert(task.id.clone(), (start, end));
+        timing.insert(task_key(&task.id), (start, end));
         cursor = cursor.max(end + 0.5);
         time_start = time_start.min(start);
         time_end = time_end.max(end);
-        computed.push((
-            task.label.clone(),
+        if task.section != current_section {
+            if let Some(name) = task.section.clone() {
+                rows.push(GanttRow::Section(name));
+            }
+            current_section = task.section.clone();
+        }
+        rows.push(GanttRow::Task {
+            label: task.label.clone(),
             start,
             duration,
-            task.status,
-            task.section.clone(),
-        ));
+            status: task.status,
+        });
     }
     if !time_start.is_finite() || !time_end.is_finite() {
         time_start = 0.0;
@@ -97,30 +131,18 @@ pub(super) fn schedule(tasks: &[GanttTask], title: Option<String>) -> GanttModel
         time_end = time_start + 1.0;
     }
 
-    let mut rows = Vec::new();
-    let mut current_section: Option<String> = None;
-    for (label, start, duration, status, section) in computed {
-        if section != current_section {
-            if let Some(name) = section.clone() {
-                rows.push(GanttRow::Section(name));
-            }
-            current_section = section;
+    let axis = if calendar {
+        GanttAxis::Calendar {
+            start: time_start,
+            end: time_end,
         }
-        rows.push(GanttRow::Task {
-            label,
-            start,
-            duration,
-            status,
-        });
-    }
-
-    GanttModel {
-        title,
-        rows,
-        axis_start: time_start,
-        axis_end: time_end,
-        has_dates,
-    }
+    } else {
+        GanttAxis::Relative {
+            start: time_start,
+            end: time_end,
+        }
+    };
+    GanttModel { title, rows, axis }
 }
 
 pub(super) fn layout_gantt(
@@ -137,11 +159,11 @@ pub(super) fn layout_gantt(
         })
         .max()
         .unwrap_or(0);
-    let label_width = longest_label.min(LABEL_CAP);
+    let label_width = longest_label.clamp(LABEL_FLOOR, LABEL_CAP);
     let bar_width = match max_width {
         Some(max_width) => {
             let available = max_width.saturating_sub(label_width.saturating_add(1));
-            if label_width < LABEL_FLOOR || available < BAR_FLOOR {
+            if available < BAR_FLOOR {
                 return Err(Oversize::Width);
             }
             available.min(BAR_CAP)
@@ -156,7 +178,7 @@ pub(super) fn layout_gantt(
         return Err(Oversize::Width);
     }
 
-    let axis_span = (model.axis_end - model.axis_start).max(1.0);
+    let axis_span = model.axis.span();
     let mut lines = Vec::new();
     if let Some(title) = &model.title {
         lines.push(fit_label(title, total_width));
@@ -174,7 +196,7 @@ pub(super) fn layout_gantt(
                 let bar = bar_line(
                     *start,
                     *duration,
-                    model.axis_start,
+                    model.axis.start(),
                     axis_span,
                     bar_width,
                     *status,
@@ -238,8 +260,8 @@ fn axis_footer(
     bar_width: usize,
     total_width: usize,
 ) -> String {
-    let start = axis_label(model.axis_start, model.has_dates, model.axis_start);
-    let end = axis_label(model.axis_end, model.has_dates, model.axis_start);
+    let start = axis_label(model.axis.start(), model.axis);
+    let end = axis_label(model.axis.end(), model.axis);
     let mut bar = vec![' '; bar_width];
     put_label(&mut bar, 0, &start);
     let end_at = bar_width.saturating_sub(end.width());
@@ -254,11 +276,12 @@ fn axis_footer(
     truncate_width(&line, total_width)
 }
 
-fn axis_label(value: f32, has_dates: bool, origin: f32) -> String {
-    if has_dates {
-        format_gantt_date(value.round() as i32)
-    } else {
-        format!("{}d", (value - origin).round() as i32)
+fn axis_label(value: f32, axis: GanttAxis) -> String {
+    match axis {
+        GanttAxis::Calendar { .. } => NaiveDate::from_num_days_from_ce_opt(value.round() as i32)
+            .map(|date| date.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| format!("{}", value.round() as i32)),
+        GanttAxis::Relative { start, .. } => format!("{}d", (value - start).round() as i32),
     }
 }
 
@@ -291,33 +314,38 @@ fn truncate_width(line: &str, width: usize) -> String {
     fit_label(line, width)
 }
 
+fn task_key(id: &str) -> String {
+    id.to_ascii_lowercase()
+}
+
+/// Mermaid duration suffixes, converted to days. `m` is minutes; `M` is months.
 pub(super) fn parse_gantt_duration(value: &str) -> Option<f32> {
     let value = value.trim();
     if value.is_empty() {
         return None;
     }
-    let mut digits = String::new();
-    let mut unit = None;
-    for character in value.chars() {
-        if character.is_ascii_digit() || character == '.' {
-            digits.push(character);
-        } else if !character.is_whitespace() {
-            unit = Some(character.to_ascii_lowercase());
-        }
-    }
-    let number: f32 = digits.parse().ok()?;
-    let mult = match unit {
-        Some('d') => 1.0,
-        Some('w') => 7.0,
-        Some('h') => 1.0 / 24.0,
-        Some('m') => 30.0,
-        Some('y') => 365.0,
-        _ => 1.0,
+    let split = value
+        .char_indices()
+        .find(|(_, character)| !character.is_ascii_digit() && *character != '.')
+        .map(|(index, _)| index)
+        .unwrap_or(value.len());
+    let number: f32 = value[..split].parse().ok()?;
+    let suffix = value[split..].trim();
+    let days = match suffix {
+        "" | "d" => 1.0,
+        "ms" => 1.0 / 86_400_000.0,
+        "s" => 1.0 / 86_400.0,
+        "m" => 1.0 / 1_440.0,
+        "h" => 1.0 / 24.0,
+        "w" => 7.0,
+        "M" => 30.0,
+        "y" => 365.0,
+        _ => return None,
     };
-    Some(number * mult)
+    Some(number * days)
 }
 
-pub(super) fn parse_gantt_date(value: &str) -> Option<i32> {
+pub(super) fn parse_gantt_date(value: &str) -> Option<NaiveDate> {
     let value = value.trim();
     if value.is_empty() {
         return None;
@@ -329,40 +357,7 @@ pub(super) fn parse_gantt_date(value: &str) -> Option<i32> {
     let year: i32 = parts[0].parse().ok()?;
     let month: u32 = parts[1].parse().ok()?;
     let day: u32 = parts[2].parse().ok()?;
-    if month == 0 || month > 12 || day == 0 || day > 31 {
-        return None;
-    }
-    Some(days_from_civil(year, month, day))
-}
-
-fn days_from_civil(year: i32, month: u32, day: u32) -> i32 {
-    let y = year - i32::from(month <= 2);
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let m = month as i32;
-    let d = day as i32;
-    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
-}
-
-fn civil_from_days(days: i32) -> (i32, u32, u32) {
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = mp + if mp < 10 { 3 } else { -9 };
-    let year = y + i32::from(m <= 2);
-    (year, m as u32, d as u32)
-}
-
-fn format_gantt_date(days: i32) -> String {
-    let (year, month, day) = civil_from_days(days);
-    format!("{year:04}-{month:02}-{day:02}")
+    NaiveDate::from_ymd_opt(year, month, day)
 }
 
 #[cfg(test)]

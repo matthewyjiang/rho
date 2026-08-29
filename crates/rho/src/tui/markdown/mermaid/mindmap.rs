@@ -31,30 +31,34 @@ pub(super) fn from_ir(ir: &mermaid_rs_renderer::Graph) -> Option<MindmapModel> {
     for (index, node) in ir.mindmap.nodes.iter().enumerate() {
         by_id.insert(node.id.as_str(), index);
     }
-    let roots: Vec<usize> = ir
+    let root = ir
         .mindmap
-        .nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| node.level == 0)
-        .map(|(index, _)| index)
-        .collect();
-    let roots = if roots.is_empty() { vec![0] } else { roots };
+        .root_id
+        .as_deref()
+        .and_then(|id| by_id.get(id).copied())
+        .unwrap_or(0);
     let mut entries = Vec::new();
     let mut visited = HashSet::new();
-    let mut ctx = WalkCtx {
-        ir,
-        by_id: &by_id,
-        visited: &mut visited,
-        entries: &mut entries,
-    };
-    for (position, root) in roots.iter().enumerate() {
-        walk(&mut ctx, *root, 0, position + 1 == roots.len(), &[]);
-    }
+    walk(
+        &mut WalkCtx {
+            ir,
+            by_id: &by_id,
+            visited: &mut visited,
+            entries: &mut entries,
+        },
+        root,
+        0,
+        true,
+        &[],
+    );
     if entries.is_empty() {
         return None;
     }
     Some(MindmapModel { entries })
+}
+
+pub(super) fn complexity(ir: &mermaid_rs_renderer::Graph) -> (usize, usize, usize, usize) {
+    (ir.mindmap.nodes.len(), 0, 0, 0)
 }
 
 pub(super) fn layout_mindmap(

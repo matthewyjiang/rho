@@ -381,6 +381,27 @@ fn gitgraph_paints_messages_merges_and_hides_auto_ids() {
     );
 }
 
+// Covers: merge type: HIGHLIGHT must keep the join and use the highlight glyph
+// Owner: mermaid gitgraph layout
+#[test]
+fn gitgraph_highlight_merge_keeps_join() {
+    let art = rendered(
+        "gitGraph\n\
+            commit id: \"init\" msg: \"init\"\n\
+            branch develop\n\
+            commit id: \"parser\" msg: \"parser\"\n\
+            checkout main\n\
+            merge develop type: HIGHLIGHT",
+        80,
+    )
+    .join("\n");
+    assert!(art.contains('◆'), "highlight glyph missing:\n{art}");
+    assert!(
+        art.contains('─') || art.contains('├') || art.contains('└'),
+        "merge join missing:\n{art}"
+    );
+}
+
 // Covers: gantt after-chains and sections must keep later tasks to the right
 // Owner: mermaid gantt layout
 #[test]

@@ -176,8 +176,7 @@ fn render_inner(source: &str, inner_width: usize) -> MermaidRender {
         Ok(parsed) => parsed,
         Err(_) => return MermaidRender::Fallback(MermaidFallback::Malformed),
     };
-    let diagram_policy = policy::diagram_policy(parsed.graph.kind);
-    if diagram_policy == policy::DiagramPolicy::RawFallback {
+    if !policy::paints(parsed.graph.kind) {
         return MermaidRender::Fallback(MermaidFallback::Unsupported);
     }
     if !parsed.graph.node_links.is_empty() {
@@ -362,6 +361,8 @@ fn is_supported_header(source: &str) -> bool {
     else {
         return false;
     };
+    // `gitGraph:` / `gantt` / `flowchart TD` all appear as the first token.
+    // Strip a trailing colon so the kind name matches the allowlist.
     let header = header.trim_end_matches(':').to_ascii_lowercase();
     matches!(
         header.as_str(),

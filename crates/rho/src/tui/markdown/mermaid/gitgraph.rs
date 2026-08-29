@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
-use mermaid_rs_renderer::ir::GitGraphCommitType;
+use mermaid_rs_renderer::ir::{GitGraphBranch, GitGraphCommit, GitGraphCommitType};
 use mermaid_rs_renderer::Direction as MermaidDirection;
 use unicode_width::UnicodeWidthStr;
 
@@ -15,8 +15,20 @@ const TEXT_FLOOR: usize = 12;
 
 #[derive(Clone, Debug)]
 pub(super) struct GitGraphModel {
-    lanes: Vec<String>,
+    lane_count: usize,
     rows: Vec<GitRow>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ConnectOn {
+    SameRow,
+    ExtraAbove,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Connect {
+    from: usize,
+    on: ConnectOn,
 }
 
 #[derive(Clone, Debug)]
@@ -24,10 +36,7 @@ struct GitRow {
     lane: usize,
     glyph: char,
     text: String,
-    /// Other lane that forks into or joins this commit.
-    connect_from: Option<usize>,
-    /// Merge joins share the commit row; branch-offs use an extra row above.
-    join_on_row: bool,
+    connect: Option<Connect>,
 }
 
 pub(super) fn from_ir(ir: &mermaid_rs_renderer::Graph) -> Option<GitGraphModel> {
@@ -35,70 +44,98 @@ pub(super) fn from_ir(ir: &mermaid_rs_renderer::Graph) -> Option<GitGraphModel> 
         return None;
     }
 
-    let mut branches = ir.gitgraph.branches.clone();
+    let mut commits: Vec<_> = ir.gitgraph.commits.iter().collect();
+    commits.sort_by_key(|commit| commit.seq);
+
+    let used: HashSet<&str> = commits
+        .iter()
+        .map(|commit| commit.branch.as_str())
+        .collect();
+    let mut branches: Vec<GitGraphBranch> = ir
+        .gitgraph
+        .branches
+        .iter()
+        .filter(|branch| used.contains(branch.name.as_str()))
+        .cloned()
+        .collect();
+    let mut next_index = branches
+        .iter()
+        .map(|branch| branch.insertion_index)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    for commit in &commits {
+        if branches.iter().any(|branch| branch.name == commit.branch) {
+            continue;
+        }
+        branches.push(GitGraphBranch {
+            name: commit.branch.clone(),
+            order: None,
+            insertion_index: next_index,
+        });
+        next_index += 1;
+    }
     branches.sort_by(|left, right| {
-        let left_order = left
-            .order
-            .unwrap_or_else(|| default_branch_order(left.insertion_index));
-        let right_order = right
-            .order
-            .unwrap_or_else(|| default_branch_order(right.insertion_index));
-        left_order
-            .partial_cmp(&right_order)
+        branch_order(left)
+            .partial_cmp(&branch_order(right))
             .unwrap_or(Ordering::Equal)
             .then(left.insertion_index.cmp(&right.insertion_index))
     });
 
-    let mut lanes = Vec::new();
-    let mut lane_index: HashMap<String, usize> = HashMap::new();
-    for branch in &branches {
-        if lane_index.contains_key(&branch.name) {
-            continue;
-        }
-        lane_index.insert(branch.name.clone(), lanes.len());
-        lanes.push(branch.name.clone());
-    }
-
-    let mut commits: Vec<_> = ir.gitgraph.commits.iter().collect();
-    commits.sort_by_key(|commit| commit.seq);
-    if ir.direction == MermaidDirection::BottomTop {
-        commits.reverse();
-    }
+    let lane_index: HashMap<String, usize> = branches
+        .iter()
+        .enumerate()
+        .map(|(index, branch)| (branch.name.clone(), index))
+        .collect();
+    let lane_count = branches.len().max(1);
 
     let mut id_lane: HashMap<String, usize> = HashMap::new();
     let mut seen_lanes: HashSet<usize> = HashSet::new();
     let mut rows = Vec::with_capacity(commits.len());
-    for commit in commits {
-        let lane = *lane_index.entry(commit.branch.clone()).or_insert_with(|| {
-            lanes.push(commit.branch.clone());
-            lanes.len() - 1
-        });
+    for commit in &commits {
+        let lane = *lane_index
+            .get(&commit.branch)
+            .expect("used branches receive a lane before painting");
         let first_on_lane = seen_lanes.insert(lane);
-        let kind = commit.custom_type.unwrap_or(commit.commit_type);
-        let join_on_row = kind == GitGraphCommitType::Merge;
-        let connect_from = incoming_lane(commit, lane, &id_lane, first_on_lane, join_on_row);
+        let glyph_kind = commit.custom_type.unwrap_or(commit.commit_type);
+        let connect = incoming_lane(commit, lane, &id_lane, first_on_lane);
         let text = row_text(
             commit,
             first_on_lane,
             lane,
-            lanes
-                .get(lane)
-                .map(String::as_str)
-                .unwrap_or(&commit.branch),
+            &commit.branch,
             ir.gitgraph.main_branch.as_str(),
         );
         rows.push(GitRow {
             lane,
-            glyph: glyph(kind),
+            glyph: glyph(glyph_kind),
             text,
-            connect_from,
-            join_on_row,
+            connect,
         });
         id_lane.insert(commit.id.clone(), lane);
     }
+    if ir.direction == MermaidDirection::BottomTop {
+        rows.reverse();
+    }
 
-    let (lanes, rows) = compact_lanes(lanes, rows);
-    Some(GitGraphModel { lanes, rows })
+    Some(GitGraphModel { lane_count, rows })
+}
+
+pub(super) fn complexity(ir: &mermaid_rs_renderer::Graph) -> (usize, usize, usize, usize) {
+    (
+        ir.gitgraph.commits.len(),
+        ir.gitgraph
+            .commits
+            .iter()
+            .map(|commit| commit.parents.len())
+            .sum(),
+        ir.gitgraph.branches.len(),
+        ir.gitgraph
+            .commits
+            .iter()
+            .map(|commit| commit.tags.len())
+            .sum(),
+    )
 }
 
 pub(super) fn layout_gitgraph(
@@ -106,7 +143,7 @@ pub(super) fn layout_gitgraph(
     styles: &GraphStyles,
     max_width: Option<usize>,
 ) -> Result<MermaidArt, Oversize> {
-    let lane_count = model.lanes.len().max(1);
+    let lane_count = model.lane_count.max(1);
     let text_x = 2 * lane_count;
     let longest = model
         .rows
@@ -142,7 +179,13 @@ pub(super) fn layout_gitgraph(
     let mut paint_y = Vec::with_capacity(model.rows.len());
     let mut y = 0usize;
     for row in &model.rows {
-        if row.connect_from.is_some() && !row.join_on_row {
+        if matches!(
+            row.connect,
+            Some(Connect {
+                on: ConnectOn::ExtraAbove,
+                ..
+            })
+        ) {
             y += 1;
         }
         paint_y.push(y);
@@ -167,12 +210,7 @@ pub(super) fn layout_gitgraph(
     for (index, row) in model.rows.iter().enumerate() {
         let commit_y = paint_y[index];
         touch(&mut lane_min, &mut lane_max, row.lane, commit_y);
-        if let Some(from) = row.connect_from {
-            let connector_y = if row.join_on_row {
-                commit_y
-            } else {
-                commit_y.saturating_sub(1)
-            };
+        if let Some((from, connector_y)) = connector_y(row, commit_y) {
             touch(&mut lane_min, &mut lane_max, from, connector_y);
             touch(&mut lane_min, &mut lane_max, row.lane, connector_y);
         }
@@ -186,12 +224,7 @@ pub(super) fn layout_gitgraph(
 
     for (index, row) in model.rows.iter().enumerate() {
         let commit_y = paint_y[index];
-        if let Some(from) = row.connect_from {
-            let connector_y = if row.join_on_row {
-                commit_y
-            } else {
-                commit_y.saturating_sub(1)
-            };
+        if let Some((from, connector_y)) = connector_y(row, commit_y) {
             canvas.seg_h(connector_y, lane_x(from), lane_x(row.lane));
         }
         canvas.set(lane_x(row.lane), commit_y, row.glyph, Cls::Border);
@@ -205,6 +238,16 @@ pub(super) fn layout_gitgraph(
     Ok(MermaidArt {
         styled_lines,
         plain_lines,
+    })
+}
+
+fn connector_y(row: &GitRow, commit_y: usize) -> Option<(usize, usize)> {
+    row.connect.map(|connect| {
+        let y = match connect.on {
+            ConnectOn::SameRow => commit_y,
+            ConnectOn::ExtraAbove => commit_y.saturating_sub(1),
+        };
+        (connect.from, y)
     })
 }
 
@@ -222,29 +265,40 @@ fn glyph(kind: GitGraphCommitType) -> char {
 }
 
 fn incoming_lane(
-    commit: &mermaid_rs_renderer::ir::GitGraphCommit,
+    commit: &GitGraphCommit,
     lane: usize,
     id_lane: &HashMap<String, usize>,
     first_on_lane: bool,
-    join_on_row: bool,
-) -> Option<usize> {
+) -> Option<Connect> {
     let other = |parent: &String| {
         id_lane
             .get(parent)
             .copied()
             .filter(|&parent_lane| parent_lane != lane)
     };
-    if join_on_row {
-        return commit.parents.iter().rev().find_map(other);
+    // `custom_type` is only a glyph. Merge joins follow `commit_type`.
+    if commit.commit_type == GitGraphCommitType::Merge {
+        return commit
+            .parents
+            .iter()
+            .rev()
+            .find_map(other)
+            .map(|from| Connect {
+                from,
+                on: ConnectOn::SameRow,
+            });
     }
     if first_on_lane {
-        return commit.parents.first().and_then(other);
+        return commit.parents.first().and_then(other).map(|from| Connect {
+            from,
+            on: ConnectOn::ExtraAbove,
+        });
     }
     None
 }
 
 fn row_text(
-    commit: &mermaid_rs_renderer::ir::GitGraphCommit,
+    commit: &GitGraphCommit,
     first_on_lane: bool,
     lane: usize,
     lane_name: &str,
@@ -279,38 +333,13 @@ fn row_text(
     text
 }
 
-fn compact_lanes(lanes: Vec<String>, rows: Vec<GitRow>) -> (Vec<String>, Vec<GitRow>) {
-    let mut used = vec![false; lanes.len()];
-    for row in &rows {
-        if let Some(used_lane) = used.get_mut(row.lane) {
-            *used_lane = true;
-        }
-        if let Some(used_lane) = row.connect_from.and_then(|from| used.get_mut(from)) {
-            *used_lane = true;
-        }
-    }
-    if used.iter().all(|&lane| lane) {
-        return (lanes, rows);
-    }
-    let mut map = vec![0usize; lanes.len()];
-    let mut kept = Vec::new();
-    for (index, name) in lanes.into_iter().enumerate() {
-        if used.get(index).copied().unwrap_or(false) {
-            map[index] = kept.len();
-            kept.push(name);
-        }
-    }
-    let rows = rows
-        .into_iter()
-        .map(|row| GitRow {
-            lane: map.get(row.lane).copied().unwrap_or(0),
-            connect_from: row.connect_from.and_then(|from| map.get(from).copied()),
-            ..row
-        })
-        .collect();
-    (kept, rows)
+fn branch_order(branch: &GitGraphBranch) -> f32 {
+    branch
+        .order
+        .unwrap_or_else(|| default_branch_order(branch.insertion_index))
 }
 
+/// mermaid.js / mermaid-rs-renderer 0.3.1 lane order when a branch omits `order`.
 fn default_branch_order(index: usize) -> f32 {
     if index == 0 {
         return 0.0;

@@ -9,11 +9,7 @@ use crate::tui::terminal_graph::{
     Direction, Edge, EdgeHead, EdgeLine, Node, NodeShape, NodeStyle, RankOrdering,
 };
 
-use super::{
-    gantt, gitgraph, mindmap,
-    policy::{diagram_policy, DiagramPolicy},
-    sequence::Sequence,
-};
+use super::{gantt, gitgraph, mindmap, sequence::Sequence};
 
 #[derive(Clone)]
 pub(super) struct Group {
@@ -67,12 +63,11 @@ pub(super) enum TerminalModel {
 }
 
 pub(super) fn from_ir(ir: &mermaid_rs_renderer::Graph) -> Option<TerminalModel> {
-    match diagram_policy(ir.kind) {
-        DiagramPolicy::RawFallback => None,
-        DiagramPolicy::PaintGitGraph => gitgraph::from_ir(ir).map(TerminalModel::GitGraph),
-        DiagramPolicy::PaintGantt => gantt::from_ir(ir).map(TerminalModel::Gantt),
-        DiagramPolicy::PaintMindmap => mindmap::from_ir(ir).map(TerminalModel::Mindmap),
-        DiagramPolicy::PaintSequence => {
+    match ir.kind {
+        DiagramKind::GitGraph => gitgraph::from_ir(ir).map(TerminalModel::GitGraph),
+        DiagramKind::Gantt => gantt::from_ir(ir).map(TerminalModel::Gantt),
+        DiagramKind::Mindmap => mindmap::from_ir(ir).map(TerminalModel::Mindmap),
+        DiagramKind::Sequence => {
             let sequence = super::sequence::from_ir(ir);
             if sequence.labels.is_empty() {
                 None
@@ -80,16 +75,15 @@ pub(super) fn from_ir(ir: &mermaid_rs_renderer::Graph) -> Option<TerminalModel> 
                 Some(TerminalModel::Sequence(sequence))
             }
         }
-        DiagramPolicy::PaintFlow | DiagramPolicy::PaintState => {
-            Some(TerminalModel::Flow(flow_graph(ir)))
-        }
-        DiagramPolicy::PaintClass | DiagramPolicy::PaintEr => {
+        DiagramKind::Flowchart | DiagramKind::State => Some(TerminalModel::Flow(flow_graph(ir))),
+        DiagramKind::Class | DiagramKind::Er => {
             let (graph, ids) = flow_graph_with_ids(ir);
             Some(TerminalModel::Class {
                 info: class_info(ir, &ids),
                 graph,
             })
         }
+        _ => None,
     }
 }
 
@@ -303,14 +297,14 @@ fn class_info(ir: &mermaid_rs_renderer::Graph, ids: &[&String]) -> Vec<ClassInfo
 }
 
 pub(super) fn complexity(ir: &mermaid_rs_renderer::Graph) -> (usize, usize, usize, usize) {
-    match diagram_policy(ir.kind) {
-        DiagramPolicy::PaintSequence => (
+    match ir.kind {
+        DiagramKind::Sequence => (
             ir.nodes.len(),
             ir.edges.len(),
             ir.subgraphs.len(),
             ir.sequence_notes.len() + ir.sequence_frames.len() + ir.sequence_activations.len(),
         ),
-        DiagramPolicy::PaintClass | DiagramPolicy::PaintEr => (
+        DiagramKind::Class | DiagramKind::Er => (
             ir.nodes.len(),
             ir.edges.len(),
             ir.subgraphs.len(),
@@ -319,30 +313,10 @@ pub(super) fn complexity(ir: &mermaid_rs_renderer::Graph) -> (usize, usize, usiz
                 .map(|node| node.label.lines().count().saturating_sub(1))
                 .sum(),
         ),
-        DiagramPolicy::PaintGitGraph => (
-            ir.gitgraph.commits.len(),
-            ir.gitgraph
-                .commits
-                .iter()
-                .map(|commit| commit.parents.len())
-                .sum(),
-            ir.gitgraph.branches.len(),
-            ir.gitgraph
-                .commits
-                .iter()
-                .map(|commit| commit.tags.len())
-                .sum(),
-        ),
-        DiagramPolicy::PaintGantt => (
-            ir.gantt_tasks.len(),
-            ir.edges.len(),
-            ir.gantt_sections.len(),
-            0,
-        ),
-        DiagramPolicy::PaintMindmap => (ir.mindmap.nodes.len(), ir.edges.len(), 0, 0),
-        DiagramPolicy::PaintFlow | DiagramPolicy::PaintState | DiagramPolicy::RawFallback => {
-            (ir.nodes.len(), ir.edges.len(), ir.subgraphs.len(), 0)
-        }
+        DiagramKind::GitGraph => gitgraph::complexity(ir),
+        DiagramKind::Gantt => gantt::complexity(ir),
+        DiagramKind::Mindmap => mindmap::complexity(ir),
+        _ => (ir.nodes.len(), ir.edges.len(), ir.subgraphs.len(), 0),
     }
 }
 
