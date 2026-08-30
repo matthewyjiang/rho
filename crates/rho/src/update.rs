@@ -113,7 +113,7 @@ fn latest_app_release_tag(releases: &[Release]) -> Option<&str> {
         .find(|release| {
             !release.draft
                 && !release.prerelease
-                && release.tag_name.starts_with(RELEASE_TAG_PREFIX)
+                && release_tag_to_version(&release.tag_name).is_some()
         })
         .map(|release| release.tag_name.as_str())
 }
@@ -585,6 +585,11 @@ mod tests {
             Release {
                 tag_name: "rho-coding-agent-v2.3.0".into(),
                 draft: true,
+                prerelease: false,
+            },
+            Release {
+                tag_name: "rho-coding-agent-vbroken".into(),
+                draft: false,
                 prerelease: false,
             },
             Release {
