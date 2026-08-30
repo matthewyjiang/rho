@@ -1,6 +1,7 @@
 use std::io::Cursor;
 
 use image::{DynamicImage, ImageFormat};
+use ratatui::{backend::TestBackend, Terminal};
 use ratatui_image::picker::{Picker, ProtocolType};
 use rho_sdk::tool::ToolAsset;
 
@@ -12,6 +13,7 @@ use super::{
 };
 use crate::tui::{
     history_cache::{HistoryLineCache, HistoryLineSlice, HistoryRenderSettings},
+    render::entry_lines,
     Entry, ToolEntry,
 };
 
@@ -39,7 +41,7 @@ fn kitty_picker() -> Picker {
     picker
 }
 
-fn image_tool() -> Entry {
+fn image_tool_with_image(image: FeedImage) -> Entry {
     Entry::Tool(ToolEntry::new(
         rho_tools::tool_card::ToolCard::new(
             rho_tools::tool_card::ToolStatus::Ok,
@@ -47,9 +49,13 @@ fn image_tool() -> Entry {
             rho_tools::tool_card::ToolHeader::call("read_file photo.png", None),
         ),
         false,
-        Some(FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap()),
+        Some(image),
         None,
     ))
+}
+
+fn image_tool() -> Entry {
+    image_tool_with_image(FeedImage::load(&png_asset(300, 600), &kitty_picker()).unwrap())
 }
 
 #[test]
@@ -276,10 +282,74 @@ fn derives_reserved_rows_from_the_thumbnail_aspect_ratio() {
     assert_eq!(tall.height_for_width(40, budget), usize::from(budget));
 }
 
-// Covers: partially scrolled image placements stay blank until fully visible.
+// Covers: the reserved feed-image height uses the same padded content width
+// that the image renderer receives, avoiding trailing blank rows.
+// Owner: feed image layout width
+#[test]
+fn reserved_feed_image_rows_match_the_painted_content_width() {
+    let image = FeedImage::load(&png_asset(400, 102), &kitty_picker()).unwrap();
+    let budget = DEFAULT_IMAGE_HEIGHT;
+    let mut lines = Vec::new();
+    let placement = reserve_image_rows(&mut lines, &image, 38, budget);
+
+    assert_eq!(placement.rows.end - placement.rows.start, 5);
+    assert_eq!(lines.len(), image.height_for_width(38, budget));
+    assert_ne!(
+        image.height_for_width(40, budget),
+        image.height_for_width(38, budget)
+    );
+
+    let mut entry = image_tool_with_image(image.clone());
+    let with_image = entry_lines(&entry, 40, 20, budget);
+    let Entry::Tool(tool) = &mut entry else {
+        unreachable!();
+    };
+    tool.image = None;
+    let without_image = entry_lines(&entry, 40, 20, budget);
+    assert_eq!(
+        with_image.len() - without_image.len(),
+        image.height_for_width(38, budget)
+    );
+}
+
+// Covers: clipped image rendering preserves source rows at both viewport
+// boundaries instead of fitting the whole image into the partial area.
+// Owner: feed image protocol rendering
+#[test]
+fn partial_image_rendering_keeps_the_original_encoded_rows() {
+    let image = FeedImage::load(&png_asset(20, 80), &Picker::halfblocks()).unwrap();
+
+    let mut full_terminal = Terminal::new(TestBackend::new(10, 4)).unwrap();
+    full_terminal
+        .draw(|frame| image.render(frame, frame.area()))
+        .unwrap();
+    let full = full_terminal.backend().buffer().clone();
+
+    let mut top_terminal = Terminal::new(TestBackend::new(10, 2)).unwrap();
+    top_terminal
+        .draw(|frame| image.render_partial(frame, frame.area(), 4, 1))
+        .unwrap();
+    let top = top_terminal.backend().buffer();
+    for x in 0..2 {
+        assert_eq!(top[(x, 0)], full[(x, 1)]);
+        assert_eq!(top[(x, 1)], full[(x, 2)]);
+    }
+
+    let mut bottom_terminal = Terminal::new(TestBackend::new(10, 2)).unwrap();
+    bottom_terminal
+        .draw(|frame| image.render_partial(frame, frame.area(), 4, 0))
+        .unwrap();
+    let bottom = bottom_terminal.backend().buffer();
+    for x in 0..2 {
+        assert_eq!(bottom[(x, 0)], full[(x, 0)]);
+        assert_eq!(bottom[(x, 1)], full[(x, 1)]);
+    }
+}
+
+// Covers: partially scrolled image placements retain the visible image rows.
 // Owner: history cache image placement
 #[test]
-fn tool_entry_history_cache_omits_partially_visible_image_placement() {
+fn tool_entry_history_cache_tracks_partial_image_placements_at_both_boundaries() {
     let entries = vec![image_tool()];
     let mut cache = HistoryLineCache::default();
     let width = 40;
@@ -299,10 +369,23 @@ fn tool_entry_history_cache_omits_partially_visible_image_placement() {
     assert_eq!(full[0].row, 1);
     assert_eq!(full[0].height, usize::from(budget));
 
-    // Avoid resizing an image into a partial viewport. Reserved rows remain
-    // blank until the full image fits in the visible history window.
-    let partial = cache.visible_image_placements(&entries, settings, 6, 4, &no_images);
-    assert!(partial.is_empty());
+    // Scrolling past the top keeps the image's visible rows and records how
+    // many encoded rows must be skipped.
+    let top_partial = cache.visible_image_placements(&entries, settings, 6, 4, &no_images);
+    assert_eq!(top_partial.len(), 1);
+    assert_eq!(top_partial[0].row, 0);
+    assert_eq!(top_partial[0].height, 4);
+    assert_eq!(top_partial[0].total_height, usize::from(budget));
+    assert_eq!(top_partial[0].skip_rows, 5);
+
+    // A viewport ending in the image keeps the leading rows and drops only
+    // the rows below the viewport.
+    let bottom_partial = cache.visible_image_placements(&entries, settings, 1, 4, &no_images);
+    assert_eq!(bottom_partial.len(), 1);
+    assert_eq!(bottom_partial[0].row, 0);
+    assert_eq!(bottom_partial[0].height, 4);
+    assert_eq!(bottom_partial[0].total_height, usize::from(budget));
+    assert_eq!(bottom_partial[0].skip_rows, 0);
 
     let mut visible_lines = Vec::new();
     cache.extend_visible_lines(

@@ -425,11 +425,13 @@ impl HistoryLineCache {
                 let abs_end = range.start.saturating_add(placement.rows.end);
                 let visible_start = abs_start.max(start);
                 let visible_end = abs_end.min(end);
-                if visible_start == abs_start && visible_end == abs_end {
+                if visible_start < visible_end {
                     visible.push(super::feed_image::VisibleImagePlacement {
                         image: placement.image.clone(),
                         row: visible_start - start,
                         height: visible_end - visible_start,
+                        total_height: abs_end - abs_start,
+                        skip_rows: visible_start - abs_start,
                     });
                 }
             }
