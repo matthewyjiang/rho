@@ -444,8 +444,9 @@ impl App {
             {
                 self.set_status(if running { "running" } else { "ready" });
             }
-            // Backing all the way out of a setup picker leaves setup too,
-            // rather than stranding an empty full-screen shell.
+            // Escaping the setup picker leaves setup. Escaping a pending
+            // login does not take this path; that restore is
+            // `restore_after_cancelled_login()`.
             self.dismiss_setup_screen();
         }
         Ok(())

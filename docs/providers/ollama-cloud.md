@@ -53,7 +53,7 @@ Ollama's local install keeps an Ed25519 device key at `~/.ollama/id_ed25519`. Af
 /login ollama-cloud
 ```
 
-Choose **Device Key**. Rho opens the Ollama connect page (or prints the URL with `--device-auth` / headless login), waits until the device is approved, and stores a short session marker. Config keeps `provider = "ollama-cloud"` with `auth = "ollama-cloud-device"`.
+Choose **Device Key**. Rho always shows the Ollama connect URL, and opens a browser when one can appear. Approve the device, then use an Ollama Cloud model. Config keeps `provider = "ollama-cloud"` with `auth = "ollama-cloud-device"`.
 
 2. Or reuse an existing Ollama sign-in. If you already ran `ollama signin` and `~/.ollama/id_ed25519` is registered, Rho can use that key without creating an API key.
 
@@ -79,10 +79,10 @@ rho --provider ollama-cloud \
 
 API keys are sent as Bearer tokens. Device-key auth signs each request with the local key and a `ts` query parameter; do not put either credential in `config.toml` or commit it to source control.
 
-Device-key login from a remote shell:
+Device-key login from a remote shell still prints the connect URL:
 
 ```bash
-rho login ollama-cloud --device-auth
+rho login ollama-cloud-device
 ```
 
 When multiple login methods exist, prefer choosing Device Key in the TUI, or ensure the selected auth profile is `ollama-cloud-device`.

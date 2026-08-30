@@ -1,8 +1,12 @@
 use {
     crate::credential_store::AppCredentialStore,
-    rho_providers::auth::login_dispatch::{
-        AuthenticationMethod, InteractiveLoginCompletion, InteractiveLoginMode,
-        InteractiveUserAction, ProviderAuthentication,
+    crate::login_prompt_print::eprint_login_prompt,
+    rho_providers::auth::{
+        browser::BrowserAvailability,
+        login_dispatch::{
+            AuthenticationMethod, InteractiveLoginCompletion, InteractiveLoginMode,
+            ProviderAuthentication,
+        },
     },
     rho_providers::model::catalog,
 };
@@ -33,44 +37,19 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
         AuthenticationMethod::Interactive { .. } => {}
     }
 
+    let availability = BrowserAvailability::from_process();
     let mode = if device_auth {
         InteractiveLoginMode::Device
     } else {
-        InteractiveLoginMode::Browser
+        ProviderAuthentication::preferred_mode(&target.auth, availability)
     };
-    let login = ProviderAuthentication::start_interactive_login(&target.auth, mode).await?;
-    match &login.user_action {
-        InteractiveUserAction::BrowserOpened => {
-            if ProviderAuthentication::supports_device_login(&target.auth) {
-                eprintln!(
-                    "Opening browser for {} login. On a remote or headless session, use `rho login {} --device-auth` instead.",
-                    login.provider_label, target.auth
-                );
-            } else {
-                eprintln!(
-                    "Opening browser for {} login. This provider does not support device login; use an API key on a remote or headless session.",
-                    login.provider_label
-                );
-            }
-        }
-        InteractiveUserAction::OpenUrl { url, instruction } => {
-            eprintln!("{}: {instruction}", login.provider_label);
-            eprintln!("{url}");
-        }
-        InteractiveUserAction::DeviceCode {
-            verification_uri,
-            user_code,
-            verification_uri_complete,
-        } => {
-            eprintln!(
-                "{} login: visit {verification_uri} and enter code {user_code}",
-                login.provider_label
-            );
-            if let Some(uri) = verification_uri_complete {
-                eprintln!("Or open this URL to continue: {uri}");
-            }
-        }
-    }
+    let login = ProviderAuthentication::start_interactive_login_with_availability(
+        &target.auth,
+        mode,
+        availability,
+    )
+    .await?;
+    eprint_login_prompt(login.provider_label, &login.prompt);
 
     match login.completion {
         InteractiveLoginCompletion::Confirm(completion) => {

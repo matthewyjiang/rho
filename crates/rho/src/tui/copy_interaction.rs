@@ -11,6 +11,39 @@ pub(super) struct CodeBlockCopyTarget {
     pub(super) text: Arc<str>,
 }
 
+/// Copy button produced with a row of text: line index, columns, payload.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CopyHit {
+    /// Line index in the painted lines, before any visible-start skip.
+    pub row: usize,
+    pub columns: Range<usize>,
+    pub text: String,
+}
+
+impl CopyHit {
+    /// Hit-test a pointer against this target as painted at `origin`, skipping
+    /// `start` lines the same way the renderer does.
+    pub(super) fn text_at(
+        &self,
+        origin: Rect,
+        start: usize,
+        column: u16,
+        row: u16,
+    ) -> Option<&str> {
+        if !origin.contains(Position { x: column, y: row }) {
+            return None;
+        }
+        let line = start.saturating_add(row.saturating_sub(origin.y) as usize);
+        if line != self.row {
+            return None;
+        }
+        let rel_col = column.saturating_sub(origin.x) as usize;
+        self.columns
+            .contains(&rel_col)
+            .then_some(self.text.as_str())
+    }
+}
+
 pub(super) fn selection_position(
     history: Rect,
     history_start: usize,

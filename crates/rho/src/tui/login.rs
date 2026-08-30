@@ -3,9 +3,12 @@ use super::{
     InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, *,
 };
 use {
-    rho_providers::auth::login_dispatch::{
-        AuthenticationMethod, CompletedAuthentication, InteractiveLoginCompletion,
-        InteractiveLoginMode, InteractiveUserAction, ProviderAuthentication,
+    rho_providers::auth::{
+        browser::BrowserAvailability,
+        login_dispatch::{
+            AuthenticationMethod, CompletedAuthentication, InteractiveLoginCompletion,
+            InteractiveLoginMode, ProviderAuthentication,
+        },
     },
     rho_providers::model::{provider_models::ProviderModelEndpoint, registry},
     rho_providers::provider,
@@ -483,21 +486,19 @@ impl App {
             return Ok(());
         }
 
-        let remote_or_nested = std::env::var_os("SSH_CONNECTION").is_some()
-            || std::env::var_os("SSH_TTY").is_some()
-            || std::env::var_os("HERDR_ENV").is_some();
-        let mode =
-            if remote_or_nested && ProviderAuthentication::supports_device_login(&target.auth) {
-                InteractiveLoginMode::Device
-            } else {
-                InteractiveLoginMode::Browser
-            };
+        let availability = BrowserAvailability::from_process();
+        let mode = ProviderAuthentication::preferred_mode(&target.auth, availability);
         self.set_status(match mode {
             InteractiveLoginMode::Browser => format!("starting {provider_label} login"),
             InteractiveLoginMode::Device => format!("starting {provider_label} device login"),
         });
         terminal.draw(|frame| self.draw(frame))?;
-        let login = match ProviderAuthentication::start_interactive_login(&target.auth, mode).await
+        let login = match ProviderAuthentication::start_interactive_login_with_availability(
+            &target.auth,
+            mode,
+            availability,
+        )
+        .await
         {
             Ok(login) => login,
             Err(err) => {
@@ -508,44 +509,20 @@ impl App {
         };
 
         let provider_label = login.provider_label;
-        let waits_for_confirmation =
-            matches!(&login.completion, InteractiveLoginCompletion::Confirm(_));
-        let device_flow = matches!(&login.user_action, InteractiveUserAction::DeviceCode { .. });
-        match login.user_action {
-            InteractiveUserAction::BrowserOpened => {
-                let cancel_hint = if waits_for_confirmation {
-                    " Press esc to cancel."
-                } else {
-                    ""
-                };
-                self.insert_entry(&Entry::Notice(format!(
-                    "opening browser for {provider_label} login.{cancel_hint}"
-                )));
-            }
-            InteractiveUserAction::OpenUrl { url, instruction } => {
-                self.insert_entry(&Entry::Notice(format!("{provider_label}: {instruction}")));
-                self.insert_entry(&Entry::Notice(url));
-            }
-            InteractiveUserAction::DeviceCode {
-                verification_uri,
-                user_code,
-                verification_uri_complete,
-            } => {
-                self.insert_entry(&Entry::Notice(format!(
-                    "{provider_label} login: visit {verification_uri} and enter code {user_code}"
-                )));
-                if let Some(uri) = verification_uri_complete {
-                    self.insert_entry(&Entry::Notice(format!(
-                        "Or open this URL to continue: {uri}"
-                    )));
-                }
-            }
+        let device_flow = login.prompt.user_code.is_some();
+        for line in super::login_presentation::notice_lines(provider_label, &login.prompt) {
+            self.insert_entry(&Entry::Notice(line));
         }
+        let pending = PendingLoginComposer {
+            target: target.clone(),
+            prompt: login.prompt.clone(),
+        };
         let completion = match login.completion {
             InteractiveLoginCompletion::Confirm(completion) => completion,
             InteractiveLoginCompletion::Unconfirmed { instruction } => {
                 self.insert_entry(&Entry::Notice(instruction.into()));
-                self.input_ui.set_composer(ComposerMode::Input);
+                self.input_ui
+                    .set_composer(ComposerMode::InteractivePending(pending));
                 self.refresh_available_auths();
                 self.report_resting_herdr_state().await;
                 return Ok(());
@@ -553,10 +530,11 @@ impl App {
         };
         let flow = if device_flow { " device" } else { "" };
         self.set_status(format!(
-            "waiting for {provider_label}{flow} login; press esc to cancel"
+            "waiting for {provider_label}{flow} login · {}",
+            super::login_presentation::LOGIN_KEY_HINT
         ));
         self.input_ui
-            .set_composer(ComposerMode::InteractivePending(target.clone()));
+            .set_composer(ComposerMode::InteractivePending(pending));
         self.pending_interactive_login = Some(PendingInteractiveLogin {
             target,
             handle: tokio::spawn(async move { completion.await.map_err(|err| err.to_string()) }),
@@ -966,26 +944,6 @@ impl App {
         }
         true
     }
-}
-
-pub(super) fn interactive_pending_lines(
-    target: &LoginTarget,
-    width: usize,
-) -> Vec<ratatui::text::Line<'static>> {
-    let label = if target.auth == "ollama-cloud-device" {
-        format!(
-            "waiting for {} device-key login  esc cancel",
-            target.provider
-        )
-    } else {
-        format!("waiting for {} login  esc cancel", target.label)
-    };
-    vec![styled_line(
-        truncate_one_line(&label, width),
-        width,
-        Theme::dim(),
-        LineFill::Natural,
-    )]
 }
 
 #[cfg(test)]

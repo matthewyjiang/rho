@@ -1,9 +1,11 @@
+pub mod browser;
 pub mod codex_oauth;
 pub mod github_copilot_device;
 pub mod github_copilot_token;
 pub mod kimi_oauth;
 pub mod kimi_token;
 pub mod login_dispatch;
+pub mod login_prompt;
 pub(crate) mod loopback;
 pub mod ollama_device;
 pub mod openrouter_oauth;

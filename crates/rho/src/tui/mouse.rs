@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use super::{
-    copy_interaction::{selection_position, selection_position_clamped},
+    copy_interaction::{selection_position, selection_position_clamped, CopyHit},
     paste_burst::word_range_at,
     picker::PickerMouseEvent,
     text_selection::{screen_lines, CopyNotice, TextSelection},
@@ -27,6 +27,11 @@ impl App {
         self.history.clear_text_selection();
         self.screen_selection = None;
         self.input_ui.cancel_pointer_click_sequence();
+    }
+
+    pub(super) fn clear_hovered_copy_buttons(&mut self) {
+        self.history.set_hovered_code_block_copy(None);
+        self.input_ui.set_hovered_composer_copy(false);
     }
 }
 
@@ -94,7 +99,7 @@ impl App {
                     return Ok(());
                 }
                 self.screen_selection = None;
-                self.history.set_hovered_code_block_copy(None);
+                self.clear_hovered_copy_buttons();
                 self.clear_rail_pointer_state();
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
@@ -130,7 +135,7 @@ impl App {
                     return Ok(());
                 }
                 self.screen_selection = None;
-                self.history.set_hovered_code_block_copy(None);
+                self.clear_hovered_copy_buttons();
                 self.clear_rail_pointer_state();
                 self.reveal_history_scrollbar(now);
                 self.history.set_scrollbar_drag(None);
@@ -169,6 +174,9 @@ impl App {
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 self.history
                     .set_hovered_code_block_copy(code_target.as_ref().map(|target| target.line));
+                let composer_copy = self.composer_copy_text_at(screen, column, row);
+                self.input_ui
+                    .set_hovered_composer_copy(composer_copy.is_some());
                 let rail_target =
                     self.session_rail_pointer(layout.subagents, layout.processes, column, row, now);
                 if let Some(target) = rail_target {
@@ -205,6 +213,12 @@ impl App {
                     self.clear_rail_pointer_state();
                     self.history.clear_text_selection();
                     self.copy_text(&target.text, now);
+                } else if let Some(text) = composer_copy {
+                    self.input_ui.clear_selection();
+                    self.input_ui.cancel_pointer_click_sequence();
+                    self.clear_rail_pointer_state();
+                    self.history.clear_text_selection();
+                    self.copy_text(&text, now);
                 } else if self.pointer_in_composer(&layout, column, row) {
                     // Composer owns the pointer: place the caret / start an
                     // editable selection instead of screen-copy drag.
@@ -274,7 +288,7 @@ impl App {
                 self.clear_rail_pressed();
                 if self.history.scrollbar_drag().is_some() {
                     self.history.clear_text_selection();
-                    self.history.set_hovered_code_block_copy(None);
+                    self.clear_hovered_copy_buttons();
                     if let Some(scrollbar) = layout.history_scrollbar {
                         self.history.scroll_chrome_mut().drag_to(scrollbar, row);
                         self.reveal_unmeasured_history_at_scrollbar_top(&layout, settings);
@@ -307,6 +321,7 @@ impl App {
                         )
                         .map(|target| target.line);
                     self.history.set_hovered_code_block_copy(hovered);
+                    self.set_hovered_composer_copy_at(screen, column, row);
                     if let (Some(selection), Some(position)) = (
                         self.history.text_selection_mut().as_mut(),
                         selection_position_clamped(history, history_start, column, row),
@@ -353,6 +368,7 @@ impl App {
                     )
                     .map(|target| target.line);
                 self.history.set_hovered_code_block_copy(hovered);
+                self.set_hovered_composer_copy_at(screen, column, row);
                 if let Some(target) = activate_rail {
                     self.input_ui.clear_selection();
                     self.history.clear_text_selection();
@@ -463,6 +479,7 @@ impl App {
                     )
                     .map(|target| target.line);
                 self.history.set_hovered_code_block_copy(hovered);
+                self.set_hovered_composer_copy_at(screen, column, row);
                 let rail_hover =
                     self.session_rail_pointer(layout.subagents, layout.processes, column, row, now);
                 self.set_rail_hover(rail_hover.as_ref());
@@ -655,6 +672,41 @@ impl App {
                 target,
                 lines: (static_len + range.start)..(static_len + range.end),
             })
+    }
+
+    /// Hit-test the composer copy button using the same origin the current screen painted.
+    pub(super) fn composer_copy_text_at(
+        &mut self,
+        area: Rect,
+        column: u16,
+        row: u16,
+    ) -> Option<String> {
+        let (origin, start, hit) = self.composer_copy_hit(area)?;
+        hit.text_at(origin, start, column, row).map(str::to_string)
+    }
+
+    fn set_hovered_composer_copy_at(&mut self, area: Rect, column: u16, row: u16) {
+        let hovered = self
+            .composer_copy_hit(area)
+            .is_some_and(|(origin, start, hit)| hit.text_at(origin, start, column, row).is_some());
+        self.input_ui.set_hovered_composer_copy(hovered);
+    }
+
+    /// Painted origin, composer-line start, and copy target for the current composer.
+    fn composer_copy_hit(&mut self, area: Rect) -> Option<(Rect, usize, CopyHit)> {
+        if let Some(step) = self.setup_step() {
+            let origin = super::setup_screen::setup_composer_origin(area, step);
+            let hit = self
+                .composer_frame(origin.width as usize, origin.height as usize)
+                .copy_hit?;
+            return Some((origin, /*start*/ 0, hit));
+        }
+        let ctx = self.frame_context(area);
+        Some((
+            ctx.layout.composer,
+            ctx.layout.composer_start,
+            ctx.composer.copy_hit?,
+        ))
     }
 
     pub(super) fn copy_text(&mut self, text: &str, now: Instant) {

@@ -155,12 +155,12 @@ result:
 
 ## `rho login`
 
-Log in to a provider from the command line. Browser-based providers open a local browser flow; use `--device-auth` on remote or headless systems:
+Log in to a provider from the command line. Rho always prints the authorize URL, and opens a browser when one can appear. Headless or remote sessions skip the browser and use device-code when the provider has one. `--device-auth` forces device-code on a graphical session:
 
 ```bash
 rho login openai-codex
 rho login openai-codex --device-auth
-rho login xai-oauth --device-auth
+rho login xai-oauth
 ```
 
 API-key providers are usually easier to configure interactively with `/login` in the TUI or with their documented environment-variable override. See [authentication and models](/authentication-and-models) for provider-specific details.
@@ -214,7 +214,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho sessions rename <ID> <TITLE>...` | Rename a session by UUID or prefix. See [sessions](/sessions#listing-renaming-exporting-and-deleting-sessions). |
 | `rho sessions rm <ID>...` | Delete sessions by UUID or prefix. Cascades parent-linked subagent runs. See [sessions](/sessions#listing-renaming-exporting-and-deleting-sessions). |
 | `rho sessions cleanup [--yes] [--force]` | Delete sessions whose recorded workspace directories no longer exist. Shows a confirmation unless `--yes` is set. |
-| `rho login <PROVIDER>` | Authenticate a provider from a browser or device-code flow. Add `--device-auth` for remote or headless sessions. |
+| `rho login <PROVIDER>` | Authenticate a provider from a browser or device-code flow. Always prints the authorize URL. Headless sessions prefer device-code when available; `--device-auth` forces it. |
 | `rho credential-store probe [os|file]` | Test a credential backend with a temporary secret. Defaults to `os`. |
 | `rho credential-store set <BACKEND>` | Save `os` or `file` as the credential backend in config (`behavior.credential_store`). |
 | `rho credential-store status` | Print the saved credential backend policy: `unset`, `os`, or `file`. |

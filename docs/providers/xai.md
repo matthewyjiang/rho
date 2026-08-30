@@ -20,7 +20,7 @@ Run `/login`, select **xAI**, then choose **API Key** or **OAuth**. `/login xai`
 /login xai-oauth
 ```
 
-API-key login opens a masked key entry box. `/login xai-oauth` opens Rho's browser-based xAI OAuth flow, or automatically uses xAI's device-code flow in SSH and headless environments. You can also request the OAuth device-code flow explicitly:
+API-key login opens a masked key entry box. `/login xai-oauth` always shows the authorize URL. Rho opens a browser when one can appear, and uses xAI's device-code flow automatically in SSH and headless environments. `--device-auth` forces device-code on a graphical session:
 
 ```bash
 rho login xai-oauth --device-auth

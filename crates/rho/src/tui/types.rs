@@ -26,10 +26,19 @@ use ratatui::{
     style::{Modifier, Style},
     text::Line,
 };
-use rho_providers::model::{
-    catalog::{LoginTarget, ModelSelection},
-    ContextUsage, ModelUsage,
+use rho_providers::{
+    auth::login_prompt::LoginPrompt,
+    model::{
+        catalog::{LoginTarget, ModelSelection},
+        ContextUsage, ModelUsage,
+    },
 };
+
+#[derive(Clone, Debug)]
+pub(super) struct PendingLoginComposer {
+    pub target: LoginTarget,
+    pub prompt: LoginPrompt,
+}
 
 #[cfg(test)]
 pub(super) struct ActiveFrame {
@@ -186,7 +195,7 @@ pub(super) enum ComposerMode {
     SecretInput(SecretInput),
     ConfigNumberInput(ConfigNumberInput),
     TextInput(super::text_input::TextInput),
-    InteractivePending(LoginTarget),
+    InteractivePending(PendingLoginComposer),
     InlineChoice(InlineChoiceModal),
     Questionnaire(QuestionnaireComposer),
     Approval(ApprovalComposer),
@@ -219,6 +228,23 @@ impl ComposerMode {
         match self {
             Self::InlineChoice(modal) => modal.blocks_auto_continue(),
             _ => false,
+        }
+    }
+
+    /// Esc on the setup picker (or the empty setup composer) leaves setup.
+    /// Esc on a login overlay restores that step's picker instead.
+    pub(super) fn setup_escape_leaves_setup(&self) -> bool {
+        match self {
+            Self::Input | Self::Picker(_) => true,
+            Self::SecretInput(_)
+            | Self::ConfigNumberInput(_)
+            | Self::TextInput(_)
+            | Self::InteractivePending(_)
+            | Self::InlineChoice(_)
+            | Self::Questionnaire(_)
+            | Self::Approval(_)
+            | Self::Limits(_)
+            | Self::Side => false,
         }
     }
 

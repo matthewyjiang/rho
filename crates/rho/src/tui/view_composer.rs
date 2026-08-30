@@ -5,30 +5,44 @@ use ratatui::{
     text::{Line, Span},
 };
 
-/// Composer rows plus the caret position for one frame.
-#[derive(Debug)]
-pub(super) struct ComposerFrame {
-    pub(super) lines: Vec<Line<'static>>,
-    pub(super) cursor: Position,
-}
-
 use super::{
     advisor_status::AdvisorStatus,
     approval_lines, char_prefix_display_width,
     composer_chrome::ComposerDividerSlot,
     composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
-    config_number_input_lines, display_width,
+    config_number_input_lines,
+    copy_interaction::CopyHit,
+    display_width,
     divider::{labeled_divider_line, DividerCaption},
     file_picker,
     inline_choice::inline_choice_lines,
     inline_shell, input_frame,
-    login::{interactive_pending_lines, secret_input_lines},
+    login::secret_input_lines,
+    login_presentation::login_composer_view,
     palette::ActivePalette,
     picker_lines, questionnaire_cursor_position, questionnaire_lines, styled_line,
     text_input::text_input_lines,
     truncate_one_line, App, ComposerMode, InputFrame, LineFill, Theme, MAX_COMMAND_SUGGESTIONS,
     MIN_COMMAND_DESCRIPTION_WIDTH,
 };
+
+/// Composer rows plus the caret position for one frame.
+#[derive(Debug)]
+pub(super) struct ComposerFrame {
+    pub(super) lines: Vec<Line<'static>>,
+    pub(super) cursor: Position,
+    pub(super) copy_hit: Option<CopyHit>,
+}
+
+impl ComposerFrame {
+    fn new(lines: Vec<Line<'static>>, cursor: Position) -> Self {
+        Self {
+            lines,
+            cursor,
+            copy_hit: None,
+        }
+    }
+}
 
 impl App {
     pub(super) fn divider_line(&self, width: usize, slot: ComposerDividerSlot) -> Line<'static> {
@@ -79,6 +93,7 @@ impl App {
     /// without wrapping the composer text twice per frame.
     pub(super) fn composer_frame(&mut self, width: usize, viewport_height: usize) -> ComposerFrame {
         self.refresh_composer_attachment_layout_cache(width);
+        let composer_copy_hovered = self.input_ui.hovered_composer_copy();
         match self.input_ui.composer() {
             ComposerMode::Input => {
                 let focused_paste = self
@@ -117,15 +132,15 @@ impl App {
                         .push(Span::styled(placeholder, Theme::dim()));
                 }
                 lines.extend(text_lines);
-                ComposerFrame {
+                ComposerFrame::new(
                     lines,
-                    cursor: Position {
+                    Position {
                         x: (cursor.x + prompt_width() as u16).min(width.saturating_sub(1) as u16),
                         y: cursor
                             .y
                             .saturating_add(self.composer_attachment_row_count(width) as u16),
                     },
-                }
+                )
             }
             // Overlay pickers paint over the composer, so they own no rows here.
             ComposerMode::Picker(picker) => {
@@ -134,60 +149,64 @@ impl App {
                 } else {
                     picker_lines(picker, width, viewport_height)
                 };
-                ComposerFrame {
+                ComposerFrame::new(
                     lines,
-                    cursor: Position {
+                    Position {
                         x: display_width(&picker.filter)
                             .saturating_add(2)
                             .min(width.saturating_sub(1)) as u16,
                         y: 0,
                     },
-                }
+                )
             }
-            ComposerMode::SecretInput(secret) => ComposerFrame {
-                lines: secret_input_lines(secret, width),
-                cursor: Position {
+            ComposerMode::SecretInput(secret) => ComposerFrame::new(
+                secret_input_lines(secret, width),
+                Position {
                     x: char_prefix_display_width(&secret.value, secret.cursor).min(width.max(1))
                         as u16,
                     y: 1,
                 },
-            },
-            ComposerMode::ConfigNumberInput(input) => ComposerFrame {
-                lines: config_number_input_lines(input, width),
-                cursor: Position {
+            ),
+            ComposerMode::ConfigNumberInput(input) => ComposerFrame::new(
+                config_number_input_lines(input, width),
+                Position {
                     x: char_prefix_display_width(&input.value, input.cursor).min(width.max(1))
                         as u16,
                     y: 1,
                 },
-            },
-            ComposerMode::TextInput(input) => ComposerFrame {
-                lines: text_input_lines(input, width),
-                cursor: Position {
+            ),
+            ComposerMode::TextInput(input) => ComposerFrame::new(
+                text_input_lines(input, width),
+                Position {
                     x: char_prefix_display_width(&input.editor.value, input.editor.cursor)
                         .min(width.max(1)) as u16,
                     y: 1,
                 },
-            },
-            ComposerMode::InteractivePending(target) => ComposerFrame {
-                lines: interactive_pending_lines(target, width),
-                cursor: Position { x: 0, y: 0 },
-            },
-            ComposerMode::InlineChoice(modal) => ComposerFrame {
-                lines: inline_choice_lines(&modal.choice, width),
-                cursor: Position { x: 0, y: 0 },
-            },
-            ComposerMode::Questionnaire(questionnaire) => ComposerFrame {
-                lines: questionnaire_lines(questionnaire, width),
-                cursor: questionnaire_cursor_position(questionnaire, width),
-            },
-            ComposerMode::Approval(approval) => ComposerFrame {
-                lines: approval_lines(approval, width, viewport_height),
-                cursor: Position { x: 0, y: 0 },
-            },
-            ComposerMode::Limits(_) | ComposerMode::Side => ComposerFrame {
-                lines: Vec::new(),
-                cursor: Position { x: 0, y: 0 },
-            },
+            ),
+            ComposerMode::InteractivePending(pending) => {
+                let view =
+                    login_composer_view(pending, width, /*hovered*/ composer_copy_hovered);
+                ComposerFrame {
+                    lines: view.lines,
+                    cursor: Position { x: 0, y: 0 },
+                    copy_hit: view.copy_hit,
+                }
+            }
+            ComposerMode::InlineChoice(modal) => ComposerFrame::new(
+                inline_choice_lines(&modal.choice, width),
+                Position { x: 0, y: 0 },
+            ),
+            ComposerMode::Questionnaire(questionnaire) => ComposerFrame::new(
+                questionnaire_lines(questionnaire, width),
+                questionnaire_cursor_position(questionnaire, width),
+            ),
+            ComposerMode::Approval(approval) => ComposerFrame::new(
+                approval_lines(approval, width, viewport_height),
+                Position { x: 0, y: 0 },
+            ),
+            ComposerMode::Limits(_) | ComposerMode::Side => {
+                ComposerFrame::new(Vec::new(), Position { x: 0, y: 0 })
+            }
         }
     }
 

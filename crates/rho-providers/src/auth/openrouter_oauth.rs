@@ -7,7 +7,7 @@ use url::Url;
 use crate::model::TransportError;
 
 use super::loopback::{
-    accept_request, bind_ipv4, callback_url, pkce_challenge, random_token, write_response,
+    accept_request, bind_loopback, pkce_challenge, random_token, write_response, LoopbackBindError,
     ResponseBodies, ResponseKind,
 };
 
@@ -39,6 +39,9 @@ pub enum OpenRouterOAuthError {
     Bind(std::io::Error),
     #[error("could not determine the local OpenRouter OAuth callback address: {0}")]
     LocalAddress(std::io::Error),
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-providers): remove OpenRouterOAuthError::Browser; browser launch lives in the login dispatch layer
     #[error("could not open a browser for OpenRouter OAuth")]
     Browser,
     #[error("timed out waiting for the OpenRouter OAuth browser callback")]
@@ -96,24 +99,59 @@ impl std::fmt::Debug for CallbackParse {
     }
 }
 
+/// Bound loopback login. The authorize URL is ready before the callback wait.
+pub struct OpenRouterBrowserLogin {
+    pub authorize_url: String,
+    listener: TcpListener,
+    callback_path: String,
+    verifier: String,
+}
+
+/// One-shot browser login used by 2.0 callers.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-providers): remove run_openrouter_oauth_flow; use start_openrouter_browser_login and complete_openrouter_browser_login
+#[deprecated(
+    since = "2.1.0",
+    note = "use start_openrouter_browser_login and complete_openrouter_browser_login so the authorize URL can be shown before the browser opens"
+)]
 pub async fn run_openrouter_oauth_flow() -> Result<String, OpenRouterOAuthError> {
-    let client = http_client()?;
-    let listener = bind_ipv4(0).await.map_err(OpenRouterOAuthError::Bind)?;
+    let login = start_openrouter_browser_login().await?;
+    webbrowser::open(&login.authorize_url).map_err(|_| OpenRouterOAuthError::Browser)?;
+    complete_openrouter_browser_login(login).await
+}
+
+pub async fn start_openrouter_browser_login() -> Result<OpenRouterBrowserLogin, OpenRouterOAuthError>
+{
     let callback_nonce = random_token(32);
     let callback_path = format!("{CALLBACK_PATH_PREFIX}{callback_nonce}");
-    let callback_url =
-        callback_url(&listener, &callback_path).map_err(OpenRouterOAuthError::LocalAddress)?;
-    let request = build_oauth_request(&callback_url, random_token(64));
+    let bound = bind_loopback(0, &callback_path)
+        .await
+        .map_err(|error| match error {
+            LoopbackBindError::Bind(error) => OpenRouterOAuthError::Bind(error),
+            LoopbackBindError::LocalAddress(error) => OpenRouterOAuthError::LocalAddress(error),
+        })?;
+    let request = build_oauth_request(&bound.callback_url, random_token(64));
+    Ok(OpenRouterBrowserLogin {
+        authorize_url: request.authorize_url,
+        listener: bound.listener,
+        callback_path,
+        verifier: request.verifier,
+    })
+}
 
-    webbrowser::open(&request.authorize_url).map_err(|_| OpenRouterOAuthError::Browser)?;
-
+pub async fn complete_openrouter_browser_login(
+    login: OpenRouterBrowserLogin,
+) -> Result<String, OpenRouterOAuthError> {
+    let client = http_client()?;
     let code = timeout(
         CALLBACK_TIMEOUT,
-        wait_for_callback(&listener, &callback_path),
+        wait_for_callback(&login.listener, &login.callback_path),
     )
     .await
     .map_err(|_| OpenRouterOAuthError::Timeout)??;
-    exchange_code(&client, &code, &request.verifier).await
+    exchange_code(&client, &code, &login.verifier).await
 }
 
 fn build_oauth_request(callback_url: &str, verifier: String) -> OpenRouterOAuthRequest {

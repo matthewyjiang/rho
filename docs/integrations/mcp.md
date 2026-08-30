@@ -110,7 +110,7 @@ Rules the flow holds to:
 
 A configured `Authorization` header wins over the `oauth` table and suppresses the flow entirely. You already said which credential to send, so Rho sends it and never opens a browser.
 
-The browser login needs a person, so it only runs when Rho has a terminal and is not in CI. `rho mcp list --connect` and `rho mcp show --connect` never open a browser: a server with no stored token is reported as failed, with an error telling you to start Rho interactively and authorize it once.
+The browser login needs a person, so it only runs when Rho has a terminal and is not in CI. Rho always prints the authorize URL, and opens a browser when one can appear. `rho mcp list --connect` and `rho mcp show --connect` never open a browser: a server with no stored token is reported as failed, with an error telling you to start Rho interactively and authorize it once.
 
 ## Handshake
 
