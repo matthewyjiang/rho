@@ -62,7 +62,7 @@ fn desired_height_caps_at_two_and_overflow_summarizes() {
     ));
 
     assert_eq!(panel.desired_height(), 2);
-    let lines = panel.lines(80, 8, now);
+    let lines = panel.lines(80, 8, /*continues_below*/ false, now);
     assert_eq!(lines.len(), 2);
     assert!(line_text(&lines[0]).contains("sleep 1"));
     assert!(line_text(&lines[1]).contains("2 more jobs"));
@@ -94,7 +94,7 @@ fn process_row_uses_first_command_line_without_id() {
         )],
         now,
     );
-    let text = line_text(&panel.lines(80, 8, now)[0]);
+    let text = line_text(&panel.lines(80, 8, /*continues_below*/ false, now)[0]);
     assert!(text.contains("sleep 60"));
     assert!(text.contains(activity::PROCESS_GLYPH));
     assert!(!text.contains("550e8400"));
@@ -204,14 +204,24 @@ fn process_linger_keeps_then_drops_around_deadline() {
     assert!(panel.ingest(vec![ok.clone()], t0));
     assert_eq!(panel.live_count(), 0);
     assert!(panel.is_active());
-    let kept = line_text(&panel.lines(80, 8, t0)[0]);
+    let kept = line_text(&panel.lines(80, 8, /*continues_below*/ false, t0)[0]);
     assert!(kept.contains("✓ exit 0"));
 
     assert!(!panel.ingest(
         vec![ok.clone()],
         t0 + activity::LINGER_OK - Duration::from_millis(1)
     ));
-    assert_eq!(panel.lines(80, 8, t0 + activity::LINGER_OK).len(), 0);
+    assert_eq!(
+        panel
+            .lines(
+                80,
+                8,
+                /*continues_below*/ false,
+                t0 + activity::LINGER_OK
+            )
+            .len(),
+        0
+    );
     assert!(panel.ingest(vec![ok], t0 + activity::LINGER_OK));
     assert!(!panel.is_active());
 }
@@ -254,7 +264,7 @@ fn process_overflow_summary_counts_hidden_jobs() {
         ],
         now,
     );
-    let text = line_text(&panel.lines(80, 8, now)[1]);
+    let text = line_text(&panel.lines(80, 8, /*continues_below*/ false, now)[1]);
     assert!(text.contains("2 more jobs"));
 }
 
@@ -277,7 +287,7 @@ fn process_verdict_styles_paint_on_wide_rows() {
         }],
         now,
     );
-    let line = &panel.lines(80, 8, now)[0];
+    let line = &panel.lines(80, 8, /*continues_below*/ false, now)[0];
     assert_eq!(
         activity_span_style(line, "✓ exit 0"),
         Theme::activity_rail().patch(Theme::activity_rail_success())
@@ -342,7 +352,7 @@ fn hover_trailing_keeps_elapsed() {
     let now = Instant::now();
     panel.ingest(vec![summary("live-1", "sleep 60", 4)], now);
     panel.set_hovered(Some("live-1"));
-    let text = line_text(&panel.lines(80, 8, now)[0]);
+    let text = line_text(&panel.lines(80, 8, /*continues_below*/ false, now)[0]);
     assert!(text.contains("⏎ peek · 4s"));
     assert_eq!(
         panel.highlighted_row(8, now),
@@ -361,7 +371,7 @@ fn highlight_uses_painted_height_not_cap() {
         now,
     );
     panel.set_hovered(Some("a"));
-    assert_eq!(panel.lines(80, 1, now).len(), 1);
+    assert_eq!(panel.lines(80, 1, /*continues_below*/ false, now).len(), 1);
     assert_eq!(panel.highlighted_row(1, now), None);
     assert_eq!(
         panel.highlighted_row(2, now),

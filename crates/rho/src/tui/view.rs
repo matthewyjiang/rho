@@ -18,7 +18,7 @@ use super::{
     picker::picker_overlay_frame,
     render::{pad_display_line, padded_content_width, truncate_one_line},
     render_copy_notice,
-    screen_layout::{terminal_meets_minimum, MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH},
+    screen_layout::{terminal_meets_minimum, StackedBand, MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH},
     session_header_lines, styled_line, tool_card_hover,
 };
 use super::{
@@ -237,6 +237,57 @@ impl App {
         self.render_feed_images(frame, layout.history_content, &visible_images);
     }
 
+    /// Content for one stacked chrome band, or empty when the band has no rows.
+    ///
+    /// Single source of band content for both the real paint path
+    /// ([`Self::draw_panels`]) and the test frame oracle
+    /// ([`Self::active_frame_at_for_height`]), so the two cannot describe
+    /// different screens. Order comes from [`StackedBand::ORDER`].
+    fn stacked_band_lines(
+        &mut self,
+        band: StackedBand,
+        width: usize,
+        layout: &super::screen_layout::ScreenLayout,
+        now: Instant,
+    ) -> Vec<Line<'static>> {
+        let height = layout.band(band).height as usize;
+        if height == 0 {
+            return Vec::new();
+        }
+        match band {
+            StackedBand::Subagents => self.subagent_panel.lines(
+                width,
+                height,
+                super::subagent_attach::ACTION_HINT,
+                layout.rail_continues_below(band),
+                now,
+            ),
+            StackedBand::Processes => {
+                self.process_panel
+                    .lines(width, height, layout.rail_continues_below(band), now)
+            }
+            StackedBand::PendingInput => self
+                .pending_input_lines(width)
+                .into_iter()
+                .take(height)
+                .collect(),
+        }
+    }
+
+    /// Rail row highlight for a band, when the pointer is over one of its rows.
+    fn stacked_band_highlight(
+        &self,
+        band: StackedBand,
+        height: usize,
+        now: Instant,
+    ) -> Option<(usize, super::activity::RailRowState)> {
+        match band {
+            StackedBand::Subagents => self.subagent_panel.highlighted_row(height, now),
+            StackedBand::Processes => self.process_panel.highlighted_row(height, now),
+            StackedBand::PendingInput => None,
+        }
+    }
+
     fn draw_panels(&mut self, frame: &mut Frame<'_>, surface: DrawSurface<'_>) {
         let DrawSurface {
             width, now, layout, ..
@@ -274,53 +325,17 @@ impl App {
                 button,
             );
         }
-        if layout.subagents.height > 0 {
-            frame.render_widget(
-                Paragraph::new(self.subagent_panel.lines(
-                    width,
-                    layout.subagents.height as usize,
-                    super::subagent_attach::ACTION_HINT,
-                    /*continues_below*/ layout.processes.height > 0,
-                    now,
-                ))
-                .style(Theme::activity_rail()),
-                layout.subagents,
-            );
-            if let Some((row, state)) = self
-                .subagent_panel
-                .highlighted_row(layout.subagents.height as usize, now)
-            {
-                paint_rail_highlight(frame, layout.subagents, row, state);
+        for band in StackedBand::ORDER {
+            let rect = layout.band(band);
+            if rect.height == 0 {
+                continue;
             }
-        }
-        if layout.processes.height > 0 {
-            frame.render_widget(
-                Paragraph::new(self.process_panel.lines(
-                    width,
-                    layout.processes.height as usize,
-                    now,
-                ))
-                .style(Theme::activity_rail()),
-                layout.processes,
-            );
-            if let Some((row, state)) = self
-                .process_panel
-                .highlighted_row(layout.processes.height as usize, now)
+            let lines = self.stacked_band_lines(band, width, layout, now);
+            frame.render_widget(Paragraph::new(lines).style(band.style()), rect);
+            if let Some((row, state)) = self.stacked_band_highlight(band, rect.height as usize, now)
             {
-                paint_rail_highlight(frame, layout.processes, row, state);
+                paint_rail_highlight(frame, rect, row, state);
             }
-        }
-        if layout.pending_input.height > 0 {
-            frame.render_widget(
-                Paragraph::new(
-                    self.pending_input_lines(width)
-                        .into_iter()
-                        .take(layout.pending_input.height as usize)
-                        .collect::<Vec<_>>(),
-                )
-                .style(Style::default()),
-                layout.pending_input,
-            );
         }
         if layout.top_divider.height > 0 {
             frame.render_widget(
@@ -522,25 +537,8 @@ impl App {
             lines[button.y.saturating_sub(layout.history.y) as usize] =
                 self.jump_to_bottom_line(width);
         }
-        if layout.subagents.height > 0 {
-            lines.extend(self.subagent_panel.lines(
-                width,
-                layout.subagents.height as usize,
-                super::subagent_attach::ACTION_HINT,
-                /*continues_below*/ layout.processes.height > 0,
-                now,
-            ));
-        }
-        lines.extend(
-            self.process_panel
-                .lines(width, layout.processes.height as usize, now),
-        );
-        if layout.pending_input.height > 0 {
-            lines.extend(
-                self.pending_input_lines(width)
-                    .into_iter()
-                    .take(layout.pending_input.height as usize),
-            );
+        for band in StackedBand::ORDER {
+            lines.extend(self.stacked_band_lines(band, width, &layout, now));
         }
         if layout.top_divider.height > 0 {
             lines.push(self.divider_line(width, ComposerDividerSlot::Top));

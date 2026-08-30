@@ -3,9 +3,44 @@ use ratatui::layout::Rect;
 
 use super::{
     bottom_chrome_heights, split_interactive_budget, terminal_meets_minimum,
-    visible_composer_start, BottomChrome, InteractiveBudget, MIN_TERMINAL_HEIGHT,
-    MIN_TERMINAL_WIDTH,
+    visible_composer_start, BottomChrome, InteractiveBudget, ScreenLayout, StackedBand,
+    MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH,
 };
+
+/// Lay the stacked bands out below a fixed history panel, mirroring the
+/// `y`-walk in `build_screen_layout` without standing up a whole `App`.
+fn layout_with_band_heights(subagents: u16, processes: u16, pending: u16) -> ScreenLayout {
+    const WIDTH: u16 = 80;
+    let history = Rect::new(0, 0, WIDTH, 4);
+    let mut y = history.bottom();
+    let mut place = |height: u16| {
+        let rect = Rect::new(0, y, WIDTH, height);
+        y += height;
+        rect
+    };
+    let subagents = place(subagents);
+    let processes = place(processes);
+    let pending_input = place(pending);
+    let top_divider = place(1);
+    ScreenLayout {
+        history,
+        history_content: history,
+        history_scrollbar: None,
+        activity_gap: None,
+        activity_rail: None,
+        jump_to_bottom: None,
+        subagents,
+        processes,
+        pending_input,
+        top_divider,
+        composer: place(1),
+        bottom_divider: place(1),
+        statusline: place(2),
+        commands: Rect::new(0, y, WIDTH, 0),
+        composer_start: 0,
+        history_len: 0,
+    }
+}
 
 // Covers: moving the caret within the visible composer must not move the text
 // under an active pointer gesture.
@@ -177,4 +212,57 @@ fn interactive_split_follows_claim_priority() {
     assert_eq!(starved.subagents, 0);
     assert_eq!(starved.processes, 0);
     assert_eq!(starved.history, 1);
+}
+
+// Covers: queued input is painted below active work, so a follow-up prompt sits
+// next to the composer it will feed instead of under the transcript. Guards the
+// paint order itself, which heights alone cannot express.
+// Owner: pure layout
+#[test]
+fn pending_input_paints_below_the_activity_rails() {
+    assert_eq!(
+        StackedBand::ORDER,
+        [
+            StackedBand::Subagents,
+            StackedBand::Processes,
+            StackedBand::PendingInput,
+        ]
+    );
+}
+
+// Covers: the activity tree must terminate at the last visible rail. Pending
+// input is queued text, not active work, so it never extends the `├`/`└` chain.
+// Owner: pure layout
+#[test]
+fn rail_connectors_ignore_the_pending_input_band() {
+    let layout = layout_with_band_heights(
+        /*subagents*/ 1, /*processes*/ 1, /*pending*/ 2,
+    );
+    assert!(layout.rail_continues_below(StackedBand::Subagents));
+    assert!(!layout.rail_continues_below(StackedBand::Processes));
+
+    // Processes hidden: the subagent rail is now the last rail even though
+    // pending input still paints below it.
+    let no_processes = layout_with_band_heights(1, 0, 2);
+    assert!(!no_processes.rail_continues_below(StackedBand::Subagents));
+
+    let no_pending = layout_with_band_heights(1, 1, 0);
+    assert!(no_pending.rail_continues_below(StackedBand::Subagents));
+    assert!(!no_pending.rail_continues_below(StackedBand::Processes));
+}
+
+// Covers: band accessors must resolve to the rect the stack walk assigned, so
+// `band()` cannot silently return a neighbour's geometry.
+// Owner: pure layout
+#[test]
+fn band_accessor_resolves_each_rect() {
+    let layout = layout_with_band_heights(
+        /*subagents*/ 1, /*processes*/ 2, /*pending*/ 3,
+    );
+    assert_eq!(layout.band(StackedBand::Subagents), layout.subagents);
+    assert_eq!(layout.band(StackedBand::Processes), layout.processes);
+    assert_eq!(layout.band(StackedBand::PendingInput), layout.pending_input);
+    assert_eq!(layout.band(StackedBand::Subagents).height, 1);
+    assert_eq!(layout.band(StackedBand::Processes).height, 2);
+    assert_eq!(layout.band(StackedBand::PendingInput).height, 3);
 }
