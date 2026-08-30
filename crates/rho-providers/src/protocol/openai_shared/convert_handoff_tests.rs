@@ -232,6 +232,86 @@ fn codex_handoff_restores_replay_item_position() {
     assert_eq!(input[2]["type"], "function_call");
 }
 
+// Covers: multiple positioned replay items must reconstruct the provider's
+// original output order; stale original indexes inserted into the shorter
+// lowered list strand reasoning items behind the tool call, which strict
+// Responses gateways reject (opencode-go muse-spark tool loops: HTTP 500)
+// Owner: OpenAI Responses history conversion
+#[test]
+fn codex_handoff_restores_original_order_for_multiple_replay_items() {
+    let source = crate::model::ModelIdentity::new("opencode-go", "openai-responses", "muse-test");
+    let reasoning = |position: usize, id: &str| crate::model::ProviderContextBlock {
+        identity: source.clone(),
+        kind: "openai_response_output_item".into(),
+        position: Some(position),
+        data: json!({"type": "reasoning", "id": id, "encrypted_content": "signed"}),
+    };
+    let tool_call = |id: &str| {
+        ContentBlock::ToolCall(ToolCall {
+            id: id.into(),
+            name: "fetch_content".into(),
+            arguments: json!({"urls": ["https://example.com"]}),
+        })
+    };
+
+    struct Case {
+        name: &'static str,
+        content: Vec<ContentBlock>,
+        provider_context: Vec<crate::model::ProviderContextBlock>,
+        // (json pointer key, expected value) per wire item, in order
+        expected: Vec<(&'static str, &'static str)>,
+    }
+    let cases = [
+        // Original output: reasoning(0), reasoning(1), function_call(2).
+        Case {
+            name: "two reasoning items before a lone tool call",
+            content: vec![tool_call("call_1")],
+            provider_context: vec![reasoning(0, "rs_1"), reasoning(1, "rs_2")],
+            expected: vec![("id", "rs_1"), ("id", "rs_2"), ("call_id", "call_1")],
+        },
+        // Original output: reasoning(0), function_call(1), reasoning(2),
+        // function_call(3) - parallel calls with interleaved reasoning.
+        Case {
+            name: "reasoning interleaved between parallel tool calls",
+            content: vec![tool_call("call_1"), tool_call("call_2")],
+            provider_context: vec![reasoning(0, "rs_1"), reasoning(2, "rs_2")],
+            expected: vec![
+                ("id", "rs_1"),
+                ("call_id", "call_1"),
+                ("id", "rs_2"),
+                ("call_id", "call_2"),
+            ],
+        },
+    ];
+
+    for case in cases {
+        let message = Message::assistant(crate::model::AssistantMessage {
+            content: case.content,
+            provenance: Some(source.clone()),
+            reasoning_summary: None,
+            provider_context: case.provider_context,
+        });
+        let input =
+            codex_input_items_for_target(&[message], &mut Vec::new(), Some(&source)).unwrap();
+        let order = input
+            .iter()
+            .map(|item| {
+                case.expected
+                    .iter()
+                    .map(|(key, _)| *key)
+                    .find_map(|key| item.get(key).and_then(|value| value.as_str()))
+                    .expect("wire item carries an id")
+            })
+            .collect::<Vec<_>>();
+        let expected = case
+            .expected
+            .iter()
+            .map(|(_, value)| *value)
+            .collect::<Vec<_>>();
+        assert_eq!(order, expected, "{}", case.name);
+    }
+}
+
 #[test]
 fn codex_remote_compaction_marker_replays_item_without_portable_text() {
     let source = crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
