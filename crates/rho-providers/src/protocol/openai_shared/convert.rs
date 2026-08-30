@@ -306,7 +306,7 @@ fn append_codex_prepared_assistant(
     // `prepare_assistant` already suppresses portable fallback when opaque
     // context can replay, so converters only append the lowered content.
     append_codex_assistant(&mut assistant_items, &content)?;
-    insert_replay_items(&mut assistant_items, prepared.replay_context);
+    merge_replay_items(&mut assistant_items, prepared.replay_context);
     input.extend(assistant_items);
     Ok(())
 }
@@ -332,7 +332,7 @@ fn portable_assistant_blocks(prepared: &PreparedAssistant) -> Cow<'_, [ContentBl
     }
 }
 
-fn insert_replay_items(
+fn merge_replay_items(
     assistant_items: &mut Vec<serde_json::Value>,
     replay_context: Vec<ProviderContextBlock>,
 ) {
@@ -341,21 +341,21 @@ fn insert_replay_items(
         .enumerate()
         .filter(|(_, block)| block.kind == "openai_response_output_item")
         .collect::<Vec<_>>();
+    // Positionless items sort to the tail, so a single position-ordered pass
+    // handles both: positioned items merge in, positionless items trail.
     replay_items.sort_by_key(|(sequence, block)| (block.position.unwrap_or(usize::MAX), *sequence));
-    let (positioned, unpositioned): (Vec<_>, Vec<_>) = replay_items
-        .into_iter()
-        .partition(|(_, block)| block.position.is_some());
     // `position` is the item's index in the provider's original `output`
     // array, and the lowered portable items already sit in original relative
-    // order. Emitting each replay item once the rebuilt list reaches its
-    // original index therefore reconstructs the provider's exact output
-    // sequence. Inserting original indexes into the shorter lowered list
-    // instead strands trailing reasoning items behind the tool call, which
-    // strict Responses gateways reject (opencode-go muse-spark: HTTP 500).
-    let mut merged = Vec::with_capacity(assistant_items.len() + positioned.len());
-    let mut positioned = positioned.into_iter().peekable();
+    // order (one lowered item per original item). Emitting each replay item
+    // once the rebuilt list reaches its original index therefore
+    // reconstructs the provider's exact output sequence. Inserting original
+    // indexes into the shorter lowered list instead strands trailing
+    // reasoning items behind the tool call, which strict Responses gateways
+    // reject (opencode-go muse-spark: HTTP 500).
+    let mut replay = replay_items.into_iter().map(|(_, block)| block).peekable();
+    let mut merged = Vec::with_capacity(assistant_items.len() + replay.len());
     for item in assistant_items.drain(..) {
-        while let Some((_, block)) = positioned.next_if(|(_, block)| {
+        while let Some(block) = replay.next_if(|block| {
             block
                 .position
                 .is_some_and(|position| position <= merged.len())
@@ -364,8 +364,7 @@ fn insert_replay_items(
         }
         merged.push(item);
     }
-    merged.extend(positioned.map(|(_, block)| block.data));
-    merged.extend(unpositioned.into_iter().map(|(_, block)| block.data));
+    merged.extend(replay.map(|block| block.data));
     *assistant_items = merged;
 }
 
