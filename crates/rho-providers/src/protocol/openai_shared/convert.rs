@@ -345,14 +345,28 @@ fn insert_replay_items(
     let (positioned, unpositioned): (Vec<_>, Vec<_>) = replay_items
         .into_iter()
         .partition(|(_, block)| block.position.is_some());
-    for (_, block) in positioned.into_iter().rev() {
-        let position = block
-            .position
-            .expect("positioned replay item has a position")
-            .min(assistant_items.len());
-        assistant_items.insert(position, block.data);
+    // `position` is the item's index in the provider's original `output`
+    // array, and the lowered portable items already sit in original relative
+    // order. Emitting each replay item once the rebuilt list reaches its
+    // original index therefore reconstructs the provider's exact output
+    // sequence. Inserting original indexes into the shorter lowered list
+    // instead strands trailing reasoning items behind the tool call, which
+    // strict Responses gateways reject (opencode-go muse-spark: HTTP 500).
+    let mut merged = Vec::with_capacity(assistant_items.len() + positioned.len());
+    let mut positioned = positioned.into_iter().peekable();
+    for item in assistant_items.drain(..) {
+        while let Some((_, block)) = positioned.next_if(|(_, block)| {
+            block
+                .position
+                .is_some_and(|position| position <= merged.len())
+        }) {
+            merged.push(block.data);
+        }
+        merged.push(item);
     }
-    assistant_items.extend(unpositioned.into_iter().map(|(_, block)| block.data));
+    merged.extend(positioned.map(|(_, block)| block.data));
+    merged.extend(unpositioned.into_iter().map(|(_, block)| block.data));
+    *assistant_items = merged;
 }
 
 fn append_codex_assistant(
