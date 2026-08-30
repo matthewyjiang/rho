@@ -71,6 +71,45 @@ fn response_incomplete_event_surfaces_reason() {
     ));
 }
 
+// Covers: an incomplete response after streamed output still fails with the
+// provider's reason rather than reporting the partial content as completed,
+// mirroring the websocket transport's handling.
+// Owner: providers stream parse
+#[test]
+fn response_incomplete_after_text_delta_still_fails() {
+    let mut state = CodexSseState::default();
+    let mut deltas = Vec::new();
+    let mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> =
+        Some(&mut |event| {
+            if let ModelEvent::OutputDelta(delta) = event {
+                deltas.push(delta);
+            }
+            Ok(())
+        });
+    handle_codex_sse_line(
+        r#"data: {"type":"response.output_text.delta","delta":"partial"}"#,
+        &mut state,
+        &mut on_event,
+    )
+    .unwrap();
+    let error = handle_codex_sse_line(
+        r#"data: {"type":"response.incomplete","response":{"id":"resp_incomplete","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}"#,
+        &mut state,
+        &mut on_event,
+    )
+    .unwrap_err();
+
+    assert_eq!(deltas, ["partial"]);
+    assert!(matches!(
+        error,
+        ModelError::ProviderReported {
+            kind: ProviderReportedErrorKind::InvalidResponse,
+            error_type,
+            message,
+        } if error_type == "response_incomplete" && message.contains("max_output_tokens")
+    ));
+}
+
 // Covers: a failure after streamed output still surfaces the provider error
 // rather than reporting the partial content as a completed response.
 // Owner: providers stream parse

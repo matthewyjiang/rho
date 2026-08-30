@@ -472,13 +472,22 @@ fn terminal_failure_uses_error_type_when_code_is_null() {
             ProviderReportedErrorKind::InvalidResponse,
         ),
     ] {
+        // Route the event through the shared check inside `handle_codex_sse_value`
+        // and the websocket `classify_model_error` mapping, the same path a live
+        // stream takes.
+        let mut state = CodexSseState::default();
+        let mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> =
+            None;
+        let error =
+            handle_codex_sse_value(&event, &mut state, &mut on_event, CodexTransport::WebSocket)
+                .expect_err("terminal protocol event must fail the stream");
         assert!(matches!(
-            codex_ws_terminal_failure(&event, /*events_emitted*/ false),
-            Some(CodexWsFailure::Model(ModelError::ProviderReported {
+            classify_model_error(error, /*events_emitted*/ false),
+            CodexWsFailure::Model(ModelError::ProviderReported {
                 kind,
                 error_type,
                 ..
-            })) if kind == expected_kind && error_type == expected_type
+            }) if kind == expected_kind && error_type == expected_type
         ));
     }
 }
