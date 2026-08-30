@@ -8,8 +8,8 @@ use ratatui::{
 };
 use ratatui_image::{
     picker::{Picker, ProtocolType},
-    protocol::StatefulProtocol,
-    Resize, StatefulImage,
+    sliced::{SignedPosition, SlicedImage, SlicedProtocol},
+    Resize,
 };
 use rho_sdk::tool::ToolAsset;
 
@@ -130,7 +130,18 @@ impl ImageRowBudget {
 
 #[derive(Clone)]
 pub(super) struct FeedImage {
-    state: Rc<RefCell<StatefulProtocol>>,
+    inner: Rc<FeedImageState>,
+}
+
+struct FeedImageState {
+    source: DynamicImage,
+    picker: Picker,
+    protocol: RefCell<Option<SlicedRenderState>>,
+}
+
+struct SlicedRenderState {
+    size: Size,
+    protocol: SlicedProtocol,
 }
 
 /// A decoded image that can cross a background task boundary before
@@ -192,18 +203,49 @@ impl FeedImage {
     }
 
     pub(super) fn size_for(&self, width: usize, max_height: u16) -> Size {
-        let width = u16::try_from(width).unwrap_or(u16::MAX).max(1);
-        let max_height = max_height.max(1);
-        self.state
-            .borrow()
-            .size_for(Resize::Fit(None), Size::new(width, max_height))
+        let available = Size::new(
+            u16::try_from(width).unwrap_or(u16::MAX).max(1),
+            max_height.max(1),
+        );
+        Resize::Fit(None).size_for(&self.inner.source, self.inner.picker.font_size(), available)
     }
 
     pub(super) fn render(&self, frame: &mut Frame<'_>, area: Rect) {
-        frame.render_stateful_widget(
-            StatefulImage::default().resize(Resize::Fit(None)),
+        self.render_partial(frame, area, usize::from(area.height), 0);
+    }
+
+    /// Render a fixed-size image while dropping rows outside the visible area.
+    pub(super) fn render_partial(
+        &self,
+        frame: &mut Frame<'_>,
+        area: Rect,
+        full_height: usize,
+        skip_rows: usize,
+    ) {
+        let full_height = u16::try_from(full_height).unwrap_or(u16::MAX).max(1);
+        let size = self.size_for(usize::from(area.width), full_height);
+        let mut cached = self.inner.protocol.borrow_mut();
+        if cached.as_ref().is_none_or(|cached| cached.size != size) {
+            let Ok(protocol) = SlicedProtocol::new_with_resize(
+                &self.inner.picker,
+                self.inner.source.clone(),
+                size,
+                Resize::Fit(None),
+            ) else {
+                return;
+            };
+            *cached = Some(SlicedRenderState { size, protocol });
+        }
+
+        let Some(cached) = cached.as_ref() else {
+            return;
+        };
+        let skip_rows = i16::try_from(skip_rows)
+            .unwrap_or(i16::MAX)
+            .saturating_neg();
+        frame.render_widget(
+            SlicedImage::new(&cached.protocol, SignedPosition { x: 0, y: skip_rows }),
             area,
-            &mut *self.state.borrow_mut(),
         );
     }
 }
@@ -215,7 +257,11 @@ impl DecodedFeedImage {
 
     pub(super) fn to_feed_image(&self, picker: &Picker) -> FeedImage {
         FeedImage {
-            state: Rc::new(RefCell::new(picker.new_resize_protocol(self.image.clone()))),
+            inner: Rc::new(FeedImageState {
+                source: self.image.clone(),
+                picker: picker.clone(),
+                protocol: RefCell::new(None),
+            }),
         }
     }
 }
@@ -342,7 +388,12 @@ pub(super) fn reserve_entry_image_rows(
 pub(super) struct VisibleImagePlacement {
     pub(super) image: FeedImage,
     pub(super) row: usize,
+    /// Number of image rows inside the current viewport.
     pub(super) height: usize,
+    /// Total rows occupied by the image before viewport clipping.
+    pub(super) total_height: usize,
+    /// Number of image rows above the current viewport.
+    pub(super) skip_rows: usize,
 }
 
 pub(super) fn preview_generated_image(
@@ -427,15 +478,18 @@ impl super::App {
             if visible_height == 0 {
                 continue;
             }
-            placement.image.render(
+            // History lines are padded by one column on each side.
+            let image_area = Rect::new(
+                history_area.x.saturating_add(1),
+                image_y,
+                history_area.width.saturating_sub(2),
+                visible_height,
+            );
+            placement.image.render_partial(
                 frame,
-                // History lines are padded by one column on each side.
-                Rect::new(
-                    history_area.x.saturating_add(1),
-                    image_y,
-                    history_area.width.saturating_sub(2),
-                    visible_height,
-                ),
+                image_area,
+                placement.total_height,
+                placement.skip_rows,
             );
         }
     }

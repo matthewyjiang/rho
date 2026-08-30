@@ -91,7 +91,12 @@ pub(super) fn tool_entry_lines(
         tool.expanded,
         live_shell_elapsed(tool),
     );
-    reserve_optional_image_rows(&mut lines, tool.image.as_ref(), width, max_image_height);
+    reserve_optional_image_rows(
+        &mut lines,
+        tool.image.as_ref(),
+        inner_width,
+        max_image_height,
+    );
     // One trailing spacer only. Prior entries own the blank above this card.
     let padding_style = Theme::tool_card_padding();
     let mut padded = Vec::with_capacity(lines.len() + 1);

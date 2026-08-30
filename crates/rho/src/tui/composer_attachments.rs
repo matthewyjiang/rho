@@ -300,7 +300,8 @@ impl App {
             if placement.row < composer_start
                 || placement.row.saturating_add(placement.height) > visible_end
             {
-                // Match history: only paint when the full reserved block fits.
+                // Composer previews stay all-or-nothing so scrolling cannot
+                // split a row of side-by-side attachments.
                 continue;
             }
             let image_y = composer_area

@@ -85,7 +85,8 @@ pub(in crate::tui) fn render_entry_with_options(
         }
     };
 
-    let image_placement = reserve_entry_image_rows(&mut lines, entry, width, max_image_height);
+    let image_placement =
+        reserve_entry_image_rows(&mut lines, entry, inner_width, max_image_height);
     // Trailing spacer separates transcript blocks. User messages keep their
     // background on content rows only so the spacer does not grow an empty
     // highlighted band below the prompt. Strip underline so a lead-in link
@@ -160,6 +161,7 @@ pub(in crate::tui) fn apply_markdown_images(
         return;
     }
 
+    let image_width = padded_content_width(width);
     for block in &mut rendered.code_blocks {
         let original_top_line = block.top_line;
         let preceding_image_rows = images
@@ -171,7 +173,7 @@ pub(in crate::tui) fn apply_markdown_images(
                     .filter(|&&row| row < original_top_line)
                     .map(|_| {
                         image
-                            .height_for_width(width, max_image_height)
+                            .height_for_width(image_width, max_image_height)
                             .saturating_sub(1)
                     })
             })
@@ -184,7 +186,7 @@ pub(in crate::tui) fn apply_markdown_images(
         &mut rendered.lines,
         &rendered.image_rows,
         images,
-        width,
+        image_width,
         max_image_height,
     ) {
         rendered.image_placement = Some(placements);
