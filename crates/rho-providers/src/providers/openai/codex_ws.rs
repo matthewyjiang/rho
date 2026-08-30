@@ -9,13 +9,15 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use crate::credentials::CodexTokens;
-use crate::model::{ModelError, ModelEvent, ProviderReportedErrorKind};
+use crate::model::{ModelError, ModelEvent};
 use crate::provider_backend::stream_timeout::{wait_for_stream_activity_for, StreamIdleDeadline};
 
 use super::codex_continuation::{
     CodexContinuationCandidate, CodexContinuationResponse, CodexContinuationState,
 };
-use crate::protocol::openai_responses::{handle_codex_sse_value, CodexSseResponse, CodexSseState};
+use crate::protocol::openai_responses::{
+    handle_codex_sse_value, CodexSseResponse, CodexSseState, CodexTransport,
+};
 
 /// WebSocket transport for Codex Responses turns.
 ///
@@ -515,6 +517,25 @@ fn classify_model_error(error: ModelError, events_emitted: bool) -> CodexWsFailu
             message,
             events_emitted: false,
         },
+        // Terminal protocol failures surfaced by the shared check inside
+        // `handle_codex_sse_value` fall back to the SSE transport when output
+        // was already emitted, or when the error is specific to the websocket
+        // transport (stale continuation, connection limit).
+        ModelError::ProviderReported {
+            error_type,
+            message,
+            ..
+        } if events_emitted
+            || matches!(
+                error_type.as_str(),
+                "previous_response_not_found" | "websocket_connection_limit_reached"
+            ) =>
+        {
+            CodexWsFailure::Transport {
+                message: format!("websocket {error_type}: {message}"),
+                events_emitted,
+            }
+        }
         error => CodexWsFailure::Model(error),
     }
 }
@@ -525,9 +546,6 @@ fn handle_codex_ws_value(
     on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     events_emitted: &mut bool,
 ) -> Result<(bool, bool), CodexWsFailure> {
-    if let Some(failure) = codex_ws_terminal_failure(value, *events_emitted) {
-        return Err(failure);
-    }
     let mut emit_event = |event| {
         if let Some(on_event) = on_event.as_mut() {
             on_event(event)?;
@@ -539,6 +557,7 @@ fn handle_codex_ws_value(
         value,
         state,
         &mut Some(&mut emit_event as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)),
+        CodexTransport::WebSocket,
     )
     .map_err(|error| classify_model_error(error, *events_emitted))?;
     let event_type = value.get("type").and_then(Value::as_str);
@@ -552,111 +571,14 @@ fn handle_codex_ws_value_silent(
     value: &Value,
     state: &mut CodexSseState,
 ) -> Result<(bool, bool), CodexWsFailure> {
-    if let Some(failure) = codex_ws_terminal_failure(value, /*events_emitted*/ false) {
-        return Err(failure);
-    }
     let mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> = None;
-    handle_codex_sse_value(value, state, &mut on_event)
+    handle_codex_sse_value(value, state, &mut on_event, CodexTransport::WebSocket)
         .map_err(|error| classify_model_error(error, /*events_emitted*/ false))?;
     let event_type = value.get("type").and_then(Value::as_str);
     Ok((
         event_type == Some("response.completed"),
         event_type.is_some_and(|event_type| event_type.starts_with("response.")),
     ))
-}
-
-fn codex_ws_terminal_failure(value: &Value, events_emitted: bool) -> Option<CodexWsFailure> {
-    let event_type = value.get("type").and_then(Value::as_str)?;
-    let (error_type, message) = match event_type {
-        "error" => {
-            let error = value.get("error").unwrap_or(value);
-            (
-                error
-                    .get("code")
-                    .and_then(Value::as_str)
-                    .or_else(|| error.get("type").and_then(Value::as_str))
-                    .unwrap_or("websocket_error")
-                    .to_string(),
-                error
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("websocket error event received")
-                    .to_string(),
-            )
-        }
-        "response.failed" => {
-            let error = value
-                .get("response")
-                .and_then(|response| response.get("error"));
-            (
-                error
-                    .and_then(|error| {
-                        error
-                            .get("code")
-                            .and_then(Value::as_str)
-                            .or_else(|| error.get("type").and_then(Value::as_str))
-                    })
-                    .unwrap_or("response_failed")
-                    .to_string(),
-                error
-                    .and_then(|error| error.get("message"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("response.failed event received")
-                    .to_string(),
-            )
-        }
-        "response.incomplete" => {
-            let reason = value
-                .get("response")
-                .and_then(|response| response.get("incomplete_details"))
-                .and_then(|details| details.get("reason"))
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            (
-                "response_incomplete".to_string(),
-                format!("incomplete response returned, reason: {reason}"),
-            )
-        }
-        _ => return None,
-    };
-
-    Some(protocol_terminal_failure(
-        events_emitted,
-        &error_type,
-        message,
-    ))
-}
-
-fn protocol_terminal_failure(
-    events_emitted: bool,
-    error_type: &str,
-    message: String,
-) -> CodexWsFailure {
-    if events_emitted
-        || matches!(
-            error_type,
-            "previous_response_not_found" | "websocket_connection_limit_reached"
-        )
-    {
-        return CodexWsFailure::Transport {
-            message: format!("websocket {error_type}: {message}"),
-            events_emitted,
-        };
-    }
-
-    let kind = match error_type {
-        "rate_limit_exceeded" => ProviderReportedErrorKind::RateLimit,
-        "server_error" | "service_unavailable" | "websocket_error" | "server_is_overloaded" => {
-            ProviderReportedErrorKind::Unavailable
-        }
-        "timeout" | "request_timeout" => ProviderReportedErrorKind::Timeout,
-        _ => ProviderReportedErrorKind::InvalidResponse,
-    };
-    CodexWsFailure::Model(ModelError::ProviderReported {
-        kind,
-        error_type: error_type.to_string(),
-        message,
-    })
 }
 
 fn collect_server_output_item(payload: &Value, output_items: &mut Vec<Value>) {

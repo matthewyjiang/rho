@@ -316,6 +316,13 @@ pub(crate) fn handle_anthropic_stream_line(
     Ok(true)
 }
 
+/// Map an Anthropic error code/type to the retryability-kind surface.
+///
+/// The OpenAI Responses transports have their own error-code vocabulary and
+/// their own mapper: `provider_reported_kind` in
+/// `protocol/openai_shared/codex_sse.rs`. Keep the two in sync in spirit
+/// (rate limit / unavailable / timeout are retryable, everything else is
+/// permanent) but do not merge them; the code strings differ per provider.
 fn anthropic_error_kind(error_type: &str) -> ProviderReportedErrorKind {
     match error_type {
         "timeout_error" => ProviderReportedErrorKind::Timeout,
