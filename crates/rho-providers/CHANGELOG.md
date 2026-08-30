@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.1.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.1.0...rho-providers-v2.1.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **providers:** stop 500s on muse-spark tool loops by replaying Responses items in original order ([#1106](https://github.com/matthewyjiang/rho/issues/1106)) ([e1d6d0f](https://github.com/matthewyjiang/rho/commit/e1d6d0f472df933836f85c55ba3d4abd9b1bfdb9))
+* **providers:** surface terminal failures on Responses SSE streams ([#1105](https://github.com/matthewyjiang/rho/issues/1105)) ([ac3c2c4](https://github.com/matthewyjiang/rho/commit/ac3c2c48c3ff8bcba011770afc3496ad9cc0d5da))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.1.0 to 5.1.1
+
 ## [2.1.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.0.0...rho-providers-v2.1.0) (2026-08-30)
 
 

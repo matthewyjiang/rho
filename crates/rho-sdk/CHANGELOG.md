@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.1.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.1.0...rho-sdk-v5.1.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **sdk:** stop burst-replayed proxy streams from inflating tok/s ([#1103](https://github.com/matthewyjiang/rho/issues/1103)) ([d4e88ae](https://github.com/matthewyjiang/rho/commit/d4e88aea5d61195eb267faa49877dad11f650c29))
+
 ## [5.1.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.0.0...rho-sdk-v5.1.0) (2026-08-30)
 
 
