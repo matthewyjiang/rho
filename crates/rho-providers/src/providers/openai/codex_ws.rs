@@ -9,13 +9,16 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use crate::credentials::CodexTokens;
-use crate::model::{ModelError, ModelEvent, ProviderReportedErrorKind};
+use crate::model::{ModelError, ModelEvent};
 use crate::provider_backend::stream_timeout::{wait_for_stream_activity_for, StreamIdleDeadline};
 
 use super::codex_continuation::{
     CodexContinuationCandidate, CodexContinuationResponse, CodexContinuationState,
 };
-use crate::protocol::openai_responses::{handle_codex_sse_value, CodexSseResponse, CodexSseState};
+use crate::protocol::openai_responses::{
+    codex_terminal_failure, handle_codex_sse_value, provider_reported_kind, CodexSseResponse,
+    CodexSseState,
+};
 
 /// WebSocket transport for Codex Responses turns.
 ///
@@ -566,60 +569,11 @@ fn handle_codex_ws_value_silent(
 }
 
 fn codex_ws_terminal_failure(value: &Value, events_emitted: bool) -> Option<CodexWsFailure> {
-    let event_type = value.get("type").and_then(Value::as_str)?;
-    let (error_type, message) = match event_type {
-        "error" => {
-            let error = value.get("error").unwrap_or(value);
-            (
-                error
-                    .get("code")
-                    .and_then(Value::as_str)
-                    .or_else(|| error.get("type").and_then(Value::as_str))
-                    .unwrap_or("websocket_error")
-                    .to_string(),
-                error
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("websocket error event received")
-                    .to_string(),
-            )
-        }
-        "response.failed" => {
-            let error = value
-                .get("response")
-                .and_then(|response| response.get("error"));
-            (
-                error
-                    .and_then(|error| {
-                        error
-                            .get("code")
-                            .and_then(Value::as_str)
-                            .or_else(|| error.get("type").and_then(Value::as_str))
-                    })
-                    .unwrap_or("response_failed")
-                    .to_string(),
-                error
-                    .and_then(|error| error.get("message"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("response.failed event received")
-                    .to_string(),
-            )
-        }
-        "response.incomplete" => {
-            let reason = value
-                .get("response")
-                .and_then(|response| response.get("incomplete_details"))
-                .and_then(|details| details.get("reason"))
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            (
-                "response_incomplete".to_string(),
-                format!("incomplete response returned, reason: {reason}"),
-            )
-        }
-        _ => return None,
-    };
-
+    let (error_type, message) = codex_terminal_failure(
+        value,
+        /* fallback_error_type */ "websocket_error",
+        /* fallback_message */ "websocket error event received",
+    )?;
     Some(protocol_terminal_failure(
         events_emitted,
         &error_type,
@@ -644,16 +598,8 @@ fn protocol_terminal_failure(
         };
     }
 
-    let kind = match error_type {
-        "rate_limit_exceeded" => ProviderReportedErrorKind::RateLimit,
-        "server_error" | "service_unavailable" | "websocket_error" | "server_is_overloaded" => {
-            ProviderReportedErrorKind::Unavailable
-        }
-        "timeout" | "request_timeout" => ProviderReportedErrorKind::Timeout,
-        _ => ProviderReportedErrorKind::InvalidResponse,
-    };
     CodexWsFailure::Model(ModelError::ProviderReported {
-        kind,
+        kind: provider_reported_kind(error_type),
         error_type: error_type.to_string(),
         message,
     })

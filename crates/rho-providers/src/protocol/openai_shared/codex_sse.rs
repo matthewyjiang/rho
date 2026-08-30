@@ -8,7 +8,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use futures_util::StreamExt;
 
 use crate::{
-    model::{ContentBlock, ImageContent, ModelError, ModelEvent, ModelResponse},
+    model::{
+        ContentBlock, ImageContent, ModelError, ModelEvent, ModelResponse,
+        ProviderReportedErrorKind,
+    },
     provider_backend::line_decoder::LineDecoder,
 };
 use rho_sdk::model::ToolCall;
@@ -25,6 +28,86 @@ use super::usage::{extract_usage_report, GenerationTokenContext, HiddenReasoning
 const DETAIL_MAX_CHARS: usize = 80;
 /// Max chars per query when rendering multi-query search previews.
 const QUERY_MAX_CHARS: usize = 48;
+
+/// Terminal failure payloads shared by the SSE and WebSocket Responses
+/// transports.
+///
+/// Returns `(error_type, message)` for `error`, `response.failed`, and
+/// `response.incomplete` events so both transports surface the provider's own
+/// error instead of an empty-content diagnostic. `fallback_error_type` and
+/// `fallback_message` name the transport when a bare `error` event carries no
+/// code/type and message.
+pub(crate) fn codex_terminal_failure(
+    value: &serde_json::Value,
+    fallback_error_type: &str,
+    fallback_message: &str,
+) -> Option<(String, String)> {
+    let event_type = value.get("type").and_then(|v| v.as_str())?;
+    match event_type {
+        "error" => {
+            let error = value.get("error").unwrap_or(value);
+            Some((
+                error
+                    .get("code")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| error.get("type").and_then(|v| v.as_str()))
+                    .unwrap_or(fallback_error_type)
+                    .to_string(),
+                error
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(fallback_message)
+                    .to_string(),
+            ))
+        }
+        "response.failed" => {
+            let error = value
+                .get("response")
+                .and_then(|response| response.get("error"));
+            Some((
+                error
+                    .and_then(|error| {
+                        error
+                            .get("code")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| error.get("type").and_then(|v| v.as_str()))
+                    })
+                    .unwrap_or("response_failed")
+                    .to_string(),
+                error
+                    .and_then(|error| error.get("message"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("response.failed event received")
+                    .to_string(),
+            ))
+        }
+        "response.incomplete" => {
+            let reason = value
+                .get("response")
+                .and_then(|response| response.get("incomplete_details"))
+                .and_then(|details| details.get("reason"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            Some((
+                "response_incomplete".to_string(),
+                format!("incomplete response returned, reason: {reason}"),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Map a provider error code/type to the retryability-kind surface.
+pub(crate) fn provider_reported_kind(error_type: &str) -> ProviderReportedErrorKind {
+    match error_type {
+        "rate_limit_exceeded" => ProviderReportedErrorKind::RateLimit,
+        "server_error" | "service_unavailable" | "websocket_error" | "server_is_overloaded" => {
+            ProviderReportedErrorKind::Unavailable
+        }
+        "timeout" | "request_timeout" => ProviderReportedErrorKind::Timeout,
+        _ => ProviderReportedErrorKind::InvalidResponse,
+    }
+}
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct CodexSseResponse {
@@ -580,6 +663,19 @@ pub(crate) fn handle_codex_sse_value(
     if !event_type.is_empty() && !state.event_types.contains(event_type) {
         state.event_types.insert(event_type.to_owned());
     }
+    // A stream that starts normally and then fails must surface the provider's
+    // error, not fall through to the empty-content diagnostic at stream end.
+    if let Some((error_type, message)) = codex_terminal_failure(
+        value,
+        /* fallback_error_type */ "response_error",
+        /* fallback_message */ "error event received",
+    ) {
+        return Err(ModelError::ProviderReported {
+            kind: provider_reported_kind(&error_type),
+            error_type,
+            message,
+        });
+    }
     if event_type == "response.output_text.delta" {
         if let Some(delta) = value.get("delta").and_then(|v| v.as_str()) {
             state.text.push_str(delta);
@@ -792,3 +888,7 @@ pub(crate) fn handle_codex_sse_value(
 #[cfg(test)]
 #[path = "codex_sse_image_tests.rs"]
 mod image_tests;
+
+#[cfg(test)]
+#[path = "codex_sse_terminal_tests.rs"]
+mod terminal_tests;

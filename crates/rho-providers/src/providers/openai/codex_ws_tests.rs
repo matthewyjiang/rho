@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::{ContentBlock, ModelResponse};
+use crate::model::{ContentBlock, ModelResponse, ProviderReportedErrorKind};
 use serde_json::json;
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::net::TcpListener;
