@@ -87,6 +87,79 @@ fn synthesized_output_has_no_generation_timing() {
     assert_eq!(metrics.total_latency, Duration::from_secs(2));
 }
 
+// Covers: a translating proxy that buffers a response and flushes it in a few
+// giant deltas must not report an inflated generation rate; the compressed
+// window cannot attribute tokens, so throughput reads as unavailable.
+// Owner: SDK orchestration timing
+#[test]
+fn burst_replayed_stream_reports_throughput_unavailable() {
+    let started = Instant::now();
+    let mut timer = ModelCallTimer::start(started);
+    // Long silent wait, then two giant deltas close together (measured
+    // CLIProxyAPI shape: ~230 tokens/delta, window ~8% of latency).
+    timer.observe(
+        &ModelEvent::OutputDelta("giant".into()),
+        Some(started + Duration::from_millis(4900)),
+    );
+    timer.observe(
+        &ModelEvent::OutputDelta("giant".into()),
+        Some(started + Duration::from_millis(5300)),
+    );
+
+    let metrics = timer.finish(started + Duration::from_millis(5300), Some(460));
+
+    assert_eq!(
+        metrics.generation_output_tokens,
+        Some(GenerationOutputTokens::Unavailable)
+    );
+    assert_eq!(metrics.generation_tokens_per_second(), None);
+    // Timing itself stays honest for /info.
+    assert_eq!(metrics.generation_time, Some(Duration::from_millis(400)));
+    assert_eq!(metrics.total_latency, Duration::from_millis(5300));
+}
+
+// Covers: a live stream of many small deltas keeps its generation rate even
+// when the total is large; only compressed replays trip the burst gate.
+// Owner: SDK orchestration timing
+#[test]
+fn steadily_streamed_call_keeps_generation_tokens() {
+    let started = Instant::now();
+    let mut timer = ModelCallTimer::start(started);
+    for i in 0..17u64 {
+        timer.observe(
+            &ModelEvent::OutputDelta("delta".into()),
+            Some(started + Duration::from_millis(1290 + i * 660)),
+        );
+    }
+
+    let metrics = timer.finish(started + Duration::from_millis(11960), Some(602));
+
+    assert_eq!(metrics.resolved_generation_tokens(), Some(602));
+    assert!(metrics.generation_tokens_per_second().is_some());
+}
+
+// Covers: chunky deltas spread across the whole response are still a live
+// stream; the window-fraction gate must hold the rate in place.
+// Owner: SDK orchestration timing
+#[test]
+fn chunky_but_live_stream_keeps_generation_tokens() {
+    let started = Instant::now();
+    let mut timer = ModelCallTimer::start(started);
+    // Two large deltas, but the window spans most of the latency.
+    timer.observe(
+        &ModelEvent::OutputDelta("giant".into()),
+        Some(started + Duration::from_millis(500)),
+    );
+    timer.observe(
+        &ModelEvent::OutputDelta("giant".into()),
+        Some(started + Duration::from_millis(5000)),
+    );
+
+    let metrics = timer.finish(started + Duration::from_millis(5000), Some(460));
+
+    assert_eq!(metrics.resolved_generation_tokens(), Some(460));
+}
+
 #[test]
 fn tool_call_delta_counts_as_generated_output() {
     let started = Instant::now();
