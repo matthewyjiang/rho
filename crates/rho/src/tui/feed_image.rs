@@ -8,9 +8,8 @@ use ratatui::{
 };
 use ratatui_image::{
     picker::{Picker, ProtocolType},
-    protocol::StatefulProtocol,
     sliced::{SignedPosition, SlicedImage, SlicedProtocol},
-    Resize, StatefulImage,
+    Resize,
 };
 use rho_sdk::tool::ToolAsset;
 
@@ -135,10 +134,9 @@ pub(super) struct FeedImage {
 }
 
 struct FeedImageState {
-    state: RefCell<StatefulProtocol>,
     source: DynamicImage,
     picker: Picker,
-    sliced: RefCell<Option<SlicedRenderState>>,
+    protocol: RefCell<Option<SlicedRenderState>>,
 }
 
 struct SlicedRenderState {
@@ -205,27 +203,18 @@ impl FeedImage {
     }
 
     pub(super) fn size_for(&self, width: usize, max_height: u16) -> Size {
-        let width = u16::try_from(width).unwrap_or(u16::MAX).max(1);
-        let max_height = max_height.max(1);
-        self.inner
-            .state
-            .borrow()
-            .size_for(Resize::Fit(None), Size::new(width, max_height))
+        let available = Size::new(
+            u16::try_from(width).unwrap_or(u16::MAX).max(1),
+            max_height.max(1),
+        );
+        Resize::Fit(None).size_for(&self.inner.source, self.inner.picker.font_size(), available)
     }
 
     pub(super) fn render(&self, frame: &mut Frame<'_>, area: Rect) {
-        frame.render_stateful_widget(
-            StatefulImage::default().resize(Resize::Fit(None)),
-            area,
-            &mut *self.inner.state.borrow_mut(),
-        );
+        self.render_partial(frame, area, usize::from(area.height), 0);
     }
 
     /// Render a fixed-size image while dropping rows outside the visible area.
-    ///
-    /// `StatefulImage` fits the source into the area it receives, so passing it
-    /// a clipped height would rescale a partially visible image. The sliced
-    /// protocol keeps the original encoded size and only skips/drops rows.
     pub(super) fn render_partial(
         &self,
         frame: &mut Frame<'_>,
@@ -235,26 +224,20 @@ impl FeedImage {
     ) {
         let full_height = u16::try_from(full_height).unwrap_or(u16::MAX).max(1);
         let size = self.size_for(usize::from(area.width), full_height);
-        let mut sliced = self.inner.sliced.borrow_mut();
-        let needs_new_protocol = sliced.as_ref().is_none_or(|cached| cached.size != size);
-        if needs_new_protocol {
+        let mut cached = self.inner.protocol.borrow_mut();
+        if cached.as_ref().is_none_or(|cached| cached.size != size) {
             let Ok(protocol) = SlicedProtocol::new_with_resize(
                 &self.inner.picker,
                 self.inner.source.clone(),
                 size,
                 Resize::Fit(None),
             ) else {
-                // The stateful protocol was built from the same source and
-                // picker, so retain a usable fallback if a sliced backend
-                // rejects this target.
-                drop(sliced);
-                self.render(frame, area);
                 return;
             };
-            *sliced = Some(SlicedRenderState { size, protocol });
+            *cached = Some(SlicedRenderState { size, protocol });
         }
 
-        let Some(cached) = sliced.as_ref() else {
+        let Some(cached) = cached.as_ref() else {
             return;
         };
         let skip_rows = i16::try_from(skip_rows)
@@ -275,10 +258,9 @@ impl DecodedFeedImage {
     pub(super) fn to_feed_image(&self, picker: &Picker) -> FeedImage {
         FeedImage {
             inner: Rc::new(FeedImageState {
-                state: RefCell::new(picker.new_resize_protocol(self.image.clone())),
                 source: self.image.clone(),
                 picker: picker.clone(),
-                sliced: RefCell::new(None),
+                protocol: RefCell::new(None),
             }),
         }
     }
@@ -503,19 +485,12 @@ impl super::App {
                 history_area.width.saturating_sub(2),
                 visible_height,
             );
-            if placement.skip_rows == 0
-                && placement.height == placement.total_height
-                && usize::from(visible_height) == placement.total_height
-            {
-                placement.image.render(frame, image_area);
-            } else {
-                placement.image.render_partial(
-                    frame,
-                    image_area,
-                    placement.total_height,
-                    placement.skip_rows,
-                );
-            }
+            placement.image.render_partial(
+                frame,
+                image_area,
+                placement.total_height,
+                placement.skip_rows,
+            );
         }
     }
 }

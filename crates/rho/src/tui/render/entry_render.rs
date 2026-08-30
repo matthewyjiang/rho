@@ -85,12 +85,8 @@ pub(in crate::tui) fn render_entry_with_options(
         }
     };
 
-    let image_placement = reserve_entry_image_rows(
-        &mut lines,
-        entry,
-        padded_content_width(width),
-        max_image_height,
-    );
+    let image_placement =
+        reserve_entry_image_rows(&mut lines, entry, inner_width, max_image_height);
     // Trailing spacer separates transcript blocks. User messages keep their
     // background on content rows only so the spacer does not grow an empty
     // highlighted band below the prompt. Strip underline so a lead-in link

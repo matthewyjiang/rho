@@ -94,7 +94,7 @@ pub(super) fn tool_entry_lines(
     reserve_optional_image_rows(
         &mut lines,
         tool.image.as_ref(),
-        padded_content_width(width),
+        inner_width,
         max_image_height,
     );
     // One trailing spacer only. Prior entries own the blank above this card.
