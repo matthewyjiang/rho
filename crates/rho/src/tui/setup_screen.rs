@@ -79,6 +79,9 @@ impl StepState {
 
 const STEP_LABELS: [&str; 2] = ["Sign in to a provider", "Choose a model"];
 
+/// Shown when Esc backs out of setup. Hidden while a pending login owns Esc.
+const SETUP_SKIP_HINT: &str = "Esc to skip setup";
+
 impl App {
     pub(super) fn setup_step(&self) -> Option<SetupStep> {
         self.exclusive.setup_step()
@@ -150,8 +153,30 @@ impl App {
     /// Called from the one place a picker collapses to the plain composer, so
     /// Esc always leads somewhere instead of stranding an empty screen. Every
     /// step exits the same way, so this needs no per-step handling.
+    ///
+    /// Distinct from [`Self::restore_after_cancelled_login`]: Esc on the
+    /// picker leaves setup, Esc on a pending login stays here and reopens
+    /// this step's picker.
     pub(super) fn dismiss_setup_screen(&mut self) {
         self.leave_setup();
+    }
+
+    /// Reopen the current setup step after a pending login is cancelled.
+    ///
+    /// Escaping a pending login is not the same as escaping the picker: the
+    /// picker Esc path calls [`Self::dismiss_setup_screen`] and leaves setup
+    /// entirely. This path keeps `exclusive` as Setup and restores that
+    /// step's picker. A normal `/login` (no setup step) still returns to
+    /// the plain composer.
+    pub(super) fn restore_after_cancelled_login(&mut self) {
+        match self.setup_step() {
+            Some(SetupStep::SignIn) => self.open_login_picker(),
+            Some(SetupStep::ChooseModel) => self.show_setup_model_picker(),
+            None => {
+                self.input_ui.set_composer(ComposerMode::Input);
+                self.set_status("login cancelled");
+            }
+        }
     }
 
     /// The model picker for this session, or `None` when the available
@@ -165,6 +190,11 @@ impl App {
     /// Open the model picker without the `/model` command's loading redraw,
     /// which would paint session chrome over the setup screen.
     fn open_setup_model_picker(&mut self, terminal: &mut super::DefaultTerminal) {
+        self.show_setup_model_picker();
+        let _ = terminal.draw(|frame| self.draw(frame));
+    }
+
+    fn show_setup_model_picker(&mut self) {
         let Some(picker) = self.setup_model_picker() else {
             // Nothing to choose between: keep the configured model rather than
             // showing an empty step.
@@ -174,7 +204,6 @@ impl App {
         };
         self.input_ui.set_composer(ComposerMode::Picker(picker));
         self.set_status("select model");
-        let _ = terminal.draw(|frame| self.draw(frame));
     }
 
     pub(super) fn draw_setup_screen(&mut self, frame: &mut Frame<'_>, area: Rect, step: SetupStep) {
@@ -195,11 +224,13 @@ impl App {
         lines.extend(step_lines(step, width));
         lines.push(Line::raw(""));
         lines.extend(self.setup_body_lines(width, origin.height));
-        lines.push(Line::raw(""));
-        lines.push(Line::from(Span::styled(
-            truncate_one_line("Esc to skip setup", width),
-            Theme::dim(),
-        )));
+        if let Some(hint) = setup_skip_hint(self.input_ui.composer()) {
+            lines.push(Line::raw(""));
+            lines.push(Line::from(Span::styled(
+                truncate_one_line(hint, width),
+                Theme::dim(),
+            )));
+        }
 
         frame.render_widget(Paragraph::new(lines).style(Theme::surface()), column);
         if let Some(position) = self.setup_filter_cursor(column, body_row) {
@@ -236,6 +267,14 @@ impl App {
                 .saturating_add(offset.min(column.width.saturating_sub(1) as usize) as u16),
             y: column.y.saturating_add(body_row),
         })
+    }
+}
+
+/// Skip-setup footer, or none while a pending login owns Esc.
+pub(super) fn setup_skip_hint(composer: &ComposerMode) -> Option<&'static str> {
+    match composer {
+        ComposerMode::InteractivePending(_) => None,
+        _ => Some(SETUP_SKIP_HINT),
     }
 }
 

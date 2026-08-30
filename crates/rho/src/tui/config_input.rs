@@ -34,8 +34,9 @@ impl App {
                 if let Some(pending) = self.pending_interactive_login.take() {
                     pending.handle.abort();
                 }
-                self.input_ui.set_composer(ComposerMode::Input);
-                self.set_status("login cancelled");
+                // Cancelling a pending login is not backing out of setup.
+                // Setup picker Esc still calls `dismiss_setup_screen()`.
+                self.restore_after_cancelled_login();
                 self.clear_transient_key_state();
             }
             _ => {}

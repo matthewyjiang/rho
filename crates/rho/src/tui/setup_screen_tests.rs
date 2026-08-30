@@ -1,4 +1,4 @@
-use crossterm::event::MouseEventKind;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use pretty_assertions::assert_eq;
 use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 use rho_providers::{
@@ -215,5 +215,57 @@ fn setup_copy_button_hover_follows_pointer() {
             .expect("copy span")
             .style,
         Theme::markdown_code_copy_button(/*hovered*/ false)
+    );
+}
+
+fn composer_has_skip_hint(composer: &ComposerMode) -> bool {
+    setup_skip_hint(composer).is_some()
+}
+
+// Covers: pending login must not also advertise Esc-to-skip
+// Owner: setup screen
+#[test]
+fn setup_skip_footer_omits_while_login_pending() {
+    let cases = [
+        (
+            "pending login",
+            ComposerMode::InteractivePending(pending_login()),
+            false,
+        ),
+        ("plain composer", ComposerMode::Input, true),
+        (
+            "login picker",
+            ComposerMode::Picker(crate::tui::provider_picker::login_group_picker()),
+            true,
+        ),
+    ];
+    for (label, composer, expected) in cases {
+        assert_eq!(
+            composer_has_skip_hint(&composer),
+            expected,
+            "skip footer at {label}"
+        );
+    }
+}
+
+// Covers: cancelling a pending login must restore the skip-setup footer with the picker
+// Owner: setup screen
+#[test]
+fn cancelling_pending_login_restores_setup_skip_footer() {
+    let mut app = test_app();
+    app.enter_setup(SetupStep::SignIn);
+    app.input_ui
+        .set_composer(ComposerMode::InteractivePending(pending_login()));
+    assert_eq!(
+        composer_has_skip_hint(app.input_ui.composer()),
+        false,
+        "pending"
+    );
+    app.handle_interactive_pending_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+        .unwrap();
+    assert_eq!(
+        composer_has_skip_hint(app.input_ui.composer()),
+        true,
+        "after cancel"
     );
 }
