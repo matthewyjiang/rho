@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.3](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.0.2...rho-agent-tools-v1.0.3) (2026-08-30)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.1.0 to 5.1.1
+
 ## [1.0.2](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.0.1...rho-agent-tools-v1.0.2) (2026-08-30)
 
 
