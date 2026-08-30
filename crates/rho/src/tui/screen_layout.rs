@@ -198,9 +198,9 @@ pub(super) struct ScreenLayout {
     pub(super) activity_gap: Option<Rect>,
     pub(super) activity_rail: Option<Rect>,
     pub(super) jump_to_bottom: Option<Rect>,
-    pub(super) pending_input: Rect,
     pub(super) subagents: Rect,
     pub(super) processes: Rect,
+    pub(super) pending_input: Rect,
     pub(super) top_divider: Rect,
     pub(super) composer: Rect,
     pub(super) bottom_divider: Rect,
@@ -293,12 +293,12 @@ impl App {
         });
         let activity_rail = (activity_status.is_some() && history.height > 0)
             .then(|| Rect::new(history.x, activity_y, history.width, 1));
-        let pending_input = Rect::new(area.x, y, area.width, pending_input_height as u16);
-        y = y.saturating_add(pending_input.height);
         let subagents = Rect::new(area.x, y, area.width, subagent_height as u16);
         y = y.saturating_add(subagents.height);
         let processes = Rect::new(area.x, y, area.width, process_height as u16);
         y = y.saturating_add(processes.height);
+        let pending_input = Rect::new(area.x, y, area.width, pending_input_height as u16);
+        y = y.saturating_add(pending_input.height);
         let top_divider = if show_top_divider {
             let rect = Rect::new(area.x, y, area.width, 1);
             y = y.saturating_add(1);
@@ -325,9 +325,9 @@ impl App {
             activity_gap,
             activity_rail,
             jump_to_bottom,
-            pending_input,
             subagents,
             processes,
+            pending_input,
             top_divider,
             composer,
             bottom_divider,

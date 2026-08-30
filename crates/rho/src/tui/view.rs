@@ -274,18 +274,6 @@ impl App {
                 button,
             );
         }
-        if layout.pending_input.height > 0 {
-            frame.render_widget(
-                Paragraph::new(
-                    self.pending_input_lines(width)
-                        .into_iter()
-                        .take(layout.pending_input.height as usize)
-                        .collect::<Vec<_>>(),
-                )
-                .style(Style::default()),
-                layout.pending_input,
-            );
-        }
         if layout.subagents.height > 0 {
             frame.render_widget(
                 Paragraph::new(self.subagent_panel.lines(
@@ -321,6 +309,18 @@ impl App {
             {
                 paint_rail_highlight(frame, layout.processes, row, state);
             }
+        }
+        if layout.pending_input.height > 0 {
+            frame.render_widget(
+                Paragraph::new(
+                    self.pending_input_lines(width)
+                        .into_iter()
+                        .take(layout.pending_input.height as usize)
+                        .collect::<Vec<_>>(),
+                )
+                .style(Style::default()),
+                layout.pending_input,
+            );
         }
         if layout.top_divider.height > 0 {
             frame.render_widget(
@@ -522,13 +522,6 @@ impl App {
             lines[button.y.saturating_sub(layout.history.y) as usize] =
                 self.jump_to_bottom_line(width);
         }
-        if layout.pending_input.height > 0 {
-            lines.extend(
-                self.pending_input_lines(width)
-                    .into_iter()
-                    .take(layout.pending_input.height as usize),
-            );
-        }
         if layout.subagents.height > 0 {
             lines.extend(self.subagent_panel.lines(
                 width,
@@ -542,6 +535,13 @@ impl App {
             self.process_panel
                 .lines(width, layout.processes.height as usize, now),
         );
+        if layout.pending_input.height > 0 {
+            lines.extend(
+                self.pending_input_lines(width)
+                    .into_iter()
+                    .take(layout.pending_input.height as usize),
+            );
+        }
         if layout.top_divider.height > 0 {
             lines.push(self.divider_line(width, ComposerDividerSlot::Top));
         }
