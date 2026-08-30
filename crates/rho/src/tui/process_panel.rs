@@ -131,7 +131,20 @@ impl ProcessPanel {
         }
     }
 
-    pub(super) fn lines(&self, width: usize, height: usize, now: Instant) -> Vec<Line<'static>> {
+    /// Render the process rail.
+    ///
+    /// `continues_below` reports whether another activity-tree rail is painted
+    /// under this one, so the final row closes with `└` only when the tree
+    /// actually ends here. Callers derive it from
+    /// [`crate::tui::screen_layout::ScreenLayout::rail_continues_below`] rather
+    /// than assuming a fixed stack position.
+    pub(super) fn lines(
+        &self,
+        width: usize,
+        height: usize,
+        continues_below: bool,
+        now: Instant,
+    ) -> Vec<Line<'static>> {
         if !self.rail.is_active() || width == 0 || height == 0 {
             return Vec::new();
         }
@@ -140,7 +153,7 @@ impl ProcessPanel {
         let visible_count = rows.len() + usize::from(hidden.is_some());
         let mut lines = Vec::with_capacity(visible_count);
         for (offset, process) in rows.into_iter().enumerate() {
-            let last = offset + 1 == visible_count;
+            let last = offset + 1 == visible_count && !continues_below;
             lines.push(process_line(
                 process,
                 activity::tree_connector(last),
@@ -152,7 +165,7 @@ impl ProcessPanel {
         if let Some(hidden) = hidden {
             lines.push(summary_line(
                 activity::overflow_label(hidden, "job", "jobs"),
-                activity::tree_connector(true),
+                activity::tree_connector(!continues_below),
                 width,
             ));
         }

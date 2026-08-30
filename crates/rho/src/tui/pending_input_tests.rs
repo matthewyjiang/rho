@@ -245,3 +245,106 @@ fn late_applied_event_does_not_cut_a_live_stream() {
     assert!(!app.streams.hold.is_empty());
     assert_eq!(app.streams.current_stream_kind, Some(StreamKind::Assistant));
 }
+
+// Covers: with a subagent, a live process, and a queued follow-up all on screen,
+// the rendered frame must place pending input *below* both activity rails so a
+// queued prompt sits next to the composer it will feed. This walks the real
+// frame, so it fails if the paint order and the layout geometry ever disagree.
+// Owner: interactive TUI pending-input
+#[test]
+fn pending_input_renders_below_subagent_and_process_rails() {
+    use crate::{
+        subagent::{RunState, RunStatus},
+        tools::process::{LiveProcessSummary, State},
+    };
+
+    let mut app = test_app();
+    let now = Instant::now();
+    app.subagent_panel.ingest(
+        vec![crate::tools::agent::SubagentSnapshot {
+            id: "run-1".into(),
+            agent_id: "explorer".into(),
+            title: None,
+            elapsed: std::time::Duration::from_secs(3),
+            done: false,
+            status: RunStatus {
+                state: RunState::Running,
+                last_activity: Some("read".into()),
+                ..RunStatus::default()
+            },
+        }],
+        now,
+    );
+    app.process_panel.ingest(
+        vec![LiveProcessSummary {
+            process_id: "proc-1".into(),
+            command: "cargo build".into(),
+            state: State::Running,
+            elapsed_seconds: 5,
+            quiet_seconds: None,
+            exit_code: None,
+        }],
+        now,
+    );
+    app.pending.push_follow_up(prompt("queued follow up"));
+
+    let rendered = app
+        .active_lines_at_for_height(80, 24, now)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>();
+    let row_of = |needle: &str| {
+        rendered
+            .iter()
+            .position(|line| line.contains(needle))
+            .unwrap_or_else(|| panic!("{needle:?} missing from frame:\n{}", rendered.join("\n")))
+    };
+
+    let subagent_row = row_of("explorer");
+    let process_row = row_of("cargo build");
+    let pending_row = row_of("queued follow up");
+    assert!(
+        subagent_row < process_row && process_row < pending_row,
+        "expected subagent < process < pending, got {subagent_row} / {process_row} / \
+         {pending_row}:\n{}",
+        rendered.join("\n")
+    );
+}
+
+// Covers: the activity tree closes on the last rail. With pending input painted
+// underneath, the process rail must still terminate with `└` rather than `├`.
+// Owner: interactive TUI pending-input
+#[test]
+fn process_rail_closes_the_tree_even_with_pending_input_below() {
+    use crate::tools::process::{LiveProcessSummary, State};
+
+    let mut app = test_app();
+    let now = Instant::now();
+    app.process_panel.ingest(
+        vec![LiveProcessSummary {
+            process_id: "proc-1".into(),
+            command: "cargo build".into(),
+            state: State::Running,
+            elapsed_seconds: 5,
+            quiet_seconds: None,
+            exit_code: None,
+        }],
+        now,
+    );
+    app.pending.push_follow_up(prompt("queued follow up"));
+
+    let rendered = app
+        .active_lines_at_for_height(80, 24, now)
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>();
+    let process_line = rendered
+        .iter()
+        .find(|line| line.contains("cargo build"))
+        .unwrap_or_else(|| panic!("process row missing:\n{}", rendered.join("\n")));
+
+    assert!(
+        process_line.contains(crate::tui::activity::tree_connector(/*is_last*/ true)),
+        "process rail must close the tree, got {process_line:?}"
+    );
+}

@@ -137,7 +137,13 @@ pub(super) fn interactive_chrome(rails: ChromeRails) -> InteractiveChrome {
     }
 }
 
-/// Split the interactive budget in priority order.
+/// Split the interactive budget in *allocation priority* order.
+///
+/// This is deliberately not the paint order — that lives in [`StackedBand::ORDER`],
+/// which paints pending input *below* the rails. Pending input is allocated
+/// first so a busy subagent/process rail can never starve a queued prompt out
+/// of the frame, then painted last so it sits adjacent to the composer it will
+/// feed. Do not "fix" the mismatch by aligning the two.
 ///
 /// First pass (floors held for composer + a one-row activity history):
 /// pending reserve (capped at 2), subagents, processes, then composer.
@@ -187,6 +193,52 @@ pub(super) fn visible_composer_start(
     }
 }
 
+/// Chrome bands stacked between the history panel and the top divider.
+///
+/// [`StackedBand::ORDER`] is the single source of truth for stack order:
+/// [`App::build_screen_layout`] walks it to assign rects, and every render path
+/// walks it to emit content. Reordering the stack means editing `ORDER` and
+/// nothing else — no render site can silently disagree with the geometry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum StackedBand {
+    Subagents,
+    Processes,
+    PendingInput,
+}
+
+impl StackedBand {
+    /// Top-to-bottom paint order. See the type docs before reordering.
+    pub(super) const ORDER: [Self; 3] = [Self::Subagents, Self::Processes, Self::PendingInput];
+
+    /// Whether this band is part of the activity tree drawn with `├`/`└`
+    /// connectors. Pending input is a separate band: it is queued user text,
+    /// not active work, so the tree terminates at the last rail above it.
+    fn is_rail(self) -> bool {
+        match self {
+            Self::Subagents | Self::Processes => true,
+            Self::PendingInput => false,
+        }
+    }
+
+    /// Background style for the band's paragraph. Rails share the activity-rail
+    /// surface; pending input inherits the base surface.
+    pub(super) fn style(self) -> ratatui::style::Style {
+        if self.is_rail() {
+            super::theme::Theme::activity_rail()
+        } else {
+            ratatui::style::Style::default()
+        }
+    }
+
+    fn height(self, split: InteractiveSplit) -> usize {
+        match self {
+            Self::Subagents => split.subagents,
+            Self::Processes => split.processes,
+            Self::PendingInput => split.pending_input,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct ScreenLayout {
     /// Full history panel, including any bottom activity overlay band.
@@ -198,9 +250,9 @@ pub(super) struct ScreenLayout {
     pub(super) activity_gap: Option<Rect>,
     pub(super) activity_rail: Option<Rect>,
     pub(super) jump_to_bottom: Option<Rect>,
-    pub(super) pending_input: Rect,
     pub(super) subagents: Rect,
     pub(super) processes: Rect,
+    pub(super) pending_input: Rect,
     pub(super) top_divider: Rect,
     pub(super) composer: Rect,
     pub(super) bottom_divider: Rect,
@@ -211,6 +263,27 @@ pub(super) struct ScreenLayout {
 }
 
 impl ScreenLayout {
+    /// Rect assigned to one stacked band.
+    pub(super) fn band(&self, band: StackedBand) -> Rect {
+        match band {
+            StackedBand::Subagents => self.subagents,
+            StackedBand::Processes => self.processes,
+            StackedBand::PendingInput => self.pending_input,
+        }
+    }
+
+    /// Whether another activity-tree rail is painted below `band`.
+    ///
+    /// Drives the `├` vs `└` connector on the last visible row, so the glyph is
+    /// derived from [`StackedBand::ORDER`] rather than hardcoded at call sites.
+    pub(super) fn rail_continues_below(&self, band: StackedBand) -> bool {
+        StackedBand::ORDER
+            .iter()
+            .skip_while(|candidate| **candidate != band)
+            .skip(1)
+            .any(|below| below.is_rail() && self.band(*below).height > 0)
+    }
+
     /// Leftover rail cells for the live spinner after the jump chip.
     pub(super) fn activity_label_width(&self) -> Option<usize> {
         let rail = self.activity_rail?;
@@ -249,9 +322,6 @@ impl App {
             self.input_ui.composer_view_start(),
         );
         self.input_ui.set_composer_view_start(composer_start);
-        let pending_input_height = split.pending_input;
-        let subagent_height = split.subagents;
-        let process_height = split.processes;
         let history_height = split.history;
 
         let mut y = area.y;
@@ -293,12 +363,20 @@ impl App {
         });
         let activity_rail = (activity_status.is_some() && history.height > 0)
             .then(|| Rect::new(history.x, activity_y, history.width, 1));
-        let pending_input = Rect::new(area.x, y, area.width, pending_input_height as u16);
-        y = y.saturating_add(pending_input.height);
-        let subagents = Rect::new(area.x, y, area.width, subagent_height as u16);
-        y = y.saturating_add(subagents.height);
-        let processes = Rect::new(area.x, y, area.width, process_height as u16);
-        y = y.saturating_add(processes.height);
+        // Walking StackedBand::ORDER is what keeps geometry and every render path
+        // in agreement, and makes the bands contiguous by construction. Reorder
+        // the stack by editing ORDER, never by moving these assignments.
+        let empty = Rect::new(area.x, y, area.width, 0);
+        let (mut subagents, mut processes, mut pending_input) = (empty, empty, empty);
+        for band in StackedBand::ORDER {
+            let rect = Rect::new(area.x, y, area.width, band.height(split) as u16);
+            y = y.saturating_add(rect.height);
+            match band {
+                StackedBand::Subagents => subagents = rect,
+                StackedBand::Processes => processes = rect,
+                StackedBand::PendingInput => pending_input = rect,
+            }
+        }
         let top_divider = if show_top_divider {
             let rect = Rect::new(area.x, y, area.width, 1);
             y = y.saturating_add(1);
@@ -325,9 +403,9 @@ impl App {
             activity_gap,
             activity_rail,
             jump_to_bottom,
-            pending_input,
             subagents,
             processes,
+            pending_input,
             top_divider,
             composer,
             bottom_divider,
