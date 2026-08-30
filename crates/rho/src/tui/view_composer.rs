@@ -91,6 +91,7 @@ impl App {
     /// without wrapping the composer text twice per frame.
     pub(super) fn composer_frame(&mut self, width: usize, viewport_height: usize) -> ComposerFrame {
         self.refresh_composer_attachment_layout_cache(width);
+        let login_copy_hovered = self.input_ui.hovered_login_copy();
         match self.input_ui.composer() {
             ComposerMode::Input => {
                 let focused_paste = self
@@ -181,7 +182,7 @@ impl App {
                 },
             ),
             ComposerMode::InteractivePending(pending) => {
-                let view = login_composer_view(pending, width);
+                let view = login_composer_view(pending, width, /*hovered*/ login_copy_hovered);
                 ComposerFrame {
                     lines: view.lines,
                     cursor: Position { x: 0, y: 0 },

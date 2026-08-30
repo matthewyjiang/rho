@@ -1,10 +1,11 @@
-use ratatui::layout::Rect;
+use crossterm::event::MouseEventKind;
+use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 use rho_providers::{
     auth::{browser::BrowserOpen, login_prompt::LoginPrompt},
     model::catalog::LoginTarget,
 };
 
-use super::super::{ComposerMode, PendingLoginComposer};
+use super::super::{theme::Theme, ComposerMode, PendingLoginComposer};
 use super::login_composer_view;
 use crate::tui::tests::test_app;
 
@@ -41,7 +42,7 @@ fn device_pending() -> PendingLoginComposer {
 #[test]
 fn pending_login_composer_includes_url_and_code() {
     let pending = device_pending();
-    let view = login_composer_view(&pending, 80);
+    let view = login_composer_view(&pending, 80, /*hovered*/ false);
     let texts: Vec<String> = view.lines.iter().map(line_text).collect();
     assert!(
         texts
@@ -61,7 +62,7 @@ fn pending_login_composer_includes_url_and_code() {
 #[test]
 fn copy_hit_uses_painted_origin_for_scrolled_session_and_setup() {
     let pending = device_pending();
-    let view = login_composer_view(&pending, 80);
+    let view = login_composer_view(&pending, 80, /*hovered*/ false);
     let hit = view.copy_hit.expect("copy button row");
     let copy_col = (hit.columns.start + 1) as u16;
     let url = "https://auth.example/device?user_code=WD4E-T6MC";
@@ -150,4 +151,91 @@ fn session_copy_button_hits_composer_layout() {
         app.login_copy_url_at_position(area, column, row).as_deref(),
         Some("https://auth.example/device?user_code=WD4E-T6MC")
     );
+}
+
+fn copy_span_style(
+    lines: &[ratatui::text::Line<'_>],
+    hit: &super::CopyHit,
+) -> ratatui::style::Style {
+    lines
+        .get(hit.row)
+        .and_then(|line| line.spans.last())
+        .expect("copy span")
+        .style
+}
+
+// Covers: login COPY must use hovered vs unhovered theme, not a hardcoded false
+// Owner: login presentation
+#[test]
+fn copy_button_span_follows_hovered_flag() {
+    let pending = device_pending();
+    for hovered in [false, true] {
+        let view = login_composer_view(&pending, 80, /*hovered*/ hovered);
+        let hit = view.copy_hit.as_ref().expect("copy button");
+        pretty_assertions::assert_eq!(
+            copy_span_style(&view.lines, hit),
+            Theme::markdown_code_copy_button(hovered),
+            "hovered={hovered}"
+        );
+    }
+}
+
+// Covers: moving onto the session login COPY button highlights it; moving off clears it
+// Owner: login presentation
+#[test]
+fn session_copy_button_hover_follows_pointer() {
+    let mut app = test_app();
+    app.input_ui
+        .set_composer(ComposerMode::InteractivePending(device_pending()));
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 80,
+        height: 24,
+    };
+    let ctx = app.frame_context(area);
+    let hit = ctx.composer.copy_hit.clone().expect("copy button");
+    let column = ctx
+        .layout
+        .composer
+        .x
+        .saturating_add(hit.columns.start as u16 + 1);
+    let on_row = ctx
+        .layout
+        .composer
+        .y
+        .saturating_add(hit.row.saturating_sub(ctx.layout.composer_start) as u16);
+    let off_column = ctx.layout.composer.x;
+    let off_row = ctx.layout.composer.y;
+    let width = ctx.layout.composer.width as usize;
+    let height = ctx.layout.composer.height as usize;
+
+    app.handle_mouse_event(MouseEventKind::Moved, column, on_row, &mut terminal)
+        .unwrap();
+    pretty_assertions::assert_eq!(app.input_ui.hovered_login_copy(), true);
+    pretty_assertions::assert_eq!(
+        copy_span_style(&app.composer_frame(width, height).lines, &hit),
+        Theme::markdown_code_copy_button(/*hovered*/ true)
+    );
+
+    app.handle_mouse_event(MouseEventKind::Moved, off_column, off_row, &mut terminal)
+        .unwrap();
+    pretty_assertions::assert_eq!(app.input_ui.hovered_login_copy(), false);
+    pretty_assertions::assert_eq!(
+        copy_span_style(&app.composer_frame(width, height).lines, &hit),
+        Theme::markdown_code_copy_button(/*hovered*/ false)
+    );
+}
+
+// Covers: ending pending login must drop COPY hover so it cannot stick on the next composer
+// Owner: login presentation
+#[test]
+fn login_copy_hover_clears_when_pending_login_ends() {
+    let mut app = test_app();
+    app.input_ui
+        .set_composer(ComposerMode::InteractivePending(device_pending()));
+    app.input_ui.set_hovered_login_copy(true);
+    app.input_ui.set_composer(ComposerMode::Input);
+    pretty_assertions::assert_eq!(app.input_ui.hovered_login_copy(), false);
 }

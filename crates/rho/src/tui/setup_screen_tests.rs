@@ -1,5 +1,6 @@
+use crossterm::event::MouseEventKind;
 use pretty_assertions::assert_eq;
-use ratatui::layout::Rect;
+use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 use rho_providers::{
     auth::{browser::BrowserOpen, login_prompt::LoginPrompt},
     model::catalog::LoginTarget,
@@ -166,5 +167,53 @@ fn setup_copy_button_hits_painted_origin_not_session_composer() {
         ),
         None,
         "session composer rect must not steal the setup copy hit"
+    );
+}
+
+// Covers: first-run setup COPY hover uses the painted body origin, not session composer
+// Owner: setup screen
+#[test]
+fn setup_copy_button_hover_follows_pointer() {
+    let mut app = test_app();
+    app.enter_setup(SetupStep::SignIn);
+    app.input_ui
+        .set_composer(ComposerMode::InteractivePending(pending_login()));
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 80,
+        height: 24,
+    };
+    let origin = setup_composer_origin(area, SetupStep::SignIn);
+    let frame = app.composer_frame(origin.width as usize, origin.height as usize);
+    let hit = frame.copy_hit.expect("copy button");
+    let column = origin.x.saturating_add(hit.columns.start as u16 + 1);
+    let on_row = origin.y.saturating_add(hit.row as u16);
+
+    app.handle_mouse_event(MouseEventKind::Moved, column, on_row, &mut terminal)
+        .unwrap();
+    pretty_assertions::assert_eq!(app.input_ui.hovered_login_copy(), true);
+    let hovered = app.setup_body_lines(origin.width as usize, origin.height);
+    pretty_assertions::assert_eq!(
+        hovered
+            .get(hit.row)
+            .and_then(|line| line.spans.last())
+            .expect("copy span")
+            .style,
+        Theme::markdown_code_copy_button(/*hovered*/ true)
+    );
+
+    app.handle_mouse_event(MouseEventKind::Moved, origin.x, origin.y, &mut terminal)
+        .unwrap();
+    pretty_assertions::assert_eq!(app.input_ui.hovered_login_copy(), false);
+    let unhovered = app.setup_body_lines(origin.width as usize, origin.height);
+    pretty_assertions::assert_eq!(
+        unhovered
+            .get(hit.row)
+            .and_then(|line| line.spans.last())
+            .expect("copy span")
+            .style,
+        Theme::markdown_code_copy_button(/*hovered*/ false)
     );
 }

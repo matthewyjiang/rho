@@ -61,11 +61,17 @@ pub(super) struct LoginComposerView {
 pub(super) fn login_composer_view(
     pending: &PendingLoginComposer,
     width: usize,
+    hovered: bool,
 ) -> LoginComposerView {
-    prompt_composer_view(&pending.target.label, &pending.prompt, width)
+    prompt_composer_view(&pending.target.label, &pending.prompt, width, hovered)
 }
 
-fn prompt_composer_view(label: &str, prompt: &LoginPrompt, width: usize) -> LoginComposerView {
+fn prompt_composer_view(
+    label: &str,
+    prompt: &LoginPrompt,
+    width: usize,
+    hovered: bool,
+) -> LoginComposerView {
     let mut lines = vec![styled_line(
         truncate_one_line(&format!("waiting for {label} login"), width),
         width,
@@ -79,7 +85,7 @@ fn prompt_composer_view(label: &str, prompt: &LoginPrompt, width: usize) -> Logi
         LineFill::Natural,
     ));
     let copy_row = lines.len();
-    lines.push(url_line(&prompt.url, width));
+    lines.push(url_line(&prompt.url, width, hovered));
     if let Some(code) = &prompt.user_code {
         lines.push(styled_line(
             truncate_one_line(&format!("code {code}"), width),
@@ -108,7 +114,7 @@ fn prompt_composer_view(label: &str, prompt: &LoginPrompt, width: usize) -> Logi
     LoginComposerView { lines, copy_hit }
 }
 
-fn url_line(url: &str, width: usize) -> Line<'static> {
+fn url_line(url: &str, width: usize, hovered: bool) -> Line<'static> {
     let copy_columns = code_block_copy_columns(width);
     let copy_label = copy_columns
         .as_ref()
@@ -130,7 +136,7 @@ fn url_line(url: &str, width: usize) -> Line<'static> {
     if let Some(copy_label) = copy_label {
         spans.push(Span::styled(
             copy_label,
-            Theme::markdown_code_copy_button(/*hovered*/ false),
+            Theme::markdown_code_copy_button(/*hovered*/ hovered),
         ));
     }
     Line::from(spans)

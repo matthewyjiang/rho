@@ -139,6 +139,7 @@ pub(in crate::tui) struct InputUi {
     file_query: Option<String>,
     file_palette_dismissed: bool,
     composer: ComposerMode,
+    hovered_login_copy: bool,
 }
 
 impl InputUi {
@@ -341,12 +342,22 @@ impl InputUi {
         self.composer = composer;
         self.last_pointer_click = None;
         self.composer_view_start = 0;
+        self.hovered_login_copy = false;
     }
 
     pub(in crate::tui) fn take_composer(&mut self) -> ComposerMode {
         self.last_pointer_click = None;
         self.composer_view_start = 0;
+        self.hovered_login_copy = false;
         std::mem::replace(&mut self.composer, ComposerMode::Input)
+    }
+
+    pub(in crate::tui) fn hovered_login_copy(&self) -> bool {
+        self.hovered_login_copy
+    }
+
+    pub(in crate::tui) fn set_hovered_login_copy(&mut self, hovered: bool) {
+        self.hovered_login_copy = hovered;
     }
 
     pub(in crate::tui) fn paste_burst(&self) -> &PasteBurst {

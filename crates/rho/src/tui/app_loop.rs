@@ -404,7 +404,7 @@ impl App {
         self.clamp_overlay_detail_scroll(terminal);
         self.clamp_limits_overlay_scroll(terminal);
         self.clear_selections();
-        self.history.set_hovered_code_block_copy(None);
+        self.clear_hovered_copy_buttons();
         self.subagent_panel.clear_pointer_state();
         self.process_panel.clear_pointer_state();
         self.hide_history_scrollbar();
