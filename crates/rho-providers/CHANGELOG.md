@@ -1,5 +1,130 @@
 # Changelog
 
+## [3.0.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.1.0...rho-providers-v3.0.0) (2026-08-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* rho-sdk removes RunEvent::ProviderActivity and the PROVIDER_ACTIVITY_* constants, collapses ProviderStreamResetReason retryable variants into RetryableFailure { kind, retry_after }, removes ModelCallMetrics::output_tokens_per_second, adds revision to RunEvent::Failed, folds ContextEstimated into StepStarted, and replaces the stringly generation-output-token carriers with a typed ModelCallMetrics::generation_output_tokens metric and ModelEvent::GenerationOutputTokens variant. rho-providers adds ProviderId::OpenAiCompatible for config-defined hosts, folds CustomProviderOptions into CustomProviderSpec (removing the _with_lookup/ _with_options funnels), makes providers() include custom hosts (removing visible_providers), removes deprecated registry API-base re-exports and ProviderRuntime::same_family, and drops the CredentialStore parameter from OpenAiProvider::new_with_identity. rho-tools removes the edit_file tool-name alias, the write_file frontmatter alias, and the EditToolKind type alias.
+* **providers:** own HTTP transport errors and collapse reqwest onto 0.13 ([#1060](https://github.com/matthewyjiang/rho/issues/1060))
+* **xai:** ModelEvent::WebSearch and RunEvent::WebSearch now carry a name field so hosts can distinguish web_search from x_search.
+
+### Features
+
+* add advisor mode with a selectable advisor model ([#752](https://github.com/matthewyjiang/rho/issues/752)) ([13c1ebb](https://github.com/matthewyjiang/rho/commit/13c1ebb89edfde2924ee760c7621b099fd510708))
+* **agents:** add Claude Code subagent runtime ([#541](https://github.com/matthewyjiang/rho/issues/541)) ([c1385ec](https://github.com/matthewyjiang/rho/commit/c1385ecae9b2eb967ae73ecc09c20cc80bc63479))
+* **agents:** allow pinning auth profiles on rho agents ([#781](https://github.com/matthewyjiang/rho/issues/781)) ([3e1f691](https://github.com/matthewyjiang/rho/commit/3e1f691e693dd93bf888cb5c3eb3093a7169525a))
+* **attach:** show reasoning level next to model and provider ([#1044](https://github.com/matthewyjiang/rho/issues/1044)) ([2b1f912](https://github.com/matthewyjiang/rho/commit/2b1f912e1233b5769e250a4bf53538661afa9126))
+* **auth:** add active auth mode switcher ([#609](https://github.com/matthewyjiang/rho/issues/609)) ([a2b0f68](https://github.com/matthewyjiang/rho/commit/a2b0f68f71033ca6f8594a35368a79b2388916ca))
+* **auth:** always show a copyable login URL across every provider ([#1095](https://github.com/matthewyjiang/rho/issues/1095)) ([9e2670b](https://github.com/matthewyjiang/rho/commit/9e2670bd0892c579cad5f1d916046c16632ec9e1))
+* **config:** mid-session edit tool, advisor, and auto preference ([#840](https://github.com/matthewyjiang/rho/issues/840)) ([423d026](https://github.com/matthewyjiang/rho/commit/423d02690edee36a6dc692ac25d8fd9013d33139))
+* **openai:** add fast mode ([#610](https://github.com/matthewyjiang/rho/issues/610)) ([8c5cd6d](https://github.com/matthewyjiang/rho/commit/8c5cd6d19e1758b85fc25c345769e49426f10ad0))
+* **permission:** rename Auto to Bypass and add classifier Auto ([#870](https://github.com/matthewyjiang/rho/issues/870)) ([3192daa](https://github.com/matthewyjiang/rho/commit/3192daa713f7202f44727ec4acb83d0c646d1286))
+* **permission:** screen Auto requests with a two-stage classifier ([#893](https://github.com/matthewyjiang/rho/issues/893)) ([4149f11](https://github.com/matthewyjiang/rho/commit/4149f1157aa2c8ee10561a21a919a0e530b8f3cc))
+* **prompt:** tell the agent which model runs it, its subagents, and the advisor ([#860](https://github.com/matthewyjiang/rho/issues/860)) ([d18c377](https://github.com/matthewyjiang/rho/commit/d18c3774a20657cc1214e2936251cc993b69dd14))
+* **providers:** add Meta Model API and collapse provider registration ([#755](https://github.com/matthewyjiang/rho/issues/755)) ([b41ef92](https://github.com/matthewyjiang/rho/commit/b41ef92dcbeeba12351df4711f4817761fda0a79))
+* **providers:** add MiniMax as a first-party Anthropic-compatible host ([#1059](https://github.com/matthewyjiang/rho/issues/1059)) ([aa71132](https://github.com/matthewyjiang/rho/commit/aa7113215ed9601dd9bf74241a031febd9ee2c85))
+* **providers:** add Ollama Cloud API provider ([#597](https://github.com/matthewyjiang/rho/issues/597)) ([f6a62dd](https://github.com/matthewyjiang/rho/commit/f6a62ddb8c77bae1f6ba386328b79db625ec1e5d))
+* **providers:** add Qwen Token Plan OpenAI-compatible provider ([#738](https://github.com/matthewyjiang/rho/issues/738)) ([6aa6df2](https://github.com/matthewyjiang/rho/commit/6aa6df2e812674b721bedd3b65c7c2cdb359a1e4))
+* **providers:** add xAI server-side context compaction ([#542](https://github.com/matthewyjiang/rho/issues/542)) ([2d43f13](https://github.com/matthewyjiang/rho/commit/2d43f134669414b3d9b7332a4c9d17aaa1346d9f))
+* **providers:** let /login add custom hosts that work with CLIProxyAPI ([#984](https://github.com/matthewyjiang/rho/issues/984)) ([5ec9a44](https://github.com/matthewyjiang/rho/commit/5ec9a445db5ff9c47cc814d2cbd282172c827a5a))
+* **providers:** let config name openai-compatible hosts ([#888](https://github.com/matthewyjiang/rho/issues/888)) ([a87649a](https://github.com/matthewyjiang/rho/commit/a87649a9e76332f53f125c52e7eccd8a14bc14f1))
+* **providers:** let custom hosts speak OpenAI Responses ([#1041](https://github.com/matthewyjiang/rho/issues/1041)) ([381383d](https://github.com/matthewyjiang/rho/commit/381383d9f5f5d13746e23518d152075b63e6128d))
+* **providers:** look up models.dev from custom host model ids ([#1004](https://github.com/matthewyjiang/rho/issues/1004)) ([da477da](https://github.com/matthewyjiang/rho/commit/da477da84b401f3bc2b299e481851dfd5278aded))
+* **providers:** read Ollama context and thinking from native tags ([#993](https://github.com/matthewyjiang/rho/issues/993)) ([dfd0f01](https://github.com/matthewyjiang/rho/commit/dfd0f0145ac26a34365f16446bc924ef1de125b5))
+* **providers:** set up ollama through /login instead of first-run defaults ([#994](https://github.com/matthewyjiang/rho/issues/994)) ([1fbe5f8](https://github.com/matthewyjiang/rho/commit/1fbe5f853d9f9b8f02251b5e9dbad2258e82a20c))
+* **providers:** sign in to OpenCode Go and use its models ([#913](https://github.com/matthewyjiang/rho/issues/913)) ([db501a6](https://github.com/matthewyjiang/rho/commit/db501a6ab5b64c44114d6ecf1a1bf3a75ac597b6))
+* **providers:** use OpenAI server-side compaction for codex and api-key ([#514](https://github.com/matthewyjiang/rho/issues/514)) ([b18eadd](https://github.com/matthewyjiang/rho/commit/b18eadd6752de2945361cd59a60ffc4cc7b807ad))
+* **questionnaire:** support choice descriptions ([#510](https://github.com/matthewyjiang/rho/issues/510)) ([066899c](https://github.com/matthewyjiang/rho/commit/066899c2ad12ca23c2b7772de4b0a6a3c6161497))
+* **subagents:** add parent-child plain-text messaging for Rho runtime ([#852](https://github.com/matthewyjiang/rho/issues/852)) ([dd25d8e](https://github.com/matthewyjiang/rho/commit/dd25d8e3e48fd531e777e31fcad9c948a2a9ebfe))
+* **subagents:** route background questionnaires to parent ([#539](https://github.com/matthewyjiang/rho/issues/539)) ([e0cab31](https://github.com/matthewyjiang/rho/commit/e0cab3182e9fc833fbf304c7dad5714f73b89952))
+* **tools:** replace edit_file with codex-style apply_patch ([#653](https://github.com/matthewyjiang/rho/issues/653)) ([eef1555](https://github.com/matthewyjiang/rho/commit/eef155521c5492b9c7f34507e82b6b7f46b896a8))
+* **tui:** cycle pinned models without opening the catalogue ([#988](https://github.com/matthewyjiang/rho/issues/988)) ([c0d0292](https://github.com/matthewyjiang/rho/commit/c0d029261852a91ae24ec5ced355de8ef7c876f9))
+* **tui:** include subagent costs in status and info ([#548](https://github.com/matthewyjiang/rho/issues/548)) ([9517f00](https://github.com/matthewyjiang/rho/commit/9517f0012dd2001213fd10294287f8a0739e5d2c))
+* **tui:** lift tool-card text on hover in main TUI and attach ([#928](https://github.com/matthewyjiang/rho/issues/928)) ([344f79a](https://github.com/matthewyjiang/rho/commit/344f79a49cf5c4fa754c87a18d6b53b34bcffe5d))
+* **tui:** open or copy subagent attach from the activity rail ([#552](https://github.com/matthewyjiang/rho/issues/552)) ([95e4ca6](https://github.com/matthewyjiang/rho/commit/95e4ca698ab92f858587356ba16e29476bcfd972))
+* **tui:** pick running subagents by title instead of run id ([#950](https://github.com/matthewyjiang/rho/issues/950)) ([dffd205](https://github.com/matthewyjiang/rho/commit/dffd2053eb4d22bc0b86d364c31fc44c8317667d))
+* **tui:** show live background processes in the activity rail ([#935](https://github.com/matthewyjiang/rho/issues/935)) ([f396b72](https://github.com/matthewyjiang/rho/commit/f396b72542abf17c2ef108c91bfa04351125031a))
+* **tui:** show model output token rate ([#623](https://github.com/matthewyjiang/rho/issues/623)) ([a5aa688](https://github.com/matthewyjiang/rho/commit/a5aa688686d9f4f08d064462ccfa4fd542aa979d))
+* **tui:** stream apply_patch diff cards ([#657](https://github.com/matthewyjiang/rho/issues/657)) ([e2c932e](https://github.com/matthewyjiang/rho/commit/e2c932e377f15ddfaab1e4700aa7d6f4e8ed0417))
+* **tui:** stream mermaid diagrams as they arrive instead of popping in at fence close ([#1085](https://github.com/matthewyjiang/rho/issues/1085)) ([29c70cc](https://github.com/matthewyjiang/rho/commit/29c70cc5a0b28f66b13006dac8d3d6e4b01a31fa))
+* **tui:** unify tool transcript cards as Call + Children ([#586](https://github.com/matthewyjiang/rho/issues/586)) ([ce52cdd](https://github.com/matthewyjiang/rho/commit/ce52cddb6dbf0ac1b2878b6f3bd468a87547f8fa))
+* **tui:** watch subagents in the same terminal ([#1002](https://github.com/matthewyjiang/rho/issues/1002)) ([966f3e8](https://github.com/matthewyjiang/rho/commit/966f3e8315f8d2c39f91ef31577aa4b81f3a1e80))
+* **web:** prefer hosted search with backup provider config ([#649](https://github.com/matthewyjiang/rho/issues/649)) ([2e136e9](https://github.com/matthewyjiang/rho/commit/2e136e9025ebc318f7fac5da8e45a3134d785430))
+* **xai:** let grok generate and edit images in the conversation ([#967](https://github.com/matthewyjiang/rho/issues/967)) ([47c03c1](https://github.com/matthewyjiang/rho/commit/47c03c1d2b13864d32a69b27c21da4db54572e0e))
+* **xai:** support hosted x_search tool ([#647](https://github.com/matthewyjiang/rho/issues/647)) ([cd0c897](https://github.com/matthewyjiang/rho/commit/cd0c897570376cf39d2d99b40c58c55b22fc6133))
+
+
+### Bug Fixes
+
+* **anthropic:** derive reasoning levels from models api capabilities ([#907](https://github.com/matthewyjiang/rho/issues/907)) ([f057529](https://github.com/matthewyjiang/rho/commit/f057529128be880c640e5dd9b5d5e42071eed792))
+* **anthropic:** stop opus 5 from sending thinking.type.enabled ([#904](https://github.com/matthewyjiang/rho/issues/904)) ([d76a398](https://github.com/matthewyjiang/rho/commit/d76a3984d37d299850de6fabf9d7135c047c137c))
+* **auth:** prefer credential-backed auth and fix Ollama Cloud reasoning ([#619](https://github.com/matthewyjiang/rho/issues/619)) ([1a57f6f](https://github.com/matthewyjiang/rho/commit/1a57f6f24292b63a6ba4ba314843c2fb308792cf))
+* **auth:** restore ollama device test key dir on unwind and isolate temp dir ([#621](https://github.com/matthewyjiang/rho/issues/621)) ([d2a345d](https://github.com/matthewyjiang/rho/commit/d2a345df56b1ae815007829a04cc21172500530d))
+* **auth:** stop waiting for Ollama device callback ([#616](https://github.com/matthewyjiang/rho/issues/616)) ([54288d2](https://github.com/matthewyjiang/rho/commit/54288d28f7bcc68a36f0424e5de6c28e470fb479))
+* **ci:** repair macOS stdin guard and supervised approval PTY smoke ([#1055](https://github.com/matthewyjiang/rho/issues/1055)) ([8b6654f](https://github.com/matthewyjiang/rho/commit/8b6654ff86b34cd4f2a41d11520085f0a1ea5c01))
+* **claude-cli:** keep Auto dontAsk on the bound tool set ([#903](https://github.com/matthewyjiang/rho/issues/903)) ([fb2de07](https://github.com/matthewyjiang/rho/commit/fb2de0793939ce4034303718efadb03fba858ab9))
+* exclude reasoning tokens from throughput ([#819](https://github.com/matthewyjiang/rho/issues/819)) ([d261b5b](https://github.com/matthewyjiang/rho/commit/d261b5b35bfb119f49a81d83b33ca06b62b383e7))
+* **models:** stop clamping GPT-5.5 and GPT-5.6 context to 272k ([#966](https://github.com/matthewyjiang/rho/issues/966)) ([c5984e5](https://github.com/matthewyjiang/rho/commit/c5984e5d04d6f4ab1d24c250cb6b2e74c4362187))
+* **openai:** align Codex Responses wire contracts ([#644](https://github.com/matthewyjiang/rho/issues/644)) ([76cf855](https://github.com/matthewyjiang/rho/commit/76cf8554c390dfa112801016f2c05bd929c35eee))
+* **openai:** route gpt-5.6 Codex models through standard Responses ([#651](https://github.com/matthewyjiang/rho/issues/651)) ([219b9f5](https://github.com/matthewyjiang/rho/commit/219b9f593a42858bdbd47cac7d23ce224b81b84c))
+* **poolside:** publish final stream usage snapshot ([#516](https://github.com/matthewyjiang/rho/issues/516)) ([d51ebab](https://github.com/matthewyjiang/rho/commit/d51ebabcc4823ef11b21b8fadecd6625956146d2))
+* **prompt:** wait for catalog names before model labels ([#863](https://github.com/matthewyjiang/rho/issues/863)) ([71fa544](https://github.com/matthewyjiang/rho/commit/71fa544e86e5dd046b898be76632996d92915c19))
+* **providers:** compile openai-compatible hosts in release builds ([#917](https://github.com/matthewyjiang/rho/issues/917)) ([4625ab8](https://github.com/matthewyjiang/rho/commit/4625ab8151b348575bdc951af3ac08190ed868d5))
+* **providers:** disable parallel tools on codex responses lite ([#583](https://github.com/matthewyjiang/rho/issues/583)) ([84ca3f5](https://github.com/matthewyjiang/rho/commit/84ca3f5ff0e6d535f40ebf92594e5c60df70a711))
+* **providers:** drop flaky catalog invalidate readiness test ([#1006](https://github.com/matthewyjiang/rho/issues/1006)) ([8ba4f27](https://github.com/matthewyjiang/rho/commit/8ba4f27b203c268797f82eb0bd79845b0b412a08))
+* **providers:** enrich empty SSE content diagnostic ([#684](https://github.com/matthewyjiang/rho/issues/684)) ([79e4d48](https://github.com/matthewyjiang/rho/commit/79e4d48c735de05e1ceccde7cd3ae72a8e31e62f))
+* **providers:** keep anthropic tool schemas typed after composition strip ([#753](https://github.com/matthewyjiang/rho/issues/753)) ([207e74c](https://github.com/matthewyjiang/rho/commit/207e74cc577d4c7c905f9bcf6b6b49e7153c9db5))
+* **providers:** keep prompt-cache hits across tool turns ([#1040](https://github.com/matthewyjiang/rho/issues/1040)) ([e139d99](https://github.com/matthewyjiang/rho/commit/e139d99e6abb4e0ee9315305958e357da3afe715))
+* **providers:** restore models.dev metadata for catalog = "openrouter" ([#987](https://github.com/matthewyjiang/rho/issues/987)) ([e8fb9f1](https://github.com/matthewyjiang/rho/commit/e8fb9f16d17038168fcae7701c13fa03123722d4))
+* **providers:** retry codex server_is_overloaded as unavailable ([#641](https://github.com/matthewyjiang/rho/issues/641)) ([9bb2c12](https://github.com/matthewyjiang/rho/commit/9bb2c124c758a2ee6bc4b8deb8d8b502f6145ff7)), closes [#639](https://github.com/matthewyjiang/rho/issues/639)
+* **providers:** retry empty assistant completions ([b50aa7b](https://github.com/matthewyjiang/rho/commit/b50aa7b5968cf9ab38fa1c10d1a26666f48332ac))
+* **providers:** say why a transport request failed ([#1036](https://github.com/matthewyjiang/rho/issues/1036)) ([79fd9c1](https://github.com/matthewyjiang/rho/commit/79fd9c1d2c72fd76fab03dc5f41ac9342f5b2028))
+* **providers:** send prompt_cache_key on openai-compatible chat ([#1007](https://github.com/matthewyjiang/rho/issues/1007)) ([5c10feb](https://github.com/matthewyjiang/rho/commit/5c10feb8331e20543967128200ce5f4c09ae271b))
+* **providers:** source Meta Muse Spark reasoning from models.dev ([#758](https://github.com/matthewyjiang/rho/issues/758)) ([a11eea0](https://github.com/matthewyjiang/rho/commit/a11eea0756cedfd2f1bb879603355c28a9c4a037))
+* **providers:** stop inflated and deflated TPS for reasoning models ([#890](https://github.com/matthewyjiang/rho/issues/890)) ([a2c673d](https://github.com/matthewyjiang/rho/commit/a2c673dc48743e77689a67e4852fb6d3d094bc47))
+* **providers:** stop model-id hosts inheriting builtin reasoning ([#1018](https://github.com/matthewyjiang/rho/issues/1018)) ([05acadd](https://github.com/matthewyjiang/rho/commit/05acadd28fc9058d10d13b029785f6fa53dfe36e))
+* **providers:** surface rate-limit reset time and /limits pointer ([#733](https://github.com/matthewyjiang/rho/issues/733)) ([b9371fc](https://github.com/matthewyjiang/rho/commit/b9371fc69fb9b195f9f400d872195c91f031a6b2))
+* **sdk:** recover failed 1.17.1 release packaging ([#587](https://github.com/matthewyjiang/rho/issues/587)) ([224189e](https://github.com/matthewyjiang/rho/commit/224189e2d4fc2ec5f23cb88d80065d82c91ef40b))
+* **sdk:** recover failed 1.32.0 release packaging ([#792](https://github.com/matthewyjiang/rho/issues/792)) ([a782145](https://github.com/matthewyjiang/rho/commit/a782145820f2924a47140f9e8cd8e3cbd13be8a3))
+* **tools:** allow file paths outside workspace ([#537](https://github.com/matthewyjiang/rho/issues/537)) ([8a3cc24](https://github.com/matthewyjiang/rho/commit/8a3cc24468e89bb509fefbefced738b706b1e43d))
+* **tools:** scrub provider credential env vars from child processes ([#502](https://github.com/matthewyjiang/rho/issues/502)) ([6d66913](https://github.com/matthewyjiang/rho/commit/6d669135caa7aa160f8c81c109f0c99736b70e63))
+* **tui:** lead approval prompts with the command ([#846](https://github.com/matthewyjiang/rho/issues/846)) ([413063c](https://github.com/matthewyjiang/rho/commit/413063c9d169e10ca369d83172fbbb952619f07c))
+* **tui:** let you type while compact runs on the main loop ([#957](https://github.com/matthewyjiang/rho/issues/957)) ([07ef7c1](https://github.com/matthewyjiang/rho/commit/07ef7c14719427e4a77a23056761ca6f7532954f))
+* **tui:** render narrow mermaid flowcharts and explain fallbacks ([#565](https://github.com/matthewyjiang/rho/issues/565)) ([0bf7ad7](https://github.com/matthewyjiang/rho/commit/0bf7ad719fa32d00bc6d1bc7857307032fd9f1f6))
+* **tui:** reuse tool stream previews and allow codex parallel tools ([#566](https://github.com/matthewyjiang/rho/issues/566)) ([fa0074a](https://github.com/matthewyjiang/rho/commit/fa0074ae125972ac533ae09b30915f7e479674bd))
+* **tui:** show codex fast mode and report tier fallback ([#663](https://github.com/matthewyjiang/rho/issues/663)) ([177043f](https://github.com/matthewyjiang/rho/commit/177043f5022a1798ae45b0d987e6c6ceaf470d1c))
+* **tui:** show hosted x_search tool cards ([#662](https://github.com/matthewyjiang/rho/issues/662)) ([4381667](https://github.com/matthewyjiang/rho/commit/438166754b79645d31b4fcefd92b3ea665567c94))
+* **tui:** sort slash commands and provider pickers alphabetically ([#498](https://github.com/matthewyjiang/rho/issues/498)) ([0e2c16c](https://github.com/matthewyjiang/rho/commit/0e2c16cd9b5ac6b5c9c28259a09c0428f64a72ab))
+* **tui:** stop openai-compatible cost jumping on submit ([#1008](https://github.com/matthewyjiang/rho/issues/1008)) ([51f881f](https://github.com/matthewyjiang/rho/commit/51f881f68d663b1d15a0b280f0fef76cbcf9a8ba))
+* **usage:** normalize cache write token accounting ([#511](https://github.com/matthewyjiang/rho/issues/511)) ([4e15982](https://github.com/matthewyjiang/rho/commit/4e15982a1e6f4738d40611d77c721ac26051bfda))
+* **xai:** add grok-4.6 to the static model allowlist ([#882](https://github.com/matthewyjiang/rho/issues/882)) ([52ebd71](https://github.com/matthewyjiang/rho/commit/52ebd716456edcd9bd41d44d35afc7fc283cb31c))
+* **xai:** keep optional grok Off as wire none ([#883](https://github.com/matthewyjiang/rho/issues/883)) ([e92f0a9](https://github.com/matthewyjiang/rho/commit/e92f0a96d5d53e61d295f8ac5be4a887fcb0a8f5))
+
+
+### Performance Improvements
+
+* cut hot-path costs in grep, session persistence, and live TUI rendering ([#1027](https://github.com/matthewyjiang/rho/issues/1027)) ([9cf4ad7](https://github.com/matthewyjiang/rho/commit/9cf4ad73149ebcaffbe760481618cac9bb02a061))
+* **providers:** avoid cloning message history and batch SQLite model metadata caching ([#929](https://github.com/matthewyjiang/rho/issues/929)) ([e40926c](https://github.com/matthewyjiang/rho/commit/e40926c4449051c23340dca5fd9afe436d22d3dc))
+* **providers:** eliminate LineDecoder per-chunk compaction, SIMD-accelerate newlines, and optimize Gemini SSE decoder ([#931](https://github.com/matthewyjiang/rho/issues/931)) ([76957a5](https://github.com/matthewyjiang/rho/commit/76957a55b4d475a718d78f3c109893d1bd6d6cce))
+* **providers:** stop building a 40 MB JSON tree on catalog hydrate ([#971](https://github.com/matthewyjiang/rho/issues/971)) ([611fb08](https://github.com/matthewyjiang/rho/commit/611fb08bbfd93031135b35f0cd26cd0919e4032e))
+* **tls:** drop OpenSSL and run rustls+ring everywhere ([#1061](https://github.com/matthewyjiang/rho/issues/1061)) ([3ab2016](https://github.com/matthewyjiang/rho/commit/3ab20166d06d805a9554786904dc16ec2544a2c7))
+* **tui:** paint the first frame before MCP connect and other startup tails ([#948](https://github.com/matthewyjiang/rho/issues/948)) ([cdc1bbf](https://github.com/matthewyjiang/rho/commit/cdc1bbfeabd93bf2bf5b615911048a2eebb6a947))
+* **tui:** stop keeping a second transcript after resume ([#965](https://github.com/matthewyjiang/rho/issues/965)) ([52fd5c6](https://github.com/matthewyjiang/rho/commit/52fd5c68457c9114d258148c2ea8c10e86b70e4e))
+
+
+### Code Refactoring
+
+* pay down all NEXT_MAJOR debt for the next major, net -986 lines ([#1062](https://github.com/matthewyjiang/rho/issues/1062)) ([0e17bdb](https://github.com/matthewyjiang/rho/commit/0e17bdb5e9fa21440fffbbe00171830ac0d1d3c2))
+* **providers:** own HTTP transport errors and collapse reqwest onto 0.13 ([#1060](https://github.com/matthewyjiang/rho/issues/1060)) ([701dd29](https://github.com/matthewyjiang/rho/commit/701dd297d1b3e17df55f9dbf6f13e9c2a1d0ccb5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.0.0 to 5.1.0
+
 ## [2.0.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v1.10.0...rho-providers-v2.0.0) (2026-08-27)
 
 

@@ -1,6 +1,6 @@
 [package]
 name = "rho-sdk"
-version = "5.0.0"
+version = "5.1.0"
 edition = "2021"
 rust-version = "1.86"
 description = "Embeddable, headless agent runtime for Rho"

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.2](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.0.1...rho-agent-tools-v1.0.2) (2026-08-30)
+
+
+### Bug Fixes
+
+* **tools:** search a named file path ([#1084](https://github.com/matthewyjiang/rho/issues/1084)) ([f9dc51b](https://github.com/matthewyjiang/rho/commit/f9dc51b45bf2dd8bdd6eab9bba04ee2e57db5759))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.0.0 to 5.1.0
+
 ## [1.0.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.0.0...rho-agent-tools-v1.0.1) (2026-08-27)
 
 
