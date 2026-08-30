@@ -94,6 +94,10 @@ flowchart TD
 
 `/login` opens a readable provider picker. Providers with multiple authentication methods open a second picker with prompts such as **API Key** and **OAuth**; providers with one method continue directly to that login flow. **Custom · Chat Completions** and **Custom · Responses** each collect a name, a base URL, and an optional API key. Direct args (`/login openai`, `/login anthropic`, and so on) target a single method. See each [provider page](#providers) for the exact flow.
 
+Interactive logins always show the authorize URL, including when a local browser opened. Headless or remote sessions (SSH, no display, nested harness) skip launching a browser and prefer a device-code flow when the provider has one. In the TUI the URL and any device code stay in the composer, including on first-run setup, so they are visible without the transcript. Press `c` to copy the URL (OSC-52 over SSH), or click **COPY** next to the link. Esc cancels. `rho login` prints the same URL and code; it selects device-code automatically when no browser can appear, so you do not need `--device-auth` after the fact. `--device-auth` still forces device-code on a graphical session.
+
+Claude Code login is the exception: `/login claude-code` hands the terminal to `claude auth login` and never sees an authorize URL.
+
 Successful login normally stores credentials only. It does not switch the active provider/model, because provider switching is model-driven through `/model`. If Rho started without usable auth and is running on an unauthenticated placeholder, a successful login selects that provider's default model so the session becomes usable.
 
 `/logout` opens a provider picker containing only providers with stored credentials that can be deleted. If an environment override is still present, the provider remains available after deleting the stored credential. When Claude Code is signed in, `/logout` also offers `claude-code` as a separate runtime target.

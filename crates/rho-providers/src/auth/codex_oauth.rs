@@ -89,8 +89,6 @@ impl std::fmt::Debug for CallbackOutcome {
 pub enum CodexOAuthError {
     #[error("could not bind local OAuth callback listener: {0}")]
     Bind(std::io::Error),
-    #[error("could not open browser for Codex OAuth: {0}")]
-    Browser(String),
     #[error("timed out waiting for Codex OAuth browser callback")]
     Timeout,
     #[error("could not read OAuth callback: {0}")]
@@ -202,17 +200,30 @@ struct DeviceTokenRequest<'a> {
     user_code: &'a str,
 }
 
-pub async fn run_codex_oauth_flow() -> Result<CodexTokens, CodexOAuthError> {
-    let client = http_client()?;
+/// Bound loopback login. The authorize URL is ready before the callback wait.
+pub struct CodexBrowserLogin {
+    pub authorize_url: String,
+    listeners: CallbackListeners,
+    request: OAuthRequest,
+}
+
+pub async fn start_codex_browser_login() -> Result<CodexBrowserLogin, CodexOAuthError> {
     let listeners = bind_callback_listeners().await?;
     let request = build_oauth_request();
+    Ok(CodexBrowserLogin {
+        authorize_url: request.authorize_url.clone(),
+        listeners,
+        request,
+    })
+}
 
-    webbrowser::open(&request.authorize_url)
-        .map_err(|err| CodexOAuthError::Browser(err.to_string()))?;
-
+pub async fn complete_codex_browser_login(
+    login: CodexBrowserLogin,
+) -> Result<CodexTokens, CodexOAuthError> {
+    let client = http_client()?;
     let code = match timeout(
         CALLBACK_TIMEOUT,
-        wait_for_callback(&listeners, &request.state),
+        wait_for_callback(&login.listeners, &login.request.state),
     )
     .await
     {
@@ -222,7 +233,13 @@ pub async fn run_codex_oauth_flow() -> Result<CodexTokens, CodexOAuthError> {
         Err(_) => return Err(CodexOAuthError::Timeout),
     };
 
-    exchange_code(&client, &code, &request.redirect_uri, &request.verifier).await
+    exchange_code(
+        &client,
+        &code,
+        &login.request.redirect_uri,
+        &login.request.verifier,
+    )
+    .await
 }
 
 pub async fn start_codex_device_login() -> Result<CodexDeviceLogin, CodexOAuthError> {

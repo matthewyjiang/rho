@@ -92,6 +92,7 @@ mod linger_rail;
 mod local_commands;
 mod local_diff;
 mod login;
+mod login_presentation;
 mod login_secret_input;
 mod markdown;
 mod markdown_image;

@@ -35,6 +35,30 @@ pub(super) async fn bind_ipv4(port: u16) -> io::Result<TcpListener> {
     TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await
 }
 
+/// Listener plus the callback URL derived from its bound address.
+pub(super) struct BoundLoopback {
+    pub listener: TcpListener,
+    pub callback_url: String,
+}
+
+pub(super) enum LoopbackBindError {
+    Bind(io::Error),
+    LocalAddress(io::Error),
+}
+
+/// Bind a loopback port, then form the callback URL before the wait.
+pub(super) async fn bind_loopback(
+    port: u16,
+    path: &str,
+) -> Result<BoundLoopback, LoopbackBindError> {
+    let listener = bind_ipv4(port).await.map_err(LoopbackBindError::Bind)?;
+    let callback_url = callback_url(&listener, path).map_err(LoopbackBindError::LocalAddress)?;
+    Ok(BoundLoopback {
+        listener,
+        callback_url,
+    })
+}
+
 /// Builds a callback URL from the listener's bound address.
 ///
 /// Using this exact address avoids binding IPv4 while asking the browser to

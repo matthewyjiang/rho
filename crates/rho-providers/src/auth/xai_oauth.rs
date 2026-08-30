@@ -10,7 +10,7 @@ use url::Url;
 use crate::{credentials::XaiTokens, model::TransportError};
 
 use super::loopback::{
-    accept_request, bind_ipv4, callback_url, pkce_challenge, random_token, write_response,
+    accept_request, bind_loopback, pkce_challenge, random_token, write_response, LoopbackBindError,
     ResponseBodies, ResponseKind,
 };
 
@@ -94,8 +94,6 @@ impl std::fmt::Debug for CallbackOutcome {
 pub enum XaiOAuthError {
     #[error("could not bind local xAI OAuth callback listener: {0}")]
     Bind(std::io::Error),
-    #[error("could not open browser for xAI OAuth: {0}")]
-    Browser(String),
     #[error("timed out waiting for xAI OAuth browser callback")]
     Timeout,
     #[error("could not read xAI OAuth callback: {0}")]
@@ -148,24 +146,40 @@ struct DeviceCodeRequest<'a> {
     scope: &'a str,
 }
 
-pub async fn run_xai_oauth_flow() -> Result<XaiTokens, XaiOAuthError> {
-    let client = http_client()?;
-    let listener = bind_ipv4(CALLBACK_PORT)
+/// Bound loopback login. The authorize URL is ready before the callback wait.
+pub struct XaiBrowserLogin {
+    pub authorize_url: String,
+    listener: TcpListener,
+    request: XaiOAuthRequest,
+}
+
+pub async fn start_xai_browser_login() -> Result<XaiBrowserLogin, XaiOAuthError> {
+    let bound = bind_loopback(CALLBACK_PORT, CALLBACK_PATH)
         .await
-        .map_err(XaiOAuthError::Bind)?;
-    let redirect_uri = callback_url(&listener, CALLBACK_PATH).map_err(XaiOAuthError::CallbackIo)?;
+        .map_err(|error| match error {
+            LoopbackBindError::Bind(error) => XaiOAuthError::Bind(error),
+            LoopbackBindError::LocalAddress(error) => XaiOAuthError::CallbackIo(error),
+        })?;
     let request = build_oauth_request_with_redirect(
         random_token(32),
         random_token(64),
         random_token(32),
-        redirect_uri,
+        bound.callback_url,
     );
-    webbrowser::open(&request.authorize_url)
-        .map_err(|err| XaiOAuthError::Browser(err.to_string()))?;
+    Ok(XaiBrowserLogin {
+        authorize_url: request.authorize_url.clone(),
+        listener: bound.listener,
+        request,
+    })
+}
 
+pub async fn complete_xai_browser_login(
+    login: XaiBrowserLogin,
+) -> Result<XaiTokens, XaiOAuthError> {
+    let client = http_client()?;
     let code = match timeout(
         CALLBACK_TIMEOUT,
-        wait_for_callback(&listener, &request.state),
+        wait_for_callback(&login.listener, &login.request.state),
     )
     .await
     {
@@ -175,7 +189,7 @@ pub async fn run_xai_oauth_flow() -> Result<XaiTokens, XaiOAuthError> {
         Err(_) => return Err(XaiOAuthError::Timeout),
     };
 
-    exchange_code(&client, &code, &request).await
+    exchange_code(&client, &code, &login.request).await
 }
 
 pub async fn start_xai_device_login() -> Result<XaiDeviceLogin, XaiOAuthError> {

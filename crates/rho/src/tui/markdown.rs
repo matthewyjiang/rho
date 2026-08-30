@@ -440,7 +440,7 @@ fn code_block_header(
     Line::from(spans)
 }
 
-fn code_block_copy_label(width: usize) -> Option<&'static str> {
+pub(in crate::tui) fn code_block_copy_label(width: usize) -> Option<&'static str> {
     if width >= 9 {
         Some(" COPY ")
     } else if width >= 6 {

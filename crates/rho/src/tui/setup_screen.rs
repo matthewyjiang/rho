@@ -189,11 +189,12 @@ impl App {
         }
         let width = column.width as usize;
 
+        let origin = setup_composer_origin(area, step);
+        let body_row = origin.y.saturating_sub(column.y);
         let mut lines = welcome_lines(width);
         lines.extend(step_lines(step, width));
         lines.push(Line::raw(""));
-        let body_row = lines.len() as u16;
-        lines.extend(self.setup_body_lines(width, column.height.saturating_sub(body_row)));
+        lines.extend(self.setup_body_lines(width, origin.height));
         lines.push(Line::raw(""));
         lines.push(Line::from(Span::styled(
             truncate_one_line("Esc to skip setup", width),
@@ -235,6 +236,19 @@ impl App {
                 .saturating_add(offset.min(column.width.saturating_sub(1) as usize) as u16),
             y: column.y.saturating_add(body_row),
         })
+    }
+}
+
+/// Where the composer body is painted on the setup screen.
+pub(super) fn setup_composer_origin(area: Rect, step: SetupStep) -> Rect {
+    let column = content_column(area);
+    let width = column.width as usize;
+    let body_row = (welcome_lines(width).len() + step_lines(step, width).len() + 1) as u16;
+    Rect {
+        x: column.x,
+        y: column.y.saturating_add(body_row),
+        width: column.width,
+        height: column.height.saturating_sub(body_row),
     }
 }
 

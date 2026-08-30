@@ -1,8 +1,14 @@
 use super::{
-    ollama_interactive_login, AuthenticationError, AuthenticationMethod,
-    InteractiveLoginCompletion, InteractiveUserAction, ProviderAuthentication,
+    interactive_login, AuthenticationError, AuthenticationMethod, InteractiveLoginCompletion,
+    ProviderAuthentication,
 };
-use crate::{auth::ollama_device::OllamaDeviceLogin, credentials::MemoryCredentialStore};
+use crate::{
+    auth::{
+        browser::{BrowserAvailability, BrowserOpen},
+        login_prompt::LoginPrompt,
+    },
+    credentials::MemoryCredentialStore,
+};
 
 #[test]
 fn dispatches_registered_providers_to_typed_authentication_methods() {
@@ -57,22 +63,95 @@ fn dispatches_registered_providers_to_typed_authentication_methods() {
     ));
 }
 
+// Covers: headless prefers device when the provider has one
+// Owner: login dispatch
+#[test]
+fn preferred_mode_uses_device_only_when_headless_and_capable() {
+    let cases = [
+        (
+            "openai-codex",
+            BrowserAvailability::Headless,
+            super::InteractiveLoginMode::Device,
+        ),
+        (
+            "openai-codex",
+            BrowserAvailability::Graphical,
+            super::InteractiveLoginMode::Browser,
+        ),
+        (
+            "github-copilot",
+            BrowserAvailability::Headless,
+            super::InteractiveLoginMode::Device,
+        ),
+        (
+            "github-copilot",
+            BrowserAvailability::Graphical,
+            super::InteractiveLoginMode::Browser,
+        ),
+        (
+            "xai-oauth",
+            BrowserAvailability::Headless,
+            super::InteractiveLoginMode::Device,
+        ),
+        (
+            "kimi-code",
+            BrowserAvailability::Headless,
+            super::InteractiveLoginMode::Device,
+        ),
+        (
+            "ollama-cloud-device",
+            BrowserAvailability::Headless,
+            super::InteractiveLoginMode::Device,
+        ),
+        (
+            "openrouter-oauth",
+            BrowserAvailability::Headless,
+            super::InteractiveLoginMode::Browser,
+        ),
+        (
+            "openrouter-oauth",
+            BrowserAvailability::Graphical,
+            super::InteractiveLoginMode::Browser,
+        ),
+        (
+            "openai",
+            BrowserAvailability::Headless,
+            super::InteractiveLoginMode::Browser,
+        ),
+    ];
+    for (provider, availability, expected) in cases {
+        pretty_assertions::assert_eq!(
+            ProviderAuthentication::preferred_mode(provider, availability),
+            expected,
+            "{provider} {availability:?}"
+        );
+    }
+}
+
 #[test]
 fn ollama_device_setup_does_not_wait_for_confirmation() {
-    let login = ollama_interactive_login(
-        OllamaDeviceLogin {
-            connect_url: "https://ollama.com/connect?key=test".into(),
+    let login = interactive_login(
+        "Ollama Cloud",
+        LoginPrompt::browser_flow(
+            "https://ollama.com/connect?key=test",
+            BrowserOpen::Launched,
+            "Open this URL and approve the device for Ollama Cloud.",
+        ),
+        BrowserAvailability::Headless,
+        InteractiveLoginCompletion::Unconfirmed {
+            instruction: "Approve the device in your browser, then use an Ollama Cloud model. Rho does not receive a completion callback.",
         },
-        /* open_browser */ false,
     );
 
-    assert_eq!(login.provider_label, "Ollama Cloud");
-    match login.user_action {
-        InteractiveUserAction::OpenUrl { url, .. } => {
-            assert_eq!(url, "https://ollama.com/connect?key=test");
-        }
-        other => panic!("expected an Ollama connect URL, got {other:?}"),
-    }
+    pretty_assertions::assert_eq!(login.provider_label, "Ollama Cloud");
+    pretty_assertions::assert_eq!(
+        login.prompt,
+        LoginPrompt::browser_flow(
+            "https://ollama.com/connect?key=test",
+            BrowserOpen::Skipped,
+            "Open this URL and approve the device for Ollama Cloud.",
+        )
+    );
     assert!(matches!(
         login.completion,
         InteractiveLoginCompletion::Unconfirmed { .. }
@@ -109,4 +188,58 @@ fn rejects_unknown_provider_before_starting_authentication() {
         ProviderAuthentication::method("missing"),
         Err(AuthenticationError::UnsupportedProvider(provider)) if provider == "missing"
     ));
+}
+
+// Covers: LoginPrompt maps onto the deprecated InteractiveUserAction shim without drift
+// Owner: login dispatch
+#[allow(deprecated)]
+#[test]
+fn login_prompt_maps_to_interactive_user_action() {
+    let cases = [
+        (
+            "device code",
+            LoginPrompt::device_code(
+                "https://auth.example/device",
+                "WD4E-T6MC",
+                Some("https://auth.example/device?user_code=WD4E-T6MC".into()),
+                BrowserOpen::Launched,
+                "Visit this URL and enter the code.",
+            ),
+            super::InteractiveUserAction::DeviceCode {
+                verification_uri: "https://auth.example/device".into(),
+                user_code: "WD4E-T6MC".into(),
+                verification_uri_complete: Some(
+                    "https://auth.example/device?user_code=WD4E-T6MC".into(),
+                ),
+            },
+        ),
+        (
+            "launched browser",
+            LoginPrompt::browser_flow(
+                "https://auth.example/authorize",
+                BrowserOpen::Launched,
+                "Open this URL to finish login.",
+            ),
+            super::InteractiveUserAction::BrowserOpened,
+        ),
+        (
+            "not launched",
+            LoginPrompt::browser_flow(
+                "https://auth.example/authorize",
+                BrowserOpen::Skipped,
+                "Open this URL to finish login.",
+            ),
+            super::InteractiveUserAction::OpenUrl {
+                url: "https://auth.example/authorize".into(),
+                instruction: "Open this URL to finish login.".into(),
+            },
+        ),
+    ];
+    for (name, prompt, expected) in cases {
+        pretty_assertions::assert_eq!(
+            super::InteractiveUserAction::from(&prompt),
+            expected,
+            "{name}"
+        );
+    }
 }

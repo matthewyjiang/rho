@@ -26,10 +26,19 @@ use ratatui::{
     style::{Modifier, Style},
     text::Line,
 };
-use rho_providers::model::{
-    catalog::{LoginTarget, ModelSelection},
-    ContextUsage, ModelUsage,
+use rho_providers::{
+    auth::login_prompt::LoginPrompt,
+    model::{
+        catalog::{LoginTarget, ModelSelection},
+        ContextUsage, ModelUsage,
+    },
 };
+
+#[derive(Clone, Debug)]
+pub(super) struct PendingLoginComposer {
+    pub target: LoginTarget,
+    pub prompt: LoginPrompt,
+}
 
 #[cfg(test)]
 pub(super) struct ActiveFrame {
@@ -186,7 +195,7 @@ pub(super) enum ComposerMode {
     SecretInput(SecretInput),
     ConfigNumberInput(ConfigNumberInput),
     TextInput(super::text_input::TextInput),
-    InteractivePending(LoginTarget),
+    InteractivePending(PendingLoginComposer),
     InlineChoice(InlineChoiceModal),
     Questionnaire(QuestionnaireComposer),
     Approval(ApprovalComposer),

@@ -122,9 +122,15 @@ enum AuthorizationPrompt {
 impl AuthorizationPrompt {
     fn present(&self, url: &str) -> anyhow::Result<()> {
         match self {
-            Self::DesktopBrowser => webbrowser::open(url)
-                .map(|_| ())
-                .context("could not open a browser for the MCP authorization login"),
+            Self::DesktopBrowser => {
+                let availability = rho_providers::auth::browser::BrowserAvailability::resolve(
+                    rho_providers::auth::browser::BrowserEnvironment::from_process(),
+                );
+                let browser = rho_providers::auth::browser::try_open(url, availability);
+                eprintln!("{url}");
+                eprintln!("{}", browser.note());
+                Ok(())
+            }
             #[cfg(test)]
             Self::Captured(sender) => sender
                 .send(url.to_string())
@@ -399,13 +405,10 @@ async fn log_in(
         .context("authorization request could not be prepared")?;
 
     let auth_url = session.get_authorization_url();
-    let auth_origin = url::Url::parse(auth_url)
-        .map(|parsed| parsed.origin().ascii_serialization())
-        .unwrap_or_else(|_| "unknown".to_string());
     tracing::info!(
         server = %identity,
-        origin = %auth_origin,
-        "opening a browser to authorize this MCP server"
+        url = %auth_url,
+        "MCP authorization URL"
     );
     prompt.present(auth_url)?;
 

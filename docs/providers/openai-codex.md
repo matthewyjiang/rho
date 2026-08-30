@@ -18,11 +18,7 @@ Codex OAuth uses Rho-owned OAuth and signs in with an OpenAI account subscriptio
 /login openai-codex
 ```
 
-`/login openai-codex` starts Rho's browser-based Codex OAuth flow. For remote or headless sessions where a browser is not available, use the device-code flow:
-
-```bash
-rho login openai-codex --device-auth
-```
+`/login openai-codex` starts Rho's Codex OAuth flow and always shows the authorize URL. On a machine with a browser, Rho opens it and still prints the link. Remote or headless sessions skip the browser and use device-code automatically (`rho login openai-codex`). `--device-auth` forces device-code on a graphical session.
 
 Credentials are stored in the configured credential store, not in config or transcripts.
 

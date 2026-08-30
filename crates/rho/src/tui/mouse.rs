@@ -205,6 +205,12 @@ impl App {
                     self.clear_rail_pointer_state();
                     self.history.clear_text_selection();
                     self.copy_text(&target.text, now);
+                } else if let Some(url) = self.login_copy_url_at_position(screen, column, row) {
+                    self.input_ui.clear_selection();
+                    self.input_ui.cancel_pointer_click_sequence();
+                    self.clear_rail_pointer_state();
+                    self.history.clear_text_selection();
+                    self.copy_text(&url, now);
                 } else if self.pointer_in_composer(&layout, column, row) {
                     // Composer owns the pointer: place the caret / start an
                     // editable selection instead of screen-copy drag.
@@ -655,6 +661,31 @@ impl App {
                 target,
                 lines: (static_len + range.start)..(static_len + range.end),
             })
+    }
+
+    /// Hit-test the login copy button using the same origin the current screen painted.
+    pub(super) fn login_copy_url_at_position(
+        &mut self,
+        area: Rect,
+        column: u16,
+        row: u16,
+    ) -> Option<String> {
+        if let Some(step) = self.setup_step() {
+            let origin = super::setup_screen::setup_composer_origin(area, step);
+            let hit = self
+                .composer_frame(origin.width as usize, origin.height as usize)
+                .copy_hit?;
+            return hit
+                .text_at(origin, /*start*/ 0, column, row)
+                .map(str::to_string);
+        }
+        let ctx = self.frame_context(area);
+        let origin = ctx.layout.composer;
+        let start = ctx.layout.composer_start;
+        ctx.composer
+            .copy_hit?
+            .text_at(origin, start, column, row)
+            .map(str::to_string)
     }
 
     pub(super) fn copy_text(&mut self, text: &str, now: Instant) {

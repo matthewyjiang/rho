@@ -2,7 +2,8 @@ use std::{future::Future, pin::Pin};
 
 use crate::{
     auth::{
-        codex_oauth, github_copilot_device, kimi_oauth, ollama_device, openrouter_oauth, xai_oauth,
+        browser, codex_oauth, github_copilot_device, kimi_oauth, ollama_device, openrouter_oauth,
+        xai_oauth,
     },
     credentials::{
         self, CodexTokens, CredentialResult, CredentialStore, GitHubCopilotTokens, KimiTokens,
@@ -31,7 +32,22 @@ pub enum InteractiveLoginMode {
     Device,
 }
 
+pub use super::browser::{BrowserAvailability, BrowserEnvironment, BrowserOpen};
+use super::login_prompt::LoginPrompt;
+
+/// Deprecated presentation of an interactive login.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-providers): remove InteractiveUserAction and the InteractiveLogin::user_action field; LoginPrompt is the only login presentation surface
+///
+/// This minor keeps the 2.0 variants so existing matches still compile. New
+/// code should read [`LoginPrompt`] from [`InteractiveLogin::prompt`].
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[deprecated(
+    since = "2.1.0",
+    note = "use InteractiveLogin::prompt (LoginPrompt) instead of matching InteractiveUserAction"
+)]
 pub enum InteractiveUserAction {
     BrowserOpened,
     /// Show a URL to open manually (no device code). Used by Ollama device-key connect.
@@ -44,6 +60,26 @@ pub enum InteractiveUserAction {
         user_code: String,
         verification_uri_complete: Option<String>,
     },
+}
+
+#[allow(deprecated)]
+impl From<&LoginPrompt> for InteractiveUserAction {
+    fn from(prompt: &LoginPrompt) -> Self {
+        if let Some(user_code) = prompt.user_code.clone() {
+            Self::DeviceCode {
+                verification_uri: prompt.url.clone(),
+                user_code,
+                verification_uri_complete: prompt.url_with_code.clone(),
+            }
+        } else if prompt.browser == BrowserOpen::Launched {
+            Self::BrowserOpened
+        } else {
+            Self::OpenUrl {
+                url: prompt.url.clone(),
+                instruction: prompt.instruction.clone(),
+            }
+        }
+    }
 }
 
 pub enum InteractiveLoginCompletion {
@@ -66,17 +102,30 @@ impl std::fmt::Debug for InteractiveLoginCompletion {
     }
 }
 
+#[allow(deprecated)]
 pub struct InteractiveLogin {
     pub provider_label: &'static str,
+    pub prompt: LoginPrompt,
+    /// Deprecated dual-emit of [`Self::prompt`].
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-providers): remove InteractiveUserAction and the InteractiveLogin::user_action field; LoginPrompt is the only login presentation surface
+    #[deprecated(
+        since = "2.1.0",
+        note = "use InteractiveLogin::prompt (LoginPrompt) instead of user_action"
+    )]
     pub user_action: InteractiveUserAction,
     pub completion: InteractiveLoginCompletion,
 }
 
 impl std::fmt::Debug for InteractiveLogin {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        #[allow(deprecated)]
         formatter
             .debug_struct("InteractiveLogin")
             .field("provider_label", &self.provider_label)
+            .field("prompt", &self.prompt)
             .field("user_action", &self.user_action)
             .field("completion", &self.completion)
             .finish()
@@ -184,23 +233,68 @@ impl ProviderAuthentication {
         })
     }
 
+    /// Headless sessions prefer device-code when the provider has one.
+    pub fn preferred_mode(
+        provider_or_auth: &str,
+        availability: BrowserAvailability,
+    ) -> InteractiveLoginMode {
+        if availability == BrowserAvailability::Headless
+            && Self::supports_device_login(provider_or_auth)
+        {
+            InteractiveLoginMode::Device
+        } else {
+            InteractiveLoginMode::Browser
+        }
+    }
+
+    /// Start an interactive login using process browser availability.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-providers): remove the 2-arg start_interactive_login wrapper and rename start_interactive_login_with_availability back to start_interactive_login
+    ///
+    /// Prefer [`Self::start_interactive_login_with_availability`] so callers
+    /// pass availability explicitly instead of sniffing the process.
+    #[deprecated(
+        since = "2.1.0",
+        note = "use start_interactive_login_with_availability so browser availability is explicit"
+    )]
     pub async fn start_interactive_login(
         provider_or_auth: &str,
         mode: InteractiveLoginMode,
+    ) -> Result<InteractiveLogin, AuthenticationError> {
+        Self::start_interactive_login_with_availability(
+            provider_or_auth,
+            mode,
+            BrowserAvailability::from_process(),
+        )
+        .await
+    }
+
+    /// Start an interactive login. Bind or device setup finishes before return
+    /// so [`InteractiveLogin::prompt`] already has the authorize URL.
+    pub async fn start_interactive_login_with_availability(
+        provider_or_auth: &str,
+        mode: InteractiveLoginMode,
+        availability: BrowserAvailability,
     ) -> Result<InteractiveLogin, AuthenticationError> {
         let profile = resolve_login_profile(provider_or_auth)?;
         match profile.auth_kind() {
             ProviderAuthKind::None | ProviderAuthKind::ApiKey { .. } => {
                 Err(AuthenticationError::NotInteractive(provider_or_auth.into()))
             }
-            ProviderAuthKind::CodexOAuth { .. } => start_codex(mode).await,
-            ProviderAuthKind::GithubCopilotDevice { .. } => start_github_copilot().await,
-            ProviderAuthKind::KimiOAuth { .. } => start_kimi().await,
-            ProviderAuthKind::XaiOAuth { .. } => start_xai(mode).await,
-            ProviderAuthKind::OllamaDeviceKey { .. } => start_ollama_device(mode).await,
+            ProviderAuthKind::CodexOAuth { .. } => start_codex(mode, availability).await,
+            ProviderAuthKind::GithubCopilotDevice { .. } => {
+                start_github_copilot(availability).await
+            }
+            ProviderAuthKind::KimiOAuth { .. } => start_kimi(availability).await,
+            ProviderAuthKind::XaiOAuth { .. } => start_xai(mode, availability).await,
+            ProviderAuthKind::OllamaDeviceKey { .. } => start_ollama_device(availability).await,
             ProviderAuthKind::BearerCredential { acquisition, .. } => match acquisition {
                 BearerCredentialAcquisition::BrowserOAuth(BrowserOAuthFlow::OpenRouter) => {
-                    start_openrouter(mode).await
+                    // OpenRouter has no device-code grant. `--device-auth` still
+                    // runs the browser/PKCE flow; the printed URL works headless.
+                    start_openrouter(availability).await
                 }
             },
         }
@@ -294,34 +388,47 @@ fn resolve_login_profile(
     }
 }
 
-async fn start_codex(mode: InteractiveLoginMode) -> Result<InteractiveLogin, AuthenticationError> {
+async fn start_codex(
+    mode: InteractiveLoginMode,
+    availability: BrowserAvailability,
+) -> Result<InteractiveLogin, AuthenticationError> {
     if mode == InteractiveLoginMode::Browser {
-        return Ok(InteractiveLogin {
-            provider_label: "Codex",
-            user_action: InteractiveUserAction::BrowserOpened,
-            completion: InteractiveLoginCompletion::Confirm(Box::pin(async {
-                codex_oauth::run_codex_oauth_flow()
+        let login = codex_oauth::start_codex_browser_login()
+            .await
+            .map_err(flow_error)?;
+        return Ok(interactive_login(
+            "Codex",
+            LoginPrompt::browser_flow(
+                login.authorize_url.clone(),
+                BrowserOpen::Skipped,
+                "Open this URL to finish Codex login.",
+            ),
+            availability,
+            InteractiveLoginCompletion::Confirm(Box::pin(async move {
+                codex_oauth::complete_codex_browser_login(login)
                     .await
                     .map(|tokens| CompletedAuthentication {
                         credentials: LoginCredentials::Codex(tokens),
                     })
                     .map_err(flow_error)
             })),
-        });
+        ));
     }
 
     let login = codex_oauth::start_codex_device_login()
         .await
         .map_err(flow_error)?;
-    let user_action = InteractiveUserAction::DeviceCode {
-        verification_uri: login.verification_uri.clone(),
-        user_code: login.user_code.clone(),
-        verification_uri_complete: None,
-    };
-    Ok(InteractiveLogin {
-        provider_label: "Codex",
-        user_action,
-        completion: InteractiveLoginCompletion::Confirm(Box::pin(async move {
+    Ok(interactive_login(
+        "Codex",
+        LoginPrompt::device_code(
+            login.verification_uri.clone(),
+            login.user_code.clone(),
+            None,
+            BrowserOpen::Skipped,
+            "Visit this URL and enter the code.",
+        ),
+        availability,
+        InteractiveLoginCompletion::Confirm(Box::pin(async move {
             codex_oauth::complete_codex_device_login(login)
                 .await
                 .map(|tokens| CompletedAuthentication {
@@ -329,22 +436,26 @@ async fn start_codex(mode: InteractiveLoginMode) -> Result<InteractiveLogin, Aut
                 })
                 .map_err(flow_error)
         })),
-    })
+    ))
 }
 
-async fn start_github_copilot() -> Result<InteractiveLogin, AuthenticationError> {
+async fn start_github_copilot(
+    availability: BrowserAvailability,
+) -> Result<InteractiveLogin, AuthenticationError> {
     let login = github_copilot_device::start_github_copilot_device_login()
         .await
         .map_err(flow_error)?;
-    let user_action = InteractiveUserAction::DeviceCode {
-        verification_uri: login.verification_uri.clone(),
-        user_code: login.user_code.clone(),
-        verification_uri_complete: login.verification_uri_complete.clone(),
-    };
-    Ok(InteractiveLogin {
-        provider_label: "GitHub Copilot",
-        user_action,
-        completion: InteractiveLoginCompletion::Confirm(Box::pin(async move {
+    Ok(interactive_login(
+        "GitHub Copilot",
+        LoginPrompt::device_code(
+            login.verification_uri.clone(),
+            login.user_code.clone(),
+            login.verification_uri_complete.clone(),
+            BrowserOpen::Skipped,
+            "Visit this URL and enter the code.",
+        ),
+        availability,
+        InteractiveLoginCompletion::Confirm(Box::pin(async move {
             github_copilot_device::complete_github_copilot_device_login(login)
                 .await
                 .map(|tokens| CompletedAuthentication {
@@ -352,22 +463,26 @@ async fn start_github_copilot() -> Result<InteractiveLogin, AuthenticationError>
                 })
                 .map_err(flow_error)
         })),
-    })
+    ))
 }
 
-async fn start_kimi() -> Result<InteractiveLogin, AuthenticationError> {
+async fn start_kimi(
+    availability: BrowserAvailability,
+) -> Result<InteractiveLogin, AuthenticationError> {
     let login = kimi_oauth::start_kimi_device_login()
         .await
         .map_err(flow_error)?;
-    let user_action = InteractiveUserAction::DeviceCode {
-        verification_uri: login.verification_uri.clone(),
-        user_code: login.user_code.clone(),
-        verification_uri_complete: login.verification_uri_complete.clone(),
-    };
-    Ok(InteractiveLogin {
-        provider_label: "Kimi",
-        user_action,
-        completion: InteractiveLoginCompletion::Confirm(Box::pin(async move {
+    Ok(interactive_login(
+        "Kimi",
+        LoginPrompt::device_code(
+            login.verification_uri.clone(),
+            login.user_code.clone(),
+            login.verification_uri_complete.clone(),
+            BrowserOpen::Skipped,
+            "Visit this URL and enter the code.",
+        ),
+        availability,
+        InteractiveLoginCompletion::Confirm(Box::pin(async move {
             kimi_oauth::complete_kimi_device_login(login)
                 .await
                 .map(|tokens| CompletedAuthentication {
@@ -375,59 +490,75 @@ async fn start_kimi() -> Result<InteractiveLogin, AuthenticationError> {
                 })
                 .map_err(flow_error)
         })),
-    })
+    ))
 }
 
 async fn start_openrouter(
-    mode: InteractiveLoginMode,
+    availability: BrowserAvailability,
 ) -> Result<InteractiveLogin, AuthenticationError> {
-    if mode == InteractiveLoginMode::Device {
-        return Err(AuthenticationError::Flow(
-            "OpenRouter does not support device login; use browser login or an API key".into(),
-        ));
-    }
-    Ok(InteractiveLogin {
-        provider_label: "OpenRouter",
-        user_action: InteractiveUserAction::BrowserOpened,
-        completion: InteractiveLoginCompletion::Confirm(Box::pin(async {
-            openrouter_oauth::run_openrouter_oauth_flow()
+    let login = openrouter_oauth::start_openrouter_browser_login()
+        .await
+        .map_err(flow_error)?;
+    Ok(interactive_login(
+        "OpenRouter",
+        LoginPrompt::browser_flow(
+            login.authorize_url.clone(),
+            BrowserOpen::Skipped,
+            "Open this URL to finish OpenRouter login.",
+        ),
+        availability,
+        InteractiveLoginCompletion::Confirm(Box::pin(async move {
+            openrouter_oauth::complete_openrouter_browser_login(login)
                 .await
                 .map(|key| CompletedAuthentication {
                     credentials: LoginCredentials::OpenRouter(key),
                 })
                 .map_err(flow_error)
         })),
-    })
+    ))
 }
 
-async fn start_xai(mode: InteractiveLoginMode) -> Result<InteractiveLogin, AuthenticationError> {
+async fn start_xai(
+    mode: InteractiveLoginMode,
+    availability: BrowserAvailability,
+) -> Result<InteractiveLogin, AuthenticationError> {
     if mode == InteractiveLoginMode::Browser {
-        return Ok(InteractiveLogin {
-            provider_label: "xAI",
-            user_action: InteractiveUserAction::BrowserOpened,
-            completion: InteractiveLoginCompletion::Confirm(Box::pin(async {
-                xai_oauth::run_xai_oauth_flow()
+        let login = xai_oauth::start_xai_browser_login()
+            .await
+            .map_err(flow_error)?;
+        return Ok(interactive_login(
+            "xAI",
+            LoginPrompt::browser_flow(
+                login.authorize_url.clone(),
+                BrowserOpen::Skipped,
+                "Open this URL to finish xAI login.",
+            ),
+            availability,
+            InteractiveLoginCompletion::Confirm(Box::pin(async move {
+                xai_oauth::complete_xai_browser_login(login)
                     .await
                     .map(|tokens| CompletedAuthentication {
                         credentials: LoginCredentials::Xai(tokens),
                     })
                     .map_err(flow_error)
             })),
-        });
+        ));
     }
 
     let login = xai_oauth::start_xai_device_login()
         .await
         .map_err(flow_error)?;
-    let user_action = InteractiveUserAction::DeviceCode {
-        verification_uri: login.verification_uri.clone(),
-        user_code: login.user_code.clone(),
-        verification_uri_complete: login.verification_uri_complete.clone(),
-    };
-    Ok(InteractiveLogin {
-        provider_label: "xAI",
-        user_action,
-        completion: InteractiveLoginCompletion::Confirm(Box::pin(async move {
+    Ok(interactive_login(
+        "xAI",
+        LoginPrompt::device_code(
+            login.verification_uri.clone(),
+            login.user_code.clone(),
+            login.verification_uri_complete.clone(),
+            BrowserOpen::Skipped,
+            "Visit this URL and enter the code.",
+        ),
+        availability,
+        InteractiveLoginCompletion::Confirm(Box::pin(async move {
             xai_oauth::complete_xai_device_login(login)
                 .await
                 .map(|tokens| CompletedAuthentication {
@@ -435,37 +566,42 @@ async fn start_xai(mode: InteractiveLoginMode) -> Result<InteractiveLogin, Authe
                 })
                 .map_err(flow_error)
         })),
-    })
+    ))
 }
 
 async fn start_ollama_device(
-    mode: InteractiveLoginMode,
+    availability: BrowserAvailability,
 ) -> Result<InteractiveLogin, AuthenticationError> {
-    let open_browser = mode == InteractiveLoginMode::Browser;
-    let login = ollama_device::start_ollama_device_login(/* open_browser */ open_browser)
+    let login = ollama_device::start_ollama_device_login()
         .await
         .map_err(flow_error)?;
-    Ok(ollama_interactive_login(login, open_browser))
-}
-
-fn ollama_interactive_login(
-    login: ollama_device::OllamaDeviceLogin,
-    open_browser: bool,
-) -> InteractiveLogin {
-    let user_action = if open_browser {
-        InteractiveUserAction::BrowserOpened
-    } else {
-        InteractiveUserAction::OpenUrl {
-            url: login.connect_url,
-            instruction: "Open this URL and approve the device for Ollama Cloud.".into(),
-        }
-    };
-    InteractiveLogin {
-        provider_label: "Ollama Cloud",
-        user_action,
-        completion: InteractiveLoginCompletion::Unconfirmed {
+    Ok(interactive_login(
+        "Ollama Cloud",
+        LoginPrompt::browser_flow(
+            login.connect_url,
+            BrowserOpen::Skipped,
+            "Open this URL and approve the device for Ollama Cloud.",
+        ),
+        availability,
+        InteractiveLoginCompletion::Unconfirmed {
             instruction: "Approve the device in your browser, then use an Ollama Cloud model. Rho does not receive a completion callback.",
         },
+    ))
+}
+
+#[allow(deprecated)]
+fn interactive_login(
+    provider_label: &'static str,
+    mut prompt: LoginPrompt,
+    availability: BrowserAvailability,
+    completion: InteractiveLoginCompletion,
+) -> InteractiveLogin {
+    prompt.browser = browser::try_open(prompt.copyable_url(), availability);
+    InteractiveLogin {
+        provider_label,
+        user_action: InteractiveUserAction::from(&prompt),
+        prompt,
+        completion,
     }
 }
 

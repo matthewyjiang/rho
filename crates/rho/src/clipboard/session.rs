@@ -2,9 +2,11 @@ use std::{env, fs};
 
 /// Where clipboard operations should target for this process.
 ///
-/// This is about which machine owns the user-facing clipboard. OAuth login uses a
-/// related but different "can we open a browser?" check that also treats `HERDR_ENV`
-/// as non-local; clipboard policy intentionally ignores that marker.
+/// This is about which machine owns the user-facing clipboard. OAuth login uses
+/// [`rho_providers::auth::browser::BrowserAvailability`] for "can a browser
+/// appear?", which also treats `HERDR_ENV` as non-local. Clipboard policy
+/// intentionally ignores that marker so OSC-52 still targets the user-facing
+/// clipboard inside a nested harness.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionKind {
     /// Ordinary local desktop or server session.

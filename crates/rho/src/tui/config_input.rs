@@ -17,13 +17,28 @@ impl App {
             return Ok(false);
         }
 
-        if key.code == KeyCode::Esc {
-            if let Some(pending) = self.pending_interactive_login.take() {
-                pending.handle.abort();
+        match (key.modifiers, key.code) {
+            (KeyModifiers::CONTROL, KeyCode::Char('c' | 'C')) => return Ok(false),
+            (modifiers, KeyCode::Char('c' | 'C'))
+                if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                let url = match self.input_ui.composer() {
+                    ComposerMode::InteractivePending(pending) => {
+                        pending.prompt.copyable_url().to_string()
+                    }
+                    _ => return Ok(true),
+                };
+                self.copy_text(&url, std::time::Instant::now());
             }
-            self.input_ui.set_composer(ComposerMode::Input);
-            self.set_status("login cancelled");
-            self.clear_transient_key_state();
+            (_, KeyCode::Esc) => {
+                if let Some(pending) = self.pending_interactive_login.take() {
+                    pending.handle.abort();
+                }
+                self.input_ui.set_composer(ComposerMode::Input);
+                self.set_status("login cancelled");
+                self.clear_transient_key_state();
+            }
+            _ => {}
         }
         Ok(true)
     }
@@ -352,3 +367,7 @@ fn save_config_api_key(
         save_web_search_api_key(credential_store, credential, value)
     }
 }
+
+#[cfg(test)]
+#[path = "config_input_tests.rs"]
+mod tests;
