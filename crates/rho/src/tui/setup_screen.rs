@@ -197,8 +197,10 @@ impl App {
     fn show_setup_model_picker(&mut self) {
         let Some(picker) = self.setup_model_picker() else {
             // Nothing to choose between: keep the configured model rather than
-            // showing an empty step.
+            // showing an empty step. Setup is gone, so the composer must
+            // return to Input instead of keeping a cancelled login overlay.
             self.leave_setup();
+            self.input_ui.set_composer(ComposerMode::Input);
             self.set_status("ready");
             return;
         };

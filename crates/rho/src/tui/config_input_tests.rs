@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rho_providers::{
     auth::{browser::BrowserOpen, login_prompt::LoginPrompt},
-    model::catalog::LoginTarget,
+    model::{catalog::LoginTarget, provider_models::with_provider_models_cache_dir_for_tests},
 };
 
 use crate::tui::{
@@ -96,6 +96,19 @@ fn set_cancel_occupant(app: &mut crate::tui::App, occupant: CancelOccupant) {
     };
 }
 
+fn test_app_with_selectable_model() -> crate::tui::App {
+    let app = test_app();
+    // OpenAI models come from a cache these unit tests do not populate.
+    // xAI is a static-catalog provider, so a stored key makes models selectable.
+    rho_providers::credentials::save_provider_api_key(
+        app.credential_store.as_ref(),
+        "xai",
+        "xai-test",
+    )
+    .unwrap();
+    app
+}
+
 fn arm_login_overlay(app: &mut crate::tui::App, occupant: CancelOccupant, overlay: CancelOverlay) {
     set_cancel_occupant(app, occupant);
     match overlay {
@@ -136,42 +149,64 @@ fn cancel_login_overlay(app: &mut crate::tui::App, overlay: CancelOverlay) {
     }
 }
 
-// Covers: Esc on a login overlay must restore setup's picker, not drop into session Input
+// Covers: Esc on a login overlay restores that setup step's picker (not
+// dismiss_setup_screen); with no selectable models, ChooseModel leaves
+// setup and drops the overlay instead of leaving it stale.
 // Owner: login composer input
 #[test]
 fn cancelling_login_overlay_restores_setup_picker_or_session_input() {
-    let occupants = [
-        (
-            CancelOccupant::SignIn,
-            CancelOccupant::SignIn,
-            CancelComposer::Picker,
-        ),
-        (
-            CancelOccupant::Session,
-            CancelOccupant::Session,
-            CancelComposer::Input,
-        ),
-        (
-            CancelOccupant::ChooseModel,
-            CancelOccupant::ChooseModel,
-            CancelComposer::Picker,
-        ),
-    ];
-    let overlays = [
-        CancelOverlay::Pending,
-        CancelOverlay::Secret,
-        CancelOverlay::CustomHost,
-    ];
-    for overlay in overlays {
-        for (start, expected_occupant, expected_composer) in occupants {
-            let mut app = test_app();
-            arm_login_overlay(&mut app, start, overlay);
-            cancel_login_overlay(&mut app, overlay);
-            pretty_assertions::assert_eq!(
-                (cancel_occupant(&app), cancel_composer(&app)),
-                (expected_occupant, expected_composer),
-                "cancel {overlay:?} from {start:?}"
-            );
+    // Cached Ollama/OpenAI lists make ChooseModel look populated on machines
+    // that have already refreshed models. An empty cache matches CI and the
+    // no-models fallback. xAI still works: it is a static catalog.
+    let cache = tempfile::tempdir().unwrap();
+    with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), || {
+        let occupants = [
+            (
+                CancelOccupant::SignIn,
+                CancelOccupant::SignIn,
+                CancelComposer::Picker,
+                false,
+            ),
+            (
+                CancelOccupant::Session,
+                CancelOccupant::Session,
+                CancelComposer::Input,
+                false,
+            ),
+            (
+                CancelOccupant::ChooseModel,
+                CancelOccupant::ChooseModel,
+                CancelComposer::Picker,
+                true,
+            ),
+            // No selectable models: restore leaves setup and must drop the overlay.
+            (
+                CancelOccupant::ChooseModel,
+                CancelOccupant::Session,
+                CancelComposer::Input,
+                false,
+            ),
+        ];
+        let overlays = [
+            CancelOverlay::Pending,
+            CancelOverlay::Secret,
+            CancelOverlay::CustomHost,
+        ];
+        for overlay in overlays {
+            for (start, expected_occupant, expected_composer, selectable_model) in occupants {
+                let mut app = if selectable_model {
+                    test_app_with_selectable_model()
+                } else {
+                    test_app()
+                };
+                arm_login_overlay(&mut app, start, overlay);
+                cancel_login_overlay(&mut app, overlay);
+                pretty_assertions::assert_eq!(
+                    (cancel_occupant(&app), cancel_composer(&app)),
+                    (expected_occupant, expected_composer),
+                    "cancel {overlay:?} from {start:?} selectable_model={selectable_model}"
+                );
+            }
         }
-    }
+    });
 }
