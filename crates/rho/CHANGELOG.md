@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.3.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.2.0...rho-coding-agent-v2.3.0) (2026-08-30)
+
+
+### Features
+
+* **auth:** always show a copyable login URL across every provider ([#1095](https://github.com/matthewyjiang/rho/issues/1095)) ([9e2670b](https://github.com/matthewyjiang/rho/commit/9e2670bd0892c579cad5f1d916046c16632ec9e1))
+* **tui:** add /side overlay for frozen-context asides ([#1094](https://github.com/matthewyjiang/rho/issues/1094)) ([3ebbdf9](https://github.com/matthewyjiang/rho/commit/3ebbdf951f01c6a32e827d4b819bdd9441c76684))
+* **tui:** make MCP tool cards readable instead of raw wire names and JSON blobs ([#1092](https://github.com/matthewyjiang/rho/issues/1092)) ([c57ba6c](https://github.com/matthewyjiang/rho/commit/c57ba6cf79a75d627af37c977c5b2d4f9535a2d7))
+* **tui:** oversized mermaid diagrams now clip instead of dumping source ([#1082](https://github.com/matthewyjiang/rho/issues/1082)) ([0f52503](https://github.com/matthewyjiang/rho/commit/0f5250344452dfe4d6aaac537f6874e36ba77cad))
+* **tui:** paint gitGraph, gantt, and mindmap in the transcript ([#1088](https://github.com/matthewyjiang/rho/issues/1088)) ([e22adb6](https://github.com/matthewyjiang/rho/commit/e22adb64c84d5480de317290ed8477a180e93b91))
+* **tui:** print a compact session receipt after interactive exit ([#1077](https://github.com/matthewyjiang/rho/issues/1077)) ([4f75c2a](https://github.com/matthewyjiang/rho/commit/4f75c2acf885529a960b39df00422a43be8775f5))
+* **tui:** stream mermaid diagrams as they arrive instead of popping in at fence close ([#1085](https://github.com/matthewyjiang/rho/issues/1085)) ([29c70cc](https://github.com/matthewyjiang/rho/commit/29c70cc5a0b28f66b13006dac8d3d6e4b01a31fa))
+
+
+### Bug Fixes
+
+* **mcp:** escape underscore-edged exported tool names ([#1096](https://github.com/matthewyjiang/rho/issues/1096)) ([86c7ea1](https://github.com/matthewyjiang/rho/commit/86c7ea15e28d4ff237823e5f1c26ae22479bcf94))
+* **tui:** keep mermaid loops from gluing onto skip edges ([#1087](https://github.com/matthewyjiang/rho/issues/1087)) ([5baa60d](https://github.com/matthewyjiang/rho/commit/5baa60d6e70a422e3af045f2dd25467a5bb07c3f))
+* **tui:** make add/remove diff wash visible on sampled themes ([#1086](https://github.com/matthewyjiang/rho/issues/1086)) ([4f660a0](https://github.com/matthewyjiang/rho/commit/4f660a035de61d864b992a643358758d7dee4b56))
+* **tui:** place pending input below active work ([#1097](https://github.com/matthewyjiang/rho/issues/1097)) ([c3cf135](https://github.com/matthewyjiang/rho/commit/c3cf135d521fbdf5fc7ba1ecf6ae8973b5648587))
+* **tui:** refresh the github pr chip after create ([#1080](https://github.com/matthewyjiang/rho/issues/1080)) ([af367bd](https://github.com/matthewyjiang/rho/commit/af367bd80a5326b26d0670842fb47d48be61cdf4))
+* **tui:** render mermaid state start and end without empty boxes ([#1089](https://github.com/matthewyjiang/rho/issues/1089)) ([8545b9f](https://github.com/matthewyjiang/rho/commit/8545b9ff34a940d44a703e81df01dd45461f7be5))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.0.0 to 5.1.0
+    * rho-providers bumped from 2.1.0 to 3.0.0
+
 ## [2.2.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.1.0...rho-coding-agent-v2.2.0) (2026-08-28)
 
 

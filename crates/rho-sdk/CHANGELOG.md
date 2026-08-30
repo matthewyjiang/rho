@@ -1,5 +1,13 @@
 # Changelog
 
+## [5.1.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.0.0...rho-sdk-v5.1.0) (2026-08-30)
+
+
+### Features
+
+* **sdk:** put the requested capability on after_tool_use ([#1090](https://github.com/matthewyjiang/rho/issues/1090)) ([90f1a0e](https://github.com/matthewyjiang/rho/commit/90f1a0ec781930f8ed98b6f7b80953ffc04a7587))
+* **tui:** add /side overlay for frozen-context asides ([#1094](https://github.com/matthewyjiang/rho/issues/1094)) ([3ebbdf9](https://github.com/matthewyjiang/rho/commit/3ebbdf951f01c6a32e827d4b819bdd9441c76684))
+
 ## [5.0.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v4.2.0...rho-sdk-v5.0.0) (2026-08-27)
 
 
