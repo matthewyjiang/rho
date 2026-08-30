@@ -214,8 +214,8 @@ impl App {
     }
 
     pub(super) fn cancel_custom_host_step(&mut self) {
-        self.input_ui.set_composer(ComposerMode::Input);
-        self.set_status("login cancelled");
+        // Same recovery as pending-login / API-key Esc.
+        self.restore_after_cancelled_login();
     }
 
     fn persist_custom_provider(

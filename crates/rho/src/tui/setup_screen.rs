@@ -161,13 +161,13 @@ impl App {
         self.leave_setup();
     }
 
-    /// Reopen the current setup step after a pending login is cancelled.
+    /// Reopen the current setup step after a login overlay is cancelled.
     ///
-    /// Escaping a pending login is not the same as escaping the picker: the
-    /// picker Esc path calls [`Self::dismiss_setup_screen`] and leaves setup
-    /// entirely. This path keeps `exclusive` as Setup and restores that
-    /// step's picker. A normal `/login` (no setup step) still returns to
-    /// the plain composer.
+    /// Escaping a pending login, API-key prompt, or custom-host step is not
+    /// the same as escaping the picker: the picker Esc path calls
+    /// [`Self::dismiss_setup_screen`] and leaves setup entirely. This path
+    /// keeps `exclusive` as Setup and restores that step's picker. A normal
+    /// `/login` (no setup step) still returns to the plain composer.
     pub(super) fn restore_after_cancelled_login(&mut self) {
         match self.setup_step() {
             Some(SetupStep::SignIn) => self.open_login_picker(),

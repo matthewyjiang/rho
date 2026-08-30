@@ -5,7 +5,8 @@ use rho_providers::{
 };
 
 use crate::tui::{
-    exclusive_screen::ExclusiveOccupant, setup_screen::SetupStep, tests::test_app, ComposerMode,
+    custom_provider_login::CustomHostStep, exclusive_screen::ExclusiveOccupant, login::SecretInput,
+    setup_screen::SetupStep, tests::test_app, text_input::TextInput, ComposerMode,
     PendingLoginComposer,
 };
 
@@ -80,27 +81,66 @@ fn cancel_composer(app: &crate::tui::App) -> CancelComposer {
     }
 }
 
-fn arm_pending_login(app: &mut crate::tui::App, occupant: CancelOccupant) {
-    match occupant {
-        CancelOccupant::Session => {
-            app.exclusive = ExclusiveOccupant::Session;
-        }
-        CancelOccupant::SignIn => {
-            app.exclusive = ExclusiveOccupant::Setup(SetupStep::SignIn);
-        }
-        CancelOccupant::ChooseModel => {
-            app.exclusive = ExclusiveOccupant::Setup(SetupStep::ChooseModel);
-        }
-    }
-    app.input_ui
-        .set_composer(ComposerMode::InteractivePending(pending()));
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CancelOverlay {
+    Pending,
+    Secret,
+    CustomHost,
 }
 
-// Covers: Esc on a pending login must restore setup's picker, not drop into session Input
+fn set_cancel_occupant(app: &mut crate::tui::App, occupant: CancelOccupant) {
+    app.exclusive = match occupant {
+        CancelOccupant::Session => ExclusiveOccupant::Session,
+        CancelOccupant::SignIn => ExclusiveOccupant::Setup(SetupStep::SignIn),
+        CancelOccupant::ChooseModel => ExclusiveOccupant::Setup(SetupStep::ChooseModel),
+    };
+}
+
+fn arm_login_overlay(app: &mut crate::tui::App, occupant: CancelOccupant, overlay: CancelOverlay) {
+    set_cancel_occupant(app, occupant);
+    match overlay {
+        CancelOverlay::Pending => {
+            app.input_ui
+                .set_composer(ComposerMode::InteractivePending(pending()));
+        }
+        CancelOverlay::Secret => {
+            app.input_ui
+                .set_composer(ComposerMode::SecretInput(SecretInput::new(
+                    pending().target,
+                )));
+        }
+        CancelOverlay::CustomHost => {
+            app.input_ui
+                .set_composer(ComposerMode::TextInput(TextInput::custom_host(
+                    CustomHostStep::Name {
+                        api: rho_providers::provider::OpenAiCompatibleApi::ChatCompletions,
+                    },
+                    String::new(),
+                )));
+        }
+    }
+}
+
+fn cancel_login_overlay(app: &mut crate::tui::App, overlay: CancelOverlay) {
+    let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+    match overlay {
+        CancelOverlay::Pending => {
+            app.handle_interactive_pending_key(esc).unwrap();
+        }
+        CancelOverlay::Secret => {
+            app.apply_secret_key(esc);
+        }
+        CancelOverlay::CustomHost => {
+            app.handle_text_input_key(esc).unwrap();
+        }
+    }
+}
+
+// Covers: Esc on a login overlay must restore setup's picker, not drop into session Input
 // Owner: login composer input
 #[test]
-fn cancelling_pending_login_restores_setup_picker_or_session_input() {
-    let cases = [
+fn cancelling_login_overlay_restores_setup_picker_or_session_input() {
+    let occupants = [
         (
             CancelOccupant::SignIn,
             CancelOccupant::SignIn,
@@ -117,15 +157,21 @@ fn cancelling_pending_login_restores_setup_picker_or_session_input() {
             CancelComposer::Picker,
         ),
     ];
-    for (start, expected_occupant, expected_composer) in cases {
-        let mut app = test_app();
-        arm_pending_login(&mut app, start);
-        app.handle_interactive_pending_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
-            .unwrap();
-        pretty_assertions::assert_eq!(
-            (cancel_occupant(&app), cancel_composer(&app)),
-            (expected_occupant, expected_composer),
-            "cancel from {start:?}"
-        );
+    let overlays = [
+        CancelOverlay::Pending,
+        CancelOverlay::Secret,
+        CancelOverlay::CustomHost,
+    ];
+    for overlay in overlays {
+        for (start, expected_occupant, expected_composer) in occupants {
+            let mut app = test_app();
+            arm_login_overlay(&mut app, start, overlay);
+            cancel_login_overlay(&mut app, overlay);
+            pretty_assertions::assert_eq!(
+                (cancel_occupant(&app), cancel_composer(&app)),
+                (expected_occupant, expected_composer),
+                "cancel {overlay:?} from {start:?}"
+            );
+        }
     }
 }

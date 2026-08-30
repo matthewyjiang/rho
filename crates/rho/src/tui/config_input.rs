@@ -50,59 +50,75 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
+        match self.apply_secret_key(key) {
+            SecretKeyResult::NotSecret => Ok(false),
+            SecretKeyResult::Handled => {
+                self.clear_transient_key_state();
+                Ok(true)
+            }
+            SecretKeyResult::Submit(submission) => {
+                self.clear_transient_key_state();
+                self.submit_api_key_login(submission, terminal, agent)
+                    .await?;
+                Ok(true)
+            }
+        }
+    }
+
+    /// Apply a keystroke to API-key secret input.
+    fn apply_secret_key(&mut self, key: KeyEvent) -> SecretKeyResult {
+        if !matches!(self.input_ui.composer(), ComposerMode::SecretInput(_)) {
+            return SecretKeyResult::NotSecret;
+        }
+
+        // Restore before borrowing the secret buffer: Esc needs `&mut self`.
+        if matches!(key.code, KeyCode::Esc) {
+            self.restore_after_cancelled_login();
+            return SecretKeyResult::Handled;
+        }
+
         let ComposerMode::SecretInput(secret) = self.input_ui.composer_mut() else {
-            return Ok(false);
+            return SecretKeyResult::NotSecret;
         };
 
-        let submit = match (key.modifiers, key.code) {
+        match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Enter) => {
                 let submission = secret.submission();
                 self.input_ui.set_composer(ComposerMode::Input);
-                Some(submission)
-            }
-            (_, KeyCode::Esc) => {
-                self.input_ui.set_composer(ComposerMode::Input);
-                self.set_status("login cancelled");
-                None
+                SecretKeyResult::Submit(submission)
             }
             (_, KeyCode::Backspace) => {
                 secret.backspace();
-                None
+                SecretKeyResult::Handled
             }
             (_, KeyCode::Delete) => {
                 secret.delete();
-                None
+                SecretKeyResult::Handled
             }
             (_, KeyCode::Left) => {
                 secret.cursor = secret.cursor.saturating_sub(1);
-                None
+                SecretKeyResult::Handled
             }
             (_, KeyCode::Right) => {
                 secret.cursor = (secret.cursor + 1).min(secret.char_len());
-                None
+                SecretKeyResult::Handled
             }
             (_, KeyCode::Home) => {
                 secret.cursor = 0;
-                None
+                SecretKeyResult::Handled
             }
             (_, KeyCode::End) => {
                 secret.cursor = secret.char_len();
-                None
+                SecretKeyResult::Handled
             }
             (modifiers, KeyCode::Char(ch))
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
                 secret.insert_char(ch);
-                None
+                SecretKeyResult::Handled
             }
-            _ => None,
-        };
-        self.clear_transient_key_state();
-        if let Some(submission) = submit {
-            self.submit_api_key_login(submission, terminal, agent)
-                .await?;
+            _ => SecretKeyResult::Handled,
         }
-        Ok(true)
     }
 
     pub(super) fn handle_config_number_key(
@@ -352,6 +368,12 @@ impl App {
             f(input);
         }
     }
+}
+
+enum SecretKeyResult {
+    NotSecret,
+    Handled,
+    Submit(super::login::ApiKeySubmission),
 }
 
 fn save_config_api_key(
