@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use rho_providers::{
-    auth::{browser::BrowserOpen, login_prompt::LoginPrompt},
+    auth::login_prompt::LoginPrompt,
     model::{catalog::LoginTarget, provider_models::with_provider_models_cache_dir_for_tests},
 };
 
@@ -21,7 +21,6 @@ fn pending() -> PendingLoginComposer {
             "https://auth.example/device",
             "WD4E-T6MC",
             None,
-            BrowserOpen::Skipped,
             "Visit this URL and enter the code.",
         ),
     }

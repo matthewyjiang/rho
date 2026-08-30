@@ -123,12 +123,14 @@ impl AuthorizationPrompt {
     fn present(&self, url: &str) -> anyhow::Result<()> {
         match self {
             Self::DesktopBrowser => {
-                let availability = rho_providers::auth::browser::BrowserAvailability::resolve(
-                    rho_providers::auth::browser::BrowserEnvironment::from_process(),
-                );
-                let browser = rho_providers::auth::browser::try_open(url, availability);
-                eprintln!("{url}");
-                eprintln!("{}", browser.note());
+                let availability =
+                    rho_providers::auth::browser::BrowserAvailability::from_process();
+                let prompt = rho_providers::auth::login_prompt::LoginPrompt::browser_flow(
+                    url,
+                    "Open this URL to authorize this MCP server.",
+                )
+                .with_browser(rho_providers::auth::browser::try_open(url, availability));
+                crate::login_prompt_print::eprint_login_prompt("MCP", &prompt);
                 Ok(())
             }
             #[cfg(test)]
@@ -407,7 +409,7 @@ async fn log_in(
     let auth_url = session.get_authorization_url();
     tracing::info!(
         server = %identity,
-        url = %auth_url,
+        origin = %authorization_trace_origin(auth_url),
         "MCP authorization URL"
     );
     prompt.present(auth_url)?;
@@ -422,6 +424,14 @@ async fn log_in(
         .map_err(|error| anyhow::anyhow!(error))
         .context("authorization code could not be exchanged for a token")?;
     Ok(session.auth_manager)
+}
+
+/// Origin-only form of an authorization URL for traces. Query (CSRF `state`,
+/// PKCE, callback) stays off the log line.
+fn authorization_trace_origin(auth_url: &str) -> String {
+    url::Url::parse(auth_url)
+        .map(|parsed| parsed.origin().ascii_serialization())
+        .unwrap_or_else(|_| "unknown".to_string())
 }
 
 #[cfg(test)]

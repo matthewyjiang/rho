@@ -1,13 +1,13 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
 use pretty_assertions::assert_eq;
 use ratatui::{backend::TestBackend, layout::Rect, Terminal};
-use rho_providers::{
-    auth::{browser::BrowserOpen, login_prompt::LoginPrompt},
-    model::catalog::LoginTarget,
-};
+use rho_providers::{auth::login_prompt::LoginPrompt, model::catalog::LoginTarget};
 
 use super::*;
-use crate::tui::{tests::test_app, ComposerMode, PendingLoginComposer};
+use crate::tui::{
+    custom_provider_login::CustomHostStep, login::SecretInput, tests::test_app,
+    text_input::TextInput, ComposerMode, PendingLoginComposer,
+};
 
 fn step_text(step: SetupStep) -> Vec<String> {
     step_lines(step, 74)
@@ -87,7 +87,6 @@ fn setup_body_shows_pending_login_url_and_code() {
                 "https://auth.example/device",
                 "WD4E-T6MC",
                 None,
-                BrowserOpen::Skipped,
                 "Visit this URL and enter the code.",
             ),
         }));
@@ -124,7 +123,6 @@ fn pending_login() -> PendingLoginComposer {
             "https://auth.example/device",
             "WD4E-T6MC",
             Some("https://auth.example/device?user_code=WD4E-T6MC".into()),
-            BrowserOpen::Skipped,
             "Visit this URL and enter the code.",
         ),
     }
@@ -150,13 +148,13 @@ fn setup_copy_button_hits_painted_origin_not_session_composer() {
     let column = origin.x.saturating_add(hit.columns.start as u16 + 1);
     let row = origin.y.saturating_add(hit.row as u16);
     pretty_assertions::assert_eq!(
-        app.login_copy_url_at_position(area, column, row).as_deref(),
+        app.composer_copy_text_at(area, column, row).as_deref(),
         Some("https://auth.example/device?user_code=WD4E-T6MC")
     );
 
     let session = app.frame_context(area);
     pretty_assertions::assert_eq!(
-        app.login_copy_url_at_position(
+        app.composer_copy_text_at(
             area,
             session
                 .layout
@@ -193,7 +191,7 @@ fn setup_copy_button_hover_follows_pointer() {
 
     app.handle_mouse_event(MouseEventKind::Moved, column, on_row, &mut terminal)
         .unwrap();
-    pretty_assertions::assert_eq!(app.input_ui.hovered_login_copy(), true);
+    pretty_assertions::assert_eq!(app.input_ui.hovered_composer_copy(), true);
     let hovered = app.setup_body_lines(origin.width as usize, origin.height);
     pretty_assertions::assert_eq!(
         hovered
@@ -206,7 +204,7 @@ fn setup_copy_button_hover_follows_pointer() {
 
     app.handle_mouse_event(MouseEventKind::Moved, origin.x, origin.y, &mut terminal)
         .unwrap();
-    pretty_assertions::assert_eq!(app.input_ui.hovered_login_copy(), false);
+    pretty_assertions::assert_eq!(app.input_ui.hovered_composer_copy(), false);
     let unhovered = app.setup_body_lines(origin.width as usize, origin.height);
     pretty_assertions::assert_eq!(
         unhovered
@@ -230,6 +228,21 @@ fn setup_skip_footer_omits_while_login_pending() {
         (
             "pending login",
             ComposerMode::InteractivePending(pending_login()),
+            false,
+        ),
+        (
+            "secret input",
+            ComposerMode::SecretInput(SecretInput::new(pending_login().target)),
+            false,
+        ),
+        (
+            "custom host",
+            ComposerMode::TextInput(TextInput::custom_host(
+                CustomHostStep::Name {
+                    api: rho_providers::provider::OpenAiCompatibleApi::ChatCompletions,
+                },
+                String::new(),
+            )),
             false,
         ),
         ("plain composer", ComposerMode::Input, true),

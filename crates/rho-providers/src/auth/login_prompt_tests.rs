@@ -7,7 +7,6 @@ use crate::auth::browser::BrowserOpen;
 fn constructors_copyable_url_and_debug_redaction() {
     let browser = LoginPrompt::browser_flow(
         "https://auth.example/authorize",
-        BrowserOpen::Skipped,
         "Open this URL to finish login.",
     );
     pretty_assertions::assert_eq!(
@@ -26,9 +25,9 @@ fn constructors_copyable_url_and_debug_redaction() {
         "https://auth.example/device",
         "WD4E-T6MC",
         Some("https://auth.example/device?user_code=WD4E-T6MC".into()),
-        BrowserOpen::Launched,
         "Visit this URL and enter the code.",
-    );
+    )
+    .with_browser(BrowserOpen::Launched);
     pretty_assertions::assert_eq!(
         device.copyable_url(),
         "https://auth.example/device?user_code=WD4E-T6MC"

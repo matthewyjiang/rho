@@ -21,6 +21,7 @@ mod herdr;
 mod hooks;
 mod keybindings;
 mod logging;
+mod login_prompt_print;
 mod model_aliases;
 mod model_identity;
 mod paths;

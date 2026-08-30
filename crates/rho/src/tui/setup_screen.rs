@@ -79,7 +79,7 @@ impl StepState {
 
 const STEP_LABELS: [&str; 2] = ["Sign in to a provider", "Choose a model"];
 
-/// Shown when Esc backs out of setup. Hidden while a pending login owns Esc.
+/// Shown when Esc backs out of setup. Hidden while a login overlay owns Esc.
 const SETUP_SKIP_HINT: &str = "Esc to skip setup";
 
 impl App {
@@ -272,12 +272,11 @@ impl App {
     }
 }
 
-/// Skip-setup footer, or none while a pending login owns Esc.
+/// Skip-setup footer, or none while a login overlay owns Esc.
 pub(super) fn setup_skip_hint(composer: &ComposerMode) -> Option<&'static str> {
-    match composer {
-        ComposerMode::InteractivePending(_) => None,
-        _ => Some(SETUP_SKIP_HINT),
-    }
+    composer
+        .setup_escape_leaves_setup()
+        .then_some(SETUP_SKIP_HINT)
 }
 
 /// Where the composer body is painted on the setup screen.

@@ -409,10 +409,25 @@ fn code_block_header(
     label: Option<&str>,
     copy_button: CodeBlockCopyButton,
 ) -> Line<'static> {
+    copyable_header_line(
+        label.unwrap_or_default(),
+        width,
+        Theme::dim(),
+        (copy_button == CodeBlockCopyButton::Visible).then_some(false),
+    )
+    .0
+}
+
+/// Label on the left, optional COPY on the right. `copy_hovered` is `None`
+/// when the button is hidden, `Some(hovered)` when it is visible.
+pub(in crate::tui) fn copyable_header_line(
+    label: &str,
+    width: usize,
+    label_style: Style,
+    copy_hovered: Option<bool>,
+) -> (Line<'static>, Option<std::ops::Range<usize>>) {
     let width = width.max(1);
-    let copy_columns = (copy_button == CodeBlockCopyButton::Visible)
-        .then(|| code_block_copy_columns(width))
-        .flatten();
+    let copy_columns = copy_hovered.and_then(|_| code_block_copy_columns(width));
     let copy_label = copy_columns
         .as_ref()
         .and_then(|_| code_block_copy_label(width));
@@ -420,27 +435,27 @@ fn code_block_header(
     let label_budget = copy_columns
         .as_ref()
         .map_or(width, |columns| columns.start.saturating_sub(1));
-    let label = truncate_to_display_width(label.unwrap_or_default(), label_budget);
+    let label = truncate_to_display_width(label, label_budget);
     let mut spans = Vec::new();
     if let Some(columns) = &copy_columns {
         let filler = columns.start.saturating_sub(display_width(&label));
         spans.push(Span::styled(
             format!("{label}{}", " ".repeat(filler)),
-            Theme::dim(),
+            label_style,
         ));
     } else {
-        spans.push(Span::styled(label.into_owned(), Theme::dim()));
+        spans.push(Span::styled(label.into_owned(), label_style));
     }
     if let Some(copy_label) = copy_label {
         spans.push(Span::styled(
             copy_label,
-            Theme::markdown_code_copy_button(/*hovered*/ false),
+            Theme::markdown_code_copy_button(/*hovered*/ copy_hovered.unwrap_or(false)),
         ));
     }
-    Line::from(spans)
+    (Line::from(spans), copy_columns)
 }
 
-pub(in crate::tui) fn code_block_copy_label(width: usize) -> Option<&'static str> {
+fn code_block_copy_label(width: usize) -> Option<&'static str> {
     if width >= 9 {
         Some(" COPY ")
     } else if width >= 6 {

@@ -1,9 +1,7 @@
 use crossterm::event::MouseEventKind;
 use ratatui::{backend::TestBackend, layout::Rect, Terminal};
-use rho_providers::{
-    auth::{browser::BrowserOpen, login_prompt::LoginPrompt},
-    model::catalog::LoginTarget,
-};
+use rho_providers::auth::login_prompt::LoginPrompt;
+use rho_providers::model::catalog::LoginTarget;
 
 use super::super::{theme::Theme, ComposerMode, PendingLoginComposer};
 use super::login_composer_view;
@@ -32,7 +30,6 @@ fn device_pending() -> PendingLoginComposer {
         "https://auth.example/device",
         "WD4E-T6MC",
         Some("https://auth.example/device?user_code=WD4E-T6MC".into()),
-        BrowserOpen::Skipped,
         "Visit this URL and enter the code.",
     ))
 }
@@ -148,14 +145,14 @@ fn session_copy_button_hits_composer_layout() {
         .y
         .saturating_add(hit.row.saturating_sub(ctx.layout.composer_start) as u16);
     pretty_assertions::assert_eq!(
-        app.login_copy_url_at_position(area, column, row).as_deref(),
+        app.composer_copy_text_at(area, column, row).as_deref(),
         Some("https://auth.example/device?user_code=WD4E-T6MC")
     );
 }
 
 fn copy_span_style(
     lines: &[ratatui::text::Line<'_>],
-    hit: &super::CopyHit,
+    hit: &crate::tui::copy_interaction::CopyHit,
 ) -> ratatui::style::Style {
     lines
         .get(hit.row)
@@ -213,7 +210,7 @@ fn session_copy_button_hover_follows_pointer() {
 
     app.handle_mouse_event(MouseEventKind::Moved, column, on_row, &mut terminal)
         .unwrap();
-    pretty_assertions::assert_eq!(app.input_ui.hovered_login_copy(), true);
+    pretty_assertions::assert_eq!(app.input_ui.hovered_composer_copy(), true);
     pretty_assertions::assert_eq!(
         copy_span_style(&app.composer_frame(width, height).lines, &hit),
         Theme::markdown_code_copy_button(/*hovered*/ true)
@@ -221,7 +218,7 @@ fn session_copy_button_hover_follows_pointer() {
 
     app.handle_mouse_event(MouseEventKind::Moved, off_column, off_row, &mut terminal)
         .unwrap();
-    pretty_assertions::assert_eq!(app.input_ui.hovered_login_copy(), false);
+    pretty_assertions::assert_eq!(app.input_ui.hovered_composer_copy(), false);
     pretty_assertions::assert_eq!(
         copy_span_style(&app.composer_frame(width, height).lines, &hit),
         Theme::markdown_code_copy_button(/*hovered*/ false)
@@ -235,7 +232,7 @@ fn login_copy_hover_clears_when_pending_login_ends() {
     let mut app = test_app();
     app.input_ui
         .set_composer(ComposerMode::InteractivePending(device_pending()));
-    app.input_ui.set_hovered_login_copy(true);
+    app.input_ui.set_hovered_composer_copy(true);
     app.input_ui.set_composer(ComposerMode::Input);
-    pretty_assertions::assert_eq!(app.input_ui.hovered_login_copy(), false);
+    pretty_assertions::assert_eq!(app.input_ui.hovered_composer_copy(), false);
 }

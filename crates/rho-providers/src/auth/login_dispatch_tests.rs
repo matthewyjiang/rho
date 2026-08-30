@@ -1,6 +1,6 @@
 use super::{
     interactive_login, AuthenticationError, AuthenticationMethod, InteractiveLoginCompletion,
-    ProviderAuthentication,
+    ProviderAuthentication, StartedLogin,
 };
 use crate::{
     auth::{
@@ -81,7 +81,7 @@ fn preferred_mode_uses_device_only_when_headless_and_capable() {
         (
             "github-copilot",
             BrowserAvailability::Headless,
-            super::InteractiveLoginMode::Device,
+            super::InteractiveLoginMode::Browser,
         ),
         (
             "github-copilot",
@@ -96,12 +96,12 @@ fn preferred_mode_uses_device_only_when_headless_and_capable() {
         (
             "kimi-code",
             BrowserAvailability::Headless,
-            super::InteractiveLoginMode::Device,
+            super::InteractiveLoginMode::Browser,
         ),
         (
             "ollama-cloud-device",
             BrowserAvailability::Headless,
-            super::InteractiveLoginMode::Device,
+            super::InteractiveLoginMode::Browser,
         ),
         (
             "openrouter-oauth",
@@ -131,16 +131,17 @@ fn preferred_mode_uses_device_only_when_headless_and_capable() {
 #[test]
 fn ollama_device_setup_does_not_wait_for_confirmation() {
     let login = interactive_login(
-        "Ollama Cloud",
-        LoginPrompt::browser_flow(
-            "https://ollama.com/connect?key=test",
-            BrowserOpen::Launched,
-            "Open this URL and approve the device for Ollama Cloud.",
-        ),
-        BrowserAvailability::Headless,
-        InteractiveLoginCompletion::Unconfirmed {
-            instruction: "Approve the device in your browser, then use an Ollama Cloud model. Rho does not receive a completion callback.",
+        StartedLogin {
+            provider_label: "Ollama Cloud",
+            prompt: LoginPrompt::browser_flow(
+                "https://ollama.com/connect?key=test",
+                "Open this URL and approve the device for Ollama Cloud.",
+            ),
+            completion: InteractiveLoginCompletion::Unconfirmed {
+                instruction: "Approve the device in your browser, then use an Ollama Cloud model. Rho does not receive a completion callback.",
+            },
         },
+        BrowserAvailability::Headless,
     );
 
     pretty_assertions::assert_eq!(login.provider_label, "Ollama Cloud");
@@ -148,7 +149,6 @@ fn ollama_device_setup_does_not_wait_for_confirmation() {
         login.prompt,
         LoginPrompt::browser_flow(
             "https://ollama.com/connect?key=test",
-            BrowserOpen::Skipped,
             "Open this URL and approve the device for Ollama Cloud.",
         )
     );
@@ -202,9 +202,9 @@ fn login_prompt_maps_to_interactive_user_action() {
                 "https://auth.example/device",
                 "WD4E-T6MC",
                 Some("https://auth.example/device?user_code=WD4E-T6MC".into()),
-                BrowserOpen::Launched,
                 "Visit this URL and enter the code.",
-            ),
+            )
+            .with_browser(BrowserOpen::Launched),
             super::InteractiveUserAction::DeviceCode {
                 verification_uri: "https://auth.example/device".into(),
                 user_code: "WD4E-T6MC".into(),
@@ -217,16 +217,15 @@ fn login_prompt_maps_to_interactive_user_action() {
             "launched browser",
             LoginPrompt::browser_flow(
                 "https://auth.example/authorize",
-                BrowserOpen::Launched,
                 "Open this URL to finish login.",
-            ),
+            )
+            .with_browser(BrowserOpen::Launched),
             super::InteractiveUserAction::BrowserOpened,
         ),
         (
             "not launched",
             LoginPrompt::browser_flow(
                 "https://auth.example/authorize",
-                BrowserOpen::Skipped,
                 "Open this URL to finish login.",
             ),
             super::InteractiveUserAction::OpenUrl {

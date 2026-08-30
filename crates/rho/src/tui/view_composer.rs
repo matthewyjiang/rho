@@ -10,13 +10,15 @@ use super::{
     approval_lines, char_prefix_display_width,
     composer_chrome::ComposerDividerSlot,
     composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
-    config_number_input_lines, display_width,
+    config_number_input_lines,
+    copy_interaction::CopyHit,
+    display_width,
     divider::{labeled_divider_line, DividerCaption},
     file_picker,
     inline_choice::inline_choice_lines,
     inline_shell, input_frame,
     login::secret_input_lines,
-    login_presentation::{login_composer_view, CopyHit},
+    login_presentation::login_composer_view,
     palette::ActivePalette,
     picker_lines, questionnaire_cursor_position, questionnaire_lines, styled_line,
     text_input::text_input_lines,
@@ -91,7 +93,7 @@ impl App {
     /// without wrapping the composer text twice per frame.
     pub(super) fn composer_frame(&mut self, width: usize, viewport_height: usize) -> ComposerFrame {
         self.refresh_composer_attachment_layout_cache(width);
-        let login_copy_hovered = self.input_ui.hovered_login_copy();
+        let composer_copy_hovered = self.input_ui.hovered_composer_copy();
         match self.input_ui.composer() {
             ComposerMode::Input => {
                 let focused_paste = self
@@ -182,7 +184,8 @@ impl App {
                 },
             ),
             ComposerMode::InteractivePending(pending) => {
-                let view = login_composer_view(pending, width, /*hovered*/ login_copy_hovered);
+                let view =
+                    login_composer_view(pending, width, /*hovered*/ composer_copy_hovered);
                 ComposerFrame {
                     lines: view.lines,
                     cursor: Position { x: 0, y: 0 },

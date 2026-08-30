@@ -687,3 +687,16 @@ fn text_response(status: &str, body: &str) -> String {
         body.len()
     )
 }
+
+// Covers: traces must not include query/state from the MCP authorize URL
+// Owner: MCP OAuth
+#[test]
+fn authorization_trace_origin_drops_query() {
+    assert_eq!(
+        authorization_trace_origin(
+            "https://auth.example/authorize?state=secret&code_challenge=abc"
+        ),
+        "https://auth.example"
+    );
+    assert_eq!(authorization_trace_origin("not a url"), "unknown");
+}

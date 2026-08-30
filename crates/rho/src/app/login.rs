@@ -1,12 +1,12 @@
 use {
     crate::credential_store::AppCredentialStore,
+    crate::login_prompt_print::eprint_login_prompt,
     rho_providers::auth::{
-        browser::{BrowserAvailability, BrowserEnvironment},
+        browser::BrowserAvailability,
         login_dispatch::{
             AuthenticationMethod, InteractiveLoginCompletion, InteractiveLoginMode,
             ProviderAuthentication,
         },
-        login_prompt::LoginPrompt,
     },
     rho_providers::model::catalog,
 };
@@ -37,7 +37,7 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
         AuthenticationMethod::Interactive { .. } => {}
     }
 
-    let availability = BrowserAvailability::resolve(BrowserEnvironment::from_process());
+    let availability = BrowserAvailability::from_process();
     let mode = if device_auth {
         InteractiveLoginMode::Device
     } else {
@@ -49,7 +49,7 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
         availability,
     )
     .await?;
-    print_login_prompt(login.provider_label, &login.prompt);
+    eprint_login_prompt(login.provider_label, &login.prompt);
 
     match login.completion {
         InteractiveLoginCompletion::Confirm(completion) => {
@@ -61,19 +61,4 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
         }
     }
     Ok(())
-}
-
-fn print_login_prompt(provider_label: &str, prompt: &LoginPrompt) {
-    eprintln!("{provider_label} login");
-    eprintln!("{}", prompt.url);
-    if let Some(code) = &prompt.user_code {
-        eprintln!("code: {code}");
-    }
-    if let Some(complete) = &prompt.url_with_code {
-        if complete != prompt.url.as_str() {
-            eprintln!("{complete}");
-        }
-    }
-    eprintln!("{}", prompt.browser.note());
-    eprintln!("{}", prompt.instruction);
 }

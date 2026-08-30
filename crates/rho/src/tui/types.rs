@@ -231,6 +231,23 @@ impl ComposerMode {
         }
     }
 
+    /// Esc on the setup picker (or the empty setup composer) leaves setup.
+    /// Esc on a login overlay restores that step's picker instead.
+    pub(super) fn setup_escape_leaves_setup(&self) -> bool {
+        match self {
+            Self::Input | Self::Picker(_) => true,
+            Self::SecretInput(_)
+            | Self::ConfigNumberInput(_)
+            | Self::TextInput(_)
+            | Self::InteractivePending(_)
+            | Self::InlineChoice(_)
+            | Self::Questionnaire(_)
+            | Self::Approval(_)
+            | Self::Limits(_)
+            | Self::Side => false,
+        }
+    }
+
     pub(super) fn is_centered_overlay(&self) -> bool {
         match self {
             Self::Picker(picker) => picker.is_overlay(),

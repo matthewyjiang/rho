@@ -5,7 +5,8 @@ use super::browser::BrowserOpen;
 /// What the user needs to finish an interactive login.
 ///
 /// `url` is always present. Presenters must show it even when a browser
-/// launched successfully.
+/// launched successfully. [`Self::browser`] is [`BrowserOpen::Skipped`] until
+/// the dispatch edge calls [`Self::with_browser`].
 #[derive(Clone, PartialEq, Eq)]
 pub struct LoginPrompt {
     pub url: String,
@@ -17,16 +18,12 @@ pub struct LoginPrompt {
 
 impl LoginPrompt {
     /// Browser or URL-only flow (no device code).
-    pub fn browser_flow(
-        url: impl Into<String>,
-        browser: BrowserOpen,
-        instruction: impl Into<String>,
-    ) -> Self {
+    pub fn browser_flow(url: impl Into<String>, instruction: impl Into<String>) -> Self {
         Self {
             url: url.into(),
             user_code: None,
             url_with_code: None,
-            browser,
+            browser: BrowserOpen::Skipped,
             instruction: instruction.into(),
         }
     }
@@ -36,16 +33,21 @@ impl LoginPrompt {
         verification_uri: impl Into<String>,
         user_code: impl Into<String>,
         url_with_code: Option<String>,
-        browser: BrowserOpen,
         instruction: impl Into<String>,
     ) -> Self {
         Self {
             url: verification_uri.into(),
             user_code: Some(user_code.into()),
             url_with_code,
-            browser,
+            browser: BrowserOpen::Skipped,
             instruction: instruction.into(),
         }
+    }
+
+    /// Record whether a browser launch was attempted after the URL is known.
+    pub fn with_browser(mut self, browser: BrowserOpen) -> Self {
+        self.browser = browser;
+        self
     }
 
     /// Prefer the complete URL when the provider supplied one.

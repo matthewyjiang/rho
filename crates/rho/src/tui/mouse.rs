@@ -8,8 +8,7 @@ use ratatui::{
 };
 
 use super::{
-    copy_interaction::{selection_position, selection_position_clamped},
-    login_presentation::CopyHit,
+    copy_interaction::{selection_position, selection_position_clamped, CopyHit},
     paste_burst::word_range_at,
     picker::PickerMouseEvent,
     text_selection::{screen_lines, CopyNotice, TextSelection},
@@ -32,7 +31,7 @@ impl App {
 
     pub(super) fn clear_hovered_copy_buttons(&mut self) {
         self.history.set_hovered_code_block_copy(None);
-        self.input_ui.set_hovered_login_copy(false);
+        self.input_ui.set_hovered_composer_copy(false);
     }
 }
 
@@ -175,8 +174,9 @@ impl App {
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 self.history
                     .set_hovered_code_block_copy(code_target.as_ref().map(|target| target.line));
-                let login_url = self.login_copy_url_at_position(screen, column, row);
-                self.input_ui.set_hovered_login_copy(login_url.is_some());
+                let composer_copy = self.composer_copy_text_at(screen, column, row);
+                self.input_ui
+                    .set_hovered_composer_copy(composer_copy.is_some());
                 let rail_target =
                     self.session_rail_pointer(layout.subagents, layout.processes, column, row, now);
                 if let Some(target) = rail_target {
@@ -213,12 +213,12 @@ impl App {
                     self.clear_rail_pointer_state();
                     self.history.clear_text_selection();
                     self.copy_text(&target.text, now);
-                } else if let Some(url) = login_url {
+                } else if let Some(text) = composer_copy {
                     self.input_ui.clear_selection();
                     self.input_ui.cancel_pointer_click_sequence();
                     self.clear_rail_pointer_state();
                     self.history.clear_text_selection();
-                    self.copy_text(&url, now);
+                    self.copy_text(&text, now);
                 } else if self.pointer_in_composer(&layout, column, row) {
                     // Composer owns the pointer: place the caret / start an
                     // editable selection instead of screen-copy drag.
@@ -321,7 +321,7 @@ impl App {
                         )
                         .map(|target| target.line);
                     self.history.set_hovered_code_block_copy(hovered);
-                    self.set_hovered_login_copy_at(screen, column, row);
+                    self.set_hovered_composer_copy_at(screen, column, row);
                     if let (Some(selection), Some(position)) = (
                         self.history.text_selection_mut().as_mut(),
                         selection_position_clamped(history, history_start, column, row),
@@ -368,7 +368,7 @@ impl App {
                     )
                     .map(|target| target.line);
                 self.history.set_hovered_code_block_copy(hovered);
-                self.set_hovered_login_copy_at(screen, column, row);
+                self.set_hovered_composer_copy_at(screen, column, row);
                 if let Some(target) = activate_rail {
                     self.input_ui.clear_selection();
                     self.history.clear_text_selection();
@@ -479,7 +479,7 @@ impl App {
                     )
                     .map(|target| target.line);
                 self.history.set_hovered_code_block_copy(hovered);
-                self.set_hovered_login_copy_at(screen, column, row);
+                self.set_hovered_composer_copy_at(screen, column, row);
                 let rail_hover =
                     self.session_rail_pointer(layout.subagents, layout.processes, column, row, now);
                 self.set_rail_hover(rail_hover.as_ref());
@@ -674,26 +674,26 @@ impl App {
             })
     }
 
-    /// Hit-test the login copy button using the same origin the current screen painted.
-    pub(super) fn login_copy_url_at_position(
+    /// Hit-test the composer copy button using the same origin the current screen painted.
+    pub(super) fn composer_copy_text_at(
         &mut self,
         area: Rect,
         column: u16,
         row: u16,
     ) -> Option<String> {
-        let (origin, start, hit) = self.login_copy_hit(area)?;
+        let (origin, start, hit) = self.composer_copy_hit(area)?;
         hit.text_at(origin, start, column, row).map(str::to_string)
     }
 
-    fn set_hovered_login_copy_at(&mut self, area: Rect, column: u16, row: u16) {
+    fn set_hovered_composer_copy_at(&mut self, area: Rect, column: u16, row: u16) {
         let hovered = self
-            .login_copy_hit(area)
+            .composer_copy_hit(area)
             .is_some_and(|(origin, start, hit)| hit.text_at(origin, start, column, row).is_some());
-        self.input_ui.set_hovered_login_copy(hovered);
+        self.input_ui.set_hovered_composer_copy(hovered);
     }
 
-    /// Painted origin, composer-line start, and copy target for the current login prompt.
-    fn login_copy_hit(&mut self, area: Rect) -> Option<(Rect, usize, CopyHit)> {
+    /// Painted origin, composer-line start, and copy target for the current composer.
+    fn composer_copy_hit(&mut self, area: Rect) -> Option<(Rect, usize, CopyHit)> {
         if let Some(step) = self.setup_step() {
             let origin = super::setup_screen::setup_composer_origin(area, step);
             let hit = self

@@ -39,6 +39,11 @@ pub enum OpenRouterOAuthError {
     Bind(std::io::Error),
     #[error("could not determine the local OpenRouter OAuth callback address: {0}")]
     LocalAddress(std::io::Error),
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-providers): remove OpenRouterOAuthError::Browser; browser launch lives in the login dispatch layer
+    #[error("could not open a browser for OpenRouter OAuth")]
+    Browser,
     #[error("timed out waiting for the OpenRouter OAuth browser callback")]
     Timeout,
     #[error("could not accept an OpenRouter OAuth callback: {0}")]
@@ -100,6 +105,21 @@ pub struct OpenRouterBrowserLogin {
     listener: TcpListener,
     callback_path: String,
     verifier: String,
+}
+
+/// One-shot browser login used by 2.0 callers.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-providers): remove run_openrouter_oauth_flow; use start_openrouter_browser_login and complete_openrouter_browser_login
+#[deprecated(
+    since = "2.1.0",
+    note = "use start_openrouter_browser_login and complete_openrouter_browser_login so the authorize URL can be shown before the browser opens"
+)]
+pub async fn run_openrouter_oauth_flow() -> Result<String, OpenRouterOAuthError> {
+    let login = start_openrouter_browser_login().await?;
+    webbrowser::open(&login.authorize_url).map_err(|_| OpenRouterOAuthError::Browser)?;
+    complete_openrouter_browser_login(login).await
 }
 
 pub async fn start_openrouter_browser_login() -> Result<OpenRouterBrowserLogin, OpenRouterOAuthError>

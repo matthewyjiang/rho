@@ -4,7 +4,7 @@ use super::{
 };
 use {
     rho_providers::auth::{
-        browser::{BrowserAvailability, BrowserEnvironment},
+        browser::BrowserAvailability,
         login_dispatch::{
             AuthenticationMethod, CompletedAuthentication, InteractiveLoginCompletion,
             InteractiveLoginMode, ProviderAuthentication,
@@ -486,7 +486,7 @@ impl App {
             return Ok(());
         }
 
-        let availability = BrowserAvailability::resolve(BrowserEnvironment::from_process());
+        let availability = BrowserAvailability::from_process();
         let mode = ProviderAuthentication::preferred_mode(&target.auth, availability);
         self.set_status(match mode {
             InteractiveLoginMode::Browser => format!("starting {provider_label} login"),
