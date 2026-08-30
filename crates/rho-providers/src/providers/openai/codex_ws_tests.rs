@@ -492,6 +492,32 @@ fn terminal_failure_uses_error_type_when_code_is_null() {
     }
 }
 
+// Covers: an `error` event carrying the code at the event level (no nested
+// `error` object) still routes a stale continuation to the full-SSE fallback
+// before any caller-visible output.
+// Owner: providers stream parse
+#[test]
+fn top_level_previous_response_not_found_falls_back_to_sse() {
+    let event = json!({
+        "type": "error",
+        "code": "previous_response_not_found",
+        "message": "Previous response not found.",
+    });
+    let mut state = CodexSseState::default();
+    let mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> = None;
+    let error =
+        handle_codex_sse_value(&event, &mut state, &mut on_event, CodexTransport::WebSocket)
+            .expect_err("terminal protocol event must fail the stream");
+
+    assert!(matches!(
+        classify_model_error(error, /*events_emitted*/ false),
+        CodexWsFailure::Transport {
+            events_emitted: false,
+            ..
+        }
+    ));
+}
+
 #[tokio::test]
 async fn continuation_error_before_output_returns_immediate_full_sse_fallback() {
     let (url, frames) = ws_server_stalls_after_event(vec![json!({

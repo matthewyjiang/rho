@@ -48,6 +48,29 @@ fn bare_error_event_uses_http_fallbacks() {
     ));
 }
 
+// Covers: an `error` event carrying `code`/`message` at the event level (no
+// nested `error` object) keeps the provider's own code and retryability.
+// Owner: providers stream parse
+#[test]
+fn top_level_error_fields_are_used() {
+    let mut state = CodexSseState::default();
+    let error = handle_codex_sse_line(
+        r#"data: {"type":"error","code":"server_error","message":"upstream unavailable"}"#,
+        &mut state,
+        &mut None,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        ModelError::ProviderReported {
+            kind: ProviderReportedErrorKind::Unavailable,
+            error_type,
+            message,
+        } if error_type == "server_error" && message == "upstream unavailable"
+    ));
+}
+
 // Covers: a bare `error` event on the websocket transport falls back to
 // `websocket_error`, which classifies as a retryable Unavailable kind.
 // Owner: providers stream parse
