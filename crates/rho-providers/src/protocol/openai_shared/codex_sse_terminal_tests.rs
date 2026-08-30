@@ -29,8 +29,8 @@ fn response_failed_event_surfaces_provider_error() {
     ));
 }
 
-// Covers: a bare `error` event with no code/type or message falls back to the
-// HTTP transport defaults.
+// Covers: a bare `error` event with no nested payload falls back to the HTTP
+// transport defaults instead of reporting the event discriminator as the type.
 // Owner: providers stream parse
 #[test]
 fn bare_error_event_uses_http_fallbacks() {
@@ -44,7 +44,32 @@ fn bare_error_event_uses_http_fallbacks() {
             kind: ProviderReportedErrorKind::InvalidResponse,
             error_type,
             message,
-        } if error_type == "error" && message == "error event received"
+        } if error_type == "response_error" && message == "error event received"
+    ));
+}
+
+// Covers: a bare `error` event on the websocket transport falls back to
+// `websocket_error`, which classifies as a retryable Unavailable kind.
+// Owner: providers stream parse
+#[test]
+fn bare_error_event_uses_websocket_fallbacks() {
+    let mut state = CodexSseState::default();
+    let mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> = None;
+    let error = handle_codex_sse_value(
+        &serde_json::json!({"type":"error"}),
+        &mut state,
+        &mut on_event,
+        CodexTransport::WebSocket,
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        ModelError::ProviderReported {
+            kind: ProviderReportedErrorKind::Unavailable,
+            error_type,
+            message,
+        } if error_type == "websocket_error" && message == "websocket error event received"
     ));
 }
 

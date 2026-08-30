@@ -67,16 +67,23 @@ fn codex_terminal_failure(
     match event_type {
         "error" => {
             let (fallback_error_type, fallback_message) = transport.bare_error_fallback();
-            let error = value.get("error").unwrap_or(value);
+            // A bare `{type: "error"}` event carries no nested payload; use the
+            // transport's fallback naming instead of reading the event
+            // discriminator `"error"` as a code/type.
+            let payload = value.get("error").filter(|error| error.is_object());
             Some((
-                error
-                    .get("code")
+                payload
+                    .and_then(|error| error.get("code"))
                     .and_then(|v| v.as_str())
-                    .or_else(|| error.get("type").and_then(|v| v.as_str()))
+                    .or_else(|| {
+                        payload
+                            .and_then(|error| error.get("type"))
+                            .and_then(|v| v.as_str())
+                    })
                     .unwrap_or(fallback_error_type)
                     .to_string(),
-                error
-                    .get("message")
+                payload
+                    .and_then(|error| error.get("message"))
                     .and_then(|v| v.as_str())
                     .unwrap_or(fallback_message)
                     .to_string(),
