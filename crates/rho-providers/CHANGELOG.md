@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.1.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.0.0...rho-providers-v2.1.0) (2026-08-30)
+
+
+### Features
+
+* **auth:** always show a copyable login URL across every provider ([#1095](https://github.com/matthewyjiang/rho/issues/1095)) ([9e2670b](https://github.com/matthewyjiang/rho/commit/9e2670bd0892c579cad5f1d916046c16632ec9e1))
+* **tui:** stream mermaid diagrams as they arrive instead of popping in at fence close ([#1085](https://github.com/matthewyjiang/rho/issues/1085)) ([29c70cc](https://github.com/matthewyjiang/rho/commit/29c70cc5a0b28f66b13006dac8d3d6e4b01a31fa))
+
+
+### Bug Fixes
+
+* **release:** recover provider 2.1.0 ([#1099](https://github.com/matthewyjiang/rho/issues/1099)) ([15f9403](https://github.com/matthewyjiang/rho/commit/15f9403a38c9edf62f7bd46900b05299e99a48ea))
+
 ## [3.0.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.1.0...rho-providers-v3.0.0) (2026-08-30)
 
 

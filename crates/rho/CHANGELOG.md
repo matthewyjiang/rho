@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.3.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.3.0...rho-coding-agent-v2.3.1) (2026-08-30)
+
+
+### Bug Fixes
+
+* **release:** recover provider 2.1.0 ([#1099](https://github.com/matthewyjiang/rho/issues/1099)) ([15f9403](https://github.com/matthewyjiang/rho/commit/15f9403a38c9edf62f7bd46900b05299e99a48ea))
+* **tui:** keep images visible across viewport clipping ([#1100](https://github.com/matthewyjiang/rho/issues/1100)) ([4c50ca6](https://github.com/matthewyjiang/rho/commit/4c50ca677a6af8fd177380d90278c7af0ca1fb88))
+
 ## [2.3.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.2.0...rho-coding-agent-v2.3.0) (2026-08-30)
 
 
