@@ -533,7 +533,8 @@ pub enum GenerationOutputTokens {
     /// Non-reasoning output count that matches the generation timing window.
     Reported(u64),
     /// The provider produced output that cannot be attributed to the generation
-    /// window (for example hidden reasoning without a token split).
+    /// window (hidden reasoning without a token split, or a burst-replayed
+    /// proxy flush whose generation window measures replay speed).
     Unavailable,
 }
 

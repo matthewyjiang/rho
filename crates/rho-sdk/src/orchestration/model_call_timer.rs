@@ -91,7 +91,7 @@ impl ModelCallTimer {
             .first_generated
             .map(|first| stream_completed.duration_since(first));
         let total_latency = stream_completed.duration_since(self.attempt_started);
-        let mut metrics = ModelCallMetrics {
+        let metrics = ModelCallMetrics {
             output_tokens,
             time_to_first_token: self
                 .first_generated
@@ -100,15 +100,18 @@ impl ModelCallTimer {
             total_latency,
             generation_output_tokens: self.generation_output_tokens,
         };
-        if self.is_burst_replay(&metrics) {
-            // The stream was buffered upstream (a translating proxy flushing a
-            // held response in a few giant deltas), so the generation window
-            // measures replay speed, not decode speed. Timing stays reported;
-            // the tokens cannot be attributed to the window, so throughput
-            // surfaces read this as unavailable rather than an inflated rate.
-            metrics.generation_output_tokens = Some(GenerationOutputTokens::Unavailable);
+        if !self.is_burst_replay(&metrics) {
+            return metrics;
         }
-        metrics
+        // The stream was buffered upstream (a translating proxy flushing a
+        // held response in a few giant deltas), so the generation window
+        // measures replay speed, not decode speed. Timing stays reported;
+        // the tokens cannot be attributed to the window, so throughput
+        // surfaces read this as unavailable rather than an inflated rate.
+        ModelCallMetrics {
+            generation_output_tokens: Some(GenerationOutputTokens::Unavailable),
+            ..metrics
+        }
     }
 
     /// True when the generated deltas were too few and too compressed for the
@@ -121,9 +124,6 @@ impl ModelCallTimer {
         let Some(generation_time) = metrics.generation_time else {
             return false;
         };
-        if self.generated_events == 0 {
-            return false;
-        }
         tokens / self.generated_events >= BURST_MIN_TOKENS_PER_GENERATED_EVENT
             && generation_time.as_secs_f64()
                 <= BURST_MAX_WINDOW_FRACTION_OF_LATENCY * metrics.total_latency.as_secs_f64()
