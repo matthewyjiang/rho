@@ -12,8 +12,12 @@ use serde::Deserialize;
 #[cfg(not(windows))]
 use tokio::process::Command;
 
-const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/matthewyjiang/rho/releases/latest";
+const RELEASES_URL: &str = "https://api.github.com/repos/matthewyjiang/rho/releases";
+// GitHub documents 100 as the maximum releases page size. Use it so old drafts
+// or releases for sibling workspace crates cannot hide the latest app release.
+const RELEASES_PER_PAGE: u64 = 100;
 const CRATE_NAME: &str = "rho-coding-agent";
+const RELEASE_TAG_PREFIX: &str = "rho-coding-agent-v";
 const PACMAN_PACKAGE_TARGET: &str = "mjiang-extras/rho-coding-agent";
 const SCOOP_PACKAGE: &str = "rho";
 /// Shell command that fetches and runs `install.sh` from `git_ref`. Pinned to
@@ -97,8 +101,21 @@ enum ScoopInstallScope {
 }
 
 #[derive(Deserialize)]
-struct LatestRelease {
+struct Release {
     tag_name: String,
+    draft: bool,
+    prerelease: bool,
+}
+
+fn latest_app_release_tag(releases: &[Release]) -> Option<&str> {
+    releases
+        .iter()
+        .find(|release| {
+            !release.draft
+                && !release.prerelease
+                && release.tag_name.starts_with(RELEASE_TAG_PREFIX)
+        })
+        .map(|release| release.tag_name.as_str())
 }
 
 pub async fn available_update(current_version: &str) -> anyhow::Result<Option<UpdateInfo>> {
@@ -481,22 +498,28 @@ pub(crate) async fn latest_release_tag() -> anyhow::Result<String> {
         .default_headers(headers)
         .timeout(Duration::from_secs(10))
         .build()?;
-    let release = client
-        .get(LATEST_RELEASE_URL)
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<LatestRelease>()
-        .await?;
-    Ok(release.tag_name)
+    let mut page = 1_u64;
+    loop {
+        let releases = client
+            .get(RELEASES_URL)
+            .query(&[("per_page", RELEASES_PER_PAGE), ("page", page)])
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<Vec<Release>>()
+            .await?;
+        if let Some(tag) = latest_app_release_tag(&releases) {
+            return Ok(tag.to_string());
+        }
+        if releases.len() < RELEASES_PER_PAGE as usize {
+            anyhow::bail!("GitHub releases did not include a published {CRATE_NAME} release");
+        }
+        page += 1;
+    }
 }
 
 pub(crate) fn release_tag_to_version(tag: &str) -> Option<String> {
-    let version = tag
-        .rsplit_once('v')
-        .map(|(_, version)| version)
-        .unwrap_or(tag)
-        .trim();
+    let version = tag.strip_prefix(RELEASE_TAG_PREFIX)?.trim();
     parse_version(version)
         .is_some()
         .then(|| version.to_string())
@@ -532,9 +555,9 @@ mod tests {
 
     use super::{
         cargo_install_list_contains_crate, cargo_root_from_bin_path, cargo_update_root_for_exe,
-        install_script_ref, pacman_update_command_display, release_tag_to_version,
-        scoop_install_scope_for_path, scoop_update_command_display, version_is_newer,
-        InstallMethod, ScoopInstallScope,
+        install_script_ref, latest_app_release_tag, pacman_update_command_display,
+        release_tag_to_version, scoop_install_scope_for_path, scoop_update_command_display,
+        version_is_newer, InstallMethod, Release, ScoopInstallScope,
     };
 
     #[test]
@@ -549,12 +572,37 @@ mod tests {
         assert_eq!(install_script_ref(String::new()), "main");
     }
 
+    // Covers: another workspace package's major release must not become a rho update.
+    // Owner: update release selection
     #[test]
-    fn extracts_release_please_tag_version() {
+    fn selects_latest_published_app_release() {
+        let releases = [
+            Release {
+                tag_name: "rho-providers-v3.0.0".into(),
+                draft: false,
+                prerelease: false,
+            },
+            Release {
+                tag_name: "rho-coding-agent-v2.3.0".into(),
+                draft: true,
+                prerelease: false,
+            },
+            Release {
+                tag_name: "rho-coding-agent-v2.2.0".into(),
+                draft: false,
+                prerelease: false,
+            },
+        ];
+
         assert_eq!(
-            release_tag_to_version("rho-coding-agent-v0.12.3").as_deref(),
-            Some("0.12.3")
+            latest_app_release_tag(&releases),
+            Some("rho-coding-agent-v2.2.0")
         );
+        assert_eq!(
+            release_tag_to_version("rho-coding-agent-v2.2.0").as_deref(),
+            Some("2.2.0")
+        );
+        assert_eq!(release_tag_to_version("rho-providers-v3.0.0"), None);
     }
 
     #[test]
