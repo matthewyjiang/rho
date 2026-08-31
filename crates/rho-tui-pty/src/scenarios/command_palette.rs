@@ -119,6 +119,43 @@ const SLASH_COMMAND_PALETTE_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+// Covers: tab-completing /agents leaves the argument palette open, and a
+// plain Enter must run the bare command instead of the first argument row.
+// Owner: interactive TUI
+const TAB_COMPLETE_ENTER_BARE_COMMAND_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("tab_complete"),
+    Step::TypeText("/agents"),
+    // The palette offers the command and its `/agents create` argument row.
+    Step::WaitText {
+        text: "/agents create",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Tab),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
+    },
+    Step::Phase("enter_runs_bare_command"),
+    Step::Key(Key::Enter),
+    // The agents catalog opens only for the bare command; `/agents create`
+    // would start the guided creator turn instead.
+    Step::WaitText {
+        text: "goal-judge",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitTextGone {
+        text: "goal-judge",
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];
+
 pub(super) const CREATE_AGENT_COMMAND_SCENARIO: Scenario = Scenario::new(
     "create_agent_command",
     "Start the guided agent creator without opening the agents catalog",
@@ -150,6 +187,14 @@ pub(super) const SLASH_COMMAND_PALETTE_SCENARIO: Scenario = Scenario::new(
     "Open the slash command palette and filter to a matching command",
     SIZE,
     SLASH_COMMAND_PALETTE_STEPS,
+    /* smoke */ false,
+);
+
+pub(super) const TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO: Scenario = Scenario::new(
+    "tab_complete_enter_bare_command",
+    "Tab completion leaves Enter running the bare slash command",
+    SIZE,
+    TAB_COMPLETE_ENTER_BARE_COMMAND_STEPS,
     /* smoke */ false,
 );
 

@@ -1,4 +1,6 @@
-use super::super::{tests::test_app, HistoryDirection, InputSubmissionMode};
+use super::super::{
+    tests::test_app, CommandChoice, CommandChoiceKind, HistoryDirection, InputSubmissionMode,
+};
 
 #[test]
 fn completing_goal_command_reveals_lifecycle_actions() {
@@ -34,7 +36,7 @@ fn goal_lifecycle_action_completion_replaces_placeholder() {
     app.input_ui.set_text("/goal ".to_string());
     app.input_ui.set_cursor(app.input_ui.text().chars().count());
     app.clamp_command_selection();
-    app.input_ui.set_command_selection(1);
+    app.input_ui.move_command_selection(1);
 
     let clear = app.selected_command().unwrap();
     app.complete_command_choice(&clear);
@@ -161,4 +163,70 @@ fn dismiss_on_esc_preserves_partial_slash_command() {
     assert_eq!(app.input_ui.text(), "/mo");
     assert_eq!(app.input_ui.cursor(), 3);
     assert!(app.input_ui.command_palette_dismissed());
+}
+
+// Covers: with argument rows open, Enter must not spend the default
+// highlight on a row nobody picked; an arrow-key pick enables it, and a
+// changed question takes the pick back.
+// Owner: command palette Enter policy
+#[test]
+fn enter_keeps_bare_command_until_an_argument_row_is_picked() {
+    let mut app = test_app();
+    app.input_ui.set_text("/goal ".to_string());
+    app.input_ui.set_cursor(app.input_ui.text().chars().count());
+    app.clamp_command_selection();
+    let matches = app.command_matches();
+
+    assert!(!app.enter_completes_choice(&matches[0]));
+
+    app.input_ui.move_command_selection(1);
+    assert!(app.enter_completes_choice(&matches[1]));
+
+    // Moving the cursor back into the command token changes the palette
+    // question, so the pick does not survive it.
+    app.input_ui.set_text("/goal".to_string());
+    app.input_ui.set_cursor(app.input_ui.text().chars().count());
+    app.input_changed();
+    assert!(!app.input_ui.command_selection_explicit());
+}
+
+// Covers: when the match list shrinks below the picked row, that row is
+// gone, so the clamped highlight must not act as a pick for Enter.
+// Owner: command palette selection invariant
+#[test]
+fn clamping_below_a_pick_drops_the_explicit_flag() {
+    let mut app = test_app();
+    app.input_ui.set_text("/goal ".to_string());
+    app.input_ui.set_cursor(app.input_ui.text().chars().count());
+    app.clamp_command_selection();
+    app.input_ui.move_command_selection(1);
+    assert!(app.input_ui.command_selection_explicit());
+
+    // `/agents ` offers a single argument row, so the pick at row 1 clamps.
+    app.input_ui.set_text("/agents ".to_string());
+    app.input_ui.set_cursor(app.input_ui.text().chars().count());
+    app.input_changed();
+
+    assert_eq!(app.input_ui.command_selection(), 0);
+    assert!(!app.input_ui.command_selection_explicit());
+}
+
+// Covers: MCP argument rows obey the same pick rule; without an arrow-key
+// pick (or a typed value narrowing the server's suggestions) Enter submits
+// the command as typed.
+// Owner: command palette Enter policy
+#[test]
+fn enter_on_mcp_argument_rows_follows_the_pick_rule() {
+    let mut app = test_app();
+    let choice = CommandChoice {
+        name: "alice".into(),
+        usage: "alice".into(),
+        description: String::new(),
+        kind: CommandChoiceKind::McpPromptArgument { value: 0..0 },
+    };
+
+    assert!(!app.enter_completes_choice(&choice));
+
+    app.input_ui.move_command_selection(1);
+    assert!(app.enter_completes_choice(&choice));
 }

@@ -12,11 +12,10 @@ use ratatui::DefaultTerminal;
 
 use super::{
     activity::LoadingSpinner,
-    command_palette::selected_command,
+    command_palette::CommandPaletteKeyOutcome,
     commands::{self, CommandId, CommandInvocation},
     config_editor::{ConfigNumberInput, ConfigNumberKey, ConfigTextKey},
     config_picker,
-    palette::ActivePalette,
     paste_burst::normalize_paste,
     App, ApprovalKeyOutcome, ComposerMode, Entry, HistoryDirection, InputSubmissionMode,
     InteractiveModelSelection, InteractiveRuntime, PasteSegment, QueuedPrompt, StreamControl,
@@ -108,11 +107,13 @@ impl App {
         if self.handle_side_chat_key(key, terminal) {
             return Ok(false);
         }
-        if self
-            .handle_running_command_palette_key(key, terminal)
-            .await?
-        {
-            return Ok(false);
+        match self.handle_command_palette_key(key) {
+            CommandPaletteKeyOutcome::Ignored => {}
+            CommandPaletteKeyOutcome::Handled => return Ok(false),
+            CommandPaletteKeyOutcome::Submit => {
+                self.submit_during_turn(terminal).await?;
+                return Ok(false);
+            }
         }
         if self.handle_file_palette_key(key)? {
             return Ok(false);
@@ -429,62 +430,6 @@ impl App {
                 ));
                 Ok(())
             }
-        }
-    }
-
-    pub(super) async fn handle_running_command_palette_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
-        let Some(ActivePalette::Command(matches)) = self.active_palette() else {
-            return Ok(false);
-        };
-
-        match (key.modifiers, key.code) {
-            (KeyModifiers::NONE, KeyCode::Up) => {
-                if !matches.is_empty() {
-                    self.input_ui.set_command_selection(
-                        if self.input_ui.command_selection() == 0 {
-                            matches.len() - 1
-                        } else {
-                            self.input_ui.command_selection() - 1
-                        },
-                    );
-                }
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Down) => {
-                if !matches.is_empty() {
-                    self.input_ui.set_command_selection(
-                        (self.input_ui.command_selection() + 1) % matches.len(),
-                    );
-                }
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Tab) => {
-                if let Some(choice) = selected_command(&matches, self.input_ui.command_selection())
-                {
-                    self.complete_command_choice(&choice);
-                    self.input_ui.set_command_palette_dismissed(false);
-                    self.clamp_command_selection();
-                }
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Enter) => {
-                if let Some(choice) = selected_command(&matches, self.input_ui.command_selection())
-                {
-                    self.complete_command_choice(&choice);
-                    self.clamp_command_selection();
-                }
-                self.submit_during_turn(terminal).await?;
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Esc) => {
-                self.dismiss_command_palette_on_esc();
-                Ok(true)
-            }
-            _ => Ok(false),
         }
     }
 

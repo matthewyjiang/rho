@@ -629,6 +629,14 @@ fn fragile_surface_scenarios_pass() {
     }
 }
 
+// Covers: tab-completing a slash command must not turn a plain Enter into the
+// first argument choice; the bare command runs as typed.
+// Owner: interactive TUI
+#[test]
+fn tab_completion_keeps_enter_on_the_bare_command() {
+    assert_pass("tab_complete_enter_bare_command");
+}
+
 // Covers: advisor mode must ask for a model before it claims to be on, keep the
 // chosen model across off and on, warn when a saved mode has no model, and bring
 // the advisor's answer back to the executor without ending the turn on failure.
