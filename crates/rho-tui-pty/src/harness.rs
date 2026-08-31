@@ -387,6 +387,19 @@ impl PtyHarness {
 
     pub fn wait_for_exit(&mut self, timeout: WaitTimeout) -> Result<u32> {
         self.set_phase("wait_for_exit");
+        match self.poll_for_exit(timeout)? {
+            Some(code) => Ok(code),
+            None => self.fail_code(format!(
+                "timeout waiting for child exit ({})",
+                timeout.label
+            )),
+        }
+    }
+
+    /// Wait for the child to exit without writing a failure artifact on
+    /// timeout. Used by retry paths that must not report FAIL until every
+    /// attempt is exhausted.
+    fn poll_for_exit(&mut self, timeout: WaitTimeout) -> Result<Option<u32>> {
         let started = Instant::now();
         // Keep draining while waiting so restoration sequences are captured.
         let deadline = started + timeout.duration;
@@ -407,7 +420,7 @@ impl PtyHarness {
                 self.log(format!("exit code {code}"));
                 // Final drain after exit.
                 self.poll(Duration::from_millis(50));
-                return Ok(code);
+                return Ok(Some(code));
             }
             // On some macOS runners the process prints the post-TUI resume
             // summary but lingers before reaping. Once the clean exit path is
@@ -421,14 +434,15 @@ impl PtyHarness {
                         self.timing
                             .push(TimingSample::new("wait_for_exit", started.elapsed()));
                     }
-                    return Ok(0);
+                    return Ok(Some(0));
                 }
             }
             if Instant::now() >= deadline {
-                return self.fail_code(format!(
-                    "timeout waiting for child exit ({})",
+                self.log(format!(
+                    "exit probe timed out ({}); child still running",
                     timeout.label
                 ));
+                return Ok(None);
             }
         }
     }
@@ -484,7 +498,9 @@ impl PtyHarness {
         // send a second after another suppress window.
         self.settle_for(Duration::from_millis(250));
         self.inject_key(&Key::Enter)?;
-        if let Ok(code) = self.wait_for_exit(WaitTimeout::secs(5, "exit after /exit")) {
+        // Quiet probe: a timeout here must not write a failure artifact,
+        // because a second Enter may still succeed.
+        if let Some(code) = self.poll_for_exit(WaitTimeout::secs(5, "exit after /exit"))? {
             return Ok(code);
         }
         self.log("first Enter after /exit did not quit; retrying Enter once");
@@ -502,7 +518,7 @@ impl PtyHarness {
                 let _ = self.inject_key(&Key::Ctrl('c'));
                 self.poll(Duration::from_millis(100));
                 let _ = self.inject_key(&Key::Ctrl('c'));
-                let _ = self.wait_for_exit(WaitTimeout::secs(5, "cleanup after failed /exit"));
+                let _ = self.poll_for_exit(WaitTimeout::secs(5, "cleanup after failed /exit"));
                 if self.is_running() {
                     let _ = self.kill();
                 }
