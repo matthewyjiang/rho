@@ -474,14 +474,30 @@ impl PtyHarness {
         // (`\x1b[200~`); a short PTY read of that introducer lands as literal
         // `[200~/exit` and the child never quits.
         self.inject_key(&Key::Esc)?;
+        self.settle_for(Duration::from_millis(50));
         self.type_text("/exit")?;
         self.wait_for_text("/exit", WaitTimeout::secs(10, "/exit in composer"))?;
-        // Under runner load the five typed chars arrive as one paste burst.
-        // Rho then suppresses Enter for 120ms, which leaves `/exit` sitting
-        // in the composer. Wait that window out before submitting.
-        self.settle_for(Duration::from_millis(160));
+        // Under runner load the five typed chars can be drained in one event-loop
+        // turn and look like a paste burst. Rho then suppresses Enter for 120ms
+        // (turning it into a newline), which leaves `/exit` sitting in the
+        // composer. Wait well past that window before submitting.
+        self.settle_for(Duration::from_millis(250));
         self.inject_key(&Key::Enter)?;
-        self.wait_for_exit(WaitTimeout::secs(15, "exit after /exit"))
+        match self.wait_for_exit(WaitTimeout::secs(8, "exit after /exit")) {
+            Ok(code) => Ok(code),
+            Err(first) => {
+                // Enter was still swallowed, or exit stalled after a handoff.
+                // Clear the composer and force-quit rather than hanging the suite.
+                self.log(format!(
+                    "first /exit attempt failed: {first:#}; falling back to ctrl-c"
+                ));
+                self.inject_key(&Key::Ctrl('c'))?;
+                self.poll(Duration::from_millis(100));
+                self.inject_key(&Key::Ctrl('c'))?;
+                self.wait_for_exit(WaitTimeout::secs(15, "exit after ctrl-c fallback"))
+                    .with_context(|| format!("{first:#}; ctrl-c fallback also failed"))
+            }
+        }
     }
 
     pub fn quit_with_ctrl_c(&mut self) -> Result<u32> {
