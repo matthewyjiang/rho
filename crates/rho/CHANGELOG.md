@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.3.3](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.3.2...rho-coding-agent-v2.3.3) (2026-08-31)
+
+
+### Bug Fixes
+
+* **tui:** keep enter on the bare command after tab completion ([#1109](https://github.com/matthewyjiang/rho/issues/1109)) ([f6b47c4](https://github.com/matthewyjiang/rho/commit/f6b47c4398ee8f7a9cc299a40f27d148e7085f16))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.1.1 to 2.1.2
+
 ## [2.3.2](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.3.1...rho-coding-agent-v2.3.2) (2026-08-30)
 
 
