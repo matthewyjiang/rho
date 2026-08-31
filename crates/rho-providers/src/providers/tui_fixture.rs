@@ -217,10 +217,11 @@ async fn fixture_stream(
         "fixture markdown emphasis stream" => {
             let mut response = String::new();
             // Hold the open-emphasis delta longer so PTY scenarios can sample
-            // ALPHA staying visible before BETA arrives.
+            // ALPHA staying visible before BETA arrives. CI runners under load
+            // miss a shorter window when the PTY poll thread is starved.
             for (delta, pause_ms) in [
                 ("Stable prose ALPHA remains drawn ", 250),
-                ("while **hold", 500),
+                ("while **hold", 1500),
                 ("ing closes** and trailing BETA completes.", 250),
             ] {
                 events.send(ModelEvent::OutputDelta(delta.into())).await?;

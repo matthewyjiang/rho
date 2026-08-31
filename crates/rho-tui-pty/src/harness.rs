@@ -387,6 +387,19 @@ impl PtyHarness {
 
     pub fn wait_for_exit(&mut self, timeout: WaitTimeout) -> Result<u32> {
         self.set_phase("wait_for_exit");
+        match self.poll_for_exit(timeout)? {
+            Some(code) => Ok(code),
+            None => self.fail_code(format!(
+                "timeout waiting for child exit ({})",
+                timeout.label
+            )),
+        }
+    }
+
+    /// Wait for the child to exit without writing a failure artifact on
+    /// timeout. Used by retry paths that must not report FAIL until every
+    /// attempt is exhausted.
+    fn poll_for_exit(&mut self, timeout: WaitTimeout) -> Result<Option<u32>> {
         let started = Instant::now();
         // Keep draining while waiting so restoration sequences are captured.
         let deadline = started + timeout.duration;
@@ -407,7 +420,7 @@ impl PtyHarness {
                 self.log(format!("exit code {code}"));
                 // Final drain after exit.
                 self.poll(Duration::from_millis(50));
-                return Ok(code);
+                return Ok(Some(code));
             }
             // On some macOS runners the process prints the post-TUI resume
             // summary but lingers before reaping. Once the clean exit path is
@@ -421,14 +434,15 @@ impl PtyHarness {
                         self.timing
                             .push(TimingSample::new("wait_for_exit", started.elapsed()));
                     }
-                    return Ok(0);
+                    return Ok(Some(0));
                 }
             }
             if Instant::now() >= deadline {
-                return self.fail_code(format!(
-                    "timeout waiting for child exit ({})",
+                self.log(format!(
+                    "exit probe timed out ({}); child still running",
                     timeout.label
                 ));
+                return Ok(None);
             }
         }
     }
@@ -474,14 +488,43 @@ impl PtyHarness {
         // (`\x1b[200~`); a short PTY read of that introducer lands as literal
         // `[200~/exit` and the child never quits.
         self.inject_key(&Key::Esc)?;
+        self.settle_for(Duration::from_millis(50));
         self.type_text("/exit")?;
         self.wait_for_text("/exit", WaitTimeout::secs(10, "/exit in composer"))?;
-        // Under runner load the five typed chars arrive as one paste burst.
-        // Rho then suppresses Enter for 120ms, which leaves `/exit` sitting
-        // in the composer. Wait that window out before submitting.
-        self.settle_for(Duration::from_millis(160));
+        // Under runner load the five typed chars can be drained in one
+        // event-loop turn and look like a paste burst. Rho then suppresses
+        // Enter for 120ms (turning it into a newline). Wait well past that
+        // window, and if the first Enter was still swallowed as a newline,
+        // send a second after another suppress window.
+        self.settle_for(Duration::from_millis(250));
         self.inject_key(&Key::Enter)?;
-        self.wait_for_exit(WaitTimeout::secs(15, "exit after /exit"))
+        // Quiet probe: a timeout here must not write a failure artifact,
+        // because a second Enter may still succeed.
+        if let Some(code) = self.poll_for_exit(WaitTimeout::secs(5, "exit after /exit"))? {
+            return Ok(code);
+        }
+        self.log("first Enter after /exit did not quit; retrying Enter once");
+        self.settle_for(Duration::from_millis(250));
+        self.inject_key(&Key::Enter)?;
+        match self.wait_for_exit(WaitTimeout::secs(10, "exit after /exit retry")) {
+            Ok(code) => Ok(code),
+            Err(err) => {
+                // Tear the child down so a stuck session does not poison the
+                // rest of the suite, but still surface the /exit failure so a
+                // broken exit command cannot hide behind cleanup.
+                self.log(format!(
+                    "/exit did not terminate the child: {err:#}; cleaning up"
+                ));
+                let _ = self.inject_key(&Key::Ctrl('c'));
+                self.poll(Duration::from_millis(100));
+                let _ = self.inject_key(&Key::Ctrl('c'));
+                let _ = self.poll_for_exit(WaitTimeout::secs(5, "cleanup after failed /exit"));
+                if self.is_running() {
+                    let _ = self.kill();
+                }
+                Err(err).context("/exit did not terminate the child")
+            }
+        }
     }
 
     pub fn quit_with_ctrl_c(&mut self) -> Result<u32> {

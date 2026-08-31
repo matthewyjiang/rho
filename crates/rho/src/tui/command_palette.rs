@@ -1,7 +1,24 @@
 use std::sync::Arc;
 
-use super::{palette::PALETTE_CACHE_TTL, App, CommandChoice, CommandChoiceKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+use super::{
+    palette::{ActivePalette, PALETTE_CACHE_TTL},
+    App, CommandChoice, CommandChoiceKind,
+};
 use crate::commands;
+
+/// What a command-palette key did, so the idle and running composers share
+/// one handler and keep only their own submit path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CommandPaletteKeyOutcome {
+    /// Not a palette key; keep routing.
+    Ignored,
+    /// The palette consumed the key; nothing submits.
+    Handled,
+    /// Enter accepted the composer; the caller submits for its mode.
+    Submit,
+}
 
 impl App {
     /// Command matches when the command palette is what the composer shows.
@@ -155,7 +172,86 @@ impl App {
             self.input_ui.set_cursor(0);
         }
         self.input_ui.set_command_palette_dismissed(true);
-        self.input_ui.set_command_selection(0);
+        self.input_ui.reset_command_selection();
+    }
+
+    /// Keys the open command palette owns, shared by the idle and running
+    /// composers so navigation, tab completion, and the Enter gate stay
+    /// defined once. Only the submit that Enter triggers differs per mode,
+    /// so the caller performs it.
+    pub(super) fn handle_command_palette_key(&mut self, key: KeyEvent) -> CommandPaletteKeyOutcome {
+        let Some(ActivePalette::Command(matches)) = self.active_palette() else {
+            return CommandPaletteKeyOutcome::Ignored;
+        };
+
+        match (key.modifiers, key.code) {
+            (KeyModifiers::NONE, KeyCode::Up) => {
+                if !matches.is_empty() {
+                    let next = if self.input_ui.command_selection() == 0 {
+                        matches.len() - 1
+                    } else {
+                        self.input_ui.command_selection() - 1
+                    };
+                    self.input_ui.move_command_selection(next);
+                }
+                CommandPaletteKeyOutcome::Handled
+            }
+            (KeyModifiers::NONE, KeyCode::Down) => {
+                if !matches.is_empty() {
+                    let next = (self.input_ui.command_selection() + 1) % matches.len();
+                    self.input_ui.move_command_selection(next);
+                }
+                CommandPaletteKeyOutcome::Handled
+            }
+            (KeyModifiers::NONE, KeyCode::Tab) => {
+                if let Some(choice) = selected_command(&matches, self.input_ui.command_selection())
+                {
+                    self.complete_command_choice(&choice);
+                    self.input_ui.set_command_palette_dismissed(false);
+                    self.clamp_command_selection();
+                }
+                CommandPaletteKeyOutcome::Handled
+            }
+            (KeyModifiers::NONE, KeyCode::Enter) => {
+                if let Some(choice) = selected_command(&matches, self.input_ui.command_selection())
+                    .filter(|choice| self.enter_completes_choice(choice))
+                {
+                    self.complete_command_choice(&choice);
+                    self.clamp_command_selection();
+                }
+                CommandPaletteKeyOutcome::Submit
+            }
+            (KeyModifiers::NONE, KeyCode::Esc) => {
+                self.dismiss_command_palette_on_esc();
+                CommandPaletteKeyOutcome::Handled
+            }
+            _ => CommandPaletteKeyOutcome::Ignored,
+        }
+    }
+
+    /// Whether Enter folds the highlighted palette row into the composer
+    /// before submitting.
+    ///
+    /// Command-name rows finish a token someone was already typing, so Enter
+    /// completes them uninvited. Argument rows add content nobody typed, so
+    /// Enter takes one only after an explicit pick, or once a typed MCP value
+    /// already narrows the server's suggestions. Otherwise the bare command
+    /// runs as typed: tab fills the trailing space for an argument, and a
+    /// blind Enter must not spend that offer on the first row.
+    pub(super) fn enter_completes_choice(&self, choice: &CommandChoice) -> bool {
+        match choice.kind {
+            CommandChoiceKind::Builtin(_)
+            | CommandChoiceKind::PromptTemplate(_)
+            | CommandChoiceKind::Skill
+            | CommandChoiceKind::McpPrompt => true,
+            CommandChoiceKind::BuiltinArgument(_) => self.input_ui.command_selection_explicit(),
+            CommandChoiceKind::McpPromptArgument { .. } => {
+                self.input_ui.command_selection_explicit()
+                    || self
+                        .mcp_argument_cursor()
+                        .is_some_and(|cursor| !cursor.key.typed.trim().is_empty())
+            }
+        }
     }
 
     pub(super) fn complete_command_choice(&mut self, choice: &CommandChoice) {

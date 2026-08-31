@@ -5,11 +5,10 @@ use ratatui::DefaultTerminal;
 
 use super::{
     command_actions::CommandSubmission,
-    command_palette::{selected_command, slash_command_args},
-    commands, goal_command,
-    palette::ActivePalette,
-    skill_actions, ActivityPhase, App, ChatMedia, ComposerMode, GoalState, HistoryDirection,
-    InputSubmissionMode, InteractiveRuntime, PasteSegment, QueuedPrompt, TurnOutcome, TurnPrompt,
+    command_palette::{slash_command_args, CommandPaletteKeyOutcome},
+    commands, goal_command, skill_actions, ActivityPhase, App, ChatMedia, ComposerMode, GoalState,
+    HistoryDirection, InputSubmissionMode, InteractiveRuntime, PasteSegment, QueuedPrompt,
+    TurnOutcome, TurnPrompt,
 };
 
 /// A turn held until MCP connect settles.
@@ -98,11 +97,19 @@ impl App {
             return Ok(());
         }
 
-        if self
-            .handle_command_palette_key(key, terminal, agent)
-            .await?
-        {
-            return Ok(());
+        match self.handle_command_palette_key(key) {
+            CommandPaletteKeyOutcome::Ignored => {}
+            CommandPaletteKeyOutcome::Handled => {
+                self.input_ui.clear_paste_burst();
+                self.ctrl_c_streak = 0;
+                return Ok(());
+            }
+            CommandPaletteKeyOutcome::Submit => {
+                self.input_ui.clear_paste_burst();
+                self.ctrl_c_streak = 0;
+                self.submit(terminal, agent).await?;
+                return Ok(());
+            }
         }
 
         if self.handle_file_palette_key(key)? {
@@ -208,73 +215,6 @@ impl App {
         self.clamp_command_selection();
         self.clamp_file_selection();
         Ok(())
-    }
-
-    pub(super) async fn handle_command_palette_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<bool> {
-        let Some(ActivePalette::Command(matches)) = self.active_palette() else {
-            return Ok(false);
-        };
-
-        match (key.modifiers, key.code) {
-            (KeyModifiers::NONE, KeyCode::Up) => {
-                if !matches.is_empty() {
-                    self.input_ui.set_command_selection(
-                        if self.input_ui.command_selection() == 0 {
-                            matches.len() - 1
-                        } else {
-                            self.input_ui.command_selection() - 1
-                        },
-                    );
-                }
-                self.input_ui.clear_paste_burst();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Down) => {
-                if !matches.is_empty() {
-                    self.input_ui.set_command_selection(
-                        (self.input_ui.command_selection() + 1) % matches.len(),
-                    );
-                }
-                self.input_ui.clear_paste_burst();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Tab) => {
-                if let Some(choice) = selected_command(&matches, self.input_ui.command_selection())
-                {
-                    self.complete_command_choice(&choice);
-                    self.input_ui.set_command_palette_dismissed(false);
-                    self.clamp_command_selection();
-                }
-                self.input_ui.clear_paste_burst();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Enter) => {
-                if let Some(choice) = selected_command(&matches, self.input_ui.command_selection())
-                {
-                    self.complete_command_choice(&choice);
-                    self.clamp_command_selection();
-                }
-                self.input_ui.clear_paste_burst();
-                self.ctrl_c_streak = 0;
-                self.submit(terminal, agent).await?;
-                Ok(true)
-            }
-            (KeyModifiers::NONE, KeyCode::Esc) => {
-                self.dismiss_command_palette_on_esc();
-                self.input_ui.clear_paste_burst();
-                self.ctrl_c_streak = 0;
-                Ok(true)
-            }
-            _ => Ok(false),
-        }
     }
 
     pub(super) async fn submit(

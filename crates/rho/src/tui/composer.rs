@@ -681,15 +681,11 @@ impl App {
         };
         if self.input_ui.command_prefix() != prefix.as_deref() {
             self.input_ui.set_command_prefix(prefix);
-            self.input_ui.set_command_selection(0);
+            self.input_ui.reset_command_selection();
         }
 
         let match_count = self.command_matches().len();
-        if match_count == 0 {
-            self.input_ui.set_command_selection(0);
-        } else if self.input_ui.command_selection() >= match_count {
-            self.input_ui.set_command_selection(match_count - 1);
-        }
+        self.input_ui.clamp_command_selection_to(match_count);
     }
 
     pub(super) fn insert_paste(&mut self, text: &str) {

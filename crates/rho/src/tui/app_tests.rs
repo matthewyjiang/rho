@@ -848,7 +848,7 @@ fn command_selection_clamps_to_available_matches() {
     app.input_ui.set_text("/".to_string());
     app.input_ui.set_cursor(1);
     app.clamp_command_selection();
-    app.input_ui.set_command_selection(99);
+    app.input_ui.move_command_selection(99);
     app.clamp_command_selection();
     assert_eq!(
         app.input_ui.command_selection(),

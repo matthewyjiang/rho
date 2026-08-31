@@ -139,6 +139,18 @@ struct McpCatalogServer {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct McpCatalog {
     servers: Arc<RwLock<Vec<Arc<McpCatalogServer>>>>,
+    /// Prompt listings available without a live peer. Unit tests that exercise
+    /// palette and cursor matching seed this instead of standing up a session.
+    #[cfg(test)]
+    offline: Arc<RwLock<Vec<OfflinePrompt>>>,
+}
+
+/// One offline prompt entry used only by unit tests.
+#[cfg(test)]
+#[derive(Clone, Debug)]
+struct OfflinePrompt {
+    prompt: McpPrompt,
+    completions: bool,
 }
 
 /// Why a catalog lookup or fetch could not be served.
@@ -197,7 +209,42 @@ impl McpCatalog {
     /// Every prompt, ordered by server then prompt name so palette results are
     /// stable between keystrokes.
     pub(crate) fn prompts(&self) -> Vec<McpPrompt> {
-        self.collect(|entry| entry.prompts.clone())
+        #[cfg(not(test))]
+        {
+            self.collect(|entry| entry.prompts.clone())
+        }
+        #[cfg(test)]
+        {
+            let mut prompts = self.collect(|entry| entry.prompts.clone());
+            prompts.extend(
+                self.offline
+                    .read()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .iter()
+                    .map(|entry| entry.prompt.clone()),
+            );
+            prompts.sort_by(|left, right| {
+                left.server
+                    .cmp(&right.server)
+                    .then(left.name.cmp(&right.name))
+            });
+            prompts
+        }
+    }
+
+    /// Seed a prompt listing without a connected peer.
+    ///
+    /// Palette and argument-cursor unit tests need the catalog shape the
+    /// matcher reads, not a live `completion/complete` round-trip.
+    #[cfg(test)]
+    pub(crate) fn insert_offline_prompt(&self, prompt: McpPrompt, completions: bool) {
+        self.offline
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(OfflinePrompt {
+                prompt,
+                completions,
+            });
     }
 
     pub(crate) fn resources(&self) -> Vec<McpResource> {
@@ -299,10 +346,19 @@ impl McpCatalog {
     /// per keystroke can ask this without a round-trip.
     pub(crate) fn completion_support(&self, server: &str) -> McpCompletionSupport {
         if self.offers(server).is_some_and(|offers| offers.completions) {
-            McpCompletionSupport::Declared
-        } else {
-            McpCompletionSupport::Absent
+            return McpCompletionSupport::Declared;
         }
+        #[cfg(test)]
+        if self
+            .offline
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .iter()
+            .any(|entry| entry.prompt.server == server && entry.completions)
+        {
+            return McpCompletionSupport::Declared;
+        }
+        McpCompletionSupport::Absent
     }
 
     /// Suggested values for one argument of one prompt.

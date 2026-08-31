@@ -133,6 +133,10 @@ pub(in crate::tui) struct InputUi {
     paste_segments: Vec<PasteSegment>,
     submission_mode: InputSubmissionMode,
     command_selection: usize,
+    /// Whether arrow keys moved the palette highlight since the palette
+    /// question last changed. Enter folds argument rows into the composer
+    /// only after such a pick; the default highlight stays a suggestion.
+    command_selection_explicit: bool,
     command_prefix: Option<String>,
     command_palette_dismissed: bool,
     file_selection: usize,
@@ -597,8 +601,36 @@ impl InputUi {
         self.command_selection
     }
 
-    pub(in crate::tui) fn set_command_selection(&mut self, selection: usize) {
-        self.command_selection = selection;
+    pub(in crate::tui) fn command_selection_explicit(&self) -> bool {
+        self.command_selection_explicit
+    }
+
+    /// Selection back to the untouched default: the first row, not a pick.
+    pub(in crate::tui) fn reset_command_selection(&mut self) {
+        self.command_selection = 0;
+        self.command_selection_explicit = false;
+    }
+
+    /// Move the palette highlight, recording an explicit pick when the row
+    /// actually changes. A keyboard pick lets Enter take an argument row; the
+    /// default highlight does not.
+    pub(in crate::tui) fn move_command_selection(&mut self, next: usize) {
+        if next != self.command_selection {
+            self.command_selection_explicit = true;
+        }
+        self.command_selection = next;
+    }
+
+    /// Keep the highlight inside a new match list. A question with no rows
+    /// starts over, and the row picked under the old question is gone, so the
+    /// clamped highlight is not a pick anyone made.
+    pub(in crate::tui) fn clamp_command_selection_to(&mut self, match_count: usize) {
+        if match_count == 0 {
+            self.reset_command_selection();
+        } else if self.command_selection >= match_count {
+            self.command_selection = match_count - 1;
+            self.command_selection_explicit = false;
+        }
     }
 
     pub(in crate::tui) fn command_prefix(&self) -> Option<&str> {
