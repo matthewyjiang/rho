@@ -213,11 +213,11 @@ fn clamping_below_a_pick_drops_the_explicit_flag() {
 
 // Covers: MCP argument rows obey the same pick rule; without an arrow-key
 // pick (or a typed value narrowing the server's suggestions) Enter submits
-// the command as typed.
+// the command as typed. A non-empty typed value is the exception that lets
+// Enter complete without a pick.
 // Owner: command palette Enter policy
 #[test]
 fn enter_on_mcp_argument_rows_follows_the_pick_rule() {
-    let mut app = test_app();
     let choice = CommandChoice {
         name: "alice".into(),
         usage: "alice".into(),
@@ -225,8 +225,51 @@ fn enter_on_mcp_argument_rows_follows_the_pick_rule() {
         kind: CommandChoiceKind::McpPromptArgument { value: 0..0 },
     };
 
+    let mut app = test_app();
     assert!(!app.enter_completes_choice(&choice));
 
     app.input_ui.move_command_selection(1);
     assert!(app.enter_completes_choice(&choice));
+
+    // Typed non-empty value under the cursor enables Enter without a pick.
+    // Removing the typed-value side of enter_completes_choice must fail this.
+    let mut app = test_app();
+    app.mcp_catalog.insert_offline_prompt(
+        crate::tools::mcp::catalog::McpPrompt {
+            server: "tickets".into(),
+            name: "triage".into(),
+            title: None,
+            description: None,
+            arguments: vec![
+                crate::tools::mcp::catalog::McpPromptArgument {
+                    name: "severity".into(),
+                    description: None,
+                    required: false,
+                },
+                crate::tools::mcp::catalog::McpPromptArgument {
+                    name: "owner".into(),
+                    description: None,
+                    required: false,
+                },
+            ],
+        },
+        true,
+    );
+    let typed = "/mcp:tickets:triage owner=al";
+    app.input_ui.set_text(typed.to_string());
+    app.input_ui.set_cursor(typed.chars().count());
+    assert!(!app.input_ui.command_selection_explicit());
+    assert!(app
+        .mcp_argument_cursor()
+        .is_some_and(|cursor| cursor.key.typed == "al"));
+    assert!(app.enter_completes_choice(&choice));
+
+    // An empty value still needs an explicit pick.
+    let empty = "/mcp:tickets:triage owner=";
+    app.input_ui.set_text(empty.to_string());
+    app.input_ui.set_cursor(empty.chars().count());
+    assert!(app
+        .mcp_argument_cursor()
+        .is_some_and(|cursor| cursor.key.typed.is_empty()));
+    assert!(!app.enter_completes_choice(&choice));
 }
