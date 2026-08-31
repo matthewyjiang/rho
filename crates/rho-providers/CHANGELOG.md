@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.2](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.1.1...rho-providers-v2.1.2) (2026-08-31)
+
+
+### Bug Fixes
+
+* **tui:** keep enter on the bare command after tab completion ([#1109](https://github.com/matthewyjiang/rho/issues/1109)) ([f6b47c4](https://github.com/matthewyjiang/rho/commit/f6b47c4398ee8f7a9cc299a40f27d148e7085f16))
+
 ## [2.1.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.1.0...rho-providers-v2.1.1) (2026-08-30)
 
 
