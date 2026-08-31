@@ -477,25 +477,36 @@ impl PtyHarness {
         self.settle_for(Duration::from_millis(50));
         self.type_text("/exit")?;
         self.wait_for_text("/exit", WaitTimeout::secs(10, "/exit in composer"))?;
-        // Under runner load the five typed chars can be drained in one event-loop
-        // turn and look like a paste burst. Rho then suppresses Enter for 120ms
-        // (turning it into a newline), which leaves `/exit` sitting in the
-        // composer. Wait well past that window before submitting.
+        // Under runner load the five typed chars can be drained in one
+        // event-loop turn and look like a paste burst. Rho then suppresses
+        // Enter for 120ms (turning it into a newline). Wait well past that
+        // window, and if the first Enter was still swallowed as a newline,
+        // send a second after another suppress window.
         self.settle_for(Duration::from_millis(250));
         self.inject_key(&Key::Enter)?;
-        match self.wait_for_exit(WaitTimeout::secs(8, "exit after /exit")) {
+        if let Ok(code) = self.wait_for_exit(WaitTimeout::secs(5, "exit after /exit")) {
+            return Ok(code);
+        }
+        self.log("first Enter after /exit did not quit; retrying Enter once");
+        self.settle_for(Duration::from_millis(250));
+        self.inject_key(&Key::Enter)?;
+        match self.wait_for_exit(WaitTimeout::secs(10, "exit after /exit retry")) {
             Ok(code) => Ok(code),
-            Err(first) => {
-                // Enter was still swallowed, or exit stalled after a handoff.
-                // Clear the composer and force-quit rather than hanging the suite.
+            Err(err) => {
+                // Tear the child down so a stuck session does not poison the
+                // rest of the suite, but still surface the /exit failure so a
+                // broken exit command cannot hide behind cleanup.
                 self.log(format!(
-                    "first /exit attempt failed: {first:#}; falling back to ctrl-c"
+                    "/exit did not terminate the child: {err:#}; cleaning up"
                 ));
-                self.inject_key(&Key::Ctrl('c'))?;
+                let _ = self.inject_key(&Key::Ctrl('c'));
                 self.poll(Duration::from_millis(100));
-                self.inject_key(&Key::Ctrl('c'))?;
-                self.wait_for_exit(WaitTimeout::secs(15, "exit after ctrl-c fallback"))
-                    .with_context(|| format!("{first:#}; ctrl-c fallback also failed"))
+                let _ = self.inject_key(&Key::Ctrl('c'));
+                let _ = self.wait_for_exit(WaitTimeout::secs(5, "cleanup after failed /exit"));
+                if self.is_running() {
+                    let _ = self.kill();
+                }
+                Err(err).context("/exit did not terminate the child")
             }
         }
     }
