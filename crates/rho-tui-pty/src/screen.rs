@@ -73,6 +73,11 @@ impl ScreenModel {
         self.parser.screen().cursor_position()
     }
 
+    /// Whether the reconstructed terminal has hidden the caret (`DECTCEM` off).
+    pub fn hide_cursor(&self) -> bool {
+        self.parser.screen().hide_cursor()
+    }
+
     /// Cell at `(row, col)`, if the coordinates fall inside the screen.
     pub(crate) fn cell(&self, row: u16, col: u16) -> Option<ScreenCell> {
         let cell = self.parser.screen().cell(row, col)?;

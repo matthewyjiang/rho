@@ -248,7 +248,7 @@ pub(super) fn side_overlay_frame(overlay: &SideOverlay, area: Rect) -> Option<Ov
         .body_rows
         .saturating_sub(1)
         .min(input_row.saturating_sub(scroll));
-    frame.cursor = Position {
+    frame.cursor = Some(Position {
         x: frame
             .outer
             .x
@@ -259,7 +259,7 @@ pub(super) fn side_overlay_frame(overlay: &SideOverlay, area: Rect) -> Option<Ov
             .y
             .saturating_add(1)
             .saturating_add(input_screen_row as u16),
-    };
+    });
     Some(frame)
 }
 

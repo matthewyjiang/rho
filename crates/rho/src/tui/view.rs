@@ -430,6 +430,8 @@ impl App {
             now,
             composer_cursor: full_cursor,
         } = surface;
+        // Outer None: no overlay, fall through to the composer caret.
+        // Inner None: overlay is open but has no text field; hide the caret.
         let popup_cursor = match self.input_ui.composer() {
             ComposerMode::Picker(picker) => picker_overlay_frame(picker, area).map(|overlay| {
                 // Clear punches host defaults; fixed themes must repaint their surface
@@ -439,7 +441,7 @@ impl App {
                     Paragraph::new(overlay.lines).style(Theme::surface()),
                     overlay.outer,
                 );
-                overlay.cursor
+                Some(overlay.cursor)
             }),
             ComposerMode::Limits(_) => self.limits_overlay_frame(area, now).map(|overlay| {
                 frame.render_widget(Clear, overlay.outer);
@@ -460,9 +462,13 @@ impl App {
             _ => None,
         };
 
-        if let Some(position) = popup_cursor {
-            frame.set_cursor_position(position);
-            return;
+        match popup_cursor {
+            Some(Some(position)) => {
+                frame.set_cursor_position(position);
+                return;
+            }
+            Some(None) => return,
+            None => {}
         }
 
         // A zero-high composer owns no row; do not park the cursor on foreign chrome.

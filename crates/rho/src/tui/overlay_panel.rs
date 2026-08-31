@@ -35,7 +35,8 @@ pub(super) struct OverlayPanelLayout {
 pub(super) struct OverlayPanelFrame {
     pub(super) outer: Rect,
     pub(super) lines: Vec<Line<'static>>,
-    pub(super) cursor: Position,
+    /// Caret inside the panel. `None` for dismiss-only chrome with no text field.
+    pub(super) cursor: Option<Position>,
 }
 
 pub(super) fn overlay_panel_layout(area: Rect, body_line_count: usize) -> OverlayPanelLayout {
@@ -104,15 +105,8 @@ pub(super) fn render_overlay_panel(
         lines.push(Line::raw(""));
     }
 
-    let cursor_y = layout
-        .outer
-        .y
-        .saturating_add(layout.outer.height.saturating_sub(2));
     OverlayPanelFrame {
-        cursor: Position {
-            x: layout.outer.x.saturating_add(2),
-            y: cursor_y,
-        },
+        cursor: None,
         outer: layout.outer,
         lines,
     }

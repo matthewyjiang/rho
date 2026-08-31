@@ -16,8 +16,8 @@ const SIZE: PtySize = PtySize {
     cols: 100,
 };
 
-// Covers: /limits opens a single-pane overlay and Esc returns to the session
-// without dumping a transcript block.
+// Covers: /limits opens a single-pane overlay, hides the terminal caret, and
+// Esc returns to the session without dumping a transcript block.
 // Owner: interactive TUI
 const LIMITS_OVERLAY_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -60,6 +60,12 @@ fn assert_limits_overlay_is_single_pane(harness: &mut PtyHarness) -> Result<()> 
     if screen.contains("Search") {
         anyhow::bail!("limits overlay used picker search chrome:\n{screen}");
     }
+    if !harness.screen().hide_cursor() {
+        anyhow::bail!(
+            "limits overlay must hide the terminal caret, cursor at {:?}:\n{screen}",
+            harness.screen().cursor()
+        );
+    }
     Ok(())
 }
 
@@ -70,6 +76,9 @@ fn assert_limits_overlay_dismissed(harness: &mut PtyHarness) -> Result<()> {
     }
     if !screen.contains("gpt-5.5") {
         anyhow::bail!("session chrome missing after dismissing limits:\n{screen}");
+    }
+    if harness.screen().hide_cursor() {
+        anyhow::bail!("composer caret still hidden after dismissing limits:\n{screen}");
     }
     Ok(())
 }
