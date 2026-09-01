@@ -238,22 +238,77 @@ fn split_trailing_unit(token: &str) -> Option<(&str, &str)> {
 }
 
 fn parse_local_clock(text: &str, now_unix: i64) -> Option<i64> {
+    use chrono::Datelike;
+
     let (hour, minute) = parse_12h_time(text)?;
     let now = chrono::DateTime::from_timestamp(now_unix, 0)?
         .with_timezone(&chrono::Local)
         .naive_local();
     let today = now.date();
     let naive_time = chrono::NaiveTime::from_hms_opt(hour, minute, 0)?;
+    // "Resets Sep 5, 8am": weekly windows reset at most 7 days out, so the
+    // day-of-month alone pins the date within the next 8 days - no month
+    // parsing needed. Clock-only lines ("Resets 5:30am") fall through to
+    // today-or-tomorrow.
+    if let Some(day) = parse_day_of_month(text) {
+        for offset in 0..=8 {
+            let date = today + chrono::TimeDelta::days(offset);
+            if date.day() == day {
+                let candidate = date.and_time(naive_time);
+                if candidate > now {
+                    return local_timestamp(candidate);
+                }
+            }
+        }
+    }
     let mut candidate = today.and_time(naive_time);
     if candidate <= now {
         candidate += chrono::TimeDelta::days(1);
     }
+    local_timestamp(candidate)
+}
+
+fn local_timestamp(candidate: chrono::NaiveDateTime) -> Option<i64> {
     Some(
         candidate
             .and_local_timezone(chrono::Local)
             .single()?
             .timestamp(),
     )
+}
+
+/// First standalone 1-31 number that is not part of a clock time.
+fn parse_day_of_month(text: &str) -> Option<u32> {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if !bytes[index].is_ascii_digit() {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && bytes[index].is_ascii_digit() {
+            index += 1;
+        }
+        // "5:30" hour or "8am" time, not a date day.
+        if index < bytes.len() && bytes[index] == b':' {
+            continue;
+        }
+        let mut rest = index;
+        while rest < bytes.len() && bytes[rest].is_ascii_whitespace() {
+            rest += 1;
+        }
+        let tail = text.get(rest..)?;
+        if tail.starts_with("am") || tail.starts_with("pm") {
+            continue;
+        }
+        if let Ok(value) = text[start..index].parse::<u32>() {
+            if (1..=31).contains(&value) {
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 fn parse_12h_time(text: &str) -> Option<(u32, u32)> {

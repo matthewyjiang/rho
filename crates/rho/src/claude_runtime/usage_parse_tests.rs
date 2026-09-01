@@ -57,6 +57,40 @@ fn relative_reset_in_hours_and_minutes_becomes_unix() {
     assert_eq!(info.resets_at, Some(NOW + 5_400));
 }
 
+// Covers: "Resets Sep 5, 8am" must land on that day, not today-or-tomorrow.
+// Weekly resets are at most 7 days out, so the day-of-month pins the date.
+// Owner: pure unit
+#[test]
+fn dated_reset_lands_on_the_named_day() {
+    use chrono::{Datelike, TimeZone, Timelike};
+
+    let now = chrono::Local.timestamp_opt(NOW, 0).unwrap();
+    let target = now + chrono::TimeDelta::days(4);
+    let text = format!(
+        "Current week (all models)\n26% used\nResets Sep {}, 8am (America/Los_Angeles)\n",
+        target.day()
+    );
+    let state = parse_usage_screen(&text, NOW).expect("parsed");
+    let resets_at = state.sorted_windows()[0].info.resets_at.expect("resets_at");
+    let resolved = chrono::Local.timestamp_opt(resets_at, 0).unwrap();
+    assert_eq!(
+        (resolved.day(), resolved.hour(), resolved.minute()),
+        (target.day(), 8, 0)
+    );
+}
+
+// Covers: a clock-only reset ("Resets 5:30am") still resolves today-or-tomorrow
+// and must not misread the hour as a day-of-month.
+// Owner: pure unit
+#[test]
+fn clock_only_reset_stays_within_a_day() {
+    let text = "Current session\n29% used\nResets 5:30am (America/Los_Angeles)\n";
+    let state = parse_usage_screen(text, NOW).expect("parsed");
+    let resets_at = state.sorted_windows()[0].info.resets_at.expect("resets_at");
+    let delta = resets_at - NOW;
+    assert!((0..=86_400).contains(&delta), "{delta}");
+}
+
 #[test]
 fn header_without_percent_is_skipped() {
     let text = "Current session\nsome random text\nmore random text\n";
