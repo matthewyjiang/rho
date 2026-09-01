@@ -7,6 +7,7 @@ use super::{
     chat_media::ChatMedia,
     commands::{self, CommandSpec},
     config_editor::ConfigNumberInput,
+    doctor_overlay,
     feed_image::FeedImage,
     info_command,
     inline_choice::InlineChoiceModal,
@@ -200,6 +201,7 @@ pub(super) enum ComposerMode {
     Questionnaire(QuestionnaireComposer),
     Approval(ApprovalComposer),
     Limits(limits_command::LimitsOverlay),
+    Doctor(doctor_overlay::DoctorOverlay),
     Side,
 }
 
@@ -220,6 +222,7 @@ impl ComposerMode {
             | Self::Questionnaire(_)
             | Self::Approval(_)
             | Self::Limits(_)
+            | Self::Doctor(_)
             | Self::Side => true,
         }
     }
@@ -244,6 +247,7 @@ impl ComposerMode {
             | Self::Questionnaire(_)
             | Self::Approval(_)
             | Self::Limits(_)
+            | Self::Doctor(_)
             | Self::Side => false,
         }
     }
@@ -251,7 +255,7 @@ impl ComposerMode {
     pub(super) fn is_centered_overlay(&self) -> bool {
         match self {
             Self::Picker(picker) => picker.is_overlay(),
-            Self::Limits(_) | Self::Side => true,
+            Self::Limits(_) | Self::Doctor(_) | Self::Side => true,
             _ => false,
         }
     }

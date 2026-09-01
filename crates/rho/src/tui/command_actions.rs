@@ -108,7 +108,7 @@ impl App {
             CommandId::Attach => self.execute_attach_command(),
             CommandId::Changelog => self.execute_changelog_command(&invocation, terminal),
             CommandId::Diff => self.execute_diff_command(),
-            CommandId::Doctor => self.execute_doctor_command_with_probes(terminal).await,
+            CommandId::Doctor => self.execute_doctor_command(terminal),
             CommandId::Export => self.execute_export_command(&invocation),
             CommandId::Mcp => self.execute_mcp_command(),
             CommandId::Title => self.execute_title_command(&invocation),

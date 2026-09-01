@@ -54,6 +54,7 @@ impl App {
             ComposerMode::TextInput(_) => self.handle_text_input_key(key),
             ComposerMode::Picker(_) => self.handle_picker_key(key, terminal, agent).await,
             ComposerMode::Limits(_) => Ok(self.handle_limits_overlay_key(key, terminal)),
+            ComposerMode::Doctor(_) => Ok(self.handle_doctor_overlay_key(key, terminal)),
             ComposerMode::Side => Ok(self.handle_side_chat_key(key, terminal)),
             // Approvals are handled on the during-turn path, not idle input.
             ComposerMode::Approval(_) => Ok(false),

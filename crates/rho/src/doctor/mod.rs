@@ -16,7 +16,6 @@ use rho_providers::{auth::login_dispatch::ProviderAuthentication, credentials::C
 pub(crate) use checks::HerdrProbe;
 pub(crate) use probes::{
     plan_probes, probe_checks, run_probe, DoctorProbeGate, DoctorProbeId, DoctorProbeOutcome,
-    ProbePlaceholder,
 };
 pub(crate) use report::{
     DoctorCheck, DoctorCheckId, DoctorReport, DoctorSection, DoctorStatus, DoctorSummary,
@@ -39,9 +38,8 @@ pub(crate) struct DoctorInputs<'a> {
     pub(crate) clipboard: &'a ClipboardDoctorReport,
     pub(crate) mcp_report: &'a McpSessionReport,
     pub(crate) plugins_report: &'a PluginLoadReport,
-    /// Probes the host will run (or skipped), rendered as placeholder rows.
+    /// Probes the host will run, rendered as `Checking` rows until they finish.
     pub(crate) probes: &'a [DoctorProbeId],
-    pub(crate) placeholder: ProbePlaceholder,
 }
 
 pub(crate) fn build_report(inputs: DoctorInputs<'_>) -> DoctorReport {
@@ -51,7 +49,7 @@ pub(crate) fn build_report(inputs: DoctorInputs<'_>) -> DoctorReport {
         &ProviderAuthentication::has_environment_override,
     );
     for probe in inputs.probes {
-        rows.extend(probes::placeholder_checks(probe, inputs.placeholder));
+        rows.extend(probes::placeholder_checks(probe));
     }
     rows.extend(checks::cache_checks());
     rows.push(checks::selected_model_check(

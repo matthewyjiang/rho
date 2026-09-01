@@ -70,8 +70,8 @@ In the interactive TUI, run `/doctor`. The **Herdr** row reports:
 | --- | --- |
 | `not configured` | Rho is not running inside Herdr (healthy when you are outside Herdr) |
 | `connected` | Herdr env is set and the socket accepted a connection |
-| `unreachable` | Herdr env is set but the socket did not accept a connection |
-| `unavailable` | Herdr is configured but reachability could not be determined |
+| `unreachable` | Herdr env is set but the socket did not accept a connection (shown as a failure) |
+| `unknown` | Herdr is configured but reachability could not be determined (shown as a warning) |
 
 ## Related
 

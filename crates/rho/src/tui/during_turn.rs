@@ -104,6 +104,9 @@ impl App {
         if self.handle_limits_overlay_key(key, terminal) {
             return Ok(false);
         }
+        if self.handle_doctor_overlay_key(key, terminal) {
+            return Ok(false);
+        }
         if self.handle_side_chat_key(key, terminal) {
             return Ok(false);
         }
@@ -396,7 +399,7 @@ impl App {
             CommandId::Attach => self.execute_attach_command(),
             CommandId::Changelog => self.execute_changelog_command(&invocation, terminal),
             CommandId::Diff => self.execute_diff_command(),
-            CommandId::Doctor => self.execute_doctor_command(),
+            CommandId::Doctor => self.start_doctor_command(),
             CommandId::Copy => self.execute_copy_command(),
             CommandId::Export => self.execute_export_command(&invocation),
             CommandId::Mcp => self.execute_mcp_command(),

@@ -83,6 +83,7 @@ impl App {
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
+            | ComposerMode::Doctor(_)
             | ComposerMode::Side
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => {}
@@ -116,6 +117,7 @@ impl App {
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
+            | ComposerMode::Doctor(_)
             | ComposerMode::Side
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => false,
@@ -136,6 +138,7 @@ impl App {
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
+            | ComposerMode::Doctor(_)
             | ComposerMode::Side
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => false,
@@ -704,6 +707,7 @@ impl App {
             ComposerMode::Approval(_)
             | ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
+            | ComposerMode::Doctor(_)
             | ComposerMode::InteractivePending(_)
             | ComposerMode::InlineChoice(_) => {}
         }

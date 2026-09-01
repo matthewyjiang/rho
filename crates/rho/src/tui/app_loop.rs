@@ -61,6 +61,10 @@ impl App {
                     .iter()
                     .any(super::limits_command::PendingUsageFetch::is_finished)
                 || self
+                    .pending_doctor_probes
+                    .iter()
+                    .any(super::doctor_overlay::PendingDoctorProbe::is_finished)
+                || self
                     .pending_changelog
                     .as_ref()
                     .is_some_and(|handle| handle.is_finished())
@@ -98,6 +102,7 @@ impl App {
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_interactive_login(terminal, agent).await?;
             needs_redraw |= self.poll_limits_command().await?;
+            needs_redraw |= self.poll_doctor_command().await?;
             needs_redraw |= self.poll_side_chat();
             needs_redraw |= self.poll_changelog_command().await?;
             // Runs on every pass because the composer is what decides whether
@@ -158,6 +163,7 @@ impl App {
                 || self.pending_session_title.is_some()
                 || self.pending_interactive_login.is_some()
                 || !self.pending_usage_limits.is_empty()
+                || !self.pending_doctor_probes.is_empty()
                 || self.pending_changelog.is_some()
                 || self.mcp_argument_completions.is_pending()
                 || self.exclusive.wants_fast_ticks()
@@ -206,6 +212,7 @@ impl App {
         self.prompt_history.flush();
         self.abort_compact(agent).await;
         self.cancel_limits_command().await;
+        self.cancel_doctor_command().await;
         self.cancel_changelog_command().await;
         agent.cancel_startup_hydrates();
         self.mcp_argument_completions.cancel();
@@ -310,6 +317,10 @@ impl App {
                 self.input_ui.composer(),
                 ComposerMode::Limits(overlay) if overlay.is_checking()
             )
+            || matches!(
+                self.input_ui.composer(),
+                ComposerMode::Doctor(overlay) if overlay.is_checking()
+            )
             || self.side_chat_busy()
             || self.history.scrollbar_hovered()
             || self.history.scrollbar_drag().is_some()
@@ -343,6 +354,7 @@ impl App {
             ComposerMode::Input
             | ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
+            | ComposerMode::Doctor(_)
             | ComposerMode::Side
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
@@ -403,6 +415,7 @@ impl App {
         self.flush_pending_paste_burst();
         self.clamp_overlay_detail_scroll(terminal);
         self.clamp_limits_overlay_scroll(terminal);
+        self.clamp_doctor_overlay_scroll(terminal);
         self.clear_selections();
         self.clear_hovered_copy_buttons();
         self.subagent_panel.clear_pointer_state();

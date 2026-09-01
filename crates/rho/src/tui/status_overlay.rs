@@ -91,14 +91,13 @@ fn is_routine_status(message: &str) -> bool {
             | "refreshing model list"
             | "checking usage limits"
             | "usage limits"
-            | "checking provider connections"
+            | "doctor"
             | "fetching latest changelog"
             | "waiting for delegated agents"
             | "waiting for approval"
             | "waiting for your answers"
             | "keyboard shortcuts"
             | "runtime info"
-            | "doctor diagnostics"
             | "web search config"
             | "changelog usage"
     ) {
@@ -135,7 +134,6 @@ fn is_routine_status(message: &str) -> bool {
         lower.as_str(),
         "config · saves automatically"
             | "conversation tree"
-            | "doctor diagnostics"
             | "inline shell"
             | "keyboard shortcuts"
             | "loaded agents"

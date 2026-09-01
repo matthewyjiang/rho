@@ -451,6 +451,14 @@ impl App {
                 );
                 overlay.cursor
             }),
+            ComposerMode::Doctor(_) => self.doctor_overlay_frame(area, now).map(|overlay| {
+                frame.render_widget(Clear, overlay.outer);
+                frame.render_widget(
+                    Paragraph::new(overlay.lines).style(Theme::surface()),
+                    overlay.outer,
+                );
+                overlay.cursor
+            }),
             ComposerMode::Side => self.side_overlay_frame(area).map(|overlay| {
                 frame.render_widget(Clear, overlay.outer);
                 frame.render_widget(

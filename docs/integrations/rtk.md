@@ -84,7 +84,7 @@ In the interactive TUI, run `/doctor`. The **rtk** row reports:
 | `available` | `rtk --version` succeeds and supports rewrite |
 | `unavailable` | Binary missing, too old, or not runnable |
 
-Unavailable is not an error. Rho runs shell commands without rewrite until RTK is installed.
+Unavailable is not an error and is shown as an informational row. Rho runs shell commands without rewrite until RTK is installed.
 
 ## Related
 

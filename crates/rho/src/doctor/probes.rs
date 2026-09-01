@@ -55,15 +55,6 @@ pub(crate) enum DoctorProbeGate {
     Disabled,
 }
 
-/// How planned-but-unfinished probe rows render.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ProbePlaceholder {
-    /// A task is running; the row is replaced when it finishes.
-    Checking,
-    /// The host chose not to probe.
-    NotChecked,
-}
-
 /// Probes this host should spawn: the active OpenAI-compatible endpoint when
 /// it is probeable, any other host the user configured an endpoint for, plus
 /// the Claude Code and rtk binaries. Built-in defaults for unused keyless
@@ -185,18 +176,13 @@ fn rtk_version_supports_rewrite(version: &str) -> bool {
     major > 0 || minor >= 23
 }
 
-/// Rows a probe will fill in, in their pre-result state.
-pub(crate) fn placeholder_checks(
-    id: &DoctorProbeId,
-    placeholder: ProbePlaceholder,
-) -> Vec<DoctorCheck> {
-    let (status, summary) = match placeholder {
-        ProbePlaceholder::Checking => (DoctorStatus::Checking, "checking"),
-        ProbePlaceholder::NotChecked => (DoctorStatus::Info, "not checked"),
-    };
+/// Rows a probe will fill in, as `Checking` placeholders until it finishes.
+pub(crate) fn placeholder_checks(id: &DoctorProbeId) -> Vec<DoctorCheck> {
     probe_rows(id)
         .into_iter()
-        .map(|(check_id, label)| DoctorCheck::new(check_id, label, status, summary))
+        .map(|(check_id, label)| {
+            DoctorCheck::new(check_id, label, DoctorStatus::Checking, "checking")
+        })
         .collect()
 }
 
