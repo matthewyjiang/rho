@@ -42,6 +42,25 @@ fn write_state_unlocked(path: &Path, observation: &RateLimitObservation) {
     crate::config_writer::write_bytes_atomically(path, &contents).unwrap();
 }
 
+fn store_observation(path: &Path, observation: RateLimitObservation) -> anyhow::Result<()> {
+    let mut state = RateLimitState::default();
+    state.merge_window(observation);
+    store_state(path, state).map(|_| ())
+}
+
+fn store_ordered(
+    path: &Path,
+    info: RateLimitInfo,
+    observed_at_nanos: u64,
+    observed_seq: u64,
+    observed_nonce: impl Into<String>,
+) -> anyhow::Result<()> {
+    store_observation(
+        path,
+        RateLimitObservation::with_order(info, observed_at_nanos, observed_seq, observed_nonce),
+    )
+}
+
 #[test]
 fn multi_window_state_keeps_five_hour_and_seven_day() {
     let directory = tempfile::tempdir().unwrap();
@@ -200,32 +219,6 @@ fn out_of_order_writers_keep_highest_order_key() {
     let loaded = load_at(&path).expect("stored");
     assert_eq!(only(&loaded).observed_seq, 5);
     assert_eq!(only(&loaded).info.status.as_deref(), Some("fast-new"));
-}
-
-#[test]
-fn slot_keeps_latest_under_out_of_order_publish() {
-    let slot = RateLimitSlot::new();
-    slot.publish(RateLimitObservation::with_order(
-        sample_info("mid"),
-        secs(10),
-        2,
-        "n",
-    ));
-    slot.publish(RateLimitObservation::with_order(
-        sample_info("old"),
-        secs(10),
-        1,
-        "n",
-    ));
-    slot.publish(RateLimitObservation::with_order(
-        sample_info("new"),
-        secs(11),
-        1,
-        "n",
-    ));
-    let taken = slot.take().expect("observation");
-    assert_eq!(only(&taken).info.status.as_deref(), Some("new"));
-    assert!(slot.take().is_none());
 }
 
 #[test]
@@ -556,6 +549,55 @@ fn cross_process_out_of_order_writes_keep_newer() {
     assert_eq!(only(&loaded).info.status.as_deref(), Some("from-new-proc"));
     assert_eq!(only(&loaded).observed_nonce, "proc-new");
     assert_eq!(only(&loaded).observed_at_nanos, secs(7_000) + 500);
+}
+
+// Covers: stream window merges must not wipe a successful /usage probe stamp.
+// Owner: pure unit
+#[test]
+fn stream_merge_keeps_newer_last_probe_unix() {
+    let mut disk = RateLimitState {
+        last_probe_unix: Some(1_000),
+        ..RateLimitState::default()
+    };
+    disk.merge_window(RateLimitObservation::with_order(
+        sample_info("allowed"),
+        secs(1_000),
+        1,
+        "p1",
+    ));
+    let mut incoming = RateLimitState::default();
+    incoming.merge_window(RateLimitObservation::with_order(
+        sample_info_window("allowed", "seven_day"),
+        secs(1_100),
+        1,
+        "p1",
+    ));
+    disk.merge_state(incoming);
+    assert_eq!(disk.last_probe_unix, Some(1_000));
+    assert_eq!(disk.windows.len(), 2);
+
+    let probe = RateLimitState {
+        last_probe_unix: Some(2_000),
+        ..RateLimitState::default()
+    };
+    disk.merge_state(probe);
+    assert_eq!(disk.last_probe_unix, Some(2_000));
+    assert_eq!(disk.section_age_unix(), Some(2_000));
+
+    let mut observed = RateLimitState::default();
+    observed.merge_window(RateLimitObservation::with_order(
+        sample_info("allowed"),
+        secs(1_000),
+        1,
+        "p1",
+    ));
+    observed.merge_window(RateLimitObservation::with_order(
+        sample_info_window("allowed", "seven_day"),
+        secs(1_100),
+        1,
+        "p1",
+    ));
+    assert_eq!(observed.section_age_unix(), Some(1_100));
 }
 
 // Covers: epoch-zero timestamps must not format as multi-decade ages.

@@ -140,9 +140,9 @@ impl RateLimitInfo {
         Some(((1.0 - used) * 100.0).clamp(0.0, 100.0))
     }
 
-    /// Human window label (`five_hour` → `Five hour`).
+    /// Human window label (`five_hour` → `5-hour`, `seven_day` → `Weekly`).
     pub(crate) fn window_label(&self) -> String {
-        humanize_rate_limit_type(self.window_key())
+        crate::claude_runtime::window_kind::WindowKind::from_key(self.window_key()).label()
     }
 }
 
@@ -230,15 +230,6 @@ impl<'a> RateLimitStatusKind<'a> {
             "rejected" => Self::Rejected,
             other => Self::Other(other),
         }
-    }
-}
-
-fn humanize_rate_limit_type(value: &str) -> String {
-    let replaced = value.replace('_', " ");
-    let mut chars = replaced.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => "Usage window".into(),
     }
 }
 

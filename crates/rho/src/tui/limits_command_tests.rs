@@ -68,10 +68,10 @@ async fn cancelling_limits_query_waits_for_background_task_to_stop() {
     let task_marker = std::sync::Arc::new(());
     let captured_marker = task_marker.clone();
     app.pending_usage_limits.push(PendingUsageFetch {
-        kind: UsageProviderKind::Codex,
+        id: LimitsSectionId::Provider(UsageProviderKind::Codex),
         handle: tokio::spawn(async move {
             let _marker = captured_marker;
-            std::future::pending::<Result<Option<ProviderUsageLimits>, UsageLimitsError>>().await
+            std::future::pending::<LimitsFetchResult>().await
         }),
     });
 
@@ -114,7 +114,11 @@ fn applying_one_provider_leaves_others_checking() {
         scroll: 0,
         checking_started: Instant::now(),
     };
-    overlay.apply_live(UsageProviderKind::Codex, vec![codex_window()]);
+    overlay.apply_live(
+        LimitsSectionId::Provider(UsageProviderKind::Codex),
+        UsageProviderKind::Codex.label(),
+        vec![codex_window()],
+    );
 
     assert_eq!(overlay.sections[0].status, LimitsSectionStatus::Live);
     assert_eq!(overlay.sections[0].windows.len(), 1);
@@ -163,13 +167,17 @@ fn claude_section_is_present_without_oauth() {
         &BTreeMap::new(),
         &[],
         UsageLimitsCache::default(),
-        Some(&sample_claude_state(1_000)),
+        super::limits_claude::ClaudeLimitsView {
+            disk: Some(&sample_claude_state(1_000)),
+            pending: false,
+            probe_available: false,
+        },
         1_125,
     );
     assert_eq!(overlay.sections.len(), 1);
     assert_eq!(overlay.sections[0].id, LimitsSectionId::ClaudeCode);
     assert_eq!(overlay.sections[0].windows.len(), 1);
-    assert_eq!(overlay.sections[0].windows[0].label, "Five hour");
+    assert_eq!(overlay.sections[0].windows[0].label, "5-hour");
     assert!(overlay.sections[0].windows[0].remaining_percent.is_none());
     assert!(matches!(
         overlay.sections[0].status,
@@ -194,11 +202,109 @@ fn claude_section_surfaces_utilization_without_allowed_status() {
     state.merge_window(five);
     state.merge_window(weekly);
 
-    let section = claude_provider_limits(Some(&state), 1_100).expect("claude");
-    assert_eq!(section.windows[0].label, "Five hour");
+    let section = super::limits_claude::claude_provider_limits(
+        super::limits_claude::ClaudeLimitsView {
+            disk: Some(&state),
+            pending: false,
+            probe_available: false,
+        },
+        1_100,
+    )
+    .expect("claude");
+    assert_eq!(section.windows[0].label, "5-hour");
     assert_eq!(section.windows[0].remaining_percent, Some(75.0));
-    assert_eq!(section.windows[1].label, "Seven day");
+    assert_eq!(section.windows[1].label, "Weekly");
     assert_eq!(section.windows[1].remaining_percent, Some(60.0));
+}
+
+// Covers: Live keeps cache-only windows but labels them with observed age.
+// Owner: pure unit
+#[test]
+fn fresh_probe_state_shows_live_including_disk_fable() {
+    let mut disk = sample_claude_state(1_100);
+    disk.windows[0].info.utilization = Some(0.0);
+    let mut weekly = disk.windows[0].clone();
+    weekly.info.rate_limit_type = Some("seven_day".into());
+    weekly.info.utilization = Some(0.19);
+    weekly.observed_at_unix = 1_100;
+    let mut fable = weekly.clone();
+    fable.info.rate_limit_type = Some("seven_day_fable".into());
+    fable.info.utilization = Some(0.33);
+    fable.observed_at_unix = 1_000;
+    fable.observed_at_nanos = 1_000_000_000_000;
+    disk.merge_window(weekly);
+    disk.merge_window(fable);
+    disk.last_probe_unix = Some(1_100);
+
+    let section = super::limits_claude::claude_provider_limits(
+        super::limits_claude::ClaudeLimitsView {
+            disk: Some(&disk),
+            pending: false,
+            probe_available: false,
+        },
+        1_100,
+    )
+    .expect("claude");
+    assert_eq!(section.status, LimitsSectionStatus::Live);
+    let labels: Vec<&str> = section
+        .windows
+        .iter()
+        .map(|window| window.label.as_str())
+        .collect();
+    assert_eq!(labels, vec!["5-hour", "Weekly", "Fable"]);
+    assert_eq!(section.windows[0].note, None);
+    assert_eq!(section.windows[1].note, None);
+    assert_eq!(section.windows[2].note.as_deref(), Some("observed 1m ago"));
+}
+
+// Covers: a live Claude probe must occupy /limits before any disk cache exists.
+// Owner: pure unit
+#[test]
+fn stale_disk_probe_with_binary_shows_checking() {
+    let mut disk = sample_claude_state(1_000);
+    disk.last_probe_unix = Some(1);
+    let overlay = build_limits_overlay(
+        &MemoryCredentialStore::default(),
+        &BTreeMap::new(),
+        &[],
+        UsageLimitsCache::default(),
+        super::limits_claude::ClaudeLimitsView {
+            disk: Some(&disk),
+            pending: false,
+            probe_available: true,
+        },
+        1_000 + 400,
+    );
+    assert!(matches!(
+        overlay.sections[0].status,
+        LimitsSectionStatus::Checking {
+            cached_at_unix: Some(1)
+        }
+    ));
+}
+
+#[test]
+fn claude_probe_without_disk_shows_checking() {
+    let overlay = build_limits_overlay(
+        &MemoryCredentialStore::default(),
+        &BTreeMap::new(),
+        &[],
+        UsageLimitsCache::default(),
+        super::limits_claude::ClaudeLimitsView {
+            disk: None,
+            pending: false,
+            probe_available: true,
+        },
+        0,
+    );
+    assert_eq!(overlay.sections.len(), 1);
+    assert_eq!(overlay.sections[0].id, LimitsSectionId::ClaudeCode);
+    assert!(matches!(
+        overlay.sections[0].status,
+        LimitsSectionStatus::Checking {
+            cached_at_unix: None
+        }
+    ));
 }
 
 #[test]
@@ -208,7 +314,11 @@ fn missing_claude_state_does_not_invent_a_section() {
         &BTreeMap::new(),
         &[],
         UsageLimitsCache::default(),
-        None,
+        super::limits_claude::ClaudeLimitsView {
+            disk: None,
+            pending: false,
+            probe_available: false,
+        },
         0,
     );
     assert!(overlay.sections.is_empty());

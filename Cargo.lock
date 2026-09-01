@@ -4423,6 +4423,7 @@ dependencies = [
  "libc",
  "logos 0.16.1",
  "mermaid-rs-renderer",
+ "portable-pty",
  "pretty_assertions",
  "pulldown-cmark",
  "rand 0.8.6",
@@ -4460,6 +4461,7 @@ dependencies = [
  "unicode-width 0.2.2",
  "url",
  "uuid",
+ "vt100",
  "windows-sys 0.61.2",
  "winresource",
 ]
@@ -4520,8 +4522,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "portable-pty",
  "pretty_assertions",
+ "rho-coding-agent",
  "serde",
  "serde_json",
  "tempfile",
