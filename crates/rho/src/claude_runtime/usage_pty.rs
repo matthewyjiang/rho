@@ -1,6 +1,13 @@
 //! Minimal Unix PTY session for the Claude `/usage` probe.
 //!
 //! Spawn, inject, drain into a VT screen, kill. Not a test harness.
+//!
+//! KEEP IN SYNC with `crates/rho-tui-pty/src/pty.rs` (`PtyController`): spawn
+//! shape, env_clear, reader-thread loop, drain-with-deadline, killed flag,
+//! Drop, and process-group SIGKILL. This copy exists because `rho-tui-pty`
+//! is unpublished test support and cannot be a production dependency of
+//! published `rho-coding-agent`. Deltas here: VT100 parse on drain, `String`
+//! errors.
 
 use std::{
     io::{Read, Write},

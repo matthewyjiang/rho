@@ -225,51 +225,7 @@ impl RateLimitState {
 }
 
 fn window_sort_key(key: &str) -> u8 {
-    match key {
-        "five_hour" => 0,
-        "seven_day" => 1,
-        "seven_day_sonnet" => 2,
-        "seven_day_opus" => 3,
-        "seven_day_fable" => 4,
-        "seven_day_all_models" | "seven_day_all" => 5,
-        _ => 50,
-    }
-}
-
-/// Coalescing multi-window slot. Never drops a newer window under load.
-#[cfg(test)]
-#[derive(Default)]
-pub(crate) struct RateLimitSlot {
-    pending: Mutex<RateLimitState>,
-}
-
-#[cfg(test)]
-impl RateLimitSlot {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    /// Merge one window observation into the pending multi-window state.
-    pub(crate) fn publish(&self, observation: RateLimitObservation) {
-        let mut guard = self
-            .pending
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.merge_window(observation);
-    }
-
-    /// Take pending windows, clearing the slot.
-    pub(crate) fn take(&self) -> Option<RateLimitState> {
-        let mut guard = self
-            .pending
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if guard.is_empty() {
-            None
-        } else {
-            Some(std::mem::take(&mut *guard))
-        }
-    }
+    super::window_kind::WindowKind::from_key(key).sort_rank()
 }
 
 pub(crate) fn default_state_path() -> anyhow::Result<PathBuf> {
@@ -345,17 +301,6 @@ fn set_private_path_permissions(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Persist one window, merging into any multi-window state already on disk.
-#[cfg(test)]
-pub(crate) fn store_observation(
-    path: &Path,
-    observation: RateLimitObservation,
-) -> anyhow::Result<()> {
-    let mut state = RateLimitState::default();
-    state.merge_window(observation);
-    store_state(path, state).map(|_| ())
-}
-
 /// Merge `incoming` windows into disk state under the cross-process lock.
 pub(crate) fn store_state(path: &Path, incoming: RateLimitState) -> anyhow::Result<RateLimitState> {
     if incoming.is_empty() {
@@ -385,21 +330,6 @@ pub(crate) fn store_state(path: &Path, incoming: RateLimitState) -> anyhow::Resu
         }
     }
     Ok(state)
-}
-
-/// Persist with an explicit order key (tests for equal timestamps / migration).
-#[cfg(test)]
-pub(crate) fn store_ordered(
-    path: &Path,
-    info: RateLimitInfo,
-    observed_at_nanos: u64,
-    observed_seq: u64,
-    observed_nonce: impl Into<String>,
-) -> anyhow::Result<()> {
-    store_observation(
-        path,
-        RateLimitObservation::with_order(info, observed_at_nanos, observed_seq, observed_nonce),
-    )
 }
 
 pub(crate) fn load() -> Option<RateLimitState> {

@@ -42,6 +42,25 @@ fn write_state_unlocked(path: &Path, observation: &RateLimitObservation) {
     crate::config_writer::write_bytes_atomically(path, &contents).unwrap();
 }
 
+fn store_observation(path: &Path, observation: RateLimitObservation) -> anyhow::Result<()> {
+    let mut state = RateLimitState::default();
+    state.merge_window(observation);
+    store_state(path, state).map(|_| ())
+}
+
+fn store_ordered(
+    path: &Path,
+    info: RateLimitInfo,
+    observed_at_nanos: u64,
+    observed_seq: u64,
+    observed_nonce: impl Into<String>,
+) -> anyhow::Result<()> {
+    store_observation(
+        path,
+        RateLimitObservation::with_order(info, observed_at_nanos, observed_seq, observed_nonce),
+    )
+}
+
 #[test]
 fn multi_window_state_keeps_five_hour_and_seven_day() {
     let directory = tempfile::tempdir().unwrap();
@@ -200,32 +219,6 @@ fn out_of_order_writers_keep_highest_order_key() {
     let loaded = load_at(&path).expect("stored");
     assert_eq!(only(&loaded).observed_seq, 5);
     assert_eq!(only(&loaded).info.status.as_deref(), Some("fast-new"));
-}
-
-#[test]
-fn slot_keeps_latest_under_out_of_order_publish() {
-    let slot = RateLimitSlot::new();
-    slot.publish(RateLimitObservation::with_order(
-        sample_info("mid"),
-        secs(10),
-        2,
-        "n",
-    ));
-    slot.publish(RateLimitObservation::with_order(
-        sample_info("old"),
-        secs(10),
-        1,
-        "n",
-    ));
-    slot.publish(RateLimitObservation::with_order(
-        sample_info("new"),
-        secs(11),
-        1,
-        "n",
-    ));
-    let taken = slot.take().expect("observation");
-    assert_eq!(only(&taken).info.status.as_deref(), Some("new"));
-    assert!(slot.take().is_none());
 }
 
 #[test]

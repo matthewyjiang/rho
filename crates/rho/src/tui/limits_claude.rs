@@ -19,7 +19,37 @@ pub(super) struct ClaudeLimitsView<'a> {
     pub(super) probe_available: bool,
 }
 
+/// Whether a row should carry an "observed Xs ago" note.
+#[derive(Clone, Copy)]
+enum AgeNote {
+    Always,
+    StaleOnly,
+}
+
+/// Overlay presentation derived from disk freshness, pending fetch, and probe.
+#[derive(Clone, Copy)]
+enum ClaudeDisplay {
+    Checking { cached_at_unix: Option<i64> },
+    Live,
+    Observed { observed_at_unix: i64 },
+}
+
+impl ClaudeDisplay {
+    fn age_note(self) -> AgeNote {
+        match self {
+            Self::Checking { .. } | Self::Observed { .. } => AgeNote::Always,
+            Self::Live => AgeNote::StaleOnly,
+        }
+    }
+}
+
 pub(super) fn claude_probe_available() -> bool {
+    // `probe_supported` is the Unix PTY capability and stays true under
+    // `cfg(test)`. cargo test must not spawn the real `claude` TUI from
+    // `/limits`; fake-child coverage goes through `read_usage_from_binary`.
+    if cfg!(test) {
+        return false;
+    }
     usage_probe::probe_supported() && crate::claude_runtime::executable::resolve().is_ok()
 }
 
@@ -33,42 +63,45 @@ pub(super) fn claude_provider_limits(
             .last_probe_unix
             .is_some_and(|at| usage_probe::live_is_fresh(at, now_unix))
     });
-    let disk_windows = view
+    let display = if view.pending || (view.probe_available && !fresh) {
+        ClaudeDisplay::Checking {
+            cached_at_unix: disk_age,
+        }
+    } else if fresh {
+        ClaudeDisplay::Live
+    } else {
+        ClaudeDisplay::Observed {
+            observed_at_unix: disk_age.unwrap_or(now_unix),
+        }
+    };
+    let windows = view
         .disk
-        .map(|state| claude_windows_from_state(state, now_unix, !fresh || view.pending))
+        .map(|state| claude_windows_from_state(state, now_unix, display.age_note()))
         .unwrap_or_default();
-
-    if view.pending || (view.probe_available && !fresh) {
-        return Some(claude_section(
-            LimitsSectionStatus::Checking {
-                cached_at_unix: disk_age,
-            },
-            disk_windows,
-        ));
-    }
-    if fresh {
-        let windows = view
-            .disk
-            .map(|state| claude_windows_from_state(state, now_unix, false))
-            .unwrap_or_default();
-        return Some(claude_section(
+    match display {
+        ClaudeDisplay::Checking { cached_at_unix } => Some(claude_section(
+            LimitsSectionStatus::Checking { cached_at_unix },
+            windows,
+        )),
+        ClaudeDisplay::Live => Some(claude_section(
             if windows.is_empty() {
                 LimitsSectionStatus::Empty
             } else {
                 LimitsSectionStatus::Live
             },
             windows,
-        ));
+        )),
+        ClaudeDisplay::Observed { observed_at_unix } => {
+            if windows.is_empty() {
+                None
+            } else {
+                Some(claude_section(
+                    LimitsSectionStatus::Observed { observed_at_unix },
+                    windows,
+                ))
+            }
+        }
     }
-    if disk_windows.is_empty() {
-        return None;
-    }
-    Some(claude_section(
-        LimitsSectionStatus::Observed {
-            observed_at_unix: disk_age.unwrap_or(now_unix),
-        },
-        disk_windows,
-    ))
 }
 
 fn claude_section(status: LimitsSectionStatus, windows: Vec<UsageLimitWindow>) -> LimitsSection {
@@ -81,7 +114,7 @@ fn claude_section(status: LimitsSectionStatus, windows: Vec<UsageLimitWindow>) -
 }
 
 impl App {
-    pub(super) fn spawn_claude_usage_fetch(&mut self) {
+    pub(super) fn spawn_claude_usage_fetch(&mut self, disk: Option<&RateLimitState>) {
         if self
             .pending_usage_limits
             .iter()
@@ -93,7 +126,7 @@ impl App {
             return;
         }
         let now = now_unix();
-        if crate::claude_runtime::rate_limit::load().is_some_and(|state| {
+        if disk.is_some_and(|state| {
             state
                 .last_probe_unix
                 .is_some_and(|at| usage_probe::live_is_fresh(at, now))
@@ -106,7 +139,11 @@ impl App {
                 match usage_probe::fetch_usage().await {
                     Ok(usage_probe::UsageProbeOutcome::Ready(state)) => {
                         LimitsFetchResult::ClaudeReady {
-                            windows: claude_windows_from_state(&state, now_unix(), false),
+                            windows: claude_windows_from_state(
+                                &state,
+                                now_unix(),
+                                AgeNote::StaleOnly,
+                            ),
                         }
                     }
                     Ok(usage_probe::UsageProbeOutcome::Unavailable) => {
@@ -119,8 +156,7 @@ impl App {
                 }
             }),
         });
-        let cached_at =
-            crate::claude_runtime::rate_limit::load().and_then(|state| state.section_age_unix());
+        let cached_at = disk.and_then(|state| state.section_age_unix());
         if let Some(overlay) = self.limits_overlay_mut() {
             set_claude_checking(overlay, cached_at);
         }
@@ -146,7 +182,7 @@ pub(super) fn apply_claude_disk_fallback(app: &mut App, failed: bool) {
             overlay.upsert(
                 LimitsSectionId::ClaudeCode,
                 CLAUDE_CODE_PROVIDER_LABEL,
-                claude_windows_from_state(&state, now_unix(), true),
+                claude_windows_from_state(&state, now_unix(), AgeNote::Always),
                 LimitsSectionStatus::Observed {
                     observed_at_unix: state.section_age_unix().unwrap_or(now_unix()),
                 },
@@ -176,10 +212,10 @@ fn set_claude_checking(overlay: &mut LimitsOverlay, cached_at_unix: Option<i64>)
     );
 }
 
-pub(super) fn claude_windows_from_state(
+fn claude_windows_from_state(
     state: &RateLimitState,
     now_unix: i64,
-    include_age: bool,
+    age_note: AgeNote,
 ) -> Vec<UsageLimitWindow> {
     state
         .sorted_windows()
@@ -198,7 +234,11 @@ pub(super) fn claude_windows_from_state(
                 Some(probe) => window.observed_at_unix < probe,
                 None => true,
             };
-            if include_age || cache_only {
+            let show_age = match age_note {
+                AgeNote::Always => true,
+                AgeNote::StaleOnly => cache_only,
+            };
+            if show_age {
                 if let Some(age) = crate::claude_runtime::rate_limit::format_age_since(
                     window.observed_at_unix,
                     now_unix,

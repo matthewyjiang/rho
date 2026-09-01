@@ -4,7 +4,7 @@
 //! shows. Window keys match stream `rate_limit_event` types so `/limits`
 //! can merge a live probe with last-observed cache.
 
-use super::{rate_limit::RateLimitState, stream::RateLimitInfo};
+use super::{rate_limit::RateLimitState, stream::RateLimitInfo, window_kind::WindowKind};
 
 /// Look-ahead after a header for `% used` / `Resets`.
 const HEADER_SCAN_LINES: usize = 6;
@@ -54,8 +54,20 @@ fn find_headers(lines: &[&str]) -> Vec<HeaderHit> {
     let mut hits = Vec::new();
     for (line, text) in lines.iter().enumerate() {
         let lower = text.to_ascii_lowercase();
-        push_ascii_hit(&mut hits, line, &lower, "current session", "five_hour");
-        push_ascii_hit(&mut hits, line, &lower, "extra usage", "extra_usage");
+        push_ascii_hit(
+            &mut hits,
+            line,
+            &lower,
+            "current session",
+            WindowKind::FiveHour.key(),
+        );
+        push_ascii_hit(
+            &mut hits,
+            line,
+            &lower,
+            "extra usage",
+            WindowKind::ExtraUsage.key(),
+        );
         hits.extend(week_hits(line, &lower));
     }
     hits.sort_by_key(|hit| (hit.line, hit.start));
@@ -89,7 +101,7 @@ fn week_hits(line: usize, lower: &str) -> Vec<HeaderHit> {
         let inner = &lower[inner_byte..inner_byte + rel_end];
         let end_byte = inner_byte + rel_end + 1;
         hits.push(HeaderHit {
-            key: week_window_key(inner),
+            key: WindowKind::from_week_inner(inner).key().to_owned(),
             line,
             start: char_count(lower, start_byte),
             end: char_count(lower, end_byte),
@@ -97,30 +109,6 @@ fn week_hits(line: usize, lower: &str) -> Vec<HeaderHit> {
         from = end_byte;
     }
     hits
-}
-
-fn week_window_key(inner: &str) -> String {
-    let inner = inner.trim();
-    if inner.contains("all model") {
-        "seven_day".into()
-    } else if inner.contains("sonnet") {
-        "seven_day_sonnet".into()
-    } else if inner.contains("opus") {
-        "seven_day_opus".into()
-    } else if inner.contains("fable") {
-        "seven_day_fable".into()
-    } else {
-        let slug: String = inner
-            .chars()
-            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
-            .collect();
-        let slug = slug.trim_matches('_').replace("__", "_");
-        if slug.is_empty() {
-            "seven_day".into()
-        } else {
-            format!("seven_day_{slug}")
-        }
-    }
 }
 
 fn char_count(text: &str, byte: usize) -> usize {

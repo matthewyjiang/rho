@@ -21,4 +21,5 @@ pub(crate) mod usage_parse;
 pub(crate) mod usage_probe;
 #[cfg(unix)]
 pub(crate) mod usage_pty;
+pub(crate) mod window_kind;
 pub(crate) mod windows_shim_args;

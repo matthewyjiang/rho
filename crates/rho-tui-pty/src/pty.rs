@@ -1,4 +1,10 @@
 //! Low-level PTY controller: spawn, inject, resize, drain, and cleanup.
+//!
+//! KEEP IN SYNC with `crates/rho/src/claude_runtime/usage_pty.rs`
+//! (`PtySession`): spawn shape, env_clear, reader-thread loop,
+//! drain-with-deadline, killed flag, Drop, and process-group SIGKILL. That
+//! production copy cannot depend on this unpublished test crate. Deltas
+//! there: VT100 parse on drain, `String` errors.
 
 use std::{
     io::{Read, Write},
@@ -139,6 +145,16 @@ impl PtyController {
             return Ok(());
         }
         self.killed = true;
+        // portable-pty `setsid`s the child, so the pid is the group leader.
+        // Keep this kill path aligned with `usage_pty::PtySession::kill`.
+        #[cfg(unix)]
+        if let Some(pid) = self.child.process_id() {
+            if let Ok(pid) = i32::try_from(pid) {
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
         Ok(())

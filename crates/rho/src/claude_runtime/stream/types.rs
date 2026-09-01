@@ -142,7 +142,7 @@ impl RateLimitInfo {
 
     /// Human window label (`five_hour` → `5-hour`, `seven_day` → `Weekly`).
     pub(crate) fn window_label(&self) -> String {
-        humanize_rate_limit_type(self.window_key())
+        crate::claude_runtime::window_kind::WindowKind::from_key(self.window_key()).label()
     }
 }
 
@@ -231,41 +231,6 @@ impl<'a> RateLimitStatusKind<'a> {
             other => Self::Other(other),
         }
     }
-}
-
-fn humanize_rate_limit_type(value: &str) -> String {
-    match value {
-        "five_hour" => "5-hour".into(),
-        "seven_day" | "seven_day_all" | "seven_day_all_models" => "Weekly".into(),
-        "seven_day_fable" => "Fable".into(),
-        "extra_usage" => "Extra usage".into(),
-        "usage_window" => "Usage window".into(),
-        other => {
-            if let Some(slug) = other.strip_prefix("seven_day_") {
-                return format!("Weekly {}", title_case_slug(slug));
-            }
-            let replaced = other.replace('_', " ");
-            let mut chars = replaced.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                None => "Usage window".into(),
-            }
-        }
-    }
-}
-
-fn title_case_slug(slug: &str) -> String {
-    slug.split('_')
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn format_unix_local(unix: i64) -> String {

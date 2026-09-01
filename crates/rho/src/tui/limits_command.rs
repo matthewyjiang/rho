@@ -37,7 +37,6 @@ const CLAUDE_CODE_PROVIDER_LABEL: &str = "Claude Code";
 
 enum LimitsFetchResult {
     ProviderReady {
-        kind: UsageProviderKind,
         limits: crate::usage_limits::ProviderUsageLimits,
     },
     ClaudeReady {
@@ -209,8 +208,9 @@ impl App {
     }
 
     pub(super) fn start_limits_command(&mut self) {
-        self.open_limits_overlay();
-        self.spawn_missing_usage_fetches();
+        let claude_disk = crate::claude_runtime::rate_limit::load();
+        self.open_limits_overlay(claude_disk.as_ref());
+        self.spawn_missing_usage_fetches(claude_disk.as_ref());
         self.set_status("usage limits");
     }
 
@@ -402,7 +402,10 @@ impl App {
         }
     }
 
-    fn open_limits_overlay(&mut self) {
+    fn open_limits_overlay(
+        &mut self,
+        claude_disk: Option<&crate::claude_runtime::rate_limit::RateLimitState>,
+    ) {
         let overlay = build_limits_overlay(
             self.credential_store.as_ref(),
             &self.usage_limits_live,
@@ -413,7 +416,7 @@ impl App {
                 .as_slice(),
             usage_limits_cache::load(),
             limits_claude::ClaudeLimitsView {
-                disk: crate::claude_runtime::rate_limit::load().as_ref(),
+                disk: claude_disk,
                 pending: self
                     .pending_usage_limits
                     .iter()
@@ -425,7 +428,10 @@ impl App {
         self.input_ui.set_composer(ComposerMode::Limits(overlay));
     }
 
-    fn spawn_missing_usage_fetches(&mut self) {
+    fn spawn_missing_usage_fetches(
+        &mut self,
+        claude_disk: Option<&crate::claude_runtime::rate_limit::RateLimitState>,
+    ) {
         let pending: Vec<UsageProviderKind> = self
             .pending_usage_limits
             .iter()
@@ -445,7 +451,7 @@ impl App {
                 id: LimitsSectionId::Provider(kind),
                 handle: tokio::spawn(async move {
                     match fetch_usage_provider(kind, store.as_ref(), client).await {
-                        Ok(Some(limits)) => LimitsFetchResult::ProviderReady { kind, limits },
+                        Ok(Some(limits)) => LimitsFetchResult::ProviderReady { limits },
                         Ok(None) => LimitsFetchResult::Unavailable,
                         Err(_) => LimitsFetchResult::Failed,
                     }
@@ -469,29 +475,36 @@ impl App {
                 }
             }
         }
-        self.spawn_claude_usage_fetch();
+        self.spawn_claude_usage_fetch(claude_disk);
     }
 
     fn apply_limits_fetch(&mut self, id: LimitsSectionId, result: LimitsFetchResult) {
-        match result {
-            LimitsFetchResult::ProviderReady { kind, limits } => {
+        match (id, result) {
+            (LimitsSectionId::Provider(kind), LimitsFetchResult::ProviderReady { limits }) => {
                 self.apply_provider_ready(kind, limits)
             }
-            LimitsFetchResult::ClaudeReady { windows } => {
+            (LimitsSectionId::ClaudeCode, LimitsFetchResult::ClaudeReady { windows }) => {
                 limits_claude::apply_claude_live(self, windows)
             }
-            LimitsFetchResult::Unavailable => match id {
-                LimitsSectionId::Provider(kind) => {
-                    self.usage_limits_live.remove(&kind);
-                    if let Some(overlay) = self.limits_overlay_mut() {
-                        overlay.remove_id(id);
-                    }
+            (LimitsSectionId::Provider(kind), LimitsFetchResult::Unavailable) => {
+                self.usage_limits_live.remove(&kind);
+                if let Some(overlay) = self.limits_overlay_mut() {
+                    overlay.remove_id(LimitsSectionId::Provider(kind));
                 }
-                LimitsSectionId::ClaudeCode => {
-                    limits_claude::apply_claude_disk_fallback(self, false)
-                }
-            },
-            LimitsFetchResult::Failed => match id {
+            }
+            (LimitsSectionId::ClaudeCode, LimitsFetchResult::Unavailable) => {
+                limits_claude::apply_claude_disk_fallback(self, false)
+            }
+            (LimitsSectionId::Provider(kind), LimitsFetchResult::Failed) => {
+                self.mark_usage_failed(kind)
+            }
+            (LimitsSectionId::ClaudeCode, LimitsFetchResult::Failed) => {
+                limits_claude::apply_claude_disk_fallback(self, true)
+            }
+            (
+                id,
+                LimitsFetchResult::ProviderReady { .. } | LimitsFetchResult::ClaudeReady { .. },
+            ) => match id {
                 LimitsSectionId::Provider(kind) => self.mark_usage_failed(kind),
                 LimitsSectionId::ClaudeCode => {
                     limits_claude::apply_claude_disk_fallback(self, true)

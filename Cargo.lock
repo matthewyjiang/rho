@@ -4522,6 +4522,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "libc",
  "portable-pty",
  "pretty_assertions",
  "serde",
