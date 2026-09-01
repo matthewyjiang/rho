@@ -122,14 +122,14 @@ impl App {
         self.set_status("checking provider connections");
         terminal.draw(|frame| self.draw(frame))?;
 
-        let probes = plan_probes(&config, doctor::probe_gate());
+        let probes = plan_probes(&config, &self.info.runtime.provider, doctor::probe_gate());
         let mut outcomes = Vec::with_capacity(probes.len());
         for id in &probes {
             outcomes.push(run_probe(id.clone(), self.credential_store.clone()).await);
         }
         let mut report = self.doctor_report(&probes, ProbePlaceholder::Checking)?;
         for outcome in &outcomes {
-            report.replace_checks(probe_checks(outcome, &config.provider));
+            report.replace_checks(probe_checks(outcome, &self.info.runtime.provider));
         }
         self.open_doctor_picker(&report)
     }
@@ -138,7 +138,7 @@ impl App {
         // During a turn, skip live probes so stream draining is never blocked
         // on a child process or the network.
         let config = self.info.services.config_repository.load()?;
-        let probes = plan_probes(&config, doctor::probe_gate());
+        let probes = plan_probes(&config, &self.info.runtime.provider, doctor::probe_gate());
         let report = self.doctor_report(&probes, ProbePlaceholder::NotChecked)?;
         self.open_doctor_picker(&report)
     }

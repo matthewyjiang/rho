@@ -69,7 +69,15 @@ pub(crate) enum ProbePlaceholder {
 /// the Claude Code and rtk binaries. Built-in defaults for unused keyless
 /// hosts are not probed; those would fail `rho doctor` on machines that never
 /// run them.
-pub(crate) fn plan_probes(config: &Config, gate: DoctorProbeGate) -> Vec<DoctorProbeId> {
+///
+/// `active_provider` is the host the session is using. That can differ from
+/// [`Config::provider`] when a `--provider` override was not saved or a model
+/// switch did not persist.
+pub(crate) fn plan_probes(
+    config: &Config,
+    active_provider: &str,
+    gate: DoctorProbeGate,
+) -> Vec<DoctorProbeId> {
     match gate {
         DoctorProbeGate::Disabled => return Vec::new(),
         DoctorProbeGate::Live => {}
@@ -78,7 +86,7 @@ pub(crate) fn plan_probes(config: &Config, gate: DoctorProbeGate) -> Vec<DoctorP
         .iter()
         .filter(|descriptor| {
             descriptor.probes_configured_endpoint()
-                && (descriptor.name == config.provider
+                && (descriptor.name == active_provider
                     || config
                         .configured_provider_endpoint(descriptor.name)
                         .is_some())

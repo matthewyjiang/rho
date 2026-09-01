@@ -5,32 +5,37 @@ use super::*;
 
 // Covers: the disabled gate plans nothing; the live gate plans an endpoint
 // probe only for the active provider or a user-configured host, then the
-// binaries. Unused built-in defaults are not probed.
+// binaries. Unused built-in defaults are not probed. The active host is the
+// argument, not `config.provider`, so an unsaved session provider is still
+// planned.
 // Owner: pure unit
 #[test]
 fn plan_follows_gate_and_selected_or_configured_hosts() {
     let config = Config::default();
 
-    assert!(plan_probes(&config, DoctorProbeGate::Disabled).is_empty());
+    assert!(plan_probes(&config, &config.provider, DoctorProbeGate::Disabled).is_empty());
     assert_eq!(
-        plan_probes(&config, DoctorProbeGate::Live),
+        plan_probes(&config, &config.provider, DoctorProbeGate::Live),
         vec![DoctorProbeId::Claude, DoctorProbeId::Rtk]
     );
 
     let mut active = Config::default();
     active.provider = "ollama".into();
-    assert_endpoint_then_binaries(&active, "ollama");
+    assert_endpoint_then_binaries(&active, &active.provider, "ollama");
 
     let mut configured = Config::default();
     configured
         .providers
         .set_endpoint("ollama", rho_providers::provider::OLLAMA_API_BASE)
         .unwrap();
-    assert_endpoint_then_binaries(&configured, "ollama");
+    assert_endpoint_then_binaries(&configured, &configured.provider, "ollama");
+
+    let unsaved = Config::default();
+    assert_endpoint_then_binaries(&unsaved, "ollama", "ollama");
 }
 
-fn assert_endpoint_then_binaries(config: &Config, provider: &str) {
-    let probes = plan_probes(config, DoctorProbeGate::Live);
+fn assert_endpoint_then_binaries(config: &Config, active_provider: &str, provider: &str) {
+    let probes = plan_probes(config, active_provider, DoctorProbeGate::Live);
     let DoctorProbeId::ProviderEndpoint {
         provider: planned,
         endpoint,
