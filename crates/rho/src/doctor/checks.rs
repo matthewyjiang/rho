@@ -172,11 +172,18 @@ pub(super) fn endpoint_label(provider: &str) -> String {
     format!("{display_name} connection")
 }
 
-pub(super) fn endpoint_check(provider: &str, health: &ProviderModelHealth) -> DoctorCheck {
+/// One row per probed host. Only the active provider fails or warns; unused
+/// configured hosts stay informational so `rho doctor` can gate CI.
+pub(super) fn endpoint_check(
+    provider: &str,
+    health: &ProviderModelHealth,
+    active_provider: &str,
+) -> DoctorCheck {
     let id = DoctorCheckId::ProviderEndpoint {
         provider: provider.into(),
     };
     let label = endpoint_label(provider);
+    let active = provider == active_provider;
     match health {
         ProviderModelHealth::ReachableWithModels { model_count } => DoctorCheck::new(
             id,
@@ -187,17 +194,39 @@ pub(super) fn endpoint_check(provider: &str, health: &ProviderModelHealth) -> Do
                 plural_suffix(*model_count)
             ),
         ),
-        ProviderModelHealth::ReachableWithoutModels => {
-            DoctorCheck::new(id, label, DoctorStatus::Warn, "no models")
-                .with_hint("the endpoint is reachable but has no installed models")
-        }
-        ProviderModelHealth::Unreachable { error } => {
-            DoctorCheck::new(id, label, DoctorStatus::Fail, "unreachable").with_hint(error.clone())
-        }
-        ProviderModelHealth::InvalidResponse { error } => {
-            DoctorCheck::new(id, label, DoctorStatus::Fail, "invalid response")
-                .with_hint(error.clone())
-        }
+        ProviderModelHealth::ReachableWithoutModels => DoctorCheck::new(
+            id,
+            label,
+            if active {
+                DoctorStatus::Warn
+            } else {
+                DoctorStatus::Info
+            },
+            "no models",
+        )
+        .with_hint("the endpoint is reachable but has no installed models"),
+        ProviderModelHealth::Unreachable { error } => DoctorCheck::new(
+            id,
+            label,
+            if active {
+                DoctorStatus::Fail
+            } else {
+                DoctorStatus::Info
+            },
+            "unreachable",
+        )
+        .with_hint(error.clone()),
+        ProviderModelHealth::InvalidResponse { error } => DoctorCheck::new(
+            id,
+            label,
+            if active {
+                DoctorStatus::Fail
+            } else {
+                DoctorStatus::Info
+            },
+            "invalid response",
+        )
+        .with_hint(error.clone()),
     }
 }
 

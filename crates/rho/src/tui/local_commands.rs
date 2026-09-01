@@ -129,7 +129,7 @@ impl App {
         }
         let mut report = self.doctor_report(&probes, ProbePlaceholder::Checking)?;
         for outcome in &outcomes {
-            report.replace_checks(probe_checks(outcome));
+            report.replace_checks(probe_checks(outcome, &config.provider));
         }
         self.open_doctor_picker(&report)
     }

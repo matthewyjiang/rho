@@ -64,8 +64,11 @@ pub(crate) enum ProbePlaceholder {
     NotChecked,
 }
 
-/// Probes this host should spawn: one per provider with a resolvable
-/// OpenAI-compatible endpoint, plus the Claude Code and rtk binaries.
+/// Probes this host should spawn: the active OpenAI-compatible endpoint when
+/// it is probeable, any other host the user configured an endpoint for, plus
+/// the Claude Code and rtk binaries. Built-in defaults for unused keyless
+/// hosts are not probed; those would fail `rho doctor` on machines that never
+/// run them.
 pub(crate) fn plan_probes(config: &Config, gate: DoctorProbeGate) -> Vec<DoctorProbeId> {
     match gate {
         DoctorProbeGate::Disabled => return Vec::new(),
@@ -73,7 +76,13 @@ pub(crate) fn plan_probes(config: &Config, gate: DoctorProbeGate) -> Vec<DoctorP
     }
     let mut probes = provider::providers()
         .iter()
-        .filter(|descriptor| descriptor.probes_configured_endpoint())
+        .filter(|descriptor| {
+            descriptor.probes_configured_endpoint()
+                && (descriptor.name == config.provider
+                    || config
+                        .configured_provider_endpoint(descriptor.name)
+                        .is_some())
+        })
         .filter_map(|descriptor| {
             config
                 .resolved_provider_endpoint(descriptor.name)
@@ -126,10 +135,13 @@ pub(crate) fn placeholder_checks(
 }
 
 /// Rows that replace a probe's placeholders.
-pub(crate) fn probe_checks(outcome: &DoctorProbeOutcome) -> Vec<DoctorCheck> {
+pub(crate) fn probe_checks(
+    outcome: &DoctorProbeOutcome,
+    active_provider: &str,
+) -> Vec<DoctorCheck> {
     match outcome {
         DoctorProbeOutcome::ProviderEndpoint { provider, health } => {
-            vec![checks::endpoint_check(provider, health)]
+            vec![checks::endpoint_check(provider, health, active_provider)]
         }
         DoctorProbeOutcome::Claude(snapshot) => checks::claude_checks(snapshot),
         DoctorProbeOutcome::Rtk { available } => vec![checks::rtk_check(*available)],

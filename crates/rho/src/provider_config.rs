@@ -298,20 +298,28 @@ impl Config {
         true
     }
 
+    /// User-configured API base, if any. Unlike [`Self::resolved_provider_endpoint`],
+    /// this does not fall back to a built-in default.
+    pub(crate) fn configured_provider_endpoint(&self, provider: &str) -> Option<&Url> {
+        self.providers.endpoint(provider)
+    }
+
     /// Resolves the one API base shared by runtime requests, model discovery, and diagnostics.
     pub(crate) fn resolved_provider_endpoint(&self, provider: &str) -> Option<Url> {
-        self.providers.endpoint(provider).cloned().or_else(|| {
-            match rho_providers::model::registry::provider_runtime(provider) {
-                Some(rho_providers::model::registry::ProviderRuntime::OpenAiCompatible {
-                    default_api_base,
-                    ..
-                }) => Some(
-                    Url::parse(default_api_base)
-                        .expect("built-in provider API bases must be valid URLs"),
-                ),
-                _ => None,
-            }
-        })
+        self.configured_provider_endpoint(provider)
+            .cloned()
+            .or_else(
+                || match rho_providers::model::registry::provider_runtime(provider) {
+                    Some(rho_providers::model::registry::ProviderRuntime::OpenAiCompatible {
+                        default_api_base,
+                        ..
+                    }) => Some(
+                        Url::parse(default_api_base)
+                            .expect("built-in provider API bases must be valid URLs"),
+                    ),
+                    _ => None,
+                },
+            )
     }
 }
 
