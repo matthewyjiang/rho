@@ -119,20 +119,22 @@ fn herdr_probe_maps_to_status() {
     }
 }
 
-// Covers: every endpoint health variant maps to one status. Planning already
-// decided the host matters, so unused-host demotion is not applied here.
+// Covers: the active host fails or warns; unused configured hosts stay
+// informational so a down custom endpoint cannot fail `rho doctor`.
 // Owner: pure unit
 #[test]
 fn endpoint_health_maps_to_status() {
     let cases = [
         (
             ProviderModelHealth::ReachableWithModels { model_count: 3 },
+            "ollama",
             DoctorStatus::Ok,
             "reachable, 3 models",
             None,
         ),
         (
             ProviderModelHealth::ReachableWithoutModels,
+            "ollama",
             DoctorStatus::Warn,
             "no models",
             Some("the endpoint is reachable but has no installed models"),
@@ -141,6 +143,7 @@ fn endpoint_health_maps_to_status() {
             ProviderModelHealth::Unreachable {
                 error: "connection refused".into(),
             },
+            "ollama",
             DoctorStatus::Fail,
             "unreachable",
             Some("connection refused"),
@@ -149,18 +152,44 @@ fn endpoint_health_maps_to_status() {
             ProviderModelHealth::InvalidResponse {
                 error: "HTTP 500".into(),
             },
+            "ollama",
             DoctorStatus::Fail,
             "invalid response",
             Some("HTTP 500"),
         ),
+        (
+            ProviderModelHealth::Unreachable {
+                error: "connection refused".into(),
+            },
+            "openai",
+            DoctorStatus::Info,
+            "unreachable",
+            Some("connection refused"),
+        ),
+        (
+            ProviderModelHealth::InvalidResponse {
+                error: "HTTP 500".into(),
+            },
+            "openai",
+            DoctorStatus::Info,
+            "invalid response",
+            Some("HTTP 500"),
+        ),
+        (
+            ProviderModelHealth::ReachableWithoutModels,
+            "openai",
+            DoctorStatus::Info,
+            "no models",
+            Some("the endpoint is reachable but has no installed models"),
+        ),
     ];
-    for (health, status, summary, hint) in cases {
-        let check = endpoint_check("ollama", &health);
+    for (health, active_provider, status, summary, hint) in cases {
+        let check = endpoint_check("ollama", &health, active_provider);
         assert_eq!(check.label, "Ollama connection");
         assert_eq!(
             (check.status, check.summary.as_str(), check.hint.as_deref()),
             (status, summary, hint),
-            "{health:?}"
+            "{health:?} active={active_provider}"
         );
     }
 }

@@ -87,7 +87,7 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
         .map(|id| (id.clone(), tokio::spawn(run_probe(id, store.clone()))))
         .collect();
     for outcome in collect_probes(handles, PROBE_DEADLINE).await {
-        report.replace_checks(probe_checks(&outcome));
+        report.replace_checks(probe_checks(&outcome, &config.provider));
     }
 
     if json {

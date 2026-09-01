@@ -82,13 +82,16 @@ fn placeholders_and_results_cover_the_same_rows() {
         .iter()
         .all(|check| check.status == DoctorStatus::Info && check.summary == "not checked"));
 
-    let timed_out = probe_checks(&DoctorProbeOutcome::TimedOut(DoctorProbeId::Claude));
+    let timed_out = probe_checks(
+        &DoctorProbeOutcome::TimedOut(DoctorProbeId::Claude),
+        "openai",
+    );
     assert_eq!(ids(&timed_out), claude_ids);
     assert!(timed_out
         .iter()
         .all(|check| check.status == DoctorStatus::Warn && check.summary == "timed out"));
 
-    let failed = probe_checks(&DoctorProbeOutcome::Failed(DoctorProbeId::Rtk));
+    let failed = probe_checks(&DoctorProbeOutcome::Failed(DoctorProbeId::Rtk), "openai");
     assert_eq!(ids(&failed), vec![DoctorCheckId::Rtk]);
     assert_eq!(failed[0].summary, "probe failed");
 }
@@ -97,7 +100,7 @@ fn placeholders_and_results_cover_the_same_rows() {
 // Owner: pure unit
 #[test]
 fn outcomes_map_to_rows() {
-    let rtk = probe_checks(&DoctorProbeOutcome::Rtk { available: false });
+    let rtk = probe_checks(&DoctorProbeOutcome::Rtk { available: false }, "openai");
     assert_eq!(
         rtk,
         vec![
@@ -106,10 +109,13 @@ fn outcomes_map_to_rows() {
         ]
     );
 
-    let endpoint = probe_checks(&DoctorProbeOutcome::ProviderEndpoint {
-        provider: "ollama".into(),
-        health: ProviderModelHealth::ReachableWithModels { model_count: 1 },
-    });
+    let endpoint = probe_checks(
+        &DoctorProbeOutcome::ProviderEndpoint {
+            provider: "ollama".into(),
+            health: ProviderModelHealth::ReachableWithModels { model_count: 1 },
+        },
+        "ollama",
+    );
     assert_eq!(
         endpoint,
         vec![DoctorCheck::new(
