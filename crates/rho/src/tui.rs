@@ -113,6 +113,7 @@ mod mouse;
 mod mouse_capture;
 mod overlay_panel;
 mod palette;
+mod panel_text;
 mod paste_burst;
 mod pending_input;
 #[cfg(test)]

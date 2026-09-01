@@ -22,7 +22,7 @@ use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
     automation, automation_protocol, cli_config,
     config_repository::ConfigRepository,
-    interactive, login, mcp_cli, plugins_cli,
+    doctor_cli, interactive, login, mcp_cli, plugins_cli,
     sdk_config::SdkBootstrapOptions,
     sessions_cli, workflow_cli,
 };
@@ -162,6 +162,9 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
     }
     if let Some(Command::Plugins { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(plugins_cli::run(command, cli)));
+    }
+    if let Some(Command::Doctor { json }) = &cli.command {
+        return Ok(EarlyDispatch::Handled(doctor_cli::run(*json, cli).await));
     }
     if let Some(Command::Attach { id }) = &cli.command {
         // Attach is early-dispatched, so load display settings here the way the

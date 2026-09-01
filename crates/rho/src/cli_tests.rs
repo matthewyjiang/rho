@@ -25,6 +25,17 @@ fn rejects_unknown_auth_profiles() {
     assert!(error.to_string().contains("ollama-cloud-api-key"));
 }
 
+// Covers: `rho doctor` parses with and without `--json`.
+// Owner: CLI parser.
+#[test]
+fn parses_doctor_subcommand() {
+    let cli = Cli::try_parse_from(["rho", "doctor"]).unwrap();
+    assert!(matches!(cli.command, Some(Command::Doctor { json: false })));
+
+    let cli = Cli::try_parse_from(["rho", "doctor", "--json"]).unwrap();
+    assert!(matches!(cli.command, Some(Command::Doctor { json: true })));
+}
+
 // Covers: `rho acp` parses as the ACP stdio subcommand.
 // Owner: CLI parser.
 #[test]

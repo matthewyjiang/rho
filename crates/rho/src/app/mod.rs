@@ -7,6 +7,7 @@ mod bootstrap;
 mod cli_config;
 pub(crate) mod config_repository;
 pub(crate) mod conversation_switch;
+mod doctor_cli;
 pub(crate) mod headless_run;
 mod interactive;
 pub(crate) mod interactive_presenter;

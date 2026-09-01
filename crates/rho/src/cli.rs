@@ -181,6 +181,15 @@ pub enum Command {
         #[command(subcommand)]
         command: WorkflowCommand,
     },
+    /// Run local setup diagnostics and print a report.
+    ///
+    /// Same checks as the interactive `/doctor` overlay. Exits with status 1
+    /// when any check fails; warnings exit 0.
+    Doctor {
+        /// Print the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Serve the Agent Client Protocol over stdio for editor/host integration.
     Acp,
     /// Internal supervised workflow planner worker. Not a public command.

@@ -15,6 +15,7 @@ mod config;
 mod config_writer;
 mod credential_store;
 mod diagnostics;
+mod doctor;
 mod executable;
 mod export;
 mod herdr;

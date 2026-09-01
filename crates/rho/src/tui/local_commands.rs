@@ -1,10 +1,6 @@
 use std::time::Instant;
 
 use ratatui::DefaultTerminal;
-use rho_providers::{
-    model::provider_models::{probe_provider_models, ProviderModelHealth},
-    provider,
-};
 use {
     crate::commands::CommandInvocation,
     crate::export,
@@ -12,7 +8,10 @@ use {
 };
 
 use super::{doctor, local_diff, App, Entry, Session, ToolEntry};
-use crate::claude_runtime::auth::ClaudeProbeSnapshot;
+use crate::doctor::{
+    build_report, plan_probes, probe_checks, run_probe, DoctorInputs, DoctorProbeId, DoctorReport,
+    HerdrProbe, ProbePlaceholder,
+};
 
 impl App {
     pub(super) fn execute_copy_command(&mut self) -> anyhow::Result<()> {
@@ -123,38 +122,37 @@ impl App {
         self.set_status("checking provider connections");
         terminal.draw(|frame| self.draw(frame))?;
 
-        let mut provider_health = Vec::new();
-        for descriptor in provider::providers() {
-            if !descriptor.probes_configured_endpoint() {
-                continue;
-            }
-            let Some(endpoint) = config.resolved_provider_endpoint(descriptor.name) else {
-                continue;
-            };
-            let health =
-                probe_provider_models(descriptor.name, &endpoint, self.credential_store.as_ref())
-                    .await;
-            provider_health.push((descriptor.name.to_string(), health));
+        let probes = plan_probes(&config, &self.info.runtime.provider, doctor::probe_gate());
+        let mut outcomes = Vec::with_capacity(probes.len());
+        for id in &probes {
+            outcomes.push(run_probe(id.clone(), self.credential_store.clone()).await);
         }
-        let claude = self.claude_probe_snapshot().await;
-        self.open_doctor_picker(&provider_health, &claude)
+        let mut report = self.doctor_report(&probes, ProbePlaceholder::Checking)?;
+        for outcome in &outcomes {
+            report.replace_checks(probe_checks(outcome, &self.info.runtime.provider));
+        }
+        self.open_doctor_picker(&report)
     }
 
     pub(super) fn execute_doctor_command(&mut self) -> anyhow::Result<()> {
-        // During a turn, skip live Claude probes so stream draining is never
-        // blocked on a child process.
-        self.open_doctor_picker(&[], &ClaudeProbeSnapshot::not_refreshed_during_turn())
+        // During a turn, skip live probes so stream draining is never blocked
+        // on a child process or the network.
+        let config = self.info.services.config_repository.load()?;
+        let probes = plan_probes(&config, &self.info.runtime.provider, doctor::probe_gate());
+        let report = self.doctor_report(&probes, ProbePlaceholder::NotChecked)?;
+        self.open_doctor_picker(&report)
     }
 
-    fn open_doctor_picker(
+    fn doctor_report(
         &mut self,
-        provider_health: &[(String, ProviderModelHealth)],
-        claude: &ClaudeProbeSnapshot,
-    ) -> anyhow::Result<()> {
+        probes: &[DoctorProbeId],
+        placeholder: ProbePlaceholder,
+    ) -> anyhow::Result<DoctorReport> {
         self.refresh_available_auths();
         let config_path = self.info.services.config_repository.configured_path()?;
         let session_root = crate::paths::rho_dir()?.join("sessions");
-        let picker = doctor::picker(doctor::DoctorContext {
+        let clipboard = crate::clipboard::doctor_report();
+        Ok(build_report(DoctorInputs {
             provider: &self.info.runtime.provider,
             model: &self.info.runtime.model,
             auth: &self.info.runtime.auth,
@@ -162,15 +160,18 @@ impl App {
             credential_store: self.credential_store.as_ref(),
             config_path: &config_path,
             session_root: &session_root,
-            herdr_enabled: self.info.services.herdr.is_enabled(),
-            herdr_socket_reachable: self.info.services.herdr.socket_is_reachable(),
-            provider_health,
-            claude,
+            herdr: HerdrProbe::from_reporter(&self.info.services.herdr),
+            clipboard: &clipboard,
             mcp_report: &self.mcp_report,
             plugins_report: &self.plugins_report,
-        });
+            probes,
+            placeholder,
+        }))
+    }
+
+    fn open_doctor_picker(&mut self, report: &DoctorReport) -> anyhow::Result<()> {
         self.input_ui
-            .set_composer(super::ComposerMode::Picker(picker));
+            .set_composer(super::ComposerMode::Picker(doctor::picker(report)));
         self.set_status("doctor diagnostics");
         Ok(())
     }

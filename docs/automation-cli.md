@@ -225,6 +225,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho plugins enable <NAME>` | Enable a plugin for new sessions. |
 | `rho plugins disable <NAME>` | Disable a plugin without deleting package files. |
 | `rho plugins remove <NAME> [--yes]` | Remove a package from a managed root; keeps plugin data. |
+| `rho doctor [--json]` | Run the same setup diagnostics as the interactive `/doctor` overlay and print a text report (or one JSON document). Root `--provider`, `--model`, `--auth`, and `--reasoning` apply to this invocation the same way they do for `rho run`. Exits with status 1 when any check fails; warnings exit 0. |
 | `rho update` | Update Rho using the detected installation method. |
 | `rho help [COMMAND]` | Show help for Rho or a subcommand. |
 
