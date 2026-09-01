@@ -110,7 +110,7 @@ flowchart TD
    claude --resume <session-id>
    ```
 
-   After at least one Claude-cli run has reported limits, `/limits` shows the last observed Claude rate-limit windows (no live probe, no invented percentage).
+   `/limits` probes Claude Code `/usage` through a PTY when you are signed in (Claude still owns the token) and falls back to last-observed stream windows if that probe fails.
 
 ## Quick checklist
 
@@ -158,7 +158,7 @@ Stderr goes to `log.txt` in the run directory. Cancel kills the child. Terminal 
 
 Per-run usage (turns, tokens, cost) comes from Claude's terminal result and is stored on `result.json`. Cache read/write token fields stay separate on attachment usage events; `input_tokens` on the status file is the total input including cache so attach metrics stay consistent.
 
-`/limits` shows last-observed Claude rate-limit windows reported during a run (window name, status, reset time, age). It does not invent a remaining percentage and does not spawn a probe run. If nothing has been observed yet, Claude limits are absent until a claude-cli run reports them.
+`/limits` probes the signed-in `claude` TUI `/usage` panel over a PTY and shows remaining percentages when the panel includes them. Rho never reads Claude's credential files. If the probe fails, `/limits` keeps last-observed stream windows from a prior claude-cli run.
 
 When a run finishes, `result.json` may include `claude_session_id`. Attach and the parent completion entry show it so you can reopen the full Claude transcript with:
 

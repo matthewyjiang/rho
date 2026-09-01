@@ -1,7 +1,7 @@
 //! Persist Claude Code rate-limit windows for `/limits`.
 //!
-//! This is not a credential path. Rho never stores Claude tokens; it only
-//! remembers what prior streams reported.
+//! This is not a credential path. Rho never stores Claude tokens. Live `/limits`
+//! reads `/usage` through a PTY; this cache also remembers stream observations.
 //!
 //! Each stream event is one window (`five_hour`, `seven_day`, …). State keeps
 //! the newest observation per window so `/limits` can show every known bucket.
@@ -153,6 +153,9 @@ pub(crate) struct RateLimitState {
     #[serde(default = "rate_limit_state_version")]
     pub(crate) version: u32,
     pub(crate) windows: Vec<RateLimitObservation>,
+    /// Last successful `/usage` PTY probe. Stream merges leave this alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) last_probe_unix: Option<i64>,
 }
 
 fn rate_limit_state_version() -> u32 {
@@ -164,6 +167,7 @@ impl Default for RateLimitState {
         Self {
             version: rate_limit_state_version(),
             windows: Vec::new(),
+            last_probe_unix: None,
         }
     }
 }
@@ -193,6 +197,16 @@ impl RateLimitState {
         for window in other.windows {
             self.merge_window(window);
         }
+        if other.last_probe_unix > self.last_probe_unix {
+            self.last_probe_unix = other.last_probe_unix;
+        }
+    }
+
+    pub(crate) fn oldest_observed_unix(&self) -> Option<i64> {
+        self.windows
+            .iter()
+            .map(|window| window.observed_at_unix)
+            .min()
     }
 
     /// Stable display order: five hour, seven day variants, then the rest.
@@ -213,7 +227,8 @@ fn window_sort_key(key: &str) -> u8 {
         "seven_day" => 1,
         "seven_day_sonnet" => 2,
         "seven_day_opus" => 3,
-        "seven_day_all_models" | "seven_day_all" => 4,
+        "seven_day_fable" => 4,
+        "seven_day_all_models" | "seven_day_all" => 5,
         _ => 50,
     }
 }

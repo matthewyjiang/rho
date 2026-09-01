@@ -59,7 +59,7 @@ impl App {
                 || self
                     .pending_usage_limits
                     .iter()
-                    .any(|fetch| fetch.handle.is_finished())
+                    .any(super::limits_command::PendingUsageFetch::is_finished)
                 || self
                     .pending_changelog
                     .as_ref()

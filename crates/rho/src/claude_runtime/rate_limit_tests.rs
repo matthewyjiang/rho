@@ -558,6 +558,35 @@ fn cross_process_out_of_order_writes_keep_newer() {
     assert_eq!(only(&loaded).observed_at_nanos, secs(7_000) + 500);
 }
 
+// Covers: stream window merges must not wipe a successful /usage probe stamp.
+// Owner: pure unit
+#[test]
+fn stream_merge_keeps_newer_last_probe_unix() {
+    let mut disk = RateLimitState::default();
+    disk.last_probe_unix = Some(1_000);
+    disk.merge_window(RateLimitObservation::with_order(
+        sample_info("allowed"),
+        secs(1_000),
+        1,
+        "p1",
+    ));
+    let mut incoming = RateLimitState::default();
+    incoming.merge_window(RateLimitObservation::with_order(
+        sample_info_window("allowed", "seven_day"),
+        secs(1_100),
+        1,
+        "p1",
+    ));
+    disk.merge_state(incoming);
+    assert_eq!(disk.last_probe_unix, Some(1_000));
+    assert_eq!(disk.windows.len(), 2);
+
+    let mut probe = RateLimitState::default();
+    probe.last_probe_unix = Some(2_000);
+    disk.merge_state(probe);
+    assert_eq!(disk.last_probe_unix, Some(2_000));
+}
+
 // Covers: epoch-zero timestamps must not format as multi-decade ages.
 // Owner: pure unit
 #[test]

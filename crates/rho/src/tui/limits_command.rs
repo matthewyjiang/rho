@@ -23,6 +23,9 @@ use crate::usage_limits::{
 };
 use crate::usage_limits_cache::{self, UsageLimitsCache};
 
+#[path = "limits_claude.rs"]
+mod limits_claude;
+
 const BAR_WIDTH: usize = 10;
 const RELATIVE_RESET_CUTOFF_SECONDS: i64 = 24 * 60 * 60;
 const TITLE: &str = "Usage limits";
@@ -34,9 +37,39 @@ const CLAUDE_CODE_PROVIDER_LABEL: &str = "Claude Code";
 
 type UsageFetchResult = Result<Option<crate::usage_limits::ProviderUsageLimits>, UsageLimitsError>;
 
-pub(super) struct PendingUsageFetch {
-    pub(super) kind: UsageProviderKind,
-    pub(super) handle: tokio::task::JoinHandle<UsageFetchResult>,
+pub(super) enum PendingUsageFetch {
+    Provider {
+        kind: UsageProviderKind,
+        handle: tokio::task::JoinHandle<UsageFetchResult>,
+    },
+    Claude {
+        handle: tokio::task::JoinHandle<
+            Result<
+                crate::claude_runtime::usage_probe::UsageProbeOutcome,
+                crate::claude_runtime::usage_probe::UsageProbeError,
+            >,
+        >,
+    },
+}
+
+impl PendingUsageFetch {
+    pub(super) fn is_finished(&self) -> bool {
+        match self {
+            Self::Provider { handle, .. } => handle.is_finished(),
+            Self::Claude { handle } => handle.is_finished(),
+        }
+    }
+
+    fn is_claude(&self) -> bool {
+        matches!(self, Self::Claude { .. })
+    }
+
+    fn provider_kind(&self) -> Option<UsageProviderKind> {
+        match self {
+            Self::Provider { kind, .. } => Some(*kind),
+            Self::Claude { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -155,8 +188,16 @@ impl App {
     pub(super) async fn cancel_limits_command(&mut self) {
         let pending = std::mem::take(&mut self.pending_usage_limits);
         for fetch in pending {
-            fetch.handle.abort();
-            let _ = fetch.handle.await;
+            match fetch {
+                PendingUsageFetch::Provider { handle, .. } => {
+                    handle.abort();
+                    let _ = handle.await;
+                }
+                PendingUsageFetch::Claude { handle } => {
+                    handle.abort();
+                    let _ = handle.await;
+                }
+            }
         }
     }
 
@@ -165,14 +206,20 @@ impl App {
         let mut still_pending = Vec::new();
         let pending = std::mem::take(&mut self.pending_usage_limits);
         for fetch in pending {
-            if !fetch.handle.is_finished() {
+            if !fetch.is_finished() {
                 still_pending.push(fetch);
                 continue;
             }
             changed = true;
-            match fetch.handle.await {
-                Ok(result) => self.apply_usage_fetch(fetch.kind, result),
-                Err(_) => self.mark_usage_failed(fetch.kind),
+            match fetch {
+                PendingUsageFetch::Provider { kind, handle } => match handle.await {
+                    Ok(result) => self.apply_usage_fetch(kind, result),
+                    Err(_) => self.mark_usage_failed(kind),
+                },
+                PendingUsageFetch::Claude { handle } => match handle.await {
+                    Ok(result) => self.apply_claude_usage_fetch(result),
+                    Err(_) => self.mark_claude_usage_failed(),
+                },
             }
         }
         self.pending_usage_limits = still_pending;
@@ -336,11 +383,18 @@ impl App {
             &self.usage_limits_live,
             self.pending_usage_limits
                 .iter()
-                .map(|fetch| fetch.kind)
+                .filter_map(PendingUsageFetch::provider_kind)
                 .collect::<Vec<_>>()
                 .as_slice(),
             usage_limits_cache::load(),
-            crate::claude_runtime::rate_limit::load().as_ref(),
+            limits_claude::ClaudeLimitsView {
+                disk: crate::claude_runtime::rate_limit::load().as_ref(),
+                pending: self
+                    .pending_usage_limits
+                    .iter()
+                    .any(PendingUsageFetch::is_claude),
+                probe_available: limits_claude::claude_probe_available(),
+            },
             crate::claude_runtime::rate_limit::now_unix(),
         );
         self.input_ui.set_composer(ComposerMode::Limits(overlay));
@@ -350,7 +404,7 @@ impl App {
         let pending: Vec<UsageProviderKind> = self
             .pending_usage_limits
             .iter()
-            .map(|fetch| fetch.kind)
+            .filter_map(PendingUsageFetch::provider_kind)
             .collect();
         let kinds = connected_kinds(self.credential_store.as_ref());
         for kind in kinds {
@@ -362,7 +416,7 @@ impl App {
                 .usage_limits_client
                 .get_or_init(crate::reqwest_client)
                 .clone();
-            self.pending_usage_limits.push(PendingUsageFetch {
+            self.pending_usage_limits.push(PendingUsageFetch::Provider {
                 kind,
                 handle: tokio::spawn(async move {
                     fetch_usage_provider(kind, store.as_ref(), client).await
@@ -383,6 +437,86 @@ impl App {
                         LimitsSectionStatus::Observed { .. } | LimitsSectionStatus::Empty => None,
                     };
                     section.status = LimitsSectionStatus::Checking { cached_at_unix };
+                }
+            }
+        }
+        self.spawn_claude_usage_fetch();
+    }
+
+    fn spawn_claude_usage_fetch(&mut self) {
+        // Unit tests must not launch the real `claude` TUI. The PTY drive
+        // sequence is covered with a fake child in usage_probe_tests.
+        if cfg!(test) {
+            return;
+        }
+        if self
+            .pending_usage_limits
+            .iter()
+            .any(PendingUsageFetch::is_claude)
+        {
+            return;
+        }
+        if !limits_claude::claude_probe_available() {
+            return;
+        }
+        let now = now_unix();
+        if crate::claude_runtime::rate_limit::load().is_some_and(|state| {
+            state
+                .last_probe_unix
+                .is_some_and(|at| crate::claude_runtime::usage_probe::live_is_fresh(at, now))
+        }) {
+            return;
+        }
+        self.pending_usage_limits.push(PendingUsageFetch::Claude {
+            handle: tokio::spawn(crate::claude_runtime::usage_probe::fetch_usage()),
+        });
+        let cached_at = crate::claude_runtime::rate_limit::load()
+            .and_then(|state| state.oldest_observed_unix());
+        if let Some(overlay) = self.limits_overlay_mut() {
+            overlay.set_claude_checking(cached_at);
+        }
+    }
+
+    fn apply_claude_usage_fetch(
+        &mut self,
+        result: Result<
+            crate::claude_runtime::usage_probe::UsageProbeOutcome,
+            crate::claude_runtime::usage_probe::UsageProbeError,
+        >,
+    ) {
+        match result {
+            Ok(crate::claude_runtime::usage_probe::UsageProbeOutcome::Ready(state)) => {
+                let windows = limits_claude::claude_windows_from_state(&state, now_unix(), false);
+                if let Some(overlay) = self.limits_overlay_mut() {
+                    overlay.apply_claude_live(windows);
+                }
+            }
+            Ok(crate::claude_runtime::usage_probe::UsageProbeOutcome::Unavailable) => {
+                if let Some(overlay) = self.limits_overlay_mut() {
+                    match crate::claude_runtime::rate_limit::load() {
+                        Some(state) if !state.is_empty() => {
+                            overlay.apply_claude_observed(&state, now_unix());
+                        }
+                        _ => overlay.remove_claude(),
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "claude usage probe failed");
+                self.mark_claude_usage_failed();
+            }
+        }
+    }
+
+    fn mark_claude_usage_failed(&mut self) {
+        if let Some(overlay) = self.limits_overlay_mut() {
+            match crate::claude_runtime::rate_limit::load() {
+                Some(state) if !state.is_empty() => {
+                    overlay.apply_claude_observed(&state, now_unix());
+                }
+                state => {
+                    overlay
+                        .apply_claude_failed(state.and_then(|value| value.oldest_observed_unix()));
                 }
             }
         }
@@ -451,7 +585,7 @@ fn connected_kinds(store: &dyn CredentialStore) -> Vec<UsageProviderKind> {
 }
 
 fn empty_note() -> String {
-    "no supported providers are connected and no Claude Code limits are known yet; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, xAI with /login xai-oauth, OpenCode Go with /login opencode-go, or run a claude-cli agent"
+    "no supported providers are connected and no Claude Code limits are known yet; connect Codex with /login openai-codex, Kimi Code with /login kimi-code, xAI with /login xai-oauth, OpenCode Go with /login opencode-go, or sign in with /login claude-code"
         .into()
 }
 
@@ -460,7 +594,7 @@ fn build_limits_overlay(
     live: &BTreeMap<UsageProviderKind, LiveUsage>,
     pending: &[UsageProviderKind],
     cache: UsageLimitsCache,
-    claude: Option<&crate::claude_runtime::rate_limit::RateLimitState>,
+    claude: limits_claude::ClaudeLimitsView<'_>,
     now_unix: i64,
 ) -> LimitsOverlay {
     let mut sections = Vec::new();
@@ -483,7 +617,7 @@ fn build_limits_overlay(
             }
         }
     }
-    if let Some(claude) = claude_provider_limits(claude, now_unix) {
+    if let Some(claude) = limits_claude::claude_provider_limits(claude, now_unix) {
         sections.push(claude);
     }
     let empty_note = sections.is_empty().then(empty_note);
@@ -535,54 +669,6 @@ fn provider_section(
                 .unwrap_or_default(),
         },
     }
-}
-
-fn claude_provider_limits(
-    state: Option<&crate::claude_runtime::rate_limit::RateLimitState>,
-    now_unix: i64,
-) -> Option<LimitsSection> {
-    let state = state.filter(|state| !state.is_empty())?;
-    let oldest = state
-        .sorted_windows()
-        .iter()
-        .map(|window| window.observed_at_unix)
-        .min()
-        .unwrap_or(now_unix);
-    let windows = state
-        .sorted_windows()
-        .into_iter()
-        .map(|window| {
-            let mut note_parts = Vec::new();
-            if let Some(status) = crate::claude_runtime::stream::notable_rate_limit_status(
-                window.info.status.as_deref(),
-            ) {
-                note_parts.push(status);
-            }
-            if window.info.is_using_overage == Some(true) {
-                note_parts.push("using overage".into());
-            }
-            if let Some(age) = crate::claude_runtime::rate_limit::format_age_since(
-                window.observed_at_unix,
-                now_unix,
-            ) {
-                note_parts.push(format!("observed {age}"));
-            }
-            UsageLimitWindow {
-                label: window.info.window_label(),
-                remaining_percent: window.info.remaining_percent(),
-                resets_at_unix: window.info.resets_at,
-                note: Some(note_parts.join(", ")),
-            }
-        })
-        .collect();
-    Some(LimitsSection {
-        id: LimitsSectionId::ClaudeCode,
-        label: CLAUDE_CODE_PROVIDER_LABEL.into(),
-        status: LimitsSectionStatus::Observed {
-            observed_at_unix: oldest,
-        },
-        windows,
-    })
 }
 
 fn overlay_body_lines(

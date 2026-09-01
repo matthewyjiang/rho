@@ -59,9 +59,13 @@ impl ClaudeExecutable {
         crate::paths::display(&self.program)
     }
 
+    pub(crate) fn path(&self) -> &Path {
+        &self.program
+    }
+
     #[cfg(test)]
     pub(crate) fn program(&self) -> &Path {
-        &self.program
+        self.path()
     }
 
     #[cfg(test)]
