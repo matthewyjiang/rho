@@ -242,10 +242,19 @@ fn split_trailing_unit(token: &str) -> Option<(&str, &str)> {
 /// Time zones match by construction: the probe's `claude` child inherits our
 /// environment, and (verified on 2.1.252) the panel renders reset times in
 /// the process `TZ` - the same zone `chrono::Local` reads here. The panel's
-/// own "(America/Los_Angeles)" label is therefore never parsed. Known gap,
-/// deliberately unhandled: a reset landing in a DST-ambiguous or skipped
-/// local hour makes `single()` return `None`, dropping the countdown for
-/// that window rather than showing a time that is wrong by an hour.
+/// own "(America/Los_Angeles)" label is only touched by the month-anchored
+/// day parse, which requires a month name and so never matches digits inside
+/// a tz label like "(UTC+10)". Known gap, deliberately unhandled: a reset
+/// landing in a DST-ambiguous or skipped local hour makes `single()` return
+/// `None`, dropping the countdown for that window rather than showing a time
+/// that is wrong by an hour.
+///
+/// A dated line ("Resets Sep 5, 8am") pins the day-of-month: weekly windows
+/// reset at most 7 days out, so the day alone identifies the date within the
+/// next 8 days - no month arithmetic needed. Clock-only lines resolve to
+/// today-or-tomorrow, the degenerate range of the same search. A named day
+/// with no future candidate in range yields `None` (misparse or stale panel)
+/// rather than a confidently wrong date.
 fn parse_local_clock(text: &str, now_unix: i64) -> Option<i64> {
     use chrono::Datelike;
 
@@ -255,26 +264,14 @@ fn parse_local_clock(text: &str, now_unix: i64) -> Option<i64> {
         .naive_local();
     let today = now.date();
     let naive_time = chrono::NaiveTime::from_hms_opt(hour, minute, 0)?;
-    // "Resets Sep 5, 8am": weekly windows reset at most 7 days out, so the
-    // day-of-month alone pins the date within the next 8 days - no month
-    // parsing needed. Clock-only lines ("Resets 5:30am") fall through to
-    // today-or-tomorrow.
-    if let Some(day) = parse_day_of_month(text) {
-        for offset in 0..=8 {
-            let date = today + chrono::TimeDelta::days(offset);
-            if date.day() == day {
-                let candidate = date.and_time(naive_time);
-                if candidate > now {
-                    return local_timestamp(candidate);
-                }
-            }
-        }
-    }
-    let mut candidate = today.and_time(naive_time);
-    if candidate <= now {
-        candidate += chrono::TimeDelta::days(1);
-    }
-    local_timestamp(candidate)
+    let day = parse_day_of_month(text);
+    let range = if day.is_some() { 0..=8 } else { 0..=1 };
+    range
+        .map(|offset| today + chrono::TimeDelta::days(offset))
+        .filter(|date| day.is_none_or(|day| date.day() == day))
+        .map(|date| date.and_time(naive_time))
+        .find(|candidate| *candidate > now)
+        .and_then(local_timestamp)
 }
 
 fn local_timestamp(candidate: chrono::NaiveDateTime) -> Option<i64> {
@@ -286,38 +283,26 @@ fn local_timestamp(candidate: chrono::NaiveDateTime) -> Option<i64> {
     )
 }
 
-/// First standalone 1-31 number that is not part of a clock time.
+/// Day-of-month anchored on a month name: the `5` in "resets sep 5, 8am".
+///
+/// The month token is an anchor only - its value is not validated against
+/// the resolved date (the day alone pins the date; see [`parse_local_clock`]).
+/// Anchoring is what keeps digits elsewhere on the line - clock times, tz
+/// labels like "(utc+10)", dollar amounts - from being misread as a day.
 fn parse_day_of_month(text: &str) -> Option<u32> {
-    let bytes = text.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if !bytes[index].is_ascii_digit() {
-            index += 1;
-            continue;
-        }
-        let start = index;
-        while index < bytes.len() && bytes[index].is_ascii_digit() {
-            index += 1;
-        }
-        // "5:30" hour or "8am" time, not a date day.
-        if index < bytes.len() && bytes[index] == b':' {
-            continue;
-        }
-        let mut rest = index;
-        while rest < bytes.len() && bytes[rest].is_ascii_whitespace() {
-            rest += 1;
-        }
-        let tail = text.get(rest..)?;
-        if tail.starts_with("am") || tail.starts_with("pm") {
-            continue;
-        }
-        if let Ok(value) = text[start..index].parse::<u32>() {
-            if (1..=31).contains(&value) {
-                return Some(value);
-            }
-        }
-    }
-    None
+    const MONTHS: [&str; 12] = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
+    let (index, month) = MONTHS
+        .iter()
+        .filter_map(|month| Some((text.find(month)?, month)))
+        .min()?;
+    let rest = text[index + month.len()..].trim_start();
+    let digits = &rest[..rest
+        .find(|ch: char| !ch.is_ascii_digit())
+        .unwrap_or(rest.len())];
+    let day: u32 = digits.parse().ok()?;
+    (1..=31).contains(&day).then_some(day)
 }
 
 fn parse_12h_time(text: &str) -> Option<(u32, u32)> {

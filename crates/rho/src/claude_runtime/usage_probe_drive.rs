@@ -16,8 +16,10 @@ use crate::claude_runtime::{rate_limit, usage_parse::parse_usage_screen, usage_p
 /// connect. A warm start reaches the idle prompt in under 1s, but a cold
 /// start was captured spending 13s+ on the remote-control handshake alone
 /// ("Remote Control disconnected" logged 13s after spawn), so the old 30s
-/// budget sat within noise of a spurious "update failed". Warm runs never
-/// touch this; it only bounds a hung child.
+/// budget sat within noise of a spurious "update failed". The probe now
+/// disables that handshake via `--settings`, but the budget stays generous
+/// as defense-in-depth in case a Claude update stops honoring the flag.
+/// Warm runs never touch this; it only bounds a hung child.
 const PROMPT_WAIT: Duration = Duration::from_secs(60);
 /// `/usage` then Anthropic's usage endpoint. Warm captures paint "% used"
 /// in under 1s, but a cold start stacks startup latency with a slow usage

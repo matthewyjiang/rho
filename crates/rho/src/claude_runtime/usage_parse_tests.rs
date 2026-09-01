@@ -59,6 +59,8 @@ fn relative_reset_in_hours_and_minutes_becomes_unix() {
 
 // Covers: "Resets Sep 5, 8am" must land on that day, not today-or-tomorrow.
 // Weekly resets are at most 7 days out, so the day-of-month pins the date.
+// The month token is only an anchor for the day number - its value is not
+// validated, so the literal "Sep" here pairs fine with a November NOW.
 // Owner: pure unit
 #[test]
 fn dated_reset_lands_on_the_named_day() {
@@ -89,6 +91,20 @@ fn clock_only_reset_stays_within_a_day() {
     let resets_at = state.sorted_windows()[0].info.resets_at.expect("resets_at");
     let delta = resets_at - NOW;
     assert!((0..=86_400).contains(&delta), "{delta}");
+}
+
+// Covers: digits inside a tz label ("(UTC+10)", "(EST5EDT)") must not be read
+// as a day-of-month and push a clock-only reset days into the future.
+// Owner: pure unit
+#[test]
+fn tz_label_digits_are_not_a_day_of_month() {
+    for label in ["(UTC+10)", "(EST5EDT)", "(GMT-5)"] {
+        let text = format!("Current session\n29% used\nResets 5:30am {label}\n");
+        let state = parse_usage_screen(&text, NOW).expect("parsed");
+        let resets_at = state.sorted_windows()[0].info.resets_at.expect("resets_at");
+        let delta = resets_at - NOW;
+        assert!((0..=86_400).contains(&delta), "{label}: {delta}");
+    }
 }
 
 #[test]
