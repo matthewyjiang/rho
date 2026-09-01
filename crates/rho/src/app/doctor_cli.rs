@@ -112,55 +112,7 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
 /// when the target host has no cached models. Persistence stays with `--save`
 /// in `prepare_startup`; doctor never writes.
 fn apply_doctor_overrides(config: &mut crate::config::Config, cli: &Cli) -> anyhow::Result<()> {
-    match super::cli_config::apply_overrides(config, cli) {
-        Ok(_) => Ok(()),
-        Err(error) if error.to_string().contains("no cached models") => {
-            apply_doctor_cli_flags(config, cli)
-        }
-        Err(error) => Err(error),
-    }
-}
-
-/// Apply the named CLI selection even when catalog resolution cannot pick a
-/// default model. Unknown provider names still fail.
-fn apply_doctor_cli_flags(config: &mut crate::config::Config, cli: &Cli) -> anyhow::Result<()> {
-    use rho_providers::{model::catalog, provider};
-
-    if let Some(provider_flag) = cli.provider.as_deref() {
-        let profile = provider::resolve_provider_reference(provider_flag)
-            .map_err(|_| anyhow::anyhow!("unknown provider '{provider_flag}' for --provider"))?;
-        let name = profile.provider_name();
-        config.provider = name.into();
-        config.auth = profile.auth_id().into();
-        if cli.model.is_none() {
-            if let Some(model) = catalog::default_model_for_provider(name) {
-                config.model = model;
-            }
-        }
-    }
-    if let Some(model) = cli.model.as_deref() {
-        let model = model.trim();
-        match model.split_once('/') {
-            Some((provider_name, model_name)) if cli.provider.is_none() => {
-                config.provider = provider_name.into();
-                config.model = model_name.into();
-            }
-            Some((_, model_name)) => config.model = model_name.into(),
-            None => config.model = model.into(),
-        }
-    }
-    if let Some(auth) = cli.auth.as_deref() {
-        if cli.provider.is_none() && cli.model.is_none() {
-            if let Some(profile) = provider::provider_descriptor_for_auth(auth) {
-                config.provider = profile.name.into();
-            }
-        }
-        config.auth = auth.into();
-    }
-    if let Some(reasoning) = cli.reasoning {
-        config.reasoning = reasoning;
-    }
-    config.normalize_provider_profiles()?;
+    super::cli_config::apply_overrides_allowing_empty_cache(config, cli)?;
     Ok(())
 }
 

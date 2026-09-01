@@ -105,16 +105,53 @@ fn unknown_provider_override_still_errors() {
     );
 }
 
-// Covers: catalog/alias failures must not be rewritten into a raw --model
-// assignment; only the empty-cache path is allowed to skip default-model
-// resolution.
+fn model_aliases(pairs: &[(&str, &str)]) -> crate::model_aliases::ModelAliases {
+    crate::model_aliases::ModelAliases::from_entries(
+        pairs
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect(),
+    )
+    .unwrap()
+}
+
+// Covers: doctor must reject the same override errors as `rho run` instead
+// of storing the raw `--model` string. Empty cache is the only exception.
 // Owner: CLI (pure selection)
 #[test]
-fn model_override_errors_are_not_swallowed() {
-    let mut config = crate::config::Config::default();
-    let before = config.clone();
-    let cli = Cli::try_parse_from(["rho", "--model", "definitely-not-a-model", "doctor"]).unwrap();
-    assert!(apply_doctor_overrides(&mut config, &cli).is_err());
-    assert_eq!(config.provider, before.provider);
-    assert_eq!(config.model, before.model);
+fn doctor_overrides_reject_errors_that_run_rejects() {
+    for (name, args, aliases, raw_model) in [
+        (
+            "unknown model",
+            &["rho", "--model", "definitely-not-a-model", "doctor"] as &[&str],
+            &[] as &[(&str, &str)],
+            "definitely-not-a-model",
+        ),
+        (
+            "undefined alias",
+            &["rho", "--model", "@missing", "doctor"],
+            &[],
+            "@missing",
+        ),
+        (
+            "provider conflicts with alias host",
+            &["rho", "--provider", "openai", "--model", "@other", "doctor"],
+            &[("other", "anthropic/claude-sonnet-4-5")],
+            "@other",
+        ),
+    ] {
+        let mut config = crate::config::Config {
+            model_aliases: model_aliases(aliases),
+            ..crate::config::Config::default()
+        };
+        let cli = Cli::try_parse_from(args).unwrap();
+        assert!(
+            apply_doctor_overrides(&mut config, &cli).is_err(),
+            "{name} must fail"
+        );
+        assert_ne!(
+            config.model, raw_model,
+            "{name} must not store the raw --model flag"
+        );
+    }
 }

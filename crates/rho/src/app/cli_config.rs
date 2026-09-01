@@ -142,6 +142,15 @@ pub(super) async fn refresh_custom_provider_models(
     .await;
 }
 
+/// Whether a missing cached default model aborts override application.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CachedModelRequirement {
+    /// `rho run`: fail so the user refreshes or passes a cached model.
+    Required,
+    /// `rho doctor`: keep the named selection so the report can diagnose it.
+    Optional,
+}
+
 /// Apply CLI provider/model/auth/reasoning overrides in memory.
 ///
 /// Returns whether those overrides changed the effective selection after
@@ -149,10 +158,28 @@ pub(super) async fn refresh_custom_provider_models(
 /// count as a change. Persistence is decided by the caller (only when `--save`
 /// is set).
 pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<bool> {
+    apply_cli_overrides(config, cli, CachedModelRequirement::Required)
+}
+
+/// Same resolution as [`apply_overrides`], including `@alias` checks, but keep
+/// going when the target host has no cached models so `rho doctor` can report
+/// that host instead of aborting.
+pub(super) fn apply_overrides_allowing_empty_cache(
+    config: &mut Config,
+    cli: &Cli,
+) -> anyhow::Result<bool> {
+    apply_cli_overrides(config, cli, CachedModelRequirement::Optional)
+}
+
+fn apply_cli_overrides(
+    config: &mut Config,
+    cli: &Cli,
+    cached_models: CachedModelRequirement,
+) -> anyhow::Result<bool> {
     let before = CliSelection::capture(config);
     let mut flags_present = false;
     if let Some(provider) = &cli.provider {
-        apply_provider_override(config, provider, cli.model.is_some())?;
+        apply_provider_override(config, provider, cli.model.is_some(), cached_models)?;
         flags_present = true;
     }
     if let Some(model) = &cli.model {
@@ -171,7 +198,7 @@ pub(super) fn apply_overrides(config: &mut Config, cli: &Cli) -> anyhow::Result<
             config.provider = profile.name.into();
             config.auth = auth.into();
         } else {
-            apply_provider_override(config, profile.name, cli.model.is_some())?;
+            apply_provider_override(config, profile.name, cli.model.is_some(), cached_models)?;
             config.auth = auth.into();
         }
         flags_present = true;
@@ -324,10 +351,11 @@ fn apply_reasoning_resolution(
     true
 }
 
-pub(super) fn apply_provider_override(
+fn apply_provider_override(
     config: &mut Config,
     provider: &str,
     has_model_override: bool,
+    cached_models: CachedModelRequirement,
 ) -> anyhow::Result<()> {
     let profile = provider::resolve_provider_reference(provider)
         .map_err(|_| anyhow::anyhow!("unknown provider '{provider}' for --provider"))?;
@@ -335,12 +363,15 @@ pub(super) fn apply_provider_override(
     let auth = Some(profile.auth_id());
     let model = if has_model_override {
         None
+    } else if let Some(model) = catalog::default_model_for_provider(provider) {
+        Some(model)
     } else {
-        Some(catalog::default_model_for_provider(provider).ok_or_else(|| {
-            anyhow::anyhow!(
+        match cached_models {
+            CachedModelRequirement::Optional => None,
+            CachedModelRequirement::Required => anyhow::bail!(
                 "no cached models for provider '{provider}'. Open /config and choose Refresh model lists, or pass a cached provider/model with --model"
-            )
-        })?)
+            ),
+        }
     };
     config.provider = provider.to_string();
     if let Some(auth) = auth {
