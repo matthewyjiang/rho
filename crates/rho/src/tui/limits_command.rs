@@ -36,9 +36,11 @@ const FOOTER: &str = "Enter/Esc close";
 const CLAUDE_CODE_PROVIDER_LABEL: &str = "Claude Code";
 
 enum LimitsFetchResult {
-    Ready {
+    ProviderReady {
+        limits: crate::usage_limits::ProviderUsageLimits,
+    },
+    ClaudeReady {
         windows: Vec<UsageLimitWindow>,
-        provider: Option<crate::usage_limits::ProviderUsageLimits>,
     },
     Unavailable,
     Failed,
@@ -442,10 +444,7 @@ impl App {
                 id: LimitsSectionId::Provider(kind),
                 handle: tokio::spawn(async move {
                     match fetch_usage_provider(kind, store.as_ref(), client).await {
-                        Ok(Some(limits)) => LimitsFetchResult::Ready {
-                            windows: limits.windows.clone(),
-                            provider: Some(limits),
-                        },
+                        Ok(Some(limits)) => LimitsFetchResult::ProviderReady { limits },
                         Ok(None) => LimitsFetchResult::Unavailable,
                         Err(_) => LimitsFetchResult::Failed,
                     }
@@ -475,17 +474,8 @@ impl App {
     fn apply_limits_fetch(&mut self, id: LimitsSectionId, result: LimitsFetchResult) {
         match id {
             LimitsSectionId::Provider(kind) => match result {
-                LimitsFetchResult::Ready {
-                    windows,
-                    provider: Some(limits),
-                } => self.apply_provider_ready(kind, limits, windows),
-                LimitsFetchResult::Ready {
-                    windows,
-                    provider: None,
-                } => {
-                    if let Some(overlay) = self.limits_overlay_mut() {
-                        overlay.apply_live(LimitsSectionId::Provider(kind), kind.label(), windows);
-                    }
+                LimitsFetchResult::ProviderReady { limits } => {
+                    self.apply_provider_ready(kind, limits)
                 }
                 LimitsFetchResult::Unavailable => {
                     self.usage_limits_live.remove(&kind);
@@ -493,7 +483,9 @@ impl App {
                         overlay.remove_id(id);
                     }
                 }
-                LimitsFetchResult::Failed => self.mark_usage_failed(kind),
+                LimitsFetchResult::Failed | LimitsFetchResult::ClaudeReady { .. } => {
+                    self.mark_usage_failed(kind)
+                }
             },
             LimitsSectionId::ClaudeCode => limits_claude::apply_claude_limits_result(self, result),
         }
@@ -503,9 +495,9 @@ impl App {
         &mut self,
         kind: UsageProviderKind,
         limits: crate::usage_limits::ProviderUsageLimits,
-        windows: Vec<UsageLimitWindow>,
     ) {
         let fetched_at_unix = now_unix();
+        let windows = limits.windows.clone();
         let mut cache = usage_limits_cache::load();
         cache.upsert(kind, limits.windows.clone(), fetched_at_unix);
         let _ = usage_limits_cache::save(&cache);

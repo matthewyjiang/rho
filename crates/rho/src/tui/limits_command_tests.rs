@@ -217,18 +217,21 @@ fn claude_section_surfaces_utilization_without_allowed_status() {
     assert_eq!(section.windows[1].remaining_percent, Some(60.0));
 }
 
-// Covers: a fresh probe on disk is Live and keeps every cached window key.
+// Covers: Live keeps cache-only windows but labels them with observed age.
 // Owner: pure unit
 #[test]
 fn fresh_probe_state_shows_live_including_disk_fable() {
-    let mut disk = sample_claude_state(1_000);
+    let mut disk = sample_claude_state(1_100);
     disk.windows[0].info.utilization = Some(0.0);
     let mut weekly = disk.windows[0].clone();
     weekly.info.rate_limit_type = Some("seven_day".into());
     weekly.info.utilization = Some(0.19);
+    weekly.observed_at_unix = 1_100;
     let mut fable = weekly.clone();
     fable.info.rate_limit_type = Some("seven_day_fable".into());
     fable.info.utilization = Some(0.33);
+    fable.observed_at_unix = 1_000;
+    fable.observed_at_nanos = 1_000_000_000_000;
     disk.merge_window(weekly);
     disk.merge_window(fable);
     disk.last_probe_unix = Some(1_100);
@@ -249,6 +252,9 @@ fn fresh_probe_state_shows_live_including_disk_fable() {
         .map(|window| window.label.as_str())
         .collect();
     assert_eq!(labels, vec!["5-hour", "Weekly", "Fable"]);
+    assert_eq!(section.windows[0].note, None);
+    assert_eq!(section.windows[1].note, None);
+    assert_eq!(section.windows[2].note.as_deref(), Some("observed 1m ago"));
 }
 
 // Covers: a live Claude probe must occupy /limits before any disk cache exists.

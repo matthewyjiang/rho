@@ -63,6 +63,14 @@ mod pty {
     use super::super::read_usage_from_binary;
 
     fn run_cmd(binary: &str, args: &[&str]) -> super::super::RateLimitState {
+        run_cmd_grow(binary, args, std::time::Duration::from_millis(400))
+    }
+
+    fn run_cmd_grow(
+        binary: &str,
+        args: &[&str],
+        grow: std::time::Duration,
+    ) -> super::super::RateLimitState {
         let env = vec![("TERM".into(), "xterm-256color".into())];
         let cwd = tempfile::TempDir::new().unwrap();
         read_usage_from_binary(
@@ -71,6 +79,7 @@ mod pty {
             &env,
             cwd.path(),
             &AtomicBool::new(false),
+            grow,
         )
         .expect("fake /usage")
     }
@@ -149,6 +158,38 @@ while os.read(sys.stdin.fileno(), 1024):
         assert_session_and_week(&run_cmd("/usr/bin/python3", &["-c", script]));
     }
 
+    // Covers: grow must wait for a named window that paints after the first parse.
+    // Owner: OS or process
+    #[test]
+    fn fake_child_grow_picks_up_late_fable() {
+        let script = r#"
+printf '? for shortcuts\n❯ '
+buf=
+while IFS= read -r -n1 c; do
+  buf="${buf}${c}"
+  case "$buf" in
+    */usage*) break ;;
+  esac
+done
+printf '\nCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n'
+sleep 0.2
+printf '\nCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n33%% used\nResets in 2d\n'
+exec cat >/dev/null
+"#;
+        let state = run_cmd_grow(
+            "/bin/bash",
+            &["-c", script],
+            std::time::Duration::from_millis(800),
+        );
+        let keys: Vec<&str> = state
+            .sorted_windows()
+            .into_iter()
+            .map(|window| window.info.window_key())
+            .collect();
+        assert_eq!(keys, vec!["five_hour", "seven_day", "seven_day_fable"]);
+        assert_eq!(state.sorted_windows()[2].info.utilization, Some(0.33));
+    }
+
     // Covers: dropping /limits must stop the blocking PTY child.
     // Owner: OS or process
     #[test]
@@ -168,6 +209,7 @@ while os.read(sys.stdin.fileno(), 1024):
                 &env,
                 cwd.path(),
                 abort_for_thread.as_ref(),
+                Duration::from_secs(2),
             )
         });
         std::thread::sleep(Duration::from_millis(80));

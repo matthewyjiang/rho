@@ -201,10 +201,7 @@ fn strip_box_drawing(line: &str) -> String {
 
 fn parse_used_percent(line: &str) -> Option<f64> {
     let lower = line.to_ascii_lowercase();
-    let idx = lower
-        .find("% used")
-        .or_else(|| lower.find("%used"))
-        .or_else(|| lower.find('%'))?;
+    let idx = lower.find("% used").or_else(|| lower.find("%used"))?;
     let before = line[..idx].trim_end();
     let token = before.split_whitespace().last()?;
     let value: f64 = token.parse().ok()?;

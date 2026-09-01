@@ -63,6 +63,19 @@ fn header_without_percent_is_skipped() {
     assert!(parse_usage_screen(text, NOW).is_none());
 }
 
+// Covers: a bare % above the usage bar must not be taken as the window used%.
+// Owner: pure unit
+#[test]
+fn incidental_percent_is_not_window_used() {
+    let compact = "Current session\nauto-compact at 80%\n10% used\nResets in 1h\n";
+    assert_eq!(
+        window_map(compact),
+        vec![("five_hour".into(), Some(0.10), true)]
+    );
+    let only_bare = "Current session\nauto-compact at 80%\nResets in 1h\n";
+    assert!(parse_usage_screen(only_bare, NOW).is_none());
+}
+
 #[test]
 fn box_drawing_and_leading_whitespace_are_stripped() {
     let text = "│   Current session   │\n│   ██░░  10% used   │\n│   Resets in 5m     │\n";

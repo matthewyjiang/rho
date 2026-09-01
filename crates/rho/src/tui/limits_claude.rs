@@ -104,10 +104,11 @@ impl App {
             id: LimitsSectionId::ClaudeCode,
             handle: tokio::spawn(async {
                 match usage_probe::fetch_usage().await {
-                    Ok(usage_probe::UsageProbeOutcome::Ready(state)) => LimitsFetchResult::Ready {
-                        windows: claude_windows_from_state(&state, now_unix(), false),
-                        provider: None,
-                    },
+                    Ok(usage_probe::UsageProbeOutcome::Ready(state)) => {
+                        LimitsFetchResult::ClaudeReady {
+                            windows: claude_windows_from_state(&state, now_unix(), false),
+                        }
+                    }
                     Ok(usage_probe::UsageProbeOutcome::Unavailable) => {
                         LimitsFetchResult::Unavailable
                     }
@@ -128,7 +129,7 @@ impl App {
 
 pub(super) fn apply_claude_limits_result(app: &mut App, result: LimitsFetchResult) {
     match result {
-        LimitsFetchResult::Ready { windows, .. } => {
+        LimitsFetchResult::ClaudeReady { windows } => {
             if let Some(overlay) = app.limits_overlay_mut() {
                 overlay.apply_live(
                     LimitsSectionId::ClaudeCode,
@@ -137,6 +138,7 @@ pub(super) fn apply_claude_limits_result(app: &mut App, result: LimitsFetchResul
                 );
             }
         }
+        LimitsFetchResult::ProviderReady { .. } => apply_claude_disk_fallback(app, true),
         LimitsFetchResult::Unavailable => apply_claude_disk_fallback(app, false),
         LimitsFetchResult::Failed => apply_claude_disk_fallback(app, true),
     }
@@ -199,7 +201,11 @@ pub(super) fn claude_windows_from_state(
             if window.info.is_using_overage == Some(true) {
                 note_parts.push("using overage".into());
             }
-            if include_age {
+            let cache_only = match state.last_probe_unix {
+                Some(probe) => window.observed_at_unix < probe,
+                None => true,
+            };
+            if include_age || cache_only {
                 if let Some(age) = crate::claude_runtime::rate_limit::format_age_since(
                     window.observed_at_unix,
                     now_unix,
