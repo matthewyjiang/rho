@@ -224,7 +224,7 @@ fn collect_usage(
 #[derive(Clone, Copy)]
 enum TrustDrive {
     NeedDown,
-    AwaitYes,
+    AwaitYes { down_at: Instant },
     AwaitPrompt { enter_at: Instant },
 }
 
@@ -238,9 +238,11 @@ fn step_trust(
             session
                 .inject_bytes(TRUST_DOWN)
                 .map_err(UsageProbeError::Spawn)?;
-            Ok(TrustDrive::AwaitYes)
+            Ok(TrustDrive::AwaitYes {
+                down_at: Instant::now(),
+            })
         }
-        TrustDrive::AwaitYes => {
+        TrustDrive::AwaitYes { down_at } => {
             // Default row is "No, exit". Enter only after the pointer is on Yes.
             if trust_yes_selected(screen) {
                 session
@@ -249,6 +251,8 @@ fn step_trust(
                 Ok(TrustDrive::AwaitPrompt {
                     enter_at: Instant::now(),
                 })
+            } else if Instant::now() >= down_at + TRUST_RETRY {
+                Ok(TrustDrive::NeedDown)
             } else {
                 Ok(drive)
             }
