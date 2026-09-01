@@ -146,7 +146,7 @@ flowchart TD
 - **Scenarios** - named action/assertion sequences over `RHO_TUI_TEST_MODE=matrix`
 - **Artifacts** - on failure, keep raw PTY bytes, reconstructed screen, action log, and redacted env
 
-Unix PTYs are supported. Windows is skipped with an explicit error rather than a silent pass.
+Unix PTYs are supported. Windows is skipped with an explicit error rather than a silent pass. The harness compiles `crates/rho/src/pty.rs` by path instead of depending on `rho-coding-agent`, so the Cargo workspace (and release-please's cargo-workspace plugin) stay acyclic.
 
 ### Run harness self-tests
 

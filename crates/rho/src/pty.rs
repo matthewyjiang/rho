@@ -1,6 +1,8 @@
 //! Low-level PTY session: spawn, inject, resize, drain, and cleanup.
 //!
 //! Shared by the Claude `/usage` probe and the unpublished TUI PTY harness.
+//! The harness compiles this file by path rather than depending on this crate,
+//! so Cargo (and release-please's cargo-workspace plugin) stay acyclic.
 
 /// Terminal size in character cells.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -4522,8 +4522,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "libc",
+ "portable-pty",
  "pretty_assertions",
- "rho-coding-agent",
  "serde",
  "serde_json",
  "tempfile",
