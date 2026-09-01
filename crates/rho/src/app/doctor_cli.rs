@@ -1,8 +1,9 @@
 //! CLI handler for `rho doctor`.
 //!
 //! Runs the same checks as the interactive `/doctor` overlay without a TUI.
-//! Probes run concurrently under one deadline so a hung endpoint cannot stall
-//! the report.
+//! Root `--provider`/`--model`/`--auth`/`--reasoning` apply in memory so the
+//! report matches `rho --provider X run`. Probes run concurrently under one
+//! deadline so a hung endpoint cannot stall the report.
 
 use std::{sync::Arc, time::Duration};
 
@@ -30,12 +31,18 @@ const PROBE_DEADLINE: Duration = Duration::from_secs(20);
 pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
     let config_repository = ConfigRepository::new(cli.config.clone());
     let mut config = config_repository.load()?;
+    // Register every [providers.custom.*] name before the checks read the
+    // provider list. Early dispatch runs before `prepare_startup` does it.
+    config.providers.activate()?;
     let config_path = super::bootstrap::absolute_config_path(&config_repository)?;
     // The store defaults to the OS backend when unset. A store that cannot be
     // opened is reported by the authentication rows instead of aborting.
     if let Err(error) = crate::credential_store::initialize_from_config(&mut config, &config_path) {
         eprintln!("warning: credential store not initialized: {error:#}");
     }
+    // Honor root --provider/--model/--auth/--reasoning for this invocation.
+    // Persistence stays with `--save` in `prepare_startup`; doctor never writes.
+    super::cli_config::apply_overrides(&mut config, cli)?;
     let store: Arc<dyn CredentialStore> = Arc::new(AppCredentialStore);
 
     let cwd = std::env::current_dir()?;
@@ -77,7 +84,7 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
         .map(|id| (id.clone(), tokio::spawn(run_probe(id, store.clone()))))
         .collect();
     for outcome in collect_probes(handles, PROBE_DEADLINE).await {
-        report.replace_checks(probe_checks(&outcome, &config.provider));
+        report.replace_checks(probe_checks(&outcome));
     }
 
     if json {

@@ -143,13 +143,10 @@ pub(crate) fn placeholder_checks(
 }
 
 /// Rows that replace a probe's placeholders.
-pub(crate) fn probe_checks(
-    outcome: &DoctorProbeOutcome,
-    active_provider: &str,
-) -> Vec<DoctorCheck> {
+pub(crate) fn probe_checks(outcome: &DoctorProbeOutcome) -> Vec<DoctorCheck> {
     match outcome {
         DoctorProbeOutcome::ProviderEndpoint { provider, health } => {
-            vec![checks::endpoint_check(provider, health, active_provider)]
+            vec![checks::endpoint_check(provider, health)]
         }
         DoctorProbeOutcome::Claude(snapshot) => checks::claude_checks(snapshot),
         DoctorProbeOutcome::Rtk { available } => vec![checks::rtk_check(*available)],

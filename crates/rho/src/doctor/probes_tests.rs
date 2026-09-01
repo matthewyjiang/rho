@@ -19,8 +19,10 @@ fn plan_follows_gate_and_selected_or_configured_hosts() {
         vec![DoctorProbeId::Claude, DoctorProbeId::Rtk]
     );
 
-    let mut active = Config::default();
-    active.provider = "ollama".into();
+    let active = Config {
+        provider: "ollama".into(),
+        ..Default::default()
+    };
     assert_endpoint_then_binaries(&active, &active.provider, "ollama");
 
     let mut configured = Config::default();
@@ -80,16 +82,13 @@ fn placeholders_and_results_cover_the_same_rows() {
         .iter()
         .all(|check| check.status == DoctorStatus::Info && check.summary == "not checked"));
 
-    let timed_out = probe_checks(
-        &DoctorProbeOutcome::TimedOut(DoctorProbeId::Claude),
-        "openai",
-    );
+    let timed_out = probe_checks(&DoctorProbeOutcome::TimedOut(DoctorProbeId::Claude));
     assert_eq!(ids(&timed_out), claude_ids);
     assert!(timed_out
         .iter()
         .all(|check| check.status == DoctorStatus::Warn && check.summary == "timed out"));
 
-    let failed = probe_checks(&DoctorProbeOutcome::Failed(DoctorProbeId::Rtk), "openai");
+    let failed = probe_checks(&DoctorProbeOutcome::Failed(DoctorProbeId::Rtk));
     assert_eq!(ids(&failed), vec![DoctorCheckId::Rtk]);
     assert_eq!(failed[0].summary, "probe failed");
 }
@@ -98,7 +97,7 @@ fn placeholders_and_results_cover_the_same_rows() {
 // Owner: pure unit
 #[test]
 fn outcomes_map_to_rows() {
-    let rtk = probe_checks(&DoctorProbeOutcome::Rtk { available: false }, "openai");
+    let rtk = probe_checks(&DoctorProbeOutcome::Rtk { available: false });
     assert_eq!(
         rtk,
         vec![
@@ -107,13 +106,10 @@ fn outcomes_map_to_rows() {
         ]
     );
 
-    let endpoint = probe_checks(
-        &DoctorProbeOutcome::ProviderEndpoint {
-            provider: "ollama".into(),
-            health: ProviderModelHealth::ReachableWithModels { model_count: 1 },
-        },
-        "ollama",
-    );
+    let endpoint = probe_checks(&DoctorProbeOutcome::ProviderEndpoint {
+        provider: "ollama".into(),
+        health: ProviderModelHealth::ReachableWithModels { model_count: 1 },
+    });
     assert_eq!(
         endpoint,
         vec![DoctorCheck::new(
