@@ -1,8 +1,10 @@
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
 use ratatui::layout::Rect;
 
 use super::{
-    clamp_panel_scroll, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
+    clamp_panel_scroll, classify_panel_key, overlay_panel_inner_width, overlay_panel_layout,
+    render_overlay_panel, PanelKey, PanelScroll, PanelScrollTarget,
 };
 
 // Covers: a short body must not fill the terminal, and overflow must clamp scroll.
@@ -69,4 +71,86 @@ fn overlay_panel_clips_body_to_inner_width_when_scrollbar_is_shown() {
             .all(|width| *width <= frame.outer.width as usize),
         "overlay rows must not overflow the panel, got {widths:?}"
     );
+}
+
+// Covers: dismiss-only overlays share one key table so a third overlay cannot
+// drift from Enter/Esc/q close, hjkl/arrows/paging, Ctrl+C passthrough, and
+// swallow-everything-else.
+// Owner: pure unit
+#[test]
+fn classify_panel_key_covers_close_scroll_passthrough_and_swallow() {
+    let cases = [
+        (KeyCode::Esc, KeyModifiers::NONE, PanelKey::Close),
+        (KeyCode::Enter, KeyModifiers::NONE, PanelKey::Close),
+        (KeyCode::Char('q'), KeyModifiers::NONE, PanelKey::Close),
+        (
+            KeyCode::Up,
+            KeyModifiers::NONE,
+            PanelKey::Scroll(PanelScrollTarget::Delta(-1)),
+        ),
+        (
+            KeyCode::Char('k'),
+            KeyModifiers::NONE,
+            PanelKey::Scroll(PanelScrollTarget::Delta(-1)),
+        ),
+        (
+            KeyCode::Down,
+            KeyModifiers::NONE,
+            PanelKey::Scroll(PanelScrollTarget::Delta(1)),
+        ),
+        (
+            KeyCode::Char('j'),
+            KeyModifiers::NONE,
+            PanelKey::Scroll(PanelScrollTarget::Delta(1)),
+        ),
+        (
+            KeyCode::PageUp,
+            KeyModifiers::NONE,
+            PanelKey::Scroll(PanelScrollTarget::Page(-1)),
+        ),
+        (
+            KeyCode::PageDown,
+            KeyModifiers::SHIFT,
+            PanelKey::Scroll(PanelScrollTarget::Page(1)),
+        ),
+        (
+            KeyCode::Home,
+            KeyModifiers::NONE,
+            PanelKey::Scroll(PanelScrollTarget::Absolute(0)),
+        ),
+        (
+            KeyCode::End,
+            KeyModifiers::NONE,
+            PanelKey::Scroll(PanelScrollTarget::Absolute(usize::MAX)),
+        ),
+        (
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+            PanelKey::Passthrough,
+        ),
+        (KeyCode::Char('x'), KeyModifiers::NONE, PanelKey::Swallow),
+    ];
+    for (code, modifiers, expected) in cases {
+        assert_eq!(
+            classify_panel_key(KeyEvent::new(code, modifiers)),
+            expected,
+            "{code:?} {modifiers:?}"
+        );
+    }
+}
+
+// Covers: delta, page, and absolute targets clamp to the body, so overlays
+// cannot scroll past the last row.
+// Owner: pure unit
+#[test]
+fn panel_scroll_applies_targets_and_clamps() {
+    let mut scroll = PanelScroll::default();
+    scroll.apply(PanelScrollTarget::Delta(2), 10, 4);
+    assert_eq!(scroll.offset(), 2);
+    scroll.apply(PanelScrollTarget::Page(1), 10, 4);
+    assert_eq!(scroll.offset(), 6);
+    scroll.apply(PanelScrollTarget::Absolute(99), 10, 4);
+    assert_eq!(scroll.offset(), 6);
+    scroll.apply(PanelScrollTarget::Delta(-3), 10, 4);
+    assert_eq!(scroll.offset(), 3);
 }

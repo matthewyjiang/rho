@@ -13,7 +13,7 @@ fn text(line: &Line<'_>) -> String {
 fn overlay(checks: Vec<DoctorCheck>) -> DoctorOverlay {
     DoctorOverlay {
         report: DoctorReport::from_checks(checks),
-        scroll: 0,
+        scroll: Default::default(),
         checking_started: Instant::now(),
     }
 }
@@ -61,6 +61,102 @@ async fn cancelling_doctor_probes_waits_for_task_to_stop() {
     });
 
     app.cancel_doctor_command().await;
+
+    assert!(app.pending_doctor_probes.is_empty());
+    assert_eq!(std::sync::Arc::strong_count(&task_marker), 1);
+}
+
+async fn wait_until_finished(handle: &tokio::task::JoinHandle<DoctorProbeOutcome>) {
+    while !handle.is_finished() {
+        tokio::task::yield_now().await;
+    }
+}
+
+fn checking_rtk_row() -> DoctorCheck {
+    DoctorCheck::new(
+        DoctorCheckId::Rtk,
+        "rtk",
+        DoctorStatus::Checking,
+        "checking",
+    )
+}
+
+fn rtk_row(app: &mut super::super::App) -> DoctorCheck {
+    let overlay = app
+        .doctor_overlay_mut()
+        .expect("doctor overlay should stay open");
+    overlay
+        .report
+        .checks()
+        .find(|check| check.id == DoctorCheckId::Rtk)
+        .cloned()
+        .expect("rtk row")
+}
+
+// Covers: a finished probe replaces its Checking row and clears is_checking;
+// a join error becomes a failure row instead of spinning forever.
+// Owner: interactive TUI (unit seam; PTY cannot observe task join)
+#[tokio::test]
+async fn poll_applies_finished_probe_and_failed_join() {
+    let mut app = super::super::tests::test_app();
+    app.start_doctor_command().unwrap();
+    app.doctor_overlay_mut()
+        .unwrap()
+        .report
+        .replace_checks(vec![checking_rtk_row()]);
+
+    let handle = tokio::spawn(async { DoctorProbeOutcome::Rtk { available: true } });
+    wait_until_finished(&handle).await;
+    app.pending_doctor_probes.push(PendingDoctorProbe {
+        id: DoctorProbeId::Rtk,
+        handle,
+    });
+    assert!(app.poll_doctor_command().await.unwrap());
+    assert!(!app.doctor_overlay_mut().unwrap().is_checking());
+    let rtk = rtk_row(&mut app);
+    assert_eq!(
+        (rtk.status, rtk.summary.as_str(), rtk.hint.as_deref()),
+        (DoctorStatus::Ok, "available", None)
+    );
+
+    app.doctor_overlay_mut()
+        .unwrap()
+        .report
+        .replace_checks(vec![checking_rtk_row()]);
+    let handle = tokio::spawn(std::future::pending::<DoctorProbeOutcome>());
+    handle.abort();
+    wait_until_finished(&handle).await;
+    app.pending_doctor_probes.push(PendingDoctorProbe {
+        id: DoctorProbeId::Rtk,
+        handle,
+    });
+    assert!(app.poll_doctor_command().await.unwrap());
+    let rtk = rtk_row(&mut app);
+    assert_eq!(
+        (rtk.status, rtk.summary.as_str()),
+        (DoctorStatus::Warn, "probe failed")
+    );
+}
+
+// Covers: approval/questionnaire set_composer must abort live probes, not
+// leave children running until shutdown. PTY cannot observe task lifetime.
+// Owner: interactive TUI (unit seam)
+#[tokio::test]
+async fn replacing_doctor_overlay_aborts_probes() {
+    let mut app = super::super::tests::test_app();
+    app.start_doctor_command().unwrap();
+    let task_marker = std::sync::Arc::new(());
+    let captured_marker = task_marker.clone();
+    app.pending_doctor_probes.push(PendingDoctorProbe {
+        id: DoctorProbeId::Rtk,
+        handle: tokio::spawn(async move {
+            let _marker = captured_marker;
+            std::future::pending::<DoctorProbeOutcome>().await
+        }),
+    });
+
+    app.input_ui.set_composer(super::super::ComposerMode::Input);
+    app.poll_doctor_command().await.unwrap();
 
     assert!(app.pending_doctor_probes.is_empty());
     assert_eq!(std::sync::Arc::strong_count(&task_marker), 1);

@@ -17,8 +17,8 @@ use ratatui::{
 use super::{
     activity::LoadingSpinner,
     overlay_panel::{
-        clamp_panel_scroll, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
-        OverlayPanelFrame,
+        classify_panel_key, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
+        OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
     },
     panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
     render::display_width,
@@ -52,7 +52,7 @@ impl PendingDoctorProbe {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct DoctorOverlay {
     report: DoctorReport,
-    scroll: usize,
+    scroll: PanelScroll,
     /// Spinner phase anchor.
     checking_started: Instant,
 }
@@ -61,22 +61,6 @@ impl DoctorOverlay {
     pub(super) fn is_checking(&self) -> bool {
         self.report.is_checking()
     }
-
-    fn scroll_by(&mut self, delta: isize, body_len: usize, body_rows: usize) {
-        let next = if delta < 0 {
-            self.scroll.saturating_sub(delta.unsigned_abs())
-        } else {
-            self.scroll.saturating_add(delta as usize)
-        };
-        self.scroll = clamp_panel_scroll(next, body_len, body_rows);
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-enum DoctorScrollTarget {
-    Delta(isize),
-    Page(isize),
-    Absolute(usize),
 }
 
 /// Live probes stay out of unit tests, mirroring `/limits`.
@@ -130,7 +114,7 @@ impl App {
         self.input_ui
             .set_composer(ComposerMode::Doctor(DoctorOverlay {
                 report,
-                scroll: 0,
+                scroll: PanelScroll::default(),
                 checking_started: Instant::now(),
             }));
         self.set_status("doctor");
@@ -141,9 +125,10 @@ impl App {
         matches!(self.input_ui.composer(), ComposerMode::Doctor(_))
     }
 
-    /// Close the overlay and drop its probes. Key handling is synchronous,
-    /// so tasks are aborted without being awaited; child processes are
-    /// `kill_on_drop`.
+    /// Close the overlay and drop its probes. Key handling is synchronous, so
+    /// tasks are aborted without being awaited. The Claude probe child is
+    /// `kill_on_drop`; the rtk probe is a blocking task that runs to
+    /// completion.
     pub(super) fn close_doctor_overlay(&mut self) {
         if self.doctor_overlay_open() {
             self.input_ui.set_composer(ComposerMode::Input);
@@ -166,6 +151,12 @@ impl App {
     }
 
     pub(super) async fn poll_doctor_command(&mut self) -> anyhow::Result<bool> {
+        if !self.doctor_overlay_open() {
+            // Approvals and other set_composer replacements do not go through
+            // close_doctor_overlay; drop leftover children here.
+            self.cancel_doctor_command().await;
+            return Ok(false);
+        }
         let mut changed = false;
         let mut still_pending = Vec::new();
         let pending = std::mem::take(&mut self.pending_doctor_probes);
@@ -204,7 +195,7 @@ impl App {
             TITLE,
             FOOTER,
             &body,
-            overlay.scroll,
+            overlay.scroll.offset(),
             area,
         ))
     }
@@ -214,44 +205,20 @@ impl App {
         key: crossterm::event::KeyEvent,
         terminal: &ratatui::DefaultTerminal,
     ) -> bool {
-        use crossterm::event::{KeyCode, KeyModifiers};
-
         if !self.doctor_overlay_open() {
             return false;
         }
-        match (key.modifiers, key.code) {
-            (KeyModifiers::NONE, KeyCode::Esc)
-            | (KeyModifiers::NONE, KeyCode::Enter)
-            | (KeyModifiers::NONE, KeyCode::Char('q')) => {
+        match classify_panel_key(key) {
+            PanelKey::Close => {
                 self.close_doctor_overlay();
                 true
             }
-            (KeyModifiers::NONE, KeyCode::Up) | (KeyModifiers::NONE, KeyCode::Char('k')) => {
-                self.apply_doctor_scroll(terminal, DoctorScrollTarget::Delta(-1));
+            PanelKey::Scroll(target) => {
+                self.apply_doctor_scroll(terminal, target);
                 true
             }
-            (KeyModifiers::NONE, KeyCode::Down) | (KeyModifiers::NONE, KeyCode::Char('j')) => {
-                self.apply_doctor_scroll(terminal, DoctorScrollTarget::Delta(1));
-                true
-            }
-            (_, KeyCode::PageUp) => {
-                self.apply_doctor_scroll(terminal, DoctorScrollTarget::Page(-1));
-                true
-            }
-            (_, KeyCode::PageDown) => {
-                self.apply_doctor_scroll(terminal, DoctorScrollTarget::Page(1));
-                true
-            }
-            (_, KeyCode::Home) => {
-                self.apply_doctor_scroll(terminal, DoctorScrollTarget::Absolute(0));
-                true
-            }
-            (_, KeyCode::End) => {
-                self.apply_doctor_scroll(terminal, DoctorScrollTarget::Absolute(usize::MAX));
-                true
-            }
-            (KeyModifiers::CONTROL, KeyCode::Char('c')) => false,
-            _ => true,
+            PanelKey::Passthrough => false,
+            PanelKey::Swallow => true,
         }
     }
 
@@ -266,7 +233,7 @@ impl App {
         }
         self.apply_doctor_scroll_area(
             Rect::new(0, 0, width, height),
-            DoctorScrollTarget::Delta(delta),
+            PanelScrollTarget::Delta(delta),
         );
         true
     }
@@ -275,14 +242,14 @@ impl App {
         let ComposerMode::Doctor(overlay) = self.input_ui.composer() else {
             return;
         };
-        let scroll = overlay.scroll;
-        self.apply_doctor_scroll(terminal, DoctorScrollTarget::Absolute(scroll));
+        let scroll = overlay.scroll.offset();
+        self.apply_doctor_scroll(terminal, PanelScrollTarget::Absolute(scroll));
     }
 
     fn apply_doctor_scroll(
         &mut self,
         terminal: &ratatui::DefaultTerminal,
-        target: DoctorScrollTarget,
+        target: PanelScrollTarget,
     ) {
         let Ok(size) = terminal.size() else {
             return;
@@ -290,24 +257,14 @@ impl App {
         self.apply_doctor_scroll_area(Rect::new(0, 0, size.width, size.height), target);
     }
 
-    fn apply_doctor_scroll_area(&mut self, area: Rect, target: DoctorScrollTarget) {
+    fn apply_doctor_scroll_area(&mut self, area: Rect, target: PanelScrollTarget) {
         let Some((body_len, body_rows)) = self.doctor_scroll_metrics(area) else {
             return;
         };
         let Some(overlay) = self.doctor_overlay_mut() else {
             return;
         };
-        match target {
-            DoctorScrollTarget::Delta(delta) => overlay.scroll_by(delta, body_len, body_rows),
-            DoctorScrollTarget::Page(direction) => overlay.scroll_by(
-                direction.saturating_mul(body_rows.max(1) as isize),
-                body_len,
-                body_rows,
-            ),
-            DoctorScrollTarget::Absolute(scroll) => {
-                overlay.scroll = clamp_panel_scroll(scroll, body_len, body_rows);
-            }
-        }
+        overlay.scroll.apply(target, body_len, body_rows);
     }
 
     fn doctor_scroll_metrics(&self, area: Rect) -> Option<(usize, usize)> {

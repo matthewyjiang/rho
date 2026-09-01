@@ -353,6 +353,9 @@ impl App {
             if self.poll_limits_command().await? {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;
             }
+            if self.poll_doctor_command().await? {
+                self.draw_running_frame(terminal, &mut frame_scheduler)?;
+            }
             if self.poll_changelog_command().await? {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;
             }

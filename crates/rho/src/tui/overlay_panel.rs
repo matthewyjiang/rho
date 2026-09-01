@@ -116,6 +116,77 @@ pub(super) fn clamp_panel_scroll(scroll: usize, body_len: usize, body_rows: usiz
     clamp_overlay_scroll(scroll, body_len, body_rows)
 }
 
+/// Scroll intent shared by single-pane overlays. Call sites supply body length
+/// and viewport height; this type owns the offset math.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PanelScrollTarget {
+    Delta(isize),
+    Page(isize),
+    Absolute(usize),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct PanelScroll {
+    offset: usize,
+}
+
+impl PanelScroll {
+    pub(super) fn offset(self) -> usize {
+        self.offset
+    }
+
+    pub(super) fn apply(&mut self, target: PanelScrollTarget, body_len: usize, body_rows: usize) {
+        let next = match target {
+            PanelScrollTarget::Delta(delta) if delta < 0 => {
+                self.offset.saturating_sub(delta.unsigned_abs())
+            }
+            PanelScrollTarget::Delta(delta) => self.offset.saturating_add(delta as usize),
+            PanelScrollTarget::Page(direction) => {
+                let delta = direction.saturating_mul(body_rows.max(1) as isize);
+                if delta < 0 {
+                    self.offset.saturating_sub(delta.unsigned_abs())
+                } else {
+                    self.offset.saturating_add(delta as usize)
+                }
+            }
+            PanelScrollTarget::Absolute(scroll) => scroll,
+        };
+        self.offset = clamp_panel_scroll(next, body_len, body_rows);
+    }
+}
+
+/// Shared key table for dismiss-only single-pane overlays. Close vs spawn
+/// policy stays at the call site.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PanelKey {
+    Close,
+    Scroll(PanelScrollTarget),
+    Passthrough,
+    Swallow,
+}
+
+pub(super) fn classify_panel_key(key: crossterm::event::KeyEvent) -> PanelKey {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    match (key.modifiers, key.code) {
+        (KeyModifiers::NONE, KeyCode::Esc)
+        | (KeyModifiers::NONE, KeyCode::Enter)
+        | (KeyModifiers::NONE, KeyCode::Char('q')) => PanelKey::Close,
+        (KeyModifiers::NONE, KeyCode::Up) | (KeyModifiers::NONE, KeyCode::Char('k')) => {
+            PanelKey::Scroll(PanelScrollTarget::Delta(-1))
+        }
+        (KeyModifiers::NONE, KeyCode::Down) | (KeyModifiers::NONE, KeyCode::Char('j')) => {
+            PanelKey::Scroll(PanelScrollTarget::Delta(1))
+        }
+        (_, KeyCode::PageUp) => PanelKey::Scroll(PanelScrollTarget::Page(-1)),
+        (_, KeyCode::PageDown) => PanelKey::Scroll(PanelScrollTarget::Page(1)),
+        (_, KeyCode::Home) => PanelKey::Scroll(PanelScrollTarget::Absolute(0)),
+        (_, KeyCode::End) => PanelKey::Scroll(PanelScrollTarget::Absolute(usize::MAX)),
+        (KeyModifiers::CONTROL, KeyCode::Char('c')) => PanelKey::Passthrough,
+        _ => PanelKey::Swallow,
+    }
+}
+
 fn overlay_outer_width(area: Rect) -> u16 {
     if area.width == 0 {
         return 0;

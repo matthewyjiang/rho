@@ -10,8 +10,8 @@ use rho_providers::credentials::CredentialStore;
 use super::{
     activity::LoadingSpinner,
     overlay_panel::{
-        clamp_panel_scroll, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
-        OverlayPanelFrame,
+        classify_panel_key, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
+        OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
     },
     panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
     render::display_width,
@@ -71,13 +71,6 @@ pub(super) enum LiveUsage {
     Failed,
 }
 
-#[derive(Clone, Copy, Debug)]
-enum LimitsScrollTarget {
-    Delta(isize),
-    Page(isize),
-    Absolute(usize),
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LimitsSectionId {
     Provider(UsageProviderKind),
@@ -114,7 +107,7 @@ struct LimitsSection {
 pub(super) struct LimitsOverlay {
     sections: Vec<LimitsSection>,
     empty_note: Option<String>,
-    scroll: usize,
+    scroll: PanelScroll,
     checking_started: Instant,
 }
 
@@ -186,15 +179,6 @@ impl LimitsOverlay {
             windows,
         });
         self.empty_note = None;
-    }
-
-    fn scroll_by(&mut self, delta: isize, body_len: usize, body_rows: usize) {
-        let next = if delta < 0 {
-            self.scroll.saturating_sub(delta.unsigned_abs())
-        } else {
-            self.scroll.saturating_add(delta as usize)
-        };
-        self.scroll = clamp_panel_scroll(next, body_len, body_rows);
     }
 }
 
@@ -269,7 +253,7 @@ impl App {
             TITLE,
             FOOTER,
             &body,
-            overlay.scroll,
+            overlay.scroll.offset(),
             area,
         ))
     }
@@ -282,43 +266,17 @@ impl App {
         if !self.limits_overlay_open() {
             return false;
         }
-        match (key.modifiers, key.code) {
-            (crossterm::event::KeyModifiers::NONE, crossterm::event::KeyCode::Esc)
-            | (crossterm::event::KeyModifiers::NONE, crossterm::event::KeyCode::Enter)
-            | (crossterm::event::KeyModifiers::NONE, crossterm::event::KeyCode::Char('q')) => {
+        match classify_panel_key(key) {
+            PanelKey::Close => {
                 self.close_limits_overlay();
                 true
             }
-            (crossterm::event::KeyModifiers::NONE, crossterm::event::KeyCode::Up)
-            | (crossterm::event::KeyModifiers::NONE, crossterm::event::KeyCode::Char('k')) => {
-                self.scroll_limits_overlay(terminal, -1);
+            PanelKey::Scroll(target) => {
+                self.apply_limits_scroll(terminal, target);
                 true
             }
-            (crossterm::event::KeyModifiers::NONE, crossterm::event::KeyCode::Down)
-            | (crossterm::event::KeyModifiers::NONE, crossterm::event::KeyCode::Char('j')) => {
-                self.scroll_limits_overlay(terminal, 1);
-                true
-            }
-            (_, crossterm::event::KeyCode::PageUp) => {
-                self.scroll_limits_overlay_page(terminal, -1);
-                true
-            }
-            (_, crossterm::event::KeyCode::PageDown) => {
-                self.scroll_limits_overlay_page(terminal, 1);
-                true
-            }
-            (_, crossterm::event::KeyCode::Home) => {
-                self.set_limits_overlay_scroll(terminal, 0);
-                true
-            }
-            (_, crossterm::event::KeyCode::End) => {
-                self.set_limits_overlay_scroll(terminal, usize::MAX);
-                true
-            }
-            (crossterm::event::KeyModifiers::CONTROL, crossterm::event::KeyCode::Char('c')) => {
-                false
-            }
-            _ => true,
+            PanelKey::Passthrough => false,
+            PanelKey::Swallow => true,
         }
     }
 
@@ -331,30 +289,17 @@ impl App {
         if !self.limits_overlay_open() {
             return false;
         }
-        self.scroll_limits_overlay_area(Rect::new(0, 0, width, height), delta);
+        self.apply_limits_scroll_area(
+            Rect::new(0, 0, width, height),
+            PanelScrollTarget::Delta(delta),
+        );
         true
-    }
-
-    fn scroll_limits_overlay(&mut self, terminal: &ratatui::DefaultTerminal, delta: isize) {
-        self.apply_limits_scroll(terminal, LimitsScrollTarget::Delta(delta));
-    }
-
-    fn scroll_limits_overlay_page(
-        &mut self,
-        terminal: &ratatui::DefaultTerminal,
-        direction: isize,
-    ) {
-        self.apply_limits_scroll(terminal, LimitsScrollTarget::Page(direction));
-    }
-
-    fn set_limits_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal, scroll: usize) {
-        self.apply_limits_scroll(terminal, LimitsScrollTarget::Absolute(scroll));
     }
 
     fn apply_limits_scroll(
         &mut self,
         terminal: &ratatui::DefaultTerminal,
-        target: LimitsScrollTarget,
+        target: PanelScrollTarget,
     ) {
         let Ok(size) = terminal.size() else {
             return;
@@ -362,28 +307,14 @@ impl App {
         self.apply_limits_scroll_area(Rect::new(0, 0, size.width, size.height), target);
     }
 
-    fn scroll_limits_overlay_area(&mut self, area: Rect, delta: isize) {
-        self.apply_limits_scroll_area(area, LimitsScrollTarget::Delta(delta));
-    }
-
-    fn apply_limits_scroll_area(&mut self, area: Rect, target: LimitsScrollTarget) {
+    fn apply_limits_scroll_area(&mut self, area: Rect, target: PanelScrollTarget) {
         let Some((body_len, body_rows)) = self.limits_scroll_metrics(area) else {
             return;
         };
-        let ComposerMode::Limits(overlay) = self.input_ui.composer_mut() else {
+        let Some(overlay) = self.limits_overlay_mut() else {
             return;
         };
-        match target {
-            LimitsScrollTarget::Delta(delta) => overlay.scroll_by(delta, body_len, body_rows),
-            LimitsScrollTarget::Page(direction) => overlay.scroll_by(
-                direction.saturating_mul(body_rows.max(1) as isize),
-                body_len,
-                body_rows,
-            ),
-            LimitsScrollTarget::Absolute(scroll) => {
-                overlay.scroll = clamp_panel_scroll(scroll, body_len, body_rows);
-            }
-        }
+        overlay.scroll.apply(target, body_len, body_rows);
     }
 
     fn limits_scroll_metrics(&self, area: Rect) -> Option<(usize, usize)> {
@@ -534,14 +465,11 @@ impl App {
     }
 
     pub(super) fn clamp_limits_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
-        if !self.limits_overlay_open() {
-            return;
-        }
         let ComposerMode::Limits(overlay) = self.input_ui.composer() else {
             return;
         };
-        let scroll = overlay.scroll;
-        self.set_limits_overlay_scroll(terminal, scroll);
+        let scroll = overlay.scroll.offset();
+        self.apply_limits_scroll(terminal, PanelScrollTarget::Absolute(scroll));
     }
 
     fn mark_usage_failed(&mut self, kind: UsageProviderKind) {
@@ -602,7 +530,7 @@ fn build_limits_overlay(
     LimitsOverlay {
         sections,
         empty_note,
-        scroll: 0,
+        scroll: PanelScroll::default(),
         checking_started: Instant::now(),
     }
 }
