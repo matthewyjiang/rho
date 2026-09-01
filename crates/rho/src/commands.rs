@@ -602,9 +602,12 @@ mod tests {
 
     #[test]
     fn rejects_unknown_command() {
-        let err = parse_command("/nope").unwrap_err();
-
-        assert_eq!(err, CommandParseError::Unknown("nope".into()));
+        for input in ["/nope", "/nope\n", "/nope\r\n"] {
+            assert_eq!(
+                parse_command(input),
+                Err(CommandParseError::Unknown("nope".into()))
+            );
+        }
     }
 
     #[test]
