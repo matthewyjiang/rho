@@ -128,3 +128,20 @@ fn outcomes_map_to_rows() {
         )]
     );
 }
+
+// Covers: a hung `rtk --version` child must be killed and reaped instead of
+// pinning doctor past the 2s probe budget.
+// Owner: OS or process
+#[cfg(unix)]
+#[tokio::test]
+async fn hung_rtk_probe_is_killed_within_budget() {
+    let mut command = tokio::process::Command::new("sh");
+    command.args(["-c", "sleep 30"]);
+    let started = std::time::Instant::now();
+    assert!(!super::probe_rtk_command(command).await);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(4),
+        "hung probe must not exceed the 2s budget by much, elapsed {:?}",
+        started.elapsed()
+    );
+}

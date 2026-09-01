@@ -1,8 +1,7 @@
-use std::{path::Path, time::Duration};
+use std::path::Path;
 
 use pretty_assertions::assert_eq;
 use serde_json::Value;
-use tokio::process::Command;
 
 use super::*;
 
@@ -82,22 +81,5 @@ async fn logs_rtk_discover_compatible_tool_pairs() {
     assert_eq!(
         lines[1].pointer("/message/content/0/is_error"),
         Some(&Value::Bool(false))
-    );
-}
-
-// Covers: a hung `rtk --version` child must be killed and reaped instead of
-// pinning the runtime past the probe budget.
-// Owner: OS or process
-#[cfg(unix)]
-#[tokio::test]
-async fn hung_version_probe_is_killed_within_budget() {
-    let mut command = Command::new("sh");
-    command.args(["-c", "sleep 30"]);
-    let started = std::time::Instant::now();
-    assert!(!probe_available_command(command).await);
-    assert!(
-        started.elapsed() < Duration::from_secs(4),
-        "hung probe must not exceed the 2s budget by much, elapsed {:?}",
-        started.elapsed()
     );
 }

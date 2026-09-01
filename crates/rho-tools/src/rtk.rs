@@ -19,47 +19,6 @@ pub fn is_available() -> bool {
     output.status.success() && supports_rewrite(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// Async `rtk --version` probe. `kill_on_drop` plus an explicit timeout so a
-/// hung child does not pin the runtime the way [`is_available`] can.
-pub async fn probe_available() -> bool {
-    let mut command = Command::new("rtk");
-    command.arg("--version");
-    probe_available_command(command).await
-}
-
-pub async fn probe_available_command(mut command: Command) -> bool {
-    use std::process::Stdio;
-
-    use tokio::io::AsyncReadExt;
-
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    let Ok(mut child) = command.spawn() else {
-        return false;
-    };
-    let mut stdout = child.stdout.take();
-    let collect = async {
-        let mut buf = Vec::new();
-        if let Some(pipe) = stdout.as_mut() {
-            let _ = pipe.read_to_end(&mut buf).await;
-        }
-        let status = child.wait().await.ok()?;
-        Some((status.success(), buf))
-    };
-    match tokio::time::timeout(REWRITE_TIMEOUT, collect).await {
-        Ok(Some((true, buf))) => supports_rewrite(&String::from_utf8_lossy(&buf)),
-        Ok(_) => false,
-        Err(_) => {
-            let _ = child.start_kill();
-            let _ = child.wait().await;
-            false
-        }
-    }
-}
-
 fn supports_rewrite(version: &str) -> bool {
     let Some((major, minor, _patch)) = parse_version(version) else {
         return true;

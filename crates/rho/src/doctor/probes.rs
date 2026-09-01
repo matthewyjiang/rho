@@ -4,7 +4,7 @@
 //! when it finishes. Hosts spawn [`run_probe`] and poll the task; nothing here
 //! blocks the caller.
 
-use std::sync::Arc;
+use std::{process::Stdio, sync::Arc, time::Duration};
 
 use rho_providers::{
     credentials::CredentialStore,
@@ -118,9 +118,71 @@ pub(crate) async fn run_probe(
             DoctorProbeOutcome::Claude(crate::claude_runtime::auth::probe_snapshot().await)
         }
         DoctorProbeId::Rtk => DoctorProbeOutcome::Rtk {
-            available: rho_tools::rtk::probe_available().await,
+            available: probe_rtk().await,
         },
     }
+}
+
+/// Same budget as `rho_tools` rewrite probes. A hung `--version` must not
+/// consume the whole `rho doctor` deadline.
+const RTK_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+async fn probe_rtk() -> bool {
+    let mut command = tokio::process::Command::new("rtk");
+    command.arg("--version");
+    probe_rtk_command(command).await
+}
+
+async fn probe_rtk_command(mut command: tokio::process::Command) -> bool {
+    use tokio::io::AsyncReadExt;
+
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let Ok(mut child) = command.spawn() else {
+        return false;
+    };
+    let mut stdout = child.stdout.take();
+    let collect = async {
+        let mut buf = Vec::new();
+        if let Some(pipe) = stdout.as_mut() {
+            let _ = pipe.read_to_end(&mut buf).await;
+        }
+        let status = child.wait().await.ok()?;
+        Some((status.success(), buf))
+    };
+    match tokio::time::timeout(RTK_PROBE_TIMEOUT, collect).await {
+        Ok(Some((true, buf))) => rtk_version_supports_rewrite(&String::from_utf8_lossy(&buf)),
+        Ok(_) => false,
+        Err(_) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            false
+        }
+    }
+}
+
+/// Keep in sync with `rho_tools::rtk` version gating. Lives here so doctor
+/// does not need a new published tools crate just to abort a hung child.
+fn rtk_version_supports_rewrite(version: &str) -> bool {
+    let version = version
+        .trim()
+        .strip_prefix("rtk ")
+        .unwrap_or(version.trim());
+    let mut parts = version.split('.');
+    let (Some(Ok(major)), Some(Ok(minor)), Some(Ok(_patch))) = (
+        parts.next().map(str::parse::<u64>),
+        parts.next().map(str::parse::<u64>),
+        parts
+            .next()
+            .and_then(|part| part.split_whitespace().next())
+            .map(str::parse::<u64>),
+    ) else {
+        return true;
+    };
+    major > 0 || minor >= 23
 }
 
 /// Rows a probe will fill in, in their pre-result state.
