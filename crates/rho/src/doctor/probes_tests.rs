@@ -93,7 +93,51 @@ fn placeholders_and_results_cover_the_same_rows() {
 
     let failed = probe_checks(&DoctorProbeOutcome::Failed(DoctorProbeId::Rtk), "openai");
     assert_eq!(ids(&failed), vec![DoctorCheckId::Rtk]);
-    assert_eq!(failed[0].summary, "probe failed");
+    assert_eq!(
+        (failed[0].status, failed[0].summary.as_str()),
+        (DoctorStatus::Warn, "probe failed")
+    );
+}
+
+fn ollama_endpoint_id() -> DoctorProbeId {
+    DoctorProbeId::ProviderEndpoint {
+        provider: "ollama".into(),
+        endpoint: rho_providers::provider::OLLAMA_API_BASE.parse().unwrap(),
+    }
+}
+
+// Covers: a hung or panicked active host must fail `rho doctor`; the same
+// outcome on an unused configured host stays informational so CI still
+// gates on the selected setup.
+// Owner: pure unit
+#[test]
+fn timed_out_or_failed_active_endpoint_fails_ci() {
+    let id = ollama_endpoint_id();
+    for (name, outcome, summary) in [
+        (
+            "active timeout",
+            DoctorProbeOutcome::TimedOut(id.clone()),
+            "timed out",
+        ),
+        (
+            "active failure",
+            DoctorProbeOutcome::Failed(id.clone()),
+            "probe failed",
+        ),
+    ] {
+        let checks = probe_checks(&outcome, "ollama");
+        assert_eq!(
+            (checks[0].status, checks[0].summary.as_str()),
+            (DoctorStatus::Fail, summary),
+            "{name}"
+        );
+    }
+
+    let unused = probe_checks(
+        &DoctorProbeOutcome::TimedOut(ollama_endpoint_id()),
+        "openai",
+    );
+    assert_eq!(unused[0].status, DoctorStatus::Info);
 }
 
 // Covers: finished outcomes become the rows their placeholders reserved.

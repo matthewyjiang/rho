@@ -213,21 +213,38 @@ pub(crate) fn probe_checks(
         DoctorProbeOutcome::Rtk { available } => vec![checks::rtk_check(*available)],
         DoctorProbeOutcome::Failed(id) => failed_rows(
             id,
+            active_provider,
             "probe failed",
             "the probe stopped before it produced a result",
         ),
-        DoctorProbeOutcome::TimedOut(id) => {
-            failed_rows(id, "timed out", "the probe did not finish in time")
-        }
+        DoctorProbeOutcome::TimedOut(id) => failed_rows(
+            id,
+            active_provider,
+            "timed out",
+            "the probe did not finish in time",
+        ),
     }
 }
 
-fn failed_rows(id: &DoctorProbeId, summary: &str, hint: &str) -> Vec<DoctorCheck> {
+/// Active endpoint timeouts and panics fail CI the same way `Unreachable`
+/// does. Unused configured hosts stay informational; Claude and rtk stay
+/// warnings because they are optional runtimes.
+fn failed_rows(
+    id: &DoctorProbeId,
+    active_provider: &str,
+    summary: &str,
+    hint: &str,
+) -> Vec<DoctorCheck> {
+    let status = match id {
+        DoctorProbeId::ProviderEndpoint { provider, .. } if provider == active_provider => {
+            DoctorStatus::Fail
+        }
+        DoctorProbeId::ProviderEndpoint { .. } => DoctorStatus::Info,
+        DoctorProbeId::Claude | DoctorProbeId::Rtk => DoctorStatus::Warn,
+    };
     probe_rows(id)
         .into_iter()
-        .map(|(check_id, label)| {
-            DoctorCheck::new(check_id, label, DoctorStatus::Warn, summary).with_hint(hint)
-        })
+        .map(|(check_id, label)| DoctorCheck::new(check_id, label, status, summary).with_hint(hint))
         .collect()
 }
 
