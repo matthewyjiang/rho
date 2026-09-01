@@ -117,7 +117,13 @@ impl ClaudeAuthStatus {
     /// `claude code: signed in[ as EMAIL][ (PLAN)]`, the shared prefix of every
     /// signed-in summary.
     fn signed_in_summary(&self) -> String {
-        let mut summary = String::from("claude code: signed in");
+        format!("claude code: {}", self.account_summary())
+    }
+
+    /// `signed in[ as EMAIL][ (PLAN)]` for surfaces that already name the
+    /// runtime, such as a doctor row.
+    pub(crate) fn account_summary(&self) -> String {
+        let mut summary = String::from("signed in");
         if let Some(email) = self.email.as_deref().filter(|value| !value.is_empty()) {
             summary.push_str(" as ");
             summary.push_str(email);
@@ -185,21 +191,6 @@ impl ClaudeProbeSnapshot {
             Ok(status) => status.describe(),
             Err(error) => error.clone(),
         }
-    }
-
-    pub(crate) fn version_description(&self) -> String {
-        match &self.version {
-            Ok(version) => version.clone(),
-            Err(error) => error.clone(),
-        }
-    }
-
-    pub(crate) fn auth_healthy(&self) -> bool {
-        matches!(&self.auth, Ok(status) if status.logged_in)
-    }
-
-    pub(crate) fn binary_healthy(&self) -> bool {
-        self.version.is_ok()
     }
 }
 

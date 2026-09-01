@@ -2,7 +2,7 @@ use std::{collections::BTreeMap, time::Instant};
 
 use ratatui::{
     layout::Rect,
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
 };
 use rho_providers::credentials::CredentialStore;
@@ -13,7 +13,8 @@ use super::{
         clamp_panel_scroll, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
         OverlayPanelFrame,
     },
-    render::{display_width, wrap_line_at_whitespace},
+    panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
+    render::display_width,
     theme::Theme,
     App, ComposerMode,
 };
@@ -656,7 +657,7 @@ fn overlay_body_lines(
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     if let Some(note) = &overlay.empty_note {
-        lines.extend(indented_note_lines(note, width, Theme::dim()));
+        lines.extend(indented_wrapped_lines(note, 2, width, Theme::dim()));
         return lines;
     }
 
@@ -673,7 +674,11 @@ fn overlay_body_lines(
         if index > 0 {
             lines.push(Line::default());
         }
-        lines.push(section_heading(section, width, spinner, now_unix));
+        lines.push(heading_with_status(
+            &section.label,
+            &heading_status(section, spinner, now_unix),
+            width,
+        ));
         if section.windows.is_empty() {
             match section.status {
                 LimitsSectionStatus::Checking { .. } => {
@@ -696,32 +701,6 @@ fn overlay_body_lines(
         }));
     }
     lines
-}
-
-fn section_heading(
-    section: &LimitsSection,
-    width: usize,
-    spinner: Option<&str>,
-    now_unix: i64,
-) -> Line<'static> {
-    let status = heading_status(section, spinner, now_unix);
-    let label = section.label.clone();
-    let label_style = Theme::text().add_modifier(Modifier::BOLD);
-    if status.is_empty() || width == 0 {
-        return Line::from(Span::styled(truncate_to(label, width), label_style));
-    }
-    let gap = 2;
-    let status_width = display_width(&status);
-    let label_budget = width.saturating_sub(status_width.saturating_add(gap));
-    let label = truncate_to(label, label_budget);
-    let pad = width
-        .saturating_sub(display_width(&label))
-        .saturating_sub(status_width);
-    Line::from(vec![
-        Span::styled(label, label_style),
-        Span::raw(" ".repeat(pad)),
-        Span::styled(status, Theme::dim()),
-    ])
 }
 
 fn heading_status(section: &LimitsSection, spinner: Option<&str>, now_unix: i64) -> String {
@@ -754,7 +733,7 @@ fn placeholder_window_line(label_width: usize, width: usize) -> Line<'static> {
     let prefix = format!("  {:label_width$}   ", "—");
     let bar = "░".repeat(BAR_WIDTH);
     let text = format!("{prefix}{bar}");
-    Line::from(Span::styled(truncate_to(text, width), Theme::dim()))
+    Line::from(Span::styled(truncate_to(&text, width), Theme::dim()))
 }
 
 fn usage_limit_window_lines(
@@ -797,7 +776,7 @@ fn usage_limit_window_lines(
         format!("  {:label_width$}   {detail}", window.label)
     };
     vec![Line::from(Span::styled(
-        truncate_to(text, width),
+        truncate_to(&text, width),
         block_style,
     ))]
 }
@@ -855,31 +834,14 @@ fn remaining_window_lines(
         )));
     }
     if let Some(note) = note {
-        lines.extend(indented_note_lines(
+        lines.extend(indented_wrapped_lines(
             note,
+            2,
             width,
             block_style.patch(Theme::dim()),
         ));
     }
     lines
-}
-
-fn indented_note_lines(note: &str, width: usize, style: Style) -> Vec<Line<'static>> {
-    if width == 0 {
-        return vec![Line::from(Span::styled("", style))];
-    }
-    let indent_width = 2.min(width.saturating_sub(1));
-    let note_width = width.saturating_sub(indent_width).max(1);
-    let indent = " ".repeat(indent_width);
-    wrap_line_at_whitespace(note, note_width)
-        .into_iter()
-        .map(|part| {
-            Line::from(Span::styled(
-                format!("{indent}{}", part.trim_start()),
-                style,
-            ))
-        })
-        .collect()
 }
 
 fn remaining_style(remaining: u8) -> Style {
@@ -915,10 +877,6 @@ fn format_reset_at(resets_at_unix: i64, now: i64) -> String {
                 .to_string()
         })
         .unwrap_or_else(|| format!("at Unix time {resets_at_unix}"))
-}
-
-fn truncate_to(text: String, width: usize) -> String {
-    super::render::truncate_one_line(&text, width.max(1))
 }
 
 #[cfg(test)]

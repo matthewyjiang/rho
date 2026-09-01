@@ -124,6 +124,7 @@ strip = "symbols"
 [dev-dependencies]
 pretty_assertions = "1"
 rho-tui-pty = { path = "../rho-tui-pty" }
+tokio = { version = "1", features = ["full", "test-util"] }
 
 [build-dependencies]
 winresource = "0.1.31"

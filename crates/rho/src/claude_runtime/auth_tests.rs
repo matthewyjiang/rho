@@ -89,35 +89,6 @@ fn parses_optional_auth_fields_and_requires_logged_in() {
     assert!(error.to_string().contains("loggedIn") || error.to_string().contains("missing field"));
 }
 
-#[test]
-fn probe_snapshot_reports_typed_health() {
-    let signed_in = ClaudeProbeSnapshot {
-        auth: Ok(ClaudeAuthStatus {
-            logged_in: true,
-            auth_method: None,
-            api_provider: None,
-            email: Some("a@b.c".into()),
-            org_id: None,
-            org_name: None,
-            subscription_type: None,
-        }),
-        version: Ok("1.2.3".into()),
-    };
-    assert!(signed_in.auth_healthy());
-    assert!(signed_in.binary_healthy());
-
-    let missing = ClaudeProbeSnapshot {
-        auth: Err(ClaudeAuthError::BinaryMissing.to_string()),
-        version: Err(ClaudeAuthError::BinaryMissing.to_string()),
-    };
-    assert!(!missing.auth_healthy());
-    assert!(!missing.binary_healthy());
-
-    let not_refreshed = ClaudeProbeSnapshot::not_refreshed_during_turn();
-    assert!(!not_refreshed.auth_healthy());
-    assert!(!not_refreshed.binary_healthy());
-}
-
 #[cfg(unix)]
 #[tokio::test]
 async fn query_program_parses_signed_in_status_json() {
