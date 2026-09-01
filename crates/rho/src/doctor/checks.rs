@@ -262,16 +262,10 @@ pub(super) fn path_check(
     path: &Path,
     kind: PathKind,
 ) -> DoctorCheck {
-    let status = if probe_writable(path, kind) {
-        DoctorStatus::Ok
+    let (status, summary) = if probe_writable(path, kind) {
+        (DoctorStatus::Ok, "writable")
     } else {
-        DoctorStatus::Fail
-    };
-    let summary = match status {
-        DoctorStatus::Ok => "writable",
-        DoctorStatus::Info | DoctorStatus::Warn | DoctorStatus::Fail | DoctorStatus::Checking => {
-            "not writable"
-        }
+        (DoctorStatus::Fail, "not writable")
     };
     DoctorCheck::new(id, label, status, summary).with_hint(path.display().to_string())
 }

@@ -113,6 +113,14 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
 /// in `prepare_startup`; doctor never writes.
 fn apply_doctor_overrides(config: &mut crate::config::Config, cli: &Cli) -> anyhow::Result<()> {
     super::cli_config::apply_overrides_allowing_empty_cache(config, cli)?;
+    super::cli_config::normalize_reasoning_for_cli(
+        config,
+        if cli.reasoning.is_some() {
+            rho_providers::model::ReasoningRequestSource::Explicit
+        } else {
+            rho_providers::model::ReasoningRequestSource::PersistedOrDefault
+        },
+    )?;
     Ok(())
 }
 
