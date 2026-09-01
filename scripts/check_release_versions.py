@@ -162,12 +162,23 @@ def workspace_member_manifests() -> list[Path]:
 
 
 def iter_manifest_dependency_names(manifest: dict[str, object]) -> set[str]:
-    """Return dependency table keys, matching release-please's cargo-workspace plugin."""
+    """Return workspace package names declared in every dependency table.
+
+    Cargo table keys can differ from `[package.name]` via `package = \"...\"`.
+    Release-please's cargo-workspace plugin uses the keys and drops those
+    edges; this check uses the renamed package so a cycle through that crate
+    still fails closed.
+    """
     names: set[str] = set()
 
     def take(table: object) -> None:
-        if isinstance(table, dict):
-            names.update(str(key) for key in table)
+        if not isinstance(table, dict):
+            return
+        for key, value in table.items():
+            if isinstance(value, dict) and isinstance(value.get("package"), str):
+                names.add(value["package"])
+            else:
+                names.add(str(key))
 
     for table_name in DEPENDENCY_TABLES:
         take(manifest.get(table_name))

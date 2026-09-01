@@ -5,6 +5,7 @@ import unittest
 from scripts.check_release_versions import (
     cargo_agrees_with_release_baseline,
     find_workspace_dependency_cycle,
+    iter_manifest_dependency_names,
 )
 
 
@@ -59,3 +60,39 @@ class WorkspaceDependencyGraphTests(unittest.TestCase):
         for graph, expected in cases:
             with self.subTest(graph=graph):
                 self.assertEqual(find_workspace_dependency_cycle(graph), expected)
+
+    # Covers: renamed `package =` keys and target tables must still produce
+    # graph edges, or a cycle through those crates would pass the check.
+    def test_resolves_renamed_and_target_specific_dependencies(self) -> None:
+        cases = (
+            (
+                {
+                    "dependencies": {
+                        "rho-sdk": {"path": "../rho-sdk"},
+                        "rho-tools": {
+                            "path": "../rho-tools",
+                            "package": "rho-agent-tools",
+                        },
+                    }
+                },
+                {"rho-sdk", "rho-agent-tools"},
+            ),
+            (
+                {
+                    "dependencies": {"anyhow": "1"},
+                    "dev-dependencies": {"rho-tui-pty": {"path": "../rho-tui-pty"}},
+                    "target": {
+                        "cfg(unix)": {
+                            "dependencies": {
+                                "portable-pty": "0.9",
+                                "rho-sdk": {"path": "../rho-sdk"},
+                            }
+                        }
+                    },
+                },
+                {"anyhow", "rho-tui-pty", "portable-pty", "rho-sdk"},
+            ),
+        )
+        for manifest, expected in cases:
+            with self.subTest(manifest=manifest):
+                self.assertEqual(iter_manifest_dependency_names(manifest), expected)
