@@ -12,11 +12,21 @@ use super::{
 };
 use crate::claude_runtime::{rate_limit, usage_parse::parse_usage_screen, usage_pty::PtySession};
 
-/// Interactive TUI + keychain + first-run trust dialog. JSON `auth status`
-/// is 10s without a TUI; local capture needed ~13s to reach the idle prompt.
-const PROMPT_WAIT: Duration = Duration::from_secs(30);
-/// `/usage` then Anthropic's usage endpoint.
-const PANEL_WAIT: Duration = Duration::from_secs(15);
+/// Interactive TUI + keychain + first-run trust dialog + remote-control
+/// connect. A warm start reaches the idle prompt in under 1s, but a cold
+/// start was captured spending 13s+ on the remote-control handshake alone
+/// ("Remote Control disconnected" logged 13s after spawn), so the old 30s
+/// budget sat within noise of a spurious "update failed". The probe now
+/// disables that handshake via `--settings`, but the budget stays generous
+/// as defense-in-depth in case a Claude update stops honoring the flag.
+/// Warm runs never touch this; it only bounds a hung child.
+const PROMPT_WAIT: Duration = Duration::from_secs(60);
+/// `/usage` then Anthropic's usage endpoint. Warm captures paint "% used"
+/// in under 1s, but a cold start stacks startup latency with a slow usage
+/// refresh; a user-visible probe failure landed 20-30s after `/limits`,
+/// which is exactly startup + the old 15s budget. Warm runs never wait
+/// this long; it only bounds a hung refresh.
+const PANEL_WAIT: Duration = Duration::from_secs(30);
 /// Anthropic's usage endpoint can sit on "Refreshing" after the panel
 /// appears. Eight seconds covers a slow network without rivaling
 /// [`PANEL_WAIT`] on a hung refresh.

@@ -140,6 +140,13 @@ fn probe_usage_blocking(abort: &AtomicBool) -> Result<RateLimitState, UsageProbe
             "",
             "--strict-mcp-config",
             "--no-chrome",
+            // Skip the Remote Control bridge handshake, observed to add 13s+
+            // to a cold start before the idle prompt was usable. `--settings`
+            // still applies under `--setting-sources ""`. Do not add
+            // CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: it drops the
+            // per-model (Fable) week window from the /usage panel.
+            "--settings",
+            r#"{"remoteControlAtStartup": false}"#,
         ],
         &env,
         &cwd,
