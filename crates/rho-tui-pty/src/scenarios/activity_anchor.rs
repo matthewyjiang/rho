@@ -62,9 +62,11 @@ const SPINNER_ACTIVITY_JUMP_RAIL_STEPS: &[Step] = &[
         text: "fixture bulk one line 180",
         timeout: STREAM,
     },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(200),
-        timeout: SETTLE,
+    // Line 180 paints before the turn is idle. Submitting the delay fixture
+    // during that tail queues it as a steer and the next wait never sees it.
+    Step::WaitText {
+        text: "Worked for",
+        timeout: STREAM,
     },
     Step::Phase("start_turn"),
     Step::SubmitText("fixture delay"),
