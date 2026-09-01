@@ -40,10 +40,13 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
     if let Err(error) = crate::credential_store::initialize_from_config(&mut config, &config_path) {
         eprintln!("warning: credential store not initialized: {error:#}");
     }
+    let store: Arc<dyn CredentialStore> = Arc::new(AppCredentialStore);
     // Honor root --provider/--model/--auth/--reasoning for this invocation.
     // Persistence stays with `--save` in `prepare_startup`; doctor never writes.
+    // Same order as `prepare_startup`: refresh then apply so `--provider` on a
+    // cached-only host can pick a default instead of exiting before the report.
+    super::cli_config::refresh_model_cache(cli, &config, store.as_ref()).await?;
     super::cli_config::apply_overrides(&mut config, cli)?;
-    let store: Arc<dyn CredentialStore> = Arc::new(AppCredentialStore);
 
     let cwd = std::env::current_dir()?;
     let home = crate::paths::home_dir();
