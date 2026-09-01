@@ -126,9 +126,8 @@ impl App {
     }
 
     /// Close the overlay and drop its probes. Key handling is synchronous, so
-    /// tasks are aborted without being awaited. The Claude probe child is
-    /// `kill_on_drop`; the rtk probe is a blocking task that runs to
-    /// completion.
+    /// tasks are aborted without being awaited. Probe children are
+    /// `kill_on_drop`.
     pub(super) fn close_doctor_overlay(&mut self) {
         if self.doctor_overlay_open() {
             self.input_ui.set_composer(ComposerMode::Input);
