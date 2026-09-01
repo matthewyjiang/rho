@@ -1,3 +1,4 @@
+use clap::Parser;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
@@ -78,4 +79,28 @@ async fn collect_probes_times_out_slow_tasks() {
         outcomes[1],
         DoctorProbeOutcome::TimedOut(DoctorProbeId::Claude)
     ));
+}
+
+// Covers: `rho --provider ollama doctor` must print a report even when the
+// model cache is empty; catalog resolution cannot abort the command.
+// Owner: CLI (pure selection)
+#[test]
+fn provider_override_with_empty_cache_still_selects_the_host() {
+    let mut config = crate::config::Config::default();
+    let cli = Cli::try_parse_from(["rho", "--provider", "ollama", "doctor"]).unwrap();
+    apply_doctor_overrides(&mut config, &cli).unwrap();
+    assert_eq!(config.provider, "ollama");
+}
+
+// Covers: unknown --provider still fails instead of producing a silent report.
+// Owner: CLI (pure selection)
+#[test]
+fn unknown_provider_override_still_errors() {
+    let mut config = crate::config::Config::default();
+    let cli = Cli::try_parse_from(["rho", "--provider", "not-a-real-host", "doctor"]).unwrap();
+    let err = apply_doctor_overrides(&mut config, &cli).unwrap_err();
+    assert!(
+        err.to_string().contains("unknown provider"),
+        "expected unknown provider, got {err:#}"
+    );
 }
