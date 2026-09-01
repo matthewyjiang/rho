@@ -71,16 +71,11 @@ fn placeholders_and_results_cover_the_same_rows() {
     };
     let claude_ids = vec![DoctorCheckId::ClaudeAuth, DoctorCheckId::ClaudeBinary];
 
-    let checking = placeholder_checks(&DoctorProbeId::Claude, ProbePlaceholder::Checking);
+    let checking = placeholder_checks(&DoctorProbeId::Claude);
     assert_eq!(ids(&checking), claude_ids);
     assert!(checking
         .iter()
         .all(|check| check.status == DoctorStatus::Checking && check.summary == "checking"));
-
-    let skipped = placeholder_checks(&DoctorProbeId::Claude, ProbePlaceholder::NotChecked);
-    assert!(skipped
-        .iter()
-        .all(|check| check.status == DoctorStatus::Info && check.summary == "not checked"));
 
     let timed_out = probe_checks(
         &DoctorProbeOutcome::TimedOut(DoctorProbeId::Claude),

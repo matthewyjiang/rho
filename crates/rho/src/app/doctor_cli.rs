@@ -17,7 +17,7 @@ use crate::{
     doctor::{
         build_report, plan_probes, probe_checks, run_probe, text_report, DoctorInputs,
         DoctorProbeGate, DoctorProbeId, DoctorProbeOutcome, DoctorReport, DoctorSection,
-        DoctorSummary, HerdrProbe, ProbePlaceholder,
+        DoctorSummary, HerdrProbe,
     },
     herdr::HerdrReporter,
     plugins::{self, ProjectTrust},
@@ -80,7 +80,6 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
         mcp_report: &mcp_report,
         plugins_report: &discovery.report,
         probes: &probes,
-        placeholder: ProbePlaceholder::Checking,
     });
     let handles = probes
         .into_iter()

@@ -10,6 +10,7 @@ mod changelog;
 mod command_palette;
 mod config;
 mod conversation_tree;
+mod doctor;
 mod document_attachment;
 mod edit_diff;
 mod file_palette;
@@ -65,6 +66,7 @@ use config::{
     AUTO_PERMISSION_MODE_STARTUP_STEPS, OPEN_CONFIG_PICKER_STEPS,
 };
 use conversation_tree::CONVERSATION_TREE_STEPS;
+use doctor::DOCTOR_OVERLAY_SCENARIO;
 use document_attachment::DOCUMENT_ATTACHMENT_SCENARIO;
 use edit_diff::EDIT_DIFF_SCENARIO;
 use file_palette::FILE_PATH_AUTOCOMPLETE_SCENARIO;
@@ -596,6 +598,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO,
     HELP_OVERLAY_SCENARIO,
     LIMITS_OVERLAY_SCENARIO,
+    DOCTOR_OVERLAY_SCENARIO,
     SIDE_OVERLAY_SCENARIO,
     SIDE_TOGGLE_SCENARIO,
     SIDE_BTW_SCENARIO,

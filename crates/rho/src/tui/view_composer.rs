@@ -51,6 +51,7 @@ impl App {
             ComposerMode::Input => Theme::reasoning_input_border(self.info.runtime.reasoning),
             ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
+            | ComposerMode::Doctor(_)
             | ComposerMode::Side
             | ComposerMode::Questionnaire(_)
             | ComposerMode::Approval(_)
@@ -204,7 +205,7 @@ impl App {
                 approval_lines(approval, width, viewport_height),
                 Position { x: 0, y: 0 },
             ),
-            ComposerMode::Limits(_) | ComposerMode::Side => {
+            ComposerMode::Limits(_) | ComposerMode::Doctor(_) | ComposerMode::Side => {
                 ComposerFrame::new(Vec::new(), Position { x: 0, y: 0 })
             }
         }

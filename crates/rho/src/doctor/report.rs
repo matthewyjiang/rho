@@ -25,6 +25,10 @@ pub(crate) enum DoctorStatus {
 }
 
 impl DoctorStatus {
+    pub(crate) const fn is_issue(self) -> bool {
+        matches!(self, Self::Warn | Self::Fail)
+    }
+
     /// ASCII word for text output.
     pub(crate) const fn word(self) -> &'static str {
         match self {
@@ -143,6 +147,14 @@ pub(crate) struct DoctorSection {
     pub(crate) checks: Vec<DoctorCheck>,
 }
 
+impl DoctorSection {
+    pub(crate) fn is_checking(&self) -> bool {
+        self.checks
+            .iter()
+            .any(|check| check.status == DoctorStatus::Checking)
+    }
+}
+
 /// Sections in canonical order; empty sections are never present.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct DoctorReport {
@@ -185,6 +197,10 @@ impl DoctorReport {
             }
         }
         summary
+    }
+
+    pub(crate) fn is_checking(&self) -> bool {
+        self.sections.iter().any(DoctorSection::is_checking)
     }
 
     /// Replace every check with a matching id in place. Checks with a new id

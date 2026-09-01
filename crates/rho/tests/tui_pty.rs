@@ -612,6 +612,14 @@ fn limits_overlay_opens_and_dismisses() {
     assert_pass("limits_overlay");
 }
 
+// Covers: /doctor must open a single-pane dashboard immediately and Esc must
+// return to the session.
+// Owner: interactive TUI
+#[test]
+fn doctor_overlay_opens_and_dismisses() {
+    assert_pass("doctor_overlay");
+}
+
 // Covers: fragile interactive surfaces from issue #711.
 // Owner: interactive TUI
 #[test]

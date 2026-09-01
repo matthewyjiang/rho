@@ -42,7 +42,7 @@ mod config_picker;
 mod context_handoff;
 mod copy_interaction;
 mod divider;
-mod doctor;
+mod doctor_overlay;
 pub(crate) mod event_adapter;
 mod external_editor;
 mod fast_command;
@@ -513,6 +513,7 @@ struct App {
     /// Who owns the full terminal. Setup and attach replace session chrome.
     exclusive: exclusive_screen::ExclusiveOccupant,
     pending_usage_limits: Vec<limits_command::PendingUsageFetch>,
+    pending_doctor_probes: Vec<doctor_overlay::PendingDoctorProbe>,
     usage_limits_live: std::collections::BTreeMap<
         crate::usage_limits::UsageProviderKind,
         limits_command::LiveUsage,

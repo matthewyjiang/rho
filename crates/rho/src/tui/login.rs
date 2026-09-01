@@ -457,6 +457,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         self.cancel_limits_command().await;
+        self.cancel_doctor_command().await;
         let saved = ProviderAuthentication::save_api_key(
             self.credential_store.as_ref(),
             &target.auth,
@@ -559,6 +560,7 @@ impl App {
         match pending.handle.await {
             Ok(Ok(result)) => {
                 self.cancel_limits_command().await;
+                self.cancel_doctor_command().await;
                 let saved = result.save(self.credential_store.as_ref());
                 match saved {
                     Ok(()) => {
@@ -866,6 +868,7 @@ impl App {
         };
 
         self.cancel_limits_command().await;
+        self.cancel_doctor_command().await;
         let deleted = ProviderAuthentication::delete_credentials(
             self.credential_store.as_ref(),
             &target.auth,

@@ -1,17 +1,12 @@
 use std::time::Instant;
 
-use ratatui::DefaultTerminal;
 use {
     crate::commands::CommandInvocation,
     crate::export,
     rho_tools::tool_card::{ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus},
 };
 
-use super::{doctor, local_diff, App, Entry, Session, ToolEntry};
-use crate::doctor::{
-    build_report, plan_probes, probe_checks, run_probe, DoctorInputs, DoctorProbeId, DoctorReport,
-    HerdrProbe, ProbePlaceholder,
-};
+use super::{local_diff, App, Entry, Session, ToolEntry};
 
 impl App {
     pub(super) fn execute_copy_command(&mut self) -> anyhow::Result<()> {
@@ -111,68 +106,6 @@ impl App {
                 self.set_status("rename failed");
             }
         }
-        Ok(())
-    }
-
-    pub(super) async fn execute_doctor_command_with_probes(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
-        let config = self.info.services.config_repository.load()?;
-        self.set_status("checking provider connections");
-        terminal.draw(|frame| self.draw(frame))?;
-
-        let probes = plan_probes(&config, &self.info.runtime.provider, doctor::probe_gate());
-        let mut outcomes = Vec::with_capacity(probes.len());
-        for id in &probes {
-            outcomes.push(run_probe(id.clone(), self.credential_store.clone()).await);
-        }
-        let mut report = self.doctor_report(&probes, ProbePlaceholder::Checking)?;
-        for outcome in &outcomes {
-            report.replace_checks(probe_checks(outcome, &self.info.runtime.provider));
-        }
-        self.open_doctor_picker(&report)
-    }
-
-    pub(super) fn execute_doctor_command(&mut self) -> anyhow::Result<()> {
-        // During a turn, skip live probes so stream draining is never blocked
-        // on a child process or the network.
-        let config = self.info.services.config_repository.load()?;
-        let probes = plan_probes(&config, &self.info.runtime.provider, doctor::probe_gate());
-        let report = self.doctor_report(&probes, ProbePlaceholder::NotChecked)?;
-        self.open_doctor_picker(&report)
-    }
-
-    fn doctor_report(
-        &mut self,
-        probes: &[DoctorProbeId],
-        placeholder: ProbePlaceholder,
-    ) -> anyhow::Result<DoctorReport> {
-        self.refresh_available_auths();
-        let config_path = self.info.services.config_repository.configured_path()?;
-        let session_root = crate::paths::rho_dir()?.join("sessions");
-        let clipboard = crate::clipboard::doctor_report();
-        Ok(build_report(DoctorInputs {
-            provider: &self.info.runtime.provider,
-            model: &self.info.runtime.model,
-            auth: &self.info.runtime.auth,
-            available_auths: &self.available_auths,
-            credential_store: self.credential_store.as_ref(),
-            config_path: &config_path,
-            session_root: &session_root,
-            herdr: HerdrProbe::from_reporter(&self.info.services.herdr),
-            clipboard: &clipboard,
-            mcp_report: &self.mcp_report,
-            plugins_report: &self.plugins_report,
-            probes,
-            placeholder,
-        }))
-    }
-
-    fn open_doctor_picker(&mut self, report: &DoctorReport) -> anyhow::Result<()> {
-        self.input_ui
-            .set_composer(super::ComposerMode::Picker(doctor::picker(report)));
-        self.set_status("doctor diagnostics");
         Ok(())
     }
 }

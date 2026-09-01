@@ -114,6 +114,7 @@ impl App {
             pending_interactive_login: None,
             exclusive: super::exclusive_screen::ExclusiveOccupant::Session,
             pending_usage_limits: Vec::new(),
+            pending_doctor_probes: Vec::new(),
             usage_limits_live: std::collections::BTreeMap::new(),
             pending_changelog: None,
             usage_limits_client: std::sync::OnceLock::new(),
