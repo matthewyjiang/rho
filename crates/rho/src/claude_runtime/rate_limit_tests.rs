@@ -562,8 +562,10 @@ fn cross_process_out_of_order_writes_keep_newer() {
 // Owner: pure unit
 #[test]
 fn stream_merge_keeps_newer_last_probe_unix() {
-    let mut disk = RateLimitState::default();
-    disk.last_probe_unix = Some(1_000);
+    let mut disk = RateLimitState {
+        last_probe_unix: Some(1_000),
+        ..RateLimitState::default()
+    };
     disk.merge_window(RateLimitObservation::with_order(
         sample_info("allowed"),
         secs(1_000),
@@ -581,10 +583,28 @@ fn stream_merge_keeps_newer_last_probe_unix() {
     assert_eq!(disk.last_probe_unix, Some(1_000));
     assert_eq!(disk.windows.len(), 2);
 
-    let mut probe = RateLimitState::default();
-    probe.last_probe_unix = Some(2_000);
+    let probe = RateLimitState {
+        last_probe_unix: Some(2_000),
+        ..RateLimitState::default()
+    };
     disk.merge_state(probe);
     assert_eq!(disk.last_probe_unix, Some(2_000));
+    assert_eq!(disk.section_age_unix(), Some(2_000));
+
+    let mut observed = RateLimitState::default();
+    observed.merge_window(RateLimitObservation::with_order(
+        sample_info("allowed"),
+        secs(1_000),
+        1,
+        "p1",
+    ));
+    observed.merge_window(RateLimitObservation::with_order(
+        sample_info_window("allowed", "seven_day"),
+        secs(1_100),
+        1,
+        "p1",
+    ));
+    assert_eq!(observed.section_age_unix(), Some(1_100));
 }
 
 // Covers: epoch-zero timestamps must not format as multi-decade ages.

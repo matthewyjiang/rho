@@ -176,7 +176,7 @@ impl StatusSink {
         let result =
             tokio::task::spawn_blocking(move || rate_limit::store_state(&path, pending)).await;
         match result {
-            Ok(Ok(())) => {}
+            Ok(Ok(_)) => {}
             Ok(Err(error)) => {
                 tracing::warn!(error = %error, "failed to persist claude rate-limit cache");
             }

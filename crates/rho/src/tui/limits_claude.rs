@@ -9,8 +9,8 @@ use crate::claude_runtime::usage_probe;
 use crate::usage_limits::UsageLimitWindow;
 
 use super::{
-    empty_note, LimitsOverlay, LimitsSection, LimitsSectionId, LimitsSectionStatus,
-    CLAUDE_CODE_PROVIDER_LABEL,
+    now_unix, App, LimitsFetchResult, LimitsOverlay, LimitsSection, LimitsSectionId,
+    LimitsSectionStatus, PendingUsageFetch, CLAUDE_CODE_PROVIDER_LABEL,
 };
 
 pub(super) struct ClaudeLimitsView<'a> {
@@ -20,9 +20,6 @@ pub(super) struct ClaudeLimitsView<'a> {
 }
 
 pub(super) fn claude_probe_available() -> bool {
-    if cfg!(test) {
-        return false;
-    }
     usage_probe::probe_supported() && crate::claude_runtime::executable::resolve().is_ok()
 }
 
@@ -30,7 +27,7 @@ pub(super) fn claude_provider_limits(
     view: ClaudeLimitsView<'_>,
     now_unix: i64,
 ) -> Option<LimitsSection> {
-    let disk_age = view.disk.and_then(RateLimitState::oldest_observed_unix);
+    let disk_age = view.disk.and_then(RateLimitState::section_age_unix);
     let fresh = view.disk.is_some_and(|state| {
         state
             .last_probe_unix
@@ -83,6 +80,107 @@ fn claude_section(status: LimitsSectionStatus, windows: Vec<UsageLimitWindow>) -
     }
 }
 
+impl App {
+    pub(super) fn spawn_claude_usage_fetch(&mut self) {
+        if self
+            .pending_usage_limits
+            .iter()
+            .any(|fetch| fetch.id == LimitsSectionId::ClaudeCode)
+        {
+            return;
+        }
+        if !claude_probe_available() {
+            return;
+        }
+        let now = now_unix();
+        if crate::claude_runtime::rate_limit::load().is_some_and(|state| {
+            state
+                .last_probe_unix
+                .is_some_and(|at| usage_probe::live_is_fresh(at, now))
+        }) {
+            return;
+        }
+        self.pending_usage_limits.push(PendingUsageFetch {
+            id: LimitsSectionId::ClaudeCode,
+            handle: tokio::spawn(async {
+                match usage_probe::fetch_usage().await {
+                    Ok(usage_probe::UsageProbeOutcome::Ready(state)) => LimitsFetchResult::Ready {
+                        windows: claude_windows_from_state(&state, now_unix(), false),
+                        provider: None,
+                    },
+                    Ok(usage_probe::UsageProbeOutcome::Unavailable) => {
+                        LimitsFetchResult::Unavailable
+                    }
+                    Err(error) => {
+                        tracing::warn!(error = %error, "claude usage probe failed");
+                        LimitsFetchResult::Failed
+                    }
+                }
+            }),
+        });
+        let cached_at =
+            crate::claude_runtime::rate_limit::load().and_then(|state| state.section_age_unix());
+        if let Some(overlay) = self.limits_overlay_mut() {
+            set_claude_checking(overlay, cached_at);
+        }
+    }
+}
+
+pub(super) fn apply_claude_limits_result(app: &mut App, result: LimitsFetchResult) {
+    match result {
+        LimitsFetchResult::Ready { windows, .. } => {
+            if let Some(overlay) = app.limits_overlay_mut() {
+                overlay.apply_live(
+                    LimitsSectionId::ClaudeCode,
+                    CLAUDE_CODE_PROVIDER_LABEL,
+                    windows,
+                );
+            }
+        }
+        LimitsFetchResult::Unavailable => apply_claude_disk_fallback(app, false),
+        LimitsFetchResult::Failed => apply_claude_disk_fallback(app, true),
+    }
+}
+
+fn apply_claude_disk_fallback(app: &mut App, failed: bool) {
+    let Some(overlay) = app.limits_overlay_mut() else {
+        return;
+    };
+    match crate::claude_runtime::rate_limit::load() {
+        Some(state) if !state.is_empty() => {
+            overlay.upsert(
+                LimitsSectionId::ClaudeCode,
+                CLAUDE_CODE_PROVIDER_LABEL,
+                claude_windows_from_state(&state, now_unix(), true),
+                LimitsSectionStatus::Observed {
+                    observed_at_unix: state.section_age_unix().unwrap_or(now_unix()),
+                },
+            );
+        }
+        state if failed => {
+            overlay.apply_failed(
+                LimitsSectionId::ClaudeCode,
+                state.and_then(|value| value.section_age_unix()),
+                Some(CLAUDE_CODE_PROVIDER_LABEL),
+            );
+        }
+        _ => overlay.remove_id(LimitsSectionId::ClaudeCode),
+    }
+}
+
+fn set_claude_checking(overlay: &mut LimitsOverlay, cached_at_unix: Option<i64>) {
+    if let Some(section) = overlay.section_mut(LimitsSectionId::ClaudeCode) {
+        section.status = LimitsSectionStatus::Checking { cached_at_unix };
+        return;
+    }
+    overlay.upsert(
+        LimitsSectionId::ClaudeCode,
+        CLAUDE_CODE_PROVIDER_LABEL,
+        Vec::new(),
+        LimitsSectionStatus::Checking { cached_at_unix },
+    );
+}
+
 pub(super) fn claude_windows_from_state(
     state: &RateLimitState,
     now_unix: i64,
@@ -117,76 +215,4 @@ pub(super) fn claude_windows_from_state(
             }
         })
         .collect()
-}
-
-impl LimitsOverlay {
-    fn claude_section_mut(&mut self) -> Option<&mut LimitsSection> {
-        self.sections
-            .iter_mut()
-            .find(|section| section.id == LimitsSectionId::ClaudeCode)
-    }
-
-    pub(super) fn apply_claude_live(&mut self, windows: Vec<UsageLimitWindow>) {
-        self.upsert_claude(windows, LimitsSectionStatus::Live);
-    }
-
-    pub(super) fn apply_claude_observed(&mut self, state: &RateLimitState, now_unix: i64) {
-        let windows = claude_windows_from_state(state, now_unix, true);
-        if windows.is_empty() {
-            self.remove_claude();
-            return;
-        }
-        self.upsert_claude(
-            windows,
-            LimitsSectionStatus::Observed {
-                observed_at_unix: state.oldest_observed_unix().unwrap_or(now_unix),
-            },
-        );
-    }
-
-    pub(super) fn apply_claude_failed(&mut self, cached_at_unix: Option<i64>) {
-        if let Some(section) = self.claude_section_mut() {
-            section.status = LimitsSectionStatus::Failed { cached_at_unix };
-            return;
-        }
-        self.sections.push(claude_section(
-            LimitsSectionStatus::Failed { cached_at_unix },
-            Vec::new(),
-        ));
-    }
-
-    pub(super) fn set_claude_checking(&mut self, cached_at_unix: Option<i64>) {
-        if let Some(section) = self.claude_section_mut() {
-            section.status = LimitsSectionStatus::Checking { cached_at_unix };
-            return;
-        }
-        self.sections.push(claude_section(
-            LimitsSectionStatus::Checking { cached_at_unix },
-            Vec::new(),
-        ));
-        self.empty_note = None;
-    }
-
-    pub(super) fn remove_claude(&mut self) {
-        self.sections
-            .retain(|section| section.id != LimitsSectionId::ClaudeCode);
-        if self.sections.is_empty() {
-            self.empty_note = Some(empty_note());
-        }
-    }
-
-    fn upsert_claude(&mut self, windows: Vec<UsageLimitWindow>, status: LimitsSectionStatus) {
-        let status = if windows.is_empty() {
-            LimitsSectionStatus::Empty
-        } else {
-            status
-        };
-        if let Some(section) = self.claude_section_mut() {
-            section.windows = windows;
-            section.status = status;
-            return;
-        }
-        self.sections.push(claude_section(status, windows));
-        self.empty_note = None;
-    }
 }

@@ -133,6 +133,14 @@ impl PtySession {
             return;
         }
         self.killed = true;
+        // portable-pty `setsid`s the child, so the pid is the group leader.
+        if let Some(pid) = self.child.process_id() {
+            if let Ok(pid) = i32::try_from(pid) {
+                unsafe {
+                    libc::kill(-pid, libc::SIGKILL);
+                }
+            }
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }

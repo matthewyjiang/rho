@@ -202,11 +202,14 @@ impl RateLimitState {
         }
     }
 
-    pub(crate) fn oldest_observed_unix(&self) -> Option<i64> {
-        self.windows
-            .iter()
-            .map(|window| window.observed_at_unix)
-            .min()
+    /// Age for `/limits` headings: last successful probe, else newest window.
+    pub(crate) fn section_age_unix(&self) -> Option<i64> {
+        self.last_probe_unix.or_else(|| {
+            self.windows
+                .iter()
+                .map(|window| window.observed_at_unix)
+                .max()
+        })
     }
 
     /// Stable display order: five hour, seven day variants, then the rest.
@@ -350,13 +353,13 @@ pub(crate) fn store_observation(
 ) -> anyhow::Result<()> {
     let mut state = RateLimitState::default();
     state.merge_window(observation);
-    store_state(path, state)
+    store_state(path, state).map(|_| ())
 }
 
 /// Merge `incoming` windows into disk state under the cross-process lock.
-pub(crate) fn store_state(path: &Path, incoming: RateLimitState) -> anyhow::Result<()> {
+pub(crate) fn store_state(path: &Path, incoming: RateLimitState) -> anyhow::Result<RateLimitState> {
     if incoming.is_empty() {
-        return Ok(());
+        return Ok(incoming);
     }
     let _guard = acquire_state_lock(path)?;
     let mut state = load_at(path).unwrap_or_default();
@@ -381,7 +384,7 @@ pub(crate) fn store_state(path: &Path, incoming: RateLimitState) -> anyhow::Resu
             let _ = fs::remove_file(lock_path_for(&legacy));
         }
     }
-    Ok(())
+    Ok(state)
 }
 
 /// Persist with an explicit order key (tests for equal timestamps / migration).

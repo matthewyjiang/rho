@@ -56,7 +56,7 @@ fn waits_while_named_fable_header_has_no_percent() {
 
 #[cfg(unix)]
 mod pty {
-    use std::path::Path;
+    use std::{path::Path, sync::atomic::AtomicBool};
 
     use pretty_assertions::assert_eq;
 
@@ -65,7 +65,14 @@ mod pty {
     fn run_cmd(binary: &str, args: &[&str]) -> super::super::RateLimitState {
         let env = vec![("TERM".into(), "xterm-256color".into())];
         let cwd = tempfile::TempDir::new().unwrap();
-        read_usage_from_binary(Path::new(binary), args, &env, cwd.path()).expect("fake /usage")
+        read_usage_from_binary(
+            Path::new(binary),
+            args,
+            &env,
+            cwd.path(),
+            &AtomicBool::new(false),
+        )
+        .expect("fake /usage")
     }
 
     fn assert_session_and_week(state: &super::super::RateLimitState) {
@@ -140,5 +147,37 @@ while os.read(sys.stdin.fileno(), 1024):
     pass
 "#;
         assert_session_and_week(&run_cmd("/usr/bin/python3", &["-c", script]));
+    }
+
+    // Covers: dropping /limits must stop the blocking PTY child.
+    // Owner: OS or process
+    #[test]
+    fn abort_flag_stops_a_hung_child() {
+        use std::sync::atomic::Ordering;
+        use std::time::{Duration, Instant};
+
+        let abort = std::sync::Arc::new(AtomicBool::new(false));
+        let abort_for_thread = abort.clone();
+        let started = Instant::now();
+        let worker = std::thread::spawn(move || {
+            let env = vec![("TERM".into(), "xterm-256color".into())];
+            let cwd = tempfile::TempDir::new().unwrap();
+            super::super::read_usage_from_binary(
+                Path::new("/bin/sleep"),
+                &["30"],
+                &env,
+                cwd.path(),
+                abort_for_thread.as_ref(),
+            )
+        });
+        std::thread::sleep(Duration::from_millis(80));
+        abort.store(true, Ordering::Relaxed);
+        let result = worker.join().expect("probe thread");
+        let elapsed = started.elapsed();
+        assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+        assert!(
+            matches!(result, Err(super::super::UsageProbeError::Cancelled)),
+            "{result:?}"
+        );
     }
 }

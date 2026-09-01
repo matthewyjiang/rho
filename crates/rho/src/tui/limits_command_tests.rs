@@ -67,11 +67,11 @@ async fn cancelling_limits_query_waits_for_background_task_to_stop() {
     let mut app = super::super::tests::test_app();
     let task_marker = std::sync::Arc::new(());
     let captured_marker = task_marker.clone();
-    app.pending_usage_limits.push(PendingUsageFetch::Provider {
-        kind: UsageProviderKind::Codex,
+    app.pending_usage_limits.push(PendingUsageFetch {
+        id: LimitsSectionId::Provider(UsageProviderKind::Codex),
         handle: tokio::spawn(async move {
             let _marker = captured_marker;
-            std::future::pending::<Result<Option<ProviderUsageLimits>, UsageLimitsError>>().await
+            std::future::pending::<LimitsFetchResult>().await
         }),
     });
 
@@ -114,7 +114,11 @@ fn applying_one_provider_leaves_others_checking() {
         scroll: 0,
         checking_started: Instant::now(),
     };
-    overlay.apply_live(UsageProviderKind::Codex, vec![codex_window()]);
+    overlay.apply_live(
+        LimitsSectionId::Provider(UsageProviderKind::Codex),
+        UsageProviderKind::Codex.label(),
+        vec![codex_window()],
+    );
 
     assert_eq!(overlay.sections[0].status, LimitsSectionStatus::Live);
     assert_eq!(overlay.sections[0].windows.len(), 1);
@@ -268,7 +272,7 @@ fn stale_disk_probe_with_binary_shows_checking() {
     assert!(matches!(
         overlay.sections[0].status,
         LimitsSectionStatus::Checking {
-            cached_at_unix: Some(1_000)
+            cached_at_unix: Some(1)
         }
     ));
 }
