@@ -479,32 +479,29 @@ impl App {
     }
 
     fn apply_limits_fetch(&mut self, id: LimitsSectionId, result: LimitsFetchResult) {
-        match (id, result) {
-            (LimitsSectionId::Provider(kind), LimitsFetchResult::ProviderReady { limits }) => {
-                self.apply_provider_ready(kind, limits)
-            }
-            (LimitsSectionId::ClaudeCode, LimitsFetchResult::ClaudeReady { windows }) => {
-                limits_claude::apply_claude_live(self, windows)
-            }
-            (LimitsSectionId::Provider(kind), LimitsFetchResult::Unavailable) => {
-                self.usage_limits_live.remove(&kind);
-                if let Some(overlay) = self.limits_overlay_mut() {
-                    overlay.remove_id(LimitsSectionId::Provider(kind));
+        match result {
+            LimitsFetchResult::ProviderReady { limits } => {
+                if let Some(kind) = id.provider_kind() {
+                    self.apply_provider_ready(kind, limits);
                 }
             }
-            (LimitsSectionId::ClaudeCode, LimitsFetchResult::Unavailable) => {
-                limits_claude::apply_claude_disk_fallback(self, false)
+            LimitsFetchResult::ClaudeReady { windows } => {
+                if id == LimitsSectionId::ClaudeCode {
+                    limits_claude::apply_claude_live(self, windows);
+                }
             }
-            (LimitsSectionId::Provider(kind), LimitsFetchResult::Failed) => {
-                self.mark_usage_failed(kind)
-            }
-            (LimitsSectionId::ClaudeCode, LimitsFetchResult::Failed) => {
-                limits_claude::apply_claude_disk_fallback(self, true)
-            }
-            (
-                id,
-                LimitsFetchResult::ProviderReady { .. } | LimitsFetchResult::ClaudeReady { .. },
-            ) => match id {
+            LimitsFetchResult::Unavailable => match id {
+                LimitsSectionId::Provider(kind) => {
+                    self.usage_limits_live.remove(&kind);
+                    if let Some(overlay) = self.limits_overlay_mut() {
+                        overlay.remove_id(LimitsSectionId::Provider(kind));
+                    }
+                }
+                LimitsSectionId::ClaudeCode => {
+                    limits_claude::apply_claude_disk_fallback(self, false)
+                }
+            },
+            LimitsFetchResult::Failed => match id {
                 LimitsSectionId::Provider(kind) => self.mark_usage_failed(kind),
                 LimitsSectionId::ClaudeCode => {
                     limits_claude::apply_claude_disk_fallback(self, true)

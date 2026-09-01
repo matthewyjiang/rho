@@ -26,7 +26,6 @@ const PANEL_MARKERS: &[&str] = &["Current session", "% used", "%used"];
 /// writes; one burst of Down+Enter confirms No and Claude exits.
 const TRUST_DOWN: &[u8] = b"\x1b[B";
 const TRUST_ENTER: &[u8] = b"\r";
-const TRUST_ARROW_SETTLE: Duration = Duration::from_millis(150);
 const TRUST_RETRY: Duration = Duration::from_millis(400);
 const PTY_ROWS: u16 = 36;
 const PTY_COLS: u16 = 140;
@@ -225,7 +224,7 @@ fn collect_usage(
 #[derive(Clone, Copy)]
 enum TrustDrive {
     NeedDown,
-    AwaitYes { down_at: Instant },
+    AwaitYes,
     AwaitPrompt { enter_at: Instant },
 }
 
@@ -239,12 +238,11 @@ fn step_trust(
             session
                 .inject_bytes(TRUST_DOWN)
                 .map_err(UsageProbeError::Spawn)?;
-            Ok(TrustDrive::AwaitYes {
-                down_at: Instant::now(),
-            })
+            Ok(TrustDrive::AwaitYes)
         }
-        TrustDrive::AwaitYes { down_at } => {
-            if trust_yes_selected(screen) || Instant::now() >= down_at + TRUST_ARROW_SETTLE {
+        TrustDrive::AwaitYes => {
+            // Default row is "No, exit". Enter only after the pointer is on Yes.
+            if trust_yes_selected(screen) {
                 session
                     .inject_bytes(TRUST_ENTER)
                     .map_err(UsageProbeError::Spawn)?;
