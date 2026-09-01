@@ -326,6 +326,44 @@ fn wait_for_usage_panel(
 }
 
 #[cfg(unix)]
+enum CollectTick {
+    Done(RateLimitState),
+    Continue {
+        best: Option<RateLimitState>,
+        screen: String,
+        running: bool,
+    },
+}
+
+#[cfg(unix)]
+fn poll_and_parse(
+    session: &mut super::usage_pty::PtySession,
+    abort: &AtomicBool,
+    mut best: Option<RateLimitState>,
+) -> Result<CollectTick, UsageProbeError> {
+    kill_if_aborted(session, abort)?;
+    session.poll(Duration::from_millis(25));
+    let screen = session.contents();
+    let running = session.is_running();
+    if let Some(state) = parse_usage_screen(&screen, rate_limit::now_unix()) {
+        if best.as_ref().map_or(0, |ready| ready.windows.len()) < state.windows.len() {
+            best = Some(state);
+        }
+    }
+    if !waiting_on_named_windows(&screen, best.as_ref()) {
+        if let Some(state) = best.take() {
+            session.kill();
+            return Ok(CollectTick::Done(state));
+        }
+    }
+    Ok(CollectTick::Continue {
+        best,
+        screen,
+        running,
+    })
+}
+
+#[cfg(unix)]
 fn collect_usage(
     session: &mut super::usage_pty::PtySession,
     abort: &AtomicBool,
@@ -334,28 +372,22 @@ fn collect_usage(
     let grow_until = Instant::now() + grow;
     let mut best: Option<RateLimitState> = None;
     loop {
-        kill_if_aborted(session, abort)?;
-        session.poll(Duration::from_millis(25));
-        let screen = session.contents();
-        let running = session.is_running();
-        if let Some(state) = parse_usage_screen(&screen, rate_limit::now_unix()) {
-            if best.as_ref().map_or(0, |ready| ready.windows.len()) < state.windows.len() {
-                best = Some(state);
+        match poll_and_parse(session, abort, best)? {
+            CollectTick::Done(state) => return Ok(state),
+            CollectTick::Continue {
+                best: next,
+                running,
+                ..
+            } => {
+                best = next;
+                if Instant::now() >= grow_until || !running {
+                    if let Some(state) = best.take() {
+                        session.kill();
+                        return Ok(state);
+                    }
+                    return wait_until_refresh_settles(session, abort);
+                }
             }
-        }
-        let waiting = waiting_on_named_windows(&screen, best.as_ref());
-        if !waiting {
-            if let Some(state) = best.take() {
-                session.kill();
-                return Ok(state);
-            }
-        }
-        if Instant::now() >= grow_until || !running {
-            if let Some(state) = best.take() {
-                session.kill();
-                return Ok(state);
-            }
-            return wait_until_refresh_settles(session, abort);
         }
     }
 }
@@ -368,28 +400,23 @@ fn wait_until_refresh_settles(
     let until = Instant::now() + Duration::from_secs(8);
     let mut best: Option<RateLimitState> = None;
     loop {
-        kill_if_aborted(session, abort)?;
-        session.poll(Duration::from_millis(25));
-        let screen = session.contents();
-        if let Some(state) = parse_usage_screen(&screen, rate_limit::now_unix()) {
-            if best.as_ref().map_or(0, |ready| ready.windows.len()) < state.windows.len() {
-                best = Some(state);
+        match poll_and_parse(session, abort, best)? {
+            CollectTick::Done(state) => return Ok(state),
+            CollectTick::Continue {
+                best: next,
+                screen,
+                running,
+            } => {
+                best = next;
+                let refreshing = screen.to_ascii_lowercase().contains("refreshing");
+                if !refreshing || !running || Instant::now() >= until {
+                    session.poll(Duration::from_millis(80));
+                    let screen = session.contents();
+                    session.kill();
+                    return parse_usage_screen(&screen, rate_limit::now_unix())
+                        .ok_or(UsageProbeError::Unparseable);
+                }
             }
-        }
-        let waiting = waiting_on_named_windows(&screen, best.as_ref());
-        if !waiting {
-            if let Some(state) = best.take() {
-                session.kill();
-                return Ok(state);
-            }
-        }
-        let refreshing = screen.to_ascii_lowercase().contains("refreshing");
-        if !refreshing || !session.is_running() || Instant::now() >= until {
-            session.poll(Duration::from_millis(80));
-            let screen = session.contents();
-            session.kill();
-            return parse_usage_screen(&screen, rate_limit::now_unix())
-                .ok_or(UsageProbeError::Unparseable);
         }
     }
 }
