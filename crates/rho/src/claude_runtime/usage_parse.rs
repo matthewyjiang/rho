@@ -237,6 +237,15 @@ fn split_trailing_unit(token: &str) -> Option<(&str, &str)> {
     Some((&token[..split], &token[split..]))
 }
 
+/// Resolve "Resets 5:30am" / "Resets Sep 5, 8am" against the local clock.
+///
+/// Time zones match by construction: the probe's `claude` child inherits our
+/// environment, and (verified on 2.1.252) the panel renders reset times in
+/// the process `TZ` - the same zone `chrono::Local` reads here. The panel's
+/// own "(America/Los_Angeles)" label is therefore never parsed. Known gap,
+/// deliberately unhandled: a reset landing in a DST-ambiguous or skipped
+/// local hour makes `single()` return `None`, dropping the countdown for
+/// that window rather than showing a time that is wrong by an hour.
 fn parse_local_clock(text: &str, now_unix: i64) -> Option<i64> {
     use chrono::Datelike;
 
