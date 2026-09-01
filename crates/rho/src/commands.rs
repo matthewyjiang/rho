@@ -440,11 +440,12 @@ pub fn matching_commands(prefix: &str) -> Vec<&'static CommandSpec> {
 }
 
 pub fn parse_command(input: &str) -> Result<Option<CommandInvocation>, CommandParseError> {
+    // Trailing newlines are paste-burst Enter artifacts, not a multiline
+    // prompt. Strip them before the newline check so `/exit\n` still quits.
+    let input = input.trim_end();
     if input.contains(['\n', '\r']) {
         return Ok(None);
     }
-
-    let input = input.trim_end();
     let Some(rest) = input.strip_prefix('/') else {
         return Ok(None);
     };
@@ -580,6 +581,23 @@ mod tests {
     fn multiline_slash_text_is_not_a_command() {
         assert_eq!(parse_command("/model\ngpt-5.5").unwrap(), None);
         assert_eq!(parse_command("/model\r\ngpt-5.5").unwrap(), None);
+    }
+
+    // Covers: a paste-burst Enter that became a trailing newline must not
+    // demote `/exit` (and other slash commands) into a prompt.
+    // Owner: command parser
+    #[test]
+    fn trailing_newline_still_parses_as_command() {
+        let invocation = parse_command("/exit\n").unwrap().unwrap();
+        assert_eq!(invocation.id, CommandId::Exit);
+        assert_eq!(
+            parse_command("/exit\r\n").unwrap().unwrap().id,
+            CommandId::Exit
+        );
+        assert_eq!(
+            parse_command("/model gpt-5.5\n").unwrap().unwrap().id,
+            CommandId::Model
+        );
     }
 
     #[test]

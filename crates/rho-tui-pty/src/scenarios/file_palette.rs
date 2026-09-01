@@ -43,6 +43,12 @@ const FILE_PATH_AUTOCOMPLETE_STEPS: &[Step] = &[
         text: FILE_ALPHA,
         timeout: SETTLE,
     },
+    // The unfiltered list already contains FILE_ALPHA. Wait until the filter
+    // drops beta rather than asserting on the first frame that shows alpha.
+    Step::WaitTextGone {
+        text: FILE_BETA,
+        timeout: SETTLE,
+    },
     Step::Custom(assert_file_palette_filtered_to_alpha),
     Step::Phase("select"),
     Step::Key(Key::Enter),
