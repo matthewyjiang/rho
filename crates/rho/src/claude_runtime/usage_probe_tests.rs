@@ -162,25 +162,50 @@ while os.read(sys.stdin.fileno(), 1024):
     // Owner: OS or process
     #[test]
     fn fake_child_grow_picks_up_late_fable() {
-        let script = r#"
+        let cwd = tempfile::TempDir::new().unwrap();
+        let ready = cwd.path().join("ready");
+        let go = cwd.path().join("go");
+        let script = format!(
+            r#"
 printf '? for shortcuts\n❯ '
 buf=
 while IFS= read -r -n1 c; do
-  buf="${buf}${c}"
+  buf="${{buf}}${{c}}"
   case "$buf" in
     */usage*) break ;;
   esac
 done
 printf '\nCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n'
-sleep 0.2
+touch {ready}
+while [ ! -f {go} ]; do sleep 0.01; done
 printf '\nCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n33%% used\nResets in 2d\n'
 exec cat >/dev/null
-"#;
-        let state = run_cmd_grow(
-            "/bin/bash",
-            &["-c", script],
-            std::time::Duration::from_millis(800),
+"#,
+            ready = ready.display(),
+            go = go.display()
         );
+        let env = vec![("TERM".into(), "xterm-256color".into())];
+        let cwd_path = cwd.path().to_path_buf();
+        let worker = std::thread::spawn(move || {
+            read_usage_from_binary(
+                Path::new("/bin/bash"),
+                &["-c", &script],
+                &env,
+                &cwd_path,
+                &AtomicBool::new(false),
+                std::time::Duration::from_secs(2),
+            )
+        });
+        let started = std::time::Instant::now();
+        while !ready.exists() {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(5),
+                "child never painted the incomplete panel"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        std::fs::write(&go, b"").unwrap();
+        let state = worker.join().expect("probe thread").expect("fake /usage");
         let keys: Vec<&str> = state
             .sorted_windows()
             .into_iter()

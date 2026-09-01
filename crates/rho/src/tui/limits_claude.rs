@@ -127,24 +127,17 @@ impl App {
     }
 }
 
-pub(super) fn apply_claude_limits_result(app: &mut App, result: LimitsFetchResult) {
-    match result {
-        LimitsFetchResult::ClaudeReady { windows } => {
-            if let Some(overlay) = app.limits_overlay_mut() {
-                overlay.apply_live(
-                    LimitsSectionId::ClaudeCode,
-                    CLAUDE_CODE_PROVIDER_LABEL,
-                    windows,
-                );
-            }
-        }
-        LimitsFetchResult::ProviderReady { .. } => apply_claude_disk_fallback(app, true),
-        LimitsFetchResult::Unavailable => apply_claude_disk_fallback(app, false),
-        LimitsFetchResult::Failed => apply_claude_disk_fallback(app, true),
+pub(super) fn apply_claude_live(app: &mut App, windows: Vec<UsageLimitWindow>) {
+    if let Some(overlay) = app.limits_overlay_mut() {
+        overlay.apply_live(
+            LimitsSectionId::ClaudeCode,
+            CLAUDE_CODE_PROVIDER_LABEL,
+            windows,
+        );
     }
 }
 
-fn apply_claude_disk_fallback(app: &mut App, failed: bool) {
+pub(super) fn apply_claude_disk_fallback(app: &mut App, failed: bool) {
     let Some(overlay) = app.limits_overlay_mut() else {
         return;
     };

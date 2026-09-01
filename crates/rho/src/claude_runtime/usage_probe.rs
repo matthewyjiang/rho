@@ -366,10 +366,23 @@ fn wait_until_refresh_settles(
     abort: &AtomicBool,
 ) -> Result<RateLimitState, UsageProbeError> {
     let until = Instant::now() + Duration::from_secs(8);
+    let mut best: Option<RateLimitState> = None;
     loop {
         kill_if_aborted(session, abort)?;
         session.poll(Duration::from_millis(25));
         let screen = session.contents();
+        if let Some(state) = parse_usage_screen(&screen, rate_limit::now_unix()) {
+            if best.as_ref().map_or(0, |ready| ready.windows.len()) < state.windows.len() {
+                best = Some(state);
+            }
+        }
+        let waiting = waiting_on_named_windows(&screen, best.as_ref());
+        if !waiting {
+            if let Some(state) = best.take() {
+                session.kill();
+                return Ok(state);
+            }
+        }
         let refreshing = screen.to_ascii_lowercase().contains("refreshing");
         if !refreshing || !session.is_running() || Instant::now() >= until {
             session.poll(Duration::from_millis(80));
