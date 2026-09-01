@@ -95,14 +95,17 @@ fn clock_only_reset_stays_within_a_day() {
 
 // Covers: digits inside a tz label ("(UTC+10)", "(EST5EDT)") must not be read
 // as a day-of-month and push a clock-only reset days into the future.
+// Drive from early in the month so a misread 5 or 10 falls inside the nine-day
+// search window (NOW is Nov 14, which excludes both).
 // Owner: pure unit
 #[test]
 fn tz_label_digits_are_not_a_day_of_month() {
+    const EARLY_IN_MONTH: i64 = 1_698_926_400; // 2023-11-02T12:00:00Z
     for label in ["(UTC+10)", "(EST5EDT)", "(GMT-5)"] {
         let text = format!("Current session\n29% used\nResets 5:30am {label}\n");
-        let state = parse_usage_screen(&text, NOW).expect("parsed");
+        let state = parse_usage_screen(&text, EARLY_IN_MONTH).expect("parsed");
         let resets_at = state.sorted_windows()[0].info.resets_at.expect("resets_at");
-        let delta = resets_at - NOW;
+        let delta = resets_at - EARLY_IN_MONTH;
         assert!((0..=86_400).contains(&delta), "{label}: {delta}");
     }
 }
