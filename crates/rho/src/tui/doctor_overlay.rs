@@ -160,6 +160,7 @@ impl App {
         let mut changed = false;
         let mut still_pending = Vec::new();
         let pending = std::mem::take(&mut self.pending_doctor_probes);
+        let active_provider = self.info.runtime.provider.clone();
         for probe in pending {
             if !probe.is_finished() {
                 still_pending.push(probe);
@@ -171,7 +172,9 @@ impl App {
                 Err(_) => DoctorProbeOutcome::Failed(probe.id),
             };
             if let Some(overlay) = self.doctor_overlay_mut() {
-                overlay.report.replace_checks(probe_checks(&outcome));
+                overlay
+                    .report
+                    .replace_checks(probe_checks(&outcome, &active_provider));
             }
         }
         self.pending_doctor_probes = still_pending;
