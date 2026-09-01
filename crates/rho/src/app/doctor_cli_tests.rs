@@ -104,3 +104,17 @@ fn unknown_provider_override_still_errors() {
         "expected unknown provider, got {err:#}"
     );
 }
+
+// Covers: catalog/alias failures must not be rewritten into a raw --model
+// assignment; only the empty-cache path is allowed to skip default-model
+// resolution.
+// Owner: CLI (pure selection)
+#[test]
+fn model_override_errors_are_not_swallowed() {
+    let mut config = crate::config::Config::default();
+    let before = config.clone();
+    let cli = Cli::try_parse_from(["rho", "--model", "definitely-not-a-model", "doctor"]).unwrap();
+    assert!(apply_doctor_overrides(&mut config, &cli).is_err());
+    assert_eq!(config.provider, before.provider);
+    assert_eq!(config.model, before.model);
+}

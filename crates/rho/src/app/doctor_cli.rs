@@ -114,7 +114,10 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
 fn apply_doctor_overrides(config: &mut crate::config::Config, cli: &Cli) -> anyhow::Result<()> {
     match super::cli_config::apply_overrides(config, cli) {
         Ok(_) => Ok(()),
-        Err(error) => apply_doctor_cli_flags(config, cli).map_err(|_| error),
+        Err(error) if error.to_string().contains("no cached models") => {
+            apply_doctor_cli_flags(config, cli)
+        }
+        Err(error) => Err(error),
     }
 }
 
