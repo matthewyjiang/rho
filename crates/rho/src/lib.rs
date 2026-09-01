@@ -32,6 +32,7 @@ mod plugins;
 mod prompt;
 mod prompt_history;
 mod prompt_templates;
+pub mod pty;
 mod questionnaire;
 mod run_artifacts;
 mod session;

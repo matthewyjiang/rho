@@ -1,33 +1,14 @@
-//! Minimal Unix PTY session for the Claude `/usage` probe.
-//!
-//! Spawn, inject, drain into a VT screen, kill. Not a test harness.
-//!
-//! KEEP IN SYNC with `crates/rho-tui-pty/src/pty.rs` (`PtyController`): spawn
-//! shape, env_clear, reader-thread loop, drain-with-deadline, killed flag,
-//! Drop, and process-group SIGKILL. This copy exists because `rho-tui-pty`
-//! is unpublished test support and cannot be a production dependency of
-//! published `rho-coding-agent`. Deltas here: VT100 parse on drain, `String`
-//! errors.
+//! VT100-backed Unix PTY session for the Claude `/usage` probe.
 
-use std::{
-    io::{Read, Write},
-    path::Path,
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{path::Path, time::Duration};
 
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty};
 use vt100::Parser;
 
+use crate::pty::{PtyController, PtySize};
+
 pub(super) struct PtySession {
-    child: Box<dyn portable_pty::Child + Send + Sync>,
-    writer: Box<dyn Write + Send>,
-    reader_rx: mpsc::Receiver<Vec<u8>>,
-    #[allow(dead_code)]
-    master: Box<dyn MasterPty + Send>,
+    inner: PtyController,
     parser: Parser,
-    killed: bool,
 }
 
 impl PtySession {
@@ -39,91 +20,24 @@ impl PtySession {
         rows: u16,
         cols: u16,
     ) -> Result<Self, String> {
-        let pty_system = native_pty_system();
-        let pair = pty_system
-            .openpty(portable_pty::PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
+        let inner = PtyController::spawn(binary, PtySize::new(rows, cols), args, env, Some(cwd))
             .map_err(|error| error.to_string())?;
-
-        let mut cmd = CommandBuilder::new(binary);
-        for arg in args {
-            cmd.arg(*arg);
-        }
-        cmd.cwd(cwd);
-        cmd.env_clear();
-        for (key, value) in env {
-            cmd.env(key, value);
-        }
-
-        let child = pair
-            .slave
-            .spawn_command(cmd)
-            .map_err(|error| format!("failed to spawn {}: {error}", binary.display()))?;
-        drop(pair.slave);
-
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|error| error.to_string())?;
-        let writer = pair
-            .master
-            .take_writer()
-            .map_err(|error| error.to_string())?;
-        let (tx, reader_rx) = mpsc::channel();
-        thread::Builder::new()
-            .name("rho-claude-usage-pty".into())
-            .spawn(move || {
-                let mut reader = reader;
-                let mut buf = [0u8; 8192];
-                loop {
-                    match reader.read(&mut buf) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            if tx.send(buf[..n].to_vec()).is_err() {
-                                break;
-                            }
-                        }
-                        Err(_) => break,
-                    }
-                }
-            })
-            .map_err(|error| error.to_string())?;
-
         Ok(Self {
-            child,
-            writer,
-            reader_rx,
-            master: pair.master,
+            inner,
             parser: Parser::new(rows, cols, 0),
-            killed: false,
         })
     }
 
     pub(super) fn inject_bytes(&mut self, bytes: &[u8]) -> Result<(), String> {
-        self.writer
-            .write_all(bytes)
-            .map_err(|error| error.to_string())?;
-        let _ = self.writer.flush();
-        Ok(())
+        self.inner
+            .inject_bytes(bytes)
+            .map_err(|error| error.to_string())
     }
 
     pub(super) fn poll(&mut self, budget: Duration) {
-        let deadline = Instant::now() + budget;
-        loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            match self.reader_rx.recv_timeout(remaining) {
-                Ok(chunk) => self.parser.process(&chunk),
-                Err(mpsc::RecvTimeoutError::Timeout | mpsc::RecvTimeoutError::Disconnected) => {
-                    break
-                }
-            }
+        let chunk = self.inner.drain(budget);
+        if !chunk.is_empty() {
+            self.parser.process(&chunk);
         }
     }
 
@@ -132,29 +46,10 @@ impl PtySession {
     }
 
     pub(super) fn is_running(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
+        self.inner.is_running()
     }
 
     pub(super) fn kill(&mut self) {
-        if self.killed {
-            return;
-        }
-        self.killed = true;
-        // portable-pty `setsid`s the child, so the pid is the group leader.
-        if let Some(pid) = self.child.process_id() {
-            if let Ok(pid) = i32::try_from(pid) {
-                unsafe {
-                    libc::kill(-pid, libc::SIGKILL);
-                }
-            }
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-impl Drop for PtySession {
-    fn drop(&mut self) {
-        self.kill();
+        let _ = self.inner.kill();
     }
 }
