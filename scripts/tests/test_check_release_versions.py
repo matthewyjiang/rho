@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import unittest
 
-from scripts.check_release_versions import cargo_agrees_with_release_baseline
+from scripts.check_release_versions import (
+    cargo_agrees_with_release_baseline,
+    find_workspace_dependency_cycle,
+)
 
 
 class CargoReleaseBaselineTests(unittest.TestCase):
@@ -30,3 +33,29 @@ class CargoReleaseBaselineTests(unittest.TestCase):
                     cargo_agrees_with_release_baseline(cargo_version, release_version),
                     expected,
                 )
+
+
+class WorkspaceDependencyGraphTests(unittest.TestCase):
+    # Covers: release-please cargo-workspace fails closed on a directed cycle,
+    # including through Cargo-legal dev-dependency loops.
+    # Owner: release packaging scripts
+
+    def test_reports_directed_cycles_and_accepts_dags(self) -> None:
+        cases = (
+            ({"app": set(), "sdk": set()}, None),
+            (
+                {"app": {"sdk"}, "sdk": set(), "tools": {"sdk"}},
+                None,
+            ),
+            (
+                {"app": {"harness"}, "harness": {"app"}},
+                ("app", "harness", "app"),
+            ),
+            (
+                {"a": {"b"}, "b": {"c"}, "c": {"a"}, "d": {"a"}},
+                ("a", "b", "c", "a"),
+            ),
+        )
+        for graph, expected in cases:
+            with self.subTest(graph=graph):
+                self.assertEqual(find_workspace_dependency_cycle(graph), expected)

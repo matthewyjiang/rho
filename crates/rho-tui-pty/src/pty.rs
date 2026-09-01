@@ -1,9 +1,18 @@
 //! Low-level PTY controller: spawn, inject, resize, drain, and cleanup.
+//!
+//! The implementation lives in `rho-coding-agent` so the published crate can
+//! drive Claude `/usage`. This crate compiles that file by path instead of
+//! depending on `rho-coding-agent`: a package edge here would cycle with the
+//! app's `rho-tui-pty` dev-dependency, and release-please's cargo-workspace
+//! plugin fails closed on that graph.
 
-pub use rho_coding_agent::pty::PtySize;
+#[path = "../../rho/src/pty.rs"]
+mod shared;
+
+pub use shared::PtySize;
 
 #[cfg(unix)]
-pub use rho_coding_agent::pty::PtyController;
+pub use shared::PtyController;
 
 #[cfg(not(unix))]
 mod unsupported {

@@ -24,6 +24,7 @@ PACKAGES = {
     "crates/rho-tools": ROOT / "crates" / "rho-tools" / "Cargo.toml",
 }
 DEPENDENCY_TABLES = ("dependencies", "dev-dependencies", "build-dependencies")
+WORKSPACE_MANIFEST = ROOT / "Cargo.toml"
 
 
 def load_json(path: Path) -> dict[str, object]:
@@ -136,6 +137,114 @@ def sync_internal_dependency_versions() -> list[Path]:
     return changed
 
 
+def load_toml(path: Path) -> dict[str, object]:
+    with path.open("rb") as file:
+        return tomllib.load(file)
+
+
+def workspace_member_manifests() -> list[Path]:
+    """Return Cargo manifests for root workspace members, including unpublished crates."""
+    workspace = load_toml(WORKSPACE_MANIFEST).get("workspace")
+    if not isinstance(workspace, dict):
+        raise RuntimeError("root Cargo.toml is not a workspace")
+    members = workspace.get("members")
+    if not isinstance(members, list) or not all(
+        isinstance(member, str) for member in members
+    ):
+        raise RuntimeError("workspace.members must be an array of strings")
+    manifests = []
+    for member in members:
+        manifest = ROOT / member / "Cargo.toml"
+        if not manifest.is_file():
+            raise RuntimeError(f"workspace member {member!r} is missing Cargo.toml")
+        manifests.append(manifest)
+    return manifests
+
+
+def iter_manifest_dependency_names(manifest: dict[str, object]) -> set[str]:
+    """Return dependency table keys, matching release-please's cargo-workspace plugin."""
+    names: set[str] = set()
+
+    def take(table: object) -> None:
+        if isinstance(table, dict):
+            names.update(str(key) for key in table)
+
+    for table_name in DEPENDENCY_TABLES:
+        take(manifest.get(table_name))
+    targets = manifest.get("target")
+    if isinstance(targets, dict):
+        for target in targets.values():
+            if not isinstance(target, dict):
+                continue
+            for table_name in DEPENDENCY_TABLES:
+                take(target.get(table_name))
+    return names
+
+
+def workspace_package_graph() -> dict[str, set[str]]:
+    """Map each workspace package name to other workspace packages it depends on."""
+    crates: dict[str, set[str]] = {}
+    for manifest_path in workspace_member_manifests():
+        manifest = load_toml(manifest_path)
+        package = manifest.get("package")
+        if not isinstance(package, dict) or not isinstance(package.get("name"), str):
+            relative = manifest_path.relative_to(ROOT)
+            raise RuntimeError(f"{relative} is missing [package.name]")
+        crates[package["name"]] = iter_manifest_dependency_names(manifest)
+    workspace_names = set(crates)
+    return {
+        name: deps & workspace_names
+        for name, deps in crates.items()
+    }
+
+
+def find_workspace_dependency_cycle(
+    graph: dict[str, set[str]],
+) -> tuple[str, ...] | None:
+    """Return one directed cycle among workspace packages, if any.
+
+    Release Please's cargo-workspace plugin walks this graph, including
+    dev-dependencies, and fails closed on a cycle.
+    """
+    visiting: set[str] = set()
+    visited: set[str] = set()
+    stack: list[str] = []
+
+    def visit(name: str) -> tuple[str, ...] | None:
+        if name in visited:
+            return None
+        if name in visiting:
+            start = stack.index(name)
+            return tuple(stack[start:] + [name])
+        visiting.add(name)
+        stack.append(name)
+        for dep in sorted(graph.get(name, ())):
+            cycle = visit(dep)
+            if cycle is not None:
+                return cycle
+        stack.pop()
+        visiting.remove(name)
+        visited.add(name)
+        return None
+
+    for name in sorted(graph):
+        cycle = visit(name)
+        if cycle is not None:
+            return cycle
+    return None
+
+
+def check_workspace_dependency_graph() -> None:
+    cycle = find_workspace_dependency_cycle(workspace_package_graph())
+    if cycle is None:
+        return
+    raise RuntimeError(
+        "found cycle in dependency graph: "
+        + " -> ".join(cycle)
+        + "; release-please's cargo-workspace plugin cannot order this workspace"
+    )
+
+
 def check_internal_dependency_versions() -> None:
     mismatches = iter_internal_dependency_mismatches(package_versions())
     if not mismatches:
@@ -203,6 +312,7 @@ def main() -> None:
             )
 
     check_internal_dependency_versions()
+    check_workspace_dependency_graph()
     print("Release Please, Cargo package, and internal dependency versions are consistent")
 
 
