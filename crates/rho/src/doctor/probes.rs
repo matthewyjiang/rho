@@ -117,12 +117,8 @@ pub(crate) async fn run_probe(
         DoctorProbeId::Claude => {
             DoctorProbeOutcome::Claude(crate::claude_runtime::auth::probe_snapshot().await)
         }
-        // `rtk --version` is a blocking child run. A blocking task cannot be
-        // aborted mid-run, but the command is short-lived.
         DoctorProbeId::Rtk => DoctorProbeOutcome::Rtk {
-            available: tokio::task::spawn_blocking(rho_tools::rtk::is_available)
-                .await
-                .unwrap_or(false),
+            available: rho_tools::rtk::probe_available().await,
         },
     }
 }
