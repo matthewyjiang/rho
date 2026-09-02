@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.4.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.3.3...rho-coding-agent-v2.4.0) (2026-09-01)
+
+
+### Features
+
+* **tui:** replace doctor picker with dashboard overlay ([#1119](https://github.com/matthewyjiang/rho/issues/1119)) ([d22c5ee](https://github.com/matthewyjiang/rho/commit/d22c5eed4de4f4f3b6ab49b0f339d9f6bd0e7084))
+* **tui:** show live Claude Code usage in /limits ([#1114](https://github.com/matthewyjiang/rho/issues/1114)) ([7f96487](https://github.com/matthewyjiang/rho/commit/7f96487d0325b33a46c080bec4a6073a2a9684b1))
+
+
+### Bug Fixes
+
+* **limits:** stop spurious Claude usage refresh failures on cold starts ([#1117](https://github.com/matthewyjiang/rho/issues/1117)) ([98b2a24](https://github.com/matthewyjiang/rho/commit/98b2a248dc37cf9507cab64aeae269bb1313a25d))
+* **release:** stop release-please failing on the pty harness cycle ([#1116](https://github.com/matthewyjiang/rho/issues/1116)) ([a78805c](https://github.com/matthewyjiang/rho/commit/a78805cc8188085993401294e176025998c34e4c))
+* **tui:** hide the caret on dismiss-only overlays ([#1112](https://github.com/matthewyjiang/rho/issues/1112)) ([9089dd0](https://github.com/matthewyjiang/rho/commit/9089dd0edfc4aa0752eb8bec65b1640cec78c6b4))
+* **tui:** keep slash commands working after a trailing newline ([#1115](https://github.com/matthewyjiang/rho/issues/1115)) ([a56c19b](https://github.com/matthewyjiang/rho/commit/a56c19be4dfa9c7a352cdc7cc0741552b7a2346d))
+
 ## [2.3.3](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.3.2...rho-coding-agent-v2.3.3) (2026-08-31)
 
 
