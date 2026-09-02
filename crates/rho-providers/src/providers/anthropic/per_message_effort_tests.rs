@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use super::{apply, beta_header, PerMessageEffortState};
+use super::{apply, beta_header, PerMessageEffortState, MAX_TRACKED_CONVERSATIONS};
 use crate::protocol::anthropic_messages::{
     AnthropicContentBlock, AnthropicMessage, AnthropicOutputConfig, AnthropicRole,
 };
@@ -276,5 +276,70 @@ fn interleaved_conversations_on_one_provider_keep_separate_effort_state() {
         Some(effort("max"))
     );
     assert!(system_efforts(&anon).is_empty());
-    assert_eq!(state.conversations.len(), 2);
+    assert_eq!(state.tracked(), 2);
+}
+
+// Covers: a shared provider serving many sessions must not retain effort
+// state forever; the least recently used conversation is dropped and a
+// still-active one keeps its prefix
+// Owner: anthropic per-message effort
+#[test]
+fn tracked_conversations_are_bounded_by_lru_eviction() {
+    let mut state = PerMessageEffortState::default();
+    let mut first = turn(1);
+    apply(
+        FABLE_5_1,
+        &mut state,
+        Some("rho:keep"),
+        Some(effort("high")),
+        &mut first,
+    );
+
+    for index in 0..MAX_TRACKED_CONVERSATIONS - 1 {
+        let key = format!("rho:fill-{index}");
+        let mut messages = turn(1);
+        apply(
+            FABLE_5_1,
+            &mut state,
+            Some(&key),
+            Some(effort("low")),
+            &mut messages,
+        );
+    }
+    assert_eq!(state.tracked(), MAX_TRACKED_CONVERSATIONS);
+
+    // Touching "keep" makes "fill-0" the oldest.
+    let mut kept = turn(2);
+    apply(
+        FABLE_5_1,
+        &mut state,
+        Some("rho:keep"),
+        Some(effort("high")),
+        &mut kept,
+    );
+    let mut overflow = turn(1);
+    apply(
+        FABLE_5_1,
+        &mut state,
+        Some("rho:new"),
+        Some(effort("low")),
+        &mut overflow,
+    );
+
+    assert_eq!(state.tracked(), MAX_TRACKED_CONVERSATIONS);
+    assert!(!state.is_tracked("rho:fill-0"));
+    assert!(state.is_tracked("rho:keep"));
+    assert!(state.is_tracked("rho:new"));
+
+    // "keep" still continues with its original prefix effort.
+    let mut kept_next = turn(3);
+    let top = apply(
+        FABLE_5_1,
+        &mut state,
+        Some("rho:keep"),
+        Some(effort("low")),
+        &mut kept_next,
+    );
+    assert_eq!(top, Some(effort("high")));
+    assert_eq!(system_efforts(&kept_next), ["low"]);
 }

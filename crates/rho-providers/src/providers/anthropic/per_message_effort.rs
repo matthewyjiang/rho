@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::VecDeque;
 
 use crate::{
     model::provider_models,
@@ -8,12 +8,22 @@ use crate::{
 /// Beta required for `output_config` on a `role: system` message.
 pub(super) const BETA: &str = "mid-conversation-output-config-2026-07-01";
 
+/// Retained conversations per provider instance. Nothing tells the provider
+/// when a session ends, so this is an LRU cap rather than lifecycle cleanup.
+/// An entry is one owned key plus a few `&'static str` shifts, so the cap is
+/// sized as a tripwire, not a budget: no host runs anywhere near this many
+/// live Anthropic sessions on one provider. Evicting a live conversation only
+/// falls back to a top-level effort change, which is the pre-existing path.
+pub(super) const MAX_TRACKED_CONVERSATIONS: usize = 1_024;
+
 /// Per-conversation effort state on one Anthropic provider instance.
 ///
 /// A provider can be shared across sessions (`RhoBuilder::provider_shared`),
 /// so state is keyed by the request's `prompt_cache_key`. That key is the
 /// session identity Rho already derives for cache continuity. Requests
-/// without one get today's top-level effort and never touch this map.
+/// without one get today's top-level effort and never touch this list.
+/// Most recently used entries sit at the back; the front is evicted past
+/// [`MAX_TRACKED_CONVERSATIONS`].
 ///
 /// NEXT_MAJOR(rho-sdk): record reasoning shifts as a first-class history
 /// message appended by `set_reasoning_level`, and have the Anthropic
@@ -23,7 +33,47 @@ pub(super) const BETA: &str = "mid-conversation-output-config-2026-07-01";
 /// which falls back to a top-level effort change and busts the cache.
 #[derive(Debug, Default)]
 pub(super) struct PerMessageEffortState {
-    conversations: HashMap<String, ConversationEffort>,
+    conversations: VecDeque<(String, ConversationEffort)>,
+}
+
+impl PerMessageEffortState {
+    #[cfg(test)]
+    pub(super) fn tracked(&self) -> usize {
+        self.conversations.len()
+    }
+
+    #[cfg(test)]
+    pub(super) fn is_tracked(&self, conversation: &str) -> bool {
+        self.conversations
+            .iter()
+            .any(|(key, _)| key == conversation)
+    }
+
+    fn remove(&mut self, conversation: &str) -> Option<ConversationEffort> {
+        let index = self
+            .conversations
+            .iter()
+            .position(|(key, _)| key == conversation)?;
+        self.conversations.remove(index).map(|(_, entry)| entry)
+    }
+
+    /// Moves `conversation` to the most-recent slot and returns it, or
+    /// returns `None` if it is not tracked.
+    fn touch(&mut self, conversation: &str) -> Option<&mut ConversationEffort> {
+        let entry = self.remove(conversation)?;
+        self.conversations
+            .push_back((conversation.to_owned(), entry));
+        self.conversations.back_mut().map(|(_, entry)| entry)
+    }
+
+    fn insert(&mut self, conversation: &str, entry: ConversationEffort) {
+        self.remove(conversation);
+        if self.conversations.len() >= MAX_TRACKED_CONVERSATIONS {
+            self.conversations.pop_front();
+        }
+        self.conversations
+            .push_back((conversation.to_owned(), entry));
+    }
 }
 
 /// Prefix effort and in-history shifts for one conversation.
@@ -59,7 +109,7 @@ pub(super) fn apply(
         return current;
     };
     let Some(current_effort) = current.as_ref().map(|config| config.effort) else {
-        state.conversations.remove(conversation);
+        state.remove(conversation);
         return current;
     };
 
@@ -69,8 +119,8 @@ pub(super) fn apply(
         shifts: Vec::new(),
         last_uninjected_len: uninjected_len,
     };
-    let Some(entry) = state.conversations.get_mut(conversation) else {
-        state.conversations.insert(conversation.to_owned(), fresh);
+    let Some(entry) = state.touch(conversation) else {
+        state.insert(conversation, fresh);
         return current;
     };
 
