@@ -32,7 +32,7 @@ flowchart TD
 
 | Action | Required | Optional | Result |
 | --- | --- | --- | --- |
-| `start` | `command` | `timeout_seconds` (≥ 1) | Compact snapshot with `process_id` and early output |
+| `start` | `command` | `timeout_seconds` (≥ 1) | Compact snapshot with `process_id`, `command`, and early output |
 | `poll` | `process_id` | `cursor`, `wait_seconds` (0–30) | Compact snapshot of retained output from the cursor |
 | `stop` | `process_id` | | Stop request for that managed process tree |
 
@@ -45,7 +45,7 @@ Launches the command through the platform shell with:
 - stdout and stderr captured on pipes
 - the same user permissions as Rho
 
-Returns a compact text snapshot that includes `process_id`. Optional
+Returns a compact text snapshot that includes `process_id` and `command`. Optional
 `timeout_seconds` bounds how long the process may run before Rho marks it timed
 out and stops the tree.
 
@@ -74,6 +74,7 @@ then force-kills if needed.
 | Line | Meaning |
 | --- | --- |
 | `process_id: …` | Handle for later `poll` / `stop` |
+| `command: …` | The launched command |
 | `state: …` | `starting`, `running`, `exited`, `terminated`, `timed_out`, or `failed_to_start` |
 | `next: …` | Pass this as `cursor` on the next `poll` |
 | `truncated: first=…` | Requested cursor is older than the retained range |

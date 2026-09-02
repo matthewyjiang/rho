@@ -31,13 +31,13 @@ fn snapshot() -> Snapshot {
     }
 }
 
-// Covers: process results omit command, empty-stream labels, and success exit
+// Covers: process results include command, empty-stream labels, and success exit
 // Owner: process output
 #[test]
-fn snapshot_text_keeps_id_state_cursor_and_streams() {
+fn snapshot_text_keeps_id_command_state_cursor_and_streams() {
     assert_eq!(
         format_snapshot(&snapshot()),
-        "process_id: proc-1\nstate: running\nnext: 2\n\nstdout:\nout\nstderr:\nerr"
+        "process_id: proc-1\ncommand: sleep 300\nstate: running\nnext: 2\n\nstdout:\nout\nstderr:\nerr"
     );
 }
 
@@ -51,7 +51,7 @@ fn successful_exit_omits_exit_line() {
     snapshot.chunks.clear();
     assert_eq!(
         format_snapshot(&snapshot),
-        "process_id: proc-1\nstate: exited\nnext: 2"
+        "process_id: proc-1\ncommand: sleep 300\nstate: exited\nnext: 2"
     );
 }
 
@@ -65,7 +65,7 @@ fn failed_exit_includes_code() {
     snapshot.chunks.clear();
     assert_eq!(
         format_snapshot(&snapshot),
-        "process_id: proc-1\nstate: exited\nnext: 2\nexit: 2"
+        "process_id: proc-1\ncommand: sleep 300\nstate: exited\nnext: 2\nexit: 2"
     );
 }
 

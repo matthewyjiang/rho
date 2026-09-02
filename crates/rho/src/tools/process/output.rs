@@ -5,6 +5,7 @@ use super::types::{Snapshot, State, Stream};
 pub(super) fn format_snapshot(snapshot: &Snapshot) -> String {
     let mut lines = vec![
         format!("process_id: {}", snapshot.process_id),
+        format!("command: {}", snapshot.command),
         format!("state: {}", snapshot.state.as_wire_str()),
         format!("next: {}", snapshot.next_cursor),
     ];

@@ -362,7 +362,7 @@ pub(super) fn finished_card(
         ToolKind::Agents => agent_format::agents_finished_card(view, content, ok),
         ToolKind::Bash => shell_result_card("$", &view.arguments, content, status),
         ToolKind::PowerShell => shell_result_card("PS", &view.arguments, content, status),
-        ToolKind::Process => process_result_card(&view.arguments, content, status),
+        ToolKind::Process => process_result_card(content, status),
         ToolKind::ListDir => {
             let mut card = kind_card(
                 status,

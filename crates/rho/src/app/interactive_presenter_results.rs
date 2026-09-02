@@ -331,14 +331,9 @@ pub(super) fn search_result_card(
     card
 }
 
-/// Result card for the process tool. `arguments` are the original call
-/// arguments; the compact result text omits the command, so `start` calls
-/// recover it from there.
-pub(super) fn process_result_card(
-    arguments: &serde_json::Value,
-    content: &str,
-    status: ToolStatus,
-) -> ToolCard {
+/// Result card for the process tool. Compact snapshot text carries `command`
+/// so start and poll cards share the same identity without call arguments.
+pub(super) fn process_result_card(content: &str, status: ToolStatus) -> ToolCard {
     #[derive(serde::Deserialize)]
     struct StopReceipt {
         stop_requested: bool,
@@ -359,8 +354,7 @@ pub(super) fn process_result_card(
         }
     }
     let Ok(snapshot) = serde_json::from_str::<crate::tools::process::Snapshot>(content) else {
-        let command = string_arg(arguments, "command").filter(|c| !c.trim().is_empty());
-        return compact_process_card(command, content, status);
+        return compact_process_card(content, status);
     };
 
     let mut card = draft_card(
@@ -409,9 +403,9 @@ pub(super) fn process_result_card(
     card
 }
 
-/// Card for the compact text result. `command` comes from the call arguments
-/// (only present on `start`) since the compact text does not carry it.
-fn compact_process_card(command: Option<String>, content: &str, status: ToolStatus) -> ToolCard {
+/// Card for the compact text result. Identity is `command` from the snapshot
+/// header; the process id and poll cursor stay in the model-facing text.
+fn compact_process_card(content: &str, status: ToolStatus) -> ToolCard {
     let header = compact_header_block(content);
     if let Some(process_id) = header_value(header, "process_id") {
         if header.lines().any(|line| line == "stop requested") {
@@ -431,11 +425,10 @@ fn compact_process_card(command: Option<String>, content: &str, status: ToolStat
             ToolFamily::Default,
             ToolHeader::call("process", state.clone()),
         );
-        if let Some(command) = command {
+        if let Some(command) = header_value(header, "command").filter(|c| !c.trim().is_empty()) {
             card.push_fact(ToolFact::Text { text: command });
         }
-        // The process id and poll cursor stay in the model-facing text; humans
-        // only need the command, exit code, and pending marker here.
+        // Humans only need the command, exit code, and pending marker here.
         if let Some(code) = header_value(header, "exit") {
             card.push_fact(ToolFact::Meta {
                 text: format!("exit {code}"),
@@ -893,7 +886,6 @@ mod tests {
     #[test]
     fn compact_process_ignores_header_tokens_in_streams() {
         let card = compact_process_card(
-            None,
             "process_id: proc-1\nstate: running\nnext: 2\n\nstdout:\npending\nexit: 1\nstop requested",
             ToolStatus::Ok,
         );
@@ -904,20 +896,36 @@ mod tests {
         assert_eq!(card.facts, vec![]);
     }
 
-    // Covers: compact start result shows the launched command, not just the id
+    // Covers: compact snapshot cards show command and human facts from the
+    // result text, for both start and later poll windows
     // Owner: pure unit (presenter)
     #[test]
-    fn compact_process_start_shows_command() {
-        let card = process_result_card(
-            &serde_json::json!({"action": "start", "command": "cargo test"}),
-            "process_id: proc-1\nstate: running\nnext: 0",
-            ToolStatus::Ok,
-        );
-        assert_eq!(
-            card.facts,
-            vec![ToolFact::Text {
-                text: "cargo test".into(),
-            }]
-        );
+    fn compact_process_shows_command_from_snapshot_text() {
+        let cases = [
+            (
+                "process_id: proc-1\ncommand: cargo test\nstate: running\nnext: 0",
+                vec![ToolFact::Text {
+                    text: "cargo test".into(),
+                }],
+            ),
+            (
+                "process_id: proc-1\ncommand: cargo test\nstate: exited\nnext: 2\nexit: 2\npending",
+                vec![
+                    ToolFact::Text {
+                        text: "cargo test".into(),
+                    },
+                    ToolFact::Meta {
+                        text: "exit 2".into(),
+                    },
+                    ToolFact::Meta {
+                        text: "more output available".into(),
+                    },
+                ],
+            ),
+        ];
+        for (content, facts) in cases {
+            let card = process_result_card(content, ToolStatus::Ok);
+            assert_eq!(card.facts, facts, "{content}");
+        }
     }
 }
