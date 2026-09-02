@@ -397,7 +397,10 @@ where
 /// Pass `native_compact` as a second argument when the transport also exposes
 /// an inherent `native_compact_turn` method returning
 /// `Result<NativeCompactionResponse, ModelError>` or
-/// `Result<CompactionOutput, ModelError>` converted by the adapter.
+/// `Result<CompactionOutput, ModelError>` converted by the adapter, plus an
+/// inherent `native_compact_available(&self) -> bool` that gates the
+/// advertisement per instance (a transport type can serve hosts without the
+/// compact endpoint).
 ///
 /// Pass `request_options` when the transport also exposes an inherent
 /// `stream_turn_with_options` method with [`rho_sdk::provider::ModelRequestOptions`]
@@ -516,6 +519,9 @@ macro_rules! impl_sdk_model_provider {
             &'a self,
             request: ::rho_sdk::model::ModelRequest<'a>,
         ) -> ::std::option::Option<::rho_sdk::provider::NativeCompactionFuture<'a>> {
+            if !self.native_compact_available() {
+                return ::std::option::Option::None;
+            }
             ::std::option::Option::Some(::std::boxed::Box::pin(async move {
                 match self.native_compact_turn(request).await {
                     ::std::result::Result::Ok(response) => response.into(),

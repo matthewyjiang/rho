@@ -130,6 +130,10 @@ impl FakeNativeCompactProvider {
         Ok(response)
     }
 
+    fn native_compact_available(&self) -> bool {
+        true
+    }
+
     async fn native_compact_turn(
         &self,
         request: ModelRequest<'_>,

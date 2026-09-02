@@ -231,6 +231,53 @@ async fn native_compaction_auth_retry_keeps_monotonic_attempt_indexes() {
     ));
 }
 
+/// A 1M-window model with a 175k-token session: automatic compaction has
+/// nothing to do, but an explicit `/compact` must still remove history.
+#[tokio::test]
+async fn manual_trigger_summarizes_below_automatic_target() {
+    let history = vec![
+        Message::System("system".into()),
+        Message::user_text("x".repeat(8_000)),
+        Message::assistant_text("y".repeat(8_000)),
+        Message::user_text("recent"),
+    ];
+    let summarized = |messages: &[Message]| {
+        messages.iter().any(|message| {
+            matches!(
+                message,
+                Message::User(blocks) if blocks.iter().any(|block| matches!(
+                    block,
+                    ContentBlock::Text(text) if text.contains("summary text")
+                ))
+            )
+        })
+    };
+    let provider = || {
+        ScriptedProvider::new(
+            ModelIdentity::new("opencode-go", "openai-responses", "muse-test"),
+            [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+                ContentBlock::Text("summary text".into()),
+            ]))],
+        )
+    };
+
+    let automatic = compactor(provider(), RecordingUsage::default(), Some(1_000_000))
+        .compact(
+            CompactionRequest::new(history.clone(), Default::default())
+                .with_trigger(rho_sdk::CompactionTrigger::Automatic),
+        )
+        .await
+        .unwrap();
+    assert_eq!(automatic.messages(), history.as_slice());
+
+    let manual = compactor(provider(), RecordingUsage::default(), Some(1_000_000))
+        .compact(CompactionRequest::new(history.clone(), Default::default()))
+        .await
+        .unwrap();
+    assert!(summarized(manual.messages()));
+    assert!(manual.messages().len() < history.len());
+}
+
 #[tokio::test]
 async fn native_compaction_cancellation_is_explicit() {
     let usage = RecordingUsage::default();

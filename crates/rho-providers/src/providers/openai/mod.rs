@@ -372,6 +372,14 @@ impl OpenAiProvider {
         }
     }
 
+    /// `POST /responses/compact` exists only on first-party OpenAI hosts.
+    /// Catalog Responses gateways (opencode-go, custom hosts) reuse this
+    /// transport but do not serve the endpoint, so skip straight to portable
+    /// summary compaction instead of paying a failed round trip.
+    fn native_compact_available(&self) -> bool {
+        matches!(self.profile.provider(), "openai" | "openai-codex")
+    }
+
     async fn native_compact_turn(
         &self,
         request: ModelRequest<'_>,

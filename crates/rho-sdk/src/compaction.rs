@@ -177,6 +177,7 @@ impl CompactionPolicy {
 pub struct CompactionRequest {
     messages: Vec<Message>,
     cancellation: CancellationToken,
+    trigger: CompactionTrigger,
     session_id: Option<crate::SessionId>,
     parent_session_id: Option<crate::SessionId>,
     run_id: Option<crate::RunId>,
@@ -185,16 +186,24 @@ pub struct CompactionRequest {
 }
 
 impl CompactionRequest {
+    /// Builds a manual request. In-run automatic compaction sets
+    /// [`CompactionTrigger::Automatic`] through [`Self::with_trigger`].
     pub fn new(messages: Vec<Message>, cancellation: CancellationToken) -> Self {
         Self {
             messages,
             cancellation,
+            trigger: CompactionTrigger::Manual,
             session_id: None,
             parent_session_id: None,
             run_id: None,
             step_index: None,
             workspace_path: None,
         }
+    }
+
+    pub fn with_trigger(mut self, trigger: CompactionTrigger) -> Self {
+        self.trigger = trigger;
+        self
     }
 
     pub(crate) fn with_request_context(
@@ -215,6 +224,12 @@ impl CompactionRequest {
 
     pub fn messages(&self) -> &[Message] {
         &self.messages
+    }
+
+    /// Why this compaction was requested. Compactors may size the retained
+    /// tail differently for an explicit user request.
+    pub fn trigger(&self) -> CompactionTrigger {
+        self.trigger
     }
 
     pub fn session_id(&self) -> Option<&crate::SessionId> {

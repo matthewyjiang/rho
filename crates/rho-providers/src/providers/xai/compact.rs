@@ -19,6 +19,11 @@ system prompts folded into the artifact, live in an encrypted blob that only \
 compatible xAI Responses turns can read.";
 
 impl XaiProvider {
+    /// Every xAI host this transport targets serves `/responses/compact`.
+    pub(super) fn native_compact_available(&self) -> bool {
+        true
+    }
+
     pub(super) async fn native_compact_turn(
         &self,
         request: ModelRequest<'_>,

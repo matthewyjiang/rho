@@ -36,6 +36,33 @@ impl CompactionConfig {
             normalized_target_percent(self.threshold_percent, self.target_percent),
         )
     }
+
+    /// Retained-tail token budget for one compaction request.
+    ///
+    /// Automatic compaction shrinks to the configured window percentage. An
+    /// explicit user request must always remove something, so its budget is
+    /// capped at half of the current estimated context; otherwise a large
+    /// window (1M tokens at 50% = 524k) makes `/compact` a no-op on any
+    /// session that has not crossed the auto threshold.
+    pub fn target_tokens_for_trigger(
+        &self,
+        context_window: Option<u64>,
+        trigger: rho_sdk::CompactionTrigger,
+        messages: &[Message],
+        tools: &[ToolSpec],
+    ) -> u64 {
+        let configured = context_window
+            .map(|window| self.target_tokens(window))
+            .unwrap_or(u64::MAX / 2);
+        match trigger {
+            rho_sdk::CompactionTrigger::Manual => {
+                configured.min(estimate_context_tokens(messages, tools) / 2)
+            }
+            // `CompactionTrigger` is `#[non_exhaustive]`; unknown future
+            // triggers keep the configured automatic budget.
+            rho_sdk::CompactionTrigger::Automatic | _ => configured,
+        }
+    }
 }
 
 /// True when a finished compact removed messages or estimated tokens.
@@ -308,6 +335,32 @@ mod tests {
         };
 
         assert_eq!(config.target_tokens(1_000), 840);
+    }
+
+    // Covers: manual compaction budget is capped below current usage so
+    // `/compact` removes history even when the auto target is far away.
+    // Owner: CompactionConfig target policy
+    #[test]
+    fn manual_trigger_caps_target_at_half_of_current_context() {
+        let config = CompactionConfig {
+            auto_compact: true,
+            threshold_percent: 85,
+            target_percent: 50,
+        };
+        let messages = vec![Message::user_text("x".repeat(4_000))];
+        let current = estimate_context_tokens(&messages, &[]);
+        let cases = [
+            (rho_sdk::CompactionTrigger::Automatic, 500_000),
+            (rho_sdk::CompactionTrigger::Manual, current / 2),
+        ];
+
+        for (trigger, expected) in cases {
+            assert_eq!(
+                config.target_tokens_for_trigger(Some(1_000_000), trigger, &messages, &[]),
+                expected,
+                "trigger={trigger:?}"
+            );
+        }
     }
 
     #[test]
