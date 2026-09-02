@@ -142,7 +142,7 @@ fn native_kitty_without_herdr_uses_kitty_protocol() {
 // Owner: pure unit
 #[test]
 fn cell_font_size_rejects_zero_quotients() {
-    let cases: [(u16, u16, u16, u16, Option<(u16, u16)>); 6] = [
+    let cases = [
         (800, 600, 80, 24, Some((10, 25))),
         (14, 32, 80, 24, None),
         (80, 24, 80, 24, Some((1, 1))),

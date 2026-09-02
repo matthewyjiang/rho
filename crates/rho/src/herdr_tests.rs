@@ -124,9 +124,10 @@ async fn release_sends_release_request() {
 
 #[test]
 fn graphics_info_parses_host_cell_metrics() {
-    let cases: [(&[u8], Option<(u16, u16)>); 4] = [
+    let cases = [
         (
-            br#"{"id":"1","result":{"type":"pane_graphics_info","cell_width_px":14,"cell_height_px":32}}"#,
+            br#"{"id":"1","result":{"type":"pane_graphics_info","cell_width_px":14,"cell_height_px":32}}"#
+                as &[u8],
             Some((14, 32)),
         ),
         (
