@@ -14,15 +14,11 @@ use tokio::{
     sync::Mutex,
 };
 
-use super::super::{
-    auth::{Auth, CodexAuthSource},
-    codex_request::{build_responses_compact_body, build_responses_create_body, ResponsesProfile},
-    reasoning::OpenAiReasoningProfile,
-};
-use super::{ResponsesEndpoint, ResponsesFailedAttemptKind, ResponsesHttpTransport};
+use super::super::openai::auth::{Auth, CodexAuthSource};
+use super::{ResponsesAuth, ResponsesEndpoint, ResponsesFailedAttemptKind, ResponsesHttpTransport};
 use crate::{
     credentials::{CodexTokens, MemoryCredentialStore},
-    model::{Message, ModelError, ModelRequest},
+    model::ModelError,
 };
 
 #[derive(Clone, Default)]
@@ -136,7 +132,7 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
 
     let create = http
         .post_json(
-            Some(&Auth::ApiKey("sk-test".into())),
+            ResponsesAuth::ApiKey("sk-test"),
             ResponsesEndpoint::Create,
             &body,
             None,
@@ -147,7 +143,7 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
 
     let compact = http
         .post_json(
-            Some(&Auth::ApiKey("sk-test".into())),
+            ResponsesAuth::ApiKey("sk-test"),
             ResponsesEndpoint::Compact,
             &body,
             None,
@@ -184,13 +180,23 @@ async fn keyless_create_and_compact_omit_authorization() {
     let body = json!({"model":"gpt-5.4","store":false});
 
     let create = http
-        .post_json(None, ResponsesEndpoint::Create, &body, None)
+        .post_json(
+            ResponsesAuth::Keyless,
+            ResponsesEndpoint::Create,
+            &body,
+            None,
+        )
         .await;
     assert!(create.failed_attempts.is_empty());
     assert_eq!(create.response.unwrap().status(), reqwest::StatusCode::OK);
 
     let compact = http
-        .post_json(None, ResponsesEndpoint::Compact, &body, None)
+        .post_json(
+            ResponsesAuth::Keyless,
+            ResponsesEndpoint::Compact,
+            &body,
+            None,
+        )
         .await;
     assert!(compact.failed_attempts.is_empty());
     assert_eq!(compact.response.unwrap().status(), reqwest::StatusCode::OK);
@@ -228,13 +234,23 @@ async fn codex_create_and_compact_send_expected_headers_and_paths() {
     let body = json!({"model":"gpt-5.4","store":false});
 
     let create = http
-        .post_json(Some(&auth), ResponsesEndpoint::Create, &body, None)
+        .post_json(
+            ResponsesAuth::Codex(&auth),
+            ResponsesEndpoint::Create,
+            &body,
+            None,
+        )
         .await;
     assert!(create.failed_attempts.is_empty());
     assert!(create.response.is_ok());
 
     let compact = http
-        .post_json(Some(&auth), ResponsesEndpoint::Compact, &body, None)
+        .post_json(
+            ResponsesAuth::Codex(&auth),
+            ResponsesEndpoint::Compact,
+            &body,
+            None,
+        )
         .await;
     assert!(compact.failed_attempts.is_empty());
     assert!(compact.response.is_ok());
@@ -311,7 +327,7 @@ async fn codex_compact_401_refresh_reports_auth_failed_attempt_and_retries() {
 
     let result = http
         .post_json(
-            Some(&auth),
+            ResponsesAuth::Codex(&auth),
             ResponsesEndpoint::Compact,
             &json!({"model":"gpt-5.4","store":false}),
             None,
@@ -361,13 +377,12 @@ async fn cancellation_during_send_returns_interrupted() {
     });
 
     let client = crate::reqwest_client();
-    let auth = Auth::ApiKey("sk-test".into());
     let http = transport(&client, &base);
     let cancellation = rho_sdk::CancellationToken::new();
     let cancel = cancellation.clone();
     let body = json!({"model":"gpt-5.4"});
     let post = http.post_json(
-        Some(&auth),
+        ResponsesAuth::ApiKey("sk-test"),
         ResponsesEndpoint::Create,
         &body,
         Some(&cancellation),
@@ -423,7 +438,7 @@ async fn cancellation_during_refresh_returns_interrupted() {
     let cancel = cancellation.clone();
     let body = json!({"model":"gpt-5.4"});
     let post = http.post_json(
-        Some(&auth),
+        ResponsesAuth::Codex(&auth),
         ResponsesEndpoint::Compact,
         &body,
         Some(&cancellation),
@@ -479,7 +494,7 @@ async fn refresh_failure_retains_authentication_failed_attempt() {
 
     let result = http
         .post_json(
-            Some(&auth),
+            ResponsesAuth::Codex(&auth),
             ResponsesEndpoint::Compact,
             &json!({"model":"gpt-5.4"}),
             None,
@@ -546,7 +561,7 @@ async fn retry_send_failure_retains_authentication_failed_attempt() {
 
     let result = http
         .post_json(
-            Some(&auth),
+            ResponsesAuth::Codex(&auth),
             ResponsesEndpoint::Compact,
             &json!({"model":"gpt-5.4"}),
             None,
@@ -558,37 +573,4 @@ async fn retry_send_failure_retains_authentication_failed_attempt() {
         result.failed_attempts[0].kind,
         ResponsesFailedAttemptKind::Authentication
     );
-}
-
-#[tokio::test]
-async fn create_and_compact_body_builders_diverge_on_tools() {
-    let profile = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-5.4");
-    let request = ModelRequest {
-        messages: &[Message::user_text("hello")],
-        tools: &[crate::model::ToolSpec {
-            name: "bash".into(),
-            description: "run".into(),
-            input_schema: json!({"type":"object"}),
-        }],
-        cancellation: Default::default(),
-        reasoning_level: Default::default(),
-        prompt_cache_key: None,
-    };
-    let create = build_responses_create_body(
-        &profile,
-        &OpenAiReasoningProfile::unknown(),
-        request.clone(),
-        None,
-        /*hosted_web_search*/ true,
-    )
-    .unwrap();
-    let compact =
-        build_responses_compact_body(&profile, &OpenAiReasoningProfile::unknown(), request)
-            .unwrap();
-    assert_eq!(create["stream"], true);
-    assert!(create.get("tools").is_some());
-    assert!(compact.get("stream").is_none());
-    assert!(compact.get("tools").is_none());
-    assert!(compact.get("tool_choice").is_none());
-    assert!(compact.get("parallel_tool_calls").is_none());
 }

@@ -7,7 +7,6 @@ mod codex_request;
 mod codex_ws;
 mod reasoning;
 mod remote_compaction;
-mod responses_http;
 
 pub use cache::prompt_cache_key_from_session_id;
 
@@ -21,13 +20,13 @@ pub fn supports_fast_mode(provider: &str, model: &str) -> bool {
 }
 
 use crate::protocol::openai_responses::collect_codex_sse_response;
+use crate::providers::responses_http::{ResponsesAuth, ResponsesEndpoint, ResponsesHttpTransport};
 use auth::Auth;
 #[cfg(test)]
 use codex_request::build_codex_responses_body;
 use codex_request::{build_responses_create_body, ResponsesProfile};
 use codex_ws::{CodexWsTransport, CodexWsTurn};
 use reasoning::OpenAiReasoningProfile;
-use responses_http::{ResponsesEndpoint, ResponsesHttpTransport};
 
 use rho_sdk::provider::ModelRequestOptions;
 
@@ -216,7 +215,7 @@ impl OpenAiProvider {
         let http_result = self
             .http()
             .post_json(
-                self.auth.as_ref(),
+                ResponsesAuth::from_openai(self.auth.as_ref()),
                 ResponsesEndpoint::Create,
                 &body,
                 /*cancellation*/ None,
@@ -293,21 +292,16 @@ impl OpenAiProvider {
         let http_result = self
             .http()
             .post_json(
-                self.auth.as_ref(),
+                ResponsesAuth::from_openai(self.auth.as_ref()),
                 ResponsesEndpoint::Create,
                 &body,
                 /*cancellation*/ None,
             )
             .await;
         for attempt in &http_result.failed_attempts {
-            let kind = match attempt.kind {
-                responses_http::ResponsesFailedAttemptKind::Authentication => {
-                    rho_sdk::ProviderErrorKind::Authentication
-                }
-            };
             on_request_event(
                 rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
-                    kind,
+                    kind: attempt.kind.provider_error_kind(),
                     usage: ModelUsage::default(),
                 },
             )?;
@@ -396,7 +390,7 @@ impl OpenAiProvider {
         let http_result = self
             .http()
             .post_json(
-                self.auth.as_ref(),
+                ResponsesAuth::from_openai(self.auth.as_ref()),
                 ResponsesEndpoint::Create,
                 &body,
                 Some(&cancellation),
@@ -420,7 +414,7 @@ impl OpenAiProvider {
         let http_result = self
             .http()
             .post_json(
-                self.auth.as_ref(),
+                ResponsesAuth::from_openai(self.auth.as_ref()),
                 ResponsesEndpoint::Create,
                 &body,
                 Some(&cancellation),

@@ -38,7 +38,7 @@ impl Auth {
         .codex_tokens_for_request()
     }
 
-    pub(super) fn codex_tokens_for_request(&self) -> Result<CodexTokens, ModelError> {
+    pub(crate) fn codex_tokens_for_request(&self) -> Result<CodexTokens, ModelError> {
         let Self::Codex {
             tokens,
             source,
@@ -62,7 +62,7 @@ impl Auth {
             .unwrap_or_else(|| tokens.clone()))
     }
 
-    pub(super) fn remember_refreshed_codex_tokens(&self, tokens: CodexTokens) {
+    pub(crate) fn remember_refreshed_codex_tokens(&self, tokens: CodexTokens) {
         let Self::Codex {
             refreshed_tokens, ..
         } = self
@@ -107,7 +107,7 @@ pub async fn refresh_codex_token(
     .await
 }
 
-pub(super) async fn refresh_codex_token_at(
+pub(crate) async fn refresh_codex_token_at(
     client: &reqwest::Client,
     store: &dyn CredentialStore,
     refresh_token: &str,

@@ -1,12 +1,10 @@
 //! xAI native server-side compaction via `POST /v1/responses/compact`.
 
-use serde_json::Value;
-
-use super::{bodies::build_xai_compact_body, http::XaiFailedAttempt, XaiProvider};
-use crate::model::{ModelError, ModelRequest, ModelUsage};
+use super::{bodies::build_xai_compact_body, XaiProvider};
+use crate::model::{ModelError, ModelRequest};
 use crate::protocol::openai_responses::{retained_system_messages, CompactUserRetention};
 use crate::providers::native_compaction::{
-    native_compact_failure, native_compact_from_response_body,
+    compact_over_responses_http, native_compact_failure, CompactParsePolicy,
 };
 
 /// Portable notice when the encrypted compaction artifact cannot replay.
@@ -31,62 +29,18 @@ impl XaiProvider {
             Err(error) => return Ok(native_compact_failure(error, Vec::new())),
         };
 
-        let result = self
-            .post_with_auth_retry("responses/compact", &body, Some(&cancellation), || Ok(()))
-            .await;
-        let failed_attempts = native_failed_attempts(result.failed_attempts);
-        let response = match result.response {
-            Ok(response) => response,
-            Err(error) => return Ok(native_compact_failure(error, failed_attempts)),
-        };
-        if !response.status().is_success() {
-            let error = cancel_aware_error_body(&cancellation, response).await;
-            return Ok(native_compact_failure(error, failed_attempts));
-        }
-
-        let body = tokio::select! {
-            result = response.json::<Value>() => match result {
-                Ok(body) => body,
-                Err(error) => {
-                    return Ok(native_compact_failure(ModelError::from(error), failed_attempts));
-                }
-            },
-            () = cancellation.cancelled() => {
-                return Ok(native_compact_failure(ModelError::Interrupted, failed_attempts));
-            }
-        };
-
-        Ok(native_compact_from_response_body(
-            identity,
-            &retained_system_messages,
+        Ok(compact_over_responses_http(
+            &self.http(),
+            self.responses_auth(),
             &body,
-            COMPACT_PORTABLE_HANDOFF_NOTICE,
-            CompactUserRetention::CompactionItemOnly,
-            failed_attempts,
-        ))
-    }
-}
-
-fn native_failed_attempts(
-    attempts: Vec<XaiFailedAttempt>,
-) -> Vec<rho_sdk::provider::NativeCompactionFailedAttempt> {
-    attempts
-        .into_iter()
-        .map(|attempt| {
-            let kind = match attempt {
-                XaiFailedAttempt::Authentication => rho_sdk::ProviderErrorKind::Authentication,
-            };
-            rho_sdk::provider::NativeCompactionFailedAttempt::new(kind, ModelUsage::default())
-        })
-        .collect()
-}
-
-async fn cancel_aware_error_body(
-    cancellation: &rho_sdk::CancellationToken,
-    response: reqwest::Response,
-) -> ModelError {
-    tokio::select! {
-        error = crate::provider_backend::http_error::from_response(response) => error,
-        () = cancellation.cancelled() => ModelError::Interrupted,
+            &cancellation,
+            CompactParsePolicy {
+                identity,
+                retained_system_messages: &retained_system_messages,
+                portable_handoff_notice: COMPACT_PORTABLE_HANDOFF_NOTICE,
+                user_retention: CompactUserRetention::CompactionItemOnly,
+            },
+        )
+        .await)
     }
 }

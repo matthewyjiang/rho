@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use crate::protocol::openai_responses::collect_codex_sse_response;
+use crate::providers::responses_http::{ResponsesAuth, ResponsesEndpoint, ResponsesHttpTransport};
 
 use crate::{
     auth::xai_token::XaiAuthManager,
@@ -20,7 +21,6 @@ use crate::{credentials::CredentialStore, provider_backend::stream_timeout::prov
 
 mod bodies;
 mod compact;
-mod http;
 #[path = "reasoning.rs"]
 mod reasoning;
 
@@ -84,6 +84,14 @@ impl XaiProvider {
         ))
     }
 
+    pub(super) fn http(&self) -> ResponsesHttpTransport<'_> {
+        ResponsesHttpTransport::new(&self.client, &self.api_base)
+    }
+
+    pub(super) fn responses_auth(&self) -> ResponsesAuth<'_> {
+        ResponsesAuth::Xai(&self.auth)
+    }
+
     async fn send_request(
         &self,
         request: ModelRequest<'_>,
@@ -100,21 +108,26 @@ impl XaiProvider {
             request,
             self.hosted,
         )?;
-        let mut on_request_event = on_request_event;
-        let result = self
-            .post_with_auth_retry("responses", &body, Some(&cancellation), || {
-                if let Some(on_request_event) = on_request_event.as_mut() {
-                    on_request_event(
-                        rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
-                            kind: rho_sdk::ProviderErrorKind::Authentication,
-                            usage: crate::model::ModelUsage::default(),
-                        },
-                    )?;
-                }
-                Ok(())
-            })
+        let http_result = self
+            .http()
+            .post_json(
+                self.responses_auth(),
+                ResponsesEndpoint::Create,
+                &body,
+                Some(&cancellation),
+            )
             .await;
-        result.response
+        if let Some(on_request_event) = on_request_event {
+            for attempt in &http_result.failed_attempts {
+                on_request_event(
+                    rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
+                        kind: attempt.kind.provider_error_kind(),
+                        usage: crate::model::ModelUsage::default(),
+                    },
+                )?;
+            }
+        }
+        http_result.response
     }
 
     async fn send_responses_turn(

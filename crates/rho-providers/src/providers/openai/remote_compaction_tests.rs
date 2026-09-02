@@ -1,7 +1,7 @@
 use super::*;
 use crate::model::{Message, ToolSpec};
 use pretty_assertions::assert_eq;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::super::auth::Auth;
 use super::super::codex_request::{codex_test_auth, ResponsesProfile};
@@ -101,10 +101,9 @@ async fn compact_with_http_malformed_retry_response_preserves_failed_attempts() 
         net::TcpListener,
     };
 
-    use super::super::{
-        auth::CodexAuthSource, codex_ws::CodexWsTransport, responses_http::ResponsesHttpTransport,
-    };
+    use super::super::{auth::CodexAuthSource, codex_ws::CodexWsTransport};
     use crate::credentials::{CodexTokens, MemoryCredentialStore};
+    use crate::providers::responses_http::ResponsesHttpTransport;
 
     async fn read_http_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
         let mut buf = vec![0; 16_384];

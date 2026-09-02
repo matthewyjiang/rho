@@ -295,3 +295,36 @@ fn assert_compact_body_omits_tool_fields(body: &Value) {
     assert!(body.get("tool_choice").is_none());
     assert!(body.get("parallel_tool_calls").is_none());
 }
+
+#[test]
+fn create_and_compact_body_builders_diverge_on_tools() {
+    let profile = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-5.4");
+    let request = ModelRequest {
+        messages: &[Message::user_text("hello")],
+        tools: &[crate::model::ToolSpec {
+            name: "bash".into(),
+            description: "run".into(),
+            input_schema: json!({"type":"object"}),
+        }],
+        cancellation: Default::default(),
+        reasoning_level: Default::default(),
+        prompt_cache_key: None,
+    };
+    let create = build_responses_create_body(
+        &profile,
+        &OpenAiReasoningProfile::unknown(),
+        request.clone(),
+        None,
+        /*hosted_web_search*/ true,
+    )
+    .unwrap();
+    let compact =
+        build_responses_compact_body(&profile, &OpenAiReasoningProfile::unknown(), request)
+            .unwrap();
+    assert_eq!(create["stream"], true);
+    assert!(create.get("tools").is_some());
+    assert!(compact.get("stream").is_none());
+    assert!(compact.get("tools").is_none());
+    assert!(compact.get("tool_choice").is_none());
+    assert!(compact.get("parallel_tool_calls").is_none());
+}

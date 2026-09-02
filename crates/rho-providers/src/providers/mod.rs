@@ -17,6 +17,7 @@ pub mod google;
 pub(crate) mod native_compaction;
 pub mod openai;
 pub mod openai_compatible;
+mod responses_http;
 pub mod sdk_contract;
 pub mod send_stream;
 #[cfg(debug_assertions)]
