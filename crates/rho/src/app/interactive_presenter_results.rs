@@ -425,7 +425,10 @@ fn compact_process_card(content: &str, status: ToolStatus) -> ToolCard {
             ToolFamily::Default,
             ToolHeader::call("process", state.clone()),
         );
-        if let Some(command) = header_value(header, "command").filter(|c| !c.trim().is_empty()) {
+        if let Some(command) = header_value(header, "command")
+            .map(|value| crate::tools::process::decode_header_value(&value))
+            .filter(|command| !command.trim().is_empty())
+        {
             card.push_fact(ToolFact::Text { text: command });
         }
         // Humans only need the command, exit code, and pending marker here.
@@ -921,6 +924,12 @@ mod tests {
                         text: "more output available".into(),
                     },
                 ],
+            ),
+            (
+                "process_id: proc-1\ncommand: echo ok\\nexit: 9\nstate: running\nnext: 0",
+                vec![ToolFact::Text {
+                    text: "echo ok\nexit: 9".into(),
+                }],
             ),
         ];
         for (content, facts) in cases {

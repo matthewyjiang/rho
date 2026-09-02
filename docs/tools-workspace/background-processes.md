@@ -74,7 +74,7 @@ then force-kills if needed.
 | Line | Meaning |
 | --- | --- |
 | `process_id: …` | Handle for later `poll` / `stop` |
-| `command: …` | The launched command |
+| `command: …` | The launched command, one escaped line (`\n`, `\r`, `\\`) |
 | `state: …` | `starting`, `running`, `exited`, `terminated`, `timed_out`, or `failed_to_start` |
 | `next: …` | Pass this as `cursor` on the next `poll` |
 | `truncated: first=…` | Requested cursor is older than the retained range |

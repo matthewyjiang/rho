@@ -5,7 +5,7 @@ use super::types::{Snapshot, State, Stream};
 pub(super) fn format_snapshot(snapshot: &Snapshot) -> String {
     let mut lines = vec![
         format!("process_id: {}", snapshot.process_id),
-        format!("command: {}", snapshot.command),
+        format!("command: {}", encode_header_value(&snapshot.command)),
         format!("state: {}", snapshot.state.as_wire_str()),
         format!("next: {}", snapshot.next_cursor),
     ];
@@ -32,6 +32,43 @@ pub(super) fn format_snapshot(snapshot: &Snapshot) -> String {
 
 pub(super) fn format_stop(process_id: &str) -> String {
     format!("process_id: {process_id}\nstop requested")
+}
+
+/// Encode a snapshot header value so it cannot inject extra header lines.
+pub(crate) fn encode_header_value(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for character in value.chars() {
+        match character {
+            '\\' => encoded.push_str("\\\\"),
+            '\n' => encoded.push_str("\\n"),
+            '\r' => encoded.push_str("\\r"),
+            other => encoded.push(other),
+        }
+    }
+    encoded
+}
+
+/// Inverse of [`encode_header_value`] for compact snapshot cards.
+pub(crate) fn decode_header_value(value: &str) -> String {
+    let mut decoded = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(character) = chars.next() {
+        if character != '\\' {
+            decoded.push(character);
+            continue;
+        }
+        match chars.next() {
+            Some('\\') => decoded.push('\\'),
+            Some('n') => decoded.push('\n'),
+            Some('r') => decoded.push('\r'),
+            Some(other) => {
+                decoded.push('\\');
+                decoded.push(other);
+            }
+            None => decoded.push('\\'),
+        }
+    }
+    decoded
 }
 
 fn failure_exit_code(snapshot: &Snapshot) -> Option<i32> {
