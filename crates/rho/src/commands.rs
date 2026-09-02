@@ -7,6 +7,7 @@ pub enum CommandId {
     Login,
     Logout,
     Model,
+    RefreshModels,
     Resume,
     Rewind,
     Sessions,
@@ -319,6 +320,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "new",
         usage: "/new",
         description: "start a new session",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::RefreshModels,
+        name: "refresh-models",
+        usage: "/refresh-models",
+        description: "refresh cached provider model lists and the models.dev catalog",
         argument_choices: &[],
     },
     CommandSpec {
