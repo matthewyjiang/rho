@@ -9,7 +9,7 @@ use ratatui::{
 use ratatui_image::{
     picker::{Picker, ProtocolType},
     sliced::{SignedPosition, SlicedImage, SlicedProtocol},
-    Resize,
+    FontSize, Resize,
 };
 use rho_sdk::tool::ToolAsset;
 
@@ -525,14 +525,62 @@ pub(super) fn picker_for_environment(
     if !host_supports_kitty {
         return None;
     }
-    let protocol = match herdr_graphics {
-        crate::herdr::HerdrGraphicsCapability::Unpaintable => ProtocolType::Halfblocks,
-        crate::herdr::HerdrGraphicsCapability::NotHerdr
-        | crate::herdr::HerdrGraphicsCapability::Paintable => ProtocolType::Kitty,
+    let (protocol, cell) = match herdr_graphics {
+        crate::herdr::HerdrGraphicsCapability::Unpaintable => (ProtocolType::Halfblocks, None),
+        crate::herdr::HerdrGraphicsCapability::NotHerdr => {
+            (ProtocolType::Kitty, cell_pixels_from_winsize())
+        }
+        crate::herdr::HerdrGraphicsCapability::Paintable { cell } => (ProtocolType::Kitty, cell),
     };
-    let mut picker = Picker::halfblocks();
+    // `from_fontsize` is deprecated in favor of `from_query_stdio`, but the
+    // stdio query needs raw mode and cannot see through Herdr's PTY. It is the
+    // only constructor that accepts externally known cell metrics.
+    #[allow(deprecated)]
+    let mut picker = match cell {
+        Some(cell) => Picker::from_fontsize(FontSize::new(cell.width, cell.height)),
+        None => Picker::halfblocks(),
+    };
     picker.set_protocol_type(protocol);
     Some(picker)
+}
+
+/// Cell pixel size from the controlling terminal's window size, when the
+/// terminal fills in pixel dimensions. Without this, `Picker::halfblocks()`
+/// guesses 10x20 and Kitty placements reserve rows the bitmap never fills.
+#[cfg(unix)]
+fn cell_pixels_from_winsize() -> Option<crate::herdr::CellPixels> {
+    use std::os::fd::AsRawFd as _;
+    let mut winsize = libc::winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    // SAFETY: TIOCGWINSZ writes into a valid, properly sized `winsize`.
+    let status = unsafe {
+        libc::ioctl(
+            std::io::stdout().as_raw_fd(),
+            libc::TIOCGWINSZ,
+            &mut winsize as *mut libc::winsize,
+        )
+    };
+    if status != 0
+        || winsize.ws_xpixel == 0
+        || winsize.ws_ypixel == 0
+        || winsize.ws_col == 0
+        || winsize.ws_row == 0
+    {
+        return None;
+    }
+    Some(crate::herdr::CellPixels {
+        width: winsize.ws_xpixel / winsize.ws_col,
+        height: winsize.ws_ypixel / winsize.ws_row,
+    })
+}
+
+#[cfg(not(unix))]
+fn cell_pixels_from_winsize() -> Option<crate::herdr::CellPixels> {
+    None
 }
 
 fn kitty_graphics_environment(

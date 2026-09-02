@@ -113,13 +113,20 @@ fn herdr_without_paintable_kitty_uses_halfblocks() {
 }
 
 #[test]
-fn herdr_with_paintable_kitty_keeps_kitty_protocol() {
+fn herdr_with_paintable_kitty_uses_host_cell_metrics() {
     let picker = picker_for_environment(
         /*host_supports_kitty*/ true,
-        crate::herdr::HerdrGraphicsCapability::Paintable,
+        crate::herdr::HerdrGraphicsCapability::Paintable {
+            cell: Some(crate::herdr::CellPixels {
+                width: 14,
+                height: 32,
+            }),
+        },
     )
     .unwrap();
     assert_eq!(picker.protocol_type(), ProtocolType::Kitty);
+    let font = picker.font_size();
+    assert_eq!((font.width, font.height), (14, 32));
 }
 
 #[test]
