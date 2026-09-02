@@ -11,7 +11,7 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<usize> {
         self.set_status("refreshing models.dev catalog");
         terminal.draw(|frame| self.draw(frame))?;
         let written = force_refresh_models_dev_catalog().await;
@@ -27,7 +27,7 @@ impl App {
             self.set_status("models.dev catalog refresh complete");
             self.start_model_metadata_fetch(agent);
         }
-        Ok(())
+        Ok(written)
     }
 
     /// `/refresh-models` shortcut for `/config` → Providers → Refresh model
@@ -42,8 +42,12 @@ impl App {
     ) -> anyhow::Result<()> {
         self.refresh_model_lists(provider_picker::ALL_REFRESHABLE_PROVIDERS, terminal)
             .await?;
-        self.refresh_models_dev_catalog(terminal, agent).await?;
-        self.set_status("model refresh complete");
+        let written = self
+            .refresh_models_dev_catalog(terminal, agent)
+            .await?;
+        if written > 0 {
+            self.set_status("model refresh complete");
+        }
         Ok(())
     }
 }

@@ -38,7 +38,9 @@ impl App {
                 Ok(())
             }
             config_picker::REFRESH_MODELS_DEV_VALUE => {
-                self.refresh_models_dev_catalog(terminal, agent).await
+                self.refresh_models_dev_catalog(terminal, agent)
+                    .await
+                    .map(|_| ())
             }
             config_picker::PROVIDER_LOGIN_VALUE => {
                 self.open_config_login_picker();
