@@ -202,13 +202,15 @@ async fn compact_with_http_malformed_retry_response_preserves_failed_attempts() 
         Message::assistant_text("world"),
     ];
     let response = compact_with_http(
-        Some(&auth),
-        &profile,
-        &OpenAiReasoningProfile::unknown(),
-        &http,
-        &client,
-        &refresh_url,
-        &codex_ws,
+        CompactHttp {
+            auth: Some(&auth),
+            profile: &profile,
+            reasoning_profile: &OpenAiReasoningProfile::unknown(),
+            http: &http,
+            client: &client,
+            refresh_url: &refresh_url,
+            codex_ws: &codex_ws,
+        },
         ModelRequest {
             messages: &messages,
             tools: &[],

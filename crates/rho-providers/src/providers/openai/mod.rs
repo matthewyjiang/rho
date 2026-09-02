@@ -379,14 +379,17 @@ impl OpenAiProvider {
         &self,
         request: ModelRequest<'_>,
     ) -> Result<rho_sdk::provider::NativeCompactionResponse, ModelError> {
+        let http = self.http();
         Ok(remote_compaction::compact_with_http(
-            self.auth.as_ref(),
-            &self.profile,
-            &self.reasoning,
-            &self.http(),
-            &self.client,
-            responses_post::DEFAULT_CODEX_REFRESH_URL,
-            &self.codex_ws,
+            remote_compaction::CompactHttp {
+                auth: self.auth.as_ref(),
+                profile: &self.profile,
+                reasoning_profile: &self.reasoning,
+                http: &http,
+                client: &self.client,
+                refresh_url: responses_post::DEFAULT_CODEX_REFRESH_URL,
+                codex_ws: &self.codex_ws,
+            },
             request,
         )
         .await)

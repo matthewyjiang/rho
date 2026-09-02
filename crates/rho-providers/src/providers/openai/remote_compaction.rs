@@ -26,32 +26,38 @@ Context was compacted with OpenAI server-side compaction. Prior assistant replie
 and tool results live in an encrypted artifact that only compatible OpenAI Responses \
 turns can read. Retained recent user messages are kept below.";
 
+/// Inputs for one OpenAI/Codex compact HTTP round-trip.
+pub(super) struct CompactHttp<'a> {
+    pub auth: Option<&'a Auth>,
+    pub profile: &'a ResponsesProfile,
+    pub reasoning_profile: &'a OpenAiReasoningProfile,
+    pub http: &'a ResponsesHttpTransport<'a>,
+    pub client: &'a reqwest::Client,
+    pub refresh_url: &'a str,
+    pub codex_ws: &'a CodexWsTransport,
+}
+
 /// Runs native compaction through the shared Responses HTTP transport.
 pub(super) async fn compact_with_http(
-    auth: Option<&Auth>,
-    profile: &ResponsesProfile,
-    reasoning_profile: &OpenAiReasoningProfile,
-    http: &ResponsesHttpTransport<'_>,
-    client: &reqwest::Client,
-    refresh_url: &str,
-    codex_ws: &CodexWsTransport,
+    compact: CompactHttp<'_>,
     request: ModelRequest<'_>,
 ) -> rho_sdk::provider::NativeCompactionResponse {
     let cancellation = request.cancellation.clone();
-    let identity = profile.identity().clone();
+    let identity = compact.profile.identity().clone();
     // Only system messages are preserved from the source history; capture those
     // alone so the full conversation is not cloned across the HTTP round-trip.
     let retained_system_messages = retained_system_messages(request.messages);
-    let body = match build_responses_compact_body(profile, reasoning_profile, request) {
-        Ok(body) => body,
-        Err(error) => return native_compact_failure(error, Vec::new()),
-    };
+    let body =
+        match build_responses_compact_body(compact.profile, compact.reasoning_profile, request) {
+            Ok(body) => body,
+            Err(error) => return native_compact_failure(error, Vec::new()),
+        };
 
     let http_result = responses_post::post(
-        http,
-        client,
-        auth,
-        refresh_url,
+        compact.http,
+        compact.client,
+        compact.auth,
+        compact.refresh_url,
         ResponsesEndpoint::Compact,
         &body,
         Some(&cancellation),
@@ -71,8 +77,8 @@ pub(super) async fn compact_with_http(
 
     // History shape changed; drop any live previous_response_id baseline. A
     // failed compaction leaves history untouched, so the baseline stays valid.
-    if matches!(auth, Some(Auth::Codex { .. })) && response.result().is_ok() {
-        codex_ws.reset().await;
+    if matches!(compact.auth, Some(Auth::Codex { .. })) && response.result().is_ok() {
+        compact.codex_ws.reset().await;
     }
     response
 }

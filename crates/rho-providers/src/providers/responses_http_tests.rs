@@ -379,12 +379,7 @@ async fn cancellation_during_send_returns_interrupted() {
     let cancel = cancellation.clone();
     let body = json!({"model":"gpt-5.4"});
     let auth = ResponsesHttpAuth::api_key("sk-test");
-    let post = http.post_json(
-        &auth,
-        ResponsesEndpoint::Create,
-        &body,
-        Some(&cancellation),
-    );
+    let post = http.post_json(&auth, ResponsesEndpoint::Create, &body, Some(&cancellation));
     let cancel_task = async move {
         accepted.notified().await;
         cancel.cancel();
