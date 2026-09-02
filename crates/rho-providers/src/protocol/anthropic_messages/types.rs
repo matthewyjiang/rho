@@ -86,7 +86,7 @@ impl AnthropicMessage {
     }
 
     /// Effort-only mid-conversation system message. Empty content so it does
-    /// not render; the new level applies from the next user turn.
+    /// not render; the new level applies to what follows the marker.
     pub(crate) fn effort_change(effort: &'static str) -> Self {
         Self {
             role: AnthropicRole::System,

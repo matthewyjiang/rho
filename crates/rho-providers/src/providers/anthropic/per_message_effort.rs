@@ -2,7 +2,9 @@ use std::collections::VecDeque;
 
 use crate::{
     model::provider_models,
-    protocol::anthropic_messages::{AnthropicMessage, AnthropicOutputConfig, AnthropicRole},
+    protocol::anthropic_messages::{
+        AnthropicContentBlock, AnthropicMessage, AnthropicOutputConfig, AnthropicRole,
+    },
 };
 
 /// Beta required for `output_config` on a `role: system` message.
@@ -142,7 +144,7 @@ pub(super) fn apply(
             return current;
         }
         entry.shifts.push(EffortShift {
-            at: last_user_index(messages),
+            at: shift_insert_index(messages),
             effort: current_effort,
         });
     }
@@ -166,6 +168,26 @@ fn last_user_index(messages: &[AnthropicMessage]) -> usize {
         .iter()
         .rposition(|message| message.role == AnthropicRole::User)
         .unwrap_or(messages.len())
+}
+
+/// Marker index for a new shift: before the latest user turn, unless that
+/// turn carries tool results. A tool-result turn must stay adjacent to the
+/// assistant `tool_use` it answers, so splitting the pair with a system
+/// marker would 400 the request. The marker goes after the tool-result turn
+/// instead; the new level then applies from the upcoming assistant response.
+fn shift_insert_index(messages: &[AnthropicMessage]) -> usize {
+    let at = last_user_index(messages);
+    let ends_tool_pair = messages.get(at).is_some_and(|message| {
+        message
+            .content
+            .iter()
+            .any(|block| matches!(block, AnthropicContentBlock::ToolResult { .. }))
+    });
+    if ends_tool_pair {
+        at + 1
+    } else {
+        at
+    }
 }
 
 fn insert_shifts(messages: &mut Vec<AnthropicMessage>, shifts: &[EffortShift]) {

@@ -33,6 +33,29 @@ fn assistant(text: &str) -> AnthropicMessage {
     )
 }
 
+fn assistant_tool_use(id: &str) -> AnthropicMessage {
+    AnthropicMessage::new(
+        AnthropicRole::Assistant,
+        vec![AnthropicContentBlock::ToolUse {
+            id: id.into(),
+            name: "read".into(),
+            input: serde_json::json!({}),
+        }],
+    )
+}
+
+fn tool_result(id: &str) -> AnthropicMessage {
+    AnthropicMessage::new(
+        AnthropicRole::User,
+        vec![AnthropicContentBlock::ToolResult {
+            tool_use_id: id.into(),
+            content: "ok".into(),
+            is_error: false,
+            cache_control: None,
+        }],
+    )
+}
+
 fn turn(user_count: usize) -> Vec<AnthropicMessage> {
     let mut messages = Vec::new();
     for index in 1..=user_count {
@@ -342,4 +365,66 @@ fn tracked_conversations_are_bounded_by_lru_eviction() {
     );
     assert_eq!(top, Some(effort("high")));
     assert_eq!(system_efforts(&kept_next), ["low"]);
+}
+
+// Covers: an effort change on a request ending with tool results pins the
+// marker after the tool-result turn, so the assistant tool_use and its tool
+// result stay adjacent for Anthropic
+// Owner: anthropic per-message effort
+#[test]
+fn effort_change_after_tool_result_keeps_tool_pair_adjacent() {
+    let mut state = PerMessageEffortState::default();
+
+    let mut first = vec![user("hi")];
+    let top = apply(
+        FABLE_5_1,
+        &mut state,
+        Some("rho:tools"),
+        Some(effort("high")),
+        &mut first,
+    );
+    assert_eq!(top, Some(effort("high")));
+    assert!(system_efforts(&first).is_empty());
+
+    let mut second = vec![
+        user("hi"),
+        assistant_tool_use("toolu_1"),
+        tool_result("toolu_1"),
+    ];
+    let top = apply(
+        FABLE_5_1,
+        &mut state,
+        Some("rho:tools"),
+        Some(effort("low")),
+        &mut second,
+    );
+    assert_eq!(top, Some(effort("high")));
+    assert_eq!(system_efforts(&second), ["low"]);
+    assert_eq!(second.len(), 4);
+    assert_eq!(second[1].role, AnthropicRole::Assistant);
+    assert_eq!(second[2].role, AnthropicRole::User);
+    assert_eq!(second[3].role, AnthropicRole::System);
+
+    // The recorded index replays onto the longer history without splitting
+    // the pair.
+    let mut third = vec![
+        user("hi"),
+        assistant_tool_use("toolu_1"),
+        tool_result("toolu_1"),
+        assistant("done"),
+        user("thanks"),
+    ];
+    let top = apply(
+        FABLE_5_1,
+        &mut state,
+        Some("rho:tools"),
+        Some(effort("low")),
+        &mut third,
+    );
+    assert_eq!(top, Some(effort("high")));
+    assert_eq!(system_efforts(&third), ["low"]);
+    assert_eq!(third.len(), 6);
+    assert_eq!(third[1].role, AnthropicRole::Assistant);
+    assert_eq!(third[2].role, AnthropicRole::User);
+    assert_eq!(third[3].role, AnthropicRole::System);
 }
