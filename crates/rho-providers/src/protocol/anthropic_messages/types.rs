@@ -72,6 +72,28 @@ impl AnthropicSystemBlock {
 pub(crate) struct AnthropicMessage {
     pub(crate) role: AnthropicRole,
     pub(crate) content: Vec<AnthropicContentBlock>,
+    #[serde(default, skip_serializing_if = "Option::is_none", skip_deserializing)]
+    pub(crate) output_config: Option<AnthropicOutputConfig>,
+}
+
+impl AnthropicMessage {
+    pub(crate) fn new(role: AnthropicRole, content: Vec<AnthropicContentBlock>) -> Self {
+        Self {
+            role,
+            content,
+            output_config: None,
+        }
+    }
+
+    /// Effort-only mid-conversation system message. Empty content so it does
+    /// not render; the new level applies from the next user turn.
+    pub(crate) fn effort_change(effort: &'static str) -> Self {
+        Self {
+            role: AnthropicRole::System,
+            content: Vec::new(),
+            output_config: Some(AnthropicOutputConfig { effort }),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,6 +101,7 @@ pub(crate) struct AnthropicMessage {
 pub(crate) enum AnthropicRole {
     User,
     Assistant,
+    System,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

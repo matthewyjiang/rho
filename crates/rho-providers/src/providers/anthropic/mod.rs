@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use crate::{
     model::ModelIdentity,
@@ -20,6 +20,7 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const DEFAULT_MAX_TOKENS: u32 = 4096;
 pub(crate) const ANTHROPIC_ANSWER_RESERVE_TOKENS: u32 = 1_024;
 
+mod per_message_effort;
 mod thinking;
 
 pub struct AnthropicProvider {
@@ -37,6 +38,9 @@ pub struct AnthropicProvider {
     /// hydrates may raise the request `max_tokens`, but the budget stays put so
     /// a hydrate cannot rewrite thinking params and bust the message cache.
     thinking_budget_ceiling: OnceLock<u32>,
+    /// Per-conversation prefix effort and later shifts, keyed by prompt cache
+    /// key, so a mid-session change does not rewrite top-level effort.
+    per_message_effort: Mutex<per_message_effort::PerMessageEffortState>,
 }
 
 impl AnthropicProvider {
@@ -55,6 +59,7 @@ impl AnthropicProvider {
             max_tokens_override: Some(DEFAULT_MAX_TOKENS),
             thinking_override,
             thinking_budget_ceiling: OnceLock::new(),
+            per_message_effort: Mutex::new(per_message_effort::PerMessageEffortState::default()),
         }
     }
 
@@ -94,6 +99,7 @@ impl AnthropicProvider {
             max_tokens_override: None,
             thinking_override: None,
             thinking_budget_ceiling: OnceLock::new(),
+            per_message_effort: Mutex::new(per_message_effort::PerMessageEffortState::default()),
         }
     }
 
@@ -143,6 +149,19 @@ impl AnthropicProvider {
             &target,
             provider_context_replay(thinking.as_ref()),
         )?;
+        let output_config = {
+            let mut state = self
+                .per_message_effort
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            per_message_effort::apply(
+                &self.model,
+                &mut state,
+                request.prompt_cache_key,
+                output_config,
+                &mut messages,
+            )
+        };
         mark_cache_control_points(&mut messages);
         let mut tools = request
             .tools
@@ -196,14 +215,7 @@ impl AnthropicProvider {
 
     async fn send_messages(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, false)?;
-        let response = self
-            .client
-            .post(self.messages_url())
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .json(&body)
-            .send()
-            .await?;
+        let response = self.messages_request(&body).json(&body).send().await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         let response: AnthropicResponse = response.json().await?;
         convert_anthropic_response(response)
@@ -215,20 +227,25 @@ impl AnthropicProvider {
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let body = self.request_body(request, true)?;
-        let response = self
-            .client
-            .post(self.messages_url())
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .json(&body)
-            .send()
-            .await?;
+        let response = self.messages_request(&body).json(&body).send().await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         collect_anthropic_sse_response(response, on_event).await
     }
 
     fn messages_url(&self) -> String {
         format!("{}/messages", self.api_base.trim_end_matches('/'))
+    }
+
+    fn messages_request(&self, body: &AnthropicRequest) -> reqwest::RequestBuilder {
+        let request = self
+            .client
+            .post(self.messages_url())
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION);
+        match per_message_effort::beta_header(&body.messages) {
+            Some(beta) => request.header("anthropic-beta", beta),
+            None => request,
+        }
     }
 }
 

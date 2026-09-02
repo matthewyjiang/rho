@@ -81,3 +81,28 @@ fn host_catalog_capabilities_never_infer_adaptive_thinking() {
         }
     );
 }
+
+// Covers: per-message effort is only advertised on families Anthropic
+// documents; Fable 5 must not get the beta payload
+// Owner: anthropic thinking protocol
+#[test]
+fn per_message_effort_is_limited_to_documented_model_families() {
+    let cases = [
+        ("claude-fable-5-1", true),
+        ("claude-fable-5-1-20260901", true),
+        ("claude-fable-5", false),
+        ("claude-mythos-5-1", true),
+        ("claude-mythos-5", false),
+        ("claude-opus-5", true),
+        ("claude-opus-5-20260724", true),
+        ("claude-opus-4-8", false),
+        ("claude-sonnet-5", false),
+    ];
+    for (model, supported) in cases {
+        assert_eq!(
+            super::supports_per_message_effort(model),
+            supported,
+            "{model}"
+        );
+    }
+}
