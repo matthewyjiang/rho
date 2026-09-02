@@ -144,8 +144,12 @@ const ATTACH_VIEW_PARENT_APPROVAL_STEPS: &[Step] = &[
     },
     Step::Phase("spawn_then_attach"),
     Step::SubmitText("fixture attach then approval"),
+    // The agent tool card prints "worker" before the subagent rail ingests
+    // the run, and the attach picker lists only rail candidates. The parent
+    // turn stays busy here (no completion text to wait on), so wait for the
+    // rail row's title instead of the card.
     Step::WaitText {
-        text: "worker",
+        text: "Fixture run title",
         timeout: STREAM,
     },
     Step::SubmitText("/attach"),
