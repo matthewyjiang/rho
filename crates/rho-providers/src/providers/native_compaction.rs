@@ -1,12 +1,12 @@
 //! Shared native-compaction response finalization for Responses providers.
 //!
 //! Protocol parsing stays in [`crate::protocol::openai_shared::compact`]; this
-//! module only wraps parsed history into the SDK native-compaction envelope.
+//! module wraps a completed compact HTTP result into the SDK envelope.
 
 use crate::model::{Message, ModelError, ModelIdentity, ModelUsage};
 use crate::protocol::openai_responses::{parse_compact_response, CompactUserRetention};
 
-use super::responses_http::{ResponsesAuth, ResponsesEndpoint, ResponsesHttpTransport};
+use super::responses_http::ResponsesHttpResult;
 
 /// Builds a native compaction failure, preserving any prior failed attempts.
 pub(crate) fn native_compact_failure(
@@ -64,21 +64,15 @@ pub(crate) struct CompactParsePolicy<'a> {
     pub(crate) user_retention: CompactUserRetention,
 }
 
-/// Runs one `POST /responses/compact` round-trip and finalizes the result.
+/// Finalizes a completed `POST /responses/compact` result.
 ///
-/// Shared by every Responses provider. The caller supplies the already-built
-/// body plus the parse policy; this function owns HTTP, failed-attempt
-/// accounting, cancellation while the JSON body downloads, and parsing.
-pub(crate) async fn compact_over_responses_http(
-    http: &ResponsesHttpTransport<'_>,
-    auth: ResponsesAuth<'_>,
-    body: &serde_json::Value,
+/// The caller owns credential policy and the HTTP post. This function maps
+/// failed attempts, cancel-reads the JSON body, and parses.
+pub(crate) async fn native_compact_from_http(
+    http_result: ResponsesHttpResult,
     cancellation: &rho_sdk::CancellationToken,
     policy: CompactParsePolicy<'_>,
 ) -> rho_sdk::provider::NativeCompactionResponse {
-    let http_result = http
-        .post_json(auth, ResponsesEndpoint::Compact, body, Some(cancellation))
-        .await;
     let failed_attempts = http_result.native_failed_attempts();
     let response = match http_result.response {
         Ok(response) => response,

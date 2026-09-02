@@ -8,9 +8,11 @@
 use crate::model::ModelRequest;
 use crate::protocol::openai_responses::{retained_system_messages, CompactUserRetention};
 use crate::providers::native_compaction::{
-    compact_over_responses_http, native_compact_failure, CompactParsePolicy,
+    native_compact_failure, native_compact_from_http, CompactParsePolicy,
 };
-use crate::providers::responses_http::{ResponsesAuth, ResponsesHttpTransport};
+use crate::providers::responses_http::{ResponsesEndpoint, ResponsesHttpTransport};
+
+use super::responses_post;
 
 use super::auth::Auth;
 use super::codex_request::{build_responses_compact_body, ResponsesProfile};
@@ -30,6 +32,8 @@ pub(super) async fn compact_with_http(
     profile: &ResponsesProfile,
     reasoning_profile: &OpenAiReasoningProfile,
     http: &ResponsesHttpTransport<'_>,
+    client: &reqwest::Client,
+    refresh_url: &str,
     codex_ws: &CodexWsTransport,
     request: ModelRequest<'_>,
 ) -> rho_sdk::provider::NativeCompactionResponse {
@@ -43,10 +47,18 @@ pub(super) async fn compact_with_http(
         Err(error) => return native_compact_failure(error, Vec::new()),
     };
 
-    let response = compact_over_responses_http(
+    let http_result = responses_post::post(
         http,
-        ResponsesAuth::from_openai(auth),
+        client,
+        auth,
+        refresh_url,
+        ResponsesEndpoint::Compact,
         &body,
+        Some(&cancellation),
+    )
+    .await;
+    let response = native_compact_from_http(
+        http_result,
         &cancellation,
         CompactParsePolicy {
             identity,

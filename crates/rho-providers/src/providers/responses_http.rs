@@ -1,20 +1,57 @@
-//! Credential-aware HTTP transport for Responses create/compact.
+//! Shared Responses HTTP transport.
 //!
-//! Shared by every provider that speaks the OpenAI Responses wire shape
-//! (OpenAI API key, Codex, custom Responses hosts, xAI). The transport owns
-//! URL assembly, auth headers, cancellation, and the single refresh-on-`401`
-//! retry. Body shape and stream parsing live with the caller.
+//! Owns URL assembly, applied request headers, cancellation, and one
+//! refresh-on-`401` retry. Credential policy (which headers to send, whether
+//! and how to refresh) stays with the calling provider.
+
+use std::future::Future;
 
 use serde_json::Value;
 
-use crate::{
-    auth::xai_token::XaiAuthManager, credentials::CodexTokens, model::ModelError,
-    provider_backend::cancel::cancel_aware,
-};
+use crate::{model::ModelError, provider_backend::cancel::cancel_aware};
 
-use super::openai::auth::{refresh_codex_token_at, Auth, CodexAuthSource};
+/// Applied headers for one Responses HTTP request.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ResponsesHttpAuth {
+    bearer: Option<String>,
+    user_agent: String,
+    extra_headers: Vec<(String, String)>,
+}
 
-const DEFAULT_CODEX_REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
+impl ResponsesHttpAuth {
+    /// Keyless custom host: `User-Agent: rho` and no `Authorization`.
+    pub(crate) fn keyless() -> Self {
+        Self {
+            bearer: None,
+            user_agent: "rho".into(),
+            extra_headers: Vec::new(),
+        }
+    }
+
+    /// API-key host: bearer token plus `User-Agent: rho`.
+    pub(crate) fn api_key(key: impl Into<String>) -> Self {
+        Self {
+            bearer: Some(key.into()),
+            user_agent: "rho".into(),
+            extra_headers: Vec::new(),
+        }
+    }
+
+    /// Bearer token with a caller-chosen user agent (Codex, xAI).
+    pub(crate) fn bearer(token: impl Into<String>, user_agent: impl Into<String>) -> Self {
+        Self {
+            bearer: Some(token.into()),
+            user_agent: user_agent.into(),
+            extra_headers: Vec::new(),
+        }
+    }
+
+    /// Adds one extra request header (Codex originator, account id, beta).
+    pub(crate) fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.extra_headers.push((name.into(), value.into()));
+        self
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ResponsesEndpoint {
@@ -27,33 +64,6 @@ impl ResponsesEndpoint {
         match self {
             Self::Create => "responses",
             Self::Compact => "responses/compact",
-        }
-    }
-}
-
-/// Credential the transport should present on a Responses request.
-///
-/// Refresh policy is per variant: `Keyless` and `ApiKey` never refresh, `Codex`
-/// refreshes through the OpenAI OAuth token endpoint, and `Xai` defers to
-/// [`XaiAuthManager::force_refresh`].
-#[derive(Clone, Copy)]
-pub(crate) enum ResponsesAuth<'a> {
-    Keyless,
-    ApiKey(&'a str),
-    Codex(&'a Auth),
-    Xai(&'a XaiAuthManager),
-}
-
-impl<'a> ResponsesAuth<'a> {
-    /// Maps the OpenAI provider's optional credential onto a transport auth.
-    ///
-    /// `None` is a keyless custom host; `Auth::ApiKey` and `Auth::Codex` map
-    /// directly.
-    pub(crate) fn from_openai(auth: Option<&'a Auth>) -> Self {
-        match auth {
-            None => Self::Keyless,
-            Some(Auth::ApiKey(key)) => Self::ApiKey(key),
-            Some(auth @ Auth::Codex { .. }) => Self::Codex(auth),
         }
     }
 }
@@ -97,7 +107,7 @@ impl ResponsesHttpResult {
         }
     }
 
-    fn err(error: ModelError) -> Self {
+    pub(crate) fn err(error: ModelError) -> Self {
         Self {
             response: Err(error),
             failed_attempts: Vec::new(),
@@ -125,93 +135,30 @@ impl ResponsesHttpResult {
     }
 }
 
+fn authentication_failed_attempt() -> Vec<ResponsesFailedAttempt> {
+    vec![ResponsesFailedAttempt {
+        kind: ResponsesFailedAttemptKind::Authentication,
+    }]
+}
+
 /// Shared Responses HTTP client used by API-key turns, Codex HTTP fallback,
 /// xAI turns, and compact.
 pub(crate) struct ResponsesHttpTransport<'a> {
     client: &'a reqwest::Client,
     api_base: &'a str,
-    codex_refresh_url: &'a str,
-}
-
-/// Per-request auth material resolved from a [`ResponsesAuth`].
-#[derive(Clone, Copy, Debug)]
-enum ResponsesHttpAuth<'a> {
-    Keyless,
-    ApiKey {
-        key: &'a str,
-    },
-    Codex {
-        access_token: &'a str,
-        account_id: Option<&'a str>,
-    },
-    Xai {
-        access_token: &'a str,
-    },
-}
-
-impl<'a> ResponsesHttpAuth<'a> {
-    fn codex(tokens: &'a CodexTokens) -> Self {
-        Self::Codex {
-            access_token: &tokens.access_token,
-            account_id: tokens.account_id.as_deref(),
-        }
-    }
 }
 
 impl<'a> ResponsesHttpTransport<'a> {
     pub(crate) fn new(client: &'a reqwest::Client, api_base: &'a str) -> Self {
-        Self {
-            client,
-            api_base,
-            codex_refresh_url: DEFAULT_CODEX_REFRESH_URL,
-        }
+        Self { client, api_base }
     }
 
-    #[cfg(test)]
-    pub(crate) fn with_codex_refresh_url(mut self, url: &'a str) -> Self {
-        self.codex_refresh_url = url;
-        self
-    }
-
-    /// Posts JSON and, for refreshable credentials, refreshes once on `401`.
-    ///
-    /// Failed physical auth attempts are reported in the typed result so callers
-    /// can account for them without an out-of-band retry callback. Once a `401`
-    /// is eligible for refresh, the authentication failed attempt is recorded
-    /// immediately and survives refresh failure, cancellation, and retry-send
-    /// failure as well as a successful retry response. A `401` that cannot be
-    /// refreshed is the final response and records no failed attempt.
+    /// Posts JSON with no refresh. A `401` is the final response.
     pub(crate) async fn post_json(
         &self,
-        auth: ResponsesAuth<'_>,
+        auth: &ResponsesHttpAuth,
         endpoint: ResponsesEndpoint,
         body: &Value,
-        cancellation: Option<&rho_sdk::CancellationToken>,
-    ) -> ResponsesHttpResult {
-        match auth {
-            ResponsesAuth::Keyless => {
-                self.send_final(endpoint, body, ResponsesHttpAuth::Keyless, cancellation)
-                    .await
-            }
-            ResponsesAuth::ApiKey(key) => {
-                self.send_final(
-                    endpoint,
-                    body,
-                    ResponsesHttpAuth::ApiKey { key },
-                    cancellation,
-                )
-                .await
-            }
-            ResponsesAuth::Codex(auth) => self.post_codex(auth, endpoint, body, cancellation).await,
-            ResponsesAuth::Xai(auth) => self.post_xai(auth, endpoint, body, cancellation).await,
-        }
-    }
-
-    async fn send_final(
-        &self,
-        endpoint: ResponsesEndpoint,
-        body: &Value,
-        auth: ResponsesHttpAuth<'_>,
         cancellation: Option<&rho_sdk::CancellationToken>,
     ) -> ResponsesHttpResult {
         match self.send(endpoint, body, auth, cancellation).await {
@@ -220,186 +167,65 @@ impl<'a> ResponsesHttpTransport<'a> {
         }
     }
 
-    async fn post_codex(
+    /// Posts JSON and, on `401`, invokes `refresh` once.
+    ///
+    /// `refresh` returning `Ok(None)` means the `401` is final and records no
+    /// failed attempt. `Ok(Some(auth))` retries once and records an
+    /// authentication failed attempt. `Err` keeps that attempt and does not
+    /// retry. Cancellation during refresh is an `Err` and also keeps the
+    /// attempt.
+    pub(crate) async fn post_json_refreshing<F, Fut>(
         &self,
-        auth: &Auth,
+        auth: &ResponsesHttpAuth,
+        refresh: F,
         endpoint: ResponsesEndpoint,
         body: &Value,
         cancellation: Option<&rho_sdk::CancellationToken>,
-    ) -> ResponsesHttpResult {
-        let Auth::Codex { source, .. } = auth else {
-            return ResponsesHttpResult::err(ModelError::InvalidResponse(
-                "Codex tokens requested for non-Codex auth".into(),
-            ));
-        };
-        let source = *source;
-        let tokens = match auth.codex_tokens_for_request() {
-            Ok(tokens) => tokens,
-            Err(error) => return ResponsesHttpResult::err(error),
-        };
-        let response = match self
-            .send(
-                endpoint,
-                body,
-                ResponsesHttpAuth::codex(&tokens),
-                cancellation,
-            )
-            .await
-        {
-            Ok(response) => response,
-            // Initial send failure has no preceding retry metadata.
-            Err(error) => return ResponsesHttpResult::err(error),
-        };
-        if response.status() != reqwest::StatusCode::UNAUTHORIZED {
-            return ResponsesHttpResult::ok(response);
-        }
-        // No-refresh 401 remains a final response with no prior failed attempt.
-        let Some(refresh_token) = tokens.refresh_token.as_deref() else {
-            return ResponsesHttpResult::ok(response);
-        };
-
-        // 401 is retry-eligible: record the auth failure before refresh/retry.
-        let failed_attempts = vec![ResponsesFailedAttempt {
-            kind: ResponsesFailedAttemptKind::Authentication,
-        }];
-        let refreshed = match self
-            .refresh_codex_tokens(auth, refresh_token, source, &tokens, cancellation)
-            .await
-        {
-            Ok(tokens) => tokens,
-            Err(error) => {
-                return ResponsesHttpResult::err(error).with_failed_attempts(failed_attempts);
-            }
-        };
-        auth.remember_refreshed_codex_tokens(refreshed.clone());
-        self.send_final(
-            endpoint,
-            body,
-            ResponsesHttpAuth::codex(&refreshed),
-            cancellation,
-        )
-        .await
-        .with_failed_attempts(failed_attempts)
-    }
-
-    async fn post_xai(
-        &self,
-        auth: &XaiAuthManager,
-        endpoint: ResponsesEndpoint,
-        body: &Value,
-        cancellation: Option<&rho_sdk::CancellationToken>,
-    ) -> ResponsesHttpResult {
-        let material = match cancel_aware(cancellation, auth.auth_material()).await {
-            Ok(material) => material,
-            Err(error) => return ResponsesHttpResult::err(error),
-        };
-        let response = match self
-            .send(
-                endpoint,
-                body,
-                ResponsesHttpAuth::Xai {
-                    access_token: &material.access_token,
-                },
-                cancellation,
-            )
-            .await
-        {
+    ) -> ResponsesHttpResult
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<Option<ResponsesHttpAuth>, ModelError>> + Send,
+    {
+        let response = match self.send(endpoint, body, auth, cancellation).await {
             Ok(response) => response,
             Err(error) => return ResponsesHttpResult::err(error),
         };
         if response.status() != reqwest::StatusCode::UNAUTHORIZED {
             return ResponsesHttpResult::ok(response);
         }
-        // No-refresh 401 remains a final response with no prior failed attempt.
-        let refreshed =
-            match cancel_aware(cancellation, auth.force_refresh(&material.access_token)).await {
-                Ok(None) => return ResponsesHttpResult::ok(response),
-                Ok(Some(refreshed)) => refreshed,
-                Err(error) => {
-                    // Refresh was attempted (store credentials); count the prior 401.
-                    return ResponsesHttpResult::err(error).with_failed_attempts(vec![
-                        ResponsesFailedAttempt {
-                            kind: ResponsesFailedAttemptKind::Authentication,
-                        },
-                    ]);
-                }
-            };
-        let failed_attempts = vec![ResponsesFailedAttempt {
-            kind: ResponsesFailedAttemptKind::Authentication,
-        }];
-        self.send_final(
-            endpoint,
-            body,
-            ResponsesHttpAuth::Xai {
-                access_token: &refreshed.access_token,
-            },
-            cancellation,
-        )
-        .await
-        .with_failed_attempts(failed_attempts)
-    }
 
-    async fn refresh_codex_tokens(
-        &self,
-        auth: &Auth,
-        refresh_token: &str,
-        source: CodexAuthSource,
-        previous: &CodexTokens,
-        cancellation: Option<&rho_sdk::CancellationToken>,
-    ) -> Result<CodexTokens, ModelError> {
-        let Auth::Codex { refresh_store, .. } = auth else {
-            return Err(ModelError::InvalidResponse(
-                "Codex tokens requested for non-Codex auth".into(),
-            ));
-        };
-        let refresh = refresh_codex_token_at(
-            self.client,
-            refresh_store.as_ref(),
-            refresh_token,
-            source,
-            previous,
-            self.codex_refresh_url,
-        );
-        cancel_aware(cancellation, refresh).await
+        match cancel_aware(cancellation, refresh()).await {
+            Ok(None) => ResponsesHttpResult::ok(response),
+            Ok(Some(refreshed)) => self
+                .post_json(&refreshed, endpoint, body, cancellation)
+                .await
+                .with_failed_attempts(authentication_failed_attempt()),
+            Err(error) => ResponsesHttpResult::err(error)
+                .with_failed_attempts(authentication_failed_attempt()),
+        }
     }
 
     fn build_request(
         &self,
         endpoint: ResponsesEndpoint,
         body: &Value,
-        auth: ResponsesHttpAuth<'_>,
+        auth: &ResponsesHttpAuth,
     ) -> reqwest::RequestBuilder {
         let url = format!(
             "{}/{}",
             self.api_base.trim_end_matches('/'),
             endpoint.path()
         );
-        let mut request = self.client.post(url).json(body);
-        match auth {
-            ResponsesHttpAuth::Keyless => {
-                request = request.header("User-Agent", "rho");
-            }
-            ResponsesHttpAuth::ApiKey { key } => {
-                request = request.bearer_auth(key).header("User-Agent", "rho");
-            }
-            ResponsesHttpAuth::Codex {
-                access_token,
-                account_id,
-            } => {
-                request = request
-                    .bearer_auth(access_token)
-                    .header("User-Agent", "codex-cli")
-                    .header("originator", "codex_cli_rs")
-                    .header("OpenAI-Beta", "responses=experimental");
-                if let Some(account_id) = account_id {
-                    request = request.header("ChatGPT-Account-ID", account_id);
-                }
-            }
-            ResponsesHttpAuth::Xai { access_token } => {
-                request = request
-                    .bearer_auth(access_token)
-                    .header("User-Agent", crate::rho_user_agent());
-            }
+        let mut request = self
+            .client
+            .post(url)
+            .json(body)
+            .header("User-Agent", &auth.user_agent);
+        if let Some(bearer) = &auth.bearer {
+            request = request.bearer_auth(bearer);
+        }
+        for (name, value) in &auth.extra_headers {
+            request = request.header(name, value);
         }
         request
     }
@@ -408,7 +234,7 @@ impl<'a> ResponsesHttpTransport<'a> {
         &self,
         endpoint: ResponsesEndpoint,
         body: &Value,
-        auth: ResponsesHttpAuth<'_>,
+        auth: &ResponsesHttpAuth,
         cancellation: Option<&rho_sdk::CancellationToken>,
     ) -> Result<reqwest::Response, ModelError> {
         let request = self.build_request(endpoint, body, auth);
