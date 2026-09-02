@@ -1,9 +1,35 @@
+use std::io;
+
+use crossterm::event::{MouseButton, MouseEventKind};
+use pretty_assertions::assert_eq;
+use ratatui::{backend::TestBackend, Terminal};
+
 use crate::tui::media_attach;
 
 use super::{
     super::{tests::test_app, ComposerAttachment},
-    ChatMedia, ChatTextDocument, ImageContent, MediaAttachId, PendingAttachmentSource,
+    ChatMedia, ChatTextDocument, Clipboard, CopyOutcome, ImageContent, MediaAttachId,
+    PendingAttachmentSource,
 };
+
+struct FakeClipboard {
+    text: String,
+    paste_error: Option<String>,
+}
+
+impl Clipboard for FakeClipboard {
+    fn copy(&mut self, text: &str) -> io::Result<CopyOutcome> {
+        self.text = text.to_string();
+        Ok(CopyOutcome::Confirmed)
+    }
+
+    fn paste(&mut self) -> io::Result<String> {
+        match self.paste_error.as_ref() {
+            Some(message) => Err(io::Error::other(message.clone())),
+            None => Ok(self.text.clone()),
+        }
+    }
+}
 
 async fn insert_external_paste_and_finish(app: &mut super::App, text: &str) {
     app.insert_external_paste(text);
@@ -11,6 +37,58 @@ async fn insert_external_paste_and_finish(app: &mut super::App, text: &str) {
         let outcome = media_attach::next_media_attach_completion(&mut app.media_attach_tasks).await;
         app.finish_media_attach(outcome);
     }
+}
+
+// Covers: right-click inserts host clipboard text once (release does not paste again).
+// Owner: tui clipboard
+#[test]
+fn right_click_pastes_clipboard_text_into_composer() {
+    let mut app = test_app();
+    app.clipboard = Box::new(FakeClipboard {
+        text: "hello from clip".into(),
+        paste_error: None,
+    });
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+
+    app.handle_mouse_event(
+        MouseEventKind::Down(MouseButton::Right),
+        10,
+        10,
+        &mut terminal,
+    )
+    .unwrap();
+    assert_eq!(app.input_ui.text(), "hello from clip");
+
+    app.handle_mouse_event(
+        MouseEventKind::Up(MouseButton::Right),
+        10,
+        10,
+        &mut terminal,
+    )
+    .unwrap();
+    assert_eq!(app.input_ui.text(), "hello from clip");
+}
+
+// Covers: empty clipboard is a no-op; a paste backend failure surfaces as a toast.
+// Owner: tui clipboard
+#[test]
+fn clipboard_text_paste_empty_and_error() {
+    let mut app = test_app();
+    app.clipboard = Box::new(FakeClipboard {
+        text: String::new(),
+        paste_error: None,
+    });
+    app.paste_clipboard_text();
+    assert_eq!(app.input_ui.text(), "");
+    assert_eq!(app.status(), "");
+
+    app.clipboard = Box::new(FakeClipboard {
+        text: String::new(),
+        paste_error: Some("no display".into()),
+    });
+    app.paste_clipboard_text();
+    assert_eq!(app.input_ui.text(), "");
+    assert_eq!(app.status(), "could not paste clipboard: no display");
 }
 
 #[test]

@@ -55,6 +55,7 @@ pub(super) const DOCTOR_OVERLAY_SCENARIO: Scenario = Scenario::new(
 );
 
 fn assert_doctor_overlay_is_single_pane(harness: &mut PtyHarness) -> Result<()> {
+    harness.wait_for_hidden_cursor(SETTLE)?;
     let screen = harness.screen().contents();
     if !screen.contains("Doctor") {
         anyhow::bail!("doctor overlay title missing:\n{screen}");

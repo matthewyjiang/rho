@@ -329,6 +329,33 @@ impl PtyHarness {
         }
     }
 
+    /// Wait until DECTCEM is off. Ratatui flushes hide-cursor after the cell
+    /// buffer, so overlay title text can appear a frame before the caret hides.
+    pub fn wait_for_hidden_cursor(&mut self, timeout: WaitTimeout) -> Result<()> {
+        self.set_phase("wait_for_hidden_cursor");
+        let deadline = Instant::now() + timeout.duration;
+        loop {
+            self.poll(Duration::from_millis(25));
+            if self.screen.hide_cursor() {
+                self.log("observed hidden cursor");
+                return Ok(());
+            }
+            if !self.pty.is_running() {
+                return self.fail_unit(format!(
+                    "child exited before the caret hid during {}",
+                    timeout.label
+                ));
+            }
+            if Instant::now() >= deadline {
+                return self.fail_unit(format!(
+                    "timeout waiting for hidden caret ({}); cursor at {:?}",
+                    timeout.label,
+                    self.screen.cursor()
+                ));
+            }
+        }
+    }
+
     /// Wait until `needle` is off the screen. The counterpart to
     /// [`Self::wait_for_text`], for steps that must know something is gone
     /// before acting, such as a composer clearing on submit.

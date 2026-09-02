@@ -4,9 +4,8 @@ use crossterm::event::{Event, KeyEventKind};
 use ratatui::DefaultTerminal;
 
 use super::{
-    media_attach, mouse_capture, paste_burst::normalize_paste, ActivityPhase, ActivityStatus, App,
-    BackgroundCounts, ComposerMode, ExitReceipt, HerdrState, HerdrUserWait, InteractiveRuntime,
-    ViewModelEvent,
+    media_attach, mouse_capture, ActivityPhase, ActivityStatus, App, BackgroundCounts,
+    ComposerMode, ExitReceipt, HerdrState, HerdrUserWait, InteractiveRuntime, ViewModelEvent,
 };
 
 impl App {
@@ -245,10 +244,7 @@ impl App {
                 }
                 Event::Paste(text) => {
                     self.input_ui.cancel_pointer_click_sequence();
-                    self.flush_pending_paste_burst();
-                    let text = normalize_paste(&text);
-                    self.insert_external_paste(&text);
-                    self.input_ui.clear_paste_burst();
+                    self.apply_external_paste(&text);
                 }
                 Event::Resize(_, _) => {
                     self.apply_terminal_resize(terminal)?;

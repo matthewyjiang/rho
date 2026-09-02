@@ -15,10 +15,9 @@ use super::{
     command_palette::CommandPaletteKeyOutcome,
     commands::{self, CommandId, CommandInvocation},
     config_editor::{ConfigNumberInput, ConfigNumberKey, ConfigTextKey},
-    config_picker,
-    paste_burst::normalize_paste,
-    App, ApprovalKeyOutcome, ComposerMode, Entry, HistoryDirection, InputSubmissionMode,
-    InteractiveModelSelection, InteractiveRuntime, PasteSegment, QueuedPrompt, StreamControl,
+    config_picker, App, ApprovalKeyOutcome, ComposerMode, Entry, HistoryDirection,
+    InputSubmissionMode, InteractiveModelSelection, InteractiveRuntime, PasteSegment, QueuedPrompt,
+    StreamControl,
 };
 
 /// What Esc does in the live TUI.
@@ -709,10 +708,7 @@ impl App {
                     }
                     Event::Paste(text) => {
                         self.input_ui.cancel_pointer_click_sequence();
-                        self.flush_pending_paste_burst();
-                        let text = normalize_paste(&text);
-                        self.insert_external_paste(&text);
-                        self.input_ui.clear_paste_burst();
+                        self.apply_external_paste(&text);
                     }
                     Event::Resize(_, _) => {
                         self.apply_terminal_resize(terminal)?;

@@ -155,6 +155,11 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             "Copy text",
             "Left-click and drag across transcript text to select it. Releasing copies the selection to the clipboard.",
         ),
+        entry(
+            "right-click",
+            "Paste text",
+            "Paste clipboard text into the composer.",
+        ),
     ]
 }
 

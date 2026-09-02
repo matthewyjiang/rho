@@ -203,7 +203,7 @@ use approval::{approval_lines, ApprovalKeyOutcome};
 use chat_media::{
     ChatMedia, ChatTextDocument, ComposerAttachment, MediaAttachId, PendingAttachmentSource,
 };
-use clipboard::ClipboardWriter;
+use clipboard::Clipboard;
 use config_editor::{
     config_number_input_lines, resolve_web_search_editor_value, ConfigNumberInput, ConfigNumberKey,
     ConfigTextKey, ConfigToggle,
@@ -552,7 +552,7 @@ struct App {
     pending_session_title: Option<PendingSessionTitle>,
     /// Set by `/title` so auto-title generation cannot overwrite a manual name.
     session_title_locked: bool,
-    clipboard: Box<dyn ClipboardWriter + Send>,
+    clipboard: Box<dyn Clipboard + Send>,
     media_attach_tasks: Vec<media_attach::MediaAttachTask>,
     /// Shared composer attachment layout for the current frame/width.
     composer_attachment_layout_cache: Option<composer_attachments::ComposerAttachmentLayoutCache>,

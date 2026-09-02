@@ -92,6 +92,7 @@ Most editing keys work the way they do in a normal terminal input. Run `/help` f
 | `ctrl-end` | Jump the transcript viewport back to the bottom |
 | mouse wheel | Scroll the transcript viewport |
 | left-click and drag | Select transcript text and copy it on release |
+| right-click | Paste clipboard text into the composer |
 | code block `COPY` | Copy the full code block contents |
 | `ctrl-c` | Clear input, then quit if pressed again |
 

@@ -3,7 +3,7 @@ use std::io;
 use crossterm::{clipboard::CopyToClipboard, execute};
 
 use super::{
-    process::{command_available, write_command_stdin},
+    process::{command_available, command_output, write_command_stdin},
     session::SessionKind,
 };
 
@@ -16,7 +16,7 @@ pub enum CopyOutcome {
     SentToTerminal,
 }
 
-/// Writes transcript text through the best host clipboard for this session.
+/// Reads and writes host clipboard text through the best backend for this session.
 pub struct SystemClipboard {
     session: SessionKind,
     native: Option<arboard::Clipboard>,
@@ -49,6 +49,18 @@ impl SystemClipboard {
         }
     }
 
+    /// Reads clipboard text for the current session.
+    ///
+    /// An empty clipboard is `Ok("")`. Remote sessions cannot read a host
+    /// clipboard (OSC 52 is write-only).
+    pub fn paste_text(&mut self) -> io::Result<String> {
+        paste_text_with(
+            self.session,
+            || self.paste_native(),
+            paste_from_windows_host_clipboard,
+        )
+    }
+
     fn copy_wsl(&mut self, text: &str) -> io::Result<CopyOutcome> {
         // Prefer the Windows host clipboard. WSLg native access is a secondary path.
         match copy_to_windows_host_clipboard(text) {
@@ -64,21 +76,81 @@ impl SystemClipboard {
     }
 
     fn copy_native(&mut self, text: &str) -> io::Result<()> {
+        self.with_native(|clipboard| clipboard.set_text(text).map_err(io_error_from_native))
+    }
+
+    fn paste_native(&mut self) -> io::Result<String> {
+        self.with_native(|clipboard| clipboard_text_from_native(clipboard.get_text()))
+    }
+
+    fn with_native<T>(
+        &mut self,
+        op: impl FnOnce(&mut arboard::Clipboard) -> io::Result<T>,
+    ) -> io::Result<T> {
         if let Some(clipboard) = self.native.as_mut() {
-            return match clipboard.set_text(text) {
-                Ok(()) => Ok(()),
+            return match op(clipboard) {
+                Ok(value) => Ok(value),
                 Err(error) => {
                     self.native = None;
-                    Err(io_error_from_native(error))
+                    Err(error)
                 }
             };
         }
 
         let mut clipboard = arboard::Clipboard::new().map_err(io_error_from_native)?;
-        clipboard.set_text(text).map_err(io_error_from_native)?;
+        let value = op(&mut clipboard)?;
         self.native = Some(clipboard);
-        Ok(())
+        Ok(value)
     }
+}
+
+fn paste_text_with(
+    session: SessionKind,
+    mut paste_native: impl FnMut() -> io::Result<String>,
+    paste_windows: impl Fn() -> io::Result<String>,
+) -> io::Result<String> {
+    match session {
+        SessionKind::Remote => Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Remote session detected. Text paste needs a local host clipboard and is unavailable over SSH/Mosh.",
+        )),
+        SessionKind::Local => paste_native(),
+        SessionKind::Wsl => match paste_windows() {
+            Ok(text) => Ok(text),
+            Err(windows_error) => match paste_native() {
+                Ok(text) => Ok(text),
+                Err(native_error) => Err(join_host_errors(windows_error, native_error)),
+            },
+        },
+    }
+}
+
+fn clipboard_text_from_native(result: Result<String, arboard::Error>) -> io::Result<String> {
+    match result {
+        Ok(text) => Ok(text),
+        Err(arboard::Error::ContentNotAvailable) => Ok(String::new()),
+        Err(error) => Err(io_error_from_native(error)),
+    }
+}
+
+fn paste_from_windows_host_clipboard() -> io::Result<String> {
+    // UTF8Encoding(false) avoids the BOM that [Text.Encoding]::UTF8 prepends.
+    // Write instead of Out-Default so PowerShell does not append a pipeline newline.
+    let output = command_output(
+        "powershell.exe",
+        &[
+            "-NoProfile",
+            "-Command",
+            "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $t = Get-Clipboard -Raw; if ($null -ne $t) { [Console]::Out.Write($t) }",
+        ],
+    )
+    .ok_or_else(|| io::Error::other("powershell.exe Get-Clipboard failed"))?;
+    Ok(clipboard_text_from_host_bytes(&output))
+}
+
+fn clipboard_text_from_host_bytes(output: &[u8]) -> String {
+    let bytes = output.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(output);
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 pub(super) struct TextWriteProbe {
