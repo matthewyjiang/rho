@@ -426,6 +426,7 @@ impl App {
             | CommandId::Rewind
             | CommandId::Sessions
             | CommandId::Tree
+            | CommandId::Thermos
             | CommandId::Workflow => {
                 self.set_status(format!(
                     "/{} is unavailable while a model turn is running",

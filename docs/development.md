@@ -100,6 +100,10 @@ three read-only review lanes in parallel, then sends their structured findings
 to one worker that applies safe fixes. If the selected scope has no changes,
 the workflow takes a no-op path instead of starting review agents.
 
+In the interactive TUI, `/thermos` starts that workflow in the background.
+Optional arguments set `scope` (`all`, `committed`, `uncommitted`) and
+`focus_path`. Watch or cancel the run from `/workflow`.
+
 ```bash
 rho workflow validate .rho/workflows/thermo-nuclear-review/workflow.star
 rho workflow plan .rho/workflows/thermo-nuclear-review/workflow.star \

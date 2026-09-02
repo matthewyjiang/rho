@@ -118,6 +118,7 @@ A single `/` as the first character opens the command palette. Any later `/` cha
 | `/btw [prompt]` | Alias for `/side`. |
 | `/tree` | Navigate completed turns and compaction states in the current session. Continuing from an older state creates a branch. |
 | `/workflow` | Open the workflow list. Start a local workflow or saved plan in the background, watch a run as a dependency graph, or press `d` to delete a plan/run. The run id is appended to chat context and completion is delivered automatically. Reopen `/workflow` and press Enter on a run to watch; use arrows or `hjkl` to move between graph nodes. |
+| `/thermos [all\|committed\|uncommitted] [path]` | Start the workspace [thermo-nuclear-review](/development#thermo-nuclear-review-workflow) workflow in the background with optional scope and focus path. Same start path as Enter on that row in `/workflow`. Errors if the workflow is not present under `.rho/workflows`. |
 | `/rewind [turn]` | Preview and restore native file-tool changes from a completed turn, then continue from that conversation state on a new branch. This experimental command requires `behavior.experimental_workspace_rewind = true`. It does not reverse shell, Git, process, network, database, or service effects. Conflicting paths stay unchanged. |
 | `/config` | Open the [config](/configuration) category browser for models, appearance, agent behavior, context limits, tools, and providers. |
 | `/info` | Show the running Rho version, provider, model, reasoning level, permission mode, advisor mode, session usage (including session and latest-request cache hit rates, and re-billed cache misses), and external runtime status (including Claude Code ownership). |
@@ -267,5 +268,5 @@ The TUI owns the transcript viewport (use its scroll controls, not terminal scro
 ## Related
 
 Use [automation and CLI](/automation-cli) when you want a single answer outside the TUI.
-Use [workflows](/workflows) when you need a frozen multi-step graph with durable status, cancellation, and resume. In the interactive TUI, run `/workflow` to browse sources, plans, and runs without leaving the session.
+Use [workflows](/workflows) when you need a frozen multi-step graph with durable status, cancellation, and resume. In the interactive TUI, run `/workflow` to browse sources, plans, and runs without leaving the session. `/thermos` starts a workspace thermo-nuclear-review workflow directly.
 Under [Herdr](/integrations/herdr), Rho reports agent state. With [RTK](/integrations/rtk) on `PATH`, agent shell commands are rewritten automatically. See [integrations](/integrations).

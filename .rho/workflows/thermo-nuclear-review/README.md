@@ -34,7 +34,17 @@ rho workflow run <PLAN_ID> --yes
 rho workflow status <RUN_ID>
 ```
 
-Or open `/workflow` in the TUI and start `thermo-nuclear-review`.
+Or in the interactive TUI:
+
+```text
+/thermos
+/thermos committed
+/thermos uncommitted crates/rho/src/tui
+```
+
+`/thermos` starts this workflow in the background with the same defaults as
+Enter on its `/workflow` row. Optional arguments set `scope` and `focus_path`.
+Reopen `/workflow` to watch or cancel the run.
 
 ## Test the context collector
 

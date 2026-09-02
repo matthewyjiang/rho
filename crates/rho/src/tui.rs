@@ -175,6 +175,7 @@ mod theme_actions;
 mod theme_picker;
 mod theme_scheme;
 mod theme_terminal;
+mod thermos_command;
 mod tool_call_batch;
 mod tool_card_hover;
 mod tool_card_render;

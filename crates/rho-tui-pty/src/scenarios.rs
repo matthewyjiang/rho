@@ -36,6 +36,7 @@ mod steering;
 mod subagent_rail;
 mod supervised_approval;
 mod text_selection;
+mod thermos;
 mod tool_card_hover;
 mod type_during_stream;
 mod workflow;
@@ -115,6 +116,7 @@ use steering::{
 use subagent_rail::SUBAGENT_RAIL_MOUSE_SCENARIO;
 use supervised_approval::SUPERVISED_APPROVAL_STEPS;
 use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
+use thermos::THERMOS_MISSING_WORKFLOW_SCENARIO;
 use tool_card_hover::TOOL_CARD_HOVER_STEPS;
 use type_during_stream::TYPE_DURING_STREAM_STEPS;
 use workflow::{WORKFLOW_CANCEL_RESUME_ID, WORKFLOW_RUN_ID};
@@ -695,6 +697,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         OPEN_WORKFLOW_HUB_EMPTY_STEPS,
         false,
     ),
+    THERMOS_MISSING_WORKFLOW_SCENARIO,
     Scenario::new(
         "open_config_picker",
         "Open model and provider settings and browse model refresh options",

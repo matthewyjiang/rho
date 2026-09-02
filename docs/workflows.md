@@ -54,6 +54,8 @@ flowchart LR
 ## Interactive hub
 
 In the chat TUI, run `/workflow` to open one list with three sections.
+`/thermos` is a shortcut that starts a workspace `thermo-nuclear-review` (or
+`thermos`) workflow without opening the hub.
 
 ```mermaid
 flowchart TD

@@ -16,7 +16,7 @@ use crate::{
         workflow_runtime::RecoveryDecision,
     },
     workflow::{
-        PlanId, PlanInventoryItem, RunId, RunInventoryItem, RunLifecycle, StoredRun,
+        InputName, PlanId, PlanInventoryItem, RunId, RunInventoryItem, RunLifecycle, StoredRun,
         WorkflowOutcome, WorkflowValue,
     },
 };
@@ -405,7 +405,8 @@ impl App {
                 let path = value
                     .strip_prefix(SOURCE_PREFIX)
                     .expect("prefix checked above");
-                self.start_workflow_source(path, terminal, agent).await
+                self.start_workflow_source_with_inputs(path, BTreeMap::new(), terminal, agent)
+                    .await
             }
             // Enter on a saved plan runs it.
             value if value.starts_with(PLAN_PREFIX) => {
@@ -513,9 +514,10 @@ impl App {
         Ok(())
     }
 
-    async fn start_workflow_source(
+    pub(super) async fn start_workflow_source_with_inputs(
         &mut self,
         relative_path: &str,
+        inputs: BTreeMap<InputName, WorkflowValue>,
         _terminal: &mut DefaultTerminal,
         agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
@@ -523,7 +525,11 @@ impl App {
         self.set_status(format!("starting {relative_path}"));
         let ops = self.workflow_ops()?;
         let available_tools = agent.workflow_host_capabilities();
-        let prepared = match self.prepare_source(&absolute, &available_tools).await {
+        let using_defaults = inputs.is_empty();
+        let prepared = match self
+            .prepare_source(&absolute, inputs, &available_tools)
+            .await
+        {
             Ok(prepared) => prepared,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -559,8 +565,13 @@ impl App {
         };
         let run_id = run.manifest.run_id;
         self.input_ui.set_composer(ComposerMode::Input);
+        let defaults_clause = if using_defaults {
+            " Default inputs only."
+        } else {
+            ""
+        };
         self.insert_entry(&Entry::Notice(format!(
-            "Starting '{}' in the background (run {}). Default inputs only. Completion is delivered automatically.",
+            "Starting '{}' in the background (run {}).{defaults_clause} Completion is delivered automatically.",
             plan.graph.graph.name,
             short_id(&run_id.to_string())
         )));
@@ -571,12 +582,12 @@ impl App {
     async fn prepare_source(
         &self,
         absolute: &std::path::Path,
+        inputs: BTreeMap<InputName, WorkflowValue>,
         available_tools: &AgentCapabilities,
     ) -> anyhow::Result<workflow_cli::PreparedPlan> {
         let ops = self.workflow_ops()?;
         let config = self.info.services.config_repository.load()?;
         let limits = workflow_cli::planning_limits()?;
-        let inputs: BTreeMap<_, WorkflowValue> = BTreeMap::new();
         ops.prepare_local(absolute, inputs, &config, available_tools, &limits)
             .await
     }

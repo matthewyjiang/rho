@@ -32,6 +32,7 @@ pub enum CommandId {
     Mcp,
     Title,
     Fast,
+    Thermos,
     Workflow,
     Side,
     Exit,
@@ -157,6 +158,24 @@ const CHANGELOG_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentCh
     usage: "/changelog latest",
     description: "fetch notes for the latest published release",
 }];
+
+const THERMOS_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
+    CommandArgumentChoice {
+        completion: "/thermos all",
+        usage: "/thermos all",
+        description: "review committed and uncommitted changes",
+    },
+    CommandArgumentChoice {
+        completion: "/thermos committed",
+        usage: "/thermos committed",
+        description: "review commits on this branch against the base",
+    },
+    CommandArgumentChoice {
+        completion: "/thermos uncommitted",
+        usage: "/thermos uncommitted",
+        description: "review only uncommitted worktree changes",
+    },
+];
 
 // Keep alphabetical by `name` so the slash palette stays sorted as commands are added.
 pub static COMMANDS: &[CommandSpec] = &[
@@ -370,6 +389,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         usage: "/theme",
         description: "preview and apply a color theme",
         argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Thermos,
+        name: "thermos",
+        usage: "/thermos [all|committed|uncommitted] [path]",
+        description: "start the thermo-nuclear-review workflow",
+        argument_choices: THERMOS_ARGUMENT_CHOICES,
     },
     CommandSpec {
         id: CommandId::Title,
