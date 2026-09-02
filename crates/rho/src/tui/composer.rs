@@ -713,6 +713,13 @@ impl App {
         }
     }
 
+    pub(super) fn apply_external_paste(&mut self, text: &str) {
+        self.flush_pending_paste_burst();
+        let text = normalize_paste(text);
+        self.insert_external_paste(&text);
+        self.input_ui.clear_paste_burst();
+    }
+
     pub(super) fn insert_external_paste(&mut self, text: &str) {
         let is_command = matches!(commands::parse_command(text), Ok(Some(_)));
         if is_command || !self.start_pasted_media_path(text) {

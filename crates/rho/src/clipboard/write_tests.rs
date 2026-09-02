@@ -71,3 +71,83 @@ fn wsl_probe_prefers_windows_host_when_clip_exists() {
     assert!(probe.healthy);
     assert!(probe.detail.contains("clip.exe"));
 }
+
+// Covers: empty native clipboard is a successful no-op paste, not an error toast.
+// Owner: clipboard text paste
+#[test]
+fn empty_native_clipboard_pastes_as_empty_string() {
+    assert_eq!(
+        clipboard_text_from_native(Err(arboard::Error::ContentNotAvailable)).unwrap(),
+        ""
+    );
+}
+
+// Covers: text paste backends follow session policy (remote cannot read).
+// Owner: clipboard text paste
+#[test]
+fn text_paste_follows_session_backends() {
+    struct Case {
+        session: SessionKind,
+        native: Result<&'static str, &'static str>,
+        windows: Result<&'static str, &'static str>,
+        expected: Result<&'static str, io::ErrorKind>,
+    }
+
+    let cases = [
+        Case {
+            session: SessionKind::Remote,
+            native: Ok("native"),
+            windows: Ok("windows"),
+            expected: Err(io::ErrorKind::Unsupported),
+        },
+        Case {
+            session: SessionKind::Local,
+            native: Ok("native"),
+            windows: Err("unused"),
+            expected: Ok("native"),
+        },
+        Case {
+            session: SessionKind::Wsl,
+            native: Ok("native"),
+            windows: Ok("windows"),
+            expected: Ok("windows"),
+        },
+        Case {
+            session: SessionKind::Wsl,
+            native: Ok("native"),
+            windows: Err("powershell missing"),
+            expected: Ok("native"),
+        },
+        Case {
+            session: SessionKind::Wsl,
+            native: Err("native failed"),
+            windows: Err("powershell missing"),
+            expected: Err(io::ErrorKind::Other),
+        },
+    ];
+
+    for case in cases {
+        let result = paste_text_with(
+            case.session,
+            || match case.native {
+                Ok(text) => Ok(text.to_string()),
+                Err(message) => Err(io::Error::other(message)),
+            },
+            || match case.windows {
+                Ok(text) => Ok(text.to_string()),
+                Err(message) => Err(io::Error::other(message)),
+            },
+        );
+        match (result, case.expected) {
+            (Ok(text), Ok(expected)) => assert_eq!(text, expected),
+            (Err(error), Err(kind)) => {
+                assert_eq!(error.kind(), kind);
+                if case.native.is_err() && case.windows.is_err() {
+                    assert_eq!(error.to_string(), "powershell missing; native failed");
+                }
+            }
+            (Ok(text), Err(kind)) => panic!("expected {kind:?}, got {text:?}"),
+            (Err(error), Ok(expected)) => panic!("expected {expected:?}, got {error}"),
+        }
+    }
+}

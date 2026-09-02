@@ -498,8 +498,11 @@ impl App {
                     self.session_rail_pointer(layout.subagents, layout.processes, column, row, now);
                 self.set_rail_hover(rail_hover.as_ref());
             }
-            MouseEventKind::Down(MouseButton::Right)
-            | MouseEventKind::Down(MouseButton::Middle)
+            MouseEventKind::Down(MouseButton::Right) => {
+                self.input_ui.cancel_pointer_click_sequence();
+                self.paste_clipboard_text();
+            }
+            MouseEventKind::Down(MouseButton::Middle)
             | MouseEventKind::Up(MouseButton::Right)
             | MouseEventKind::Up(MouseButton::Middle)
             | MouseEventKind::Drag(MouseButton::Right)

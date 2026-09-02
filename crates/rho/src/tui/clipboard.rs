@@ -19,21 +19,38 @@ enum PastedImageOutcome {
     Failed { kind: &'static str, message: String },
 }
 
-/// Writes transcript text to the user's clipboard synchronously.
+/// Reads and writes the user's clipboard synchronously.
 ///
-/// Implementors must preserve the supplied text and report whether the destination confirmed the
-/// write. Errors mean that no available backend accepted the request.
-pub(super) trait ClipboardWriter {
+/// `copy` must preserve the supplied text and report whether the destination confirmed the write.
+/// `paste` returns the current clipboard text; an empty clipboard is `Ok("")`. Errors mean that no
+/// available backend accepted the request.
+pub(super) trait Clipboard {
     fn copy(&mut self, text: &str) -> io::Result<CopyOutcome>;
+    fn paste(&mut self) -> io::Result<String>;
 }
 
-impl ClipboardWriter for SystemClipboard {
+impl Clipboard for SystemClipboard {
     fn copy(&mut self, text: &str) -> io::Result<CopyOutcome> {
         self.copy_text(text)
+    }
+
+    fn paste(&mut self) -> io::Result<String> {
+        self.paste_text()
     }
 }
 
 impl App {
+    /// Pastes host clipboard text through the same composer path as bracketed paste.
+    pub(super) fn paste_clipboard_text(&mut self) {
+        match self.clipboard.paste() {
+            Ok(text) if text.is_empty() => {}
+            Ok(text) => self.apply_external_paste(&text),
+            Err(err) => {
+                self.notify_status(format!("could not paste clipboard: {err}"));
+            }
+        }
+    }
+
     pub(super) fn paste_clipboard_image(&mut self) {
         if self.is_ui_busy() {
             self.notify_status("image paste is unavailable while a model turn is running");
