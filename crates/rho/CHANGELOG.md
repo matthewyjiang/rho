@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.5.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.4.0...rho-coding-agent-v2.5.0) (2026-09-02)
+
+
+### Features
+
+* **tui:** paste clipboard text on right-click ([#1122](https://github.com/matthewyjiang/rho/issues/1122)) ([6008f36](https://github.com/matthewyjiang/rho/commit/6008f36759c0a49aee707e11d161ab7bee0acce0))
+* **tui:** show the command on process cards instead of the raw id ([#1124](https://github.com/matthewyjiang/rho/issues/1124)) ([a1c1dec](https://github.com/matthewyjiang/rho/commit/a1c1dec828117d1faa8c13391280d8a06caa57e7))
+
+
+### Bug Fixes
+
+* **tui:** Kitty image previews no longer reserve blank rows under Herdr ([f11557e](https://github.com/matthewyjiang/rho/commit/f11557e19d5c3033b7b1badb56b23ce219a74375))
+* **tui:** require herdr cell metrics before kitty image placements ([69dcfdc](https://github.com/matthewyjiang/rho/commit/69dcfdcc4a13b5c1d2456ed83dd8b5f8207354a0))
+
 ## [2.4.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.3.3...rho-coding-agent-v2.4.0) (2026-09-01)
 
 
