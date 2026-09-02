@@ -82,7 +82,9 @@ impl PerMessageEffortState {
 ///
 /// Consecutive requests keep top-level `output_config.effort` on the first
 /// value and append effort-only system messages at the change points so the
-/// cached prefix still matches.
+/// cached prefix still matches. A change that lands on a tool-result turn
+/// resets the prefix instead (see `apply`): the marker takes effect from the
+/// next user turn, so it would miss the upcoming assistant response.
 #[derive(Clone, Debug)]
 struct ConversationEffort {
     prefix_effort: &'static str,
@@ -143,8 +145,17 @@ pub(super) fn apply(
             *entry = fresh;
             return current;
         }
+        if ends_tool_pair(messages) {
+            // The change lands on a tool-result turn. No marker may go
+            // before that turn without splitting the tool_use/tool_result
+            // pair, and a marker after it takes effect only past the
+            // upcoming assistant response. Carry today's top-level effort
+            // and restart the cache so the requested level applies now.
+            *entry = fresh;
+            return current;
+        }
         entry.shifts.push(EffortShift {
-            at: shift_insert_index(messages),
+            at: last_user_index(messages),
             effort: current_effort,
         });
     }
@@ -170,24 +181,18 @@ fn last_user_index(messages: &[AnthropicMessage]) -> usize {
         .unwrap_or(messages.len())
 }
 
-/// Marker index for a new shift: before the latest user turn, unless that
-/// turn carries tool results. A tool-result turn must stay adjacent to the
-/// assistant `tool_use` it answers, so splitting the pair with a system
-/// marker would 400 the request. The marker goes after the tool-result turn
-/// instead; the new level then applies from the upcoming assistant response.
-fn shift_insert_index(messages: &[AnthropicMessage]) -> usize {
-    let at = last_user_index(messages);
-    let ends_tool_pair = messages.get(at).is_some_and(|message| {
-        message
-            .content
-            .iter()
-            .any(|block| matches!(block, AnthropicContentBlock::ToolResult { .. }))
-    });
-    if ends_tool_pair {
-        at + 1
-    } else {
-        at
-    }
+/// Whether the latest user turn carries tool results. That turn must stay
+/// adjacent to the assistant `tool_use` it answers, so no marker may go
+/// before it.
+fn ends_tool_pair(messages: &[AnthropicMessage]) -> bool {
+    messages
+        .get(last_user_index(messages))
+        .is_some_and(|message| {
+            message
+                .content
+                .iter()
+                .any(|block| matches!(block, AnthropicContentBlock::ToolResult { .. }))
+        })
 }
 
 fn insert_shifts(messages: &mut Vec<AnthropicMessage>, shifts: &[EffortShift]) {
