@@ -7,6 +7,7 @@ mod codex_request;
 mod codex_ws;
 mod reasoning;
 mod remote_compaction;
+pub(crate) mod responses_post;
 
 pub use cache::prompt_cache_key_from_session_id;
 
@@ -20,7 +21,9 @@ pub fn supports_fast_mode(provider: &str, model: &str) -> bool {
 }
 
 use crate::protocol::openai_responses::collect_codex_sse_response;
-use crate::providers::responses_http::{ResponsesAuth, ResponsesEndpoint, ResponsesHttpTransport};
+use crate::providers::responses_http::{
+    ResponsesEndpoint, ResponsesHttpResult, ResponsesHttpTransport,
+};
 use auth::Auth;
 #[cfg(test)]
 use codex_request::build_codex_responses_body;
@@ -119,6 +122,24 @@ impl OpenAiProvider {
         ResponsesHttpTransport::new(&self.client, &self.api_base)
     }
 
+    async fn post_responses(
+        &self,
+        endpoint: ResponsesEndpoint,
+        body: &Value,
+        cancellation: Option<&rho_sdk::CancellationToken>,
+    ) -> ResponsesHttpResult {
+        responses_post::post(
+            &self.http(),
+            &self.client,
+            self.auth.as_ref(),
+            responses_post::DEFAULT_CODEX_REFRESH_URL,
+            endpoint,
+            body,
+            cancellation,
+        )
+        .await
+    }
+
     fn create_body(
         &self,
         request: ModelRequest<'_>,
@@ -213,13 +234,7 @@ impl OpenAiProvider {
         };
 
         let http_result = self
-            .http()
-            .post_json(
-                ResponsesAuth::from_openai(self.auth.as_ref()),
-                ResponsesEndpoint::Create,
-                &body,
-                /*cancellation*/ None,
-            )
+            .post_responses(ResponsesEndpoint::Create, &body, /*cancellation*/ None)
             .await;
         let response = match http_result.response {
             Ok(response) => response,
@@ -290,13 +305,7 @@ impl OpenAiProvider {
         };
 
         let http_result = self
-            .http()
-            .post_json(
-                ResponsesAuth::from_openai(self.auth.as_ref()),
-                ResponsesEndpoint::Create,
-                &body,
-                /*cancellation*/ None,
-            )
+            .post_responses(ResponsesEndpoint::Create, &body, /*cancellation*/ None)
             .await;
         for attempt in &http_result.failed_attempts {
             on_request_event(
@@ -375,6 +384,8 @@ impl OpenAiProvider {
             &self.profile,
             &self.reasoning,
             &self.http(),
+            &self.client,
+            responses_post::DEFAULT_CODEX_REFRESH_URL,
             &self.codex_ws,
             request,
         )
@@ -388,13 +399,7 @@ impl OpenAiProvider {
         let cancellation = request.cancellation.clone();
         let body = self.create_body(request, ModelRequestOptions::default())?;
         let http_result = self
-            .http()
-            .post_json(
-                ResponsesAuth::from_openai(self.auth.as_ref()),
-                ResponsesEndpoint::Create,
-                &body,
-                Some(&cancellation),
-            )
+            .post_responses(ResponsesEndpoint::Create, &body, Some(&cancellation))
             .await;
         let response = http_result.response?;
         if !response.status().is_success() {
@@ -412,13 +417,7 @@ impl OpenAiProvider {
         let cancellation = request.cancellation.clone();
         let body = self.create_body(request, options)?;
         let http_result = self
-            .http()
-            .post_json(
-                ResponsesAuth::from_openai(self.auth.as_ref()),
-                ResponsesEndpoint::Create,
-                &body,
-                Some(&cancellation),
-            )
+            .post_responses(ResponsesEndpoint::Create, &body, Some(&cancellation))
             .await;
         let response = http_result.response?;
         if !response.status().is_success() {

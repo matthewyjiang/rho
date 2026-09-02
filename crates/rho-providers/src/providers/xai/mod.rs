@@ -9,7 +9,9 @@
 use std::sync::Arc;
 
 use crate::protocol::openai_responses::collect_codex_sse_response;
-use crate::providers::responses_http::{ResponsesAuth, ResponsesEndpoint, ResponsesHttpTransport};
+use crate::providers::responses_http::{
+    ResponsesEndpoint, ResponsesHttpAuth, ResponsesHttpResult, ResponsesHttpTransport,
+};
 
 use crate::{
     auth::xai_token::XaiAuthManager,
@@ -88,8 +90,44 @@ impl XaiProvider {
         ResponsesHttpTransport::new(&self.client, &self.api_base)
     }
 
-    pub(super) fn responses_auth(&self) -> ResponsesAuth<'_> {
-        ResponsesAuth::Xai(&self.auth)
+    fn responses_http_auth(access_token: &str) -> ResponsesHttpAuth {
+        ResponsesHttpAuth::bearer(access_token, crate::rho_user_agent())
+    }
+
+    pub(super) async fn post_responses(
+        &self,
+        endpoint: ResponsesEndpoint,
+        body: &serde_json::Value,
+        cancellation: Option<&rho_sdk::CancellationToken>,
+    ) -> ResponsesHttpResult {
+        let material = match crate::provider_backend::cancel::cancel_aware(
+            cancellation,
+            self.auth.auth_material(),
+        )
+        .await
+        {
+            Ok(material) => material,
+            Err(error) => return ResponsesHttpResult::err(error),
+        };
+        let request_auth = Self::responses_http_auth(&material.access_token);
+        let access_token = material.access_token.clone();
+        self.http()
+            .post_json_refreshing(
+                &request_auth,
+                || async {
+                    match self.auth.force_refresh(&access_token).await {
+                        Ok(None) => Ok(None),
+                        Ok(Some(refreshed)) => {
+                            Ok(Some(Self::responses_http_auth(&refreshed.access_token)))
+                        }
+                        Err(error) => Err(error),
+                    }
+                },
+                endpoint,
+                body,
+                cancellation,
+            )
+            .await
     }
 
     async fn send_request(
@@ -109,13 +147,7 @@ impl XaiProvider {
             self.hosted,
         )?;
         let http_result = self
-            .http()
-            .post_json(
-                self.responses_auth(),
-                ResponsesEndpoint::Create,
-                &body,
-                Some(&cancellation),
-            )
+            .post_responses(ResponsesEndpoint::Create, &body, Some(&cancellation))
             .await;
         if let Some(on_request_event) = on_request_event {
             for attempt in &http_result.failed_attempts {

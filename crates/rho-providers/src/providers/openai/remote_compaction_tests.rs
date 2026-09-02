@@ -194,7 +194,7 @@ async fn compact_with_http_malformed_retry_response_preserves_failed_attempts() 
     );
     let profile = ResponsesProfile::from_auth(&auth, "gpt-5.4");
     let refresh_url = format!("{base}/oauth/token");
-    let http = ResponsesHttpTransport::new(&client, &base).with_codex_refresh_url(&refresh_url);
+    let http = ResponsesHttpTransport::new(&client, &base);
     let codex_ws = CodexWsTransport::new(&base);
     let messages = [
         Message::System("system".into()),
@@ -206,6 +206,8 @@ async fn compact_with_http_malformed_retry_response_preserves_failed_attempts() 
         &profile,
         &OpenAiReasoningProfile::unknown(),
         &http,
+        &client,
+        &refresh_url,
         &codex_ws,
         ModelRequest {
             messages: &messages,

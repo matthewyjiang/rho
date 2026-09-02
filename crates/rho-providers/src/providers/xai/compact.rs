@@ -4,8 +4,9 @@ use super::{bodies::build_xai_compact_body, XaiProvider};
 use crate::model::{ModelError, ModelRequest};
 use crate::protocol::openai_responses::{retained_system_messages, CompactUserRetention};
 use crate::providers::native_compaction::{
-    compact_over_responses_http, native_compact_failure, CompactParsePolicy,
+    native_compact_failure, native_compact_from_http, CompactParsePolicy,
 };
+use crate::providers::responses_http::ResponsesEndpoint;
 
 /// Portable notice when the encrypted compaction artifact cannot replay.
 ///
@@ -29,10 +30,11 @@ impl XaiProvider {
             Err(error) => return Ok(native_compact_failure(error, Vec::new())),
         };
 
-        Ok(compact_over_responses_http(
-            &self.http(),
-            self.responses_auth(),
-            &body,
+        let http_result = self
+            .post_responses(ResponsesEndpoint::Compact, &body, Some(&cancellation))
+            .await;
+        Ok(native_compact_from_http(
+            http_result,
             &cancellation,
             CompactParsePolicy {
                 identity,
