@@ -34,10 +34,18 @@ pub enum HerdrState {
 pub enum HerdrGraphicsCapability {
     /// Not running under a configured Herdr pane.
     NotHerdr,
-    /// Herdr can paint Kitty placements for this pane.
-    Paintable,
+    /// Herdr can paint Kitty placements for this pane. Cell metrics are
+    /// `None` when the host reported a paintable pane without pixel sizes.
+    Paintable { cell: Option<CellPixels> },
     /// Under Herdr, but host cell metrics or the probe path is unavailable.
     Unpaintable,
+}
+
+/// Pixel size of one terminal cell, used to size Kitty image placements.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CellPixels {
+    pub width: u16,
+    pub height: u16,
 }
 
 impl HerdrState {
@@ -88,8 +96,8 @@ impl HerdrReporter {
             return HerdrGraphicsCapability::NotHerdr;
         };
         match probe_kitty_graphics(config).await {
-            true => HerdrGraphicsCapability::Paintable,
-            false => HerdrGraphicsCapability::Unpaintable,
+            Some(cell) => HerdrGraphicsCapability::Paintable { cell },
+            None => HerdrGraphicsCapability::Unpaintable,
         }
     }
 
@@ -189,25 +197,37 @@ impl HerdrReporter {
     }
 }
 
-async fn probe_kitty_graphics(config: &HerdrConfig) -> bool {
+/// `Some` when the pane is paintable; the inner value carries host cell
+/// metrics when the `pane.graphics.info` result includes them.
+async fn probe_kitty_graphics(config: &HerdrConfig) -> Option<Option<CellPixels>> {
     let request = json_rpc_request("pane.graphics.info", json!({ "pane_id": config.pane_id }));
-    let Ok(mut payload) = serde_json::to_vec(&request) else {
-        return false;
-    };
+    let mut payload = serde_json::to_vec(&request).ok()?;
     payload.push(b'\n');
-    let Ok(response) =
-        exchange_payload(config.socket_path.clone(), payload, GRAPHICS_PROBE_TIMEOUT).await
-    else {
-        return false;
-    };
-    graphics_info_reports_paintable(&response)
+    let response = exchange_payload(config.socket_path.clone(), payload, GRAPHICS_PROBE_TIMEOUT)
+        .await
+        .ok()?;
+    graphics_info_paintable_cell(&response)
 }
 
-pub(crate) fn graphics_info_reports_paintable(response: &[u8]) -> bool {
-    let Ok(value) = serde_json::from_slice::<serde_json::Value>(response) else {
-        return false;
+/// Parses a `pane.graphics.info` response. Outer `None` means unpaintable
+/// (error or malformed); inner `None` means paintable without cell metrics.
+pub(crate) fn graphics_info_paintable_cell(response: &[u8]) -> Option<Option<CellPixels>> {
+    let value = serde_json::from_slice::<serde_json::Value>(response).ok()?;
+    if value.get("error").is_some() {
+        return None;
+    }
+    let result = value.get("result")?;
+    let px = |key: &str| {
+        result
+            .get(key)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|px| u16::try_from(px).ok())
+            .filter(|px| *px > 0)
     };
-    value.get("error").is_none() && value.get("result").is_some()
+    Some(match (px("cell_width_px"), px("cell_height_px")) {
+        (Some(width), Some(height)) => Some(CellPixels { width, height }),
+        _ => None,
+    })
 }
 
 #[cfg(unix)]
