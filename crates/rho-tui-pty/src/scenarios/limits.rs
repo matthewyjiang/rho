@@ -53,6 +53,7 @@ pub(super) const LIMITS_OVERLAY_SCENARIO: Scenario = Scenario::new(
 );
 
 fn assert_limits_overlay_is_single_pane(harness: &mut PtyHarness) -> Result<()> {
+    harness.wait_for_hidden_cursor(SETTLE)?;
     let screen = harness.screen().contents();
     if !screen.contains("Usage limits") {
         anyhow::bail!("limits overlay title missing:\n{screen}");

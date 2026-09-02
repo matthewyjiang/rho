@@ -134,17 +134,23 @@ fn clipboard_text_from_native(result: Result<String, arboard::Error>) -> io::Res
 }
 
 fn paste_from_windows_host_clipboard() -> io::Result<String> {
+    // UTF8Encoding(false) avoids the BOM that [Text.Encoding]::UTF8 prepends.
     // Write instead of Out-Default so PowerShell does not append a pipeline newline.
     let output = command_output(
         "powershell.exe",
         &[
             "-NoProfile",
             "-Command",
-            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $t = Get-Clipboard -Raw; if ($null -ne $t) { [Console]::Out.Write($t) }",
+            "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $t = Get-Clipboard -Raw; if ($null -ne $t) { [Console]::Out.Write($t) }",
         ],
     )
     .ok_or_else(|| io::Error::other("powershell.exe Get-Clipboard failed"))?;
-    Ok(String::from_utf8_lossy(&output).into_owned())
+    Ok(clipboard_text_from_host_bytes(&output))
+}
+
+fn clipboard_text_from_host_bytes(output: &[u8]) -> String {
+    let bytes = output.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(output);
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 pub(super) struct TextWriteProbe {

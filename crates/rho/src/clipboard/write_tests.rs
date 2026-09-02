@@ -151,3 +151,15 @@ fn text_paste_follows_session_backends() {
         }
     }
 }
+
+// Covers: a UTF-8 BOM on host stdout is not pasted as U+FEFF.
+// Owner: clipboard text paste
+#[test]
+fn windows_host_paste_strips_utf8_bom() {
+    assert_eq!(clipboard_text_from_host_bytes(b"hello"), "hello");
+    assert_eq!(
+        clipboard_text_from_host_bytes(&[0xEF, 0xBB, 0xBF, b'h', b'i']),
+        "hi"
+    );
+    assert_eq!(clipboard_text_from_host_bytes(&[0xEF, 0xBB, 0xBF]), "");
+}
