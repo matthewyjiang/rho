@@ -317,6 +317,19 @@ fn model_has_prefix(model: &str, prefixes: &[&str]) -> bool {
     })
 }
 
+/// Models that accept a mid-conversation `role: system` effort change
+/// without invalidating the cached message prefix.
+///
+/// Temporary id-prefix shim until `/v1/models` advertises per-turn effort.
+/// Sending that payload to an unsupported model, including Claude Fable 5,
+/// returns 400. Keep this list to families Anthropic documents.
+pub(crate) fn supports_per_message_effort(model: &str) -> bool {
+    model_has_prefix(
+        model,
+        &["claude-fable-5-1", "claude-mythos-5-1", "claude-opus-5"],
+    )
+}
+
 /// Budget-token thinking accepts any positive Rho level; Off is handled apart.
 fn budget_token_levels() -> Vec<ReasoningLevel> {
     ReasoningLevel::ALL

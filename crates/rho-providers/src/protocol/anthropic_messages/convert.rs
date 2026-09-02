@@ -148,7 +148,7 @@ fn push_message(
     if let Some(previous) = messages.last_mut().filter(|message| message.role == role) {
         previous.content.append(&mut content);
     } else {
-        messages.push(AnthropicMessage { role, content });
+        messages.push(AnthropicMessage::new(role, content));
     }
 }
 

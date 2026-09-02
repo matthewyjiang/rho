@@ -150,6 +150,64 @@ fn adaptive_thinking_uses_output_effort_without_a_token_budget() {
     assert!(value["thinking"].get("budget_tokens").is_none());
 }
 
+// Covers: a mid-conversation effort change on Fable 5.1 must keep the
+// prefix output_config and send an effort-only system message
+// Owner: anthropic request body cache breakpoints
+#[test]
+fn fable_5_1_mid_conversation_effort_change_keeps_prefix_output_config() {
+    let provider = test_provider_with_capabilities("claude-fable-5-1", &adaptive_capabilities());
+    let first = provider
+        .request_body(
+            ModelRequest {
+                messages: &[Message::user_text("plan this")],
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: ReasoningLevel::High,
+                prompt_cache_key: None,
+            },
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        first.output_config,
+        Some(AnthropicOutputConfig { effort: "high" })
+    );
+    assert!(first
+        .messages
+        .iter()
+        .all(|message| message.output_config.is_none()));
+
+    let second = provider
+        .request_body(
+            ModelRequest {
+                messages: &[
+                    Message::user_text("plan this"),
+                    Message::assistant_text("1. export"),
+                    Message::user_text("summarize"),
+                ],
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: ReasoningLevel::Low,
+                prompt_cache_key: None,
+            },
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        second.output_config,
+        Some(AnthropicOutputConfig { effort: "high" })
+    );
+    let value = serde_json::to_value(&second).unwrap();
+    assert_eq!(
+        value["messages"][2],
+        json!({
+            "role": "system",
+            "content": [],
+            "output_config": {"effort": "low"}
+        })
+    );
+}
+
 #[test]
 fn provider_context_replay_follows_effective_thinking_mode() {
     let adaptive = AnthropicThinkingConfig::Adaptive {

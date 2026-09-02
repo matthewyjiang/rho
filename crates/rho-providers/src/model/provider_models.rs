@@ -28,7 +28,8 @@ mod anthropic;
 #[cfg(test)]
 pub(crate) use anthropic::thinking_mode_from_value as anthropic_thinking_mode_from_value;
 pub(crate) use anthropic::{
-    cached_thinking_mode as cached_anthropic_thinking_mode, AnthropicThinkingMode, OffThinking,
+    cached_thinking_mode as cached_anthropic_thinking_mode, supports_per_message_effort,
+    AnthropicThinkingMode, OffThinking,
 };
 #[path = "provider_models/google.rs"]
 mod google;
