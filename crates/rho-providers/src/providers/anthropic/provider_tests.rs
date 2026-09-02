@@ -163,7 +163,7 @@ fn fable_5_1_mid_conversation_effort_change_keeps_prefix_output_config() {
                 tools: &[],
                 cancellation: Default::default(),
                 reasoning_level: ReasoningLevel::High,
-                prompt_cache_key: None,
+                prompt_cache_key: Some("rho:session"),
             },
             false,
         )
@@ -188,7 +188,7 @@ fn fable_5_1_mid_conversation_effort_change_keeps_prefix_output_config() {
                 tools: &[],
                 cancellation: Default::default(),
                 reasoning_level: ReasoningLevel::Low,
-                prompt_cache_key: None,
+                prompt_cache_key: Some("rho:session"),
             },
             false,
         )

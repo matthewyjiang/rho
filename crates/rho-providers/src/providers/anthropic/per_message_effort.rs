@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     model::provider_models,
     protocol::anthropic_messages::{AnthropicMessage, AnthropicOutputConfig, AnthropicRole},
@@ -6,11 +8,12 @@ use crate::{
 /// Beta required for `output_config` on a `role: system` message.
 pub(super) const BETA: &str = "mid-conversation-output-config-2026-07-01";
 
-/// Prefix effort and in-history shifts for one Anthropic provider instance.
+/// Per-conversation effort state on one Anthropic provider instance.
 ///
-/// Consecutive conversation requests on the same instance keep top-level
-/// `output_config.effort` on the first value and append effort-only system
-/// messages at the change points so the cached prefix still matches.
+/// A provider can be shared across sessions (`RhoBuilder::provider_shared`),
+/// so state is keyed by the request's `prompt_cache_key`. That key is the
+/// session identity Rho already derives for cache continuity. Requests
+/// without one get today's top-level effort and never touch this map.
 ///
 /// NEXT_MAJOR(rho-sdk): record reasoning shifts as a first-class history
 /// message appended by `set_reasoning_level`, and have the Anthropic
@@ -18,9 +21,19 @@ pub(super) const BETA: &str = "mid-conversation-output-config-2026-07-01";
 /// this provider-local state. Anthropic requires the marker to be re-sent
 /// verbatim; rebuilding it from memory loses it on resume or provider rebuild,
 /// which falls back to a top-level effort change and busts the cache.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub(super) struct PerMessageEffortState {
-    prefix_effort: Option<&'static str>,
+    conversations: HashMap<String, ConversationEffort>,
+}
+
+/// Prefix effort and in-history shifts for one conversation.
+///
+/// Consecutive requests keep top-level `output_config.effort` on the first
+/// value and append effort-only system messages at the change points so the
+/// cached prefix still matches.
+#[derive(Clone, Debug)]
+struct ConversationEffort {
+    prefix_effort: &'static str,
     shifts: Vec<EffortShift>,
     last_uninjected_len: usize,
 }
@@ -35,59 +48,59 @@ struct EffortShift {
 pub(super) fn apply(
     model: &str,
     state: &mut PerMessageEffortState,
+    conversation: Option<&str>,
     current: Option<AnthropicOutputConfig>,
     messages: &mut Vec<AnthropicMessage>,
 ) -> Option<AnthropicOutputConfig> {
     if !provider_models::supports_per_message_effort(model) {
         return current;
     }
+    let Some(conversation) = conversation else {
+        return current;
+    };
     let Some(current_effort) = current.as_ref().map(|config| config.effort) else {
-        *state = PerMessageEffortState::default();
+        state.conversations.remove(conversation);
         return current;
     };
 
     let uninjected_len = messages.len();
-    let Some(prefix_effort) = state.prefix_effort else {
-        state.prefix_effort = Some(current_effort);
-        state.last_uninjected_len = uninjected_len;
+    let fresh = ConversationEffort {
+        prefix_effort: current_effort,
+        shifts: Vec::new(),
+        last_uninjected_len: uninjected_len,
+    };
+    let Some(entry) = state.conversations.get_mut(conversation) else {
+        state.conversations.insert(conversation.to_owned(), fresh);
         return current;
     };
 
-    if uninjected_len < state.last_uninjected_len {
-        *state = PerMessageEffortState {
-            prefix_effort: Some(current_effort),
-            last_uninjected_len: uninjected_len,
-            shifts: Vec::new(),
-        };
+    if uninjected_len < entry.last_uninjected_len {
+        *entry = fresh;
         return current;
     }
 
-    let last_effort = state
+    let last_effort = entry
         .shifts
         .last()
         .map(|shift| shift.effort)
-        .unwrap_or(prefix_effort);
+        .unwrap_or(entry.prefix_effort);
     if current_effort != last_effort {
-        if uninjected_len == state.last_uninjected_len {
+        if uninjected_len == entry.last_uninjected_len {
             // Same prompt, different effort: classifier stages, not a
             // conversation continuation. Keep today's top-level change.
-            *state = PerMessageEffortState {
-                prefix_effort: Some(current_effort),
-                last_uninjected_len: uninjected_len,
-                shifts: Vec::new(),
-            };
+            *entry = fresh;
             return current;
         }
-        state.shifts.push(EffortShift {
+        entry.shifts.push(EffortShift {
             at: last_user_index(messages),
             effort: current_effort,
         });
     }
 
-    insert_shifts(messages, &state.shifts);
-    state.last_uninjected_len = uninjected_len;
+    insert_shifts(messages, &entry.shifts);
+    entry.last_uninjected_len = uninjected_len;
     Some(AnthropicOutputConfig {
-        effort: prefix_effort,
+        effort: entry.prefix_effort,
     })
 }
 

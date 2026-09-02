@@ -38,8 +38,8 @@ pub struct AnthropicProvider {
     /// hydrates may raise the request `max_tokens`, but the budget stays put so
     /// a hydrate cannot rewrite thinking params and bust the message cache.
     thinking_budget_ceiling: OnceLock<u32>,
-    /// First conversation effort on this instance, plus later per-message
-    /// shifts so a mid-session change does not rewrite top-level effort.
+    /// Per-conversation prefix effort and later shifts, keyed by prompt cache
+    /// key, so a mid-session change does not rewrite top-level effort.
     per_message_effort: Mutex<per_message_effort::PerMessageEffortState>,
 }
 
@@ -154,7 +154,13 @@ impl AnthropicProvider {
                 .per_message_effort
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            per_message_effort::apply(&self.model, &mut state, output_config, &mut messages)
+            per_message_effort::apply(
+                &self.model,
+                &mut state,
+                request.prompt_cache_key,
+                output_config,
+                &mut messages,
+            )
         };
         mark_cache_control_points(&mut messages);
         let mut tools = request
