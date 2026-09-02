@@ -421,6 +421,7 @@ impl App {
             | CommandId::Compact
             | CommandId::Login
             | CommandId::Logout
+            | CommandId::RefreshModels
             | CommandId::Resume
             | CommandId::Rewind
             | CommandId::Sessions

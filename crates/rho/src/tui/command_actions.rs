@@ -114,6 +114,7 @@ impl App {
             CommandId::Title => self.execute_title_command(&invocation),
             CommandId::Limits => self.execute_limits_command(terminal),
             CommandId::Fast => self.execute_fast_command(invocation, agent),
+            CommandId::RefreshModels => self.execute_refresh_models_command(terminal, agent).await,
             CommandId::Workflow => self.execute_workflow_command(terminal).await,
             CommandId::Side => self.execute_side_command(invocation).await,
         }
