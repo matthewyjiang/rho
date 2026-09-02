@@ -525,30 +525,37 @@ pub(super) fn picker_for_environment(
     if !host_supports_kitty {
         return None;
     }
-    let (protocol, cell) = match herdr_graphics {
-        crate::herdr::HerdrGraphicsCapability::Unpaintable => (ProtocolType::Halfblocks, None),
-        crate::herdr::HerdrGraphicsCapability::NotHerdr => {
-            (ProtocolType::Kitty, cell_pixels_from_winsize())
+    Some(match herdr_graphics {
+        crate::herdr::HerdrGraphicsCapability::Unpaintable => Picker::halfblocks(),
+        crate::herdr::HerdrGraphicsCapability::Paintable { width, height } => {
+            kitty_picker(FontSize::new(width, height))
         }
-        crate::herdr::HerdrGraphicsCapability::Paintable { cell } => (ProtocolType::Kitty, cell),
-    };
+        crate::herdr::HerdrGraphicsCapability::NotHerdr => {
+            kitty_picker(font_size_from_winsize().unwrap_or(FALLBACK_KITTY_FONT))
+        }
+    })
+}
+
+/// `Picker::halfblocks()` default. Used for native Kitty when the terminal
+/// does not report pixel window size, instead of smuggling the guess out of
+/// a halfblocks constructor.
+const FALLBACK_KITTY_FONT: FontSize = FontSize::new(10, 20);
+
+fn kitty_picker(font: FontSize) -> Picker {
     // `from_fontsize` is deprecated in favor of `from_query_stdio`, but the
     // stdio query needs raw mode and cannot see through Herdr's PTY. It is the
     // only constructor that accepts externally known cell metrics.
     #[allow(deprecated)]
-    let mut picker = match cell {
-        Some(cell) => Picker::from_fontsize(FontSize::new(cell.width, cell.height)),
-        None => Picker::halfblocks(),
-    };
-    picker.set_protocol_type(protocol);
-    Some(picker)
+    let mut picker = Picker::from_fontsize(font);
+    picker.set_protocol_type(ProtocolType::Kitty);
+    picker
 }
 
 /// Cell pixel size from the controlling terminal's window size, when the
-/// terminal fills in pixel dimensions. Without this, `Picker::halfblocks()`
-/// guesses 10x20 and Kitty placements reserve rows the bitmap never fills.
+/// terminal fills in pixel dimensions. Without this, Kitty placements use
+/// [`FALLBACK_KITTY_FONT`] and can reserve rows the bitmap never fills.
 #[cfg(unix)]
-fn cell_pixels_from_winsize() -> Option<crate::herdr::CellPixels> {
+fn font_size_from_winsize() -> Option<FontSize> {
     use std::os::fd::AsRawFd as _;
     let mut winsize = libc::winsize {
         ws_row: 0,
@@ -564,23 +571,31 @@ fn cell_pixels_from_winsize() -> Option<crate::herdr::CellPixels> {
             &mut winsize as *mut libc::winsize,
         )
     };
-    if status != 0
-        || winsize.ws_xpixel == 0
-        || winsize.ws_ypixel == 0
-        || winsize.ws_col == 0
-        || winsize.ws_row == 0
-    {
+    if status != 0 {
         return None;
     }
-    Some(crate::herdr::CellPixels {
-        width: winsize.ws_xpixel / winsize.ws_col,
-        height: winsize.ws_ypixel / winsize.ws_row,
-    })
+    cell_font_size(
+        winsize.ws_xpixel,
+        winsize.ws_ypixel,
+        winsize.ws_col,
+        winsize.ws_row,
+    )
 }
 
 #[cfg(not(unix))]
-fn cell_pixels_from_winsize() -> Option<crate::herdr::CellPixels> {
+fn font_size_from_winsize() -> Option<FontSize> {
     None
+}
+
+/// Converts window pixels and cell counts to a font size. Rejects a zero
+/// quotient so `Resize::Fit` cannot treat height 0 as `u16::MAX` reserved rows.
+pub(super) fn cell_font_size(xpixel: u16, ypixel: u16, cols: u16, rows: u16) -> Option<FontSize> {
+    if xpixel == 0 || ypixel == 0 || cols == 0 || rows == 0 {
+        return None;
+    }
+    let width = xpixel / cols;
+    let height = ypixel / rows;
+    (width > 0 && height > 0).then_some(FontSize::new(width, height))
 }
 
 fn kitty_graphics_environment(

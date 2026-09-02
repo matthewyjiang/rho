@@ -6,7 +6,7 @@ use ratatui_image::picker::{Picker, ProtocolType};
 use rho_sdk::tool::ToolAsset;
 
 use super::{
-    feed_image_height_budget, kitty_graphics_environment, max_feed_image_height,
+    cell_font_size, feed_image_height_budget, kitty_graphics_environment, max_feed_image_height,
     picker_for_environment, quantize_content_image_cap, reserve_image_rows, FeedImage,
     COMPACT_IMAGE_HEIGHT, COMPOSER_IMAGE_HEIGHT, DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT,
     MIN_IMAGE_HEIGHT, TALL_IMAGE_HEIGHT,
@@ -117,16 +117,45 @@ fn herdr_with_paintable_kitty_uses_host_cell_metrics() {
     let picker = picker_for_environment(
         /*host_supports_kitty*/ true,
         crate::herdr::HerdrGraphicsCapability::Paintable {
-            cell: Some(crate::herdr::CellPixels {
-                width: 14,
-                height: 32,
-            }),
+            width: 14,
+            height: 32,
         },
     )
     .unwrap();
     assert_eq!(picker.protocol_type(), ProtocolType::Kitty);
     let font = picker.font_size();
     assert_eq!((font.width, font.height), (14, 32));
+}
+
+#[test]
+fn native_kitty_without_herdr_uses_kitty_protocol() {
+    let picker = picker_for_environment(
+        /*host_supports_kitty*/ true,
+        crate::herdr::HerdrGraphicsCapability::NotHerdr,
+    )
+    .unwrap();
+    assert_eq!(picker.protocol_type(), ProtocolType::Kitty);
+}
+
+// Covers: inconsistent TIOCGWINSZ pixels must not produce a 0-height font
+// (that reserves u16::MAX feed rows).
+// Owner: pure unit
+#[test]
+fn cell_font_size_rejects_zero_quotients() {
+    let cases = [
+        (800, 600, 80, 24, Some((10, 25))),
+        (14, 32, 80, 24, None),
+        (80, 24, 80, 24, Some((1, 1))),
+        (79, 24, 80, 24, None),
+        (0, 600, 80, 24, None),
+        (800, 600, 0, 24, None),
+    ];
+    for (xpixel, ypixel, cols, rows, expected) in cases {
+        assert_eq!(
+            cell_font_size(xpixel, ypixel, cols, rows).map(|font| (font.width, font.height)),
+            expected
+        );
+    }
 }
 
 #[test]
