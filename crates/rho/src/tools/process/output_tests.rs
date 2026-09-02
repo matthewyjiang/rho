@@ -31,13 +31,13 @@ fn snapshot() -> Snapshot {
     }
 }
 
-// Covers: process results omit command, empty-stream labels, and success exit
+// Covers: process results include command, empty-stream labels, and success exit
 // Owner: process output
 #[test]
-fn snapshot_text_keeps_id_state_cursor_and_streams() {
+fn snapshot_text_keeps_id_command_state_cursor_and_streams() {
     assert_eq!(
         format_snapshot(&snapshot()),
-        "process_id: proc-1\nstate: running\nnext: 2\n\nstdout:\nout\nstderr:\nerr"
+        "process_id: proc-1\ncommand: sleep 300\nstate: running\nnext: 2\n\nstdout:\nout\nstderr:\nerr"
     );
 }
 
@@ -51,7 +51,7 @@ fn successful_exit_omits_exit_line() {
     snapshot.chunks.clear();
     assert_eq!(
         format_snapshot(&snapshot),
-        "process_id: proc-1\nstate: exited\nnext: 2"
+        "process_id: proc-1\ncommand: sleep 300\nstate: exited\nnext: 2"
     );
 }
 
@@ -65,7 +65,7 @@ fn failed_exit_includes_code() {
     snapshot.chunks.clear();
     assert_eq!(
         format_snapshot(&snapshot),
-        "process_id: proc-1\nstate: exited\nnext: 2\nexit: 2"
+        "process_id: proc-1\ncommand: sleep 300\nstate: exited\nnext: 2\nexit: 2"
     );
 }
 
@@ -74,4 +74,19 @@ fn failed_exit_includes_code() {
 #[test]
 fn stop_receipt_is_plain_text() {
     assert_eq!(format_stop("proc-1"), "process_id: proc-1\nstop requested");
+}
+
+// Covers: command newlines stay in one header line and cannot spoof exit
+// Owner: process output
+#[test]
+fn snapshot_text_escapes_multiline_command() {
+    let mut snapshot = snapshot();
+    snapshot.command = "echo ok\nexit: 9".into();
+    snapshot.chunks.clear();
+    let text = format_snapshot(&snapshot);
+    assert_eq!(
+        text,
+        "process_id: proc-1\ncommand: echo ok\\nexit: 9\nstate: running\nnext: 2"
+    );
+    assert_eq!(decode_header_value("echo ok\\nexit: 9"), "echo ok\nexit: 9");
 }

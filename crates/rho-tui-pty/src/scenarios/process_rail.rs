@@ -36,12 +36,14 @@ fn active_process_row(harness: &mut PtyHarness) -> Result<u16> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         harness.poll(Duration::from_millis(20));
-        if let Some(row) = harness.screen().rows_text().iter().position(|line| {
-            line.contains("└ ⚙ sleep 60")
-                || line.contains("├ ⚙ sleep 60")
-                || line.contains("└ sleep 60")
-                || line.contains("├ sleep 60")
-        }) {
+        // Prefer the rail glyph. The finished process card also shows
+        // `└ sleep 60`, and hovering that row is not the peek target.
+        if let Some(row) = harness
+            .screen()
+            .rows_text()
+            .iter()
+            .position(|line| line.contains("⚙ sleep 60"))
+        {
             return Ok(row as u16 + 1);
         }
         if Instant::now() >= deadline {

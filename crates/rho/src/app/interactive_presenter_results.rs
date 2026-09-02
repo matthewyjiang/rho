@@ -331,6 +331,8 @@ pub(super) fn search_result_card(
     card
 }
 
+/// Result card for the process tool. Compact snapshot text carries `command`
+/// so start and poll cards share the same identity without call arguments.
 pub(super) fn process_result_card(content: &str, status: ToolStatus) -> ToolCard {
     #[derive(serde::Deserialize)]
     struct StopReceipt {
@@ -401,6 +403,8 @@ pub(super) fn process_result_card(content: &str, status: ToolStatus) -> ToolCard
     card
 }
 
+/// Card for the compact text result. Identity is `command` from the snapshot
+/// header; the process id and poll cursor stay in the model-facing text.
 fn compact_process_card(content: &str, status: ToolStatus) -> ToolCard {
     let header = compact_header_block(content);
     if let Some(process_id) = header_value(header, "process_id") {
@@ -421,14 +425,18 @@ fn compact_process_card(content: &str, status: ToolStatus) -> ToolCard {
             ToolFamily::Default,
             ToolHeader::call("process", state.clone()),
         );
-        let mut meta = process_id;
-        if let Some(next) = header_value(header, "next") {
-            meta.push_str(&format!(" · next {next}"));
+        if let Some(command) = header_value(header, "command")
+            .map(|value| crate::tools::process::decode_header_value(&value))
+            .filter(|command| !command.trim().is_empty())
+        {
+            card.push_fact(ToolFact::Text { text: command });
         }
+        // Humans only need the command, exit code, and pending marker here.
         if let Some(code) = header_value(header, "exit") {
-            meta.push_str(&format!(" · exit {code}"));
+            card.push_fact(ToolFact::Meta {
+                text: format!("exit {code}"),
+            });
         }
-        card.push_fact(ToolFact::Meta { text: meta });
         if header.lines().any(|line| line == "pending") {
             card.push_fact(ToolFact::Meta {
                 text: "more output available".into(),
@@ -888,11 +896,45 @@ mod tests {
             card.header,
             ToolHeader::call("process", Some("running".into()))
         );
-        assert_eq!(
-            card.facts,
-            vec![ToolFact::Meta {
-                text: "proc-1 · next 2".into(),
-            }]
-        );
+        assert_eq!(card.facts, vec![]);
+    }
+
+    // Covers: compact snapshot cards show command and human facts from the
+    // result text, for both start and later poll windows
+    // Owner: pure unit (presenter)
+    #[test]
+    fn compact_process_shows_command_from_snapshot_text() {
+        let cases = [
+            (
+                "process_id: proc-1\ncommand: cargo test\nstate: running\nnext: 0",
+                vec![ToolFact::Text {
+                    text: "cargo test".into(),
+                }],
+            ),
+            (
+                "process_id: proc-1\ncommand: cargo test\nstate: exited\nnext: 2\nexit: 2\npending",
+                vec![
+                    ToolFact::Text {
+                        text: "cargo test".into(),
+                    },
+                    ToolFact::Meta {
+                        text: "exit 2".into(),
+                    },
+                    ToolFact::Meta {
+                        text: "more output available".into(),
+                    },
+                ],
+            ),
+            (
+                "process_id: proc-1\ncommand: echo ok\\nexit: 9\nstate: running\nnext: 0",
+                vec![ToolFact::Text {
+                    text: "echo ok\nexit: 9".into(),
+                }],
+            ),
+        ];
+        for (content, facts) in cases {
+            let card = process_result_card(content, ToolStatus::Ok);
+            assert_eq!(card.facts, facts, "{content}");
+        }
     }
 }
