@@ -78,7 +78,7 @@ impl RailRow {
         let trailing_reserve = if self.trailing.is_empty() {
             0
         } else {
-            MIN_GAP + display_width(&self.trailing)
+            (MIN_GAP + display_width(&self.trailing)).min(content_width)
         };
         let identity_plain: String = self
             .identity
@@ -93,7 +93,9 @@ impl RailRow {
         } else {
             let identity = truncate_one_line(&identity_plain, identity_budget);
             let shown = display_width(&identity);
-            spans.push(Span::styled(identity, identity_style.patch(row_style)));
+            if shown > 0 {
+                spans.push(Span::styled(identity, identity_style.patch(row_style)));
+            }
             shown
         };
 
@@ -111,12 +113,17 @@ impl RailRow {
         }
 
         if !self.trailing.is_empty() {
-            used += trailing_reserve;
-            spans.push(Span::styled(" ".repeat(MIN_GAP), row_style));
-            spans.push(Span::styled(
-                self.trailing,
-                row_style.patch(self.trailing_style),
-            ));
+            let remaining = content_width.saturating_sub(used);
+            let gap = if remaining > MIN_GAP { MIN_GAP } else { 0 };
+            let trailing_budget = remaining.saturating_sub(gap);
+            if trailing_budget > 0 {
+                let trailing = truncate_one_line(&self.trailing, trailing_budget);
+                used += gap + display_width(&trailing);
+                if gap > 0 {
+                    spans.push(Span::styled(" ".repeat(gap), row_style));
+                }
+                spans.push(Span::styled(trailing, row_style.patch(self.trailing_style)));
+            }
         }
 
         let fill = content_width.saturating_sub(used);

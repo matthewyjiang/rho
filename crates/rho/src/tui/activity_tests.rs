@@ -5,7 +5,8 @@ use pretty_assertions::assert_eq;
 use super::*;
 
 // Covers: rail rows pack identity · activity  elapsed, drop activity before
-// chopping identity, and use the pane width instead of a 52-col clamp.
+// chopping identity, stay within the pane on narrow hover trailing, and use
+// the pane width instead of a 52-col clamp.
 // Owner: pure layout
 #[test]
 fn rail_row_layout_assembles_columns() {
@@ -60,6 +61,14 @@ fn rail_row_layout_assembles_columns() {
             width: 18,
             expected: &["  └ ", "very-lon…", "  ", "12s"],
         },
+        Case {
+            name: "narrow hover trailing stays within the pane",
+            identity: &["explorer"],
+            activity: "read",
+            trailing: "⏎ attach · 4s",
+            width: 10,
+            expected: &["  └ ", "  ", "⏎ a…"],
+        },
     ];
     for case in cases {
         let line = RailRow {
@@ -81,6 +90,13 @@ fn rail_row_layout_assembles_columns() {
             .iter()
             .map(|span| span.content.as_ref())
             .collect();
+        let full: String = texts.concat();
+        assert!(
+            display_width(&full) <= case.width,
+            "{}: {full:?} is {} cells",
+            case.name,
+            display_width(&full)
+        );
         assert_eq!(
             &texts[..case.expected.len()],
             case.expected,
@@ -91,12 +107,6 @@ fn rail_row_layout_assembles_columns() {
             texts[case.expected.len()..]
                 .iter()
                 .all(|text| text.chars().all(|ch| ch == ' ')),
-            "{}",
-            case.name
-        );
-        let content: String = texts[1..].concat();
-        assert!(
-            display_width(&content) <= case.width.saturating_sub(display_width("  └ ")),
             "{}",
             case.name
         );
