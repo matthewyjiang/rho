@@ -87,6 +87,112 @@ pub(super) struct ResponseBodies<'a> {
     pub ignored: &'a str,
 }
 
+/// How the shared callback waiter should respond and return.
+pub(super) enum CallbackDecision<T, E> {
+    /// Write the success page and return `Ok(value)`.
+    Success(T),
+    /// Write the failure page and return `Ok(value)`.
+    Failure(T),
+    /// Write the failure page and return `Err(error)`.
+    Invalid(E),
+    /// Write the ignored page and keep waiting.
+    Ignored,
+}
+
+pub(super) enum CallbackWaitError<E> {
+    Accept(io::Error),
+    Invalid(E),
+}
+
+/// Dual-stack loopback bind used by Codex (`127.0.0.1` and `::1` on one port).
+pub(super) struct DualLoopback {
+    ipv4: Option<TcpListener>,
+    ipv6: Option<TcpListener>,
+}
+
+/// Bind IPv4 `127.0.0.1` and IPv6 `::1` on `port`. Succeeds if either stack binds.
+///
+/// When both fail, the IPv4 error is returned, matching the previous Codex binder.
+pub(super) async fn bind_dual_loopback(port: u16) -> io::Result<DualLoopback> {
+    let ipv4 = bind_ipv4(port).await;
+    let ipv6 = bind_ipv6(port).await;
+    match (ipv4, ipv6) {
+        (Ok(ipv4), Ok(ipv6)) => Ok(DualLoopback {
+            ipv4: Some(ipv4),
+            ipv6: Some(ipv6),
+        }),
+        (Ok(ipv4), Err(_)) => Ok(DualLoopback {
+            ipv4: Some(ipv4),
+            ipv6: None,
+        }),
+        (Err(_), Ok(ipv6)) => Ok(DualLoopback {
+            ipv4: None,
+            ipv6: Some(ipv6),
+        }),
+        (Err(ipv4), Err(_)) => Err(ipv4),
+    }
+}
+
+pub(super) async fn bind_ipv6(port: u16) -> io::Result<TcpListener> {
+    TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, port)).await
+}
+
+/// Accept the first connection on either dual-stack listener.
+pub(super) async fn accept_dual(listeners: &DualLoopback) -> io::Result<TcpStream> {
+    match (&listeners.ipv4, &listeners.ipv6) {
+        (Some(ipv4), Some(ipv6)) => {
+            tokio::select! {
+                result = ipv4.accept() => result,
+                result = ipv6.accept() => result,
+            }
+        }
+        (Some(ipv4), None) => ipv4.accept().await,
+        (None, Some(ipv6)) => ipv6.accept().await,
+        (None, None) => {
+            return Err(io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                "no OAuth callback listeners were available",
+            ))
+        }
+    }
+    .map(|(stream, _)| stream)
+}
+
+/// Wait until a callback parse finishes or fails. Probe requests stay ignored.
+pub(super) async fn wait_for_oauth_callback<T, E>(
+    listener: &TcpListener,
+    parse: impl Fn(&str) -> CallbackDecision<T, E>,
+    bodies: ResponseBodies<'_>,
+    timeout: Duration,
+) -> Result<T, CallbackWaitError<E>> {
+    loop {
+        let (mut stream, request) = accept_request(listener, timeout)
+            .await
+            .map_err(CallbackWaitError::Accept)?;
+        let Some(request) = request else {
+            let _ = write_response(&mut stream, ResponseKind::Ignored, bodies).await;
+            continue;
+        };
+        match parse(&request) {
+            CallbackDecision::Success(value) => {
+                let _ = write_response(&mut stream, ResponseKind::Success, bodies).await;
+                return Ok(value);
+            }
+            CallbackDecision::Failure(value) => {
+                let _ = write_response(&mut stream, ResponseKind::Failure, bodies).await;
+                return Ok(value);
+            }
+            CallbackDecision::Invalid(error) => {
+                let _ = write_response(&mut stream, ResponseKind::Failure, bodies).await;
+                return Err(CallbackWaitError::Invalid(error));
+            }
+            CallbackDecision::Ignored => {
+                let _ = write_response(&mut stream, ResponseKind::Ignored, bodies).await;
+            }
+        }
+    }
+}
+
 pub(super) async fn write_response(
     stream: &mut TcpStream,
     kind: ResponseKind,
@@ -97,6 +203,14 @@ pub(super) async fn write_response(
         ResponseKind::Failure => ("400 Bad Request", bodies.failure),
         ResponseKind::Ignored => ("404 Not Found", bodies.ignored),
     };
+    write_http_response(stream, status, body).await
+}
+
+pub(super) async fn write_http_response(
+    stream: &mut TcpStream,
+    status: &str,
+    body: &str,
+) -> io::Result<()> {
     let response = format!(
         "HTTP/1.1 {status}\r\ncontent-type: text/plain; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
         body.len(),
@@ -104,7 +218,7 @@ pub(super) async fn write_response(
     stream.write_all(response.as_bytes()).await
 }
 
-async fn read_http_request(stream: &mut TcpStream) -> io::Result<String> {
+pub(super) async fn read_http_request(stream: &mut TcpStream) -> io::Result<String> {
     let mut request = Vec::new();
     let mut chunk = [0_u8; CHUNK_SIZE];
     loop {

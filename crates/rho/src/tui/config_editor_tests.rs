@@ -7,7 +7,7 @@ use crate::tui::text_input::{TextInput, TextInputTarget};
 #[test]
 fn agent_concurrency_clamps_to_named_max() {
     let mut over_max = ConfigNumberInput::new(ConfigNumberKey::AgentConcurrency, 1);
-    over_max.value = "1000".into();
+    over_max.editor.value = "1000".into();
     assert_eq!(
         over_max.parsed_value().unwrap(),
         crate::config::MAX_AGENT_CONCURRENCY
@@ -22,7 +22,7 @@ fn prompt_history_limit_allows_zero_and_clamps_max() {
     assert_eq!(zero.parsed_value().unwrap(), 0);
 
     let mut over_max = ConfigNumberInput::new(ConfigNumberKey::PromptHistoryLimit, 0);
-    over_max.value = "50000".into();
+    over_max.editor.value = "50000".into();
     assert_eq!(
         over_max.parsed_value().unwrap(),
         crate::config::MAX_PROMPT_HISTORY_LIMIT
@@ -35,8 +35,8 @@ fn number_input_accepts_only_ascii_digits() {
 
     input.insert_text("a1-２3");
 
-    assert_eq!(input.value, "4213");
-    assert_eq!(input.cursor, 4);
+    assert_eq!(input.editor.value, "4213");
+    assert_eq!(input.editor.cursor, 4);
 }
 
 #[test]

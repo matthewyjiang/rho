@@ -88,33 +88,33 @@ impl App {
                 SecretKeyResult::Submit(submission)
             }
             (_, KeyCode::Backspace) => {
-                secret.backspace();
+                secret.editor.backspace();
                 SecretKeyResult::Handled
             }
             (_, KeyCode::Delete) => {
-                secret.delete();
+                secret.editor.delete();
                 SecretKeyResult::Handled
             }
             (_, KeyCode::Left) => {
-                secret.cursor = secret.cursor.saturating_sub(1);
+                secret.editor.move_cursor_left();
                 SecretKeyResult::Handled
             }
             (_, KeyCode::Right) => {
-                secret.cursor = (secret.cursor + 1).min(secret.char_len());
+                secret.editor.move_cursor_right();
                 SecretKeyResult::Handled
             }
             (_, KeyCode::Home) => {
-                secret.cursor = 0;
+                secret.editor.move_cursor_home();
                 SecretKeyResult::Handled
             }
             (_, KeyCode::End) => {
-                secret.cursor = secret.char_len();
+                secret.editor.move_cursor_end();
                 SecretKeyResult::Handled
             }
             (modifiers, KeyCode::Char(ch))
                 if !modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
             {
-                secret.insert_char(ch);
+                secret.editor.insert_char(ch);
                 SecretKeyResult::Handled
             }
             _ => SecretKeyResult::Handled,
@@ -197,7 +197,7 @@ impl App {
                 Ok(true)
             }
             (KeyModifiers::NONE, KeyCode::Backspace) => {
-                self.with_config_number_mut(ConfigNumberInput::backspace);
+                self.with_config_number_mut(|input| input.editor.backspace());
                 Ok(true)
             }
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
@@ -205,19 +205,19 @@ impl App {
                 Ok(true)
             }
             (_, KeyCode::Left) => {
-                self.with_config_number_mut(ConfigNumberInput::move_cursor_left);
+                self.with_config_number_mut(|input| input.editor.move_cursor_left());
                 Ok(true)
             }
             (_, KeyCode::Right) => {
-                self.with_config_number_mut(ConfigNumberInput::move_cursor_right);
+                self.with_config_number_mut(|input| input.editor.move_cursor_right());
                 Ok(true)
             }
             (_, KeyCode::Home) => {
-                self.with_config_number_mut(ConfigNumberInput::move_cursor_home);
+                self.with_config_number_mut(|input| input.editor.move_cursor_home());
                 Ok(true)
             }
             (_, KeyCode::End) => {
-                self.with_config_number_mut(ConfigNumberInput::move_cursor_end);
+                self.with_config_number_mut(|input| input.editor.move_cursor_end());
                 Ok(true)
             }
             (_, KeyCode::Esc) => {

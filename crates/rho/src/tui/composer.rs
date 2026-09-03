@@ -697,7 +697,7 @@ impl App {
         }
         match self.input_ui.composer_mut() {
             ComposerMode::Input => self.insert_pasted_input_text(text),
-            ComposerMode::SecretInput(secret) => secret.insert_text(text),
+            ComposerMode::SecretInput(secret) => secret.editor.insert_text(text),
             ComposerMode::ConfigNumberInput(input) => input.insert_text(text),
             ComposerMode::TextInput(input) => input.editor.insert_text(text),
             ComposerMode::Questionnaire(questionnaire) => {

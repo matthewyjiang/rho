@@ -1,15 +1,13 @@
-use futures_util::StreamExt;
 use serde::Deserialize;
 
 use crate::{
     model::{ModelUsage, ProviderReportedErrorKind},
     protocol::cost::parse_usd_micros,
-    provider_backend::{ModelError, ModelEvent, ModelResponse},
+    provider_backend::{line_stream::collect_line_stream, ModelError, ModelEvent, ModelResponse},
 };
 
 use super::convert::{convert_content_blocks, usage_to_model_usage};
 use super::types::{AnthropicContentBlock, AnthropicUsage};
-use crate::provider_backend::line_decoder::LineDecoder;
 
 const MAX_STREAM_BLOCK_INDEX: usize = 4096;
 
@@ -84,23 +82,10 @@ pub(crate) async fn collect_anthropic_sse_response(
     on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
 ) -> Result<ModelResponse, ModelError> {
     let mut state = AnthropicSseState::default();
-    let mut decoder = LineDecoder::default();
-    let mut stream = response.bytes_stream();
-    let mut idle_deadline = crate::provider_backend::stream_timeout::StreamIdleDeadline::new();
-    loop {
-        let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
-            break;
-        };
-        decoder.push(&chunk?);
-        while let Some(line) = decoder.next_line().map_err(line_decode_error)? {
-            if handle_anthropic_stream_line(line, &mut state, on_event)? {
-                idle_deadline.record_activity();
-            }
-        }
-    }
-    if let Some(line) = decoder.finish().map_err(line_decode_error)? {
-        handle_anthropic_stream_line(line, &mut state, on_event)?;
-    }
+    collect_line_stream(response, line_decode_error, |line| {
+        handle_anthropic_stream_line(line, &mut state, on_event)
+    })
+    .await?;
     state.into_response()
 }
 

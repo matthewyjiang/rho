@@ -4,14 +4,13 @@ use rho_sdk::{
 };
 use {
     crate::app::interactive_presenter::InteractiveToolPresenter,
-    crate::questionnaire::{QuestionnaireAnswer, QuestionnaireQuestionKind, QuestionnaireResponse},
+    crate::questionnaire::{QuestionnaireAnswer, QuestionnaireResponse},
     rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus},
 };
 
 use super::{
     activity::{ActivityPhase, ProviderRetryHint},
     compaction_display::compaction_call_id,
-    questionnaire::{QuestionnaireChoice, QuestionnaireQuestion, QuestionnaireRequest},
 };
 
 pub(super) use super::compaction_display::CompactionUiOutcome;
@@ -442,62 +441,6 @@ pub(super) fn compact_finished_event(outcome: CompactionUiOutcome) -> ViewModelE
         card: outcome.card(),
         image_asset: None,
     }
-}
-
-pub(super) fn questionnaire_request(request: &HostInputRequest) -> QuestionnaireRequest {
-    QuestionnaireRequest {
-        title: (!request.title().is_empty()).then(|| request.title().to_string()),
-        reason: None,
-        questions: request
-            .questions()
-            .iter()
-            .map(|question| {
-                let choices = question
-                    .choices()
-                    .iter()
-                    .map(|choice| {
-                        let mapped = QuestionnaireChoice::new(choice.value(), choice.label());
-                        match choice.description_text() {
-                            Some(description) => mapped.description(description),
-                            None => mapped,
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                QuestionnaireQuestion {
-                    id: question.id().to_string(),
-                    question: question.prompt().to_string(),
-                    header: question.header_text().map(str::to_string),
-                    help: question.help_text().map(str::to_string),
-                    default: question.default_value_ref().cloned(),
-                    default_selection: question.default_selection_mode().into(),
-                    kind: questionnaire_kind(question),
-                    required: question.is_required(),
-                    choices,
-                    allow_other: question.permits_other(),
-                }
-            })
-            .collect(),
-    }
-}
-
-fn questionnaire_kind(question: &rho_sdk::HostQuestion) -> QuestionnaireQuestionKind {
-    match question.selection() {
-        rho_sdk::SelectionMode::Many => QuestionnaireQuestionKind::MultiSelect,
-        rho_sdk::SelectionMode::One if is_yes_no_question(question) => {
-            QuestionnaireQuestionKind::Confirm
-        }
-        rho_sdk::SelectionMode::One => QuestionnaireQuestionKind::Choice,
-        _ => QuestionnaireQuestionKind::Choice,
-    }
-}
-
-fn is_yes_no_question(question: &rho_sdk::HostQuestion) -> bool {
-    matches!(
-        question.choices(),
-        [yes, no]
-            if yes.value().eq_ignore_ascii_case("yes")
-                && no.value().eq_ignore_ascii_case("no")
-    )
 }
 
 pub(super) fn host_response(response: QuestionnaireResponse) -> HostInputResponse {

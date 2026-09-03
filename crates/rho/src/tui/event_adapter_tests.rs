@@ -11,12 +11,11 @@ use rho_tools::tool_card::{
     DiffRow, DiffRowKind, ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus,
 };
 
-use super::{host_response, questionnaire_request, SdkEventAdapter, ViewEvent, ViewModelEvent};
+use super::{host_response, SdkEventAdapter, ViewEvent, ViewModelEvent};
 use crate::{
-    questionnaire::{QuestionnaireQuestionKind, QuestionnaireResponse},
+    questionnaire::QuestionnaireResponse,
     tui::questionnaire::{
-        QuestionnaireChoice, QuestionnaireComposer, QuestionnaireReply,
-        QuestionnaireResponseChannel,
+        is_confirm, QuestionnaireComposer, QuestionnaireReply, QuestionnaireResponseChannel,
     },
 };
 
@@ -638,18 +637,17 @@ fn choice_round_trip_renders_label_and_returns_machine_value() {
     .unwrap()
     .help("Choose one");
     let request = HostInputRequest::questionnaire("Setup", vec![question]).unwrap();
-    let translated = questionnaire_request(&request);
 
-    assert_eq!(translated.title.as_deref(), Some("Setup"));
+    assert_eq!(request.title(), "Setup");
     assert_eq!(
-        translated.questions[0].choices,
-        vec![
-            QuestionnaireChoice::new("rust", "Rust").description("Strong type and memory safety"),
-            QuestionnaireChoice::new("go", "Go"),
+        request.questions()[0].choices(),
+        [
+            HostChoice::new("rust", "Rust").description("Strong type and memory safety"),
+            HostChoice::new("go", "Go"),
         ]
     );
 
-    let (response, display) = submit(translated, |composer| composer.toggle_active_choice());
+    let (response, display) = submit(request.clone(), |composer| composer.toggle_active_choice());
     let host = host_response(response);
 
     assert_eq!(display, "Rust");
@@ -674,18 +672,17 @@ fn focused_default_round_trips_without_preselecting() {
     .default_value(serde_json::json!("extend"))
     .default_selection(DefaultSelection::Focused);
     let request = HostInputRequest::questionnaire("Prompt", vec![question]).unwrap();
-    let translated = questionnaire_request(&request);
 
     assert_eq!(
-        translated.questions[0].default_selection,
-        crate::questionnaire::QuestionnaireDefaultSelection::Focused
+        request.questions()[0].default_selection_mode(),
+        DefaultSelection::Focused
     );
     assert_eq!(
-        translated.questions[0].default,
-        Some(serde_json::json!("extend"))
+        request.questions()[0].default_value_ref(),
+        Some(&serde_json::json!("extend"))
     );
 
-    let (response, display) = submit(translated, |composer| composer.toggle_active_choice());
+    let (response, display) = submit(request.clone(), |composer| composer.toggle_active_choice());
     let host = host_response(response);
 
     assert_eq!(display, "extend");
@@ -703,14 +700,10 @@ fn yes_no_round_trip_preserves_confirm_semantics_and_values() {
     )
     .unwrap();
     let request = HostInputRequest::questionnaire("Confirm", vec![question]).unwrap();
-    let translated = questionnaire_request(&request);
 
-    assert_eq!(
-        translated.questions[0].kind,
-        QuestionnaireQuestionKind::Confirm
-    );
+    assert!(is_confirm(&request.questions()[0]));
 
-    let (response, display) = submit(translated, |composer| composer.toggle_active_choice());
+    let (response, display) = submit(request.clone(), |composer| composer.toggle_active_choice());
     let host = host_response(response);
 
     assert_eq!(display, "Yes");
@@ -729,9 +722,8 @@ fn optional_unanswered_round_trip_omits_the_answer() {
     .unwrap()
     .optional();
     let request = HostInputRequest::questionnaire("Optional", vec![question]).unwrap();
-    let translated = questionnaire_request(&request);
 
-    let (response, _display) = submit(translated, |_| {});
+    let (response, _display) = submit(request.clone(), |_| {});
     let host = host_response(response);
 
     assert!(host.answers().is_empty());
@@ -751,9 +743,8 @@ fn multi_select_round_trip_renders_labels_and_returns_values() {
     )
     .unwrap();
     let request = HostInputRequest::questionnaire("Tests", vec![question]).unwrap();
-    let translated = questionnaire_request(&request);
 
-    let (response, display) = submit(translated, |composer| {
+    let (response, display) = submit(request.clone(), |composer| {
         composer.toggle_active_choice();
         composer.move_active_choice_next();
         composer.toggle_active_choice();
@@ -766,7 +757,7 @@ fn multi_select_round_trip_renders_labels_and_returns_values() {
 }
 
 fn submit(
-    request: crate::tui::questionnaire::QuestionnaireRequest,
+    request: HostInputRequest,
     interact: impl FnOnce(&mut QuestionnaireComposer),
 ) -> (QuestionnaireResponse, String) {
     let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();

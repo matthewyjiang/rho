@@ -1,16 +1,19 @@
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
-use tokio::time::sleep;
 
 use crate::{credentials::GitHubCopilotTokens, model::TransportError};
+
+use super::device_code::{
+    poll_device_token, standard_device_poll_step, DeviceCodeResponse, DevicePollHttp,
+    DevicePollOutcome, DevicePollRequest, DevicePollStep, FirstPoll,
+};
 
 const CLIENT_ID: &str = "Iv1.b507a08c87ecfe98";
 const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 const TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 const DEFAULT_SCOPE: &str = "read:user";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(5);
-const SLOW_DOWN_INCREMENT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
@@ -55,18 +58,6 @@ impl From<reqwest::Error> for GitHubCopilotDeviceError {
     fn from(error: reqwest::Error) -> Self {
         Self::Request(TransportError::from_reqwest(error))
     }
-}
-
-#[derive(Deserialize)]
-struct DeviceCodeResponse {
-    device_code: Option<String>,
-    user_code: Option<String>,
-    verification_uri: Option<String>,
-    verification_uri_complete: Option<String>,
-    expires_in: Option<u64>,
-    interval: Option<u64>,
-    error: Option<String>,
-    error_description: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -156,64 +147,74 @@ async fn complete_github_copilot_device_login_with_endpoint(
     login: GitHubCopilotDeviceLogin,
     endpoint: &str,
 ) -> Result<GitHubCopilotTokens, GitHubCopilotDeviceError> {
-    let deadline = Instant::now() + login.expires_in;
-    let mut interval = login.interval;
-
-    loop {
-        if Instant::now() >= deadline {
-            return Err(GitHubCopilotDeviceError::Timeout);
-        }
-        sleep(interval).await;
-
-        let response: TokenResponse = client
-            .post(endpoint)
-            .header("Accept", "application/json")
-            .header("User-Agent", crate::rho_user_agent())
-            .form(&[
-                ("client_id", CLIENT_ID),
-                ("device_code", login.device_code.as_str()),
-                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-            ])
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-
-        if let Some(access_token) = response.access_token {
-            return Ok(GitHubCopilotTokens {
-                github_access_token: access_token,
-                github_refresh_token: response.refresh_token,
-                github_expires_at_unix: response
-                    .expires_in
-                    .map(|seconds| now_unix_seconds() + seconds),
-                copilot_token: None,
-                copilot_expires_at_unix: None,
-                copilot_refresh_after_unix: None,
-                copilot_token_endpoint: None,
-                copilot_chat_endpoint: None,
-                copilot_models_endpoint: None,
-            });
-        }
-
-        match response.error.as_deref() {
-            Some("authorization_pending") => {}
-            Some("slow_down") => interval += SLOW_DOWN_INCREMENT,
-            Some("expired_token") => return Err(GitHubCopilotDeviceError::Timeout),
-            Some("access_denied") => {
-                return Err(GitHubCopilotDeviceError::OAuthDenied(
-                    response
+    let form = [
+        ("client_id", CLIENT_ID),
+        ("device_code", login.device_code.as_str()),
+        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+    ];
+    let user_agent = crate::rho_user_agent();
+    let extra_headers = [
+        ("Accept", "application/json"),
+        ("User-Agent", user_agent.as_str()),
+    ];
+    match poll_device_token(
+        DevicePollRequest {
+            client,
+            endpoint,
+            form: &form,
+            extra_headers: &extra_headers,
+            expires_in: login.expires_in,
+            interval: login.interval,
+            first_poll: FirstPoll::AfterInterval,
+            http: DevicePollHttp::ErrorForStatus,
+        },
+        |_status, body: TokenResponse| {
+            if body.access_token.is_some() {
+                return DevicePollStep::Tokens(body);
+            }
+            if let Some(step) = standard_device_poll_step(body.error.as_deref()) {
+                return step;
+            }
+            match body.error.as_deref() {
+                Some("access_denied") => DevicePollStep::Denied {
+                    description: body
                         .error_description
                         .unwrap_or_else(|| "access denied".into()),
-                ));
+                },
+                Some(error) => DevicePollStep::Denied {
+                    description: body.error_description.unwrap_or_else(|| error.into()),
+                },
+                None => DevicePollStep::Fatal {
+                    error: "access_token".into(),
+                },
             }
-            Some(error) => {
-                return Err(GitHubCopilotDeviceError::OAuthDenied(
-                    response.error_description.unwrap_or_else(|| error.into()),
-                ));
-            }
-            None => return Err(GitHubCopilotDeviceError::MissingField("access_token")),
+        },
+    )
+    .await?
+    {
+        DevicePollOutcome::Tokens(response) => Ok(GitHubCopilotTokens {
+            github_access_token: response
+                .access_token
+                .ok_or(GitHubCopilotDeviceError::MissingField("access_token"))?,
+            github_refresh_token: response.refresh_token,
+            github_expires_at_unix: response
+                .expires_in
+                .map(|seconds| now_unix_seconds() + seconds),
+            copilot_token: None,
+            copilot_expires_at_unix: None,
+            copilot_refresh_after_unix: None,
+            copilot_token_endpoint: None,
+            copilot_chat_endpoint: None,
+            copilot_models_endpoint: None,
+        }),
+        DevicePollOutcome::Denied { description } => {
+            Err(GitHubCopilotDeviceError::OAuthDenied(description))
         }
+        DevicePollOutcome::Timeout => Err(GitHubCopilotDeviceError::Timeout),
+        DevicePollOutcome::Fatal { error } if error == "access_token" => {
+            Err(GitHubCopilotDeviceError::MissingField("access_token"))
+        }
+        DevicePollOutcome::Fatal { error } => Err(GitHubCopilotDeviceError::OAuthDenied(error)),
     }
 }
 

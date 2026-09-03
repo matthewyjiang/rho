@@ -2,14 +2,14 @@ use crate::protocol::openai_chat::{
     convert_openai_response, invalid_stream_utf8, response_without_stream_context,
     to_openai_message_for_target, to_openai_tool, ChatStreamAccumulator, ChatToolCallPolicy,
 };
-use futures_util::StreamExt;
 use reqwest::StatusCode;
 
 use crate::{
     auth::github_copilot_token::{GitHubCopilotAuthManager, GitHubCopilotAuthMaterial},
     model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
     protocol::openai_chat::{ChatRequest, ChatResponse, ChatStreamOptions},
-    provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
+    provider_backend::line_stream::collect_line_stream,
+    providers::responses_http::post_with_optional_refresh,
 };
 
 #[cfg(test)]
@@ -145,21 +145,25 @@ impl GitHubCopilotProvider {
         >,
     ) -> Result<reqwest::Response, ModelError> {
         let response = self.send_chat_once(&body, &auth).await?;
-        if response.status() != StatusCode::UNAUTHORIZED {
-            return Ok(response);
-        }
-        if let Some(refreshed) = self.auth.force_refresh(&self.client).await? {
-            if let Some(on_request_event) = on_request_event {
-                on_request_event(
-                    rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
-                        kind: rho_sdk::ProviderErrorKind::Authentication,
-                        usage: ModelUsage::default(),
-                    },
-                )?;
-            }
-            return self.send_chat_once(&body, &refreshed).await;
-        }
-        Ok(response)
+        post_with_optional_refresh(
+            response,
+            || self.auth.force_refresh(&self.client),
+            || {
+                if let Some(on_request_event) = on_request_event {
+                    on_request_event(
+                        rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
+                            kind: rho_sdk::ProviderErrorKind::Authentication,
+                            usage: ModelUsage::default(),
+                        },
+                    )?;
+                }
+                Ok(())
+            },
+            |refreshed| async move { self.send_chat_once(&body, &refreshed).await },
+            None,
+        )
+        .await
+        .response
     }
 }
 
@@ -215,24 +219,10 @@ impl GitHubCopilotProvider {
         let response = error_for_status(response).await?;
 
         let mut chat_stream = ChatStreamAccumulator::default();
-        let mut decoder = LineDecoder::default();
-        let mut stream = response.bytes_stream();
-        let mut idle_deadline = StreamIdleDeadline::new();
-        loop {
-            let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
-                break;
-            };
-            decoder.push(&chunk?);
-            while let Some(line) = decoder.next_line().map_err(invalid_stream_utf8)? {
-                if chat_stream.handle_line(line, on_event)? {
-                    idle_deadline.record_activity();
-                }
-            }
-        }
-        if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
-            chat_stream.handle_line(line, on_event)?;
-        }
-
+        collect_line_stream(response, invalid_stream_utf8, |line| {
+            chat_stream.handle_line(line, on_event)
+        })
+        .await?;
         chat_stream.finish(on_event)
     }
 }

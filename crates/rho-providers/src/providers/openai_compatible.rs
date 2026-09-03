@@ -1,6 +1,3 @@
-use futures_util::StreamExt;
-use reqwest::StatusCode;
-
 #[path = "openai_compatible/reasoning.rs"]
 mod reasoning;
 
@@ -15,7 +12,8 @@ use crate::{
         to_openai_message_for_target, to_openai_tool, ChatRequest, ChatResponse,
         ChatStreamAccumulator, ChatStreamOptions,
     },
-    provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
+    provider_backend::line_stream::collect_line_stream,
+    providers::responses_http::post_with_optional_refresh,
 };
 
 pub enum CompatibleAuth {
@@ -102,23 +100,10 @@ impl OpenAiCompatibleProvider {
             .hidden_reasoning_risk(&self.model, reasoning_level);
         let mut chat_stream =
             ChatStreamAccumulator::new(self.dialect.chat_tool_call_policy(), hidden_reasoning_risk);
-        let mut decoder = LineDecoder::default();
-        let mut stream = response.bytes_stream();
-        let mut idle_deadline = StreamIdleDeadline::new();
-        loop {
-            let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
-                break;
-            };
-            decoder.push(&chunk?);
-            while let Some(line) = decoder.next_line().map_err(invalid_stream_utf8)? {
-                if chat_stream.handle_line(line, on_event)? {
-                    idle_deadline.record_activity();
-                }
-            }
-        }
-        if let Some(line) = decoder.finish().map_err(invalid_stream_utf8)? {
-            chat_stream.handle_line(line, on_event)?;
-        }
+        collect_line_stream(response, invalid_stream_utf8, |line| {
+            chat_stream.handle_line(line, on_event)
+        })
+        .await?;
         chat_stream.finish(on_event)
     }
 
@@ -177,22 +162,28 @@ impl OpenAiCompatibleProvider {
             CompatibleAuth::KimiOAuth(auth) => {
                 let token = auth.access_token().await?;
                 let response = self.send_request(body, RequestAuth::Bearer(&token)).await?;
-                if response.status() != StatusCode::UNAUTHORIZED {
-                    return Ok(response);
-                }
-                let Some(refreshed) = auth.force_refresh(&token).await? else {
-                    return Ok(response);
-                };
-                if let Some(on_request_event) = on_request_event {
-                    on_request_event(
-                        rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
-                            kind: rho_sdk::ProviderErrorKind::Authentication,
-                            usage: ModelUsage::default(),
-                        },
-                    )?;
-                }
-                self.send_request(body, RequestAuth::Bearer(&refreshed))
-                    .await
+                post_with_optional_refresh(
+                    response,
+                    || auth.force_refresh(&token),
+                    || {
+                        if let Some(on_request_event) = on_request_event {
+                            on_request_event(
+                                rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
+                                    kind: rho_sdk::ProviderErrorKind::Authentication,
+                                    usage: ModelUsage::default(),
+                                },
+                            )?;
+                        }
+                        Ok(())
+                    },
+                    |refreshed| async move {
+                        self.send_request(body, RequestAuth::Bearer(&refreshed))
+                            .await
+                    },
+                    None,
+                )
+                .await
+                .response
             }
             CompatibleAuth::OllamaDevice(key) => {
                 self.send_request(body, RequestAuth::OllamaDevice(key))

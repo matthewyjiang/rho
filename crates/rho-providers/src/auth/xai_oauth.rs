@@ -1,17 +1,18 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use tokio::{
-    net::TcpListener,
-    time::{sleep, timeout, Instant},
-};
+use tokio::{net::TcpListener, time::timeout};
 use url::Url;
 
 use crate::{credentials::XaiTokens, model::TransportError};
 
+use super::device_code::{
+    poll_device_token, standard_device_poll_step, DeviceCodeResponse, DevicePollHttp,
+    DevicePollOutcome, DevicePollRequest, DevicePollStep, FirstPoll,
+};
 use super::loopback::{
-    accept_request, bind_loopback, pkce_challenge, random_token, write_response, LoopbackBindError,
-    ResponseBodies, ResponseKind,
+    bind_loopback, pkce_challenge, random_token, wait_for_oauth_callback, CallbackDecision,
+    CallbackWaitError, LoopbackBindError, ResponseBodies,
 };
 
 pub(crate) const CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
@@ -26,7 +27,6 @@ const CALLBACK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const CALLBACK_READ_TIMEOUT: Duration = Duration::from_secs(2);
 const DEFAULT_DEVICE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_DEVICE_POLL_INTERVAL: Duration = Duration::from_secs(5);
-const SLOW_DOWN_INCREMENT: Duration = Duration::from_secs(5);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
@@ -129,18 +129,6 @@ struct TokenResponse {
     refresh_token: Option<String>,
     id_token: Option<String>,
     expires_in: Option<u64>,
-    error: Option<String>,
-    error_description: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct DeviceCodeResponse {
-    device_code: Option<String>,
-    user_code: Option<String>,
-    verification_uri: Option<String>,
-    verification_uri_complete: Option<String>,
-    expires_in: Option<u64>,
-    interval: Option<u64>,
     error: Option<String>,
     error_description: Option<String>,
 }
@@ -278,45 +266,31 @@ async fn wait_for_callback(
     listener: &TcpListener,
     expected_state: &str,
 ) -> Result<CallbackOutcome, XaiOAuthError> {
-    wait_for_callback_with_read_timeout(listener, expected_state, CALLBACK_READ_TIMEOUT).await
-}
-
-async fn wait_for_callback_with_read_timeout(
-    listener: &TcpListener,
-    expected_state: &str,
-    read_timeout: Duration,
-) -> Result<CallbackOutcome, XaiOAuthError> {
     const BODIES: ResponseBodies<'static> = ResponseBodies {
         success: "xAI login complete. You can return to Rho.",
         failure: "xAI login failed. You can return to Rho for details.",
         ignored: "Not found",
     };
-    loop {
-        let (mut stream, request) = accept_request(listener, read_timeout)
-            .await
-            .map_err(XaiOAuthError::CallbackIo)?;
-        let Some(request) = request else {
-            let _ = write_response(&mut stream, ResponseKind::Ignored, BODIES).await;
-            continue;
-        };
-        match parse_callback_http_request(&request, expected_state) {
-            CallbackParse::Outcome(outcome) => {
-                let kind = match &outcome {
-                    CallbackOutcome::Code(_) => ResponseKind::Success,
-                    CallbackOutcome::Error(_) => ResponseKind::Failure,
-                };
-                let _ = write_response(&mut stream, kind, BODIES).await;
-                return Ok(outcome);
+    wait_for_oauth_callback(
+        listener,
+        |request| match parse_callback_http_request(request, expected_state) {
+            CallbackParse::Outcome(CallbackOutcome::Code(code)) => {
+                CallbackDecision::Success(CallbackOutcome::Code(code))
             }
-            CallbackParse::Ignored => {
-                let _ = write_response(&mut stream, ResponseKind::Ignored, BODIES).await;
+            CallbackParse::Outcome(CallbackOutcome::Error(error)) => {
+                CallbackDecision::Failure(CallbackOutcome::Error(error))
             }
-            CallbackParse::Invalid(err) => {
-                let _ = write_response(&mut stream, ResponseKind::Failure, BODIES).await;
-                return Err(err);
-            }
-        }
-    }
+            CallbackParse::Ignored => CallbackDecision::Ignored,
+            CallbackParse::Invalid(error) => CallbackDecision::Invalid(error),
+        },
+        BODIES,
+        CALLBACK_READ_TIMEOUT,
+    )
+    .await
+    .map_err(|error| match error {
+        CallbackWaitError::Accept(error) => XaiOAuthError::CallbackIo(error),
+        CallbackWaitError::Invalid(error) => error,
+    })
 }
 
 #[derive(Debug)]
@@ -496,47 +470,51 @@ async fn complete_xai_device_login_with_endpoint(
     login: XaiDeviceLogin,
     endpoint: &str,
 ) -> Result<XaiTokens, XaiOAuthError> {
-    let deadline = Instant::now() + login.expires_in;
-    let mut interval = login.interval;
-    while Instant::now() < deadline {
-        let response = client
-            .post(endpoint)
-            .form(&[
-                ("grant_type", DEVICE_CODE_GRANT_TYPE),
-                ("client_id", CLIENT_ID),
-                ("device_code", login.device_code.as_str()),
-            ])
-            .send()
-            .await?;
-        let status = response.status();
-        let body = response.json::<TokenResponse>().await?;
-        if status.is_success() {
-            return tokens_from_response(body);
-        }
-        match body.error.as_deref() {
-            Some("authorization_pending") => {}
-            Some("slow_down") => interval += SLOW_DOWN_INCREMENT,
-            Some("access_denied" | "authorization_denied") => {
-                return Err(XaiOAuthError::OAuthDenied(
-                    body.error_description
+    let form = [
+        ("grant_type", DEVICE_CODE_GRANT_TYPE),
+        ("client_id", CLIENT_ID),
+        ("device_code", login.device_code.as_str()),
+    ];
+    match poll_device_token(
+        DevicePollRequest {
+            client,
+            endpoint,
+            form: &form,
+            extra_headers: &[],
+            expires_in: login.expires_in,
+            interval: login.interval,
+            first_poll: FirstPoll::Immediate,
+            http: DevicePollHttp::Json,
+        },
+        |status, body: TokenResponse| {
+            if status.is_success() {
+                return DevicePollStep::Tokens(body);
+            }
+            if let Some(step) = standard_device_poll_step(body.error.as_deref()) {
+                return step;
+            }
+            match body.error.as_deref() {
+                Some("access_denied" | "authorization_denied") => DevicePollStep::Denied {
+                    description: body
+                        .error_description
                         .unwrap_or_else(|| "access denied".into()),
-                ));
+                },
+                Some(error) => DevicePollStep::Fatal {
+                    error: body.error_description.unwrap_or_else(|| error.to_string()),
+                },
+                None => DevicePollStep::Fatal {
+                    error: format!("token endpoint returned HTTP {status} without an OAuth error"),
+                },
             }
-            Some("expired_token") => return Err(XaiOAuthError::DeviceTimeout),
-            Some(error) => {
-                return Err(XaiOAuthError::DeviceSetup(
-                    body.error_description.unwrap_or_else(|| error.to_string()),
-                ));
-            }
-            None => {
-                return Err(XaiOAuthError::DeviceSetup(format!(
-                    "token endpoint returned HTTP {status} without an OAuth error"
-                )));
-            }
-        }
-        sleep(interval).await;
+        },
+    )
+    .await?
+    {
+        DevicePollOutcome::Tokens(body) => tokens_from_response(body),
+        DevicePollOutcome::Denied { description } => Err(XaiOAuthError::OAuthDenied(description)),
+        DevicePollOutcome::Timeout => Err(XaiOAuthError::DeviceTimeout),
+        DevicePollOutcome::Fatal { error } => Err(XaiOAuthError::DeviceSetup(error)),
     }
-    Err(XaiOAuthError::DeviceTimeout)
 }
 
 fn tokens_from_response(response: TokenResponse) -> Result<XaiTokens, XaiOAuthError> {

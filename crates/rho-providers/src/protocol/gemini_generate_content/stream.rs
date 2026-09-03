@@ -1,8 +1,6 @@
-use futures_util::StreamExt;
-
 use crate::{
     model::{ModelError, ModelEvent, ModelResponse},
-    provider_backend::{line_decoder::LineDecoder, stream_timeout::StreamIdleDeadline},
+    provider_backend::line_stream::collect_line_stream,
 };
 
 use super::{GenerateContentResponse, ResponseCollector};
@@ -12,44 +10,12 @@ pub async fn collect_stream(
     on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
 ) -> Result<ModelResponse, ModelError> {
     let mut collector = ResponseCollector::default();
-    let mut lines = LineDecoder::default();
     let mut events = SseEventDecoder::default();
-    let mut stream = response.bytes_stream();
-    let mut idle = StreamIdleDeadline::new();
-    loop {
-        let Some(chunk) = idle
-            .wait_for(stream.next())
-            .await
-            .map_err(|error| stream_error(&collector, error))?
-        else {
-            break;
-        };
-        let chunk = chunk
-            .map_err(ModelError::from)
-            .map_err(|error| stream_error(&collector, error))?;
-        lines.push(&chunk);
-        while let Some(line) = lines
-            .next_line()
-            .map_err(line_decode_error)
-            .map_err(|error| stream_error(&collector, error))?
-        {
-            if events
-                .apply_line(line, &mut collector, on_event)
-                .map_err(|error| stream_error(&collector, error))?
-            {
-                idle.record_activity();
-            }
-        }
-    }
-    if let Some(line) = lines
-        .finish()
-        .map_err(line_decode_error)
-        .map_err(|error| stream_error(&collector, error))?
-    {
-        events
-            .apply_line(line, &mut collector, on_event)
-            .map_err(|error| stream_error(&collector, error))?;
-    }
+    collect_line_stream(response, line_decode_error, |line| {
+        events.apply_line(line, &mut collector, on_event)
+    })
+    .await
+    .map_err(|error| stream_error(&collector, error))?;
     events
         .finish(&mut collector, on_event)
         .map_err(|error| stream_error(&collector, error))?;

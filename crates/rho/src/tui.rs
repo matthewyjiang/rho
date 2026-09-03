@@ -39,6 +39,7 @@ mod config_actions;
 mod config_editor;
 mod config_input;
 mod config_picker;
+mod config_row;
 mod context_handoff;
 mod copy_interaction;
 mod divider;
@@ -229,8 +230,6 @@ use picker::{
 };
 use process_panel::ProcessPanel;
 use prompt_turn::FailedTurn;
-#[cfg(test)]
-use questionnaire::QuestionnaireComposer;
 use questionnaire::{
     questionnaire_cursor_position, questionnaire_lines, questionnaire_notice_text,
     QuestionAnswerRequest, QuestionnaireReply, QuestionnaireResponseChannel,

@@ -1,43 +1,39 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use rho_sdk::{HostChoice, HostInputRequest, HostQuestion, SelectionMode};
 
 use crate::{
-    questionnaire::{
-        QuestionnaireAnswer, QuestionnaireDefaultSelection, QuestionnaireQuestionKind,
-        QuestionnaireResponse,
-    },
-    tui::questionnaire::{QuestionnaireQuestion, QuestionnaireRequest},
+    questionnaire::{QuestionnaireAnswer, QuestionnaireResponse},
+    tui::questionnaire::QuestionnaireComposer,
 };
 
 use super::*;
 
-fn choice_question(id: &str) -> QuestionnaireQuestion {
-    QuestionnaireQuestion {
-        id: id.into(),
-        question: format!("{id}?"),
-        header: None,
-        help: None,
-        default: None,
-        default_selection: QuestionnaireDefaultSelection::Selected,
-        kind: QuestionnaireQuestionKind::Choice,
-        required: true,
-        choices: vec!["alpha".into(), "beta".into()],
-        allow_other: false,
-    }
+fn choice(label: &str) -> HostChoice {
+    HostChoice::new(label, label)
 }
 
-fn confirm_question(id: &str) -> QuestionnaireQuestion {
-    QuestionnaireQuestion {
-        id: id.into(),
-        question: format!("{id}?"),
-        header: None,
-        help: None,
-        default: None,
-        default_selection: QuestionnaireDefaultSelection::Selected,
-        kind: QuestionnaireQuestionKind::Confirm,
-        required: true,
-        choices: Vec::new(),
-        allow_other: false,
-    }
+fn choice_question(id: &str) -> HostQuestion {
+    HostQuestion::new(
+        id,
+        format!("{id}?"),
+        vec![choice("alpha"), choice("beta")],
+        SelectionMode::One,
+    )
+    .unwrap()
+}
+
+fn confirm_question(id: &str) -> HostQuestion {
+    HostQuestion::new(
+        id,
+        format!("{id}?"),
+        vec![HostChoice::new("yes", "yes"), HostChoice::new("no", "no")],
+        SelectionMode::One,
+    )
+    .unwrap()
+}
+
+fn host_request(questions: Vec<HostQuestion>) -> HostInputRequest {
+    HostInputRequest::questionnaire("", questions).unwrap()
 }
 
 #[test]
@@ -46,11 +42,7 @@ fn enter_advances_questions_and_submits_only_on_the_last() {
     let mut app = test_app();
     app.input_ui
         .set_composer(ComposerMode::Questionnaire(QuestionnaireComposer::new(
-            QuestionnaireRequest {
-                title: None,
-                reason: None,
-                questions: vec![choice_question("first"), confirm_question("second")],
-            },
+            host_request(vec![choice_question("first"), confirm_question("second")]),
             QuestionnaireResponseChannel::new(reply_tx),
         )));
     let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
@@ -90,11 +82,7 @@ fn resolving_questionnaire_clears_preexisting_shell_mode() {
             .set_shell_mode(Some(InlineShellMode::ExcludeFromContext));
         app.input_ui
             .set_composer(ComposerMode::Questionnaire(QuestionnaireComposer::new(
-                QuestionnaireRequest {
-                    title: None,
-                    reason: None,
-                    questions: vec![choice_question("choice")],
-                },
+                host_request(vec![choice_question("choice")]),
                 QuestionnaireResponseChannel::new(reply_tx),
             )));
 

@@ -2,19 +2,14 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::{
-    questionnaire::{QuestionnaireDefaultSelection, QuestionnaireQuestionKind},
-    tui::{
-        goal::GoalState,
-        inline_shell::{InlineShellMode, PendingShellTask},
-        questionnaire::{
-            QuestionnaireComposer, QuestionnaireQuestion, QuestionnaireRequest,
-            QuestionnaireResponseChannel,
-        },
-        tests::test_app,
-        App, PickerItem, QueuedPrompt, UiPicker,
-    },
+use crate::tui::{
+    goal::GoalState,
+    inline_shell::{InlineShellMode, PendingShellTask},
+    questionnaire::{QuestionnaireComposer, QuestionnaireResponseChannel},
+    tests::test_app,
+    App, PickerItem, QueuedPrompt, UiPicker,
 };
+use rho_sdk::{HostChoice, HostInputRequest, HostQuestion, SelectionMode};
 
 fn follow_up(text: &str) -> QueuedPrompt {
     QueuedPrompt {
@@ -56,22 +51,20 @@ fn model_picker() -> UiPicker {
 fn questionnaire_composer() -> QuestionnaireComposer {
     let (reply_tx, _reply_rx) = tokio::sync::oneshot::channel();
     QuestionnaireComposer::new(
-        QuestionnaireRequest {
-            title: None,
-            reason: None,
-            questions: vec![QuestionnaireQuestion {
-                id: "choice".into(),
-                question: "choice?".into(),
-                header: None,
-                help: None,
-                default: None,
-                default_selection: QuestionnaireDefaultSelection::Selected,
-                kind: QuestionnaireQuestionKind::Choice,
-                required: true,
-                choices: vec!["alpha".into(), "beta".into()],
-                allow_other: false,
-            }],
-        },
+        HostInputRequest::questionnaire(
+            "",
+            vec![HostQuestion::new(
+                "choice",
+                "choice?",
+                vec![
+                    HostChoice::new("alpha", "alpha"),
+                    HostChoice::new("beta", "beta"),
+                ],
+                SelectionMode::One,
+            )
+            .unwrap()],
+        )
+        .unwrap(),
         QuestionnaireResponseChannel::new(reply_tx),
     )
 }

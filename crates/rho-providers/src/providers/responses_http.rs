@@ -141,6 +141,51 @@ fn authentication_failed_attempt() -> Vec<ResponsesFailedAttempt> {
     }]
 }
 
+/// After a completed POST, refresh once on `401` and retry.
+///
+/// `refresh` returning `Ok(None)` means the `401` is final and records no
+/// failed attempt. `Ok(Some(auth))` records an authentication failed
+/// attempt, runs `before_retry`, then retries once. `before_retry` errors
+/// keep that attempt and skip the retry POST. `refresh` `Err` (including
+/// cancel) keeps the attempt and does not retry.
+pub(crate) async fn post_with_optional_refresh<Auth, F, Fut, N, R, RFut>(
+    response: reqwest::Response,
+    refresh: F,
+    before_retry: N,
+    retry: R,
+    cancellation: Option<&rho_sdk::CancellationToken>,
+) -> ResponsesHttpResult
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<Option<Auth>, ModelError>> + Send,
+    N: FnOnce() -> Result<(), ModelError>,
+    R: FnOnce(Auth) -> RFut,
+    RFut: Future<Output = Result<reqwest::Response, ModelError>> + Send,
+{
+    if response.status() != reqwest::StatusCode::UNAUTHORIZED {
+        return ResponsesHttpResult::ok(response);
+    }
+
+    match cancel_aware(cancellation, refresh()).await {
+        Ok(None) => ResponsesHttpResult::ok(response),
+        Ok(Some(refreshed)) => {
+            let failed_attempts = authentication_failed_attempt();
+            if let Err(error) = before_retry() {
+                return ResponsesHttpResult::err(error).with_failed_attempts(failed_attempts);
+            }
+            match retry(refreshed).await {
+                Ok(response) => {
+                    ResponsesHttpResult::ok(response).with_failed_attempts(failed_attempts)
+                }
+                Err(error) => ResponsesHttpResult::err(error).with_failed_attempts(failed_attempts),
+            }
+        }
+        Err(error) => {
+            ResponsesHttpResult::err(error).with_failed_attempts(authentication_failed_attempt())
+        }
+    }
+}
+
 /// Shared Responses HTTP client used by API-key turns, Codex HTTP fallback,
 /// xAI turns, and compact.
 pub(crate) struct ResponsesHttpTransport<'a> {
@@ -169,11 +214,8 @@ impl<'a> ResponsesHttpTransport<'a> {
 
     /// Posts JSON and, on `401`, invokes `refresh` once.
     ///
-    /// `refresh` returning `Ok(None)` means the `401` is final and records no
-    /// failed attempt. `Ok(Some(auth))` records an authentication failed
-    /// attempt, runs `before_retry`, then retries once. `before_retry` errors
-    /// keep that attempt and skip the retry POST. `refresh` `Err` (including
-    /// cancel) keeps the attempt and does not retry.
+    /// See [`post_with_optional_refresh`] for the retry contract. Credential
+    /// policy stays with the caller.
     pub(crate) async fn post_json_refreshing<F, Fut, N>(
         &self,
         auth: &ResponsesHttpAuth,
@@ -192,24 +234,18 @@ impl<'a> ResponsesHttpTransport<'a> {
             Ok(response) => response,
             Err(error) => return ResponsesHttpResult::err(error),
         };
-        if response.status() != reqwest::StatusCode::UNAUTHORIZED {
-            return ResponsesHttpResult::ok(response);
-        }
-
-        match cancel_aware(cancellation, refresh()).await {
-            Ok(None) => ResponsesHttpResult::ok(response),
-            Ok(Some(refreshed)) => {
-                let failed_attempts = authentication_failed_attempt();
-                if let Err(error) = before_retry() {
-                    return ResponsesHttpResult::err(error).with_failed_attempts(failed_attempts);
-                }
+        post_with_optional_refresh(
+            response,
+            refresh,
+            before_retry,
+            |refreshed| async move {
                 self.post_json(&refreshed, endpoint, body, cancellation)
                     .await
-                    .with_failed_attempts(failed_attempts)
-            }
-            Err(error) => ResponsesHttpResult::err(error)
-                .with_failed_attempts(authentication_failed_attempt()),
-        }
+                    .response
+            },
+            cancellation,
+        )
+        .await
     }
 
     fn build_request(

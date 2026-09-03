@@ -570,7 +570,7 @@ fn secret_input_masks_api_key() {
     let mut app = test_app();
     let target = catalog::login_target_for_provider("openai").unwrap();
     let mut secret = SecretInput::new(target);
-    secret.insert_text("sk-secret-value");
+    secret.editor.insert_text("sk-secret-value");
     app.input_ui.set_composer(ComposerMode::SecretInput(secret));
 
     let rendered = app

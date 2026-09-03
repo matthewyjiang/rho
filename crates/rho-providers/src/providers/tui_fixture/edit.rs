@@ -8,19 +8,33 @@ use rho_sdk::{
 
 use super::{completed_tool_call, fixture_sleep, tool_result};
 
-pub(super) const PROMPT: &str = "fixture edit";
-pub(super) const CANCEL_PROMPT: &str = "fixture cancel edit";
+const PROMPT: &str = "fixture edit";
+const CANCEL_PROMPT: &str = "fixture cancel edit";
 const CALL_ID: &str = "tui-fixture-edit";
 const CANCEL_CALL_ID: &str = "tui-fixture-cancel-edit";
 const ORIGINAL: &str = "original line\n";
 // FNV-1a tag for ORIGINAL via rho_tools::hashline::compute_file_hash.
 const ORIGINAL_TAG: &str = "8022";
 
-pub(super) fn is_pending(request: &ModelRequest<'_>) -> bool {
+pub(super) async fn intercept(
+    prompt: &str,
+    request: &ModelRequest<'_>,
+    events: &ProviderEventSender,
+) -> Option<Result<ModelResponse, ProviderError>> {
+    if prompt == PROMPT && is_pending(request) {
+        return Some(stream(request, events).await);
+    }
+    if prompt == CANCEL_PROMPT {
+        return Some(stream_until_cancelled(request, events).await);
+    }
+    None
+}
+
+fn is_pending(request: &ModelRequest<'_>) -> bool {
     tool_result(request, CALL_ID).is_none()
 }
 
-pub(super) async fn stream(
+async fn stream(
     request: &ModelRequest<'_>,
     events: &ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
@@ -36,7 +50,7 @@ pub(super) async fn stream(
     .await
 }
 
-pub(super) async fn stream_until_cancelled(
+async fn stream_until_cancelled(
     request: &ModelRequest<'_>,
     events: &ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {

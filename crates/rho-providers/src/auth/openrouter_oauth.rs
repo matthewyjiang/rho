@@ -7,8 +7,8 @@ use url::Url;
 use crate::model::TransportError;
 
 use super::loopback::{
-    accept_request, bind_loopback, pkce_challenge, random_token, write_response, LoopbackBindError,
-    ResponseBodies, ResponseKind,
+    bind_loopback, pkce_challenge, random_token, wait_for_oauth_callback, CallbackDecision,
+    CallbackWaitError, LoopbackBindError, ResponseBodies,
 };
 
 const AUTHORIZE_URL: &str = "https://openrouter.ai/auth";
@@ -187,45 +187,31 @@ async fn wait_for_callback(
     listener: &TcpListener,
     expected_path: &str,
 ) -> Result<String, OpenRouterOAuthError> {
-    wait_for_callback_with_read_timeout(listener, expected_path, CALLBACK_READ_TIMEOUT).await
-}
-
-async fn wait_for_callback_with_read_timeout(
-    listener: &TcpListener,
-    expected_path: &str,
-    read_timeout: Duration,
-) -> Result<String, OpenRouterOAuthError> {
     const BODIES: ResponseBodies<'static> = ResponseBodies {
         success: "Authorization received. Return to Rho to finish OpenRouter login.",
         failure: "OpenRouter login failed. Return to Rho for details and try again.",
         ignored: "This is not the OpenRouter callback.",
     };
-    loop {
-        let (mut stream, request) = accept_request(listener, read_timeout)
-            .await
-            .map_err(OpenRouterOAuthError::Accept)?;
-        let Some(request) = request else {
-            let _ = write_response(&mut stream, ResponseKind::Ignored, BODIES).await;
-            continue;
-        };
-        match parse_callback_http_request(&request, expected_path) {
-            CallbackParse::Code(code) => {
-                let _ = write_response(&mut stream, ResponseKind::Success, BODIES).await;
-                return Ok(code);
-            }
+    wait_for_oauth_callback(
+        listener,
+        |request| match parse_callback_http_request(request, expected_path) {
+            CallbackParse::Code(code) => CallbackDecision::Success(code),
             CallbackParse::Denied(error) => {
-                let _ = write_response(&mut stream, ResponseKind::Failure, BODIES).await;
-                return Err(OpenRouterOAuthError::OAuthDenied(error));
+                CallbackDecision::Invalid(OpenRouterOAuthError::OAuthDenied(error))
             }
-            CallbackParse::Ignored => {
-                let _ = write_response(&mut stream, ResponseKind::Ignored, BODIES).await;
-            }
+            CallbackParse::Ignored => CallbackDecision::Ignored,
             CallbackParse::Invalid => {
-                let _ = write_response(&mut stream, ResponseKind::Failure, BODIES).await;
-                return Err(OpenRouterOAuthError::InvalidCallback);
+                CallbackDecision::Invalid(OpenRouterOAuthError::InvalidCallback)
             }
-        }
-    }
+        },
+        BODIES,
+        CALLBACK_READ_TIMEOUT,
+    )
+    .await
+    .map_err(|error| match error {
+        CallbackWaitError::Accept(error) => OpenRouterOAuthError::Accept(error),
+        CallbackWaitError::Invalid(error) => error,
+    })
 }
 
 fn parse_callback_http_request(request: &str, expected_path: &str) -> CallbackParse {

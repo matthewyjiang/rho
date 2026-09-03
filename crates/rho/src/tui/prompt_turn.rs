@@ -702,7 +702,7 @@ impl App {
         let request_id = request.id().clone();
         let (reply_tx, reply_rx) = oneshot::channel();
         self.open_questionnaire(QuestionAnswerRequest {
-            request: event_adapter::questionnaire_request(&request),
+            request,
             response: QuestionnaireResponseChannel::new(reply_tx),
             notice: None,
         })
