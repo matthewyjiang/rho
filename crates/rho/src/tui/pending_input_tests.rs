@@ -59,6 +59,7 @@ fn alt_up_requests_retraction_for_accepted_steer() {
         .push_back(AcceptedSteering {
             id: id.clone(),
             prompt: prompt("retract me"),
+            delivered: false,
         });
 
     app.handle_pending_input_key(key(KeyCode::Up, KeyModifiers::ALT));
@@ -103,12 +104,14 @@ fn applied_event_preserves_selection_of_a_later_pending_item() {
         .push_back(AcceptedSteering {
             id: applied.clone(),
             prompt: prompt("first steer"),
+            delivered: false,
         });
     app.pending
         .accepted_steering_mut()
         .push_back(AcceptedSteering {
             id: rho_sdk::SteeringId::new(),
             prompt: prompt("second steer"),
+            delivered: false,
         });
     app.pending.push_follow_up(prompt("future turn"));
     app.pending.input_panel_mut().selected = 2;
@@ -174,12 +177,14 @@ fn applied_event_removes_only_matching_steering() {
         .push_back(AcceptedSteering {
             id: applied.clone(),
             prompt: prompt("applied"),
+            delivered: false,
         });
     app.pending
         .accepted_steering_mut()
         .push_back(AcceptedSteering {
             id: pending.clone(),
             prompt: prompt("pending"),
+            delivered: false,
         });
 
     app.record_applied_steering(&[applied]);
@@ -203,6 +208,7 @@ fn already_applied_retraction_inserts_the_user_message() {
         .push_back(AcceptedSteering {
             id: id.clone(),
             prompt: prompt("keep me"),
+            delivered: false,
         });
     app.streams.current_stream_kind = Some(StreamKind::Assistant);
     app.streams

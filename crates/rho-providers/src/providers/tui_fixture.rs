@@ -13,7 +13,10 @@ use rho_sdk::{
     model::{
         ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ToolCall,
     },
-    provider::{ModelProvider, NativeCompactionFuture, ProviderEventSender, ProviderFuture},
+    provider::{
+        ModelProvider, ModelRequestOptions, NativeCompactionFuture, ProviderEventSender,
+        ProviderFuture, ProviderSteeringReceiver,
+    },
     CancellationToken, ProviderError,
 };
 
@@ -75,6 +78,23 @@ impl ModelProvider for TuiFixtureProvider {
         events: ProviderEventSender,
     ) -> ProviderFuture<'a> {
         Box::pin(async move { fixture_stream(request, events).await })
+    }
+
+    fn send_turn_stream_steerable<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        _options: ModelRequestOptions,
+        events: ProviderEventSender,
+        mut steering: ProviderSteeringReceiver,
+    ) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let prompt = last_user_text(&request).unwrap_or_default();
+            if prompt == "fixture mid-turn steer" {
+                return stream_mid_turn_steer(request, events, &mut steering).await;
+            }
+            drop(steering);
+            fixture_stream(request, events).await
+        })
     }
 
     fn native_compact<'a>(
@@ -235,6 +255,23 @@ fn completed_tool_call(
             arguments,
         },
     )]))
+}
+
+async fn stream_mid_turn_steer(
+    request: ModelRequest<'_>,
+    events: ProviderEventSender,
+    steering: &mut ProviderSteeringReceiver,
+) -> Result<ModelResponse, ProviderError> {
+    events
+        .send(ModelEvent::OutputDelta("waiting for mid-turn steer".into()))
+        .await?;
+    if let Some(request) = steering.recv().await {
+        if request.claim() {
+            request.accept();
+        }
+    }
+    fixture_sleep(&request.cancellation, Duration::from_secs(2)).await?;
+    completed("waiting for mid-turn steer")
 }
 
 async fn fixture_sleep(

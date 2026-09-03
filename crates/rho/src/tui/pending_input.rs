@@ -8,6 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 pub(super) struct AcceptedSteering {
     pub(super) id: rho_sdk::SteeringId,
     pub(super) prompt: QueuedPrompt,
+    pub(super) delivered: bool,
 }
 
 pub(super) enum PendingInputRequest {
@@ -184,7 +185,11 @@ impl App {
             ) => {
                 self.pending
                     .accepted_steering_mut()
-                    .push_back(AcceptedSteering { id, prompt });
+                    .push_back(AcceptedSteering {
+                        id,
+                        prompt,
+                        delivered: false,
+                    });
                 self.select_pending_recall_target();
                 None
             }
@@ -241,6 +246,17 @@ impl App {
                     "could not confirm steer retraction; it remains pending: {error}"
                 ));
             }
+        }
+    }
+
+    pub(super) fn record_delivered_steering(&mut self, id: &rho_sdk::SteeringId) {
+        if let Some(entry) = self
+            .pending
+            .accepted_steering_mut()
+            .iter_mut()
+            .find(|entry| &entry.id == id)
+        {
+            entry.delivered = true;
         }
     }
 

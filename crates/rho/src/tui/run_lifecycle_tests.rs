@@ -21,6 +21,7 @@ fn interrupt_restores_accepted_local_and_follow_up_input() {
         .push_back(AcceptedSteering {
             id: rho_sdk::SteeringId::new(),
             prompt: prompt("accepted steer", "accepted steer"),
+            delivered: false,
         });
     app.pending
         .steering_prompts_mut()
@@ -48,6 +49,7 @@ fn failed_run_preserves_unapplied_steering_as_follow_ups() {
         .push_back(AcceptedSteering {
             id: rho_sdk::SteeringId::new(),
             prompt: prompt("accepted model", "accepted display"),
+            delivered: false,
         });
     app.pending
         .steering_prompts_mut()

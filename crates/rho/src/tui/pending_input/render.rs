@@ -103,6 +103,8 @@ impl App {
                 let entry = &self.pending.accepted_steering()[index];
                 let context = if self.pending.retracting_steering() == Some(&entry.id) {
                     "retracting"
+                } else if entry.delivered {
+                    "delivered"
                 } else {
                     "current run"
                 };
