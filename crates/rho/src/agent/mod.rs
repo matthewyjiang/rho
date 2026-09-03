@@ -5,6 +5,7 @@
 
 mod authorize;
 mod catalog;
+mod cursor_tools;
 mod definition;
 mod edit;
 mod internal;
@@ -15,6 +16,7 @@ mod serializer;
 
 pub(crate) use authorize::authorize_existing_agent_file;
 pub(crate) use catalog::*;
+pub(crate) use cursor_tools::*;
 pub(crate) use definition::*;
 pub(crate) use edit::{save_definition, SaveDefinitionError};
 pub(crate) use internal::*;

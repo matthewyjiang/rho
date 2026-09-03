@@ -225,11 +225,20 @@ fn validate_node_shape(node: &Node, workflow: &FrozenWorkflow) -> WorkflowResult
             }
             (Some(_), Some(_)) | (None, None) => {}
         }
-        if agent.runtime == AgentRuntime::ClaudeCli && node.access != WorkspaceAccess::Mutating {
-            return Err(WorkflowError::InvalidAccess {
-                node: node.id.clone(),
-                reason: "claude-cli nodes must be mutating in workflow schema v1".to_owned(),
-            });
+        match agent.runtime {
+            AgentRuntime::ClaudeCli if node.access != WorkspaceAccess::Mutating => {
+                return Err(WorkflowError::InvalidAccess {
+                    node: node.id.clone(),
+                    reason: "claude-cli nodes must be mutating in workflow schema v1".to_owned(),
+                });
+            }
+            AgentRuntime::Cursor if node.access != WorkspaceAccess::Mutating => {
+                return Err(WorkflowError::InvalidAccess {
+                    node: node.id.clone(),
+                    reason: "cursor nodes must be mutating in workflow schema v1".to_owned(),
+                });
+            }
+            AgentRuntime::Rho | AgentRuntime::ClaudeCli | AgentRuntime::Cursor => {}
         }
         if node.access == WorkspaceAccess::ReadOnly {
             for capability in &agent.capabilities {

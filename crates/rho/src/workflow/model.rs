@@ -343,6 +343,7 @@ pub(crate) struct ResolvedAgent {
 pub(crate) enum AgentRuntime {
     Rho,
     ClaudeCli,
+    Cursor,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

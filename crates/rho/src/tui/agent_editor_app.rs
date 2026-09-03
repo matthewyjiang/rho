@@ -287,9 +287,16 @@ impl App {
     fn open_agent_model_or_text(&mut self, draft: &crate::agent::AgentDefinition) {
         // Claude models are not catalog rows: the CLI resolves the value itself
         // and cannot enumerate models, so the editor offers the family aliases.
-        if draft.runtime.runtime() == AgentRuntime::ClaudeCli {
-            self.open_agent_choice(AgentChoiceField::ClaudeModel, draft);
-            return;
+        match draft.runtime.runtime() {
+            AgentRuntime::ClaudeCli => {
+                self.open_agent_choice(AgentChoiceField::ClaudeModel, draft);
+                return;
+            }
+            AgentRuntime::Cursor => {
+                self.open_agent_text_input(AgentField::Model, draft.model_text());
+                return;
+            }
+            AgentRuntime::Rho => {}
         }
         self.refresh_available_auths();
         let catalog = crate::tui::model_picker::conversation_model_catalog(

@@ -265,7 +265,7 @@ fn validate_definition(definition: &AgentDefinition) -> anyhow::Result<()> {
                 definition.id
             );
         }
-        AgentRuntimeSpec::ClaudeCli(_) => {
+        AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => {
             bail!(
                 "one-shot agent definition '{}' must use the rho runtime",
                 definition.id

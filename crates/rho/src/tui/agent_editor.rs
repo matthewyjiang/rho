@@ -138,6 +138,7 @@ impl AgentEditSession {
         let (rho_runtime, claude_runtime) = match &draft.runtime {
             runtime @ AgentRuntimeSpec::Rho { .. } => (Some(runtime.clone()), None),
             runtime @ AgentRuntimeSpec::ClaudeCli(_) => (None, Some(runtime.clone())),
+            AgentRuntimeSpec::Cursor(_) => (None, None),
         };
         Self {
             draft,
@@ -173,10 +174,12 @@ impl AgentEditSession {
             runtime @ AgentRuntimeSpec::ClaudeCli(_) => {
                 self.claude_runtime = Some(runtime.clone());
             }
+            AgentRuntimeSpec::Cursor(_) => {}
         }
         let saved = match value {
             "rho" => self.rho_runtime.clone(),
             "claude-cli" => self.claude_runtime.clone(),
+            "cursor" => None,
             _ => return false,
         };
         if let Some(runtime) = saved {
@@ -352,6 +355,20 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
                 AGENT_FIELD_INHERIT_CLAUDE_CONFIG,
             ));
         }
+        AgentRuntime::Cursor => {
+            items.push(field_item(
+                "Model",
+                "Cursor model id passed as --model. Bracket overrides such as name[effort=high,fast=false] are allowed. Default lets Cursor choose.",
+                Some(draft.model_badge()),
+                AGENT_FIELD_MODEL,
+            ));
+            items.push(field_item(
+                "Tools",
+                "Closed Cursor tool names, as a bracket list (for example [read_tool_call]).",
+                Some(draft.tools_badge()),
+                AGENT_FIELD_TOOLS,
+            ));
+        }
     }
 
     items.push(field_item(
@@ -483,6 +500,10 @@ fn agent_choice_picker(
                     &[
                         ("rho", "Rho's own loop and tool vocabulary."),
                         ("claude-cli", "Delegate the loop to the claude binary."),
+                        (
+                            "cursor",
+                            "Delegate the loop to cursor-agent with a closed tool allow list.",
+                        ),
                     ],
                     current,
                     prefix,
@@ -490,27 +511,24 @@ fn agent_choice_picker(
             )
         }
         AgentChoiceField::ModelPolicy => {
-            let is_claude = draft.runtime.runtime() == AgentRuntime::ClaudeCli;
             let current = draft.model_policy_badge();
-            let options: &[(&str, &str)] = if is_claude {
-                &[
-                    ("inherit", "Inherit Claude's default model."),
-                    ("select", "Pin a Claude model name as --model."),
-                ]
-            } else {
-                &[
+            let options: &[(&str, &str)] = match draft.runtime.runtime() {
+                AgentRuntime::ClaudeCli | AgentRuntime::Cursor => &[
+                    ("inherit", "Inherit the runtime's default model."),
+                    ("select", "Pin a model name as --model."),
+                ],
+                AgentRuntime::Rho => &[
                     ("inherit", "Use the conversation model."),
                     ("prefer", "Prefer a model, falling back if unavailable."),
                     ("require", "Require a model, failing if unavailable."),
                     ("select", "Pin a model."),
-                ]
+                ],
             };
             ("model policy", choice_items(options, &current, prefix))
         }
         AgentChoiceField::ClaudeModel => ("claude model", claude_model_choice_items(draft, prefix)),
         AgentChoiceField::Auth => unreachable!("use auth_choice_picker"),
         AgentChoiceField::Reasoning => {
-            let is_claude = draft.runtime.runtime() == AgentRuntime::ClaudeCli;
             let current = draft.reasoning();
             let levels = selectable_agent_reasoning_levels(draft, conversation);
             let mut items = vec![PickerItem {
@@ -529,10 +547,11 @@ fn agent_choice_picker(
                     section: None,
                     label: level.to_string(),
                     detail: Some(
-                        if is_claude {
-                            "Claude --effort level."
-                        } else {
-                            "Reasoning level for this agent."
+                        match draft.runtime.runtime() {
+                            AgentRuntime::ClaudeCli => "Claude --effort level.",
+                            AgentRuntime::Rho | AgentRuntime::Cursor => {
+                                "Reasoning level for this agent."
+                            }
                         }
                         .into(),
                     ),
@@ -646,18 +665,18 @@ fn selectable_agent_reasoning_levels(
     draft: &AgentDefinition,
     conversation: ConversationModelView<'_>,
 ) -> Vec<ReasoningLevel> {
-    let is_claude = draft.runtime.runtime() == AgentRuntime::ClaudeCli;
     // Claude Code efforts are fixed; Claude model ids are not resolved through
-    // models.dev provider rows in this editor.
-    let capabilities = if is_claude {
-        ReasoningCapabilities::Unknown
-    } else {
-        draft_model_reasoning_capabilities(draft, conversation)
-    };
-    let fallback = if is_claude {
-        crate::claude_runtime::spawn::CLAUDE_EFFORT_LEVELS.levels()
-    } else {
-        ReasoningLevel::ALL.as_slice()
+    // models.dev provider rows in this editor. Cursor has no reasoning flag.
+    let (capabilities, fallback) = match draft.runtime.runtime() {
+        AgentRuntime::ClaudeCli => (
+            ReasoningCapabilities::Unknown,
+            crate::claude_runtime::spawn::CLAUDE_EFFORT_LEVELS.levels(),
+        ),
+        AgentRuntime::Cursor => (ReasoningCapabilities::Unknown, &[] as &[ReasoningLevel]),
+        AgentRuntime::Rho => (
+            draft_model_reasoning_capabilities(draft, conversation),
+            ReasoningLevel::ALL.as_slice(),
+        ),
     };
     capabilities.selectable_levels(fallback, draft.reasoning())
 }

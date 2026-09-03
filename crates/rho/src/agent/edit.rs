@@ -7,12 +7,13 @@
 use std::{
     fs, io,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
 use super::{
     parse_definition, parse_tools_list_text, serialize_definition, AgentDefinition, AgentRuntime,
-    AgentRuntimeSpec, ClaudeAgentConfig, ClaudeToolPolicy, ModelPolicy, ModelSelection,
-    PromptPolicy, ReasoningLevel, ToolCapability, ToolPolicy,
+    AgentRuntimeSpec, ClaudeAgentConfig, ClaudeToolPolicy, CursorAgentConfig, CursorTool,
+    ModelPolicy, ModelSelection, PromptPolicy, ReasoningLevel, ToolCapability, ToolPolicy,
 };
 
 impl AgentDefinition {
@@ -42,6 +43,7 @@ impl AgentDefinition {
         let next = match value {
             "rho" => AgentRuntime::Rho,
             "claude-cli" => AgentRuntime::ClaudeCli,
+            "cursor" => AgentRuntime::Cursor,
             _ => return false,
         };
         if self.runtime.runtime() == next {
@@ -55,12 +57,13 @@ impl AgentDefinition {
 
     /// Applies a model-policy keyword for the current runtime.
     pub(crate) fn set_model_policy_kind(&mut self, value: &str) -> bool {
-        let is_claude = self.runtime.runtime() == AgentRuntime::ClaudeCli;
-        let policy = match value {
-            "inherit" => ModelPolicy::Inherit,
-            "prefer" if !is_claude => ModelPolicy::Prefer(self.current_selection()),
-            "require" if !is_claude => ModelPolicy::Require(self.current_selection()),
-            "select" => ModelPolicy::Select(self.current_selection()),
+        let policy = match (self.runtime.runtime(), value) {
+            (_, "inherit") => ModelPolicy::Inherit,
+            (AgentRuntime::Rho, "prefer") => ModelPolicy::Prefer(self.current_selection()),
+            (AgentRuntime::Rho, "require") => ModelPolicy::Require(self.current_selection()),
+            (AgentRuntime::Rho | AgentRuntime::ClaudeCli | AgentRuntime::Cursor, "select") => {
+                ModelPolicy::Select(self.current_selection())
+            }
             _ => return false,
         };
         self.set_model_policy(policy);
@@ -97,11 +100,12 @@ impl AgentDefinition {
             "no" => false,
             _ => return false,
         };
-        if let AgentRuntimeSpec::ClaudeCli(config) = &mut self.runtime {
-            config.inherit_claude_config = inherit;
-            true
-        } else {
-            false
+        match &mut self.runtime {
+            AgentRuntimeSpec::ClaudeCli(config) => {
+                config.inherit_claude_config = inherit;
+                true
+            }
+            AgentRuntimeSpec::Rho { .. } | AgentRuntimeSpec::Cursor(_) => false,
         }
     }
 
@@ -111,11 +115,16 @@ impl AgentDefinition {
 
     pub(crate) fn set_model_text(&mut self, value: String) {
         let trimmed = value.trim().to_string();
-        if self.runtime.runtime() == AgentRuntime::ClaudeCli {
-            if let AgentRuntimeSpec::ClaudeCli(config) = &mut self.runtime {
+        match &mut self.runtime {
+            AgentRuntimeSpec::ClaudeCli(config) => {
                 config.model = (!trimmed.is_empty()).then_some(trimmed);
+                return;
             }
-            return;
+            AgentRuntimeSpec::Cursor(config) => {
+                config.model = (!trimmed.is_empty()).then_some(trimmed);
+                return;
+            }
+            AgentRuntimeSpec::Rho { .. } => {}
         }
         if trimmed.is_empty() {
             self.set_model_policy(ModelPolicy::Inherit);
@@ -162,8 +171,9 @@ impl AgentDefinition {
     /// When setting an auth profile and provider is empty or incompatible, the
     /// provider is updated from the auth profile's provider.
     pub(crate) fn set_auth_selection(&mut self, auth: Option<String>) -> bool {
-        if self.runtime.runtime() == AgentRuntime::ClaudeCli {
-            return auth.is_none();
+        match self.runtime.runtime() {
+            AgentRuntime::ClaudeCli | AgentRuntime::Cursor => return auth.is_none(),
+            AgentRuntime::Rho => {}
         }
         let resolved = match auth {
             None => None,
@@ -201,13 +211,20 @@ impl AgentDefinition {
     }
 
     pub(crate) fn set_model_selection(&mut self, selection: Option<ModelSelection>) {
-        if self.runtime.runtime() == AgentRuntime::ClaudeCli {
-            if let AgentRuntimeSpec::ClaudeCli(config) = &mut self.runtime {
+        match &mut self.runtime {
+            AgentRuntimeSpec::ClaudeCli(config) => {
                 config.model = selection
                     .map(|value| value.model)
                     .filter(|value| !value.is_empty());
+                return;
             }
-            return;
+            AgentRuntimeSpec::Cursor(config) => {
+                config.model = selection
+                    .map(|value| value.model)
+                    .filter(|value| !value.is_empty());
+                return;
+            }
+            AgentRuntimeSpec::Rho { .. } => {}
         }
         let policy = match (self.model_policy().as_ref(), selection) {
             (ModelPolicy::Prefer(_), Some(selection)) if !selection.model.is_empty() => {
@@ -233,18 +250,26 @@ impl AgentDefinition {
                     | ModelPolicy::Select(selection) => Some(selection.model),
                 };
             }
+            AgentRuntimeSpec::Cursor(config) => {
+                config.model = match policy {
+                    ModelPolicy::Inherit => None,
+                    ModelPolicy::Prefer(selection)
+                    | ModelPolicy::Require(selection)
+                    | ModelPolicy::Select(selection) => Some(selection.model),
+                };
+            }
         }
     }
 
     pub(crate) fn set_reasoning(&mut self, level: Option<ReasoningLevel>) {
-        let level = if self.runtime.runtime() == AgentRuntime::ClaudeCli {
-            level.filter(|level| !matches!(level, ReasoningLevel::Off | ReasoningLevel::Minimal))
-        } else {
-            level
-        };
         match &mut self.runtime {
             AgentRuntimeSpec::Rho { reasoning, .. } => *reasoning = level,
-            AgentRuntimeSpec::ClaudeCli(config) => config.reasoning = level,
+            AgentRuntimeSpec::ClaudeCli(config) => {
+                config.reasoning = level.filter(|level| {
+                    !matches!(level, ReasoningLevel::Off | ReasoningLevel::Minimal)
+                });
+            }
+            AgentRuntimeSpec::Cursor(_) => {}
         }
     }
 
@@ -274,6 +299,24 @@ impl AgentDefinition {
                 };
                 Ok(())
             }
+            AgentRuntimeSpec::Cursor(config) => {
+                if trimmed == "all" {
+                    return Err(
+                        "runtime: cursor does not support tools: all; list closed snake_case names"
+                            .into(),
+                    );
+                }
+                let names = parse_tools_list_text(trimmed)?;
+                if names.is_empty() {
+                    return Err("cursor agents need at least one tool".into());
+                }
+                let mut tools = Vec::with_capacity(names.len());
+                for name in names {
+                    tools.push(CursorTool::from_str(&name).map_err(|error| error.to_string())?);
+                }
+                config.tools = tools;
+                Ok(())
+            }
         }
     }
 
@@ -298,6 +341,15 @@ impl AgentDefinition {
                 ClaudeToolPolicy::None => "[]".into(),
                 ClaudeToolPolicy::Allow(tools) => format!("[{}]", tools.join(", ")),
             },
+            AgentRuntimeSpec::Cursor(config) => format!(
+                "[{}]",
+                config
+                    .tools
+                    .iter()
+                    .map(|tool| tool.as_flag())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         }
     }
 
@@ -355,6 +407,13 @@ impl AgentDefinition {
                     tools.join(", ")
                 }
             }
+            AgentRuntimeSpec::Cursor(config) if config.tools.is_empty() => "none".into(),
+            AgentRuntimeSpec::Cursor(config) => config
+                .tools
+                .iter()
+                .map(|tool| tool.as_flag())
+                .collect::<Vec<_>>()
+                .join(", "),
         }
     }
 
@@ -389,7 +448,19 @@ impl AgentDefinition {
                 return Some("prompt policy 'replace' requires a non-empty prompt body".into());
             }
         }
-        None
+        match &self.runtime {
+            AgentRuntimeSpec::Cursor(config) if config.tools.is_empty() => {
+                Some("cursor agents need at least one tool".into())
+            }
+            AgentRuntimeSpec::Cursor(_) => {
+                if matches!(self.prompt, PromptPolicy::Replace(_)) {
+                    Some("cursor cannot replace its system prompt; use extend".into())
+                } else {
+                    None
+                }
+            }
+            AgentRuntimeSpec::Rho { .. } | AgentRuntimeSpec::ClaudeCli(_) => None,
+        }
     }
 }
 
@@ -421,6 +492,15 @@ fn build_runtime_spec(
                 inherit_claude_config: false,
                 model,
                 reasoning,
+            })
+        }
+        AgentRuntime::Cursor => {
+            let model = model_policy
+                .selection()
+                .map(|selection| selection.model.clone());
+            AgentRuntimeSpec::Cursor(CursorAgentConfig {
+                tools: Vec::new(),
+                model,
             })
         }
     }

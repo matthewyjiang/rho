@@ -332,37 +332,42 @@ impl AgentExecutor {
         current_tools.remove(&ToolCapability::Powershell);
         current_tools.remove(&ToolCapability::Questionnaire);
         let bound = AgentBinder::bind_frozen(&request.agent, &config, &current_tools)?;
-        let frozen_claude = if request.agent.runtime == crate::workflow::AgentRuntime::ClaudeCli {
-            let identity = request.agent.executable_identity.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("frozen Claude launch has no executable identity")
-            })?;
-            let verified_executable = crate::workflow::verify_executable_identity(identity)?;
-            let script_path = crate::workflow::verified_handle_path(
-                &verified_executable.executable.file,
-                std::path::Path::new(&identity.file.canonical_path),
-            )?;
-            let mut arguments = request.agent.arguments;
-            let executable = if let Some(interpreter) = &verified_executable.interpreter {
-                let interpreter_path = crate::workflow::verified_handle_path(
-                    &interpreter.file,
-                    std::path::Path::new(&interpreter.identity.canonical_path),
+        let frozen_claude = match request.agent.runtime {
+            crate::workflow::AgentRuntime::Cursor => {
+                anyhow::bail!("cursor runtime is not yet supported")
+            }
+            crate::workflow::AgentRuntime::Rho => None,
+            crate::workflow::AgentRuntime::ClaudeCli => {
+                let identity = request.agent.executable_identity.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("frozen Claude launch has no executable identity")
+                })?;
+                let verified_executable = crate::workflow::verify_executable_identity(identity)?;
+                let script_path = crate::workflow::verified_handle_path(
+                    &verified_executable.executable.file,
+                    std::path::Path::new(&identity.file.canonical_path),
                 )?;
-                let mut interpreter_arguments = verified_executable.interpreter_arguments.clone();
-                interpreter_arguments.push(crate::paths::display(&script_path));
-                interpreter_arguments.extend(arguments);
-                arguments = interpreter_arguments;
-                interpreter_path
-            } else {
-                script_path
-            };
-            Some(FrozenClaudeLaunch {
-                executable,
-                arguments,
-                executable_identity: identity.clone(),
-                _verified_executable: verified_executable,
-            })
-        } else {
-            None
+                let mut arguments = request.agent.arguments;
+                let executable = if let Some(interpreter) = &verified_executable.interpreter {
+                    let interpreter_path = crate::workflow::verified_handle_path(
+                        &interpreter.file,
+                        std::path::Path::new(&interpreter.identity.canonical_path),
+                    )?;
+                    let mut interpreter_arguments =
+                        verified_executable.interpreter_arguments.clone();
+                    interpreter_arguments.push(crate::paths::display(&script_path));
+                    interpreter_arguments.extend(arguments);
+                    arguments = interpreter_arguments;
+                    interpreter_path
+                } else {
+                    script_path
+                };
+                Some(FrozenClaudeLaunch {
+                    executable,
+                    arguments,
+                    executable_identity: identity.clone(),
+                    _verified_executable: verified_executable,
+                })
+            }
         };
         self.spawn_bound(BoundLaunchRequest {
             bound,

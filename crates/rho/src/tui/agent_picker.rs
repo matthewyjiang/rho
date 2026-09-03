@@ -221,6 +221,19 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
                 "no"
             }),
         ),
+        AgentRuntimeSpec::Cursor(config) => (
+            if config.tools.is_empty() {
+                "none".to_string()
+            } else {
+                config
+                    .tools
+                    .iter()
+                    .map(|tool| tool.as_flag().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            },
+            None,
+        ),
     };
     let runtime = definition.runtime.runtime().to_string();
     let prompt = match &definition.prompt {

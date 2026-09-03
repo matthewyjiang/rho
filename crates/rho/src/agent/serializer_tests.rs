@@ -128,3 +128,18 @@ fn canonicalizes_ordered_fields() {
     assert!(serialized.contains("tools: [bash, grep, read_file]"));
     assert_eq!(definition, parse(&serialized));
 }
+
+// Covers: cursor definitions round-trip, including models whose bracket
+// overrides contain commas and must be quoted.
+// Owner: agent definition serializer
+#[test]
+fn cursor_definition_round_trips() {
+    let contents = "---\nid: demo\ndescription: demo\nruntime: cursor\nmodel: \"gpt-5.3-codex[effort=high,fast=false]\"\ntools: [read_tool_call, shell_tool_call]\n---\nbody\n";
+    let first = parse(contents);
+    let serialized = serialize_definition(&first);
+    let second = parse(&serialized);
+    assert_eq!(first, second, "round trip changed:\n{serialized}");
+    assert_eq!(serialized, serialize_definition(&second));
+    assert!(serialized.contains("runtime: cursor\n"));
+    assert!(serialized.contains("gpt-5.3-codex[effort=high,fast=false]"));
+}

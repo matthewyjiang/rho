@@ -234,6 +234,9 @@ impl AgentBinder {
             AgentRuntimeSpec::ClaudeCli(config) => {
                 bind_claude_runtime(&definition, config, &invocation, host_config)?
             }
+            AgentRuntimeSpec::Cursor(_) => {
+                anyhow::bail!("cursor runtime is not yet supported")
+            }
         };
         Ok(BoundAgent {
             definition,
@@ -290,6 +293,9 @@ impl AgentBinder {
                     config: Box::new(config),
                     capabilities,
                 }
+            }
+            crate::workflow::AgentRuntime::Cursor => {
+                anyhow::bail!("cursor runtime is not yet supported")
             }
             crate::workflow::AgentRuntime::ClaudeCli => {
                 let reasoning = frozen
@@ -548,6 +554,7 @@ fn prompt_model_for_definition(
             requested: claude.model.clone(),
             resolved: None,
         }),
+        AgentRuntimeSpec::Cursor(_) => None,
         AgentRuntimeSpec::Rho { model, .. } => {
             let mut config = host.clone();
             apply_rho_model_policy(definition.id.as_str(), model, &mut config).ok()?;

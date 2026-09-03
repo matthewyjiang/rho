@@ -87,6 +87,7 @@ impl PromptModel {
         use crate::agent::AgentRuntime;
 
         match status.runtime {
+            Some(AgentRuntime::Cursor) => None,
             Some(AgentRuntime::ClaudeCli) => Some(Self::ClaudeCli {
                 requested: status
                     .model
