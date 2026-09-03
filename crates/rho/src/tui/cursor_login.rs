@@ -113,7 +113,11 @@ impl App {
         {
             CursorLoginAfterSuspend::ResumeFailed { error } => return Err(error),
             CursorLoginAfterSuspend::AuthResolved { outcome } => {
+                let complete = matches!(outcome, CursorLoginAuthOutcome::Complete { .. });
                 self.record_cursor_login_auth_outcome(&outcome);
+                if complete {
+                    let _ = crate::cursor_runtime::models::refresh().await;
+                }
             }
         }
 

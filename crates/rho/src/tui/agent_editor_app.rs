@@ -243,6 +243,26 @@ impl App {
     }
 
     fn submit_agent_model_selection(&mut self, value: &str) {
+        let runtime = self
+            .agent_editor_session
+            .as_ref()
+            .map(|session| session.draft().runtime.runtime());
+        if runtime == Some(AgentRuntime::Cursor) {
+            if value == crate::tui::cursor_model_picker::CURSOR_MODEL_OTHER {
+                let current = self
+                    .agent_editor_session
+                    .as_ref()
+                    .map(|session| session.draft().model_text())
+                    .unwrap_or_default();
+                self.open_agent_text_input(AgentField::Model, current);
+                return;
+            }
+            if let Some(session) = &mut self.agent_editor_session {
+                session.with_draft_mut(|draft| draft.set_model_text(value.to_string()));
+            }
+            self.reopen_agent_field_picker(AGENT_FIELD_MODEL);
+            return;
+        }
         let Some(mut draft) = self
             .agent_editor_session
             .as_ref()
@@ -293,7 +313,7 @@ impl App {
                 return;
             }
             AgentRuntime::Cursor => {
-                self.open_agent_text_input(AgentField::Model, draft.model_text());
+                self.open_cursor_agent_model(draft);
                 return;
             }
             AgentRuntime::Rho => {}
@@ -330,6 +350,98 @@ impl App {
         }
         self.input_ui.set_composer(ComposerMode::TextInput(input));
         self.set_status(format!("edit {}", field.label()));
+    }
+
+    fn open_cursor_agent_model(&mut self, draft: &crate::agent::AgentDefinition) {
+        let models = crate::cursor_runtime::models::cached();
+        self.spawn_cursor_model_refresh_if_needed();
+        if models.is_empty() {
+            self.cursor_model_picker_awaiting_refresh = true;
+            self.open_agent_text_input(AgentField::Model, draft.model_text());
+            return;
+        }
+        self.cursor_model_picker_awaiting_refresh = false;
+        self.open_cursor_model_picker(&models, &draft.model_text());
+    }
+
+    fn open_cursor_model_picker(
+        &mut self,
+        models: &[crate::cursor_runtime::models::CursorModel],
+        current: &str,
+    ) {
+        let picker = crate::tui::cursor_model_picker::cursor_model_picker(models, current);
+        if let Some(session) = &mut self.agent_editor_session {
+            session.set_phase(AgentEditPhase::PickingModel);
+        }
+        self.open_child_picker(picker);
+        self.set_status("select model");
+    }
+
+    fn spawn_cursor_model_refresh_if_needed(&mut self) {
+        if self.pending_cursor_models.is_some() || !crate::cursor_runtime::models::needs_refresh() {
+            return;
+        }
+        self.pending_cursor_models = Some(tokio::spawn(crate::cursor_runtime::models::refresh()));
+    }
+
+    pub(in crate::tui) async fn poll_cursor_model_refresh(&mut self) {
+        let Some(handle) = self.pending_cursor_models.as_mut() else {
+            return;
+        };
+        if !handle.is_finished() {
+            return;
+        }
+        let Some(handle) = self.pending_cursor_models.take() else {
+            return;
+        };
+        let Ok(Ok(models)) = handle.await else {
+            self.cursor_model_picker_awaiting_refresh = false;
+            return;
+        };
+        if !self.cursor_model_picker_awaiting_refresh || models.is_empty() {
+            return;
+        }
+        if self.agent_editor_session.is_none() {
+            self.cursor_model_picker_awaiting_refresh = false;
+            return;
+        }
+        let ComposerMode::TextInput(input) = self.input_ui.composer() else {
+            self.cursor_model_picker_awaiting_refresh = false;
+            return;
+        };
+        if !matches!(
+            input.target,
+            crate::tui::text_input::TextInputTarget::AgentField(AgentField::Model)
+        ) {
+            self.cursor_model_picker_awaiting_refresh = false;
+            return;
+        }
+        let current = self
+            .agent_editor_session
+            .as_ref()
+            .map(|session| session.draft().model_text())
+            .unwrap_or_default();
+        let parent = match self.input_ui.take_composer() {
+            ComposerMode::TextInput(mut input) => input.take_return_picker(),
+            composer => {
+                self.input_ui.set_composer(composer);
+                self.cursor_model_picker_awaiting_refresh = false;
+                return;
+            }
+        };
+        self.cursor_model_picker_awaiting_refresh = false;
+        if let Some(parent) = parent {
+            self.input_ui.set_composer(ComposerMode::Picker(parent));
+            self.open_cursor_model_picker(&models, &current);
+        } else {
+            if let Some(session) = &mut self.agent_editor_session {
+                session.set_phase(AgentEditPhase::PickingModel);
+            }
+            self.input_ui.set_composer(ComposerMode::Picker(
+                crate::tui::cursor_model_picker::cursor_model_picker(&models, &current),
+            ));
+            self.set_status("select model");
+        }
     }
 
     pub(in crate::tui) fn reopen_agent_field_picker(&mut self, selected_value: &str) {

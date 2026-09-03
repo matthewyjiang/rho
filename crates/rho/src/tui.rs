@@ -75,6 +75,7 @@ mod choice_actions;
 mod claude_login;
 mod composer_layout;
 mod cursor_login;
+mod cursor_model_picker;
 mod custom_provider_login;
 mod during_turn;
 mod exclusive_screen;
@@ -536,6 +537,15 @@ struct App {
     pending_model_metadata_reasoning: Option<(ReasoningLevel, ReasoningRequestSource)>,
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_custom_models: Option<tokio::task::JoinHandle<()>>,
+    pending_cursor_models: Option<
+        tokio::task::JoinHandle<
+            Result<
+                Vec<crate::cursor_runtime::models::CursorModel>,
+                crate::cursor_runtime::models::CursorModelsError,
+            >,
+        >,
+    >,
+    cursor_model_picker_awaiting_refresh: bool,
     pending_syntax_warmup: Option<tokio::task::JoinHandle<()>>,
     prompt_history: prompt_history::PromptHistory,
     pending_herdr_graphics: Option<tokio::task::JoinHandle<HerdrGraphicsCapability>>,

@@ -72,6 +72,10 @@ impl App {
                     .as_ref()
                     .is_some_and(|handle| handle.is_finished())
                 || self
+                    .pending_cursor_models
+                    .as_ref()
+                    .is_some_and(|handle| handle.is_finished())
+                || self
                     .pending_syntax_warmup
                     .as_ref()
                     .is_some_and(|handle| handle.is_finished())
@@ -95,6 +99,7 @@ impl App {
             }
             self.poll_update_notice();
             self.poll_custom_provider_models();
+            self.poll_cursor_model_refresh().await;
             needs_redraw |= self.poll_syntax_warmup();
             self.poll_herdr_graphics();
             needs_redraw |= self.poll_prompt_history();
@@ -155,6 +160,7 @@ impl App {
             let idle_timeout = if self.pending_model_metadata.is_some()
                 || self.pending_update_notice.is_some()
                 || self.pending_custom_models.is_some()
+                || self.pending_cursor_models.is_some()
                 || self.pending_syntax_warmup.is_some()
                 || self.pending_herdr_graphics.is_some()
                 || self.pending_github_pr.is_some()
@@ -213,6 +219,9 @@ impl App {
         self.cancel_limits_command().await;
         self.cancel_doctor_command().await;
         self.cancel_changelog_command().await;
+        if let Some(handle) = self.pending_cursor_models.take() {
+            handle.abort();
+        }
         agent.cancel_startup_hydrates();
         self.mcp_argument_completions.cancel();
         if let Some(mut pending) = self.pending_session_title.take() {

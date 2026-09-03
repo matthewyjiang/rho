@@ -354,7 +354,7 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
         AgentRuntime::Cursor => {
             items.push(field_item(
                 "Model",
-                "Cursor model id passed as --model. Effort lives in the model id for cursor; bracket overrides such as name[effort=high,fast=false] are allowed. Default lets Cursor choose.",
+                "Cached cursor-agent models, grouped by family. Other… types an id or a bracket override such as name[effort=high,fast=false]. Empty lets Cursor choose.",
                 Some(draft.model_badge()),
                 AGENT_FIELD_MODEL,
             ));
