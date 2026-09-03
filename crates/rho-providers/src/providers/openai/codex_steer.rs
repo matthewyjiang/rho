@@ -2,7 +2,6 @@ use serde_json::{json, Value};
 
 use crate::model::{ContentBlock, Message, ModelError};
 use crate::protocol::openai_responses::lower_codex_history_message;
-use rho_sdk::provider::ProviderSteeringRequest;
 
 use super::codex_continuation::CodexContinuationCandidate;
 
@@ -20,6 +19,7 @@ pub(super) enum SteerMatch {
 
 #[derive(Debug)]
 pub(super) struct PendingSteer {
+    #[allow(dead_code)]
     pub(super) previous_response_id: String,
     pub(super) request_properties: Value,
     pub(super) request_input: Vec<Value>,
@@ -91,35 +91,9 @@ pub(super) fn steer_event_type(value: &Value) -> Option<&str> {
         .filter(|event_type| event_type.starts_with("response.steer"))
 }
 
-pub(super) fn steer_failed_input(value: &Value) -> Option<&Value> {
-    value
-        .get("steer")
-        .and_then(|steer| steer.get("input"))
-        .or_else(|| value.get("input"))
-}
-
 pub(super) fn is_steer_pending_required_input(value: &Value) -> bool {
     value.get("type").and_then(Value::as_str) == Some("response.steer.pending")
         && value.get("reason").and_then(Value::as_str) == Some("waiting_for_required_input")
-}
-
-pub(super) fn input_matches_request(
-    failed_input: &Value,
-    request: &ProviderSteeringRequest,
-) -> bool {
-    steer_items(request.content()).ok().is_some_and(|items| {
-        failed_input == &Value::Array(items) || matches_single_text(failed_input, request)
-    })
-}
-
-fn matches_single_text(failed_input: &Value, request: &ProviderSteeringRequest) -> bool {
-    let Some(text) = failed_input.as_str() else {
-        return false;
-    };
-    matches!(
-        request.content(),
-        [ContentBlock::Text(content)] if content == text
-    )
 }
 
 #[cfg(test)]

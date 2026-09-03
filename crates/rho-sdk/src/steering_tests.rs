@@ -8,10 +8,12 @@ use crate::{
     SteeringRetraction, UserInput,
 };
 
-fn outcomes() -> (
+type OutcomePort = (
     mpsc::UnboundedSender<(crate::SteeringId, ProviderSteeringOutcome)>,
     mpsc::UnboundedReceiver<(crate::SteeringId, ProviderSteeringOutcome)>,
-) {
+);
+
+fn outcomes() -> OutcomePort {
     mpsc::unbounded_channel()
 }
 

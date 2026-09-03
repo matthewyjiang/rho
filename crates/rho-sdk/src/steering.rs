@@ -91,6 +91,7 @@ impl SteeringQueue {
         !self.staged.is_empty()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn staged_ids(&self) -> Vec<SteeringId> {
         self.staged.iter().map(|entry| entry.id.clone()).collect()
     }

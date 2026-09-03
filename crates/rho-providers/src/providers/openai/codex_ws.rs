@@ -17,8 +17,8 @@ use super::codex_continuation::{
     CodexContinuationCandidate, CodexContinuationResponse, CodexContinuationState,
 };
 use super::codex_steer::{
-    input_matches_request, is_steer_pending_required_input, steer_event_type, steer_failed_input,
-    steer_frame, steer_items, PendingSteer, SteerMatch, SteerMode,
+    is_steer_pending_required_input, steer_event_type, steer_frame, steer_items, PendingSteer,
+    SteerMatch, SteerMode,
 };
 use crate::protocol::openai_responses::{
     handle_codex_sse_value, is_codex_turn_complete, CodexSseResponse, CodexSseState, CodexTransport,
@@ -182,6 +182,7 @@ impl CodexWsTransport {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) async fn send_responses_turn(
         &self,
         body: Value,
@@ -299,6 +300,7 @@ impl CodexWsTransport {
 }
 
 impl CodexWsState {
+    #[allow(clippy::too_many_arguments)]
     async fn send_frame(
         &mut self,
         ws_url: &str,
@@ -540,10 +542,9 @@ impl SteerCollect {
                 request.release();
                 continue;
             }
-            let items =
-                steer_items(request.content()).map_err(|error| CodexWsFailure::Model(error))?;
-            let frame = steer_frame(response_id, request.content())
-                .map_err(|error| CodexWsFailure::Model(error))?;
+            let items = steer_items(request.content()).map_err(CodexWsFailure::Model)?;
+            let frame =
+                steer_frame(response_id, request.content()).map_err(CodexWsFailure::Model)?;
             wait_for_stream_activity_for(
                 socket.send(Message::Text(frame.to_string().into())),
                 idle_timeout,
@@ -573,13 +574,7 @@ impl SteerCollect {
             }
             "response.steer.failed" => {
                 if let Some(in_flight) = self.in_flight.take() {
-                    if steer_failed_input(payload)
-                        .is_none_or(|input| input_matches_request(input, &in_flight.request))
-                    {
-                        in_flight.request.release();
-                    } else {
-                        in_flight.request.release();
-                    }
+                    in_flight.request.release();
                 } else if !self.held.is_empty() {
                     self.held.remove(0).release();
                 }
