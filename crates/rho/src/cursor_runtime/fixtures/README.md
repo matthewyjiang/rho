@@ -10,8 +10,13 @@ to `/tmp/rho-cursor-fixture-*`, `conversationId` / `requestId` /
 `hookAdditionalContexts` / `contentBlobId` dropped or pinned. Frame order,
 delta boundaries, snapshot frames, tool args, and tool results are unchanged.
 
+`live_models.txt` is a live capture of `cursor-agent models` from
+`cursor-agent 2026.09.02` (plain text, no `--format`). 221 lines, 217 models.
+The list is per-account. Tests parse it; they never execute `cursor-agent`.
+
 | File | What it exercises |
 | --- | --- |
+| `live_models.txt` | `cursor-agent models` stdout: header, `<id> - <display name>` rows with `(default)` / `(current)` / `(NO ZDR)` annotations, trailing tip. |
 | `live_text_thinking.ndjson` | Prompt on stdin, `--single-turn`. 12 `thinking/delta` + `completed`, 218 `assistant` deltas, then one cumulative snapshot frame (no `timestamp_ms`) equal to the concatenated deltas, then `result/success` with usage. |
 | `live_edit.ndjson` | Default `-p` (no `--force`, no allow list): `editToolCall` started/completed with `result.success.diffString`, `linesAdded`, `linesRemoved`. Proves `-p` writes without approval. |
 | `live_shell_mid_snapshot.ndjson` | Captured with `--force --exclude-tools shell_tool_call`; shell ran anyway. Text segment → mid-turn snapshot carrying `model_call_id` → `shellToolCall` with `exitCode`, `stdout`, `executionTime` → second text segment → final snapshot. The mapper's segment-reset rule is tested here. |

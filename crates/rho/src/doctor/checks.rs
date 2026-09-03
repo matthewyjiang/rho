@@ -170,6 +170,7 @@ pub(super) fn claude_checks(claude: &ClaudeProbeSnapshot) -> Vec<DoctorCheck> {
 pub(super) fn cursor_check(
     auth: &Result<CursorAuthStatus, CursorAuthError>,
     version: Option<&str>,
+    models_cached: usize,
 ) -> DoctorCheck {
     match auth {
         Err(CursorAuthError::BinaryMissing) => DoctorCheck::new(
@@ -182,7 +183,7 @@ pub(super) fn cursor_check(
             DoctorCheckId::Cursor,
             CURSOR_LABEL,
             DoctorStatus::Ok,
-            cursor_signed_in_summary(status, version),
+            cursor_signed_in_summary(status, version, models_cached),
         ),
         Ok(_) => DoctorCheck::new(
             DoctorCheckId::Cursor,
@@ -200,7 +201,11 @@ pub(super) fn cursor_check(
     }
 }
 
-fn cursor_signed_in_summary(status: &CursorAuthStatus, version: Option<&str>) -> String {
+fn cursor_signed_in_summary(
+    status: &CursorAuthStatus,
+    version: Option<&str>,
+    models_cached: usize,
+) -> String {
     let mut summary = match version.filter(|value| !value.is_empty()) {
         Some(version) => format!("{version} signed in"),
         None => "signed in".into(),
@@ -214,6 +219,10 @@ fn cursor_signed_in_summary(status: &CursorAuthStatus, version: Option<&str>) ->
         summary.push_str(" as ");
         summary.push_str(email);
     }
+    summary.push_str(&format!(
+        ", {models_cached} model{} cached",
+        plural_suffix(models_cached)
+    ));
     summary
 }
 

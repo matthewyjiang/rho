@@ -794,3 +794,78 @@ async fn minimax_refresh_uses_anthropic_models_and_keeps_m_series_ids() {
     );
     server.await.unwrap();
 }
+
+fn cli_model(id: &str, display_name: &str, raw_json: Value) -> CliProviderModel {
+    CliProviderModel {
+        model: ProviderModel {
+            provider: "cursor".into(),
+            model: id.into(),
+            display_name: display_name.into(),
+            context_window: None,
+            max_output_tokens: None,
+            reasoning_capabilities: ReasoningCapabilities::Unknown,
+        },
+        raw_json,
+    }
+}
+
+// Covers: CLI-sourced cursor rows keep exact ids, raw_json flags, and refresh
+// context, and the 24h freshness window follows the refresh row.
+// Owner: provider model cache
+#[test]
+fn cli_provider_models_round_trip_without_canonicalizing_ids() {
+    let cache = unique_test_cache_dir("cli-cursor-models");
+    with_provider_models_cache_dir_for_tests(cache.clone(), || {
+        let context = CliProviderRefreshContext {
+            account_email: Some("dev@example.com".into()),
+            cursor_version: Some("2026.09.02".into()),
+        };
+        replace_cli_provider_models(
+            "cursor",
+            vec![
+                cli_model(
+                    "gpt-5.3-codex-high-fast",
+                    "Codex 5.3 High Fast",
+                    serde_json::json!({"default": false, "current": false, "zdr": true}),
+                ),
+                cli_model(
+                    "auto",
+                    "Auto",
+                    serde_json::json!({"default": true, "current": false, "zdr": true}),
+                ),
+            ],
+            &context,
+        )
+        .unwrap();
+
+        let cached = cached_provider_models("cursor");
+        assert_eq!(
+            cached
+                .iter()
+                .map(|model| model.model.as_str())
+                .collect::<Vec<_>>(),
+            ["auto", "gpt-5.3-codex-high-fast"]
+        );
+        assert_eq!(cached[1].display_name, "Codex 5.3 High Fast");
+        assert!(crate::provider::provider_descriptor("cursor").is_none());
+        assert!(provider_models_are_fresh("cursor"));
+        assert_eq!(
+            cli_provider_refresh_context("cursor").as_ref(),
+            Some(&context)
+        );
+
+        let cli_rows = cached_cli_provider_models("cursor");
+        assert_eq!(cli_rows.len(), 2);
+        assert_eq!(cli_rows[0].raw_json["default"], true);
+
+        let connection = open_provider_models_cache().unwrap();
+        connection
+            .execute(
+                "update provider_model_refresh set updated_at = 0 where provider = 'cursor'",
+                [],
+            )
+            .unwrap();
+        assert!(!provider_models_are_fresh("cursor"));
+    });
+    let _ = fs::remove_dir_all(cache);
+}

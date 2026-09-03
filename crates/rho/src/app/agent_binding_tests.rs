@@ -1080,3 +1080,55 @@ fn cursor_frozen_capabilities_fail_closed_on_unknown_tool() {
     assert!(message.contains("unknown Cursor tool"), "{message}");
     assert!(message.contains("not_a_cursor_tool"), "{message}");
 }
+
+// Covers: a pinned Cursor model missing from a non-empty cache warns at bind
+// and still launches.
+// Owner: delegated agent binding
+#[test]
+fn cursor_unknown_cached_model_warns_and_still_binds() {
+    use crate::agent::CursorTool;
+    use crate::cursor_runtime::models::{cache_models, CursorModel};
+    use rho_providers::model::provider_models::{
+        with_provider_models_cache_dir_for_tests, CliProviderRefreshContext,
+    };
+
+    let cache = tempfile::tempdir().unwrap();
+    with_provider_models_cache_dir_for_tests(cache.path().to_path_buf(), || {
+        cache_models(
+            &[CursorModel {
+                id: "composer-2.5".into(),
+                display_name: "Composer 2.5".into(),
+                is_default: false,
+                is_current: true,
+                zdr: true,
+            }],
+            CliProviderRefreshContext::default(),
+        )
+        .unwrap();
+
+        let unknown = AgentBinder::bind(
+            cursor_definition(Some("not-a-cursor-model"), &[CursorTool::Read]),
+            AgentInvocation {
+                role: AgentRole::Delegated,
+                available_tools: capabilities(),
+            },
+            &Config::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            unknown.bind_warnings(),
+            ["cursor model 'not-a-cursor-model' is not in the cached list"]
+        );
+
+        let known = AgentBinder::bind(
+            cursor_definition(Some("composer-2.5[effort=high]"), &[CursorTool::Read]),
+            AgentInvocation {
+                role: AgentRole::Delegated,
+                available_tools: capabilities(),
+            },
+            &Config::default(),
+        )
+        .unwrap();
+        assert!(known.bind_warnings().is_empty());
+    });
+}

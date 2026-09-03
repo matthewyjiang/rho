@@ -390,6 +390,10 @@ impl AgentExecutor {
         } = MessagingSupport::for_runtime(bound.runtime());
 
         let mut initial = bound.artifact_identity().starting_status();
+        if let Some(warning) = bound.bind_warnings().first() {
+            tracing::warn!("{warning}");
+            initial.last_activity = Some(warning.clone());
+        }
         initial.parent_session_id = parent_session_id.as_ref().map(ToString::to_string);
         // Executor owns the Starting boundary; sinks continue_from it.
         // Write Starting here so the handle can observe status before the task runs.

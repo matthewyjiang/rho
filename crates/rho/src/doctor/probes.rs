@@ -20,7 +20,10 @@ use super::{
 use crate::{
     claude_runtime::auth::ClaudeProbeSnapshot,
     config::Config,
-    cursor_runtime::auth::{CursorAuthError, CursorAuthStatus},
+    cursor_runtime::{
+        auth::{CursorAuthError, CursorAuthStatus},
+        models as cursor_models,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -42,6 +45,7 @@ pub(crate) enum DoctorProbeId {
 pub(crate) struct CursorProbeSnapshot {
     pub(crate) auth: Result<CursorAuthStatus, CursorAuthError>,
     pub(crate) version: Option<String>,
+    pub(crate) models_cached: usize,
 }
 
 #[derive(Debug)]
@@ -123,10 +127,40 @@ pub(crate) async fn run_probe(
         DoctorProbeId::Claude => {
             DoctorProbeOutcome::Claude(crate::claude_runtime::auth::probe_snapshot().await)
         }
-        DoctorProbeId::Cursor => DoctorProbeOutcome::Cursor(CursorProbeSnapshot {
-            auth: crate::cursor_runtime::auth::query().await,
-            version: crate::cursor_runtime::auth::version().await.ok(),
-        }),
+        DoctorProbeId::Cursor => {
+            let auth = crate::cursor_runtime::auth::query().await;
+            let version = crate::cursor_runtime::auth::version().await.ok();
+            let mut models_cached = cursor_models::cached().len();
+            if auth.as_ref().is_ok_and(|status| status.is_authenticated) {
+                let account_email = auth.as_ref().ok().and_then(|status| {
+                    status
+                        .user_info
+                        .as_ref()
+                        .and_then(|info| info.email.clone())
+                        .filter(|email| !email.is_empty())
+                });
+                if cursor_models::needs_refresh_for_account(account_email.as_deref()) {
+                    if let Ok(models) = cursor_models::fetch().await {
+                        if cursor_models::cache_models(
+                            &models,
+                            rho_providers::model::provider_models::CliProviderRefreshContext {
+                                account_email,
+                                cursor_version: version.clone(),
+                            },
+                        )
+                        .is_ok()
+                        {
+                            models_cached = models.len();
+                        }
+                    }
+                }
+            }
+            DoctorProbeOutcome::Cursor(CursorProbeSnapshot {
+                auth,
+                version,
+                models_cached,
+            })
+        }
         DoctorProbeId::Rtk => DoctorProbeOutcome::Rtk {
             available: probe_rtk().await,
         },
@@ -218,6 +252,7 @@ pub(crate) fn probe_checks(
         DoctorProbeOutcome::Cursor(snapshot) => vec![checks::cursor_check(
             &snapshot.auth,
             snapshot.version.as_deref(),
+            snapshot.models_cached,
         )],
         DoctorProbeOutcome::Rtk { available } => vec![checks::rtk_check(*available)],
         DoctorProbeOutcome::Failed(id) => failed_rows(

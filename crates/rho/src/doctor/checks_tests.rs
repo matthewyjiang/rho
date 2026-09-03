@@ -270,6 +270,7 @@ fn cursor_row_covers_signed_in_signed_out_and_not_installed() {
             }),
         }),
         Some("2026.08.25"),
+        217,
     );
     let signed_out = cursor_check(
         &Ok(CursorAuthStatus {
@@ -279,14 +280,15 @@ fn cursor_row_covers_signed_in_signed_out_and_not_installed() {
             user_info: None,
         }),
         Some("2026.08.25"),
+        0,
     );
-    let missing = cursor_check(&Err(CursorAuthError::BinaryMissing), None);
+    let missing = cursor_check(&Err(CursorAuthError::BinaryMissing), None, 0);
 
     let cases = [
         (
             signed_in,
             DoctorStatus::Ok,
-            "2026.08.25 signed in as dev@example.com",
+            "2026.08.25 signed in as dev@example.com, 217 models cached",
         ),
         (
             signed_out,
