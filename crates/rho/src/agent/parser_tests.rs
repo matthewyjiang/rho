@@ -3,7 +3,9 @@ use std::path::Path;
 use pretty_assertions::assert_eq;
 
 use super::{parse_definition, parse_draft_definition};
-use crate::agent::{AgentRuntimeSpec, ModelPolicy, ModelSelection, ToolPolicy};
+use crate::agent::{
+    AgentRuntimeSpec, CursorAgentConfig, CursorTool, ModelPolicy, ModelSelection, ToolPolicy,
+};
 
 fn parse(contents: &str) -> Result<crate::agent::AgentDefinition, crate::agent::AgentCatalogError> {
     parse_definition(Path::new("agent.md"), "agent", contents)
@@ -70,7 +72,9 @@ fn parses_claude_cli_runtime_and_tools_independent_of_key_order() {
 fn rejects_unknown_runtime_values() {
     let error = parse("---\ndescription: demo\nruntime: bun\n---\n").unwrap_err();
     assert_eq!(error.field.as_deref(), Some("runtime"));
-    assert!(error.to_string().contains("expected rho or claude-cli"));
+    assert!(error
+        .to_string()
+        .contains("expected rho, claude-cli, or cursor"));
 }
 
 #[test]
@@ -429,4 +433,71 @@ fn auth_selection_round_trips_through_serialize() {
     assert!(serialized.contains("auth: xai-oauth\n"));
     let again = parse(&serialized).unwrap();
     assert_eq!(again, original);
+}
+
+// Covers: cursor frontmatter is a closed tool allow list with no reasoning,
+// no replace prompt, and no Claude-only fields.
+// Owner: agent parser
+#[test]
+fn cursor_runtime_frontmatter_rules() {
+    let accepted = [
+        (
+            "minimal",
+            "---\ndescription: demo\nruntime: cursor\ntools: [read_tool_call]\n---\nbody\n",
+            AgentRuntimeSpec::Cursor(CursorAgentConfig {
+                tools: vec![CursorTool::Read],
+                model: None,
+            }),
+        ),
+        (
+            "bracket model with commas",
+            "---\ndescription: demo\nruntime: cursor\nmodel: \"gpt-5.3-codex[effort=high,fast=false]\"\ntools: [read_tool_call]\n---\nbody\n",
+            AgentRuntimeSpec::Cursor(CursorAgentConfig {
+                tools: vec![CursorTool::Read],
+                model: Some("gpt-5.3-codex[effort=high,fast=false]".into()),
+            }),
+        ),
+    ];
+    for (name, contents, expected) in accepted {
+        let definition = parse(contents).unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(definition.runtime, expected, "{name}");
+        assert_eq!(definition.reasoning(), None, "{name}");
+    }
+
+    let rejected = [
+        (
+            "tools: all",
+            "---\ndescription: demo\nruntime: cursor\ntools: all\n---\n",
+            "tools",
+        ),
+        (
+            "empty tools",
+            "---\ndescription: demo\nruntime: cursor\ntools: []\n---\n",
+            "tools",
+        ),
+        (
+            "task_tool_call",
+            "---\ndescription: demo\nruntime: cursor\ntools: [task_tool_call]\n---\n",
+            "tools",
+        ),
+        (
+            "reasoning",
+            "---\ndescription: demo\nruntime: cursor\nreasoning: high\ntools: [read_tool_call]\n---\n",
+            "reasoning",
+        ),
+        (
+            "replace prompt",
+            "---\ndescription: demo\nruntime: cursor\nprompt: replace\ntools: [read_tool_call]\n---\nReplacement\n",
+            "prompt",
+        ),
+        (
+            "inherit_claude_config",
+            "---\ndescription: demo\nruntime: cursor\ninherit_claude_config: true\ntools: [read_tool_call]\n---\n",
+            "inherit_claude_config",
+        ),
+    ];
+    for (name, contents, field) in rejected {
+        let error = parse(contents).expect_err(name);
+        assert_eq!(error.field.as_deref(), Some(field), "{name}: {error}");
+    }
 }

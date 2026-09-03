@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt,
     path::{Component, Path},
 };
 
@@ -225,10 +226,13 @@ fn validate_node_shape(node: &Node, workflow: &FrozenWorkflow) -> WorkflowResult
             }
             (Some(_), Some(_)) | (None, None) => {}
         }
-        if agent.runtime == AgentRuntime::ClaudeCli && node.access != WorkspaceAccess::Mutating {
+        if agent.runtime.is_external_cli() && node.access != WorkspaceAccess::Mutating {
             return Err(WorkflowError::InvalidAccess {
                 node: node.id.clone(),
-                reason: "claude-cli nodes must be mutating in workflow schema v1".to_owned(),
+                reason: format!(
+                    "{} nodes must be mutating in workflow schema v1",
+                    agent.runtime
+                ),
             });
         }
         if node.access == WorkspaceAccess::ReadOnly {
@@ -423,6 +427,23 @@ fn validate_output_reference(
         )));
     }
     Ok(())
+}
+
+impl AgentRuntime {
+    /// External CLI runtimes (Claude Code, Cursor Agent) mutate the workspace.
+    pub(crate) fn is_external_cli(self) -> bool {
+        matches!(self, Self::ClaudeCli | Self::Cursor)
+    }
+}
+
+impl fmt::Display for AgentRuntime {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Rho => "rho",
+            Self::ClaudeCli => "claude-cli",
+            Self::Cursor => "cursor",
+        })
+    }
 }
 
 #[cfg(test)]

@@ -363,7 +363,7 @@ impl Tool for AgentsTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
         rho_sdk::model::ToolSpec {
             name: AGENTS_TOOL.into(),
-            description: "Check on, stop, or message a delegated background run. Completions and child notices are delivered automatically at the next turn boundary (batched into one notification when several finish), so waiting for a result means ending your turn, not calling status. While a run is in progress, status reports progress only and never partial output - do not act on a run's result before it finishes. Once a run has finished, status or stop returns its final result and counts as delivery, so it will not be redelivered automatically. Use action=message to steer a running child with plain text: Rho-runtime children apply it at the next provider turn; claude-cli children receive it as a queued stream-json user turn.".into(),
+            description: "Check on, stop, or message a delegated background run. Completions and child notices are delivered automatically at the next turn boundary (batched into one notification when several finish), so waiting for a result means ending your turn, not calling status. While a run is in progress, status reports progress only and never partial output - do not act on a run's result before it finishes. Once a run has finished, status or stop returns its final result and counts as delivery, so it will not be redelivered automatically. Use action=message to steer a running child with plain text: Rho-runtime children apply it at the next provider turn; claude-cli children receive it as a queued stream-json user turn; cursor children cannot be messaged (process-per-turn).".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -378,7 +378,7 @@ impl Tool for AgentsTool {
                     },
                     "message": {
                         "type": "string",
-                        "description": "Plain-text parent message (required for message). Rho children apply it at the next provider turn; Claude-cli children queue it as the next stdin user turn."
+                        "description": "Plain-text parent message (required for message). Rho children apply it at the next provider turn; Claude-cli children queue it as the next stdin user turn; cursor children cannot be messaged (process-per-turn)."
                     }
                 },
                 "required": ["action"],

@@ -27,8 +27,8 @@ mod events;
 mod format;
 mod presentation;
 mod protocol;
+mod rate_limit_display;
 mod tool_cards;
-mod types;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -37,33 +37,40 @@ use serde_json::Value;
 
 use rho_sdk::model::ModelUsage;
 
+use crate::cli_runtime::drain::StreamLineMapper;
 use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 
+pub(crate) use crate::cli_runtime::stream_effect::{
+    classify_terminal_result, RateLimitInfo, StatusPatch, StreamEffect, TerminalClassification,
+    TerminalResult,
+};
+#[cfg(test)]
+pub(crate) use crate::cli_runtime::stream_effect::{
+    MAX_RESULT_CHARS, MAX_TEXT_DELTA_CHARS, MAX_TOOL_PAYLOAD_CHARS,
+};
+#[cfg(test)]
+pub(crate) use crate::cli_runtime::stream_format::apply_status_patch;
+pub(crate) use crate::cli_runtime::stream_format::{
+    bound_result_text, reasoning_effects, text_effects,
+};
 use blocks::{emit_complete_block, emit_open_snapshot_block, note_tool_started};
 use events::{decode_stream_event, ContentBlockStart, ContentDelta, StreamEventPayload};
 use format::{
-    bound_result_text, context_usage_from_result, format_permission_denial, raw_usage_to_model,
-    stringify_content,
+    context_usage_from_result, format_permission_denial, raw_usage_to_model, stringify_content,
 };
-pub(crate) use presentation::apply_status_patch;
 use presentation::{
     clear_all_open_indexless, content_block_kind, fidelity_notice, map_error_message,
     map_rate_limit, map_system, mark_and_text, mark_slot_emitted, push_block_slot,
-    reasoning_effects, reconcile_complete_block, resolve_partial_slot, set_slot_tool_id,
-    stable_message_id, text_effects, tool_finished_effects, tool_id_for_slot, tool_started_effects,
-    tool_updated_effects, ContentBlockKind,
+    reconcile_complete_block, resolve_partial_slot, set_slot_tool_id, stable_message_id,
+    tool_finished_effects, tool_id_for_slot, tool_started_effects, tool_updated_effects,
+    ContentBlockKind,
 };
 use protocol::{
     decode_line, AssistantMessage, ClaudeStreamMessage, ResultMessage, StreamEventMessage,
     SystemMessage, UserMessage,
 };
+pub(crate) use rate_limit_display::{describe_rate_limit, notable_rate_limit_status, window_label};
 use tool_cards::StartedClaudeTool;
-pub(crate) use types::{
-    classify_terminal_result, describe_rate_limit, notable_rate_limit_status, RateLimitInfo,
-    StatusPatch, StreamEffect, TerminalClassification, TerminalResult,
-};
-#[cfg(test)]
-pub(crate) use types::{MAX_RESULT_CHARS, MAX_TEXT_DELTA_CHARS, MAX_TOOL_PAYLOAD_CHARS};
 
 /// Bound on concurrently tracked assistant messages.
 const MAX_TRACKED_MESSAGES: usize = 64;
@@ -157,6 +164,13 @@ impl StreamMapper {
             }
         };
         self.map_message(message)
+    }
+}
+
+/// Drain-loop surface. Mapping policy stays on the inherent [`StreamMapper::push_line`].
+impl StreamLineMapper for StreamMapper {
+    fn push_line(&mut self, line: &str) -> Vec<StreamEffect> {
+        StreamMapper::push_line(self, line)
     }
 }
 

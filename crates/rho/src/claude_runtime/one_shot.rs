@@ -13,15 +13,19 @@ use rho_sdk::{model::ModelUsage, CancellationToken};
 use tokio::sync::watch;
 
 use crate::agent::{OneShotPhase, OneShotUpdate, PromptPolicy};
-use crate::cli_runtime::OwnedChild;
+use crate::cli_runtime::{
+    drain::{self, DrainEnd},
+    line_decoder::MAX_NDJSON_LINE_BYTES,
+    stream_effect::{StreamEffect, TerminalResult},
+    terminal::{assess_terminal, TerminalOutcome},
+    OwnedChild,
+};
 
 use super::{
     auth::{self, ClaudeAuthError},
-    drain::{self, DrainEnd},
     executable,
     spawn::{self, ClaudePermissionMode, ClaudeSpawnRequest, SessionPersistence},
-    stream::{StreamEffect, TerminalResult},
-    terminal::{assess_terminal, TerminalOutcome},
+    stream::StreamMapper,
 };
 
 pub(crate) const CANCELLATION_ERROR: &str = "claude code: cancelled";
@@ -108,9 +112,15 @@ pub(crate) async fn run_one_shot(
 
     let mut text = String::new();
     let drained = {
+        let mut mapper = StreamMapper::new();
         let mut on_effect = |effect| apply_effect(effect, &mut text, &mut stream);
         drain::drain_child(
             &mut child,
+            drain::DrainConfig {
+                program_label: "claude code",
+                max_line_bytes: MAX_NDJSON_LINE_BYTES,
+            },
+            &mut mapper,
             drain::DrainInput::Text {
                 prompt: request.input.clone(),
             },
@@ -161,7 +171,13 @@ fn finish(
     stderr: &str,
     status: std::process::ExitStatus,
 ) -> Result<ClaudeOneShotResult, String> {
-    let terminal = match assess_terminal(terminal, status, stderr) {
+    if !status.success() && spawn::looks_like_max_turns_unsupported(stderr) {
+        return Err(
+            "claude code: this claude binary rejected --max-turns; upgrade Claude Code or remove the turn cap"
+                .into(),
+        );
+    }
+    let terminal = match assess_terminal(terminal, status, stderr, "claude code") {
         TerminalOutcome::Success(terminal) => terminal,
         TerminalOutcome::Failure { detail, .. } => return Err(detail),
     };

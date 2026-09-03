@@ -7,7 +7,9 @@ use ratatui::DefaultTerminal;
 use rho_providers::model::catalog;
 
 use super::{
-    claude_login, config_picker, model_picker,
+    config_picker,
+    login_target::SignInTarget,
+    model_picker,
     picker::{ConfigParentRow, DuringTurnSelect, PickerAction, PickerTurn},
     provider_picker, App, ComposerMode, Entry, InteractiveRuntime, UiPicker,
 };
@@ -125,25 +127,22 @@ impl App {
                 };
                 self.commit_login_group(value, terminal, agent).await
             }
-            PickerAction::LoginProvider => match claude_login::SignInTarget::parse(value) {
-                claude_login::SignInTarget::ClaudeCode => self.execute_claude_code_login().await,
-                claude_login::SignInTarget::NewCustomHost { api } => {
-                    self.start_custom_provider_onboarding(api);
+            PickerAction::LoginProvider => {
+                let PickerCommit::Idle { terminal, agent } = commit else {
+                    unreachable!("login provider commit is idle-only");
+                };
+                self.start_sign_in(SignInTarget::parse(value), terminal, agent)
+                    .await
+            }
+            PickerAction::LogoutProvider => match SignInTarget::parse(value) {
+                SignInTarget::ClaudeCode => self.execute_claude_code_logout().await,
+                SignInTarget::Cursor => {
+                    self.report_cursor_logout_unsupported();
                     Ok(())
                 }
-                claude_login::SignInTarget::Provider(provider) => {
-                    let PickerCommit::Idle { terminal, agent } = commit else {
-                        unreachable!("login provider commit is idle-only");
-                    };
-                    self.start_login_for_provider(&provider, terminal, agent)
-                        .await
-                }
-            },
-            PickerAction::LogoutProvider => match claude_login::SignInTarget::parse(value) {
-                claude_login::SignInTarget::ClaudeCode => self.execute_claude_code_logout().await,
                 // Nothing is stored for a host that was never created.
-                claude_login::SignInTarget::NewCustomHost { .. } => Ok(()),
-                claude_login::SignInTarget::Provider(provider) => {
+                SignInTarget::NewCustomHost { .. } => Ok(()),
+                SignInTarget::Provider(provider) => {
                     let PickerCommit::Idle { agent, .. } = commit else {
                         unreachable!("logout commit is idle-only");
                     };
@@ -315,15 +314,9 @@ impl App {
         // A single-method group short-circuits to that method's value,
         // which may name the external runtime or new-host onboarding
         // rather than a group id.
-        let value = match claude_login::SignInTarget::parse(value) {
-            claude_login::SignInTarget::ClaudeCode => {
-                return self.execute_claude_code_login().await
-            }
-            claude_login::SignInTarget::NewCustomHost { api } => {
-                self.start_custom_provider_onboarding(api);
-                return Ok(());
-            }
-            claude_login::SignInTarget::Provider(provider) => provider,
+        let value = match SignInTarget::parse(value) {
+            SignInTarget::Provider(provider) => provider,
+            target => return self.start_sign_in(target, terminal, agent).await,
         };
         let Some(group) = catalog::login_group(&value) else {
             self.insert_entry(&Entry::Error(format!(

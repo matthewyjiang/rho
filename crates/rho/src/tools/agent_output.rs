@@ -61,7 +61,7 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
         }
     }
     lines.extend(run_model_line(&snapshot.status));
-    push_claude_metadata(&mut lines, snapshot);
+    push_cli_metadata(&mut lines, snapshot);
     if matches!(format, SnapshotFormat::Completion) {
         if let Some(error) = &snapshot.status.error {
             lines.push(format!("error: {error}"));
@@ -198,7 +198,7 @@ fn completion_summary(snapshot: &SubagentSnapshot) -> Vec<String> {
         format_token_count(snapshot.status.output_tokens)
     ));
     lines.extend(run_model_line(&snapshot.status));
-    push_claude_metadata(&mut lines, snapshot);
+    push_cli_metadata(&mut lines, snapshot);
     if let Some(error) = &snapshot.status.error {
         lines.push(format!(
             "error: {}",
@@ -229,14 +229,24 @@ fn run_model_line(status: &crate::subagent::RunStatus) -> Option<String> {
     ))
 }
 
-fn push_claude_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
+fn push_cli_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
+    use crate::{
+        agent::AgentRuntime, claude_runtime::session::CLAUDE_LABEL,
+        cursor_runtime::models::CURSOR_LABEL,
+    };
+
+    let label = match snapshot.status.runtime {
+        Some(AgentRuntime::Cursor) => CURSOR_LABEL,
+        Some(AgentRuntime::ClaudeCli) | Some(AgentRuntime::Rho) | None => CLAUDE_LABEL,
+    };
     if let Some(session_id) = &snapshot.status.claude_session_id {
         lines.push(format!(
-            "claude session: {session_id} (resume with `claude --resume {session_id}`)"
+            "{}: {session_id} (resume with `{} --resume {session_id}`)",
+            label.session_label, label.resume_command
         ));
     }
     if let Some(cost) = snapshot.status.total_cost_usd {
-        lines.push(format!("claude cost: ${cost:.4}"));
+        lines.push(format!("{}: ${cost:.4}", label.cost_label));
     }
 }
 
@@ -276,3 +286,7 @@ pub(super) fn format_list_entry(snapshot: &SubagentSnapshot) -> String {
 fn format_token_count(tokens: Option<u64>) -> String {
     tokens.map_or_else(|| "?".into(), |tokens| tokens.to_string())
 }
+
+#[cfg(test)]
+#[path = "agent_output_tests.rs"]
+mod tests;

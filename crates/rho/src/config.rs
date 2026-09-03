@@ -32,7 +32,7 @@ mod format;
 use format::write_config;
 #[cfg(test)]
 pub use format::{EffectiveModelConfig, EffectiveModelSource};
-pub(crate) use format::{CLAUDE_CLI_RUNTIME_KEY, RHO_RUNTIME_KEY};
+pub(crate) use format::{CLAUDE_CLI_RUNTIME_KEY, CURSOR_RUNTIME_KEY, RHO_RUNTIME_KEY};
 
 #[path = "config_load.rs"]
 mod load;

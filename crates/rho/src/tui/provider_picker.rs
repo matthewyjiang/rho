@@ -31,6 +31,12 @@ pub(super) fn login_group_picker() -> UiPicker {
         })
         .collect::<Vec<_>>();
     items.extend(super::custom_provider_login::login_group_items());
+    items.extend(
+        super::login_target::external_login_methods()
+            .into_iter()
+            .filter(|method| method.group_id.is_none())
+            .map(external_login_picker_item),
+    );
     sort_items_by_ascii_label(&mut items);
     UiPicker::login_group("Select provider to login", items).with_key_hints(super::PickerKeyHints {
         tab_complete: true,
@@ -71,19 +77,10 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
         })
         .collect::<Vec<_>>();
     items.extend(
-        super::claude_login::EXTERNAL_LOGIN_METHODS
-            .iter()
-            .filter(|method| method.group_id == group_id)
-            .map(|method| PickerItem {
-                section: None,
-                label: method.label.into(),
-                detail: Some(method.detail.into()),
-                preview: None,
-                badge: None,
-                value: method.value.into(),
-                selection_verb: None,
-                allow_filter_completion: true,
-            }),
+        super::login_target::external_login_methods()
+            .into_iter()
+            .filter(|method| method.group_id == Some(group_id.as_str()))
+            .map(external_login_picker_item),
     );
     UiPicker::login_provider(title, items).with_key_hints(super::PickerKeyHints {
         tab_complete: true,
@@ -203,6 +200,19 @@ pub(super) fn logout_provider_picker(
         sort_items_by_ascii_label(&mut picker.items);
     }
     Ok(picker)
+}
+
+fn external_login_picker_item(method: super::login_target::ExternalLoginMethod) -> PickerItem {
+    PickerItem {
+        section: None,
+        label: method.label.into(),
+        detail: Some(method.detail.into()),
+        preview: None,
+        badge: None,
+        value: method.value.into(),
+        selection_verb: None,
+        allow_filter_completion: true,
+    }
 }
 
 fn provider_picker_for_targets(verb: &str, targets: Vec<catalog::LoginTarget>) -> UiPicker {

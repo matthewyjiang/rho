@@ -98,7 +98,7 @@ fn unsupported_max_turns_uses_shared_terminal_diagnosis() {
 // Owner: Claude one-shot adapter.
 #[test]
 fn safeguard_stream_failure_surfaces_in_one_shot_error() {
-    use crate::claude_runtime::stream::{TerminalClassification, TerminalResult};
+    use crate::cli_runtime::stream_effect::{TerminalClassification, TerminalResult};
 
     let terminal = TerminalResult {
         classification: TerminalClassification::Failure {

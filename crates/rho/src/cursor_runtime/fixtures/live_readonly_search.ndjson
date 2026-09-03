@@ -1,0 +1,178 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/tmp/rho-cursor-fixture-scratch","session_id":"44444444-4444-4444-8444-444444444444","model":"Composer 2.5","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Create a file named allowlist.md containing 'should not exist'. If you cannot, say exactly what stopped you."}]},"session_id":"44444444-4444-4444-8444-444444444444"}
+{"type":"thinking","subtype":"delta","text":"I need to create a file","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" named allowlist.md ","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":"containing the text ","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":"'should not exist'.","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":"\n\nNo direct write tool","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" is available. I'll ","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":"use the shell to create","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" the file and report","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" exactly what stops ","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":"me if it fails.","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"completed","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Creating"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" `"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"allow"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"list"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".md"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"`"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" with"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" the"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" requested"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" content"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".\n"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":"I lack shell access.","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" I cannot create the","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" file.","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":"\n\nI also lack a file","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" write or edit tool.","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" I cannot create the","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" file.","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":"\n\nOnly Grep, Read, and","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" Glob are available ","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":"for file operations.","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" I am checking the workspace","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" for any existing allowlist","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" or policy file that","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" might explain restrictions.","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"completed","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Checking"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" the"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" workspace"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" whether"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" any"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" policy"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" blocks"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" this"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" filename"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":":\n"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Creating `allowlist.md` with the requested content.\nChecking the workspace and whether any policy blocks this filename:\n"}]},"session_id":"44444444-4444-4444-8444-444444444444","model_call_id":"req-0001","timestamp_ms":1700000000000}
+{"type":"tool_call","subtype":"started","call_id":"tool_0001","tool_call":{"globToolCall":{"args":{"targetDirectory":"/tmp/rho-cursor-fixture-scratch","globPattern":"**/*"}},"toolCallId":"tool_0001","startedAtMs":"1788421111270"},"model_call_id":"req-0001","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"tool_call","subtype":"started","call_id":"tool_0002","tool_call":{"grepToolCall":{"args":{"pattern":"allowlist","path":"/tmp/rho-cursor-fixture-scratch","caseInsensitive":false,"multiline":false,"toolCallId":"tool_0002","offset":0}},"toolCallId":"tool_0002","startedAtMs":"1788421111275"},"model_call_id":"req-0001","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"tool_call","subtype":"completed","call_id":"tool_0002","tool_call":{"grepToolCall":{"args":{"pattern":"allowlist","path":"/tmp/rho-cursor-fixture-scratch","caseInsensitive":false,"multiline":false,"toolCallId":"tool_0002","offset":0},"result":{"success":{"pattern":"allowlist","path":"/tmp/rho-cursor-fixture-scratch","outputMode":"content","workspaceResults":{"/tmp/rho-cursor-fixture-scratch":{"content":{"matches":[],"totalLines":0,"totalMatchedLines":0,"clientTruncated":false,"ripgrepTruncated":false}}}}}},"toolCallId":"tool_0002","startedAtMs":"1788421111275","completedAtMs":"1788421111324"},"model_call_id":"req-0001","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"tool_call","subtype":"completed","call_id":"tool_0001","tool_call":{"globToolCall":{"args":{"targetDirectory":"/tmp/rho-cursor-fixture-scratch","globPattern":"**/*"},"result":{"success":{"pattern":"","path":"/tmp/rho-cursor-fixture-scratch","files":["cursor-stream-protocol.md","noforce.md"],"totalFiles":2,"clientTruncated":false,"ripgrepTruncated":false}}},"toolCallId":"tool_0001","startedAtMs":"1788421111270","completedAtMs":"1788421111547"},"model_call_id":"req-0001","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":"Checking noforce.md ","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":"and cursor-stream-protocol.md","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" for restrictions on","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" creating allowlist.md.","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"completed","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"tool_call","subtype":"started","call_id":"tool_0003","tool_call":{"readToolCall":{"args":{"path":"/tmp/rho-cursor-fixture-scratch/noforce.md"}},"toolCallId":"tool_0003","startedAtMs":"1788421113181"},"model_call_id":"req-0002","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"tool_call","subtype":"completed","call_id":"tool_0003","tool_call":{"readToolCall":{"args":{"path":"/tmp/rho-cursor-fixture-scratch/noforce.md"},"result":{"success":{"content":"written without --force\n","isEmpty":false,"exceededLimit":false,"totalLines":2,"fileSize":24,"path":"/tmp/rho-cursor-fixture-scratch/noforce.md","readRange":{"startLine":1,"endLine":2},"relatedCursorRulePaths":[],"relatedCursorRules":[]}}},"toolCallId":"tool_0003","startedAtMs":"1788421113181","completedAtMs":"1788421113206"},"model_call_id":"req-0002","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"tool_call","subtype":"started","call_id":"tool_0004","tool_call":{"readToolCall":{"args":{"path":"/tmp/rho-cursor-fixture-scratch/cursor-stream-protocol.md"}},"toolCallId":"tool_0004","startedAtMs":"1788421113185"},"model_call_id":"req-0002","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"tool_call","subtype":"completed","call_id":"tool_0004","tool_call":{"readToolCall":{"args":{"path":"/tmp/rho-cursor-fixture-scratch/cursor-stream-protocol.md"},"result":{"success":{"isEmpty":false,"exceededLimit":false,"totalLines":289,"fileSize":14060,"path":"/tmp/rho-cursor-fixture-scratch/cursor-stream-protocol.md","readRange":{"startLine":1,"endLine":289},"contentBlobId":"blob-fixture","relatedCursorRulePaths":[],"relatedCursorRules":[]}}},"toolCallId":"tool_0004","startedAtMs":"1788421113185","completedAtMs":"1788421113275"},"model_call_id":"req-0002","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":"No allowlist restriction","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" was found in the workspace","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" documentation.","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":"\n\nThe session only provides","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" read-only tools. No","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" file write or edit ","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":"capability exists. This","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"delta","text":" prevents creating allowlist.md.","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"thinking","subtype":"completed","session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" could"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" not"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" create"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" `"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"allow"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"list"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".md"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"`.\n\n"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"**"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"What"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" stopped"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" me"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":":**"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" This"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" session"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" only"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" exposes"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" **"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"G"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"rep"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"**,"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" **"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Read"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"**,"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" **"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Glob"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"**."}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" There"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" is"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" no"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" file"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"-write"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"/edit"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" tool"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" invoking"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" **"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Shell"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"**"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" returned"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" `"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Tool"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" not"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" found"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":":"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Shell"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Available"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" tools"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":":"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" G"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"rep"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Read"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":","}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" Glob"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"`."}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" With"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" that"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" set"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" I"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" can"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" read"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" and"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" search"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" the"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" workspace"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" but"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" not"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" create"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" or"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" change"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" files"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".\n\n"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Nothing"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" in"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" the"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" workspace"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" itself"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" blocked"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" the"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" name"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" `"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"allow"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"list"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":".md"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"`;"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" the"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" limitation"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" is"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" the"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" tools"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" available"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" to"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" the"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" agent"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" in"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" this"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" run"}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"."}]},"session_id":"44444444-4444-4444-8444-444444444444","timestamp_ms":1700000000000}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I could not create `allowlist.md`.\n\n**What stopped me:** This session only exposes **Grep**, **Read**, and **Glob**. There is no file-write/edit tool, and invoking **Shell** returned `Tool not found: Shell. Available tools: Grep, Read, Glob`. With that set I can read and search the workspace but not create or change files.\n\nNothing in the workspace itself blocked the name `allowlist.md`; the limitation is the tools available to the agent in this run."}]},"session_id":"44444444-4444-4444-8444-444444444444"}
+{"type":"result","subtype":"success","duration_ms":11728,"duration_api_ms":11728,"is_error":false,"result":"Creating `allowlist.md` with the requested content.\nChecking the workspace and whether any policy blocks this filename:\nI could not create `allowlist.md`.\n\n**What stopped me:** This session only exposes **Grep**, **Read**, and **Glob**. There is no file-write/edit tool, and invoking **Shell** returned `Tool not found: Shell. Available tools: Grep, Read, Glob`. With that set I can read and search the workspace but not create or change files.\n\nNothing in the workspace itself blocked the name `allowlist.md`; the limitation is the tools available to the agent in this run.","session_id":"44444444-4444-4444-8444-444444444444","request_id":"req-0003","usage":{"inputTokens":11580,"outputTokens":768,"cacheReadTokens":23364,"cacheWriteTokens":0}}

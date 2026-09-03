@@ -12,7 +12,7 @@ use {
 };
 
 use super::{
-    agent_binding::{AgentBinder, AgentInvocation, AgentRole, CapacityClass},
+    agent_binding::{AgentBinder, AgentInvocation, AgentRole},
     agent_concurrency::AgentConcurrency,
     automation::{self, RunReporter},
     subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
@@ -61,10 +61,20 @@ enum MessagingSupport {
     Claude {
         messages: crate::claude_runtime::messaging::ClaudeMessageHandle,
     },
+    /// Cursor runtime: one prompt on stdin, then the process ends.
+    Unsupported,
+}
+
+/// Exhaustive launch target after bind. The session task matches this instead
+/// of probing Claude-then-Rho.
+enum Launch {
+    Rho(super::agent_binding::BoundAgent),
+    ClaudeCli(crate::claude_runtime::session::ClaudeSessionRequest),
+    Cursor(crate::cursor_runtime::session::CursorSessionRequest),
 }
 
 /// Messaging ports created with the run handle, before the session task starts.
-struct CapacityMessagingPorts {
+struct RuntimeMessagingPorts {
     messaging: MessagingSupport,
     steering_slot: Option<SteeringSlot>,
     claude_parent_rx: Option<crate::claude_runtime::messaging::ClaudeMessageInbox>,
@@ -73,19 +83,19 @@ struct CapacityMessagingPorts {
 impl MessagingSupport {
     /// Decides messaging support and the run's ports together, so the
     /// handle and session task cannot disagree about which path is live.
-    fn for_capacity(capacity_class: CapacityClass) -> CapacityMessagingPorts {
-        match capacity_class {
-            CapacityClass::Claude => {
+    fn for_runtime(runtime: &super::agent_binding::BoundRuntime) -> RuntimeMessagingPorts {
+        match runtime {
+            super::agent_binding::BoundRuntime::ClaudeCli { .. } => {
                 let (handle, inbox) = crate::claude_runtime::messaging::message_channel();
-                CapacityMessagingPorts {
+                RuntimeMessagingPorts {
                     messaging: Self::Claude { messages: handle },
                     steering_slot: None,
                     claude_parent_rx: Some(inbox),
                 }
             }
-            CapacityClass::Rho => {
+            super::agent_binding::BoundRuntime::Rho { .. } => {
                 let steering = SteeringSlot::new();
-                CapacityMessagingPorts {
+                RuntimeMessagingPorts {
                     messaging: Self::Rho {
                         steering: steering.clone(),
                     },
@@ -93,6 +103,11 @@ impl MessagingSupport {
                     claude_parent_rx: None,
                 }
             }
+            super::agent_binding::BoundRuntime::Cursor { .. } => RuntimeMessagingPorts {
+                messaging: Self::Unsupported,
+                steering_slot: None,
+                claude_parent_rx: None,
+            },
         }
     }
 }
@@ -164,6 +179,9 @@ impl AgentRunHandle {
                     .await
                     .map_err(|error| anyhow::anyhow!("{error}"))
             }
+            MessagingSupport::Unsupported => anyhow::bail!(
+                "cursor runs are process-per-turn and cannot accept messages; wait for completion"
+            ),
         }
     }
 
@@ -313,7 +331,7 @@ impl AgentExecutor {
             output_file: request.output_file,
             questionnaire_target,
             notice_target,
-            frozen_claude: None,
+            frozen_cli: None,
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         })
     }
@@ -332,37 +350,11 @@ impl AgentExecutor {
         current_tools.remove(&ToolCapability::Powershell);
         current_tools.remove(&ToolCapability::Questionnaire);
         let bound = AgentBinder::bind_frozen(&request.agent, &config, &current_tools)?;
-        let frozen_claude = if request.agent.runtime == crate::workflow::AgentRuntime::ClaudeCli {
-            let identity = request.agent.executable_identity.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("frozen Claude launch has no executable identity")
-            })?;
-            let verified_executable = crate::workflow::verify_executable_identity(identity)?;
-            let script_path = crate::workflow::verified_handle_path(
-                &verified_executable.executable.file,
-                std::path::Path::new(&identity.file.canonical_path),
-            )?;
-            let mut arguments = request.agent.arguments;
-            let executable = if let Some(interpreter) = &verified_executable.interpreter {
-                let interpreter_path = crate::workflow::verified_handle_path(
-                    &interpreter.file,
-                    std::path::Path::new(&interpreter.identity.canonical_path),
-                )?;
-                let mut interpreter_arguments = verified_executable.interpreter_arguments.clone();
-                interpreter_arguments.push(crate::paths::display(&script_path));
-                interpreter_arguments.extend(arguments);
-                arguments = interpreter_arguments;
-                interpreter_path
-            } else {
-                script_path
-            };
-            Some(FrozenClaudeLaunch {
-                executable,
-                arguments,
-                executable_identity: identity.clone(),
-                _verified_executable: verified_executable,
-            })
-        } else {
-            None
+        let frozen_cli = match request.agent.runtime {
+            crate::workflow::AgentRuntime::Rho => None,
+            crate::workflow::AgentRuntime::ClaudeCli | crate::workflow::AgentRuntime::Cursor => {
+                Some(frozen_cli_launch(request.agent)?)
+            }
         };
         self.spawn_bound(BoundLaunchRequest {
             bound,
@@ -372,7 +364,7 @@ impl AgentExecutor {
             output_file: request.output_file,
             questionnaire_target: None,
             notice_target: None,
-            frozen_claude,
+            frozen_cli,
             hook_host_labels: request.hook_host_labels,
         })
     }
@@ -386,16 +378,16 @@ impl AgentExecutor {
             output_file,
             questionnaire_target,
             notice_target,
-            frozen_claude,
+            frozen_cli,
             hook_host_labels,
         } = request;
 
         let capacity_class = bound.runtime().capacity_class();
-        let CapacityMessagingPorts {
+        let RuntimeMessagingPorts {
             messaging,
             steering_slot,
             claude_parent_rx,
-        } = MessagingSupport::for_capacity(capacity_class);
+        } = MessagingSupport::for_runtime(bound.runtime());
 
         let mut initial = bound.artifact_identity().starting_status();
         initial.parent_session_id = parent_session_id.as_ref().map(ToString::to_string);
@@ -461,7 +453,8 @@ impl AgentExecutor {
             );
 
             let started_status = task_status_tx.borrow().clone();
-            if let Some(mut session) = bound.clone().into_claude_session(
+            match into_launch(
+                bound,
                 prompt.clone(),
                 output_file.clone(),
                 cwd.clone(),
@@ -469,55 +462,50 @@ impl AgentExecutor {
                 Some(task_status_tx.clone()),
                 Some(started_status),
             ) {
-                session.parent_messages = claude_parent_rx;
-                session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
-                if let Some(frozen) = frozen_claude {
-                    let expected_identity = frozen.executable_identity;
-                    let verified_executable = frozen._verified_executable;
-                    session.overrides.executable = Some(
-                        crate::cli_runtime::CliExecutable::from_path(frozen.executable),
-                    );
-                    session.set_frozen_argv(ensure_stream_json_input(frozen.arguments));
-                    session.overrides.before_spawn = Some(Box::new(move |command| {
-                        crate::workflow::verify_executable_identity(&expected_identity)
-                            .map_err(std::io::Error::other)?;
-                        let mut files = vec![&verified_executable.executable.file];
-                        if let Some(interpreter) = &verified_executable.interpreter {
-                            files.push(&interpreter.file);
-                        }
-                        crate::workflow::configure_handle_inheritance(command, &files)
-                            .map_err(std::io::Error::other)
-                    }));
+                Launch::ClaudeCli(mut session) => {
+                    session.parent_messages = claude_parent_rx;
+                    session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
+                    if let Some(frozen) = frozen_cli {
+                        apply_frozen(&mut session.overrides, frozen);
+                    }
+                    crate::claude_runtime::session::run_session(session).await
                 }
-                return crate::claude_runtime::session::run_session(session).await;
+                Launch::Cursor(mut session) => {
+                    session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
+                    if let Some(frozen) = frozen_cli {
+                        apply_frozen(&mut session.overrides, frozen);
+                    }
+                    crate::cursor_runtime::session::run_session(session).await
+                }
+                Launch::Rho(bound) => {
+                    let bound_config = bound
+                        .rho_config()
+                        .expect("Rho launch has bound config")
+                        .clone();
+                    run_rho_agent(RhoAgentRun {
+                        bound,
+                        config: bound_config,
+                        config_path,
+                        cwd,
+                        prompt,
+                        output_file,
+                        run_id,
+                        parent_session_id,
+                        questionnaire_target,
+                        notice_target,
+                        host_input,
+                        notices,
+                        steering_slot: task_steering_slot,
+                        cancellation: task_cancellation,
+                        status_tx: task_status_tx,
+                        live_title: task_live_title,
+                        hook_host_labels,
+                        approval_session,
+                        approval_classifier,
+                    })
+                    .await
+                }
             }
-
-            let bound_config = bound
-                .rho_config()
-                .expect("non-Claude bound runtime is Rho")
-                .clone();
-            run_rho_agent(RhoAgentRun {
-                bound,
-                config: bound_config,
-                config_path,
-                cwd,
-                prompt,
-                output_file,
-                run_id,
-                parent_session_id,
-                questionnaire_target,
-                notice_target,
-                host_input,
-                notices,
-                steering_slot: task_steering_slot,
-                cancellation: task_cancellation,
-                status_tx: task_status_tx,
-                live_title: task_live_title,
-                hook_host_labels,
-                approval_session,
-                approval_classifier,
-            })
-            .await
         });
 
         let failure_status = status.clone();
@@ -566,16 +554,105 @@ struct BoundLaunchRequest {
     /// Parent session that can receive this child's notices, when one is
     /// listening. `None` withholds `message_parent`.
     notice_target: Option<rho_sdk::SessionId>,
-    frozen_claude: Option<FrozenClaudeLaunch>,
+    frozen_cli: Option<FrozenCliLaunch>,
     hook_host_labels: rho_sdk::hooks::HookHostLabels,
 }
 
-struct FrozenClaudeLaunch {
+struct FrozenCliLaunch {
     executable: PathBuf,
     arguments: Vec<String>,
     executable_identity: crate::workflow::ExecutableIdentity,
     // Keep descriptor-backed paths alive until the child has exited.
     _verified_executable: crate::workflow::VerifiedExecutable,
+}
+
+fn frozen_cli_launch(agent: crate::workflow::ResolvedAgent) -> anyhow::Result<FrozenCliLaunch> {
+    let identity = agent
+        .executable_identity
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("frozen CLI launch has no executable identity"))?;
+    let verified_executable = crate::workflow::verify_executable_identity(identity)?;
+    let script_path = crate::workflow::verified_handle_path(
+        &verified_executable.executable.file,
+        std::path::Path::new(&identity.file.canonical_path),
+    )?;
+    let mut arguments = agent.arguments;
+    let executable = if let Some(interpreter) = &verified_executable.interpreter {
+        let interpreter_path = crate::workflow::verified_handle_path(
+            &interpreter.file,
+            std::path::Path::new(&interpreter.identity.canonical_path),
+        )?;
+        let mut interpreter_arguments = verified_executable.interpreter_arguments.clone();
+        interpreter_arguments.push(crate::paths::display(&script_path));
+        interpreter_arguments.extend(arguments);
+        arguments = interpreter_arguments;
+        interpreter_path
+    } else {
+        script_path
+    };
+    Ok(FrozenCliLaunch {
+        executable,
+        arguments,
+        executable_identity: identity.clone(),
+        _verified_executable: verified_executable,
+    })
+}
+
+fn into_launch(
+    bound: super::agent_binding::BoundAgent,
+    prompt: String,
+    output_file: PathBuf,
+    cwd: PathBuf,
+    cancellation: RunCancellation,
+    status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
+    started_status: Option<RunStatus>,
+) -> Launch {
+    match bound.runtime() {
+        super::agent_binding::BoundRuntime::ClaudeCli { .. } => Launch::ClaudeCli(
+            bound
+                .into_claude_session(
+                    prompt,
+                    output_file,
+                    cwd,
+                    cancellation,
+                    status_tx,
+                    started_status,
+                )
+                .expect("Claude bound runtime builds a Claude session"),
+        ),
+        super::agent_binding::BoundRuntime::Cursor { .. } => Launch::Cursor(
+            bound
+                .into_cursor_session(
+                    prompt,
+                    output_file,
+                    cwd,
+                    cancellation,
+                    status_tx,
+                    started_status,
+                )
+                .expect("Cursor bound runtime builds a Cursor session"),
+        ),
+        super::agent_binding::BoundRuntime::Rho { .. } => Launch::Rho(bound),
+    }
+}
+
+fn apply_frozen(overrides: &mut crate::cli_runtime::CliSessionOverrides, frozen: FrozenCliLaunch) {
+    let expected_identity = frozen.executable_identity;
+    let verified_executable = frozen._verified_executable;
+    overrides.executable = Some(crate::cli_runtime::CliExecutable::from_path(
+        frozen.executable,
+    ));
+    overrides.frozen_argv = Some(frozen.arguments);
+    overrides.before_spawn = Some(Box::new(move |command| {
+        crate::workflow::verify_executable_identity(&expected_identity)
+            .map_err(std::io::Error::other)?;
+        let mut files = vec![&verified_executable.executable.file];
+        if let Some(interpreter) = &verified_executable.interpreter {
+            files.push(&interpreter.file);
+        }
+        crate::workflow::configure_handle_inheritance(command, &files)
+            .map_err(std::io::Error::other)
+    }));
 }
 
 /// One delegated run on the Rho runtime, after binding and permit acquisition.
@@ -773,18 +850,6 @@ fn spawn_run_title(
         });
         let _ = subagent::apply_generated_title(&sinks.output_file, &title);
     });
-}
-
-/// Ensures frozen Claude argv can accept parent messages over stream-json stdin.
-fn ensure_stream_json_input(mut arguments: Vec<String>) -> Vec<String> {
-    let has_stream_json = arguments
-        .windows(2)
-        .any(|window| window[0] == "--input-format" && window[1] == "stream-json");
-    if !has_stream_json {
-        arguments.push("--input-format".into());
-        arguments.push("stream-json".into());
-    }
-    arguments
 }
 
 #[cfg(test)]

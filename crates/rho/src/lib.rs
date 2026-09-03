@@ -15,6 +15,7 @@ mod compaction;
 mod config;
 mod config_writer;
 mod credential_store;
+mod cursor_runtime;
 mod diagnostics;
 mod doctor;
 mod executable;

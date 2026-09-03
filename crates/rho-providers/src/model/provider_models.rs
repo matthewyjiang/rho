@@ -43,6 +43,12 @@ mod openai_compatible;
 #[path = "provider_models/request_auth.rs"]
 mod request_auth;
 pub use openai_compatible::probe_provider_models;
+#[path = "provider_models/cli.rs"]
+mod cli;
+pub use cli::{
+    cached_cli_provider_models, cli_provider_refresh_context, provider_models_are_fresh,
+    replace_cli_provider_models, CliProviderModel, CliProviderRefreshContext,
+};
 
 pub(super) struct ProviderModelRecord {
     pub model: ProviderModel,
@@ -392,6 +398,14 @@ fn replace_cached_provider_model_records(
     provider: &str,
     records: &[ProviderModelRecord],
 ) -> Result<(), ModelError> {
+    replace_cached_provider_model_records_with_context(provider, records, None)
+}
+
+fn replace_cached_provider_model_records_with_context(
+    provider: &str,
+    records: &[ProviderModelRecord],
+    context_json: Option<&str>,
+) -> Result<(), ModelError> {
     let mut connection = open_provider_models_cache().map_err(model_cache_error)?;
     let tx = connection.transaction().map_err(model_cache_error)?;
     tx.execute(
@@ -423,10 +437,13 @@ fn replace_cached_provider_model_records(
         .map_err(model_cache_error)?;
     }
     tx.execute(
-        "insert into provider_model_refresh (provider, updated_at, error)
-         values (?1, strftime('%s', 'now'), null)
-         on conflict(provider) do update set updated_at = excluded.updated_at, error = null",
-        params![provider],
+        "insert into provider_model_refresh (provider, updated_at, error, context_json)
+         values (?1, strftime('%s', 'now'), null, ?2)
+         on conflict(provider) do update set
+            updated_at = excluded.updated_at,
+            error = null,
+            context_json = excluded.context_json",
+        params![provider, context_json],
     )
     .map_err(model_cache_error)?;
     tx.commit().map_err(model_cache_error)?;
@@ -647,6 +664,7 @@ fn open_provider_models_cache() -> rusqlite::Result<Connection> {
         "alter table provider_models add column cache_version integer not null default 1",
         [],
     );
+    cli::ensure_refresh_context_column(&connection);
     Ok(connection)
 }
 

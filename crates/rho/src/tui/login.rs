@@ -140,17 +140,12 @@ impl App {
             self.open_login_picker();
             return Ok(());
         }
-        match claude_login::SignInTarget::parse(&invocation.args) {
-            claude_login::SignInTarget::ClaudeCode => self.execute_claude_code_login().await,
-            claude_login::SignInTarget::NewCustomHost { api } => {
-                self.start_custom_provider_onboarding(api);
-                Ok(())
-            }
-            claude_login::SignInTarget::Provider(provider) => {
-                self.start_login_for_provider(&provider, terminal, agent)
-                    .await
-            }
-        }
+        self.start_sign_in(
+            login_target::SignInTarget::parse(&invocation.args),
+            terminal,
+            agent,
+        )
+        .await
     }
 
     pub(super) async fn execute_logout_command(
@@ -175,11 +170,15 @@ impl App {
             }
             return Ok(());
         }
-        match claude_login::SignInTarget::parse(&invocation.args) {
-            claude_login::SignInTarget::ClaudeCode => self.execute_claude_code_logout().await,
+        match login_target::SignInTarget::parse(&invocation.args) {
+            login_target::SignInTarget::ClaudeCode => self.execute_claude_code_logout().await,
+            login_target::SignInTarget::Cursor => {
+                self.report_cursor_logout_unsupported();
+                Ok(())
+            }
             // Nothing is stored for a host that was never created.
-            claude_login::SignInTarget::NewCustomHost { .. } => Ok(()),
-            claude_login::SignInTarget::Provider(provider) => {
+            login_target::SignInTarget::NewCustomHost { .. } => Ok(()),
+            login_target::SignInTarget::Provider(provider) => {
                 self.logout_provider(&provider, agent).await
             }
         }
@@ -273,10 +272,33 @@ impl App {
         }
     }
 
+    /// Begin login for a parsed [`login_target::SignInTarget`].
+    pub(super) async fn start_sign_in(
+        &mut self,
+        target: login_target::SignInTarget,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        match target {
+            login_target::SignInTarget::ClaudeCode => {
+                self.execute_claude_code_login(terminal).await
+            }
+            login_target::SignInTarget::Cursor => self.execute_cursor_login(terminal).await,
+            login_target::SignInTarget::NewCustomHost { api } => {
+                self.start_custom_provider_onboarding(api);
+                Ok(())
+            }
+            login_target::SignInTarget::Provider(provider) => {
+                self.start_login_for_provider(&provider, terminal, agent)
+                    .await
+            }
+        }
+    }
+
     /// Begin login for a Rho provider credential.
     ///
-    /// Callers resolve [`claude_login::SignInTarget`] first, so the external
-    /// Claude Code runtime never reaches this path.
+    /// Callers resolve [`login_target::SignInTarget`] first, so external
+    /// runtimes never reach this path.
     pub(super) async fn start_login_for_provider(
         &mut self,
         provider: &str,
@@ -334,8 +356,9 @@ impl App {
         providers.dedup();
         let providers = providers.join(", ");
         self.insert_entry(&Entry::Error(format!(
-            "unsupported login provider '{provider}'. Use {providers}, /login {}",
-            claude_login::CLAUDE_CODE_TARGET
+            "unsupported login provider '{provider}'. Use {providers}, /login {}, /login {}",
+            claude_login::CLAUDE_CODE_TARGET,
+            crate::agent::AgentRuntime::Cursor.as_str()
         )));
         self.set_status("login failed");
         Ok(())

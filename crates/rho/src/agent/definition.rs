@@ -6,6 +6,8 @@ use thiserror::Error;
 
 use rho_providers::reasoning::ReasoningLevel;
 
+use super::CursorTool;
+
 macro_rules! define_tool_capabilities {
     ($($variant:ident => $name:literal),+ $(,)?) => {
         /// A parsed tool capability in an agent definition.
@@ -225,7 +227,8 @@ pub enum ToolPolicy {
 ///
 /// Runtime is independent of model selection. `Rho` uses Rho's own loop and
 /// tool vocabulary. `ClaudeCli` delegates the loop to the `claude` binary and
-/// uses Claude Code tool names.
+/// uses Claude Code tool names. `Cursor` delegates the loop to `cursor-agent`
+/// and uses the closed Cursor tool vocabulary.
 #[derive(
     Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
 )]
@@ -234,6 +237,7 @@ pub enum AgentRuntime {
     #[default]
     Rho,
     ClaudeCli,
+    Cursor,
 }
 
 impl AgentRuntime {
@@ -241,7 +245,16 @@ impl AgentRuntime {
         match self {
             Self::Rho => "rho",
             Self::ClaudeCli => "claude-cli",
+            Self::Cursor => "cursor",
         }
+    }
+
+    /// Whether this runtime delegates the agent loop to an external binary.
+    ///
+    /// True for [`Self::ClaudeCli`] and [`Self::Cursor`]. Those runtimes pass
+    /// `model` through as `--model` and do not use Rho provider or auth.
+    pub fn is_external_cli(self) -> bool {
+        matches!(self, Self::ClaudeCli | Self::Cursor)
     }
 }
 
@@ -258,6 +271,7 @@ impl FromStr for AgentRuntime {
         match value {
             "rho" => Ok(Self::Rho),
             "claude-cli" => Ok(Self::ClaudeCli),
+            "cursor" => Ok(Self::Cursor),
             _ => Err(AgentRuntimeError {
                 value: value.to_string(),
             }),
@@ -266,7 +280,7 @@ impl FromStr for AgentRuntime {
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
-#[error("unknown runtime '{value}'; expected rho or claude-cli")]
+#[error("unknown runtime '{value}'; expected rho, claude-cli, or cursor")]
 pub struct AgentRuntimeError {
     value: String,
 }
@@ -317,6 +331,19 @@ pub struct ClaudeAgentConfig {
     pub reasoning: Option<ReasoningLevel>,
 }
 
+/// Settings that only the Cursor Agent runtime understands.
+///
+/// Built at parse time with a nonempty closed tool allow list. Bind and spawn
+/// map `tools` onto `--allowed-tools`. Cursor has no reasoning flag; effort
+/// lives in the model id or a bracket override.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CursorAgentConfig {
+    /// Nonempty closed allow list. Enforced at parse and edit validation.
+    pub tools: Vec<CursorTool>,
+    /// Pass-through `--model` value. `None` omits the flag.
+    pub model: Option<String>,
+}
+
 /// The runtime together with the settings only that runtime understands.
 ///
 /// One value carries the whole runtime axis, so a definition cannot pair one
@@ -329,6 +356,7 @@ pub enum AgentRuntimeSpec {
         reasoning: Option<ReasoningLevel>,
     },
     ClaudeCli(ClaudeAgentConfig),
+    Cursor(CursorAgentConfig),
 }
 
 impl Default for AgentRuntimeSpec {
@@ -346,6 +374,28 @@ impl AgentRuntimeSpec {
         match self {
             Self::Rho { .. } => AgentRuntime::Rho,
             Self::ClaudeCli(_) => AgentRuntime::ClaudeCli,
+            Self::Cursor(_) => AgentRuntime::Cursor,
+        }
+    }
+
+    /// Pass-through `--model` for external CLI runtimes.
+    ///
+    /// `Some` for Claude Code and Cursor (inner `None` omits `--model`).
+    /// `None` for Rho, which uses [`ModelPolicy`] instead.
+    pub fn pass_through_model(&self) -> Option<&Option<String>> {
+        match self {
+            Self::ClaudeCli(config) => Some(&config.model),
+            Self::Cursor(config) => Some(&config.model),
+            Self::Rho { .. } => None,
+        }
+    }
+
+    /// Mutable pass-through `--model` for external CLI runtimes.
+    pub fn pass_through_model_mut(&mut self) -> Option<&mut Option<String>> {
+        match self {
+            Self::ClaudeCli(config) => Some(&mut config.model),
+            Self::Cursor(config) => Some(&mut config.model),
+            Self::Rho { .. } => None,
         }
     }
 }
@@ -361,19 +411,17 @@ pub struct AgentDefinition {
 impl AgentDefinition {
     /// Model policy for display and fingerprinting.
     ///
-    /// Taken from the Rho arm, or reconstructed from Claude's pass-through
-    /// model string (`None` → inherit, `Some` → select).
+    /// Taken from the Rho arm, or reconstructed from an external CLI
+    /// pass-through model string (`None` → inherit, `Some` → select).
     pub fn model_policy(&self) -> Cow<'_, ModelPolicy> {
-        match &self.runtime {
-            AgentRuntimeSpec::Rho { model, .. } => Cow::Borrowed(model),
-            AgentRuntimeSpec::ClaudeCli(config) => Cow::Owned(match &config.model {
-                None => ModelPolicy::Inherit,
-                Some(model) => ModelPolicy::Select(ModelSelection {
-                    provider: None,
-                    model: model.clone(),
-                    auth: None,
-                }),
-            }),
+        match self.runtime.pass_through_model() {
+            Some(model) => Cow::Owned(pass_through_model_policy(model.as_deref())),
+            None => match &self.runtime {
+                AgentRuntimeSpec::Rho { model, .. } => Cow::Borrowed(model),
+                AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => {
+                    unreachable!("external CLI runtimes expose a pass-through model")
+                }
+            },
         }
     }
 
@@ -382,6 +430,7 @@ impl AgentDefinition {
         match &self.runtime {
             AgentRuntimeSpec::Rho { reasoning, .. } => *reasoning,
             AgentRuntimeSpec::ClaudeCli(config) => config.reasoning,
+            AgentRuntimeSpec::Cursor(_) => None,
         }
     }
 
@@ -403,7 +452,7 @@ impl AgentDefinition {
             AgentRuntimeSpec::Rho { tools, .. } => {
                 Some(self.hash_semantic(FingerprintEncoding::LegacyV1 { tools }))
             }
-            AgentRuntimeSpec::ClaudeCli(_) => None,
+            AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => None,
         }
     }
 
@@ -469,6 +518,12 @@ impl AgentDefinition {
                             hash_field(&mut hash, tool.as_bytes());
                         }
                     }
+                    AgentRuntimeSpec::Cursor(config) => {
+                        hash_field(&mut hash, b"tools:cursor");
+                        for tool in &config.tools {
+                            hash_field(&mut hash, tool.as_flag().as_bytes());
+                        }
+                    }
                 }
             }
             FingerprintEncoding::LegacyV1 { tools } => match tools {
@@ -512,6 +567,17 @@ enum FingerprintEncoding<'a> {
     LegacyV1 {
         tools: &'a ToolPolicy,
     },
+}
+
+fn pass_through_model_policy(model: Option<&str>) -> ModelPolicy {
+    match model {
+        None => ModelPolicy::Inherit,
+        Some(model) => ModelPolicy::Select(ModelSelection {
+            provider: None,
+            model: model.to_string(),
+            auth: None,
+        }),
+    }
 }
 
 fn hash_selection(hash: &mut Sha256, policy: &[u8], selection: &ModelSelection) {

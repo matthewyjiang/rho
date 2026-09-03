@@ -284,33 +284,8 @@ const FROZEN_IDENTITY_FLAGS: &[&str] = &["--model", "--effort", "--max-turns"];
 /// Overlay frozen identity onto argv generated from the effective bound mode.
 ///
 /// Frozen permission flags cannot widen or replace the mapped Claude mode.
-pub(crate) fn apply_frozen_identity_args(
-    mut generated: Vec<String>,
-    frozen: &[String],
-) -> Vec<String> {
-    for flag in FROZEN_IDENTITY_FLAGS {
-        if let Some(value) = single_flag_value(frozen, flag) {
-            set_single_flag_value(&mut generated, flag, value);
-        }
-    }
-    generated
-}
-
-fn single_flag_value(args: &[String], flag: &str) -> Option<String> {
-    args.windows(2)
-        .find(|pair| pair[0] == flag)
-        .map(|pair| pair[1].clone())
-}
-
-fn set_single_flag_value(args: &mut Vec<String>, flag: &str, value: String) {
-    if let Some(index) = args.iter().position(|arg| arg == flag) {
-        if index + 1 < args.len() {
-            args[index + 1] = value;
-            return;
-        }
-    }
-    args.push((*flag).to_string());
-    args.push(value);
+pub(crate) fn apply_frozen_identity_args(generated: Vec<String>, frozen: &[String]) -> Vec<String> {
+    crate::cli_runtime::overlay_identity_flags(generated, frozen, FROZEN_IDENTITY_FLAGS)
 }
 
 /// Map Rho `reasoning:` onto Claude `--effort`.

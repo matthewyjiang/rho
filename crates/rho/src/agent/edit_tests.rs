@@ -5,8 +5,8 @@ use pretty_assertions::assert_eq;
 use super::*;
 use crate::agent::{
     parse_definition, AgentDefinition, AgentId, AgentRuntime, AgentRuntimeSpec, ClaudeAgentConfig,
-    ClaudeToolPolicy, ModelPolicy, ModelSelection, PromptPolicy, ReasoningLevel, ToolCapability,
-    ToolPolicy,
+    ClaudeToolPolicy, CursorAgentConfig, CursorTool, ModelPolicy, ModelSelection, PromptPolicy,
+    ReasoningLevel, ToolCapability, ToolPolicy,
 };
 
 fn rho_draft() -> AgentDefinition {
@@ -69,6 +69,59 @@ fn switching_to_claude_cli_resets_incompatible_fields() {
         }
         _ => panic!("expected claude runtime"),
     }
+}
+
+// Covers: switching to cursor drops reasoning and starts with no tools so
+// save cannot emit an unrestricted cursor-agent -p allow list.
+// Owner: agent edit
+#[test]
+fn switching_to_cursor_resets_reasoning_and_requires_tools() {
+    let mut draft = AgentDefinition {
+        id: AgentId::new("switch-cursor").unwrap(),
+        description: "switch agent".into(),
+        prompt: PromptPolicy::Replace("body".into()),
+        runtime: AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(
+                [ToolCapability::ReadFile, ToolCapability::Shell]
+                    .into_iter()
+                    .collect(),
+            ),
+            model: ModelPolicy::Select(ModelSelection {
+                provider: Some("openai".into()),
+                model: "gpt-5.3-codex-high".into(),
+                auth: None,
+            }),
+            reasoning: Some(ReasoningLevel::High),
+        },
+    };
+
+    assert!(draft.switch_runtime_kind("cursor"));
+    assert_eq!(draft.prompt, PromptPolicy::Extend("body".into()));
+    match &draft.runtime {
+        AgentRuntimeSpec::Cursor(config) => {
+            assert_eq!(config.model.as_deref(), Some("gpt-5.3-codex-high"));
+            assert_eq!(config.tools, Vec::<CursorTool>::new());
+        }
+        other => panic!("expected cursor runtime, got {other:?}"),
+    }
+    assert_eq!(draft.reasoning(), None);
+    assert_eq!(
+        draft.validate_for_edit().as_deref(),
+        Some("cursor agents need at least one tool")
+    );
+    draft.set_tools_text("[read_tool_call]").unwrap();
+    assert_eq!(
+        draft.runtime,
+        AgentRuntimeSpec::Cursor(CursorAgentConfig {
+            tools: vec![CursorTool::Read],
+            model: Some("gpt-5.3-codex-high".into()),
+        })
+    );
+    assert_eq!(draft.validate_for_edit(), None);
+    assert_eq!(
+        draft.set_tools_text("[]").unwrap_err(),
+        "cursor agents need at least one tool"
+    );
 }
 
 // Covers: switching claude-cli -> rho resets tools and keeps model/reasoning

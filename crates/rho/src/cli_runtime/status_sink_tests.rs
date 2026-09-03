@@ -2,13 +2,22 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use tokio::sync::watch;
 
-use super::StatusSink;
-use crate::claude_runtime::stream::{
+use super::{RuntimeLabel, StatusSink};
+use crate::cli_runtime::stream_effect::{
     StatusPatch, StreamEffect, TerminalClassification, TerminalResult,
 };
+
 use crate::{
     run_artifacts::{AttachmentEvent, AttachmentReader, RunArtifactIdentity},
     subagent::{self, RunState, RunStatus},
+};
+
+const TEST_LABEL: RuntimeLabel = RuntimeLabel {
+    starting_activity: "starting claude",
+    program: "claude code",
+    resume_command: "claude",
+    session_label: "claude session",
+    cost_label: "claude cost",
 };
 
 fn identity() -> RunArtifactIdentity {
@@ -49,7 +58,15 @@ fn read_attachment_events(output: &std::path::Path) -> Vec<AttachmentEvent> {
 async fn sink_writes_prompt_and_starting_status() {
     let directory = TempDir::new().unwrap();
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
-    let sink = StatusSink::new(output.clone(), &identity(), "plan this", None, None).unwrap();
+    let sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "plan this",
+        None,
+        None,
+        TEST_LABEL,
+    )
+    .unwrap();
     assert_eq!(sink.status().state, RunState::Starting);
     assert_eq!(sink.status().provider.as_deref(), Some("claude-code"));
     assert_eq!(sink.status().model.as_deref(), Some("opus"));
@@ -69,7 +86,15 @@ async fn sink_applies_stream_effects_and_finalizes_success() {
     let directory = TempDir::new().unwrap();
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
     let (tx, rx) = watch::channel(RunStatus::default());
-    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", Some(tx), None).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        Some(tx),
+        None,
+        TEST_LABEL,
+    )
+    .unwrap();
 
     sink.mark_running();
     sink.apply_effect(StreamEffect::Attachment(AttachmentEvent::StepStarted));
@@ -103,7 +128,15 @@ async fn sink_applies_stream_effects_and_finalizes_success() {
 async fn sink_fail_and_stop_are_terminal() {
     let directory = TempDir::new().unwrap();
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
-    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", None, None).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        None,
+        TEST_LABEL,
+    )
+    .unwrap();
     sink.fail("boom").await;
     let status = subagent::read_status(&output).expect("status");
     assert_eq!(status.state, RunState::Error);
@@ -114,7 +147,15 @@ async fn sink_fail_and_stop_are_terminal() {
 
     let directory = TempDir::new().unwrap();
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
-    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", None, None).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        None,
+        TEST_LABEL,
+    )
+    .unwrap();
     sink.stop("cancelled", None).await;
     let status = subagent::read_status(&output).expect("status");
     assert_eq!(status.state, RunState::Stopped);
@@ -126,42 +167,18 @@ async fn sink_fail_and_stop_are_terminal() {
 }
 
 #[tokio::test]
-async fn sink_collects_rate_limits_until_settle() {
+async fn second_terminal_finish_is_ignored() {
     let directory = TempDir::new().unwrap();
-    let rate_limit_path = directory.path().join("rate-limits.json");
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
     let mut sink = StatusSink::new(
         output.clone(),
         &identity(),
         "prompt",
         None,
-        Some(rate_limit_path.clone()),
+        None,
+        TEST_LABEL,
     )
     .unwrap();
-    sink.apply_effect(StreamEffect::RateLimit(
-        crate::claude_runtime::stream::RateLimitInfo {
-            status: Some("allowed".into()),
-            rate_limit_type: Some("five_hour".into()),
-            resets_at: Some(1_700_000_000),
-            utilization: Some(0.25),
-            overage_status: None,
-            overage_resets_at: None,
-            is_using_overage: None,
-        },
-    ));
-    // Cache is empty until settle.
-    assert!(crate::claude_runtime::rate_limit::load_at(&rate_limit_path).is_none());
-    sink.finalize_success_from_stream(&success_terminal()).await;
-    let state = crate::claude_runtime::rate_limit::load_at(&rate_limit_path).expect("cached");
-    assert_eq!(state.windows.len(), 1);
-    assert_eq!(state.windows[0].info.window_key(), "five_hour");
-}
-
-#[tokio::test]
-async fn second_terminal_finish_is_ignored() {
-    let directory = TempDir::new().unwrap();
-    let output = directory.path().join(subagent::RESULT_FILE_NAME);
-    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", None, None).unwrap();
     sink.finalize_success_from_stream(&success_terminal()).await;
     sink.fail("later").await;
     let status = subagent::read_status(&output).expect("status");

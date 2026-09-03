@@ -1,6 +1,73 @@
+use std::future::Future;
+use std::pin::Pin;
+
 use pretty_assertions::assert_eq;
+use tokio::sync::mpsc;
 
 use super::*;
+use crate::cli_runtime::line_decoder::MAX_NDJSON_LINE_BYTES;
+use crate::cli_runtime::stream_effect::{StreamEffect, TerminalClassification, TerminalResult};
+
+fn drain_config() -> DrainConfig {
+    DrainConfig {
+        program_label: "cli",
+        max_line_bytes: MAX_NDJSON_LINE_BYTES,
+    }
+}
+
+struct IgnoreMapper;
+
+impl StreamLineMapper for IgnoreMapper {
+    fn push_line(&mut self, _line: &str) -> Vec<StreamEffect> {
+        Vec::new()
+    }
+}
+
+struct ResultMapper;
+
+impl StreamLineMapper for ResultMapper {
+    fn push_line(&mut self, line: &str) -> Vec<StreamEffect> {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            return Vec::new();
+        };
+        if value.get("type").and_then(|value| value.as_str()) != Some("result") {
+            return Vec::new();
+        }
+        vec![StreamEffect::Terminal(TerminalResult {
+            classification: TerminalClassification::Success {
+                subtype: "success".into(),
+            },
+            result_text: value
+                .get("result")
+                .and_then(|value| value.as_str())
+                .map(str::to_owned),
+            error: None,
+            session_id: None,
+            num_turns: None,
+            usage: None,
+            context: None,
+            total_cost_usd: None,
+            permission_denials: Vec::new(),
+            stop_reason: None,
+        })]
+    }
+}
+
+struct ChannelFollowUps {
+    receiver: mpsc::Receiver<String>,
+}
+
+impl FollowUpSource for ChannelFollowUps {
+    fn try_recv(&mut self) -> Result<String, mpsc::error::TryRecvError> {
+        self.receiver.try_recv()
+    }
+
+    fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+        Box::pin(async { self.receiver.recv().await })
+    }
+
+    fn seal(&self) {}
+}
 
 #[cfg(unix)]
 use std::process::Stdio;
@@ -26,10 +93,13 @@ async fn child_exit_closes_pipes_inherited_by_descendants() {
 
     // Three seconds is a generous CI tripwire for a process that exits at once,
     // while remaining far below the fixture descendant's 30-second lifetime.
+    let mut mapper = IgnoreMapper;
     let drained = tokio::time::timeout(
         std::time::Duration::from_secs(3),
         drain_child(
             &mut child,
+            drain_config(),
+            &mut mapper,
             DrainInput::Text {
                 prompt: String::new(),
             },
@@ -66,10 +136,13 @@ async fn broken_pipe_on_stdin_still_reaps_exit_and_stderr() {
     let mut on_effect = |_| {};
     let prompt = "P".repeat(256 * 1024);
 
+    let mut mapper = IgnoreMapper;
     let drained = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         drain_child(
             &mut child,
+            drain_config(),
+            &mut mapper,
             DrainInput::Text { prompt },
             &cancellation,
             &mut on_effect,
@@ -138,19 +211,28 @@ sys.stdin.read()
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = OwnedChild::spawn(command).expect("spawn stream-json fixture");
-    let (handle, receiver) = super::super::messaging::message_channel();
+    let (tx, receiver) = mpsc::channel(8);
     let cancellation = CancellationToken::new();
     let mut on_effect = |_| {};
 
-    handle.send("pivot now".into()).await.unwrap();
+    tx.send("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Message from the parent session (not a new task - incorporate this into your current work):\\n\\npivot now\"}}\n".into())
+        .await
+        .unwrap();
+    // Drop the sender so drain can close stdin after the terminal result.
+    drop(tx);
 
+    let mut mapper = ResultMapper;
     let drained = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         drain_child(
             &mut child,
+            drain_config(),
+            &mut mapper,
             DrainInput::StreamJson {
-                initial_prompt: "start".into(),
-                parent_messages: Some(receiver),
+                initial_line:
+                    "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"start\"}}\n"
+                        .into(),
+                follow_ups: Some(Box::new(ChannelFollowUps { receiver })),
             },
             &cancellation,
             &mut on_effect,

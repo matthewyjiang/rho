@@ -1,8 +1,8 @@
 //! Live-resizable concurrency pools for delegated agents.
 //!
-//! One global pool covers every delegated run (Rho and Claude, foreground and
-//! background). Claude-cli runs also take a nested Claude permit first so queued
-//! Claude work cannot occupy spare global slots.
+//! One global pool covers every delegated run (Rho, Claude, and Cursor,
+//! foreground and background). Claude-cli runs also take a nested Claude permit
+//! first so queued Claude work cannot occupy spare global slots.
 
 use std::sync::{
     atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -230,6 +230,8 @@ impl AgentConcurrency {
     /// Acquire concurrency for a delegated run in runtime-aware order.
     ///
     /// - Rho: one global permit only.
+    /// - Cursor: one global permit only. No nested Cursor pool: unlike Claude,
+    ///   there is no measured subscription fan-out limit to size one against.
     /// - Claude: Claude nested permit first, then one global permit.
     ///
     /// Claude-first ordering keeps queued Claude tasks off the global pool until
@@ -243,7 +245,7 @@ impl AgentConcurrency {
     ) -> Option<RuntimePermits> {
         let claude = match capacity_class {
             CapacityClass::Claude => Some(self.claude.acquire(cancellation).await?),
-            CapacityClass::Rho => None,
+            CapacityClass::Rho | CapacityClass::Cursor => None,
         };
 
         let total = self.total.acquire(cancellation).await?;

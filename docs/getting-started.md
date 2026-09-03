@@ -38,6 +38,6 @@ Rho stores persistent [configuration](/configuration) in `~/.rho/config.toml`. T
 
 For local project work, see [development](/development). If authentication, model selection, or environment setup fails, run `/doctor` in the TUI or `rho doctor` from the CLI; use `/info` to inspect the active selection and `/limits` to inspect supported usage windows (including last-observed Claude Code limits after a `claude-cli` run). See [automation CLI](/automation-cli).
 
-To delegate through Claude Code on a subscription, install the [Claude Code binary](/installation#claude-code-binary-optional), run `/login claude-code`, and define an agent with `runtime: claude-cli`. See [when this is useful and how to use it](/subagents/claude-cli).
+To delegate through Claude Code on a subscription, install the [Claude Code binary](/installation#claude-code-binary-optional), run `/login claude-code`, and define an agent with `runtime: claude-cli`. See [when this is useful and how to use it](/subagents/claude-cli). To delegate through Cursor Agent, install [cursor-agent](/installation#cursor-agent-binary-optional), run `/login cursor`, and define an agent with `runtime: cursor`.
 
 [Herdr](/integrations/herdr) turns on under a Herdr pane, and [RTK](/integrations/rtk) rewrites agent shell commands when the binary is on `PATH`. No extra configuration. See [integrations](/integrations).

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     agent::{
         AgentCapabilities, AgentDefinition, AgentFingerprint, AgentId, AgentRuntimeSpec,
-        ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy,
+        CursorTool, ModelPolicy, PromptPolicy, ToolCapability, ToolPolicy,
     },
     config::Config,
 };
@@ -27,6 +27,7 @@ pub(crate) struct AgentInvocation {
 pub(crate) enum CapacityClass {
     Rho,
     Claude,
+    Cursor,
 }
 
 /// Runtime-specific values produced by binding.
@@ -53,6 +54,15 @@ pub(crate) enum BoundRuntime {
         /// Definition `reasoning:`. `None` inherits Claude's default effort.
         reasoning: Option<crate::agent::ReasoningLevel>,
     },
+    Cursor {
+        /// Cursor `--model` value, byte-for-byte from the definition when set.
+        /// `None` means inherit Cursor's own default (no `--model` flag).
+        model: Option<String>,
+        tools: Vec<CursorTool>,
+        /// Snapshot of the parent permission mode at bind time. Cursor spawn
+        /// maps this; Auto / Allow edits / Supervised already failed at bind.
+        permission_mode: crate::permission::PermissionMode,
+    },
 }
 
 impl BoundRuntime {
@@ -60,6 +70,7 @@ impl BoundRuntime {
         match self {
             Self::Rho { .. } => CapacityClass::Rho,
             Self::ClaudeCli { .. } => CapacityClass::Claude,
+            Self::Cursor { .. } => CapacityClass::Cursor,
         }
     }
 }
@@ -93,7 +104,7 @@ impl BoundAgent {
     pub(crate) fn rho_config(&self) -> Option<&Config> {
         match &self.runtime {
             BoundRuntime::Rho { config, .. } => Some(config.as_ref()),
-            BoundRuntime::ClaudeCli { .. } => None,
+            BoundRuntime::ClaudeCli { .. } | BoundRuntime::Cursor { .. } => None,
         }
     }
 
@@ -106,7 +117,13 @@ impl BoundAgent {
         use crate::model_identity::PromptModel;
         match &self.runtime {
             BoundRuntime::Rho { config, .. } => PromptModel::from_config(config),
-            BoundRuntime::ClaudeCli { model, .. } => PromptModel::ClaudeCli {
+            BoundRuntime::ClaudeCli { model, .. } => PromptModel::ExternalCli {
+                runtime: crate::agent::AgentRuntime::ClaudeCli,
+                requested: model.clone(),
+                resolved: None,
+            },
+            BoundRuntime::Cursor { model, .. } => PromptModel::ExternalCli {
+                runtime: crate::agent::AgentRuntime::Cursor,
                 requested: model.clone(),
                 resolved: None,
             },
@@ -117,7 +134,7 @@ impl BoundAgent {
     pub(crate) fn rho_capabilities(&self) -> Option<&AgentCapabilities> {
         match &self.runtime {
             BoundRuntime::Rho { capabilities, .. } => Some(capabilities),
-            BoundRuntime::ClaudeCli { .. } => None,
+            BoundRuntime::ClaudeCli { .. } | BoundRuntime::Cursor { .. } => None,
         }
     }
 
@@ -152,6 +169,15 @@ impl BoundAgent {
                 model: Some(config.model.clone()),
                 runtime: crate::agent::AgentRuntime::Rho,
                 reasoning: Some(config.reasoning),
+            },
+            BoundRuntime::Cursor { model, .. } => crate::run_artifacts::RunArtifactIdentity {
+                agent_id: self.id().to_string(),
+                agent_fingerprint: self.fingerprint().to_string(),
+                provider: crate::cursor_runtime::models::CURSOR_SOURCE_LABEL.into(),
+                // `None` means no `--model` pin; Cursor chooses.
+                model: model.clone(),
+                runtime: crate::agent::AgentRuntime::Cursor,
+                reasoning: None,
             },
         }
     }
@@ -190,8 +216,45 @@ impl BoundAgent {
             cancellation,
             status_tx,
             started_status,
-            overrides: Default::default(),
             parent_messages: None,
+            auth_status: None,
+            rate_limit_state_path: None,
+            overrides: Default::default(),
+        })
+    }
+
+    /// Build the Cursor session request for a bound Cursor runtime.
+    pub(crate) fn into_cursor_session(
+        self,
+        prompt: String,
+        output_file: std::path::PathBuf,
+        cwd: std::path::PathBuf,
+        cancellation: rho_tools::cancellation::RunCancellation,
+        status_tx: Option<tokio::sync::watch::Sender<crate::subagent::RunStatus>>,
+        started_status: Option<crate::subagent::RunStatus>,
+    ) -> Option<crate::cursor_runtime::session::CursorSessionRequest> {
+        let identity = self.artifact_identity();
+        let BoundRuntime::Cursor {
+            tools,
+            permission_mode,
+            ..
+        } = self.runtime
+        else {
+            return None;
+        };
+        Some(crate::cursor_runtime::session::CursorSessionRequest {
+            system_prompt: self.definition.prompt.clone(),
+            identity,
+            tools,
+            prompt,
+            output_file,
+            cwd,
+            permission_mode,
+            cancellation,
+            status_tx,
+            started_status,
+            auth_status: None,
+            overrides: Default::default(),
         })
     }
 }
@@ -233,6 +296,9 @@ impl AgentBinder {
             }
             AgentRuntimeSpec::ClaudeCli(config) => {
                 bind_claude_runtime(&definition, config, &invocation, host_config)?
+            }
+            AgentRuntimeSpec::Cursor(config) => {
+                bind_cursor_runtime(&definition, config, &invocation, host_config)?
             }
         };
         Ok(BoundAgent {
@@ -291,6 +357,16 @@ impl AgentBinder {
                     capabilities,
                 }
             }
+            crate::workflow::AgentRuntime::Cursor => {
+                let tools = frozen_cursor_tools(frozen)?;
+                crate::cursor_runtime::spawn::map_permission_mode(permission_mode, &tools)
+                    .map_err(|error| anyhow::anyhow!("agent '{}': {error}", frozen.agent_id))?;
+                BoundRuntime::Cursor {
+                    model: frozen.model.clone(),
+                    tools,
+                    permission_mode,
+                }
+            }
             crate::workflow::AgentRuntime::ClaudeCli => {
                 let reasoning = frozen
                     .reasoning
@@ -326,6 +402,17 @@ fn decode_frozen_prompt_policy(encoded: &str) -> anyhow::Result<PromptPolicy> {
     } else {
         anyhow::bail!("frozen prompt policy is invalid")
     }
+}
+
+fn frozen_cursor_tools(frozen: &crate::workflow::ResolvedAgent) -> anyhow::Result<Vec<CursorTool>> {
+    frozen
+        .capabilities
+        .iter()
+        .map(|name| {
+            name.parse::<CursorTool>()
+                .map_err(|error| anyhow::anyhow!("frozen agent '{}': {error}", frozen.agent_id))
+        })
+        .collect()
 }
 
 fn frozen_capabilities(
@@ -544,8 +631,14 @@ fn prompt_model_for_definition(
     use crate::model_identity::PromptModel;
 
     match &definition.runtime {
-        AgentRuntimeSpec::ClaudeCli(claude) => Some(PromptModel::ClaudeCli {
+        AgentRuntimeSpec::ClaudeCli(claude) => Some(PromptModel::ExternalCli {
+            runtime: crate::agent::AgentRuntime::ClaudeCli,
             requested: claude.model.clone(),
+            resolved: None,
+        }),
+        AgentRuntimeSpec::Cursor(cursor) => Some(PromptModel::ExternalCli {
+            runtime: crate::agent::AgentRuntime::Cursor,
+            requested: cursor.model.clone(),
             resolved: None,
         }),
         AgentRuntimeSpec::Rho { model, .. } => {
@@ -664,6 +757,45 @@ set a Claude model name or alias (for example opus), not '{model}'",
             .try_into()
             .expect("run step limit fits in u64"),
         reasoning,
+    })
+}
+
+fn bind_cursor_runtime(
+    definition: &AgentDefinition,
+    config: &crate::agent::CursorAgentConfig,
+    invocation: &AgentInvocation,
+    host_config: &Config,
+) -> anyhow::Result<BoundRuntime> {
+    match invocation.role {
+        AgentRole::Delegated | AgentRole::Workflow => {}
+        AgentRole::InteractiveRoot | AgentRole::AutomationRoot => {
+            anyhow::bail!(
+                "agent '{}': runtime cursor is delegated-only; use it through the agent tool, not as an interactive or automation root",
+                definition.id
+            );
+        }
+    }
+
+    // Defense in depth: parse already rejects these, but constructed configs
+    // (tests, future loaders) must not slip past bind.
+    if let Some(model) = &config.model {
+        if model.starts_with('@') {
+            anyhow::bail!(
+                "agent '{}': runtime cursor does not resolve Rho model aliases; \
+set a Cursor model name (for example gpt-5.3-codex), not '{model}'",
+                definition.id
+            );
+        }
+    }
+
+    // Fail Auto / Allow edits / Supervised here so launch never reaches spawn.
+    crate::cursor_runtime::spawn::map_permission_mode(host_config.permission_mode, &config.tools)
+        .map_err(|error| anyhow::anyhow!("agent '{}': {error}", definition.id))?;
+
+    Ok(BoundRuntime::Cursor {
+        model: config.model.clone(),
+        tools: config.tools.clone(),
+        permission_mode: host_config.permission_mode,
     })
 }
 

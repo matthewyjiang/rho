@@ -18,6 +18,7 @@ use rho_providers::model::display_name::{model_display_name, model_reference_wit
 use rho_sdk::model::ModelIdentity;
 
 use crate::{
+    agent::AgentRuntime,
     claude_runtime::models::CLAUDE_CODE_SOURCE_LABEL,
     config::{Config, InternalAgentModelConfig, InternalAgentTarget},
     subagent::RunStatus,
@@ -29,19 +30,21 @@ use crate::{
 /// process catalog-name cache. It does not consult ambient "last run" state.
 ///
 /// The runtime axis travels with the model, mirroring `InternalAgentTarget` and
-/// `AgentRuntimeSpec`: Claude Code resolves its own model names, so its label
-/// cannot be described in Rho's provider vocabulary alone.
+/// `AgentRuntimeSpec`: external CLIs resolve their own model names, so those
+/// labels cannot be described in Rho's provider vocabulary alone.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PromptModel {
     /// A model Rho drives through one of its providers.
     Rho { provider: String, model: String },
-    /// The Claude Code CLI.
+    /// An external CLI runtime (Claude Code or Cursor Agent).
     ///
+    /// `runtime` is [`AgentRuntime::ClaudeCli`] or [`AgentRuntime::Cursor`].
     /// `requested` is the `--model` value Rho passes through, or `None` when Rho
-    /// omits the flag and Claude Code chooses. `resolved` is the concrete id a
-    /// run reported, when one has. Config and bind paths leave `resolved` empty;
-    /// run status fills it from the init frame.
-    ClaudeCli {
+    /// omits the flag and the CLI chooses. `resolved` is the concrete id a run
+    /// reported, when one has. Config and bind paths leave `resolved` empty;
+    /// run status fills it from the init frame (`claude_model` for both CLIs).
+    ExternalCli {
+        runtime: AgentRuntime,
         requested: Option<String>,
         resolved: Option<String>,
     },
@@ -71,7 +74,8 @@ impl PromptModel {
                 provider: rho.provider.clone(),
                 model: rho.model.clone(),
             },
-            InternalAgentTarget::ClaudeCli { model } => Self::ClaudeCli {
+            InternalAgentTarget::ClaudeCli { model } => Self::ExternalCli {
+                runtime: AgentRuntime::ClaudeCli,
                 requested: model.clone(),
                 resolved: None,
             },
@@ -81,47 +85,28 @@ impl PromptModel {
     /// The model a finished or in-flight run recorded on its status.
     ///
     /// Returns `None` when the status has no provider/model pair for a Rho run.
-    /// Claude runs always yield a value: even with nothing pinned and nothing
-    /// resolved yet, the label still says Claude Code chooses.
+    /// External CLI runs always yield a value: even with nothing pinned and
+    /// nothing resolved yet, the label still says the CLI chooses.
     pub(crate) fn from_run_status(status: &RunStatus) -> Option<Self> {
-        use crate::agent::AgentRuntime;
-
         match status.runtime {
-            Some(AgentRuntime::ClaudeCli) => Some(Self::ClaudeCli {
-                requested: status
-                    .model
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|model| !model.is_empty())
-                    .map(str::to_string),
-                resolved: status
-                    .claude_model
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|model| !model.is_empty())
-                    .map(str::to_string),
-            }),
+            Some(runtime @ (AgentRuntime::ClaudeCli | AgentRuntime::Cursor)) => {
+                Some(Self::ExternalCli {
+                    runtime,
+                    requested: non_empty(status.model.as_deref()),
+                    resolved: non_empty(status.claude_model.as_deref()),
+                })
+            }
             Some(AgentRuntime::Rho) | None => Some(Self::Rho {
-                provider: status
-                    .provider
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|provider| !provider.is_empty())
-                    .map(str::to_string)?,
-                model: status
-                    .model
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|model| !model.is_empty())
-                    .map(str::to_string)?,
+                provider: non_empty(status.provider.as_deref())?,
+                model: non_empty(status.model.as_deref())?,
             }),
         }
     }
 
     /// How the identity reads in prompt or status text.
     ///
-    /// Rho models read as `provider/model (Catalog Name)`. Claude Code models
-    /// read as `claude-code/<--model value>`, plus what a run resolved when that
+    /// Rho models read as `provider/model (Catalog Name)`. External CLI models
+    /// read as `<source>/<--model value>`, plus what a run resolved when that
     /// is carried on the value.
     ///
     /// Always one line; see [`one_line`]. Catalog names come from the models.dev
@@ -130,10 +115,19 @@ impl PromptModel {
     pub(crate) fn describe(&self) -> String {
         one_line(match self {
             Self::Rho { provider, model } => model_reference_with_display_name(provider, model),
-            Self::ClaudeCli {
+            Self::ExternalCli {
+                runtime,
                 requested,
                 resolved,
-            } => describe_claude_cli(requested.as_deref(), resolved.as_deref()),
+            } => match runtime {
+                AgentRuntime::ClaudeCli => {
+                    describe_claude_cli(requested.as_deref(), resolved.as_deref())
+                }
+                AgentRuntime::Cursor => describe_cursor(requested.as_deref(), resolved.as_deref()),
+                AgentRuntime::Rho => {
+                    unreachable!("PromptModel::ExternalCli is only for ClaudeCli and Cursor")
+                }
+            },
         })
     }
 }
@@ -145,6 +139,13 @@ impl PromptModel {
 /// prompt line or one bracketed notice around this text, and a newline in any
 /// part would turn the rest into a line of its own that the executor reads as
 /// instructions.
+fn non_empty(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 fn one_line(text: String) -> String {
     if !text.contains(char::is_control) {
         return text;
@@ -166,6 +167,14 @@ fn one_line(text: String) -> String {
 /// ids are looked up under Anthropic even though `claude-code` is what Rho
 /// shows as the source.
 const CLAUDE_CATALOG_PROVIDER: &str = "anthropic";
+
+fn describe_cursor(requested: Option<&str>, resolved: Option<&str>) -> String {
+    use crate::cursor_runtime::models::CURSOR_SOURCE_LABEL;
+    match resolved.or(requested) {
+        Some(model) => rho_providers::provider::model_reference(CURSOR_SOURCE_LABEL, model),
+        None => format!("{CURSOR_SOURCE_LABEL} (no model pinned; Cursor chooses)"),
+    }
+}
 
 fn describe_claude_cli(requested: Option<&str>, resolved: Option<&str>) -> String {
     match (requested, resolved) {

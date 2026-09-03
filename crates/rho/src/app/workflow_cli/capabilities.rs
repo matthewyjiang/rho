@@ -192,11 +192,15 @@ impl AppWorkflowToolService {
                 }
                 crate::workflow::NodeExecution::Agent(agent) => {
                     let entry = catalog.find(&agent.agent)?;
-                    if matches!(
-                        entry.definition.runtime,
-                        crate::agent::AgentRuntimeSpec::ClaudeCli(_)
-                    ) {
-                        executables.insert("claude".to_owned());
+                    match &entry.definition.runtime {
+                        crate::agent::AgentRuntimeSpec::ClaudeCli(_) => {
+                            executables.insert("claude".to_owned());
+                        }
+                        crate::agent::AgentRuntimeSpec::Cursor(_) => {
+                            executables
+                                .insert(crate::cursor_runtime::models::CURSOR_PROGRAM.to_owned());
+                        }
+                        crate::agent::AgentRuntimeSpec::Rho { .. } => {}
                     }
                 }
             }

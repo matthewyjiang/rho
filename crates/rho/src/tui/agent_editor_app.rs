@@ -117,8 +117,8 @@ impl App {
                 self.submit_agent_field_choice(field, value);
                 Ok(())
             }
-            AgentEditPhase::PickingModel => {
-                self.submit_agent_model_selection(value);
+            AgentEditPhase::PickingModel(kind) => {
+                self.submit_agent_model_selection(kind, value);
                 Ok(())
             }
         }
@@ -242,54 +242,80 @@ impl App {
         self.reopen_agent_field_picker(field.field_value());
     }
 
-    fn submit_agent_model_selection(&mut self, value: &str) {
-        let Some(mut draft) = self
-            .agent_editor_session
-            .as_ref()
-            .map(|session| session.draft().clone())
-        else {
-            self.cancel_agent_editor();
-            return;
-        };
-        self.refresh_available_auths();
-        let current = draft.current_selection();
-        let current_provider = current
-            .provider
-            .as_deref()
-            .unwrap_or(&self.info.runtime.provider);
-        let current_auth = self.info.runtime.auth.clone();
-        match self.resolve_model_selection(value, current_provider, &current_auth) {
-            Ok(resolved) => {
-                let catalog = &resolved.selection;
-                let mut selection = current;
-                selection.provider = Some(catalog.provider.clone());
-                selection.model = catalog.model.clone();
-                // Model picker resolves runtime auth; only keep an existing agent
-                // pin when it still belongs on the chosen provider.
-                selection.auth = selection.auth.filter(|auth| {
-                    rho_providers::provider::provider_accepts_auth(&catalog.provider, auth)
-                });
-                draft.set_model_selection(Some(selection));
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(err.to_string()));
+    fn submit_agent_model_selection(&mut self, kind: ModelPickerKind, value: &str) {
+        match kind {
+            ModelPickerKind::CursorCached => {
+                if value == crate::tui::cursor_model_picker::CURSOR_MODEL_OTHER {
+                    let current = self
+                        .agent_editor_session
+                        .as_ref()
+                        .map(|session| session.draft().model_text())
+                        .unwrap_or_default();
+                    self.open_agent_text_input(AgentField::Model, current);
+                    return;
+                }
+                if let Some(session) = &mut self.agent_editor_session {
+                    session.with_draft_mut(|draft| draft.set_model_text(value.to_string()));
+                }
                 self.reopen_agent_field_picker(AGENT_FIELD_MODEL);
-                self.set_status("agent model switch failed");
-                return;
+            }
+            ModelPickerKind::RhoCatalog => {
+                let Some(mut draft) = self
+                    .agent_editor_session
+                    .as_ref()
+                    .map(|session| session.draft().clone())
+                else {
+                    self.cancel_agent_editor();
+                    return;
+                };
+                self.refresh_available_auths();
+                let current = draft.current_selection();
+                let current_provider = current
+                    .provider
+                    .as_deref()
+                    .unwrap_or(&self.info.runtime.provider);
+                let current_auth = self.info.runtime.auth.clone();
+                match self.resolve_model_selection(value, current_provider, &current_auth) {
+                    Ok(resolved) => {
+                        let catalog = &resolved.selection;
+                        let mut selection = current;
+                        selection.provider = Some(catalog.provider.clone());
+                        selection.model = catalog.model.clone();
+                        // Model picker resolves runtime auth; only keep an existing agent
+                        // pin when it still belongs on the chosen provider.
+                        selection.auth = selection.auth.filter(|auth| {
+                            rho_providers::provider::provider_accepts_auth(&catalog.provider, auth)
+                        });
+                        draft.set_model_selection(Some(selection));
+                    }
+                    Err(err) => {
+                        self.insert_entry(&Entry::Error(err.to_string()));
+                        self.reopen_agent_field_picker(AGENT_FIELD_MODEL);
+                        self.set_status("agent model switch failed");
+                        return;
+                    }
+                }
+                if let Some(session) = &mut self.agent_editor_session {
+                    session.with_draft_mut(|session_draft| *session_draft = draft);
+                }
+                self.reopen_agent_field_picker(AGENT_FIELD_MODEL);
             }
         }
-        if let Some(session) = &mut self.agent_editor_session {
-            session.with_draft_mut(|session_draft| *session_draft = draft);
-        }
-        self.reopen_agent_field_picker(AGENT_FIELD_MODEL);
     }
 
     fn open_agent_model_or_text(&mut self, draft: &crate::agent::AgentDefinition) {
         // Claude models are not catalog rows: the CLI resolves the value itself
         // and cannot enumerate models, so the editor offers the family aliases.
-        if draft.runtime.runtime() == AgentRuntime::ClaudeCli {
-            self.open_agent_choice(AgentChoiceField::ClaudeModel, draft);
-            return;
+        match draft.runtime.runtime() {
+            AgentRuntime::ClaudeCli => {
+                self.open_agent_choice(AgentChoiceField::ClaudeModel, draft);
+                return;
+            }
+            AgentRuntime::Cursor => {
+                self.open_cursor_agent_model(draft);
+                return;
+            }
+            AgentRuntime::Rho => {}
         }
         self.refresh_available_auths();
         let catalog = crate::tui::model_picker::conversation_model_catalog(
@@ -303,7 +329,7 @@ impl App {
         }
         let picker = catalog.into_edit_agent().with_fuzzy_filter();
         if let Some(session) = &mut self.agent_editor_session {
-            session.set_phase(AgentEditPhase::PickingModel);
+            session.set_phase(AgentEditPhase::PickingModel(ModelPickerKind::RhoCatalog));
         }
         self.open_child_picker(picker);
         self.set_status("select model");
@@ -323,6 +349,92 @@ impl App {
         }
         self.input_ui.set_composer(ComposerMode::TextInput(input));
         self.set_status(format!("edit {}", field.label()));
+    }
+
+    fn open_cursor_agent_model(&mut self, draft: &crate::agent::AgentDefinition) {
+        let models = crate::cursor_runtime::models::cached();
+        self.spawn_cursor_model_refresh_if_needed();
+        if models.is_empty() {
+            self.open_agent_text_input(AgentField::Model, draft.model_text());
+            return;
+        }
+        self.open_cursor_model_picker(&models, &draft.model_text());
+    }
+
+    fn open_cursor_model_picker(
+        &mut self,
+        models: &[crate::cursor_runtime::models::CursorModel],
+        current: &str,
+    ) {
+        let picker = crate::tui::cursor_model_picker::cursor_model_picker(models, current);
+        if let Some(session) = &mut self.agent_editor_session {
+            session.set_phase(AgentEditPhase::PickingModel(ModelPickerKind::CursorCached));
+        }
+        if matches!(self.input_ui.composer(), ComposerMode::Picker(_)) {
+            self.open_child_picker(picker);
+        } else {
+            self.input_ui.set_composer(ComposerMode::Picker(picker));
+        }
+        self.set_status("select model");
+    }
+
+    /// Refresh the cached Cursor list off the UI thread when it is empty,
+    /// stale, or belongs to another account. The account check needs a probe,
+    /// so the whole decision runs inside the task.
+    fn spawn_cursor_model_refresh_if_needed(&mut self) {
+        if self.pending_cursor_models.is_some() {
+            return;
+        }
+        self.pending_cursor_models = Some(tokio::spawn(
+            crate::cursor_runtime::models::refresh_if_stale(),
+        ));
+    }
+
+    pub(in crate::tui) async fn poll_cursor_model_refresh(&mut self) {
+        let Some(handle) = self.pending_cursor_models.as_mut() else {
+            return;
+        };
+        if !handle.is_finished() {
+            return;
+        }
+        let Some(handle) = self.pending_cursor_models.take() else {
+            return;
+        };
+        let Ok(Ok(models)) = handle.await else {
+            return;
+        };
+        if models.is_empty() {
+            return;
+        }
+        let ComposerMode::TextInput(input) = self.input_ui.composer() else {
+            return;
+        };
+        if !matches!(
+            input.target,
+            crate::tui::text_input::TextInputTarget::AgentField(AgentField::Model)
+        ) {
+            return;
+        }
+        let Some(session) = self.agent_editor_session.as_ref() else {
+            return;
+        };
+        if session.draft().runtime.runtime() != AgentRuntime::Cursor {
+            return;
+        }
+        let current = session.draft().model_text();
+        let parent = match self.input_ui.take_composer() {
+            ComposerMode::TextInput(mut input) => input.take_return_picker(),
+            composer => {
+                self.input_ui.set_composer(composer);
+                return;
+            }
+        };
+        self.input_ui.set_composer(
+            parent
+                .map(ComposerMode::Picker)
+                .unwrap_or(ComposerMode::Input),
+        );
+        self.open_cursor_model_picker(&models, &current);
     }
 
     pub(in crate::tui) fn reopen_agent_field_picker(&mut self, selected_value: &str) {

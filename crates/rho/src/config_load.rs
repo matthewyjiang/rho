@@ -660,6 +660,13 @@ fn internal_agent_runtime_key(
                 crate::config::RHO_RUNTIME_KEY
             ),
         ),
+        Some(crate::config::CURSOR_RUNTIME_KEY) => (
+            crate::config::CURSOR_RUNTIME_KEY,
+            format!(
+                "\"{}\" with the conversation selection; [internal_agents] runtime stays rho or claude-cli, not cursor",
+                crate::config::RHO_RUNTIME_KEY
+            ),
+        ),
         Some(other) => (
             other,
             format!(

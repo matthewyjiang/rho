@@ -5,15 +5,16 @@ use std::path::Path;
 
 use serde_json::Value;
 
+use crate::cli_runtime::stream_effect::StreamEffect;
+use crate::cli_runtime::stream_format::{reasoning_effects, text_effects};
 use crate::run_artifacts::AttachmentEvent;
 
 use super::presentation::{
     content_block_kind, fidelity_notice, mark_and_reasoning, mark_and_text, mark_complete_index,
-    mark_slot_emitted, push_block_slot, reasoning_effects, reconcile_complete_block,
-    set_slot_tool_id, text_effects, tool_started_effects, tool_updated_effects, ContentBlockKind,
+    mark_slot_emitted, push_block_slot, reconcile_complete_block, set_slot_tool_id,
+    tool_started_effects, tool_updated_effects, ContentBlockKind,
 };
 use super::tool_cards::StartedClaudeTool;
-use super::types::StreamEffect;
 use super::MessageStreamState;
 
 /// Reconcile one block from a progressive assistant snapshot while the partial

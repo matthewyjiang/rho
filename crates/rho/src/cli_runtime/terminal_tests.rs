@@ -1,6 +1,8 @@
 use super::*;
 
-use crate::claude_runtime::stream::{TerminalClassification, TerminalResult};
+use crate::cli_runtime::stream_effect::{TerminalClassification, TerminalResult};
+
+const PROGRAM: &str = "claude code";
 
 enum ExitResult {
     Success,
@@ -82,36 +84,39 @@ fn terminal_assessment_matrix() {
     let err_status = exit_status(ExitResult::Failure);
 
     assert!(matches!(
-        assess_terminal(Some(success.clone()), ok_status, ""),
+        assess_terminal(Some(success.clone()), ok_status, "", PROGRAM),
         TerminalOutcome::Success(_)
     ));
     assert!(matches!(
-        assess_terminal(Some(success), err_status, ""),
+        assess_terminal(Some(success), err_status, "", PROGRAM),
         TerminalOutcome::Failure { .. }
     ));
     assert!(matches!(
-        assess_terminal(Some(failure), ok_status, ""),
+        assess_terminal(Some(failure), ok_status, "", PROGRAM),
         TerminalOutcome::Failure {
             prefer_detail: false,
             ..
         }
     ));
     assert!(matches!(
-        assess_terminal(Some(invalid), ok_status, ""),
+        assess_terminal(Some(invalid), ok_status, "", PROGRAM),
         TerminalOutcome::Failure { .. }
     ));
     assert!(matches!(
-        assess_terminal(None, ok_status, ""),
+        assess_terminal(None, ok_status, "", PROGRAM),
         TerminalOutcome::Failure { terminal: None, .. }
     ));
-    let TerminalOutcome::Failure { detail, .. } =
-        assess_terminal(None, err_status, "error: unknown option '--max-turns'")
-    else {
-        panic!("unsupported --max-turns must fail");
+    let TerminalOutcome::Failure { detail, .. } = assess_terminal(
+        None,
+        err_status,
+        "error: unknown option '--max-turns'",
+        PROGRAM,
+    ) else {
+        panic!("non-zero exit without a stream result must fail");
     };
-    assert_eq!(
-        detail,
-        "claude code: this claude binary rejected --max-turns; upgrade Claude Code or remove the turn cap"
+    assert!(
+        detail.contains("process exited") && detail.contains("max-turns"),
+        "unsupported-flag diagnosis is Claude session policy; assess_terminal keeps the process detail: {detail}"
     );
 
     // Non-zero exit with empty stderr still carries the API/safeguard reason on
@@ -137,7 +142,8 @@ fn terminal_assessment_matrix() {
         permission_denials: Vec::new(),
         stop_reason: None,
     };
-    let TerminalOutcome::Failure { detail, .. } = assess_terminal(Some(safeguard), err_status, "")
+    let TerminalOutcome::Failure { detail, .. } =
+        assess_terminal(Some(safeguard), err_status, "", PROGRAM)
     else {
         panic!("safeguard stream failure must fail");
     };
@@ -166,7 +172,7 @@ fn terminal_assessment_matrix() {
         stop_reason: None,
     };
     let TerminalOutcome::Failure { detail, .. } =
-        assess_terminal(Some(success_with_text), err_status, "")
+        assess_terminal(Some(success_with_text), err_status, "", PROGRAM)
     else {
         panic!("success stream with non-zero exit must fail");
     };
@@ -195,9 +201,12 @@ fn terminal_assessment_matrix() {
         permission_denials: Vec::new(),
         stop_reason: None,
     };
-    let TerminalOutcome::Failure { detail, .. } =
-        assess_terminal(Some(failed_with_stderr), err_status, "segfault nearby")
-    else {
+    let TerminalOutcome::Failure { detail, .. } = assess_terminal(
+        Some(failed_with_stderr),
+        err_status,
+        "segfault nearby",
+        PROGRAM,
+    ) else {
         panic!("failure with stderr must fail");
     };
     assert!(

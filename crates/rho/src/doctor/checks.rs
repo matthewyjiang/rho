@@ -23,6 +23,7 @@ use super::{
 use crate::{
     claude_runtime::auth::ClaudeProbeSnapshot,
     clipboard::ClipboardDoctorReport,
+    cursor_runtime::auth::{CursorAuthError, CursorAuthStatus, CursorProbeSnapshot},
     herdr::HerdrReporter,
     plugins::{PluginLoadReport, PluginLoadSummary},
     tools::mcp::{McpLoadMode, McpSessionReport},
@@ -30,6 +31,7 @@ use crate::{
 
 pub(super) const CLAUDE_AUTH_LABEL: &str = "Claude Code authentication";
 pub(super) const CLAUDE_BINARY_LABEL: &str = "Claude Code binary";
+pub(super) const CURSOR_LABEL: &str = "cursor-agent";
 pub(super) const RTK_LABEL: &str = "rtk";
 
 /// One row per auth mode. Only the active mode warns when its key is
@@ -163,6 +165,61 @@ pub(super) fn claude_checks(claude: &ClaudeProbeSnapshot) -> Vec<DoctorCheck> {
         .with_hint(error.clone()),
     };
     vec![auth, binary]
+}
+
+pub(super) fn cursor_check(snapshot: &CursorProbeSnapshot) -> DoctorCheck {
+    match &snapshot.auth {
+        Err(CursorAuthError::BinaryMissing) => DoctorCheck::new(
+            DoctorCheckId::Cursor,
+            CURSOR_LABEL,
+            DoctorStatus::Info,
+            "not installed",
+        ),
+        Ok(status) if status.is_authenticated => DoctorCheck::new(
+            DoctorCheckId::Cursor,
+            CURSOR_LABEL,
+            DoctorStatus::Ok,
+            cursor_signed_in_summary(status, snapshot.version.as_deref(), snapshot.models_cached),
+        ),
+        Ok(_) => DoctorCheck::new(
+            DoctorCheckId::Cursor,
+            CURSOR_LABEL,
+            DoctorStatus::Info,
+            "not signed in (run /login cursor)",
+        ),
+        Err(error) => DoctorCheck::new(
+            DoctorCheckId::Cursor,
+            CURSOR_LABEL,
+            DoctorStatus::Info,
+            "unavailable",
+        )
+        .with_hint(error.to_string()),
+    }
+}
+
+fn cursor_signed_in_summary(
+    status: &CursorAuthStatus,
+    version: Option<&str>,
+    models_cached: usize,
+) -> String {
+    let mut summary = match version.filter(|value| !value.is_empty()) {
+        Some(version) => format!("{version} signed in"),
+        None => "signed in".into(),
+    };
+    if let Some(email) = status
+        .user_info
+        .as_ref()
+        .and_then(|info| info.email.as_deref())
+        .filter(|email| !email.is_empty())
+    {
+        summary.push_str(" as ");
+        summary.push_str(email);
+    }
+    summary.push_str(&format!(
+        ", {models_cached} model{} cached",
+        plural_suffix(models_cached)
+    ));
+    summary
 }
 
 pub(super) fn endpoint_label(provider: &str) -> String {

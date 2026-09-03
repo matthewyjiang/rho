@@ -8,6 +8,9 @@ use rho_providers::{
 use super::*;
 use crate::{
     claude_runtime::auth::ClaudeProbeSnapshot,
+    cursor_runtime::auth::{
+        CursorAuthError, CursorAuthStatus, CursorProbeSnapshot, CursorUserInfo,
+    },
     plugins::{PluginOrigin, PluginReportEntry, PluginScope, PluginStatus},
     tools::mcp::{
         report::{ConnectedServerReport, McpLiveServerState},
@@ -253,6 +256,58 @@ fn claude_rows_cover_signed_in_signed_out_and_error() {
             Some("claude code: binary not found on PATH")
         )
     );
+}
+
+// Covers: Cursor doctor row is informational for missing binary / signed-out
+// Owner: pure unit
+#[test]
+fn cursor_row_covers_signed_in_signed_out_and_not_installed() {
+    let signed_in = cursor_check(&CursorProbeSnapshot {
+        auth: Ok(CursorAuthStatus {
+            status: "authenticated".into(),
+            is_authenticated: true,
+            message: None,
+            user_info: Some(CursorUserInfo {
+                email: Some("dev@example.com".into()),
+            }),
+        }),
+        version: Some("2026.08.25".into()),
+        models_cached: 217,
+    });
+    let signed_out = cursor_check(&CursorProbeSnapshot {
+        auth: Ok(CursorAuthStatus {
+            status: "unauthenticated".into(),
+            is_authenticated: false,
+            message: Some("Not logged in".into()),
+            user_info: None,
+        }),
+        version: Some("2026.08.25".into()),
+        models_cached: 0,
+    });
+    let missing = cursor_check(&CursorProbeSnapshot {
+        auth: Err(CursorAuthError::BinaryMissing),
+        version: None,
+        models_cached: 0,
+    });
+
+    let cases = [
+        (
+            signed_in,
+            DoctorStatus::Ok,
+            "2026.08.25 signed in as dev@example.com, 217 models cached",
+        ),
+        (
+            signed_out,
+            DoctorStatus::Info,
+            "not signed in (run /login cursor)",
+        ),
+        (missing, DoctorStatus::Info, "not installed"),
+    ];
+    for (check, status, summary) in cases {
+        assert_eq!(check.id, DoctorCheckId::Cursor);
+        assert_eq!(check.label, CURSOR_LABEL);
+        assert_eq!((check.status, check.summary.as_str()), (status, summary));
+    }
 }
 
 // Covers: the MCP row follows the session summary: unconfigured is neutral,

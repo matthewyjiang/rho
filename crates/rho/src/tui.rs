@@ -46,6 +46,7 @@ mod divider;
 mod doctor_overlay;
 pub(crate) mod event_adapter;
 mod external_editor;
+mod external_login;
 mod fast_command;
 mod feed_image;
 mod file_palette;
@@ -74,6 +75,8 @@ mod chat_media;
 mod choice_actions;
 mod claude_login;
 mod composer_layout;
+mod cursor_login;
+mod cursor_model_picker;
 mod custom_provider_login;
 mod during_turn;
 mod exclusive_screen;
@@ -95,6 +98,7 @@ mod local_diff;
 mod login;
 mod login_presentation;
 mod login_secret_input;
+mod login_target;
 mod markdown;
 mod markdown_image;
 mod mcp_actions;
@@ -535,6 +539,7 @@ struct App {
     pending_model_metadata_reasoning: Option<(ReasoningLevel, ReasoningRequestSource)>,
     pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
     pending_custom_models: Option<tokio::task::JoinHandle<()>>,
+    pending_cursor_models: Option<crate::cursor_runtime::models::RefreshHandle>,
     pending_syntax_warmup: Option<tokio::task::JoinHandle<()>>,
     prompt_history: prompt_history::PromptHistory,
     pending_herdr_graphics: Option<tokio::task::JoinHandle<HerdrGraphicsCapability>>,

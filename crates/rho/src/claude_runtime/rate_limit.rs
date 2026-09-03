@@ -25,7 +25,8 @@ use serde::{Deserialize, Serialize};
 
 use rho_providers::file_lock::FileLock;
 
-use super::stream::RateLimitInfo;
+use crate::cli_runtime::status_sink::RateLimitRecorder;
+use crate::cli_runtime::stream_effect::RateLimitInfo;
 
 const STATE_FILE_NAME: &str = "rate-limits.json";
 /// Pre-cache top-level file; still read once so existing observations survive.
@@ -409,6 +410,72 @@ pub(crate) fn format_age_since(at_unix: i64, now_unix: i64) -> Option<String> {
         return None;
     }
     Some(format_age(now_unix.saturating_sub(at_unix).max(0)))
+}
+
+/// Collects stream rate-limit windows and flushes them to the Claude cache.
+pub(crate) struct ClaudeRateLimitRecorder {
+    pending: RateLimitState,
+    path: Option<PathBuf>,
+}
+
+impl ClaudeRateLimitRecorder {
+    pub(crate) fn new(path: Option<PathBuf>) -> Self {
+        Self {
+            pending: RateLimitState::default(),
+            path,
+        }
+    }
+}
+
+impl RateLimitRecorder for ClaudeRateLimitRecorder {
+    fn notice(&self, info: &RateLimitInfo) -> Option<String> {
+        Some(format!(
+            "claude limits: {}",
+            super::stream::describe_rate_limit(info)
+        ))
+    }
+
+    fn record(&mut self, info: RateLimitInfo) {
+        self.pending
+            .merge_window(RateLimitObservation::capture(info));
+    }
+
+    fn flush(&mut self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+        let pending = std::mem::take(&mut self.pending);
+        let path = self.path.clone();
+        Box::pin(async move {
+            if pending.is_empty() {
+                return;
+            }
+            let path = match path {
+                Some(path) => path,
+                None => match default_state_path() {
+                    Ok(path) => path,
+                    Err(error) => {
+                        tracing::debug!(
+                            error = %error,
+                            "claude rate-limit cache path unavailable; dropping pending windows"
+                        );
+                        return;
+                    }
+                },
+            };
+            // File lock + atomic write are blocking; keep them off the runtime worker.
+            let result = tokio::task::spawn_blocking(move || store_state(&path, pending)).await;
+            match result {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(error = %error, "failed to persist claude rate-limit cache");
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "claude rate-limit cache flush task failed to join"
+                    );
+                }
+            }
+        })
+    }
 }
 
 #[cfg(test)]

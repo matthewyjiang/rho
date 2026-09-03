@@ -223,6 +223,9 @@ fn resolve_agent(
         BoundRuntime::Rho { config, .. } => config.permission_mode.to_string(),
         BoundRuntime::ClaudeCli {
             permission_mode, ..
+        }
+        | BoundRuntime::Cursor {
+            permission_mode, ..
         } => permission_mode.to_string(),
     };
     let common = ResolvedAgent {
@@ -231,6 +234,7 @@ fn resolve_agent(
         runtime: match bound.runtime() {
             BoundRuntime::Rho { .. } => crate::workflow::AgentRuntime::Rho,
             BoundRuntime::ClaudeCli { .. } => crate::workflow::AgentRuntime::ClaudeCli,
+            BoundRuntime::Cursor { .. } => crate::workflow::AgentRuntime::Cursor,
         },
         source_origin,
         // Workflow-local agents ship with the workflow source the user planned.
@@ -293,6 +297,36 @@ fn resolve_agent(
                 reasoning: reasoning.map(|level| level.to_string()),
                 step_limit: *max_turns,
                 capabilities: tools.iter().cloned().collect(),
+                executable: Some(crate::paths::display(&executable)),
+                executable_identity: Some(executable_identity),
+                arguments: plan.args,
+                ..common
+            }
+        }
+        BoundRuntime::Cursor {
+            model,
+            tools,
+            permission_mode,
+        } => {
+            let (executable, executable_identity) =
+                host.resolve_executable(crate::cursor_runtime::models::CURSOR_PROGRAM)?;
+            let allowed =
+                crate::cursor_runtime::spawn::map_permission_mode(*permission_mode, tools)?;
+            let capabilities = allowed
+                .tools()
+                .iter()
+                .map(|tool| tool.as_flag().to_owned())
+                .collect();
+            let plan = crate::cursor_runtime::spawn::build_spawn_plan(
+                &crate::cursor_runtime::spawn::CursorSpawnRequest {
+                    model: model.clone(),
+                    allowed,
+                    cwd: host.workspace().to_path_buf(),
+                },
+            );
+            ResolvedAgent {
+                model: model.clone(),
+                capabilities,
                 executable: Some(crate::paths::display(&executable)),
                 executable_identity: Some(executable_identity),
                 arguments: plan.args,

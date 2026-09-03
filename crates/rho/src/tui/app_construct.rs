@@ -125,6 +125,7 @@ impl App {
             pending_model_metadata_reasoning: None,
             pending_update_notice,
             pending_custom_models,
+            pending_cursor_models: None,
             pending_syntax_warmup,
             prompt_history,
             pending_herdr_graphics: None,

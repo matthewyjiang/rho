@@ -6,14 +6,16 @@ use super::{
     catalog::AgentCatalogError,
     definition::{
         AgentDefinition, AgentId, AgentRuntime, AgentRuntimeSpec, ClaudeAgentConfig,
-        ClaudeToolPolicy, ModelPolicy, ModelSelection, PromptPolicy, ToolCapability,
-        ToolCapabilitySet, ToolPolicy, BUILTIN_TOOL_CAPABILITIES,
+        ClaudeToolPolicy, CursorAgentConfig, ModelPolicy, ModelSelection, PromptPolicy,
+        ToolCapability, ToolCapabilitySet, ToolPolicy, BUILTIN_TOOL_CAPABILITIES,
     },
+    CursorTool,
 };
 
 const MAX_DESCRIPTION_LEN: usize = 1024;
 const RHO_TOOLS_EXAMPLE: &str = "tools: [read_file, shell]";
 const CLAUDE_TOOLS_EXAMPLE: &str = "tools: [Read, Edit, \"Bash(git *)\"]";
+const CURSOR_TOOLS_EXAMPLE: &str = "tools: [read_tool_call]";
 
 #[derive(Default)]
 struct RawDefinition {
@@ -108,6 +110,19 @@ fn parse_definition_with_fallback(
         })?,
     };
 
+    match runtime {
+        AgentRuntime::Cursor => {
+            if let PromptPolicy::Replace(_) = &prompt {
+                return Err(AgentCatalogError::at_field(
+                    path.to_path_buf(),
+                    "prompt",
+                    "cursor cannot replace its system prompt; use extend",
+                ));
+            }
+        }
+        AgentRuntime::Rho | AgentRuntime::ClaudeCli => {}
+    }
+
     let model = parse_model_policy(
         path,
         runtime,
@@ -116,8 +131,39 @@ fn parse_definition_with_fallback(
         raw.auth,
         raw.model_policy,
     )?;
-    let reasoning = raw
-        .reasoning
+    let reasoning = parse_reasoning(path, runtime, raw.reasoning)?;
+    Ok(AgentDefinition {
+        id,
+        description,
+        prompt,
+        runtime: parse_runtime_spec(
+            path,
+            runtime,
+            raw.tools,
+            raw.inherit_claude_config.unwrap_or(false),
+            model,
+            reasoning,
+        )?,
+    })
+}
+
+fn parse_reasoning(
+    path: &Path,
+    runtime: AgentRuntime,
+    reasoning: Option<String>,
+) -> Result<Option<ReasoningLevel>, AgentCatalogError> {
+    if runtime == AgentRuntime::Cursor {
+        if reasoning.is_some() {
+            return Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "reasoning",
+                "cursor has no reasoning flag; put effort in `model` (for example gpt-5.3-codex-high or name[effort=high])",
+            ));
+        }
+        return Ok(None);
+    }
+
+    let reasoning = reasoning
         .map(|value| {
             value.parse::<ReasoningLevel>().map_err(|error| {
                 AgentCatalogError::at_field(path.to_path_buf(), "reasoning", error.to_string())
@@ -139,19 +185,7 @@ expected one of: low, medium, high, xhigh, max (omit to inherit Claude's default
             }
         }
     }
-    Ok(AgentDefinition {
-        id,
-        description,
-        prompt,
-        runtime: parse_runtime_spec(
-            path,
-            runtime,
-            raw.tools,
-            raw.inherit_claude_config.unwrap_or(false),
-            model,
-            reasoning,
-        )?,
-    })
+    Ok(reasoning)
 }
 
 fn parse_model_policy(
@@ -162,64 +196,8 @@ fn parse_model_policy(
     auth: Option<String>,
     policy: Option<String>,
 ) -> Result<ModelPolicy, AgentCatalogError> {
-    if runtime == AgentRuntime::ClaudeCli {
-        if provider.is_some() {
-            return Err(AgentCatalogError::at_field(
-                path.to_path_buf(),
-                "provider",
-                "is not valid with runtime: claude-cli; set model only (passed through as --model)",
-            ));
-        }
-        if auth.is_some() {
-            return Err(AgentCatalogError::at_field(
-                path.to_path_buf(),
-                "auth",
-                "is not valid with runtime: claude-cli; set model only (passed through as --model)",
-            ));
-        }
-        if policy
-            .as_deref()
-            .is_some_and(|value| value != "inherit" && value != "select")
-        {
-            return Err(AgentCatalogError::at_field(
-                path.to_path_buf(),
-                "model-policy",
-                "with runtime: claude-cli expected inherit or select (or omit model-policy and set model)",
-            ));
-        }
-        // Empty quoted models such as model: "" fail in parse_scalar already.
-        // Still reject inherit + explicit model and select without model here.
-        return match (policy.as_deref(), model) {
-            (Some("inherit"), Some(_)) => Err(AgentCatalogError::at_field(
-                path.to_path_buf(),
-                "model-policy",
-                "inherit cannot specify model",
-            )),
-            (Some("select"), None) => Err(AgentCatalogError::at_field(
-                path.to_path_buf(),
-                "model",
-                "is required by model-policy 'select'",
-            )),
-            (_, None) => Ok(ModelPolicy::Inherit),
-            (_, Some(model)) => {
-                validate_model_name(path, &model)?;
-                if model.starts_with('@') {
-                    return Err(AgentCatalogError::at_field(
-                        path.to_path_buf(),
-                        "model",
-                        format!(
-                            "runtime: claude-cli does not resolve Rho model aliases; \
-set a Claude model name or alias (for example opus), not '{model}'"
-                        ),
-                    ));
-                }
-                Ok(ModelPolicy::Select(ModelSelection {
-                    provider: None,
-                    model,
-                    auth: None,
-                }))
-            }
-        };
+    if runtime.is_external_cli() {
+        return parse_external_runtime_model_policy(path, runtime, model, provider, auth, policy);
     }
 
     let policy = policy
@@ -305,6 +283,80 @@ set a Claude model name or alias (for example opus), not '{model}'"
     })
 }
 
+fn parse_external_runtime_model_policy(
+    path: &Path,
+    runtime: AgentRuntime,
+    model: Option<String>,
+    provider: Option<String>,
+    auth: Option<String>,
+    policy: Option<String>,
+) -> Result<ModelPolicy, AgentCatalogError> {
+    let runtime_name = runtime.as_str();
+    if provider.is_some() {
+        return Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "provider",
+            format!(
+                "is not valid with runtime: {runtime_name}; set model only (passed through as --model)"
+            ),
+        ));
+    }
+    if auth.is_some() {
+        return Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "auth",
+            format!(
+                "is not valid with runtime: {runtime_name}; set model only (passed through as --model)"
+            ),
+        ));
+    }
+    if policy
+        .as_deref()
+        .is_some_and(|value| value != "inherit" && value != "select")
+    {
+        return Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "model-policy",
+            format!(
+                "with runtime: {runtime_name} expected inherit or select (or omit model-policy and set model)"
+            ),
+        ));
+    }
+    // Empty quoted models such as model: "" fail in parse_scalar already.
+    // Still reject inherit + explicit model and select without model here.
+    match (policy.as_deref(), model) {
+        (Some("inherit"), Some(_)) => Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "model-policy",
+            "inherit cannot specify model",
+        )),
+        (Some("select"), None) => Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "model",
+            "is required by model-policy 'select'",
+        )),
+        (_, None) => Ok(ModelPolicy::Inherit),
+        (_, Some(model)) => {
+            validate_model_name(path, &model)?;
+            if model.starts_with('@') {
+                return Err(AgentCatalogError::at_field(
+                    path.to_path_buf(),
+                    "model",
+                    format!(
+                        "runtime: {runtime_name} does not resolve Rho model aliases; \
+set a model name (for example opus or gpt-5.3-codex-high), not '{model}'"
+                    ),
+                ));
+            }
+            Ok(ModelPolicy::Select(ModelSelection {
+                provider: None,
+                model,
+                auth: None,
+            }))
+        }
+    }
+}
+
 fn validate_model_name(path: &Path, model: &str) -> Result<(), AgentCatalogError> {
     if model.is_empty() {
         return Err(AgentCatalogError::at_field(
@@ -333,15 +385,15 @@ fn parse_runtime_spec(
     model: ModelPolicy,
     reasoning: Option<ReasoningLevel>,
 ) -> Result<AgentRuntimeSpec, AgentCatalogError> {
+    if runtime != AgentRuntime::ClaudeCli && inherit_claude_config {
+        return Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "inherit_claude_config",
+            "is only valid with runtime: claude-cli",
+        ));
+    }
     match runtime {
         AgentRuntime::Rho => {
-            if inherit_claude_config {
-                return Err(AgentCatalogError::at_field(
-                    path.to_path_buf(),
-                    "inherit_claude_config",
-                    "is only valid with runtime: claude-cli",
-                ));
-            }
             let tools = match tools.unwrap_or(RawTools::All) {
                 RawTools::All => ToolPolicy::All,
                 RawTools::Names(names) => ToolPolicy::Allow(validate_rho_tools(path, names)?),
@@ -386,7 +438,71 @@ fn parse_runtime_spec(
                 reasoning,
             }))
         }
+        AgentRuntime::Cursor => {
+            let tools = match tools {
+                None => {
+                    return Err(AgentCatalogError::at_field(
+                        path.to_path_buf(),
+                        "tools",
+                        format!(
+                            "is required for runtime: cursor and must be a nonempty closed allow list, for example {CURSOR_TOOLS_EXAMPLE}"
+                        ),
+                    ))
+                }
+                Some(RawTools::All) => {
+                    return Err(AgentCatalogError::at_field(
+                        path.to_path_buf(),
+                        "tools",
+                        format!(
+                            "runtime: cursor does not support tools: all; cursor-agent -p is full-power by default and --exclude-tools does not fence, so list closed snake_case names, for example {CURSOR_TOOLS_EXAMPLE}"
+                        ),
+                    ))
+                }
+                Some(RawTools::Names(names)) => {
+                    let tools = validate_cursor_tools(path, names)?;
+                    if tools.is_empty() {
+                        return Err(AgentCatalogError::at_field(
+                            path.to_path_buf(),
+                            "tools",
+                            format!(
+                                "runtime: cursor requires at least one tool, for example {CURSOR_TOOLS_EXAMPLE}"
+                            ),
+                        ));
+                    }
+                    tools
+                }
+            };
+            let model = match model {
+                ModelPolicy::Inherit => None,
+                ModelPolicy::Select(selection)
+                | ModelPolicy::Prefer(selection)
+                | ModelPolicy::Require(selection) => Some(selection.model),
+            };
+            Ok(AgentRuntimeSpec::Cursor(CursorAgentConfig { tools, model }))
+        }
     }
+}
+
+fn validate_cursor_tools(
+    path: &Path,
+    names: Vec<String>,
+) -> Result<Vec<CursorTool>, AgentCatalogError> {
+    let mut tools = Vec::with_capacity(names.len());
+    let mut seen = BTreeSet::new();
+    for name in names {
+        let tool = CursorTool::from_str(&name).map_err(|error| {
+            AgentCatalogError::at_field(path.to_path_buf(), "tools", error.to_string())
+        })?;
+        if !seen.insert(tool) {
+            return Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "tools",
+                format!("duplicate tool '{name}'"),
+            ));
+        }
+        tools.push(tool);
+    }
+    Ok(tools)
 }
 
 fn validate_rho_tools(
