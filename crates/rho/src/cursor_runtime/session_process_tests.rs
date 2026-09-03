@@ -199,10 +199,8 @@ async fn auto_permission_mode_fails_before_spawn() {
     let status = subagent::read_status(&output).expect("status");
     assert_eq!(status.state, RunState::Error);
     let error = status.error.unwrap_or_default();
-    assert!(
-        error.contains("Plan or Bypass"),
-        "unexpected error: {error}"
-    );
+    let expected = spawn::CursorSpawnError::ApprovalUnsupported(PermissionMode::Auto).to_string();
+    assert!(error.contains(&expected), "unexpected error: {error}");
 }
 
 // Covers: cancelling a live Cursor child terminates it and writes Stopped
@@ -229,16 +227,17 @@ async fn cancellation_terminates_child() {
             run_with_fake(&output, &cwd, &fake, PermissionMode::Bypass, cancellation).await;
         }
     });
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if marker.exists() {
-                break;
-            }
-            tokio::task::yield_now().await;
+    // Fake binary writes the marker within milliseconds of exec; 200 × 10 ms
+    // = 2 s ceiling, well above observed.
+    const MARKER_WAIT_ATTEMPTS: usize = 200;
+    const MARKER_WAIT_MS: u64 = 10;
+    for _ in 0..MARKER_WAIT_ATTEMPTS {
+        if marker.exists() {
+            break;
         }
-    })
-    .await
-    .expect("child started");
+        tokio::time::sleep(Duration::from_millis(MARKER_WAIT_MS)).await;
+    }
+    assert!(marker.exists(), "child started");
     cancellation.cancel();
     tokio::time::timeout(Duration::from_secs(5), run)
         .await

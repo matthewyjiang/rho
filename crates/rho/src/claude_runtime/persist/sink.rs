@@ -1,4 +1,6 @@
-//! Claude session adapter over the shared run-artifact sink.
+//! External CLI session adapter over the shared run-artifact sink.
+//!
+//! Shared by Claude Code and Cursor. Labels and stream mappers differ per CLI.
 //!
 //! Translates stream-json effects into the generic status/attachment contract.
 //! Rate-limit cache updates are collected here and flushed once at settle so

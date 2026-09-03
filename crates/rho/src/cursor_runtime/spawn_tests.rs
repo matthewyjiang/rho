@@ -5,15 +5,14 @@ use crate::permission::PermissionMode;
 
 use super::*;
 
-fn request(
-    tools: Vec<CursorTool>,
-    model: Option<&str>,
-    permission_mode: CursorPermissionMode,
-) -> CursorSpawnRequest {
+fn allowed(mode: PermissionMode, tools: &[CursorTool]) -> AllowedTools {
+    map_permission_mode(mode, tools).expect("test tool list maps")
+}
+
+fn request(tools: &[CursorTool], model: Option<&str>, mode: PermissionMode) -> CursorSpawnRequest {
     CursorSpawnRequest {
         model: model.map(str::to_string),
-        tools,
-        permission_mode,
+        allowed: allowed(mode, tools),
         cwd: PathBuf::from("/tmp/project"),
     }
 }
@@ -33,9 +32,9 @@ fn forbidden_flags_absent(args: &[String]) {
 #[test]
 fn builds_explicit_safe_spawn_args() {
     let plan = build_spawn_plan(&request(
-        vec![CursorTool::Read],
+        &[CursorTool::Read],
         Some("composer-2.5"),
-        CursorPermissionMode::Plan,
+        PermissionMode::Plan,
     ));
     assert_eq!(
         plan.args,
@@ -57,9 +56,9 @@ fn builds_explicit_safe_spawn_args() {
     assert_eq!(plan.cwd, PathBuf::from("/tmp/project"));
 
     let full = build_spawn_plan(&request(
-        vec![CursorTool::Read, CursorTool::Edit, CursorTool::Shell],
+        &[CursorTool::Read, CursorTool::Edit, CursorTool::Shell],
         Some("composer-2.5"),
-        CursorPermissionMode::Full,
+        PermissionMode::Bypass,
     ));
     assert_eq!(
         full.args,
@@ -77,11 +76,8 @@ fn builds_explicit_safe_spawn_args() {
     );
     forbidden_flags_absent(&full.args);
 
-    let omitted_model = build_spawn_plan(&request(
-        vec![CursorTool::Read],
-        None,
-        CursorPermissionMode::Full,
-    ));
+    let omitted_model =
+        build_spawn_plan(&request(&[CursorTool::Read], None, PermissionMode::Bypass));
     assert!(!omitted_model.args.iter().any(|arg| arg == "--model"));
     assert!(!omitted_model.args.iter().any(|arg| arg == "--mode"));
 
@@ -150,7 +146,9 @@ fn rho_permission_modes_map_to_cursor_modes() {
             )),
         ),
     ] {
-        assert_eq!(map_permission_mode(mode, tools), expected);
+        let got = map_permission_mode(mode, tools)
+            .map(|allowed| (allowed.mode(), allowed.tools().to_vec()));
+        assert_eq!(got, expected);
     }
 }
 
@@ -160,9 +158,9 @@ fn rho_permission_modes_map_to_cursor_modes() {
 #[test]
 fn frozen_identity_keeps_model_and_never_permission_flags() {
     let generated = build_spawn_plan(&request(
-        vec![CursorTool::Read, CursorTool::Edit],
+        &[CursorTool::Read, CursorTool::Edit],
         Some("composer-2.5"),
-        CursorPermissionMode::Full,
+        PermissionMode::Bypass,
     ))
     .args;
     let frozen = vec![

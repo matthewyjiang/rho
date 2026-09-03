@@ -19,9 +19,16 @@ use rho_tools::{
 
 use crate::claude_runtime::stream::{truncate_payload_lines, MAX_TOOL_BODY_LINES};
 
-/// Cursor tool identity parsed from the wire key.
+/// Header primary width for queries and URLs. Matches the Claude cards so
+/// mixed transcripts align; a header wider than this wraps in an 80-col pane.
+const HEADER_PRIMARY_CHARS: usize = 80;
+/// One-line error summary width, same value the Claude cards use.
+const ERROR_SUMMARY_CHARS: usize = 160;
+
+/// Cursor tool identity parsed from the wire key (`readToolCall`, ...).
+/// Distinct from [`crate::agent::CursorTool`], the `--allowed-tools` flag vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CursorTool {
+enum CursorWireTool {
     Read,
     Edit,
     Delete,
@@ -39,7 +46,7 @@ enum CursorTool {
     Other,
 }
 
-impl CursorTool {
+impl CursorWireTool {
     fn from_key(key: &str) -> Self {
         match key {
             "readToolCall" => Self::Read,
@@ -99,7 +106,7 @@ impl CursorTool {
 /// A `tool_call/started` remembered until its `completed` frame arrives.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct StartedCursorTool {
-    kind: CursorTool,
+    kind: CursorWireTool,
     key: String,
     args: Option<Value>,
 }
@@ -107,7 +114,7 @@ pub(super) struct StartedCursorTool {
 impl StartedCursorTool {
     pub(super) fn new(key: &str, args: Option<Value>) -> Self {
         Self {
-            kind: CursorTool::from_key(key),
+            kind: CursorWireTool::from_key(key),
             key: key.to_string(),
             args: args.filter(|value| !value.is_null()),
         }
@@ -120,8 +127,8 @@ impl StartedCursorTool {
     fn header(&self, cwd: Option<&Path>) -> ToolHeader {
         let args = self.args.as_ref();
         match self.kind {
-            CursorTool::Shell => ToolHeader::shell("$", string_field(args, &["command"])),
-            CursorTool::Task => ToolHeader::status_first(
+            CursorWireTool::Shell => ToolHeader::shell("$", string_field(args, &["command"])),
+            CursorWireTool::Task => ToolHeader::status_first(
                 self.verb(),
                 string_field(args, &["description", "prompt"]).unwrap_or_default(),
             ),
@@ -132,32 +139,36 @@ impl StartedCursorTool {
     fn primary(&self, cwd: Option<&Path>) -> Option<String> {
         let args = self.args.as_ref();
         let primary = match self.kind {
-            CursorTool::Read | CursorTool::Edit | CursorTool::Delete | CursorTool::Ls => {
-                display_path_field(args, &["path"], cwd)
-            }
-            CursorTool::Glob => string_field(args, &["globPattern", "pattern"]),
-            CursorTool::Grep => {
+            CursorWireTool::Read
+            | CursorWireTool::Edit
+            | CursorWireTool::Delete
+            | CursorWireTool::Ls => display_path_field(args, &["path"], cwd),
+            CursorWireTool::Glob => string_field(args, &["globPattern", "pattern"]),
+            CursorWireTool::Grep => {
                 let pattern = string_field(args, &["pattern"])?;
                 Some(match display_path_field(args, &["path"], cwd) {
                     Some(path) => format!("{pattern}, {path}"),
                     None => pattern,
                 })
             }
-            CursorTool::SemSearch | CursorTool::WebSearch => {
-                string_field(args, &["query"]).map(|query| quoted(&query, 80))
+            CursorWireTool::SemSearch | CursorWireTool::WebSearch => {
+                string_field(args, &["query"]).map(|query| quoted(&query, HEADER_PRIMARY_CHARS))
             }
-            CursorTool::WebFetch => string_field(args, &["url"]).map(|url| truncate(&url, 80)),
-            CursorTool::Mcp => string_field(args, &["name", "toolName"]),
-            CursorTool::CreatePlan => string_field(args, &["title", "name"]),
-            CursorTool::Shell | CursorTool::Task | CursorTool::ReadLints | CursorTool::Other => {
-                None
+            CursorWireTool::WebFetch => {
+                string_field(args, &["url"]).map(|url| truncate(&url, HEADER_PRIMARY_CHARS))
             }
+            CursorWireTool::Mcp => string_field(args, &["name", "toolName"]),
+            CursorWireTool::CreatePlan => string_field(args, &["title", "name"]),
+            CursorWireTool::Shell
+            | CursorWireTool::Task
+            | CursorWireTool::ReadLints
+            | CursorWireTool::Other => None,
         };
         primary.filter(|value| !value.is_empty())
     }
 
     fn populate_running(&self, card: &mut ToolCard) {
-        if let CursorTool::Shell = self.kind {
+        if let CursorWireTool::Shell = self.kind {
             push_shell_meta(card, self.args.as_ref());
         }
     }
@@ -165,7 +176,7 @@ impl StartedCursorTool {
     fn populate_finished(&self, card: &mut ToolCard, success: Option<&Value>) {
         let args = self.args.as_ref();
         match self.kind {
-            CursorTool::Shell => {
+            CursorWireTool::Shell => {
                 push_shell_meta(card, args);
                 if let Some(code) = i64_field(success, &["exitCode"]) {
                     card.push_fact(ToolFact::Exit {
@@ -178,12 +189,12 @@ impl StartedCursorTool {
                     .unwrap_or_default();
                 set_lines_body(card, &output);
             }
-            CursorTool::Read => {
+            CursorWireTool::Read => {
                 if let Some(lines) = u64_field(success, &["totalLines"]) {
                     card.push_fact(count_fact("line", "lines", lines, None));
                 }
             }
-            CursorTool::Glob => {
+            CursorWireTool::Glob => {
                 let files = string_list(success, "files");
                 let count = u64_field(success, &["totalFiles"]).unwrap_or(files.len() as u64);
                 card.push_fact(count_fact("file", "files", count, None));
@@ -191,24 +202,24 @@ impl StartedCursorTool {
                     set_lines_body(card, &files.join("\n"));
                 }
             }
-            CursorTool::Grep => push_grep_result(card, args, success),
-            CursorTool::Edit => push_edit_result(card, success),
-            CursorTool::Delete => {
+            CursorWireTool::Grep => push_grep_result(card, args, success),
+            CursorWireTool::Edit => push_edit_result(card, success),
+            CursorWireTool::Delete => {
                 if let Some(path) = string_field(success, &["path"]) {
                     card.push_fact(ToolFact::Meta {
                         text: format!("deleted {path}"),
                     });
                 }
             }
-            CursorTool::Ls
-            | CursorTool::SemSearch
-            | CursorTool::ReadLints
-            | CursorTool::WebSearch
-            | CursorTool::WebFetch
-            | CursorTool::Mcp
-            | CursorTool::Task
-            | CursorTool::CreatePlan
-            | CursorTool::Other => {
+            CursorWireTool::Ls
+            | CursorWireTool::SemSearch
+            | CursorWireTool::ReadLints
+            | CursorWireTool::WebSearch
+            | CursorWireTool::WebFetch
+            | CursorWireTool::Mcp
+            | CursorWireTool::Task
+            | CursorWireTool::CreatePlan
+            | CursorWireTool::Other => {
                 if let Some(message) = string_field(success, &["message", "text", "content"]) {
                     set_lines_body(card, &message);
                 }
@@ -234,7 +245,13 @@ pub(super) fn finished_card(
 ) -> ToolCard {
     let outcome = ToolOutcome::from_result(result);
     let status = match outcome {
-        ToolOutcome::Success(_) => ToolStatus::Ok,
+        // A shell command that ran but exited nonzero is a `success` result
+        // on the wire; native Rho cards show that as an error, so match.
+        ToolOutcome::Success(success) => match (tool.kind, i64_field(Some(success), &["exitCode"]))
+        {
+            (CursorWireTool::Shell, Some(code)) if code != 0 => ToolStatus::Error,
+            _ => ToolStatus::Ok,
+        },
         ToolOutcome::Failure { .. } | ToolOutcome::Missing => ToolStatus::Error,
     };
     let mut card = ToolCard::new(status, tool.kind.family(), tool.header(cwd));
@@ -246,7 +263,7 @@ pub(super) fn finished_card(
                 .and_then(|value| failure_summary(key, value))
                 .unwrap_or_else(|| key.to_string());
             card.push_fact(ToolFact::Error {
-                text: truncate(&summary, 160),
+                text: truncate(&summary, ERROR_SUMMARY_CHARS),
             });
         }
         ToolOutcome::Missing => card.push_fact(ToolFact::Error {
@@ -271,7 +288,7 @@ impl<'a> ToolOutcome<'a> {
         let Some(object) = result.and_then(Value::as_object) else {
             return Self::Missing;
         };
-        if let Some(success) = object.get("success") {
+        if let Some(success) = object.get("success").filter(|value| !value.is_null()) {
             return Self::Success(success);
         }
         // Shell results carry a sibling `isBackground`; skip scalar keys when
@@ -292,8 +309,14 @@ impl<'a> ToolOutcome<'a> {
 fn failure_summary(key: &str, detail: &Value) -> Option<String> {
     match detail {
         Value::String(text) => Some(text.clone()),
-        Value::Object(_) => string_field(Some(detail), &["message", "error", "reason"])
-            .or_else(|| Some(format!("{key}: {}", truncate(&detail.to_string(), 160)))),
+        Value::Object(_) => {
+            string_field(Some(detail), &["message", "error", "reason"]).or_else(|| {
+                Some(format!(
+                    "{key}: {}",
+                    truncate(&detail.to_string(), ERROR_SUMMARY_CHARS)
+                ))
+            })
+        }
         _ => None,
     }
 }

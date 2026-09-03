@@ -13,9 +13,7 @@ use crate::claude_runtime::{
     stream::TerminalResult,
     terminal::{assess_terminal, TerminalOutcome},
 };
-use crate::cli_runtime::{CliExecutable, OwnedChild};
-#[cfg(test)]
-use crate::subagent;
+use crate::cli_runtime::{read_log_tail, CliExecutable, OwnedChild};
 
 use crate::{
     agent::{CursorTool, PromptPolicy},
@@ -84,7 +82,7 @@ pub(crate) async fn run_session(mut request: CursorSessionRequest) -> anyhow::Re
             &request.prompt,
             request.status_tx.take(),
             request.overrides.live_title.clone(),
-            None,
+            /*rate_limit_state_path*/ None,
             CURSOR_LABEL,
         )?,
         None => StatusSink::new(
@@ -92,7 +90,7 @@ pub(crate) async fn run_session(mut request: CursorSessionRequest) -> anyhow::Re
             &request.identity,
             &request.prompt,
             request.status_tx.take(),
-            None,
+            /*rate_limit_state_path*/ None,
             CURSOR_LABEL,
         )?,
     };
@@ -211,15 +209,13 @@ async fn prepare_launch(request: &mut CursorSessionRequest) -> Result<Launch, St
     };
 
     let frozen_arguments = request.overrides.frozen_argv.take();
-    let (permission_mode, tools) =
-        spawn::map_permission_mode(request.permission_mode, &request.tools)
-            .map_err(|error| error.to_string())?;
+    let allowed = spawn::map_permission_mode(request.permission_mode, &request.tools)
+        .map_err(|error| error.to_string())?;
     let prompt = spawn::compose_prompt(&request.system_prompt, &request.prompt)
         .map_err(|error| error.to_string())?;
     let mut plan = spawn::build_spawn_plan(&CursorSpawnRequest {
         model: request.identity.model.clone(),
-        tools,
-        permission_mode,
+        allowed,
         cwd: request.cwd.clone(),
     });
     if let Some(arguments) = frozen_arguments {
@@ -350,19 +346,6 @@ async fn drain_child(
             "{CURSOR_PROGRAM_LABEL}: failed waiting for child: {error}"
         )),
     }
-}
-
-async fn read_log_tail(path: &std::path::Path) -> String {
-    let Ok(contents) = tokio::fs::read_to_string(path).await else {
-        return String::new();
-    };
-    let trimmed = contents.trim();
-    if trimmed.len() <= 400 {
-        return trimmed.to_string();
-    }
-    let cut = trimmed.len() - 400;
-    let boundary = rho_sdk::ceil_char_boundary(trimmed, cut);
-    format!("{}{}", rho_sdk::ELLIPSIS, &trimmed[boundary..])
 }
 
 #[cfg(test)]

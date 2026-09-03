@@ -636,6 +636,8 @@ fn into_launch(
     }
 }
 
+// Claude wraps argv with stream-json input; Cursor overlays identity at spawn.
+// The session types do not share overrides, so collapsing these is not smaller.
 fn apply_frozen_claude(
     session: &mut crate::claude_runtime::session::ClaudeSessionRequest,
     frozen: FrozenCliLaunch,

@@ -10,10 +10,14 @@
 //! then repeats the whole segment as one cumulative `assistant` frame:
 //! mid-turn (right before a tool call, tagged `model_call_id`) and once more
 //! at the very end (no `timestamp_ms`). Appending those would double-render.
-//! [`CursorStreamMapper`] tracks the text accumulated since the last segment
-//! boundary and drops a frame whose text equals it. A `tool_call/started`
-//! also closes the segment. The rule is by content, not by key, so a future
-//! build that changes the marker keys still renders once.
+//! Deltas always carry `timestamp_ms` and never `model_call_id`, so a frame
+//! is a snapshot candidate by key shape alone; [`CursorStreamMapper`] then
+//! confirms by comparing its text to the current segment (or the segment a
+//! tool call just closed, in case the replay lands after the call). Only a
+//! confirmed match is dropped: a snapshot-shaped frame with unexpected text
+//! is rendered with a drift notice rather than lost. Content equality alone
+//! is not enough: two identical consecutive deltas (`"."`, `"."`) would
+//! otherwise be mistaken for a replay.
 //!
 //! # Terminal results
 //!
@@ -53,6 +57,9 @@ const MAX_ACTIVE_TOOLS: usize = 256;
 pub(crate) struct CursorStreamMapper {
     /// Assistant text accumulated since the last segment boundary.
     segment_text: String,
+    /// Text of the segment most recently closed by a tool call, kept so a
+    /// replay that arrives after the call is still recognized.
+    closed_segment_text: String,
     /// Tool calls started and not yet completed, keyed by `call_id`.
     active_tools: HashMap<String, StartedCursorTool>,
     /// Workspace cwd from the init frame, used to compact card paths.
@@ -117,29 +124,37 @@ impl CursorStreamMapper {
         if frame.text.is_empty() {
             return Vec::new();
         }
-        let is_snapshot = !self.segment_text.is_empty() && frame.text == self.segment_text;
-        if is_snapshot {
-            // Cumulative replay of what was already streamed. Drop it and
-            // close the segment so the next delta starts fresh.
+        let snapshot_shaped = !frame.has_timestamp || frame.has_model_call_id;
+        if !snapshot_shaped {
+            self.segment_text.push_str(&frame.text);
+            return self.with_step_started(text_effects(&frame.text));
+        }
+        if frame.text == self.segment_text {
+            // Cumulative replay of the open segment. Drop it and close the
+            // segment so the next delta starts fresh.
             self.segment_text.clear();
             return Vec::new();
         }
-        if !frame.has_timestamp && !frame.has_model_call_id && !self.segment_text.is_empty() {
-            // Snapshot-shaped frame whose text does not match what we saw:
-            // schema drift. Render it (never drop real text) but say so.
-            self.segment_text.clear();
-            let mut effects =
-                notice("cursor stream: final assistant frame did not match streamed deltas".into());
-            effects.extend(text_effects(&frame.text));
-            return self.with_step_started(effects);
+        if frame.text == self.closed_segment_text {
+            // Replay of the segment a tool call already closed.
+            self.closed_segment_text.clear();
+            return Vec::new();
         }
-        self.segment_text.push_str(&frame.text);
-        self.with_step_started(text_effects(&frame.text))
+        // Snapshot-shaped frame whose text matches nothing streamed: schema
+        // drift. Render it (never drop real text) but say so.
+        self.segment_text.clear();
+        let mut effects =
+            notice("cursor stream: assistant snapshot did not match streamed deltas".into());
+        effects.extend(text_effects(&frame.text));
+        self.with_step_started(effects)
     }
 
     fn map_tool_call(&mut self, frame: ToolCallFrame) -> Vec<StreamEffect> {
-        // A tool call always ends the current text segment.
-        self.segment_text.clear();
+        // A tool call always ends the current text segment. Remember it so a
+        // late replay is still recognized.
+        if !self.segment_text.is_empty() {
+            self.closed_segment_text = std::mem::take(&mut self.segment_text);
+        }
         let cwd = self.cwd.as_deref();
         let ToolCallFrame {
             phase,
@@ -233,8 +248,8 @@ impl CursorStreamMapper {
             result_text,
             error,
             session_id: result.session_id,
-            // Cursor reports no turn count; a run is one process = one turn.
-            num_turns: Some(1),
+            // Cursor reports no turn count.
+            num_turns: None,
             usage,
             context: None,
             total_cost_usd: None,

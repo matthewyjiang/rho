@@ -1,8 +1,10 @@
 //! Drive one spawned CLI child: prompt in, stream-json out, exit status.
 //!
-//! Both Claude paths share this loop. It owns the mechanics - concurrent stdin,
-//! line decoding, bounded stderr capture, cancellation - and leaves policy to
-//! the caller's mapper, effect closure, and how the caller reads [`DrainEnd`].
+//! External CLI runtimes (Claude Code and Cursor) share this loop. It owns the
+//! mechanics - concurrent stdin, line decoding, bounded stderr capture,
+//! cancellation - and leaves policy to the caller's mapper, effect closure,
+//! and how the caller reads [`DrainEnd`]. Only labels and stream mappers
+//! differ per CLI.
 
 use rho_providers::provider_backend::line_decoder::LineDecoder;
 use rho_sdk::CancellationToken;
@@ -13,7 +15,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::cli_runtime::{OwnedChild, StderrTail};
 
 use super::{
-    line_decoder::{claude_ndjson_line_decoder, LineDecodeError, MAX_NDJSON_LINE_BYTES},
+    line_decoder::LineDecodeError,
     messaging,
     stream::{StreamEffect, TerminalResult},
 };
@@ -140,11 +142,7 @@ pub(crate) async fn drain_child(
     tokio::pin!(read_stderr);
 
     let mut stdout = BufReader::new(stdout);
-    let mut decoder = if config.max_line_bytes == MAX_NDJSON_LINE_BYTES {
-        claude_ndjson_line_decoder()
-    } else {
-        LineDecoder::with_max_line_bytes(config.max_line_bytes)
-    };
+    let mut decoder = LineDecoder::with_max_line_bytes(config.max_line_bytes);
     let mut terminal: Option<TerminalResult> = None;
     let mut stderr_text = String::new();
     let mut stderr_done = false;

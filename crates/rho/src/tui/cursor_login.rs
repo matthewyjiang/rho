@@ -56,7 +56,7 @@ impl App {
 
     pub(super) fn report_cursor_logout_unsupported(&mut self) {
         self.insert_entry(&Entry::Error(
-            "cursor logout is not available from rho; run cursor-agent logout".into(),
+            "could not log out of cursor: not available from rho, run cursor-agent logout".into(),
         ));
         self.set_status("logout failed");
     }

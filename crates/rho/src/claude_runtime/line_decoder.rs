@@ -1,10 +1,7 @@
 //! Claude stream-json NDJSON line bound and re-export of the shared decoder.
 //!
 //! Decoding lives in `rho_providers::provider_backend::line_decoder`. This
-//! module only owns the Claude-specific 4 MiB anti-runaway budget and a thin
-//! constructor so session call sites stay self-documenting.
-
-use rho_providers::provider_backend::line_decoder::LineDecoder as SharedLineDecoder;
+//! module only owns the 4 MiB anti-runaway budget.
 
 /// Maximum accepted bytes in one NDJSON line, including an incomplete tail.
 ///
@@ -31,11 +28,6 @@ use rho_providers::provider_backend::line_decoder::LineDecoder as SharedLineDeco
 pub(crate) const MAX_NDJSON_LINE_BYTES: usize = 4 * 1024 * 1024;
 
 pub(crate) use rho_providers::provider_backend::line_decoder::LineDecodeError;
-
-/// Build the Claude stream-json decoder with the 4 MiB anti-runaway budget.
-pub(crate) fn claude_ndjson_line_decoder() -> SharedLineDecoder {
-    SharedLineDecoder::with_max_line_bytes(MAX_NDJSON_LINE_BYTES)
-}
 
 #[cfg(test)]
 #[path = "line_decoder_tests.rs"]

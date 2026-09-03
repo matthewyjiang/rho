@@ -1,4 +1,6 @@
-use super::{claude_ndjson_line_decoder, LineDecodeError, MAX_NDJSON_LINE_BYTES};
+use rho_providers::provider_backend::line_decoder::LineDecoder;
+
+use super::{LineDecodeError, MAX_NDJSON_LINE_BYTES};
 
 #[test]
 fn claude_budget_rejects_oversize_and_accepts_near_1mib_tool_result() {
@@ -19,7 +21,7 @@ fn claude_budget_rejects_oversize_and_accepts_near_1mib_tool_result() {
         "legitimate tool_result must fit the decoder budget"
     );
 
-    let mut decoder = claude_ndjson_line_decoder();
+    let mut decoder = LineDecoder::with_max_line_bytes(MAX_NDJSON_LINE_BYTES);
     decoder.push(envelope.as_bytes());
     decoder.push(b"\n");
     let line = decoder

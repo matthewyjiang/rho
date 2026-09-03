@@ -20,6 +20,29 @@ pub(crate) enum CursorPermissionMode {
     Full,
 }
 
+/// The allow list a spawn may pass, proven nonempty and already narrowed for
+/// its permission class.
+///
+/// Only [`map_permission_mode`] constructs this, so every `--allowed-tools`
+/// argv passes through that gate: `cursor-agent -p` is full-power by default
+/// and an empty list has unverified semantics, so nonemptiness must be
+/// unforgeable rather than a convention.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AllowedTools {
+    mode: CursorPermissionMode,
+    tools: Vec<CursorTool>,
+}
+
+impl AllowedTools {
+    pub(crate) fn mode(&self) -> CursorPermissionMode {
+        self.mode
+    }
+
+    pub(crate) fn tools(&self) -> &[CursorTool] {
+        &self.tools
+    }
+}
+
 /// Inputs needed to construct a Cursor CLI spawn.
 ///
 /// Model and tools come from the bound runtime contract, not from
@@ -28,10 +51,8 @@ pub(crate) enum CursorPermissionMode {
 pub(crate) struct CursorSpawnRequest {
     /// Cursor `--model` value. `None` means omit the flag (Cursor inherit).
     pub(crate) model: Option<String>,
-    /// Closed allow list already mapped for this permission class.
-    pub(crate) tools: Vec<CursorTool>,
-    /// Cursor CLI permission class. Not Rho's permission mode.
-    pub(crate) permission_mode: CursorPermissionMode,
+    /// Permission class plus the tools it may keep.
+    pub(crate) allowed: AllowedTools,
     pub(crate) cwd: PathBuf,
 }
 
@@ -47,7 +68,7 @@ pub(crate) struct CursorSpawnPlan {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum CursorSpawnError {
     #[error(
-        "cursor agents run only in Plan or Bypass: `cursor-agent -p` has no approval protocol and `--exclude-tools` does not fence"
+        "cursor agents run only in Plan or Bypass, not {0}: `cursor-agent -p` has no approval protocol and `--exclude-tools` does not fence"
     )]
     ApprovalUnsupported(PermissionMode),
     #[error(
@@ -74,8 +95,8 @@ pub(crate) enum CursorPromptError {
 pub(crate) fn map_permission_mode(
     mode: PermissionMode,
     tools: &[CursorTool],
-) -> Result<(CursorPermissionMode, Vec<CursorTool>), CursorSpawnError> {
-    let (mapped, tools) = match mode {
+) -> Result<AllowedTools, CursorSpawnError> {
+    let (mode, tools) = match mode {
         PermissionMode::Plan => (
             CursorPermissionMode::Plan,
             tools
@@ -92,7 +113,7 @@ pub(crate) fn map_permission_mode(
     if tools.is_empty() {
         return Err(CursorSpawnError::NoToolsAllowed);
     }
-    Ok((mapped, tools))
+    Ok(AllowedTools { mode, tools })
 }
 
 /// Identity flags that a frozen workflow argv may keep.
@@ -104,33 +125,8 @@ const FROZEN_IDENTITY_FLAGS: &[&str] = &["--model"];
 /// Overlay frozen identity onto argv generated from the effective bound mode.
 ///
 /// Frozen permission flags cannot widen or replace the mapped Cursor mode.
-pub(crate) fn apply_frozen_identity_args(
-    mut generated: Vec<String>,
-    frozen: &[String],
-) -> Vec<String> {
-    for flag in FROZEN_IDENTITY_FLAGS {
-        if let Some(value) = single_flag_value(frozen, flag) {
-            set_single_flag_value(&mut generated, flag, value);
-        }
-    }
-    generated
-}
-
-fn single_flag_value(args: &[String], flag: &str) -> Option<String> {
-    args.windows(2)
-        .find(|pair| pair[0] == flag)
-        .map(|pair| pair[1].clone())
-}
-
-fn set_single_flag_value(args: &mut Vec<String>, flag: &str, value: String) {
-    if let Some(index) = args.iter().position(|arg| arg == flag) {
-        if index + 1 < args.len() {
-            args[index + 1] = value;
-            return;
-        }
-    }
-    args.push((*flag).to_string());
-    args.push(value);
+pub(crate) fn apply_frozen_identity_args(generated: Vec<String>, frozen: &[String]) -> Vec<String> {
+    crate::cli_runtime::overlay_identity_flags(generated, frozen, FROZEN_IDENTITY_FLAGS)
 }
 
 /// Build argv for a Cursor spawn. Infallible once the request carries a
@@ -147,16 +143,17 @@ pub(crate) fn build_spawn_plan(request: &CursorSpawnRequest) -> CursorSpawnPlan 
         args.push("--model".into());
         args.push(model.clone());
     }
-    if matches!(request.permission_mode, CursorPermissionMode::Plan) {
+    if matches!(request.allowed.mode(), CursorPermissionMode::Plan) {
         args.push("--mode".into());
         args.push("plan".into());
     }
-    // Always set `--allowed-tools`. Default `-p` is full-power; an empty list
-    // is refused earlier by [`map_permission_mode`].
+    // Always set `--allowed-tools`. Default `-p` is full-power; the list is
+    // nonempty by construction of [`AllowedTools`].
     args.push("--allowed-tools".into());
     args.push(
         request
-            .tools
+            .allowed
+            .tools()
             .iter()
             .map(|tool| tool.as_flag())
             .collect::<Vec<_>>()

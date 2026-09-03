@@ -560,7 +560,9 @@ fn agent_choice_picker(
         AgentChoiceField::InheritClaudeConfig => {
             let current = match &draft.runtime {
                 AgentRuntimeSpec::ClaudeCli(config) if config.inherit_claude_config => "yes",
-                _ => "no",
+                AgentRuntimeSpec::ClaudeCli(_)
+                | AgentRuntimeSpec::Cursor(_)
+                | AgentRuntimeSpec::Rho { .. } => "no",
             };
             (
                 "inherit Claude config",

@@ -106,6 +106,8 @@ flowchart TD
 
 An empty allow list after Plan's read-only filter is also refused: `-p` would otherwise enable every tool.
 
+Frozen workflow relaunches that narrow a Bypass agent under an Auto or Allow-edits host are refused at bind (Cursor cannot represent those modes). Rerun under Plan or Bypass.
+
 ## Quick checklist
 
 | Step | Command or field |
@@ -123,7 +125,7 @@ An empty allow list after Plan's read-only filter is also refused: `-p` would ot
 
 A `runtime: cursor` agent runs as `cursor-agent -p` with stream-json output. Rho owns the parent tree node; Cursor owns the child loop and credential.
 
-Before spawn, Rho checks `cursor-agent status --format json`. If the binary is missing or the user is signed out, the run fails immediately with a message pointing at `/login cursor`.
+Before spawn, Rho checks `cursor-agent status --format json`. If the binary is missing, the run fails immediately with `cursor: binary not found on PATH`. If the user is signed out, the run fails with the auth status from that probe.
 
 Default concurrency is the same global pool as other delegated runs (`behavior.agent_concurrency`). Cursor takes only that global permit. There is no nested Cursor cap yet: unlike Claude, there is no measured subscription fan-out limit to size one against.
 

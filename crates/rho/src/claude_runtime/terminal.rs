@@ -1,4 +1,6 @@
-//! Decide whether a completed Claude process produced a usable result.
+//! Decide whether a completed external CLI process produced a usable result.
+//!
+//! Shared by Claude Code and Cursor. Labels and stream mappers differ per CLI.
 
 use super::stream::{TerminalClassification, TerminalResult};
 

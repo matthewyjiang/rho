@@ -988,6 +988,65 @@ fn cursor_refuses_auto_allow_edits_supervised_at_bind() {
     }
 }
 
+// Covers: frozen Cursor tools stay declared at bind; Plan spawn keeps only Read.
+// Owner: frozen workflow agent binding
+#[test]
+fn cursor_frozen_bind_narrows_plan_to_read_only_tools() {
+    use crate::agent::CursorTool;
+    use pretty_assertions::assert_eq;
+
+    let source = cursor_definition(
+        Some("composer-2.5"),
+        &[CursorTool::Read, CursorTool::Edit, CursorTool::Shell],
+    );
+    let frozen = crate::workflow::ResolvedAgent {
+        agent_id: source.id.to_string(),
+        fingerprint: source.fingerprint().to_string(),
+        runtime: crate::workflow::AgentRuntime::Cursor,
+        source_origin: "project".into(),
+        trust_required: true,
+        prompt_policy: "extend:frozen".into(),
+        provider: None,
+        model: Some("composer-2.5".into()),
+        reasoning: None,
+        step_limit: 9,
+        capabilities: ["read_tool_call", "edit_tool_call", "shell_tool_call"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        permission_ceiling: "bypass".into(),
+        auth_profile: None,
+        executable: None,
+        executable_identity: None,
+        arguments: Vec::new(),
+    };
+    let current = Config {
+        permission_mode: crate::permission::PermissionMode::Plan,
+        ..Config::default()
+    };
+    let bound = AgentBinder::bind_frozen(&frozen, &current, &capabilities()).unwrap();
+    match bound.runtime() {
+        BoundRuntime::Cursor {
+            tools,
+            permission_mode,
+            ..
+        } => {
+            assert_eq!(
+                tools.as_slice(),
+                [CursorTool::Edit, CursorTool::Read, CursorTool::Shell]
+            );
+            assert_eq!(*permission_mode, crate::permission::PermissionMode::Plan);
+            let allowed =
+                crate::cursor_runtime::spawn::map_permission_mode(*permission_mode, tools)
+                    .expect("Plan with Read must spawn");
+            assert_eq!(allowed.tools(), &[CursorTool::Read]);
+        }
+        BoundRuntime::Rho { .. } | BoundRuntime::ClaudeCli { .. } => {
+            panic!("expected Cursor bound runtime")
+        }
+    }
+}
+
 // Covers: frozen Cursor capabilities are a closed set; unknown names fail bind.
 // Owner: frozen workflow agent binding
 #[test]

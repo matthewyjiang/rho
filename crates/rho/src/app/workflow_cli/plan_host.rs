@@ -310,19 +310,23 @@ fn resolve_agent(
         } => {
             let (executable, executable_identity) =
                 host.resolve_executable(crate::cursor_runtime::models::CURSOR_PROGRAM)?;
-            let (permission_mode, tools) =
+            let allowed =
                 crate::cursor_runtime::spawn::map_permission_mode(*permission_mode, tools)?;
+            let capabilities = allowed
+                .tools()
+                .iter()
+                .map(|tool| tool.as_flag().to_owned())
+                .collect();
             let plan = crate::cursor_runtime::spawn::build_spawn_plan(
                 &crate::cursor_runtime::spawn::CursorSpawnRequest {
                     model: model.clone(),
-                    tools: tools.clone(),
-                    permission_mode,
+                    allowed,
                     cwd: host.workspace().to_path_buf(),
                 },
             );
             ResolvedAgent {
                 model: model.clone(),
-                capabilities: tools.iter().map(|tool| tool.as_flag().to_owned()).collect(),
+                capabilities,
                 executable: Some(crate::paths::display(&executable)),
                 executable_identity: Some(executable_identity),
                 arguments: plan.args,

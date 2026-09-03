@@ -6,7 +6,7 @@ use tokio::sync::watch;
 
 use rho_tools::cancellation::RunCancellation;
 
-use crate::cli_runtime::{CliExecutable, OwnedChild};
+use crate::cli_runtime::{read_log_tail, CliExecutable, OwnedChild};
 #[cfg(test)]
 use crate::subagent;
 
@@ -398,19 +398,6 @@ async fn drain_child(
             SessionOutcome::Failed(format!("claude code: failed waiting for child: {error}"))
         }
     }
-}
-
-async fn read_log_tail(path: &std::path::Path) -> String {
-    let Ok(contents) = tokio::fs::read_to_string(path).await else {
-        return String::new();
-    };
-    let trimmed = contents.trim();
-    if trimmed.len() <= 400 {
-        return trimmed.to_string();
-    }
-    let cut = trimmed.len() - 400;
-    let boundary = rho_sdk::ceil_char_boundary(trimmed, cut);
-    format!("{}{}", rho_sdk::ELLIPSIS, &trimmed[boundary..])
 }
 
 #[cfg(test)]

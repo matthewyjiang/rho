@@ -97,9 +97,10 @@ fn mid_turn_snapshot_before_tool_call_is_dropped_and_segment_resets() {
     let terminal = terminal(&effects);
     // Two text segments around one shell call. `result.result` joins them
     // with "\n"; the rendered stream has neither doubled.
-    let expected = terminal.result_text.clone().unwrap();
-    let rendered = rendered_text(&effects);
-    assert_eq!(rendered.replace('\n', ""), expected.replace('\n', ""));
+    assert_eq!(
+        rendered_text(&effects),
+        terminal.result_text.clone().unwrap()
+    );
     assert_eq!(notices(&effects), Vec::<&str>::new());
 
     let cards = finished_cards(&effects);
@@ -144,36 +145,49 @@ fn edit_result_renders_diff_from_diff_string() {
 }
 
 #[test]
-fn read_only_search_cards_carry_counts_and_grep_matches() {
+fn read_only_search_cards_carry_exact_facts_from_fixture() {
     let effects = effects_from_fixture("live_readonly_search.ndjson");
     let cards = finished_cards(&effects);
-    let by_verb = |verb: &str| {
-        cards
-            .iter()
-            .filter(|card| matches!(&card.header, ToolHeader::Call { verb: v, .. } if v == verb))
-            .collect::<Vec<_>>()
+    let summary = cards
+        .iter()
+        .map(|card| (card.header.clone(), card.status, card.facts.clone()))
+        .collect::<Vec<_>>();
+    let count = |label: &str, value: u64, detail: Option<&str>| ToolFact::Count {
+        label: label.into(),
+        value,
+        detail: detail.map(str::to_string),
     };
-    let globs = by_verb("Glob");
-    assert!(!globs.is_empty());
-    assert!(globs[0].facts.iter().any(
-        |fact| matches!(fact, ToolFact::Count { label, .. } if label == "file" || label == "files")
-    ));
-
-    let greps = by_verb("Grep");
-    assert!(!greps.is_empty());
-    let grep = greps[0];
-    assert!(grep.match_pattern.is_some());
-    assert!(grep
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, ToolFact::Count { label, .. } if label.starts_with("match"))));
-
-    let reads = by_verb("Read");
-    assert!(!reads.is_empty());
-    assert!(reads[0]
-        .facts
-        .iter()
-        .any(|fact| matches!(fact, ToolFact::Count { label, .. } if label == "lines")));
+    // Fixture order: grep, glob, then two reads; every card carries the
+    // fact the wire result supports and nothing else.
+    let grep = (
+        ToolHeader::call("Grep", Some("allowlist, .".into())),
+        ToolStatus::Ok,
+        vec![count("matches", 0, None)],
+    );
+    let glob = (
+        ToolHeader::call("Glob", Some("**/*".into())),
+        ToolStatus::Ok,
+        vec![count("files", 2, None)],
+    );
+    let read = |name: &str, lines: u64| {
+        (
+            ToolHeader::call("Read", Some(name.into())),
+            ToolStatus::Ok,
+            vec![count("lines", lines, None)],
+        )
+    };
+    assert_eq!(
+        summary,
+        vec![
+            grep,
+            glob,
+            read("noforce.md", 2),
+            read("cursor-stream-protocol.md", 289),
+        ]
+    );
+    let grep_card = &cards[0];
+    assert_eq!(grep_card.match_pattern.as_deref(), Some("allowlist"));
+    assert!(grep_card.match_case_sensitive);
     // Every started tool finished; no card was evicted or orphaned.
     let started = effects
         .iter()
@@ -211,7 +225,7 @@ fn init_and_result_populate_status_without_terminalizing() {
         terminal.classification,
         TerminalClassification::Success { .. }
     ));
-    assert_eq!(terminal.num_turns, Some(1));
+    assert_eq!(terminal.num_turns, None);
     assert!(!effects.iter().any(|effect| matches!(
         effect,
         StreamEffect::Attachment(AttachmentEvent::Completed | AttachmentEvent::Failed(_))
@@ -270,4 +284,120 @@ fn snapshot_shaped_frame_with_new_text_is_rendered_with_notice() {
         .push_line(r#"{"type":"assistant","message":{"content":[{"type":"text","text":"xyz"}]}}"#);
     assert_eq!(rendered_text(&effects), "xyz");
     assert_eq!(notices(&effects).len(), 1);
+}
+
+fn delta(text: &str) -> String {
+    format!(
+        r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":{}}}]}},"timestamp_ms":1}}"#,
+        serde_json::to_string(text).unwrap()
+    )
+}
+
+fn mid_snapshot(text: &str) -> String {
+    format!(
+        r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":{}}}]}},"timestamp_ms":1,"model_call_id":"m1"}}"#,
+        serde_json::to_string(text).unwrap()
+    )
+}
+
+fn final_snapshot(text: &str) -> String {
+    format!(
+        r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":{}}}]}}}}"#,
+        serde_json::to_string(text).unwrap()
+    )
+}
+
+const TOOL_STARTED: &str = r#"{"type":"tool_call","subtype":"started","call_id":"t1","tool_call":{"readToolCall":{"args":{"path":"a"}}}}"#;
+
+// Covers: the snapshot rule keys on frame shape, so identical consecutive
+// deltas are not mistaken for a replay, and a replay that lands after the
+// tool call it precedes on the wire is still dropped.
+// Owner: cursor stream mapper snapshot dedup
+#[test]
+fn snapshot_dedup_is_by_shape_then_content() {
+    let cases: Vec<(&str, Vec<String>, &str, usize)> = vec![
+        (
+            "identical deltas then final snapshot",
+            vec![delta("ab"), delta("ab"), final_snapshot("abab")],
+            "abab",
+            0,
+        ),
+        (
+            "dots",
+            vec![delta("."), delta("."), delta("."), final_snapshot("...")],
+            "...",
+            0,
+        ),
+        (
+            "mid snapshot before tool",
+            vec![
+                delta("x"),
+                delta("y"),
+                mid_snapshot("xy"),
+                TOOL_STARTED.into(),
+                delta("z"),
+                final_snapshot("z"),
+            ],
+            "xyz",
+            0,
+        ),
+        (
+            "mid snapshot after tool",
+            vec![
+                delta("x"),
+                delta("y"),
+                TOOL_STARTED.into(),
+                mid_snapshot("xy"),
+                delta("z"),
+                final_snapshot("z"),
+            ],
+            "xyz",
+            0,
+        ),
+        (
+            "snapshot with unseen text is rendered with one notice",
+            vec![delta("abc"), final_snapshot("xyz")],
+            "abcxyz",
+            1,
+        ),
+    ];
+    for (name, lines, expected_text, expected_notices) in cases {
+        let mut mapper = CursorStreamMapper::new();
+        let effects = lines
+            .iter()
+            .flat_map(|line| mapper.push_line(line))
+            .collect::<Vec<_>>();
+        assert_eq!(rendered_text(&effects), expected_text, "{name}");
+        assert_eq!(notices(&effects).len(), expected_notices, "{name}");
+    }
+}
+
+// Covers: `success: null` and a shell that exited nonzero are error cards.
+// Owner: cursor tool cards result outcome
+#[test]
+fn null_success_and_nonzero_shell_exit_are_error_cards() {
+    let cases: &[(&str, &str, ToolStatus)] = &[
+        (
+            "success null",
+            r#"{"type":"tool_call","subtype":"completed","call_id":"t1","tool_call":{"readToolCall":{"args":{"path":"a"},"result":{"success":null}}}}"#,
+            ToolStatus::Error,
+        ),
+        (
+            "shell nonzero exit",
+            r#"{"type":"tool_call","subtype":"completed","call_id":"t1","tool_call":{"shellToolCall":{"args":{"command":"false"},"result":{"success":{"exitCode":1,"stdout":"","stderr":"boom"}}}}}"#,
+            ToolStatus::Error,
+        ),
+        (
+            "shell zero exit",
+            r#"{"type":"tool_call","subtype":"completed","call_id":"t1","tool_call":{"shellToolCall":{"args":{"command":"true"},"result":{"success":{"exitCode":0,"stdout":"ok","stderr":""}}}}}"#,
+            ToolStatus::Ok,
+        ),
+    ];
+    for (name, line, expected) in cases {
+        let mut mapper = CursorStreamMapper::new();
+        let effects = mapper.push_line(line);
+        let cards = finished_cards(&effects);
+        assert_eq!(cards.len(), 1, "{name}");
+        assert_eq!(cards[0].status, *expected, "{name}");
+    }
 }
