@@ -191,7 +191,7 @@ impl AgentExecutor {
         host_input: SubagentHostInputBridge,
         notices: SubagentNoticeBridge,
     ) -> Self {
-        let concurrency = AgentConcurrency::from_config_and_env(config.agent_concurrency);
+        let concurrency = AgentConcurrency::from_config(config.agent_concurrency);
         Self {
             config: Arc::new(std::sync::RwLock::new(config)),
             config_path,

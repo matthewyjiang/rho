@@ -24,11 +24,11 @@ use super::{
     STARLARK_VERSION,
 };
 
-// Receipt: matches config::DEFAULT_AGENT_CONCURRENCY. Kind limits
-// use the same ceiling and cannot raise total parallel work.
-const DEFAULT_PARALLEL_NODES: u32 = crate::config::DEFAULT_AGENT_CONCURRENCY as u32;
-const DEFAULT_PARALLEL_AGENTS: u32 = crate::config::DEFAULT_AGENT_CONCURRENCY as u32;
-const DEFAULT_PARALLEL_COMMANDS: u32 = crate::config::DEFAULT_AGENT_CONCURRENCY as u32;
+// Receipt: freeze-time workflow kind ceilings. Independent of
+// behavior.agent_concurrency, which is the live delegated-agent slot cap.
+const DEFAULT_PARALLEL_NODES: u32 = 4;
+const DEFAULT_PARALLEL_AGENTS: u32 = 4;
+const DEFAULT_PARALLEL_COMMANDS: u32 = 4;
 const PLANNER_FORMAT_VERSION: u32 = 1;
 
 pub(crate) struct PreparedPlan {

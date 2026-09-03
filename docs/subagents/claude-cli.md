@@ -166,7 +166,7 @@ When a run finishes, `result.json` may include `claude_session_id`. Attach and t
 claude --resume <session-id>
 ```
 
-Default concurrency is one global pool of 10 delegated runs (`behavior.agent_concurrency` in config, or `RHO_AGENT_CONCURRENCY` at process start). `/config` → **Agent behavior** → **Concurrent agents** changes the live cap immediately. Claude-cli runs also take a nested Claude permit capped at 2 by default (`RHO_CLAUDE_AGENT_CONCURRENCY` overrides that nested cap). The Claude pool is always `min(total, claude_cap)`, so overrides never open a 2N fan-out window and Claude never exceeds the global total. The named max is 64.
+Default concurrency is one global pool of 10 delegated runs (`behavior.agent_concurrency` in config). `/config` → **Agent behavior** → **Concurrent agents** changes the live cap immediately. Claude-cli runs also take a nested Claude permit capped at 2 by default (`RHO_CLAUDE_AGENT_CONCURRENCY` overrides that nested cap). The Claude pool is always `min(total, claude_cap)`, so the nested env cannot open a 2N fan-out window and Claude never exceeds the global total. The named max is 64.
 
 ## Auth ownership
 

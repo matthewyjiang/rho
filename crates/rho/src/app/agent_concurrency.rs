@@ -151,7 +151,7 @@ impl AgentConcurrency {
         }
     }
 
-    pub(crate) fn from_config_and_env(configured_total: usize) -> Self {
+    pub(crate) fn from_config(configured_total: usize) -> Self {
         Self::new(concurrency_limits(configured_total))
     }
 
@@ -214,15 +214,14 @@ impl AgentConcurrency {
     }
 }
 
-/// Resolve startup limits from config plus optional env overrides.
+/// Resolve startup limits from config plus the optional nested Claude env.
 ///
-/// `RHO_AGENT_CONCURRENCY` overrides the configured total when it is a positive
-/// integer. `RHO_CLAUDE_AGENT_CONCURRENCY` overrides the nested Claude cap.
-/// Both are clamped to [`MAX_AGENT_CONCURRENCY`], and Claude is nested under
-/// the resolved total so overrides cannot open a 2N fan-out window.
+/// The global cap is `behavior.agent_concurrency` only. `RHO_CLAUDE_AGENT_CONCURRENCY`
+/// still overrides the nested Claude cap. Both are clamped to
+/// [`MAX_AGENT_CONCURRENCY`], and Claude is nested under the resolved total so
+/// the env cannot open a 2N fan-out window.
 pub(crate) fn concurrency_limits(configured_total: usize) -> ConcurrencyLimits {
-    concurrency_limits_from_env(
-        std::env::var("RHO_AGENT_CONCURRENCY").ok().as_deref(),
+    concurrency_limits_from_claude_env(
         std::env::var("RHO_CLAUDE_AGENT_CONCURRENCY")
             .ok()
             .as_deref(),
@@ -230,16 +229,13 @@ pub(crate) fn concurrency_limits(configured_total: usize) -> ConcurrencyLimits {
     )
 }
 
-pub(crate) fn concurrency_limits_from_env(
-    total_raw: Option<&str>,
+pub(crate) fn concurrency_limits_from_claude_env(
     claude_raw: Option<&str>,
     configured_total: usize,
 ) -> ConcurrencyLimits {
-    let total = parse_concurrency_or(total_raw, configured_total);
-    let claude_requested = parse_concurrency_or(claude_raw, DEFAULT_CLAUDE_CONCURRENCY);
     ConcurrencyLimits {
-        total,
-        claude_requested,
+        total: clamp_concurrency(configured_total),
+        claude_requested: parse_concurrency_or(claude_raw, DEFAULT_CLAUDE_CONCURRENCY),
     }
 }
 

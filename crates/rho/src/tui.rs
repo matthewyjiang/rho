@@ -458,7 +458,12 @@ pub(crate) async fn run(
                 app.terminal_session = Some(TerminalSession::acquire());
                 if let Some(manager) = agent.subagents() {
                     app.subagent_inbox.bind(manager);
-                    app.agent_concurrency = Some(manager.executor.concurrency());
+                    let pool = manager.concurrency();
+                    app.info
+                        .services
+                        .diagnostics
+                        .update_agent_concurrency(pool.total_limit());
+                    app.agent_concurrency = Some(pool);
                 }
                 let result = app.run(&mut terminal, agent).await;
                 if let Some(manager) = agent.subagents() {

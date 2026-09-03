@@ -187,13 +187,7 @@ impl App {
                         self.set_status(format!("compact target set to {value}%"));
                     }
                     ConfigNumberSave::AgentConcurrency(value) => {
-                        if let Some(pool) = &self.agent_concurrency {
-                            pool.set_total(value);
-                        }
-                        self.info
-                            .services
-                            .diagnostics
-                            .update_agent_concurrency(value);
+                        self.apply_live_agent_concurrency(value);
                         self.open_main_config_picker_selected(
                             config_picker::AGENT_CONCURRENCY_VALUE,
                         )?;

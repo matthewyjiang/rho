@@ -23,66 +23,70 @@ fn limits(total: usize, claude_requested: usize) -> ConcurrencyLimits {
     }
 }
 
-// Covers: invalid env values keep the configured total and default Claude cap.
+// Covers: the global cap comes from config; invalid Claude env keeps the default nested cap.
 // Owner: delegated agent concurrency
 #[test]
-fn zero_invalid_and_huge_concurrency_values_fall_back() {
-    let expected = ConcurrencyLimits {
-        total: DEFAULT_AGENT_CONCURRENCY,
-        claude_requested: 2,
-    };
+fn configured_total_clamps_and_invalid_claude_env_falls_back() {
     assert_eq!(
-        concurrency_limits_from_env(Some("0"), Some("0"), DEFAULT_AGENT_CONCURRENCY),
-        expected
-    );
-    assert_eq!(
-        concurrency_limits_from_env(Some("-1"), Some("nope"), DEFAULT_AGENT_CONCURRENCY),
-        expected
-    );
-    assert_eq!(
-        concurrency_limits_from_env(Some(""), Some(" "), DEFAULT_AGENT_CONCURRENCY),
-        expected
-    );
-    let huge = format!("{}0", usize::MAX);
-    assert_eq!(
-        concurrency_limits_from_env(
-            Some(huge.as_str()),
-            Some(huge.as_str()),
-            DEFAULT_AGENT_CONCURRENCY
-        ),
-        expected
-    );
-}
-
-// Covers: env overrides clamp to the named max instead of opening unbounded fan-out.
-// Owner: delegated agent concurrency
-#[test]
-fn total_and_claude_env_values_interact() {
-    assert_eq!(
-        concurrency_limits_from_env(Some("bad"), Some("3"), DEFAULT_AGENT_CONCURRENCY),
-        ConcurrencyLimits {
-            total: DEFAULT_AGENT_CONCURRENCY,
-            claude_requested: 3
-        }
-    );
-    assert_eq!(
-        concurrency_limits_from_env(Some("1"), Some("bad"), DEFAULT_AGENT_CONCURRENCY),
+        concurrency_limits_from_claude_env(None, 0),
         ConcurrencyLimits {
             total: 1,
             claude_requested: 2
         }
     );
     assert_eq!(
-        concurrency_limits_from_env(Some("8"), Some("5"), DEFAULT_AGENT_CONCURRENCY),
+        concurrency_limits_from_claude_env(Some("0"), DEFAULT_AGENT_CONCURRENCY),
+        ConcurrencyLimits {
+            total: DEFAULT_AGENT_CONCURRENCY,
+            claude_requested: 2
+        }
+    );
+    assert_eq!(
+        concurrency_limits_from_claude_env(Some("-1"), DEFAULT_AGENT_CONCURRENCY),
+        ConcurrencyLimits {
+            total: DEFAULT_AGENT_CONCURRENCY,
+            claude_requested: 2
+        }
+    );
+    assert_eq!(
+        concurrency_limits_from_claude_env(Some(""), DEFAULT_AGENT_CONCURRENCY),
+        ConcurrencyLimits {
+            total: DEFAULT_AGENT_CONCURRENCY,
+            claude_requested: 2
+        }
+    );
+    let huge = format!("{}0", usize::MAX);
+    assert_eq!(
+        concurrency_limits_from_claude_env(Some(huge.as_str()), 1_000),
+        ConcurrencyLimits {
+            total: MAX_AGENT_CONCURRENCY,
+            claude_requested: 2
+        }
+    );
+}
+
+// Covers: Claude env clamps to the named max and does not replace the configured total.
+// Owner: delegated agent concurrency
+#[test]
+fn claude_env_does_not_override_configured_total() {
+    assert_eq!(
+        concurrency_limits_from_claude_env(Some("3"), DEFAULT_AGENT_CONCURRENCY),
+        ConcurrencyLimits {
+            total: DEFAULT_AGENT_CONCURRENCY,
+            claude_requested: 3
+        }
+    );
+    assert_eq!(
+        concurrency_limits_from_claude_env(Some("5"), 8),
         ConcurrencyLimits {
             total: 8,
             claude_requested: 5
         }
     );
     assert_eq!(
-        concurrency_limits_from_env(Some("100"), Some("90"), DEFAULT_AGENT_CONCURRENCY),
+        concurrency_limits_from_claude_env(Some("90"), 8),
         ConcurrencyLimits {
-            total: MAX_AGENT_CONCURRENCY,
+            total: 8,
             claude_requested: MAX_AGENT_CONCURRENCY
         }
     );
