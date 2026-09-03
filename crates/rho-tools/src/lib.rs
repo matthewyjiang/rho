@@ -22,7 +22,9 @@ mod process_env;
 mod process_stream;
 mod search;
 mod shell_process;
-pub use shell_process::{parse_shell_content, ShellContent};
+pub use shell_process::{
+    login_shell_script, parent_path_for, parse_shell_content, ShellContent, PARENT_PATH_VAR,
+};
 mod file_mutation;
 pub mod tool;
 pub mod tool_card;

@@ -8,13 +8,49 @@ use crate::cancellation::RunCancellation;
 use crate::process_env::apply_process_environment;
 use crate::process_stream::{capture_failure_notice, StreamKind};
 use crate::tool::{truncate, ToolError, ToolResult};
-use rho_sdk::{ExecutableSelection, ProcessExecution, ProcessInvocation};
+use rho_sdk::{ExecutableSelection, ProcessEnvironment, ProcessExecution, ProcessInvocation};
 use serde::Deserialize;
-use std::{process::Stdio, time::Duration, time::Instant};
+use std::{ffi::OsString, process::Stdio, time::Duration, time::Instant};
 use tokio::{io::AsyncReadExt, process::Command};
 
 const FINAL_OUTPUT_GRACE: Duration = Duration::from_millis(250);
 const UPDATE_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Child environment variable carrying the parent process `PATH` into login shells.
+pub const PARENT_PATH_VAR: &str = "RHO_PARENT_PATH";
+
+/// Wraps a script for `bash -l` so login init cannot drop parent `PATH` entries.
+///
+/// `/etc/profile` on Debian resets `PATH` (macOS `path_helper` reorders it) before
+/// user dotfiles run, so anything the launching shell added outside the login
+/// chain (mise, nix, direnv, nvm) disappears inside `bash -lc`. The wrapper
+/// re-prepends [`PARENT_PATH_VAR`] after login init; callers set that variable
+/// from [`parent_path_for`] so environment policy still decides whether the child
+/// sees the parent `PATH` at all. When the variable is unset the script leaves
+/// `PATH` untouched. The prefix stays on the first line so bash error line numbers
+/// still match the caller's command.
+pub fn login_shell_script(command: &str) -> String {
+    format!("export PATH=\"${{{PARENT_PATH_VAR}:+${PARENT_PATH_VAR}:}}$PATH\"; {command}")
+}
+
+/// Returns the parent `PATH` when `environment` lets the child inherit it.
+///
+/// `Empty` and `InheritListed` without `PATH` deliberately hide the parent path,
+/// so re-exporting it through [`PARENT_PATH_VAR`] would bypass that policy.
+pub fn parent_path_for(environment: &ProcessEnvironment) -> Option<OsString> {
+    let inherits_path = match environment {
+        ProcessEnvironment::Empty => false,
+        ProcessEnvironment::InheritAll => true,
+        ProcessEnvironment::InheritExcept { variable_names } => {
+            !variable_names.iter().any(|name| name == "PATH")
+        }
+        ProcessEnvironment::InheritListed { variable_names } => {
+            variable_names.iter().any(|name| name == "PATH")
+        }
+        _ => false,
+    };
+    inherits_path.then(|| std::env::var_os("PATH")).flatten()
+}
 
 /// Arguments accepted by the application shell tools.
 #[derive(Deserialize)]
@@ -138,15 +174,26 @@ fn build_command(execution: &ProcessExecution, tool_name: &str) -> Result<Comman
         )));
     };
     let mut command = Command::new(executable);
+    let login_bash = executable == "bash" && arguments.iter().any(|arg| arg == "-lc");
+    let script = if login_bash {
+        login_shell_script(shell_script)
+    } else {
+        shell_script.clone()
+    };
     command
         .args(arguments)
-        .arg(shell_script)
+        .arg(script)
         .current_dir(execution.working_directory())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     apply_process_environment(&mut command, execution.environment()).map_err(ToolError::Message)?;
+    if login_bash {
+        if let Some(path) = parent_path_for(execution.environment()) {
+            command.env(PARENT_PATH_VAR, path);
+        }
+    }
     Ok(command)
 }
 

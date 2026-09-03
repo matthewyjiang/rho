@@ -278,3 +278,101 @@ fn shell_content_parses_timeout_notice() {
     assert_eq!(parsed.notice.as_deref(), Some("command timed out after 5s"));
     assert_eq!(parsed.stdout, "a\n\nstderr:\nb");
 }
+
+// Covers: environment policy decides whether the parent PATH is re-exported
+// Owner: pure unit (shell process)
+#[test]
+fn parent_path_follows_environment_policy() {
+    let cases = [
+        ("empty", ProcessEnvironment::Empty, false),
+        ("inherit_all", ProcessEnvironment::InheritAll, true),
+        (
+            "inherit_except_other",
+            ProcessEnvironment::inherit_except(["HOME"]),
+            true,
+        ),
+        (
+            "inherit_except_path",
+            ProcessEnvironment::inherit_except(["PATH"]),
+            false,
+        ),
+        (
+            "inherit_listed_with_path",
+            ProcessEnvironment::InheritListed {
+                variable_names: vec!["PATH".into()],
+            },
+            true,
+        ),
+        (
+            "inherit_listed_without_path",
+            ProcessEnvironment::InheritListed {
+                variable_names: vec!["HOME".into()],
+            },
+            false,
+        ),
+    ];
+    let expected_path = std::env::var_os("PATH");
+    assert!(expected_path.is_some(), "test process must have a PATH");
+
+    for (name, environment, inherits) in cases {
+        let actual = parent_path_for(&environment);
+        let expected = inherits.then(|| expected_path.clone()).flatten();
+        assert_eq!(actual, expected, "{name}");
+    }
+}
+
+// Covers: login init (/etc/profile) must not drop parent-only PATH entries (#1147)
+// Owner: integration (bash login shell)
+#[cfg(unix)]
+#[tokio::test]
+async fn login_shell_keeps_parent_path_entries() {
+    const MARKER_DIR: &str = "/rho-parent-only-path";
+    // Child-only override: the parent PATH is not mutated.
+    let parent_path = format!("{MARKER_DIR}:{}", std::env::var("PATH").unwrap());
+    let mut command = Command::new("bash");
+    command
+        .args(["-lc", &login_shell_script("printf '%s' \"$PATH\"")])
+        .env("PATH", &parent_path)
+        .env(PARENT_PATH_VAR, &parent_path)
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+
+    let output = command.output().await.expect("login shell should run");
+    let child_path = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "login shell should succeed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        child_path.split(':').next(),
+        Some(MARKER_DIR),
+        "parent PATH must lead after login init: {child_path}"
+    );
+}
+
+// Covers: without the parent PATH variable the wrapper leaves PATH alone
+// Owner: integration (bash)
+#[cfg(unix)]
+#[tokio::test]
+async fn login_shell_script_is_inert_without_parent_path() {
+    // Resolve bash before PATH is replaced in the child; the runtime looks it up there.
+    let bash = which_bash();
+    let output = Command::new(bash)
+        .args(["-c", &login_shell_script("printf '%s' \"$PATH\"")])
+        .env("PATH", "/only")
+        .env_remove(PARENT_PATH_VAR)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .expect("bash should run");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "/only");
+}
+
+#[cfg(unix)]
+fn which_bash() -> std::path::PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|dir| dir.join("bash"))
+        .find(|candidate| candidate.is_file())
+        .expect("bash on PATH")
+}

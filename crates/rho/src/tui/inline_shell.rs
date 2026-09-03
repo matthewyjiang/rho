@@ -179,7 +179,13 @@ async fn execute_streaming(
             process.args(["-c", command]);
         }
         _ => {
-            process.args(["-lc", command]);
+            // Login shells reset PATH in /etc/profile; carry the parent PATH across
+            // so the inline shell matches the bash tool (see shell_process).
+            process.args(["-lc", &rho_tools::login_shell_script(command)]);
+            if let Some(path) = rho_tools::parent_path_for(&rho_sdk::ProcessEnvironment::InheritAll)
+            {
+                process.env(rho_tools::PARENT_PATH_VAR, path);
+            }
         }
     }
     let mut child = process
