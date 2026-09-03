@@ -1,46 +1,61 @@
 //! Bounded capture of child process stderr for diagnostics.
 //!
-//! Reading stderr to EOF in a single buffer allows a chatty child process to
-//! grow memory without bound. [`StderrTail`] keeps the closing tail of bytes
-//! (which usually carries failure diagnostics) and truncates on clean UTF-8
-//! character boundaries.
+//! Reading stderr to EOF into one buffer would let a chatty child grow memory
+//! without bound, so the head is dropped as chunks arrive. Keeping the tail
+//! matches what a log file would show: the closing lines carry the failure,
+//! while the head is startup noise.
 
-/// Default bytes of child stderr kept for diagnosis.
+use tokio::io::{AsyncRead, AsyncReadExt};
+
+/// Bytes of child stderr kept for diagnosis.
 pub(crate) const MAX_STDERR_BYTES: usize = 8 * 1024;
 
-/// The last bytes of a child's stderr.
-#[derive(Debug)]
+const READ_CHUNK_BYTES: usize = 8 * 1024;
+
+/// The last [`MAX_STDERR_BYTES`] of a child's stderr.
+#[derive(Debug, Default)]
 pub(crate) struct StderrTail {
     bytes: Vec<u8>,
-    max_bytes: usize,
     elided: bool,
 }
 
-impl Default for StderrTail {
-    fn default() -> Self {
-        Self::with_max_bytes(MAX_STDERR_BYTES)
-    }
-}
-
 impl StderrTail {
-    pub(crate) fn with_max_bytes(max_bytes: usize) -> Self {
-        Self {
-            bytes: Vec::new(),
-            max_bytes,
-            elided: false,
+    /// Read `stderr` to EOF, keeping only the tail. `None` (stderr redirected
+    /// elsewhere) yields an empty tail. A read error is not worth failing a run
+    /// over: the tail collected so far still explains what happened.
+    pub(crate) async fn capture<R>(stderr: Option<R>) -> Self
+    where
+        R: AsyncRead + Unpin,
+    {
+        let mut tail = Self::default();
+        let Some(mut stderr) = stderr else {
+            return tail;
+        };
+        let mut chunk = vec![0_u8; READ_CHUNK_BYTES];
+        loop {
+            match stderr.read(&mut chunk).await {
+                Ok(0) | Err(_) => return tail,
+                Ok(count) => tail.push(&chunk[..count]),
+            }
         }
     }
 
     pub(crate) fn push(&mut self, chunk: &[u8]) {
         self.bytes.extend_from_slice(chunk);
-        if self.bytes.len() <= self.max_bytes {
+        if self.bytes.len() <= MAX_STDERR_BYTES {
             return;
         }
-        let cut = ceil_utf8_boundary(&self.bytes, self.bytes.len() - self.max_bytes);
+        let cut = ceil_utf8_boundary(&self.bytes, self.bytes.len() - MAX_STDERR_BYTES);
         self.bytes.drain(..cut);
         self.elided = true;
     }
 
+    /// Whether any head bytes were dropped to stay within the budget.
+    pub(crate) fn elided(&self) -> bool {
+        self.elided
+    }
+
+    /// Trimmed text, prefixed with an ellipsis when the head was dropped.
     pub(crate) fn finish(self) -> String {
         let text = String::from_utf8_lossy(&self.bytes);
         let trimmed = text.trim();

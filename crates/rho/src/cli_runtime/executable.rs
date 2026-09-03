@@ -1,9 +1,8 @@
 //! Resolve external CLI programs and build structured process commands.
 //!
-//! Windows may install external tools (Claude Code, Cursor CLI, etc.) as native
-//! `.exe` binaries or as `.cmd` / `.ps1` shims (via npm, scoop, pip, etc.).
-//! Bare `Command::new("tool")` misses those shims, and joining arguments through
-//! a shell invites command injection.
+//! Windows may install external tools as native `.exe` binaries or as `.cmd` /
+//! `.ps1` shims (via npm, scoop, pip, etc.). Bare `Command::new("tool")` misses
+//! those shims, and joining arguments through a shell invites command injection.
 //!
 //! Invocation rules:
 //! - **Direct** (Unix binary / Windows `.exe`): structured `Command::new(path)`
@@ -48,6 +47,31 @@ pub(crate) enum CliExecutableError {
 }
 
 impl CliExecutable {
+    /// Locate `program` for spawning. Explicit paths must exist as files; bare
+    /// names are looked up on `PATH`, and on Windows the `.cmd` / `.ps1` shims
+    /// that Rust's bare-name lookup will not find are tried next.
+    pub(crate) fn resolve(program: &str) -> Option<Self> {
+        if program.contains('/') || program.contains('\\') {
+            let path = PathBuf::from(program);
+            return path.is_file().then(|| Self::from_path(path));
+        }
+
+        if let Some(path) = crate::executable::find_on_path(program) {
+            return Some(Self::from_path(path));
+        }
+
+        #[cfg(windows)]
+        {
+            for candidate in [format!("{program}.cmd"), format!("{program}.ps1")] {
+                if let Some(path) = crate::executable::find_on_path(&candidate) {
+                    return Some(Self::from_path(path));
+                }
+            }
+        }
+
+        None
+    }
+
     /// Build from an already-resolved path. Classifies by extension.
     pub(crate) fn from_path(path: impl Into<PathBuf>) -> Self {
         let program = path.into();
@@ -79,15 +103,18 @@ impl CliExecutable {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let args = collect_args(args);
+        let args: Vec<OsString> = args
+            .into_iter()
+            .map(|arg| arg.as_ref().to_os_string())
+            .collect();
         match self.kind {
             CliInvocationKind::Direct => Ok(CliArgv {
                 program: self.program.clone(),
                 args,
             }),
             CliInvocationKind::CmdScript => {
-                // Building the bat line is the same check std performs at spawn.
-                // Validate the same values std refuses at spawn (CR/LF/NUL/...).
+                // Building the bat line is the same check std performs at spawn:
+                // anything std refuses (CR/LF/NUL/...) fails here instead.
                 let _ = bat_command_line(&self.program, &args)?;
                 Ok(CliArgv {
                     // Spawn image is the script; std rewrites to cmd.exe.
@@ -124,33 +151,6 @@ impl CliExecutable {
     }
 }
 
-/// Locate a program for spawning. On Windows, checks real binaries and then
-/// `.cmd` / `.ps1` shims that Rust's bare-name lookup will not find.
-pub(crate) fn resolve_named(program: &str) -> Option<CliExecutable> {
-    if program.contains('/') || program.contains('\\') {
-        let path = PathBuf::from(program);
-        if path.is_file() {
-            return Some(CliExecutable::from_path(path));
-        }
-        return None;
-    }
-
-    if let Some(path) = crate::executable::find_on_path(program) {
-        return Some(CliExecutable::from_path(path));
-    }
-
-    #[cfg(windows)]
-    {
-        for candidate in [format!("{program}.cmd"), format!("{program}.ps1")] {
-            if let Some(path) = crate::executable::find_on_path(&candidate) {
-                return Some(CliExecutable::from_path(path));
-            }
-        }
-    }
-
-    None
-}
-
 fn classify_program(path: &Path) -> CliInvocationKind {
     let ext = path
         .extension()
@@ -162,16 +162,6 @@ fn classify_program(path: &Path) -> CliInvocationKind {
         "ps1" => CliInvocationKind::PowerShellScript,
         _ => CliInvocationKind::Direct,
     }
-}
-
-fn collect_args<I, S>(args: I) -> Vec<OsString>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
-    args.into_iter()
-        .map(|arg| arg.as_ref().to_os_string())
-        .collect()
 }
 
 /// A validated process plan: image and argv.
@@ -187,7 +177,7 @@ pub(crate) struct CliArgv {
 impl CliArgv {
     /// Build the process command. Invocation rules are already resolved, so
     /// every kind spawns the same way: image plus argv.
-    pub(crate) fn command(&self) -> Command {
+    fn command(&self) -> Command {
         let mut command = Command::new(&self.program);
         command.args(&self.args);
         command

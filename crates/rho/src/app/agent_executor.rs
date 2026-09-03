@@ -475,9 +475,7 @@ impl AgentExecutor {
                     let expected_identity = frozen.executable_identity;
                     let verified_executable = frozen._verified_executable;
                     session.overrides.executable = Some(
-                        crate::claude_runtime::executable::ClaudeExecutable::from_path(
-                            frozen.executable,
-                        ),
+                        crate::cli_runtime::CliExecutable::from_path(frozen.executable),
                     );
                     session.set_frozen_argv(ensure_stream_json_input(frozen.arguments));
                     session.overrides.before_spawn = Some(Box::new(move |command| {

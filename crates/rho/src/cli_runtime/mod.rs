@@ -1,19 +1,18 @@
-//! Generic external CLI subagent runtime infrastructure.
+//! Process infrastructure for external CLI agents.
 //!
-//! Provides process supervision, Windows shim argument encoding, executable
-//! resolution, and bounded stderr tail capture shared across external CLI
-//! agent runtimes (such as Claude Code or future Cursor CLI).
+//! Nothing here knows which tool is being run: process supervision, executable
+//! resolution, Windows shim argument encoding, and bounded stderr capture are
+//! the same regardless of the CLI on the other end. Tool-specific policy
+//! (which program, how to map a missing binary, what the args mean) stays with
+//! the runtime that owns the tool, such as [`crate::claude_runtime`].
 
-pub(crate) mod child;
-pub(crate) mod executable;
-pub(crate) mod stderr_tail;
-pub(crate) mod windows_shim_args;
+mod child;
+mod executable;
+mod stderr_tail;
+mod windows_shim_args;
 
 pub(crate) use child::OwnedChild;
-pub(crate) use executable::{resolve_named, CliExecutable, CliExecutableError};
+pub(crate) use executable::{CliExecutable, CliExecutableError};
 pub(crate) use stderr_tail::StderrTail;
-
 #[cfg(test)]
-pub(crate) use executable::{CliArgv, CliInvocationKind};
-#[cfg(test)]
-pub(crate) use windows_shim_args::{bat_command_line, WindowsShimArgError};
+pub(crate) use stderr_tail::MAX_STDERR_BYTES;

@@ -2,9 +2,9 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
-// Covers: a chatty child cannot grow the stderr capture without bound, and the
-// kept slice is the tail, marked as elided.
-// Owner: pure unit
+/// Covers: a chatty child cannot grow the stderr capture without bound, and the
+/// kept slice is the tail, marked as elided.
+/// Owner: the stderr capture, which is the only bound on that memory.
 #[test]
 fn stderr_capture_keeps_a_bounded_tail() {
     let mut tail = StderrTail::default();
@@ -25,9 +25,10 @@ fn stderr_capture_keeps_a_bounded_tail() {
     );
 }
 
-// Covers: cutting the head mid-character never opens the tail on a replacement
-// character.
-// Owner: pure unit
+/// Covers: cutting the head mid-character never opens the tail on a replacement
+/// character.
+/// Owner: the byte-level boundary walk, which `String::from_utf8_lossy` cannot
+/// recover from once the cut has happened.
 #[test]
 fn stderr_capture_cuts_on_a_character_boundary() {
     let mut tail = StderrTail::default();
@@ -39,9 +40,9 @@ fn stderr_capture_cuts_on_a_character_boundary() {
     assert_eq!(text.matches('\u{FFFD}').count(), 0);
 }
 
-// Covers: stderr short enough to keep whole is reported without an elision
-// marker.
-// Owner: pure unit
+/// Covers: stderr short enough to keep whole is reported without an elision
+/// marker.
+/// Owner: the same capture, whose no-elision path feeds one-shot failure text.
 #[test]
 fn stderr_capture_keeps_short_output_whole() {
     let mut tail = StderrTail::default();

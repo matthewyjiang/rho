@@ -4,7 +4,6 @@
 //! credential; Rho never stores Claude Code tokens.
 
 pub(crate) mod auth;
-pub(crate) mod child;
 pub(crate) mod drain;
 pub(crate) mod executable;
 pub(crate) mod line_decoder;

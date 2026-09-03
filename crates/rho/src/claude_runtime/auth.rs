@@ -13,7 +13,9 @@ use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
-use super::executable::{self, ClaudeExecutable};
+use crate::cli_runtime::{CliExecutable, CliExecutableError};
+
+use super::executable;
 
 /// Program name resolved on `PATH` for Claude Code.
 pub(crate) const CLAUDE_PROGRAM: &str = "claude";
@@ -79,7 +81,7 @@ pub(crate) enum ClaudeAuthError {
     Invocation {
         program: String,
         #[source]
-        source: super::executable::ClaudeExecutableError,
+        source: CliExecutableError,
     },
     #[error("claude code: auth status output was not valid UTF-8")]
     InvalidUtf8,
@@ -201,7 +203,7 @@ pub(crate) async fn query() -> Result<ClaudeAuthStatus, ClaudeAuthError> {
 }
 
 pub(crate) async fn query_executable(
-    executable: &ClaudeExecutable,
+    executable: &CliExecutable,
 ) -> Result<ClaudeAuthStatus, ClaudeAuthError> {
     let output = run_bounded_probe(executable, &["auth", "status"]).await?;
     parse_auth_status_output(&executable.display(), &output)
@@ -216,9 +218,7 @@ pub(crate) async fn logout() -> Result<(), ClaudeAuthError> {
     logout_executable(&executable).await
 }
 
-pub(crate) async fn logout_executable(
-    executable: &ClaudeExecutable,
-) -> Result<(), ClaudeAuthError> {
+pub(crate) async fn logout_executable(executable: &CliExecutable) -> Result<(), ClaudeAuthError> {
     let output = run_bounded_probe(executable, &["auth", "logout"]).await?;
     if output.status.success() {
         Ok(())
@@ -238,7 +238,7 @@ pub(crate) async fn version() -> Result<String, ClaudeAuthError> {
 }
 
 pub(crate) async fn version_executable(
-    executable: &ClaudeExecutable,
+    executable: &CliExecutable,
 ) -> Result<String, ClaudeAuthError> {
     let output = run_bounded_probe(executable, &["--version"]).await?;
     if !output.status.success() {
@@ -287,14 +287,14 @@ impl BoundedOutput {
 }
 
 async fn run_bounded_probe(
-    executable: &ClaudeExecutable,
+    executable: &CliExecutable,
     args: &[&str],
 ) -> Result<BoundedOutput, ClaudeAuthError> {
     run_bounded_probe_with_timeout(executable, args, PROBE_TIMEOUT).await
 }
 
 async fn run_bounded_probe_with_timeout(
-    executable: &ClaudeExecutable,
+    executable: &CliExecutable,
     args: &[&str],
     timeout: Duration,
 ) -> Result<BoundedOutput, ClaudeAuthError> {
@@ -310,7 +310,7 @@ async fn run_bounded_probe_with_timeout(
 
 /// Run an already-built probe command with the standard bounds.
 ///
-/// Production helpers build the command from a resolved [`ClaudeExecutable`].
+/// Production helpers build the command from a resolved [`CliExecutable`].
 /// Tests inject a stable system shell (`/bin/sh -c …`) so they never exec a
 /// freshly written file (which can race with `ETXTBSY` under parallel load).
 async fn run_bounded_command_with_timeout(

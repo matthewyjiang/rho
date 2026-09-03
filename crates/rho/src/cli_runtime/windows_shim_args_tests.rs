@@ -18,8 +18,6 @@ fn tail(script: &str, args: &[&str]) -> String {
         .into_owned()
 }
 
-// Covers: batch command line wrapper quotes script image and arguments.
-// Owner: pure unit
 #[test]
 fn bat_line_wraps_script_and_simple_args() {
     assert_eq!(
@@ -29,8 +27,6 @@ fn bat_line_wraps_script_and_simple_args() {
     assert!(line(r"C:\shims\tool.cmd", &["run"]).starts_with("cmd.exe "));
 }
 
-// Covers: space and empty arguments receive quotes.
-// Owner: pure unit
 #[test]
 fn bat_line_quotes_spaces_and_empty() {
     assert_eq!(
@@ -39,8 +35,6 @@ fn bat_line_quotes_spaces_and_empty() {
     );
 }
 
-// Covers: cmd metacharacters are safely quoted against injection.
-// Owner: pure unit
 #[test]
 fn bat_line_quotes_metacharacters() {
     let got = tail(
@@ -55,16 +49,12 @@ fn bat_line_quotes_metacharacters() {
     assert!(got.contains(r#""r<s""#), "{got}");
 }
 
-// Covers: embedded quotes are doubled matching Windows CRT escaping.
-// Owner: pure unit
 #[test]
 fn bat_line_doubles_embedded_quotes() {
     let got = tail(r"C:\shims\tool.cmd", &[r#"say "hi""#]);
     assert!(got.contains(r#""say ""hi""""#), "{got}");
 }
 
-// Covers: percent signs use the zero-length %cd:~,% slice hack to avoid environment expansion.
-// Owner: pure unit
 #[test]
 fn bat_line_percent_uses_std_null_slice_hack() {
     let got = tail(r"C:\shims\tool.cmd", &["100%sure", "%PATH%"]);
@@ -73,8 +63,6 @@ fn bat_line_percent_uses_std_null_slice_hack() {
     assert!(got.contains("%%cd:~,%PATH%%cd:~,%"), "{got}");
 }
 
-// Covers: exclamation marks are quoted under /v:OFF.
-// Owner: pure unit
 #[test]
 fn bat_line_exclamation_is_quoted_under_v_off() {
     let got = tail(r"C:\shims\tool.cmd", &["wow!"]);
@@ -82,8 +70,6 @@ fn bat_line_exclamation_is_quoted_under_v_off() {
     assert!(got.contains("/v:OFF"), "{got}");
 }
 
-// Covers: unicode characters pass through verbatim.
-// Owner: pure unit
 #[test]
 fn bat_line_unicode_passthrough() {
     let got = tail(r"C:\shims\tool.cmd", &["模型", "café"]);
@@ -91,8 +77,6 @@ fn bat_line_unicode_passthrough() {
     assert!(got.contains("café"), "{got}");
 }
 
-// Covers: CR and LF in arguments are rejected before spawn.
-// Owner: pure unit
 #[test]
 fn bat_line_rejects_cr_lf() {
     assert_eq!(
@@ -105,8 +89,6 @@ fn bat_line_rejects_cr_lf() {
     );
 }
 
-// Covers: script paths containing quotes or trailing backslashes are rejected.
-// Owner: pure unit
 #[test]
 fn bat_line_rejects_bad_script_path() {
     assert_eq!(
@@ -119,8 +101,6 @@ fn bat_line_rejects_bad_script_path() {
     );
 }
 
-// Covers: powershell arguments reject NUL but allow metacharacters.
-// Owner: pure unit
 #[test]
 fn powershell_rejects_nul_only() {
     validate_powershell_args(&["ok", "a b", "%PATH%", "a&b"]).unwrap();
@@ -131,16 +111,12 @@ fn powershell_rejects_nul_only() {
     );
 }
 
-// Covers: trailing backslash argument is quoted and doubled.
-// Owner: pure unit
 #[test]
 fn trailing_backslash_argument_is_quoted_and_doubled() {
     let got = tail(r"C:\shims\tool.cmd", &[r"C:\path\"]);
     assert!(got.contains(r#""C:\path\\""#), "{got}");
 }
 
-// Covers: PathBuf conversion roundtrips in bat_raw_arg_tail.
-// Owner: pure unit
 #[test]
 fn script_path_buf_round_trip_in_line() {
     let script = PathBuf::from(r"C:\Users\me\scoop\shims\tool.cmd");

@@ -13,10 +13,10 @@ use rho_sdk::{model::ModelUsage, CancellationToken};
 use tokio::sync::watch;
 
 use crate::agent::{OneShotPhase, OneShotUpdate, PromptPolicy};
+use crate::cli_runtime::OwnedChild;
 
 use super::{
     auth::{self, ClaudeAuthError},
-    child::OwnedChild,
     drain::{self, DrainEnd},
     executable,
     spawn::{self, ClaudePermissionMode, ClaudeSpawnRequest, SessionPersistence},
@@ -85,7 +85,7 @@ pub(crate) async fn run_one_shot(
 
     let mut command = executable
         .try_command(spawn::inline_prompt_args(&plan))
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("claude code: {error}"))?;
     command
         .current_dir(&plan.cwd)
         .stdin(Stdio::piped())

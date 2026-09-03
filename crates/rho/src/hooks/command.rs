@@ -8,6 +8,8 @@ use std::{process::Stdio, time::Duration};
 
 use tokio::io::AsyncWriteExt;
 
+use crate::cli_runtime::StderrTail;
+
 use super::{
     config::HookDefinition,
     environment::child_environment,
@@ -15,15 +17,13 @@ use super::{
     supervisor::{ProcessTree, SupervisedTree},
 };
 
-/// Largest stderr capture retained for diagnostics.
-pub const MAX_STDERR_BYTES: usize = 4 * 1024;
-
 /// What running one hook program produced.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookRunOutput {
     pub exit_code: Option<i32>,
     pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
+    /// Trimmed tail of stderr, ellipsis-prefixed when the head was dropped.
+    pub stderr: String,
     pub duration: Duration,
     /// Whether either stream hit its capture bound.
     pub truncated: bool,
@@ -36,7 +36,7 @@ impl HookRunOutput {
 
     /// Sanitized one-line stderr summary for diagnostics.
     pub fn stderr_summary(&self) -> String {
-        String::from_utf8_lossy(&self.stderr)
+        self.stderr
             .lines()
             .map(str::trim)
             .rfind(|line| !line.is_empty())
@@ -91,8 +91,11 @@ pub async fn run_hook(
         }
         drop(stdin);
     });
+    // stdout keeps its head: the decision protocol rejects oversize output, so
+    // the first bytes are what matter. stderr keeps its tail: the closing lines
+    // carry the failure.
     let stdout_reader = tokio::spawn(read_bounded(stdout, MAX_DECISION_BYTES + 1));
-    let stderr_reader = tokio::spawn(read_bounded(stderr, MAX_STDERR_BYTES));
+    let stderr_reader = tokio::spawn(StderrTail::capture(stderr));
 
     let status = tokio::select! {
         status = child.wait() => status,
@@ -119,14 +122,14 @@ pub async fn run_hook(
     tree.kill();
     let _ = writer.await;
     let (stdout, stdout_truncated) = stdout_reader.await.unwrap_or_default();
-    let (stderr, stderr_truncated) = stderr_reader.await.unwrap_or_default();
+    let stderr = stderr_reader.await.unwrap_or_default();
     let status = status.map_err(|error| HookRunError::Io(error.to_string()))?;
     Ok(HookRunOutput {
         exit_code: status.code(),
         stdout,
-        stderr,
+        truncated: stdout_truncated || stderr.elided(),
+        stderr: stderr.finish(),
         duration: started.elapsed(),
-        truncated: stdout_truncated || stderr_truncated,
     })
 }
 
@@ -147,8 +150,9 @@ fn build_command(hook: &HookDefinition) -> tokio::process::Command {
     command
 }
 
-/// Reads at most `limit` bytes, then keeps draining so the child never blocks on
-/// a full pipe. Returns the capture and whether the bound was reached.
+/// Reads at most `limit` bytes of the head, then keeps draining so the child
+/// never blocks on a full pipe. Returns the capture and whether the bound was
+/// reached.
 async fn read_bounded<R>(reader: Option<R>, limit: usize) -> (Vec<u8>, bool)
 where
     R: tokio::io::AsyncRead + Unpin,

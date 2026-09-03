@@ -9,10 +9,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::ChildStdin;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::cli_runtime::StderrTail;
+use crate::cli_runtime::{OwnedChild, StderrTail};
 
 use super::{
-    child::OwnedChild,
     line_decoder::{claude_ndjson_line_decoder, LineDecodeError},
     messaging,
     stream::{StreamEffect, StreamMapper, TerminalResult},
@@ -103,22 +102,7 @@ pub(crate) async fn drain_child(
     tokio::pin!(stdin_write);
 
     // Stderr is optional: session redirects it to a log file.
-    let stderr = child.stderr();
-    let read_stderr = async move {
-        let mut tail = StderrTail::default();
-        let Some(mut stderr) = stderr else {
-            return tail;
-        };
-        let mut chunk = vec![0_u8; READ_CHUNK_BYTES];
-        loop {
-            match stderr.read(&mut chunk).await {
-                // A stderr read error is not worth failing the run over; the
-                // tail collected so far still explains what happened.
-                Ok(0) | Err(_) => return tail,
-                Ok(count) => tail.push(&chunk[..count]),
-            }
-        }
-    };
+    let read_stderr = StderrTail::capture(child.stderr());
     tokio::pin!(read_stderr);
 
     let mut stdout = BufReader::new(stdout);

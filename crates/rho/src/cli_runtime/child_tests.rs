@@ -4,8 +4,9 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
-// Covers: child process spawns, streams stdin/stdout, and exits cleanly under OwnedChild.
-// Owner: OS or process
+/// Covers: a spawned child exposes its piped stdin/stdout and `wait` reports a
+/// clean exit once the leader is reaped.
+/// Owner: `OwnedChild` spawn and wait.
 #[tokio::test]
 async fn owned_child_spawns_and_exits_cleanly() {
     #[cfg(unix)]
@@ -43,8 +44,9 @@ async fn owned_child_spawns_and_exits_cleanly() {
     assert!(status.success());
 }
 
-// Covers: terminate signals and cleans up a running child without hanging.
-// Owner: OS or process
+/// Covers: `terminate` stops a long-running child and `wait` returns without
+/// hanging on it.
+/// Owner: `OwnedChild::terminate` and the process-group kill it drives.
 #[tokio::test]
 async fn owned_child_terminate_stops_running_process() {
     #[cfg(unix)]
