@@ -37,6 +37,35 @@ fn formats_context_with_command_and_both_streams() {
     assert!(context.contains("exit code: 0"));
 }
 
+// Covers: the parent-PATH wrapper must only reach shells that parse POSIX
+// parameter expansion; fish (in the picker) would fail to parse it
+// Owner: pure unit (inline shell)
+#[test]
+fn login_path_wrapper_targets_posix_login_shells_only() {
+    let wrapped = rho_tools::login_shell_script("true");
+    let cases = [
+        ("bash", vec!["-lc", wrapped.as_str()], true),
+        ("/usr/bin/zsh", vec!["-lc", wrapped.as_str()], true),
+        ("fish", vec!["-lc", "true"], false),
+        ("sh", vec!["-c", "true"], false),
+        (
+            "pwsh",
+            vec!["-NoLogo", "-NoProfile", "-Command", "true"],
+            false,
+        ),
+    ];
+    for (shell, args, carries_parent_path) in cases {
+        assert_eq!(
+            ShellArgv::for_shell(shell, "true"),
+            ShellArgv {
+                args: args.into_iter().map(str::to_string).collect(),
+                carries_parent_path,
+            },
+            "{shell}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn executes_with_selected_shell() {
     if cfg!(windows) {

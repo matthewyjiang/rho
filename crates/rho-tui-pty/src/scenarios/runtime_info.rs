@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use anyhow::{ensure, Result};
+use anyhow::{bail, Result};
 
 use crate::{harness::PtyHarness, scenario::Step};
 
@@ -31,24 +31,33 @@ pub(super) const RUNTIME_INFO_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Resize { rows: 44, cols: 30 },
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_runtime_info_stacked),
+    // Poll for the stacked layout instead of waiting for output to go quiet:
+    // a loaded runner can leave the screen blank between the clear and the
+    // redraw long enough for a quiet window to pass.
+    Step::Custom(wait_until_runtime_info_stacked),
     Step::ExitCommand,
 ];
 
-fn assert_runtime_info_stacked(harness: &mut PtyHarness) -> Result<()> {
+fn wait_until_runtime_info_stacked(harness: &mut PtyHarness) -> Result<()> {
+    let deadline = Instant::now() + SETTLE.duration;
+    loop {
+        harness.poll(Duration::from_millis(25));
+        if runtime_info_stacked(harness) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            bail!(
+                "runtime info did not stack the Permissions field after resize:\n{}",
+                harness.screen().debug_dump()
+            );
+        }
+    }
+}
+
+fn runtime_info_stacked(harness: &PtyHarness) -> bool {
     let rows = harness.screen().rows_text();
-    let permissions_row = rows.iter().position(|row| row.trim() == "Permissions");
-    let stacked = permissions_row
+    rows.iter()
+        .position(|row| row.trim() == "Permissions")
         .and_then(|index| rows.get(index + 1))
-        .is_some_and(|row| row.trim() == "bypass");
-    ensure!(
-        stacked,
-        "runtime info did not stack the Permissions field after resize:\n{}",
-        harness.screen().debug_dump()
-    );
-    Ok(())
+        .is_some_and(|row| row.trim() == "bypass")
 }

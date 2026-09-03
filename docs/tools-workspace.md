@@ -46,7 +46,7 @@ Additional tools:
 | `rho` | Read-only harness diagnostics |
 | `advisor` | Second-model review when [advisor mode](/configuration/advisor-mode) is on |
 
-The `bash` tool and the [inline shell](/inline-shell) run `bash -lc`, so `~/.profile` installs (cargo, nvm, pyenv) are available. Login init on Debian/Ubuntu (`/etc/profile`) and macOS (`path_helper`) resets or reorders `PATH` before user dotfiles run, so Rho re-prepends the `PATH` it inherited from the launching terminal after login init. Tools activated only in `~/.zshrc` or `~/.bashrc` (mise, nix, direnv, conda) keep working, with the parent entries taking precedence. The child sees the parent value as `RHO_PARENT_PATH`.
+The `bash` tool and the [inline shell](/inline-shell) (bash or zsh) run a login shell (`-lc`), so `~/.profile` installs (cargo, nvm, pyenv) are available. Login init on Debian/Ubuntu (`/etc/profile`) and macOS (`path_helper`) resets or reorders `PATH` before user dotfiles run, so Rho re-prepends the `PATH` it inherited from the launching terminal after login init. Tools activated only in `~/.zshrc` or `~/.bashrc` (mise, nix, direnv, conda) keep working, with the parent entries taking precedence. The child sees the parent value as `RHO_PARENT_PATH`.
 
 Prefer `grep` and `glob` over shell search for workspace inspection. Both honor `.gitignore`, skip hidden files by default, never follow symlinks, and request read access only, so workspace-scoped searches work in every permission mode including `plan`. Agent shell commands can use [RTK](/integrations/rtk) for token-efficient output when the binary is installed.
 
