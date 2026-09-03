@@ -16,7 +16,8 @@ pub(crate) struct ClaudeTool {
 
 /// Built-in Claude Code tools a subagent commonly needs, per the Claude Code
 /// tools reference. Session-only tools (plan mode, worktrees, feedback, cron)
-/// are omitted on purpose.
+/// and nested-subagent tools (`Task`, `Agent`) are omitted on purpose: spawn
+/// always denies those so fan-out stays under Rho.
 pub(crate) const CLAUDE_TOOLS: &[ClaudeTool] = &[
     ClaudeTool {
         name: "Read",
@@ -65,10 +66,6 @@ pub(crate) const CLAUDE_TOOLS: &[ClaudeTool] = &[
     ClaudeTool {
         name: "WebSearch",
         detail: "Search the web.",
-    },
-    ClaudeTool {
-        name: "Agent",
-        detail: "Spawn a nested subagent.",
     },
     ClaudeTool {
         name: "Skill",

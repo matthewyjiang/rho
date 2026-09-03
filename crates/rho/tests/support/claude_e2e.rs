@@ -297,7 +297,7 @@ pub fn assert_success_spawn(record: &SpawnRecord, workspace: &Path) {
     assert_contains(args, "--verbose");
     assert_contains(args, "--include-partial-messages");
     assert_pair(args, "--permission-mode", "bypassPermissions");
-    assert_pair(args, "--disallowedTools", "Task");
+    assert_pair(args, "--disallowedTools", "Task,Agent");
     assert_pair(args, "--setting-sources", "project");
     assert_contains(args, "--strict-mcp-config");
     assert_pair(args, "--model", "claude-opus-demo");
@@ -309,24 +309,24 @@ pub fn assert_success_spawn(record: &SpawnRecord, workspace: &Path) {
             .any(|pair| pair[0] == "--system-prompt-file"),
         "missing --system-prompt-file: {args:?}"
     );
-    assert_each_task_is_disallowed_tools_value(args);
-    // Task must never be in --tools or --allowedTools.
+    assert_nested_agent_tools_only_on_disallowed(args);
+    // Nested-agent tools must never be in --tools or --allowedTools.
     if let Some(tools) = value_after(args, "--tools") {
         assert!(
-            !tools
-                .split(',')
-                .any(|name| name.eq_ignore_ascii_case("Task")),
-            "--tools must not include Task: {tools}"
+            !tools.split(',').any(is_nested_claude_agent_tool_name),
+            "--tools must not include Task or Agent: {tools}"
         );
     }
     if let Some(idx) = args.iter().position(|arg| arg == "--allowedTools") {
         let allowed = &args[idx + 1..];
         assert!(
-            !allowed
-                .iter()
-                .any(|entry| entry.eq_ignore_ascii_case("Task")
-                    || entry.to_ascii_lowercase().starts_with("task(")),
-            "--allowedTools must not include Task: {allowed:?}"
+            !allowed.iter().any(|entry| {
+                let base = entry
+                    .split_once('(')
+                    .map_or(entry.as_str(), |(base, _)| base);
+                is_nested_claude_agent_tool_name(base)
+            }),
+            "--allowedTools must not include Task or Agent: {allowed:?}"
         );
     }
     let expected_cwd = workspace
@@ -357,18 +357,26 @@ pub fn assert_success_spawn(record: &SpawnRecord, workspace: &Path) {
     );
 }
 
-/// Every `Task` argv token must be the immediate value of `--disallowedTools`.
-fn assert_each_task_is_disallowed_tools_value(args: &[String]) {
+fn is_nested_claude_agent_tool_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("Task") || name.eq_ignore_ascii_case("Agent")
+}
+
+/// Nested-agent names may appear only as the `--disallowedTools` value.
+fn assert_nested_agent_tools_only_on_disallowed(args: &[String]) {
     for (index, arg) in args.iter().enumerate() {
-        if arg != "Task" {
-            continue;
-        }
         let is_disallowed_value = index
             .checked_sub(1)
             .is_some_and(|flag_idx| args[flag_idx] == "--disallowedTools");
+        if is_disallowed_value {
+            assert_eq!(
+                arg, "Task,Agent",
+                "--disallowedTools must deny Task and Agent: {args:?}"
+            );
+            continue;
+        }
         assert!(
-            is_disallowed_value,
-            "Task at argv[{index}] must be immediately after --disallowedTools: {args:?}"
+            !is_nested_claude_agent_tool_name(arg),
+            "nested-agent tool at argv[{index}] must only appear after --disallowedTools: {args:?}"
         );
     }
 }

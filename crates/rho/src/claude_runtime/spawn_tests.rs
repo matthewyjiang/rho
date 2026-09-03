@@ -101,7 +101,7 @@ fn builds_explicit_safe_spawn_args() {
     assert!(plan
         .args
         .windows(2)
-        .any(|pair| pair == ["--disallowedTools", "Task"]));
+        .any(|pair| pair == ["--disallowedTools", "Task,Agent"]));
     assert!(plan
         .args
         .windows(2)
@@ -615,23 +615,34 @@ fn empty_tools_sets_tools_flag_to_empty_string() {
 }
 
 #[test]
-fn task_is_never_made_available_even_if_listed() {
-    let plan = build_spawn_plan(&request(
-        vec!["Read", "Task", "Task(sub)"],
-        false,
-        None,
+fn nested_agent_tools_are_never_made_available_even_if_listed() {
+    for permission_mode in [
         ClaudePermissionMode::BypassPermissions,
-        8,
-        PromptPolicy::Replace("Plan carefully.".into()),
-    ));
-    assert_eq!(flag_value(&plan.args, "--tools").as_deref(), Some("Read"));
-    assert!(plan
-        .args
-        .windows(2)
-        .any(|pair| pair == ["--disallowedTools", "Task"]));
-    let allowed = flag_values(&plan.args, "--allowedTools");
-    assert_eq!(allowed, vec!["Read".to_string()]);
-    assert!(!allowed.iter().any(|entry| entry.contains("Task")));
+        ClaudePermissionMode::Plan,
+        ClaudePermissionMode::DontAsk,
+    ] {
+        let plan = build_spawn_plan(&request(
+            vec!["Read", "Task", "Task(sub)", "Agent", "Agent(explore)"],
+            false,
+            None,
+            permission_mode,
+            8,
+            PromptPolicy::Replace("Plan carefully.".into()),
+        ));
+        assert_eq!(
+            flag_value(&plan.args, "--tools").as_deref(),
+            Some("Read"),
+            "{permission_mode:?}"
+        );
+        assert!(
+            plan.args
+                .windows(2)
+                .any(|pair| pair == ["--disallowedTools", "Task,Agent"]),
+            "{permission_mode:?}"
+        );
+        let allowed = flag_values(&plan.args, "--allowedTools");
+        assert_eq!(allowed, vec!["Read".to_string()], "{permission_mode:?}");
+    }
 }
 
 #[test]
