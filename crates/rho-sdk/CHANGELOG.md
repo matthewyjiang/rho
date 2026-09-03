@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.1.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.1.1...rho-sdk-v5.1.2) (2026-09-03)
+
+
+### Bug Fixes
+
+* **compaction:** /compact always shrinks context on large-window models ([#1132](https://github.com/matthewyjiang/rho/issues/1132)) ([d7522b6](https://github.com/matthewyjiang/rho/commit/d7522b68b9c224e11092ad16d95717156b6b7452))
+
 ## [5.1.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.1.0...rho-sdk-v5.1.1) (2026-08-30)
 
 

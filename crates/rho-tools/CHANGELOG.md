@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.0.4](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.0.3...rho-agent-tools-v1.0.4) (2026-09-03)
+
+
+### Bug Fixes
+
+* **compaction:** /compact always shrinks context on large-window models ([#1132](https://github.com/matthewyjiang/rho/issues/1132)) ([d7522b6](https://github.com/matthewyjiang/rho/commit/d7522b68b9c224e11092ad16d95717156b6b7452))
+* **tools:** bash tool keeps mise/nix/direnv PATH entries from the launching shell ([#1148](https://github.com/matthewyjiang/rho/issues/1148)) ([589b890](https://github.com/matthewyjiang/rho/commit/589b8905b1c4f6cc45376cdce1bf805c10bef4fc))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.2.0 to 5.1.2
+
 ## [1.0.3](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.0.2...rho-agent-tools-v1.0.3) (2026-08-30)
 
 
