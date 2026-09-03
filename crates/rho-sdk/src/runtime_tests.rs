@@ -18,7 +18,8 @@ use crate::{
         ModelResponse, ToolCall, ToolSpec,
     },
     provider::{
-        ModelProvider, ProviderEventSender, ProviderFuture, ScriptedProvider, ScriptedTurn,
+        ModelProvider, ModelRequestOptions, ProviderEventSender, ProviderFuture,
+        ProviderSteeringReceiver, ScriptedProvider, ScriptedTurn,
     },
     tool::{
         ScriptedTool, ScriptedToolOutcome, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
@@ -1079,6 +1080,265 @@ async fn steering_retraction_during_blocked_tool_is_atomic_and_reports_too_late(
         .iter()
         .any(|message| message == &Message::user_text("discard me")));
     assert_eq!(requests[1].last(), Some(&Message::user_text("keep me")));
+}
+
+#[derive(Debug)]
+struct MidTurnSteeringProvider {
+    calls: AtomicUsize,
+    requests: Mutex<Vec<Vec<Message>>>,
+    offers: Mutex<Vec<usize>>,
+    fail_first: bool,
+}
+
+impl MidTurnSteeringProvider {
+    fn new(fail_first: bool) -> Self {
+        Self {
+            calls: AtomicUsize::new(0),
+            requests: Mutex::new(Vec::new()),
+            offers: Mutex::new(Vec::new()),
+            fail_first,
+        }
+    }
+}
+
+impl ModelProvider for MidTurnSteeringProvider {
+    fn identity(&self) -> ModelIdentity {
+        identity()
+    }
+
+    fn send_turn<'a>(&'a self, _request: ModelRequest<'a>) -> ProviderFuture<'a> {
+        Box::pin(async {
+            Err(crate::ProviderError::new(
+                crate::ProviderErrorKind::Other,
+                "streaming path required",
+                crate::Retryability::Permanent,
+            ))
+        })
+    }
+
+    fn send_turn_stream_steerable<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        _options: ModelRequestOptions,
+        events: ProviderEventSender,
+        mut steering: ProviderSteeringReceiver,
+    ) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            self.requests
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request.messages.to_vec());
+            let call = self.calls.fetch_add(1, Ordering::AcqRel);
+            let original_turn = if self.fail_first {
+                call <= 1
+            } else {
+                call == 0
+            };
+            if original_turn {
+                events
+                    .send(ModelEvent::OutputDelta("partial".into()))
+                    .await?;
+                let mut offered = 0;
+                if let Some(request) = steering.recv().await {
+                    offered += 1;
+                    if request.claim() {
+                        request.accept();
+                    }
+                }
+                if self.fail_first && call == 0 {
+                    self.offers
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .push(offered);
+                    return Err(crate::ProviderError::new(
+                        crate::ProviderErrorKind::Unavailable,
+                        "transient mid-turn failure",
+                        crate::Retryability::Retryable,
+                    ));
+                }
+                if !self.fail_first {
+                    if let Some(request) = steering.recv().await {
+                        offered += 1;
+                        request.release();
+                    }
+                }
+                self.offers
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push(offered);
+                Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "partial".into(),
+                )]))
+            } else {
+                drop(steering);
+                self.offers
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .push(0);
+                Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    if (self.fail_first && call == 2) || (!self.fail_first && call == 1) {
+                        "continuation".into()
+                    } else {
+                        "done".into()
+                    },
+                )]))
+            }
+        })
+    }
+}
+
+// Covers: a provider-delivered steer is applied alone, then late undelivered
+// steers stay staged for the continuation
+// Owner: sdk orchestration
+#[tokio::test]
+async fn delivered_steer_applies_alone_before_late_undelivered() {
+    let provider = Arc::new(MidTurnSteeringProvider::new(/*fail_first*/ false));
+    let runtime = Rho::builder()
+        .provider_shared(provider.clone())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("initial")).await.unwrap();
+
+    let mut delivered = None;
+    let mut late = None;
+    let mut events = Vec::new();
+    while let Some(event) = run.next_event().await {
+        match &event {
+            RunEvent::AssistantTextDelta { text } if text == "partial" && delivered.is_none() => {
+                delivered = Some(run.steer_retractable(UserInput::text("S1")).await.unwrap());
+            }
+            RunEvent::SteeringDelivered { id } => {
+                assert_eq!(Some(id), delivered.as_ref());
+                if late.is_none() {
+                    late = Some(run.steer_retractable(UserInput::text("S2")).await.unwrap());
+                }
+            }
+            _ => {}
+        }
+        events.push(event);
+    }
+
+    let delivered_id = delivered.expect("first steer");
+    let late_id = late.expect("late steer");
+    let delivered_at = events
+        .iter()
+        .position(
+            |event| matches!(event, RunEvent::SteeringDelivered { id } if id == &delivered_id),
+        )
+        .expect("SteeringDelivered");
+    let applied_s1 = events.iter().position(|event| {
+        matches!(
+            event,
+            RunEvent::SteeringApplied { ids } if ids == std::slice::from_ref(&delivered_id)
+        )
+    });
+    let applied_s2 = events.iter().position(|event| {
+        matches!(
+            event,
+            RunEvent::SteeringApplied { ids } if ids == std::slice::from_ref(&late_id)
+        )
+    });
+    assert!(applied_s1.is_some_and(|index| index > delivered_at));
+    assert!(applied_s2.is_some_and(|index| index > applied_s1.unwrap()));
+    assert!(!events
+        .iter()
+        .any(|event| { matches!(event, RunEvent::SteeringDelivered { id } if id == &late_id) }));
+    assert_eq!(run.outcome().await.unwrap().text(), "done");
+
+    let requests = provider
+        .requests
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert_eq!(requests.len(), 3);
+    assert_eq!(
+        requests[1],
+        [
+            Message::user_text("initial"),
+            Message::assistant(crate::model::AssistantMessage {
+                content: vec![ContentBlock::Text("partial".into())],
+                provenance: Some(identity()),
+                reasoning_summary: None,
+                provider_context: Vec::new(),
+            }),
+            Message::user_text("S1"),
+        ]
+    );
+    assert_eq!(requests[2].last(), Some(&Message::user_text("S2")));
+    assert!(requests[2]
+        .iter()
+        .any(|message| message == &Message::user_text("S1")));
+}
+
+// Covers: dropping the steering port applies staged input at the boundary
+// without SteeringDelivered
+// Owner: sdk orchestration
+#[tokio::test]
+async fn released_steer_applies_once_without_delivered_event() {
+    let release_first = Arc::new(Notify::new());
+    let provider = Arc::new(SteeringProvider::new(Arc::clone(&release_first)));
+    let runtime = Rho::builder()
+        .provider_shared(provider.clone())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("initial")).await.unwrap();
+    while let Some(event) = run.next_event().await {
+        if matches!(event, RunEvent::AssistantTextDelta { ref text } if text == "draft") {
+            break;
+        }
+    }
+    let id = run
+        .steer_retractable(UserInput::text("refine"))
+        .await
+        .unwrap();
+    release_first.notify_one();
+    let mut events = Vec::new();
+    while let Some(event) = run.next_event().await {
+        events.push(event);
+    }
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, RunEvent::SteeringDelivered { .. })));
+    assert!(events.iter().any(|event| {
+        matches!(event, RunEvent::SteeringApplied { ids } if ids == std::slice::from_ref(&id))
+    }));
+}
+
+// Covers: a provider error after accept restages the steer and re-offers it
+// Owner: sdk orchestration
+#[tokio::test(start_paused = true)]
+async fn provider_error_after_delivery_restages_and_reoffers() {
+    let provider = Arc::new(MidTurnSteeringProvider::new(/*fail_first*/ true));
+    let runtime = Rho::builder()
+        .provider_shared(provider.clone())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("initial")).await.unwrap();
+    let mut steered = false;
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(60), run.next_event())
+            .await
+            .expect("run event timed out");
+        match event {
+            Some(RunEvent::AssistantTextDelta { ref text }) if text == "partial" && !steered => {
+                run.steer_retractable(UserInput::text("S1")).await.unwrap();
+                steered = true;
+            }
+            Some(RunEvent::Completed { .. }) | None => break,
+            Some(RunEvent::Failed { message, .. }) => panic!("run failed: {message}"),
+            Some(_) => {}
+        }
+    }
+    let offers = provider
+        .offers
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    assert!(
+        offers.iter().filter(|count| **count > 0).count() >= 2,
+        "delivered steer should be re-offered after the failed attempt: {offers:?}"
+    );
 }
 
 #[derive(Debug)]

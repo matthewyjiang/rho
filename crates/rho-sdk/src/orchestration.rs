@@ -9,7 +9,10 @@ use crate::{
         AssistantMessage, ContentBlock, Message, ModelEvent, ModelRequest, ModelResponse,
         ModelUsage,
     },
-    provider::{provider_event_channel, ModelRequestOptions, ProviderCancellationMode},
+    provider::{
+        provider_event_channel, provider_steering_channel, ModelRequestOptions,
+        ProviderCancellationMode, ProviderSteeringOutcome,
+    },
     run::RunCommand,
     session::{HistoryMetrics, RunStart, SessionCore, SessionState},
     steering::SteeringQueue,
@@ -140,14 +143,10 @@ async fn execute_turn_loop(
     let tool_specs = runtime.tools.specs();
     for step in 1..=runtime.max_steps.get() {
         drain_commands(&mut commands, &mut steering);
-        match apply_staged_steering(&mut steering, &mut history, &events, &cancellation).await {
-            Ok(()) => {}
-            Err(Error::Cancelled) => {
-                return commit_terminal_history(core, history, TerminalKind::Cancelled, &events)
-                    .await;
-            }
-            Err(error) => return Err(error),
-        }
+        // Steering is applied after a provider or tool boundary, not here.
+        // Leftover undelivered steers stay staged so the next provider turn can
+        // offer them mid-stream; applying them first would rewrite the
+        // continuation suffix the server already prepended.
         let request_scope = ProviderRequestScope {
             runtime: &runtime,
             session_id: core.id(),
@@ -695,12 +694,17 @@ async fn provider_turn(
         reasoning: reasoning_level,
         service_tier: request_options.service_tier(),
     };
+    let (offer_tx, steering_rx) = provider_steering_channel();
+    let mut offer_tx = Some(offer_tx);
+    let (outcomes_tx, mut outcomes_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut future =
-        provider.send_turn_stream_with_options(request, request_options, provider_events);
+        provider.send_turn_stream_steerable(request, request_options, provider_events, steering_rx);
+    control.steering.offer_into(&mut offer_tx, &outcomes_tx);
     let mut capture = StreamCapture::default();
     let mut timer = ModelCallTimer::start(Instant::now());
     let mut stream_open = true;
     let mut commands_open = true;
+    let mut outcomes_open = true;
     let result = loop {
         tokio::select! {
             result = &mut future => break (result, Instant::now()),
@@ -724,6 +728,7 @@ async fn provider_turn(
                                     &mut capture,
                                 );
                             }
+                            control.steering.reset_delivery();
                             return Err(RequestFailure::boxed(error, capture));
                         }
                     }
@@ -732,8 +737,31 @@ async fn provider_turn(
             }
             command = control.commands.recv(), if commands_open => {
                 match command {
-                    Some(command) => accept_non_tool_command(command, control.steering),
+                    Some(command) => {
+                        accept_non_tool_command(command, control.steering);
+                        control.steering.offer_into(&mut offer_tx, &outcomes_tx);
+                    }
                     None => commands_open = false,
+                }
+            }
+            outcome = outcomes_rx.recv(), if outcomes_open => {
+                match outcome {
+                    Some(outcome) => {
+                        if let Err(error) = handle_steering_outcome(
+                            outcome,
+                            control.steering,
+                            control.events,
+                            control.cancellation,
+                        ).await {
+                            drop(future);
+                            control.steering.reset_delivery();
+                            return Err(RequestFailure::boxed(
+                                ProviderError::interrupted(error.to_string()),
+                                capture,
+                            ));
+                        }
+                    }
+                    None => outcomes_open = false,
                 }
             }
             () = control.cancellation.cancelled() => {
@@ -748,6 +776,7 @@ async fn provider_turn(
                 }
                 drop(future);
                 drain_cancelled_provider_events(&mut receiver, &identity, &mut capture);
+                control.steering.reset_delivery();
                 return Err(RequestFailure::boxed(
                     ProviderError::interrupted("provider request cancelled"),
                     capture,
@@ -756,6 +785,8 @@ async fn provider_turn(
         }
     };
     let (result, completed_at) = result;
+    drop(offer_tx);
+    drop(outcomes_tx);
     while let Some(event) = receiver.try_recv_timed_stream_event() {
         if let Err(error) = handle_timed_provider_stream_event(
             event,
@@ -771,7 +802,24 @@ async fn provider_turn(
             if control.cancellation.is_cancelled() {
                 drain_cancelled_provider_events(&mut receiver, &identity, &mut capture);
             }
+            control.steering.reset_delivery();
             return Err(RequestFailure::boxed(error, capture));
+        }
+    }
+    while let Ok(outcome) = outcomes_rx.try_recv() {
+        if let Err(error) = handle_steering_outcome(
+            outcome,
+            control.steering,
+            control.events,
+            control.cancellation,
+        )
+        .await
+        {
+            control.steering.reset_delivery();
+            return Err(RequestFailure::boxed(
+                ProviderError::interrupted(error.to_string()),
+                capture,
+            ));
         }
     }
     match result {
@@ -784,6 +832,7 @@ async fn provider_turn(
             )
             .await
             {
+                control.steering.reset_delivery();
                 return Err(RequestFailure::boxed(
                     ProviderError::interrupted(error.to_string()),
                     capture,
@@ -791,7 +840,10 @@ async fn provider_turn(
             }
             Ok((response, capture))
         }
-        Err(error) => Err(RequestFailure::boxed(error, capture)),
+        Err(error) => {
+            control.steering.reset_delivery();
+            Err(RequestFailure::boxed(error, capture))
+        }
     }
 }
 
@@ -828,13 +880,31 @@ async fn handle_timed_provider_stream_event(
     }
 }
 
+async fn handle_steering_outcome(
+    (id, outcome): (crate::SteeringId, ProviderSteeringOutcome),
+    steering: &mut SteeringQueue,
+    events: &mpsc::Sender<RunEvent>,
+    cancellation: &CancellationToken,
+) -> Result<(), Error> {
+    match outcome {
+        ProviderSteeringOutcome::Accepted => {
+            steering.mark_delivered(&id);
+            emit(events, cancellation, RunEvent::SteeringDelivered { id }).await
+        }
+        ProviderSteeringOutcome::Released => {
+            steering.mark_released(&id);
+            Ok(())
+        }
+    }
+}
+
 async fn apply_staged_steering(
     steering: &mut SteeringQueue,
     history: &mut Vec<Message>,
     events: &mpsc::Sender<RunEvent>,
     cancellation: &CancellationToken,
 ) -> Result<(), Error> {
-    let ids = steering.staged_ids();
+    let ids = steering.planned_apply_ids();
     if ids.is_empty() {
         return Ok(());
     }

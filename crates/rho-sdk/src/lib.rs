@@ -141,6 +141,7 @@ pub mod model;
 mod orchestration;
 mod persistence;
 pub mod provider;
+mod provider_steering;
 mod reasoning;
 mod run;
 mod secret;

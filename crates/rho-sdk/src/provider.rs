@@ -15,6 +15,11 @@ use crate::{
     CompactionOutput, ProviderError, ProviderErrorKind, Retryability,
 };
 
+pub use crate::provider_steering::{
+    provider_steering_channel, ProviderSteeringOutcome, ProviderSteeringReceiver,
+    ProviderSteeringRequest,
+};
+
 /// Future returned by [`ModelProvider`] operations.
 pub type ProviderFuture<'a> =
     Pin<Box<dyn Future<Output = Result<ModelResponse, ProviderError>> + Send + 'a>>;
@@ -387,6 +392,26 @@ pub trait ModelProvider: Send + Sync {
         events: ProviderEventSender,
     ) -> ProviderFuture<'a> {
         self.send_turn_stream(request, events)
+    }
+
+    /// Streams one turn while accepting mid-turn steering.
+    ///
+    /// The default releases all steering and delegates to
+    /// [`Self::send_turn_stream_with_options`].
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): collapse send_turn_stream, send_turn_stream_with_options and
+    /// send_turn_stream_steerable into one method taking a request context that carries options and the steering port.
+    fn send_turn_stream_steerable<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        options: ModelRequestOptions,
+        events: ProviderEventSender,
+        steering: ProviderSteeringReceiver,
+    ) -> ProviderFuture<'a> {
+        drop(steering);
+        self.send_turn_stream_with_options(request, options, events)
     }
 }
 
