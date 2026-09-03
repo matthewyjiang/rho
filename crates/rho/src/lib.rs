@@ -8,6 +8,7 @@ mod changelog;
 mod child_env;
 mod claude_runtime;
 mod cli;
+mod cli_runtime;
 mod clipboard;
 mod commands;
 mod compaction;

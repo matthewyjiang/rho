@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::claude_runtime::windows_shim_args::WindowsShimArgError;
+use crate::cli_runtime::WindowsShimArgError;
 
 #[test]
 fn missing_program_is_binary_missing() {
@@ -30,11 +30,10 @@ fn classifies_cmd_shim_uses_script_image_and_bat_command_line() {
         plan.args,
         vec![OsString::from("auth"), OsString::from("logout")]
     );
-    let line =
-        crate::claude_runtime::windows_shim_args::bat_command_line(&plan.program, &plan.args)
-            .expect("cmd shim encodes bat command line")
-            .to_string_lossy()
-            .into_owned();
+    let line = crate::cli_runtime::bat_command_line(&plan.program, &plan.args)
+        .expect("cmd shim encodes bat command line")
+        .to_string_lossy()
+        .into_owned();
     // std-compatible wrapper: not bare `cmd /C` + separate unquoted argv.
     assert!(line.starts_with("cmd.exe /e:ON /v:OFF /d /c "), "{line}");
     assert!(
@@ -99,11 +98,10 @@ fn cmd_shim_argv_encodes_special_characters() {
     ];
     for &(arg, needle) in cases {
         let plan = shim.plan([arg]).unwrap();
-        let line =
-            crate::claude_runtime::windows_shim_args::bat_command_line(&plan.program, &plan.args)
-                .unwrap()
-                .to_string_lossy()
-                .into_owned();
+        let line = crate::cli_runtime::bat_command_line(&plan.program, &plan.args)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
         assert!(
             line.contains(needle),
             "arg={arg:?} needle={needle:?} line={line}"

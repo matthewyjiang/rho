@@ -9,6 +9,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::ChildStdin;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::cli_runtime::StderrTail;
+
 use super::{
     child::OwnedChild,
     line_decoder::{claude_ndjson_line_decoder, LineDecodeError},
@@ -16,9 +18,6 @@ use super::{
     stream::{StreamEffect, StreamMapper, TerminalResult},
 };
 
-/// Bytes of child stderr kept for diagnosis. The one-shot path writes no log
-/// file, so a failure has to explain itself from memory.
-const MAX_STDERR_BYTES: usize = 8 * 1024;
 const READ_CHUNK_BYTES: usize = 8 * 1024;
 /// Child closed stdin early (flag rejection, quick exit). Non-fatal for the
 /// drain so exit status and stderr diagnosis still win.
@@ -376,53 +375,6 @@ pub(crate) fn format_line_error(error: &LineDecodeError) -> String {
             format!("claude code: oversize stream-json line: {error}")
         }
     }
-}
-
-/// The last [`MAX_STDERR_BYTES`] of a child's stderr.
-///
-/// Reading to EOF into one buffer would let a chatty child grow without bound,
-/// so the head is dropped as chunks arrive. Keeping the tail matches the log
-/// file the session path reads: the closing lines carry the failure, while the
-/// head is startup noise.
-#[derive(Default)]
-struct StderrTail {
-    bytes: Vec<u8>,
-    elided: bool,
-}
-
-impl StderrTail {
-    fn push(&mut self, chunk: &[u8]) {
-        self.bytes.extend_from_slice(chunk);
-        if self.bytes.len() <= MAX_STDERR_BYTES {
-            return;
-        }
-        let cut = ceil_utf8_boundary(&self.bytes, self.bytes.len() - MAX_STDERR_BYTES);
-        self.bytes.drain(..cut);
-        self.elided = true;
-    }
-
-    fn finish(self) -> String {
-        let text = String::from_utf8_lossy(&self.bytes);
-        let trimmed = text.trim();
-        if self.elided {
-            format!("{}{trimmed}", rho_sdk::ELLIPSIS)
-        } else {
-            trimmed.to_string()
-        }
-    }
-}
-
-/// First character start at or after `index`.
-///
-/// [`rho_sdk::ceil_char_boundary`] answers this for `&str`; the stderr tail is
-/// cut while it is still raw bytes, before any decode, so the walk is over the
-/// UTF-8 continuation-byte pattern instead.
-fn ceil_utf8_boundary(bytes: &[u8], index: usize) -> usize {
-    let mut index = index.min(bytes.len());
-    while index < bytes.len() && bytes[index] & 0b1100_0000 == 0b1000_0000 {
-        index += 1;
-    }
-    index
 }
 
 #[cfg(test)]
