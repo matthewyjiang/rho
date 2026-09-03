@@ -234,6 +234,9 @@ impl App {
             ConfigNumberKey::PromptHistoryLimit => {
                 return self.open_prompt_history_limit_editor();
             }
+            ConfigNumberKey::AgentConcurrency => {
+                return self.open_agent_concurrency_editor();
+            }
         };
         self.input_ui
             .set_composer(ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
@@ -309,7 +312,7 @@ impl App {
         selected_value: &str,
         filter: String,
     ) -> anyhow::Result<()> {
-        let config = self.info.services.config_repository.load()?;
+        let config = self.load_config_for_display()?;
         let mut root = config_picker::config_picker(&self.info.runtime, &config);
         let Some(category) = config_picker::category_for_setting(selected_value) else {
             Self::restore_picker_position(&mut root, selected_value, filter);
@@ -329,7 +332,7 @@ impl App {
     }
 
     pub(super) fn open_config_category(&mut self, category: &str) -> anyhow::Result<()> {
-        let config = self.info.services.config_repository.load()?;
+        let config = self.load_config_for_display()?;
         let Some(picker) = config_picker::category_picker(category, &self.info.runtime, &config)
         else {
             return Ok(());
@@ -414,6 +417,47 @@ impl App {
                 }
             },
         )
+    }
+
+    fn load_config_for_display(&self) -> anyhow::Result<crate::config::Config> {
+        let mut config = self.info.services.config_repository.load()?;
+        config.agent_concurrency = self.live_agent_concurrency(config.agent_concurrency);
+        Ok(config)
+    }
+
+    fn live_agent_concurrency(&self, persisted: usize) -> usize {
+        self.agent_concurrency
+            .as_ref()
+            .map(|pool| pool.total_limit())
+            .unwrap_or(persisted)
+    }
+
+    pub(super) fn apply_live_agent_concurrency(&self, value: usize) {
+        if let Some(pool) = &self.agent_concurrency {
+            pool.set_total(value);
+        }
+        self.info
+            .services
+            .diagnostics
+            .update_agent_concurrency(value);
+    }
+
+    pub(super) fn open_agent_concurrency_editor(&mut self) -> anyhow::Result<()> {
+        let value = self.live_agent_concurrency(
+            self.info
+                .services
+                .config_repository
+                .load()
+                .map(|config| config.agent_concurrency)
+                .unwrap_or(crate::config::DEFAULT_AGENT_CONCURRENCY),
+        );
+        self.input_ui
+            .set_composer(ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
+                ConfigNumberKey::AgentConcurrency,
+                value,
+            )));
+        self.set_status("edit concurrent agents");
+        Ok(())
     }
 
     pub(super) fn toggle_enable_subagents(&mut self) -> anyhow::Result<()> {

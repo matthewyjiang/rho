@@ -457,6 +457,12 @@ pub(crate) async fn run(
                 app.terminal_session = Some(TerminalSession::acquire());
                 if let Some(manager) = agent.subagents() {
                     app.subagent_inbox.bind(manager);
+                    let pool = manager.concurrency();
+                    app.info
+                        .services
+                        .diagnostics
+                        .update_agent_concurrency(pool.total_limit());
+                    app.agent_concurrency = Some(pool);
                 }
                 let result = app.run(&mut terminal, agent).await;
                 if let Some(manager) = agent.subagents() {
@@ -480,6 +486,8 @@ struct App {
     subagent_panel: SubagentPanel,
     process_panel: ProcessPanel,
     subagent_inbox: subagent_inbox::SubagentInbox,
+    /// Live delegated-agent cap, shared with the executor so `/config` can resize it.
+    agent_concurrency: Option<crate::app::agent_concurrency::AgentConcurrency>,
     pending_subagent_questionnaire: Option<PendingSubagentQuestionnaire>,
     input_ui: InputUi,
     /// Palette match caches shared by keystroke and render paths.

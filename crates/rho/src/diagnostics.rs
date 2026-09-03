@@ -75,6 +75,7 @@ pub struct SanitizedConfig {
     pub edit_tool: String,
     pub check_for_updates: bool,
     pub enable_subagents: bool,
+    pub agent_concurrency: usize,
     pub advisor_mode: bool,
     pub rtk: bool,
     pub source: String,
@@ -94,6 +95,7 @@ impl From<&Config> for SanitizedConfig {
             edit_tool: config.edit_tool.as_str().into(),
             check_for_updates: config.check_for_updates,
             enable_subagents: config.enable_subagents,
+            agent_concurrency: config.agent_concurrency,
             advisor_mode: config.advisor_mode,
             rtk: config.rtk,
             source: "live values used by this process; restart-only settings may differ from saved config"
@@ -176,6 +178,12 @@ impl RuntimeDiagnostics {
     /// the mirror follows every change instead of the startup value.
     pub fn update_advisor_mode(&self, advisor_mode: bool) {
         self.write().config.advisor_mode = advisor_mode;
+    }
+
+    /// Agent concurrency can change mid-session, so the mirror follows the live
+    /// pool rather than the process startup snapshot.
+    pub fn update_agent_concurrency(&self, agent_concurrency: usize) {
+        self.write().config.agent_concurrency = agent_concurrency;
     }
 
     /// Edit tool selection can change mid-session, so the mirror follows the

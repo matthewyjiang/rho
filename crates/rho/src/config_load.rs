@@ -233,6 +233,15 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
         if let Some(value) = group.enable_subagents {
             cfg.enable_subagents = value;
         }
+        if let Some(value) = group.agent_concurrency {
+            cfg.set_agent_concurrency(value);
+            note_if_changed_usize(
+                &mut warnings,
+                "behavior.agent_concurrency",
+                value,
+                cfg.agent_concurrency,
+            );
+        }
         if let Some(value) = group.advisor_mode {
             cfg.advisor_mode = value;
         }
@@ -269,6 +278,15 @@ fn note_if_changed(
     key: &'static str,
     requested: u8,
     actual: u8,
+) {
+    note_if_changed_usize(warnings, key, requested as usize, actual as usize);
+}
+
+fn note_if_changed_usize(
+    warnings: &mut Vec<ConfigWarning>,
+    key: &'static str,
+    requested: usize,
+    actual: usize,
 ) {
     if requested != actual {
         warnings.push(ConfigWarning::Clamped {
@@ -415,6 +433,7 @@ impl PartialConfig {
             let group = self.behavior.take().unwrap_or(PartialBehaviorConfig {
                 check_for_updates: None,
                 enable_subagents: None,
+                agent_concurrency: None,
                 advisor_mode: None,
                 experimental_workspace_rewind: None,
                 permission_mode: None,
@@ -426,6 +445,7 @@ impl PartialConfig {
             self.behavior = Some(PartialBehaviorConfig {
                 check_for_updates: group.check_for_updates.or(check_for_updates),
                 enable_subagents: group.enable_subagents.or(enable_subagents),
+                agent_concurrency: group.agent_concurrency,
                 advisor_mode: group.advisor_mode,
                 experimental_workspace_rewind: group.experimental_workspace_rewind,
                 permission_mode: group.permission_mode.or(permission_mode),
@@ -695,6 +715,7 @@ struct PartialXaiConfig {
 struct PartialBehaviorConfig {
     check_for_updates: Option<bool>,
     enable_subagents: Option<bool>,
+    agent_concurrency: Option<usize>,
     advisor_mode: Option<bool>,
     experimental_workspace_rewind: Option<bool>,
     #[serde(default)]

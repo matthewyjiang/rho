@@ -26,6 +26,7 @@ pub(super) const ZEN_MODE_VALUE: &str = "zen_mode";
 pub(super) const THEME_VALUE: &str = "theme";
 pub(super) const CHECK_FOR_UPDATES_VALUE: &str = "check_for_updates";
 pub(super) const ENABLE_SUBAGENTS_VALUE: &str = "enable_subagents";
+pub(super) const AGENT_CONCURRENCY_VALUE: &str = "agent_concurrency";
 pub(super) const ADVISOR_MODE_VALUE: &str = "advisor_mode";
 pub(super) const ADVISOR_MODEL_VALUE: &str = "advisor_model";
 pub(super) const ADVISOR_REASONING_VALUE: &str = "advisor_reasoning";
@@ -379,6 +380,13 @@ pub(super) fn category_picker(
                 "Make agent tools available. Changes apply to the next session. Space toggles.",
                 Some(on_off(config.enable_subagents)),
                 ENABLE_SUBAGENTS_VALUE,
+            ));
+            items.push(sectioned_item(
+                Some("Subagents"),
+                "Concurrent agents",
+                "Maximum delegated agents running at once, including background. Enter edits. Changes apply immediately.",
+                Some(config.agent_concurrency.to_string()),
+                AGENT_CONCURRENCY_VALUE,
             ));
             ("Config / Agent behavior", items)
         }

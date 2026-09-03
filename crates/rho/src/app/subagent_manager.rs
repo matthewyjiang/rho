@@ -144,6 +144,10 @@ impl SubagentManager {
         self.executor.update_permission_mode(mode);
     }
 
+    pub(crate) fn concurrency(&self) -> crate::app::agent_concurrency::AgentConcurrency {
+        self.executor.concurrency()
+    }
+
     #[cfg(test)]
     pub(crate) fn launch_permission_mode(&self) -> crate::permission::PermissionMode {
         self.executor.launch_permission_mode()

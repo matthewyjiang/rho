@@ -22,8 +22,7 @@ use {
 };
 
 use super::agent_output::{
-    format_background_start, format_list_entry, format_notification, format_running,
-    format_snapshot, SnapshotFormat,
+    format_background_start, format_list_entry, format_running, format_snapshot, SnapshotFormat,
 };
 
 const SUBAGENT_MANAGER: &str = "subagents";
@@ -32,31 +31,8 @@ const AGENTS_TOOL: &str = "agents";
 
 pub use crate::app::subagent_manager::{SubagentManager, SubagentNotification, SubagentSnapshot};
 
-/// Formats a drained batch of terminal runs as one bounded notification. The
-/// formatter puts every run's status before the result excerpts.
-pub fn notification_prompts(notifications: &[SubagentNotification]) -> (String, String) {
-    let snapshots = notifications
-        .iter()
-        .map(|notification| &notification.snapshot)
-        .collect::<Vec<_>>();
-    let model = format_notification(&snapshots);
-    let display = notifications
-        .iter()
-        .map(|notification| {
-            let snapshot = &notification.snapshot;
-            format!(
-                "agent {} ({}) finished - {}",
-                snapshot.id,
-                snapshot.agent_id,
-                snapshot.status.state.as_str()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    (model, display)
-}
-
 pub(crate) use super::agent_output::merge_notification_context;
+pub use super::agent_output::notification_prompts;
 #[cfg(test)]
 pub(crate) use super::agent_output::MODEL_NOTIFICATION_BYTES as NOTIFICATION_CONTEXT_BYTES;
 

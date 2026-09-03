@@ -85,6 +85,9 @@ impl ConfigRow {
             config_picker::THEME_VALUE => Self::Theme,
             config_picker::CHECK_FOR_UPDATES_VALUE => Self::CheckForUpdates,
             config_picker::ENABLE_SUBAGENTS_VALUE => Self::EnableSubagents,
+            config_picker::AGENT_CONCURRENCY_VALUE => {
+                Self::Number(ConfigNumberKey::AgentConcurrency)
+            }
             config_picker::ADVISOR_MODE_VALUE => Self::AdvisorMode,
             config_picker::ADVISOR_MODEL_VALUE => Self::AdvisorModel,
             config_picker::ADVISOR_REASONING_VALUE => Self::AdvisorReasoning,

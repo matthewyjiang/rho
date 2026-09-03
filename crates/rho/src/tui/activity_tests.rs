@@ -4,65 +4,113 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
-// Covers: stacked rail rows share one column layout for identity / activity / elapsed.
+// Covers: rail rows pack identity · activity  elapsed, drop activity before
+// chopping identity, stay within the pane on narrow hover trailing, and use
+// the pane width instead of a 52-col clamp.
 // Owner: pure layout
 #[test]
-fn rail_row_columns_identity_activity_and_trailing() {
+fn rail_row_layout_assembles_columns() {
     let row_style = Theme::activity_rail();
-    let line = RailRow {
-        connector: tree_connector(true),
-        identity: vec![
-            Span::styled("sleep", Theme::text_strong().patch(row_style)),
-            Span::styled(" ", row_style),
-            Span::styled("aaaaaaaa", Theme::dim().patch(row_style)),
-        ],
-        activity: "running".into(),
-        activity_style: Theme::text(),
-        trailing: "4s".into(),
-        trailing_style: Theme::dim(),
-        row_style,
+    struct Case {
+        name: &'static str,
+        identity: &'static [&'static str],
+        activity: &'static str,
+        trailing: &'static str,
+        width: usize,
+        expected: &'static [&'static str],
     }
-    .into_line(80);
-
-    let texts: Vec<&str> = line
-        .spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect();
-    assert_eq!(texts[0], "  └ ");
-    assert_eq!(texts[1], "sleep");
-    assert_eq!(texts[2], " ");
-    assert_eq!(texts[3], "aaaaaaaa");
-    assert_eq!(texts[4], "  ·  ");
-    assert_eq!(texts[5], "running");
-    assert!(texts[6].chars().all(|ch| ch == ' '));
-    assert_eq!(texts[7], "4s");
-}
-
-// Covers: a too-narrow rail collapses to a single truncated detail span.
-// Owner: pure layout
-#[test]
-fn rail_row_truncates_when_fixed_width_overflows() {
-    let row_style = Theme::activity_rail();
-    let line = RailRow {
-        connector: tree_connector(true),
-        identity: vec![Span::styled(
-            "very-long-command",
-            Theme::text_strong().patch(row_style),
-        )],
-        activity: "running".into(),
-        activity_style: Theme::text(),
-        trailing: "12s".into(),
-        trailing_style: Theme::dim(),
-        row_style,
+    let cases = [
+        Case {
+            name: "columns pack when they fit",
+            identity: &["sleep", " ", "aaaaaaaa"],
+            activity: "running",
+            trailing: "4s",
+            width: 80,
+            expected: &[
+                "  └ ", "sleep", " ", "aaaaaaaa", "  ·  ", "running", "  ", "4s",
+            ],
+        },
+        Case {
+            name: "long identity uses the pane width",
+            identity: &[
+                "◉ ",
+                "explorer",
+                "  ",
+                "TUI Redundancy and Simplification Audit",
+            ],
+            activity: "read",
+            trailing: "12s",
+            width: 80,
+            expected: &[
+                "  └ ",
+                "◉ ",
+                "explorer",
+                "  ",
+                "TUI Redundancy and Simplification Audit",
+                "  ·  ",
+                "read",
+                "  ",
+                "12s",
+            ],
+        },
+        Case {
+            name: "narrow row drops activity and keeps elapsed",
+            identity: &["very-long-command"],
+            activity: "running",
+            trailing: "12s",
+            width: 18,
+            expected: &["  └ ", "very-lon…", "  ", "12s"],
+        },
+        Case {
+            name: "narrow hover trailing stays within the pane",
+            identity: &["explorer"],
+            activity: "read",
+            trailing: "⏎ attach · 4s",
+            width: 10,
+            expected: &["  └ ", "  ", "⏎ a…"],
+        },
+    ];
+    for case in cases {
+        let line = RailRow {
+            connector: tree_connector(true),
+            identity: case
+                .identity
+                .iter()
+                .map(|text| Span::styled(*text, row_style))
+                .collect(),
+            activity: case.activity.into(),
+            activity_style: Theme::text(),
+            trailing: case.trailing.into(),
+            trailing_style: Theme::dim(),
+            row_style,
+        }
+        .into_line(case.width);
+        let texts: Vec<&str> = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        let full: String = texts.concat();
+        assert!(
+            display_width(&full) <= case.width,
+            "{}: {full:?} is {} cells",
+            case.name,
+            display_width(&full)
+        );
+        assert_eq!(
+            &texts[..case.expected.len()],
+            case.expected,
+            "{}",
+            case.name
+        );
+        assert!(
+            texts[case.expected.len()..]
+                .iter()
+                .all(|text| text.chars().all(|ch| ch == ' ')),
+            "{}",
+            case.name
+        );
     }
-    .into_line(18);
-
-    assert_eq!(line.spans.len(), 2);
-    assert_eq!(line.spans[0].content.as_ref(), "  └ ");
-    let detail = line.spans[1].content.as_ref();
-    assert!(detail.starts_with("very-long-"));
-    assert!(display_width(detail) <= 14);
 }
 
 #[test]

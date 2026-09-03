@@ -25,6 +25,7 @@ pub(super) enum ConfigNumberKey {
     CompactThresholdPercent,
     CompactTargetPercent,
     PromptHistoryLimit,
+    AgentConcurrency,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,6 +113,7 @@ pub(super) enum ConfigNumberSave {
     MaxToolOutputLines(usize),
     CompactThresholdPercent(u8),
     CompactTargetPercent(u8),
+    AgentConcurrency(usize),
 }
 
 impl ConfigNumberInput {
@@ -140,6 +142,10 @@ impl ConfigNumberInput {
                 config.set_compact_target_percent(value.clamp(1, 100) as u8);
                 ConfigNumberSave::CompactTargetPercent(config.compact_target_percent)
             }),
+            ConfigNumberKey::AgentConcurrency => config_repository.update(|config| {
+                config.set_agent_concurrency(value);
+                ConfigNumberSave::AgentConcurrency(config.agent_concurrency)
+            }),
         }
     }
 }
@@ -152,6 +158,7 @@ impl ConfigNumberKey {
             ConfigNumberKey::CompactThresholdPercent => "compact threshold percent",
             ConfigNumberKey::CompactTargetPercent => "compact target percent",
             ConfigNumberKey::PromptHistoryLimit => "prompt history limit",
+            ConfigNumberKey::AgentConcurrency => "concurrent agents",
         }
     }
 
@@ -164,6 +171,7 @@ impl ConfigNumberKey {
             }
             ConfigNumberKey::CompactTargetPercent => config_picker::COMPACT_TARGET_PERCENT_VALUE,
             ConfigNumberKey::PromptHistoryLimit => config_picker::PROMPT_HISTORY_LIMIT_VALUE,
+            ConfigNumberKey::AgentConcurrency => config_picker::AGENT_CONCURRENCY_VALUE,
         }
     }
 
@@ -181,6 +189,7 @@ impl ConfigNumberKey {
     pub(super) fn max_value(self) -> Option<usize> {
         match self {
             ConfigNumberKey::PromptHistoryLimit => Some(crate::config::MAX_PROMPT_HISTORY_LIMIT),
+            ConfigNumberKey::AgentConcurrency => Some(crate::config::MAX_AGENT_CONCURRENCY),
             _ => None,
         }
     }

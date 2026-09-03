@@ -186,6 +186,13 @@ impl App {
                         )?;
                         self.set_status(format!("compact target set to {value}%"));
                     }
+                    ConfigNumberSave::AgentConcurrency(value) => {
+                        self.apply_live_agent_concurrency(value);
+                        self.open_main_config_picker_selected(
+                            config_picker::AGENT_CONCURRENCY_VALUE,
+                        )?;
+                        self.set_status(format!("concurrent agents set to {value}"));
+                    }
                 }
                 Ok(true)
             }

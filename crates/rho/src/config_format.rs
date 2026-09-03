@@ -166,6 +166,7 @@ struct WebSearchConfig<'a> {
 struct BehaviorConfig<'a> {
     check_for_updates: bool,
     enable_subagents: bool,
+    agent_concurrency: usize,
     advisor_mode: bool,
     experimental_workspace_rewind: bool,
     edit_tool: EditTool,
@@ -227,6 +228,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
             behavior: BehaviorConfig {
                 check_for_updates: config.check_for_updates,
                 enable_subagents: config.enable_subagents,
+                agent_concurrency: config.agent_concurrency,
                 advisor_mode: config.advisor_mode,
                 experimental_workspace_rewind: config.experimental_workspace_rewind,
                 edit_tool: config.edit_tool,

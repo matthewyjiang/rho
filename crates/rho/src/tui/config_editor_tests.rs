@@ -2,6 +2,18 @@ use super::*;
 use crate::tui::line_editor::LineEditor;
 use crate::tui::text_input::{TextInput, TextInputTarget};
 
+// Covers: concurrent-agent edits clamp to the named max instead of accepting 1000.
+// Owner: config editor
+#[test]
+fn agent_concurrency_clamps_to_named_max() {
+    let mut over_max = ConfigNumberInput::new(ConfigNumberKey::AgentConcurrency, 1);
+    over_max.value = "1000".into();
+    assert_eq!(
+        over_max.parsed_value().unwrap(),
+        crate::config::MAX_AGENT_CONCURRENCY
+    );
+}
+
 // Covers: prompt history limit 0 is valid and the max is clamped in parse.
 // Owner: config editor
 #[test]
