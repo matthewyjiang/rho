@@ -8,7 +8,9 @@
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{format::RawUsage, types::RateLimitInfo};
+use crate::cli_runtime::stream_effect::RateLimitInfo;
+
+use super::format::RawUsage;
 
 /// One decoded stream-json line.
 #[derive(Debug)]

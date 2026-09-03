@@ -608,3 +608,66 @@ fn format_age_since_ignores_sentinel_timestamps() {
     assert_eq!(format_age_since(-12, 1_800_000_000), None);
     assert!(format_age_since(1_799_999_995, 1_800_000_000).is_some());
 }
+
+// Covers: stream rate-limit effects stay off disk until the sink settles.
+// Owner: Claude rate-limit recorder + shared status sink.
+#[tokio::test]
+async fn sink_collects_rate_limits_until_settle() {
+    use crate::cli_runtime::{
+        status_sink::StatusSink,
+        stream_effect::{StreamEffect, TerminalClassification, TerminalResult},
+    };
+    use crate::run_artifacts::RunArtifactIdentity;
+    use crate::subagent;
+
+    let directory = tempfile::TempDir::new().unwrap();
+    let rate_limit_path = directory.path().join("rate-limits.json");
+    let output = directory.path().join(subagent::RESULT_FILE_NAME);
+    let identity = RunArtifactIdentity {
+        agent_id: "planner".into(),
+        agent_fingerprint: "fp".into(),
+        provider: "claude-code".into(),
+        model: Some("opus".into()),
+        runtime: crate::agent::AgentRuntime::ClaudeCli,
+        reasoning: None,
+    };
+    let mut sink = StatusSink::new(
+        output,
+        &identity,
+        "prompt",
+        None,
+        Some(Box::new(ClaudeRateLimitRecorder::new(Some(
+            rate_limit_path.clone(),
+        )))),
+        crate::claude_runtime::session::CLAUDE_LABEL,
+    )
+    .unwrap();
+    sink.apply_effect(StreamEffect::RateLimit(RateLimitInfo {
+        status: Some("allowed".into()),
+        rate_limit_type: Some("five_hour".into()),
+        resets_at: Some(1_700_000_000),
+        utilization: Some(0.25),
+        overage_status: None,
+        overage_resets_at: None,
+        is_using_overage: None,
+    }));
+    assert!(load_at(&rate_limit_path).is_none());
+    sink.finalize_success_from_stream(&TerminalResult {
+        classification: TerminalClassification::Success {
+            subtype: "success".into(),
+        },
+        result_text: Some("done".into()),
+        error: None,
+        session_id: Some("sess".into()),
+        num_turns: Some(2),
+        usage: None,
+        context: None,
+        total_cost_usd: Some(0.12),
+        permission_denials: Vec::new(),
+        stop_reason: None,
+    })
+    .await;
+    let state = load_at(&rate_limit_path).expect("cached");
+    assert_eq!(state.windows.len(), 1);
+    assert_eq!(state.windows[0].info.window_key(), "five_hour");
+}

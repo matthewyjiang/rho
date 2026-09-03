@@ -4,17 +4,15 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use crate::{
-    run_artifacts::AttachmentEvent,
-    subagent::{RunState, RunStatus},
-};
+use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 
-use super::format::{append_tail, bound_delta_text, bound_text, LAST_TEXT_BYTES};
-use super::protocol::{ErrorMessage, RateLimitMessage, SystemMessage};
-use super::tool_cards::{finished_card, started_card, StartedClaudeTool};
-use super::types::{
+use crate::cli_runtime::stream_effect::{
     StatusPatch, StreamEffect, TerminalClassification, TerminalResult, MAX_RESULT_CHARS,
 };
+use crate::cli_runtime::stream_format::{bound_text, reasoning_effects, text_effects};
+
+use super::protocol::{ErrorMessage, RateLimitMessage, SystemMessage};
+use super::tool_cards::{finished_card, started_card, StartedClaudeTool};
 use super::{describe_rate_limit, MessageStreamState};
 
 /// Bound on content-block indices recorded per message.
@@ -482,80 +480,4 @@ pub(super) fn tool_finished_effects(
 
 fn non_empty_key(tool_use_id: &str) -> Option<String> {
     (!tool_use_id.is_empty()).then(|| tool_use_id.to_string())
-}
-
-pub(crate) fn text_effects(text: &str) -> Vec<StreamEffect> {
-    if text.is_empty() {
-        return Vec::new();
-    }
-    let text = bound_delta_text(text, "text");
-    vec![
-        StreamEffect::Attachment(AttachmentEvent::AssistantTextDelta(text.clone())),
-        StreamEffect::Status(StatusPatch {
-            last_activity: Some("assistant text".into()),
-            append_text: Some(text),
-            ..StatusPatch::default()
-        }),
-    ]
-}
-
-pub(crate) fn reasoning_effects(text: &str) -> Vec<StreamEffect> {
-    if text.is_empty() {
-        return Vec::new();
-    }
-    let text = bound_delta_text(text, "reasoning");
-    vec![
-        StreamEffect::Attachment(AttachmentEvent::ReasoningDelta(text)),
-        StreamEffect::Status(StatusPatch {
-            last_activity: Some("reasoning".into()),
-            ..StatusPatch::default()
-        }),
-    ]
-}
-
-/// Apply a status patch onto a live RunStatus.
-///
-/// NEXT_MAJOR(result.json): rename claude_session_id/claude_model to runtime_session_id/runtime_model; readers branch on runtime.
-pub(crate) fn apply_status_patch(status: &mut RunStatus, patch: StatusPatch) {
-    if let Some(state) = patch.state {
-        // Never let stream patches demote a terminal state back to nonterminal.
-        // Canonical disk writes also enforce this via `subagent::write_status`.
-        if !status.state.is_terminal() || state.is_terminal() {
-            status.state = state;
-        }
-    }
-    if let Some(turns) = patch.turns {
-        status.turns = turns;
-    }
-    if let Some(input_tokens) = patch.input_tokens {
-        status.input_tokens = Some(input_tokens);
-    }
-    if let Some(output_tokens) = patch.output_tokens {
-        status.output_tokens = Some(output_tokens);
-    }
-    if let Some(activity) = patch.last_activity {
-        status.last_activity = Some(activity);
-    }
-    if let Some(text) = patch.append_text {
-        append_tail(
-            status.last_text.get_or_insert_with(String::new),
-            &text,
-            LAST_TEXT_BYTES,
-        );
-    }
-    if let Some(result) = patch.result {
-        status.result = Some(result);
-    }
-    if let Some(error) = patch.error {
-        status.error = Some(error);
-    }
-    if let Some(session_id) = patch.claude_session_id {
-        status.claude_session_id = Some(session_id);
-    }
-    if let Some(model) = patch.claude_model {
-        status.claude_model = Some(model);
-    }
-    if let Some(cost) = patch.total_cost_usd {
-        status.total_cost_usd = Some(cost);
-    }
 }

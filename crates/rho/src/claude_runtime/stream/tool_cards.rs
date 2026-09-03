@@ -24,7 +24,7 @@ use super::format::{
     count_fact, display_path_field, quoted, set_lines_body, string_field, truncate,
     truncate_payload_lines, u64_field, MAX_TOOL_BODY_LINES,
 };
-use super::types::MAX_TOOL_PAYLOAD_CHARS;
+use crate::cli_runtime::stream_effect::MAX_TOOL_PAYLOAD_CHARS;
 
 /// Raw `input_json_delta` assembly budget. Larger than the presentation cap
 /// so a complete oversized object can be parsed, then reduced by

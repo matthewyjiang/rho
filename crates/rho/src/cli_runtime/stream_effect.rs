@@ -1,4 +1,7 @@
-//! Stream-json effect types shared by the Claude mapper and session sink.
+//! Stream-json effect types shared by CLI mappers and the session sink.
+//!
+//! Protocol-neutral presentation and terminal contracts. Claude-shaped mapping
+//! and rate-limit display policy stay with the Claude stream mapper.
 
 use serde::{Deserialize, Serialize};
 
@@ -99,11 +102,11 @@ pub(crate) struct TerminalResult {
     pub(crate) stop_reason: Option<String>,
 }
 
-/// Latest subscription rate-limit observation from a Claude stream.
+/// Latest subscription rate-limit observation from a CLI stream.
 ///
 /// One event is one window (`five_hour`, `seven_day`, …). `utilization` is an
-/// optional used fraction in `0.0..=1.0`; Claude often omits it while status is
-/// plain `allowed`.
+/// optional used fraction in `0.0..=1.0`; the provider often omits it while
+/// status is plain `allowed`. Field names follow the on-disk cache contract.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RateLimitInfo {
@@ -113,7 +116,7 @@ pub(crate) struct RateLimitInfo {
     pub(crate) rate_limit_type: Option<String>,
     #[serde(default)]
     pub(crate) resets_at: Option<i64>,
-    /// Used fraction in `0.0..=1.0` when Claude includes it.
+    /// Used fraction in `0.0..=1.0` when the provider includes it.
     #[serde(default)]
     pub(crate) utilization: Option<f64>,
     #[serde(default)]
@@ -141,11 +144,6 @@ impl RateLimitInfo {
         }
         Some(((1.0 - used) * 100.0).clamp(0.0, 100.0))
     }
-
-    /// Human window label (`five_hour` → `5-hour`, `seven_day` → `Weekly`).
-    pub(crate) fn window_label(&self) -> String {
-        crate::claude_runtime::window_kind::WindowKind::from_key(self.window_key()).label()
-    }
 }
 
 /// Classify a terminal result from required `subtype` + `is_error` fields.
@@ -162,15 +160,15 @@ pub(crate) fn classify_terminal_result(
     let Some(subtype) = subtype.filter(|value| !value.is_empty()) else {
         return TerminalClassification::Invalid {
             reason: match is_error {
-                Some(true) => "claude result missing subtype (is_error=true)".into(),
-                Some(false) => "claude result missing subtype (is_error=false)".into(),
-                None => "claude result missing subtype and is_error".into(),
+                Some(true) => "result missing subtype (is_error=true)".into(),
+                Some(false) => "result missing subtype (is_error=false)".into(),
+                None => "result missing subtype and is_error".into(),
             },
         };
     };
     let Some(is_error) = is_error else {
         return TerminalClassification::Invalid {
-            reason: format!("claude result subtype `{subtype}` missing is_error"),
+            reason: format!("result subtype `{subtype}` missing is_error"),
         };
     };
     if subtype == "success" && !is_error {
@@ -183,65 +181,4 @@ pub(crate) fn classify_terminal_result(
             is_error,
         }
     }
-}
-
-pub(crate) fn describe_rate_limit(info: &RateLimitInfo) -> String {
-    let mut parts = vec![info.window_label()];
-    if let Some(remaining) = info.remaining_percent() {
-        parts.push(format!("{}% left", remaining.round() as u8));
-    }
-    if let Some(status) = notable_rate_limit_status(info.status.as_deref()) {
-        parts.push(status);
-    }
-    if let Some(resets_at) = info.resets_at {
-        parts.push(format!("resets {}", format_unix_local(resets_at)));
-    }
-    if info.is_using_overage == Some(true) {
-        parts.push("using overage".into());
-    }
-    parts.join(", ")
-}
-
-/// Status text worth showing. Plain `allowed` is noise and is omitted.
-pub(crate) fn notable_rate_limit_status(status: Option<&str>) -> Option<String> {
-    let status = status?.trim();
-    if status.is_empty() {
-        return None;
-    }
-    match RateLimitStatusKind::parse(status) {
-        RateLimitStatusKind::Allowed => None,
-        RateLimitStatusKind::AllowedWarning => Some("warning".into()),
-        RateLimitStatusKind::Rejected => Some("limited".into()),
-        RateLimitStatusKind::Other(other) => Some(other.replace('_', " ")),
-    }
-}
-
-/// Wire status values Claude may report on a rate-limit window.
-enum RateLimitStatusKind<'a> {
-    Allowed,
-    AllowedWarning,
-    Rejected,
-    Other(&'a str),
-}
-
-impl<'a> RateLimitStatusKind<'a> {
-    fn parse(status: &'a str) -> Self {
-        match status {
-            "allowed" => Self::Allowed,
-            "allowed_warning" => Self::AllowedWarning,
-            "rejected" => Self::Rejected,
-            other => Self::Other(other),
-        }
-    }
-}
-
-fn format_unix_local(unix: i64) -> String {
-    chrono::DateTime::from_timestamp(unix, 0)
-        .map(|value| {
-            value
-                .with_timezone(&chrono::Local)
-                .format("%H:%M")
-                .to_string()
-        })
-        .unwrap_or_else(|| format!("unix {unix}"))
 }

@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::claude_runtime::stream::{TerminalClassification, TerminalResult};
+use crate::cli_runtime::stream_effect::{TerminalClassification, TerminalResult};
 
 const PROGRAM: &str = "claude code";
 

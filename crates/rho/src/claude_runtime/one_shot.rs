@@ -13,16 +13,19 @@ use rho_sdk::{model::ModelUsage, CancellationToken};
 use tokio::sync::watch;
 
 use crate::agent::{OneShotPhase, OneShotUpdate, PromptPolicy};
-use crate::cli_runtime::OwnedChild;
+use crate::cli_runtime::{
+    drain::{self, DrainEnd},
+    line_decoder::MAX_NDJSON_LINE_BYTES,
+    stream_effect::{StreamEffect, TerminalResult},
+    terminal::{assess_terminal, TerminalOutcome},
+    OwnedChild,
+};
 
 use super::{
     auth::{self, ClaudeAuthError},
-    drain::{self, DrainEnd},
     executable,
-    line_decoder::MAX_NDJSON_LINE_BYTES,
     spawn::{self, ClaudePermissionMode, ClaudeSpawnRequest, SessionPersistence},
-    stream::{StreamEffect, StreamMapper, TerminalResult},
-    terminal::{assess_terminal, TerminalOutcome},
+    stream::StreamMapper,
 };
 
 pub(crate) const CANCELLATION_ERROR: &str = "claude code: cancelled";

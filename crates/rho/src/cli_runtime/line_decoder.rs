@@ -1,4 +1,4 @@
-//! Claude stream-json NDJSON line bound and re-export of the shared decoder.
+//! CLI stream-json NDJSON line bound and re-export of the shared decoder.
 //!
 //! Decoding lives in `rho_providers::provider_backend::line_decoder`. This
 //! module only owns the 4 MiB anti-runaway budget.
@@ -7,9 +7,9 @@
 ///
 /// # Why 4 MiB (not 1 MiB, not 32 MiB)
 ///
-/// Claude stream-json lines are usually small. With
-/// `--include-partial-messages`, tool inputs arrive as short
-/// `input_json_delta` chunks. Live fixtures stay under 2 KiB per line.
+/// Stream-json lines are usually small. With partial-message streaming,
+/// tool inputs arrive as short `input_json_delta` chunks. Live fixtures
+/// stay under 2 KiB per line.
 ///
 /// The complete `assistant` envelope and `user`/`tool_result` frames still
 /// carry full tool input/result JSON on a single NDJSON line. Agents may

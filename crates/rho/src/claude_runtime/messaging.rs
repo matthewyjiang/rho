@@ -8,10 +8,14 @@
 //! Terminal shutdown seals the port before the final drain so a concurrent
 //! `agents message` cannot be acknowledged and then dropped.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use tokio::sync::mpsc;
+
+use crate::cli_runtime::drain::FollowUpSource;
 
 /// How many parent messages may wait while Claude is mid-turn.
 ///
@@ -94,6 +98,38 @@ pub(crate) fn message_channel() -> (ClaudeMessageHandle, ClaudeMessageInbox) {
         },
         ClaudeMessageInbox { gate, receiver },
     )
+}
+
+/// Drain-side adapter: encodes queued parent text as stream-json user turns.
+pub(crate) struct ClaudeFollowUpSource {
+    inbox: ClaudeMessageInbox,
+}
+
+impl ClaudeFollowUpSource {
+    pub(crate) fn new(inbox: ClaudeMessageInbox) -> Self {
+        Self { inbox }
+    }
+}
+
+impl FollowUpSource for ClaudeFollowUpSource {
+    fn try_recv(&mut self) -> Result<String, mpsc::error::TryRecvError> {
+        self.inbox
+            .try_recv()
+            .map(|text| encode_user_turn(&frame_parent_message(&text)))
+    }
+
+    fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+        Box::pin(async {
+            self.inbox
+                .recv()
+                .await
+                .map(|text| encode_user_turn(&frame_parent_message(&text)))
+        })
+    }
+
+    fn seal(&self) {
+        self.inbox.seal();
+    }
 }
 
 /// Encodes one parent (or initial prompt) body as a stream-json user turn.

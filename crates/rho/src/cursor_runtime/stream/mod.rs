@@ -33,13 +33,13 @@ use std::path::PathBuf;
 
 use rho_sdk::model::ModelUsage;
 
-use crate::claude_runtime::drain::StreamLineMapper;
-#[cfg(test)]
-use crate::claude_runtime::stream::apply_status_patch;
-use crate::claude_runtime::stream::{
-    bound_result_text, classify_terminal_result, reasoning_effects, text_effects, StatusPatch,
-    StreamEffect, TerminalClassification, TerminalResult,
+use crate::cli_runtime::drain::StreamLineMapper;
+use crate::cli_runtime::stream_effect::{
+    classify_terminal_result, StatusPatch, StreamEffect, TerminalClassification, TerminalResult,
 };
+#[cfg(test)]
+use crate::cli_runtime::stream_format::apply_status_patch;
+use crate::cli_runtime::stream_format::{bound_result_text, reasoning_effects, text_effects};
 use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 
 use protocol::{

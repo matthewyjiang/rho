@@ -9,7 +9,11 @@ use tokio::sync::watch;
 use rho_tools::cancellation::RunCancellation;
 
 use crate::cli_runtime::{
+    drain::{DrainInput, FollowUpSource},
     session::{CliSessionOverrides, CliSessionPolicy, CliSessionRequest},
+    status_sink::{RateLimitRecorder, RuntimeLabel, StatusSink},
+    stream_effect::TerminalResult,
+    terminal::{assess_terminal, TerminalOutcome},
     CliExecutable,
 };
 #[cfg(test)]
@@ -22,12 +26,19 @@ use crate::{
 
 use super::{
     auth::{self, ClaudeAuthError, ClaudeAuthStatus},
-    drain::DrainInput,
     executable,
-    persist::{RuntimeLabel, CLAUDE_LABEL},
+    rate_limit::ClaudeRateLimitRecorder,
     spawn::{self, ClaudeSpawnRequest},
-    stream::{StreamMapper, TerminalResult},
-    terminal::{assess_terminal, TerminalOutcome},
+    stream::StreamMapper,
+};
+
+/// Claude Code labels for the shared artifact sink.
+pub(crate) const CLAUDE_LABEL: RuntimeLabel = RuntimeLabel {
+    starting_activity: "starting claude",
+    program: "claude code",
+    resume_command: "claude",
+    session_label: "claude session",
+    cost_label: "claude cost",
 };
 
 /// Inputs for one Claude CLI subagent run, including bound runtime values.
@@ -138,7 +149,7 @@ impl CliSessionPolicy for ClaudePolicy {
 
     fn preflight(
         &mut self,
-        _sink: &mut super::persist::StatusSink,
+        _sink: &mut StatusSink,
     ) -> impl std::future::Future<Output = Result<(), String>> + Send {
         let auth_status = self.auth_status.take();
         async move {
@@ -207,8 +218,11 @@ impl CliSessionPolicy for ClaudePolicy {
 
     fn drain_input(&mut self) -> DrainInput {
         DrainInput::StreamJson {
-            initial_prompt: self.prompt.clone(),
-            parent_messages: self.parent_messages.take(),
+            initial_line: super::messaging::encode_user_turn(&self.prompt),
+            follow_ups: self.parent_messages.take().map(|inbox| {
+                Box::new(super::messaging::ClaudeFollowUpSource::new(inbox))
+                    as Box<dyn FollowUpSource>
+            }),
         }
     }
 
@@ -235,8 +249,10 @@ impl CliSessionPolicy for ClaudePolicy {
         assess_terminal(pending, status, log_tail, CLAUDE_LABEL.program)
     }
 
-    fn rate_limit_state_path(&self) -> Option<PathBuf> {
-        self.rate_limit_state_path.clone()
+    fn rate_limit_recorder(&self) -> Option<Box<dyn RateLimitRecorder>> {
+        Some(Box::new(ClaudeRateLimitRecorder::new(
+            self.rate_limit_state_path.clone(),
+        )))
     }
 }
 

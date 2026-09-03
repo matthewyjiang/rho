@@ -626,7 +626,7 @@ async fn oversize_line_fails_run() {
     let output = dir.path().join("result.json");
     let fake = dir.path().join("claude");
     let payload = dir.path().join("big.ndjson");
-    let mut bytes = vec![b'a'; crate::claude_runtime::line_decoder::MAX_NDJSON_LINE_BYTES + 8];
+    let mut bytes = vec![b'a'; crate::cli_runtime::line_decoder::MAX_NDJSON_LINE_BYTES + 8];
     bytes.push(b'\n');
     std::fs::write(&payload, bytes).unwrap();
     let script = format!(

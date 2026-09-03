@@ -231,7 +231,7 @@ fn run_model_line(status: &crate::subagent::RunStatus) -> Option<String> {
 
 fn push_cli_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
     use crate::{
-        agent::AgentRuntime, claude_runtime::persist::CLAUDE_LABEL,
+        agent::AgentRuntime, claude_runtime::session::CLAUDE_LABEL,
         cursor_runtime::models::CURSOR_LABEL,
     };
 

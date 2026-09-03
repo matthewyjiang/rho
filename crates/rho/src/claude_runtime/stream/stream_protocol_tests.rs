@@ -264,35 +264,35 @@ fn terminal_subtype_is_error_matrix_never_defaults_to_success() {
             None,
             Some(false),
             TerminalClassification::Invalid {
-                reason: "claude result missing subtype (is_error=false)".into(),
+                reason: "result missing subtype (is_error=false)".into(),
             },
         ),
         (
             None,
             Some(true),
             TerminalClassification::Invalid {
-                reason: "claude result missing subtype (is_error=true)".into(),
+                reason: "result missing subtype (is_error=true)".into(),
             },
         ),
         (
             Some("success"),
             None,
             TerminalClassification::Invalid {
-                reason: "claude result subtype `success` missing is_error".into(),
+                reason: "result subtype `success` missing is_error".into(),
             },
         ),
         (
             None,
             None,
             TerminalClassification::Invalid {
-                reason: "claude result missing subtype and is_error".into(),
+                reason: "result missing subtype and is_error".into(),
             },
         ),
         (
             Some(""),
             Some(false),
             TerminalClassification::Invalid {
-                reason: "claude result missing subtype (is_error=false)".into(),
+                reason: "result missing subtype (is_error=false)".into(),
             },
         ),
     ];

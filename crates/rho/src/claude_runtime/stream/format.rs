@@ -1,30 +1,18 @@
-//! Payload bounds, usage aggregation, and display formatting for stream-json.
+//! Claude-shaped usage aggregation and content stringify for stream-json.
 
-use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use rho_sdk::{
-    ceil_char_boundary,
-    model::{ContextUsage, ModelUsage},
-    ELLIPSIS,
+use rho_sdk::model::{ContextUsage, ModelUsage};
+
+use crate::cli_runtime::stream_effect::MAX_TOOL_PAYLOAD_CHARS;
+use crate::cli_runtime::stream_format::bound_text;
+
+pub(crate) use crate::cli_runtime::stream_format::{
+    count_fact, display_path_field, quoted, set_lines_body, string_field, truncate,
+    truncate_payload_lines, u64_field, MAX_TOOL_BODY_LINES,
 };
-use rho_tools::{
-    tool::compact_display_path,
-    tool_card::{ToolBody, ToolCard, ToolFact},
-};
-
-use super::types::{MAX_RESULT_CHARS, MAX_TEXT_DELTA_CHARS, MAX_TOOL_PAYLOAD_CHARS};
-
-/// Maximum body lines kept on a finished tool card after truncation.
-///
-/// Collapsed paint uses `max_tool_output_lines` (default 10). This cap is
-/// larger so attach expand can reveal more than a couple of extra rows. The
-/// 16 KiB payload bound still limits journal size.
-pub(crate) const MAX_TOOL_BODY_LINES: usize = 50;
-
-/// Bytes retained on [`crate::subagent::RunStatus::last_text`].
-pub(super) const LAST_TEXT_BYTES: usize = 400;
 
 #[derive(Clone, Debug, Default, serde::Deserialize, PartialEq)]
 pub(super) struct RawUsage {
@@ -185,111 +173,4 @@ pub(super) fn stringify_content(value: Option<&Value>) -> String {
 fn compact_value_preview(value: &Value) -> String {
     let rendered = value.to_string();
     bound_text(&rendered, MAX_TOOL_PAYLOAD_CHARS, "json")
-}
-
-pub(crate) fn bound_text(text: &str, max_chars: usize, label: &str) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut out = text.chars().take(max_chars).collect::<String>();
-    out.push_str(&format!("{ELLIPSIS} [truncated {label}]"));
-    out
-}
-
-pub(crate) fn truncate_payload_lines(text: &str, max_lines: usize) -> Vec<String> {
-    let bounded = bound_text(text, MAX_TOOL_PAYLOAD_CHARS, "tool payload");
-    let mut lines = bounded.lines().map(str::to_string).collect::<Vec<_>>();
-    if lines.len() > max_lines {
-        let omitted = lines.len() - max_lines;
-        lines.truncate(max_lines);
-        lines.push(format!("{ELLIPSIS} {omitted} more line(s)"));
-    }
-    lines
-}
-
-pub(crate) fn bound_result_text(text: &str) -> String {
-    bound_text(text, MAX_RESULT_CHARS, "result")
-}
-
-pub(crate) fn bound_delta_text(text: &str, label: &str) -> String {
-    bound_text(text, MAX_TEXT_DELTA_CHARS, label)
-}
-
-pub(super) fn append_tail(buffer: &mut String, text: &str, max: usize) {
-    buffer.push_str(text);
-    if buffer.len() > max {
-        let cut = buffer.len() - max;
-        let boundary = ceil_char_boundary(buffer, cut);
-        *buffer = buffer[boundary..].to_string();
-    }
-}
-
-pub(crate) fn set_lines_body(card: &mut ToolCard, content_text: &str) {
-    if content_text.trim().is_empty() {
-        return;
-    }
-    card.body = ToolBody::Lines(truncate_payload_lines(content_text, MAX_TOOL_BODY_LINES));
-}
-
-pub(crate) fn display_path_field(
-    input: Option<&Value>,
-    keys: &[&str],
-    cwd: Option<&Path>,
-) -> Option<String> {
-    let path = string_field(input, keys)?;
-    Some(match cwd {
-        Some(cwd) => compact_display_path(cwd, &path),
-        None => path,
-    })
-}
-
-pub(crate) fn string_field(input: Option<&Value>, keys: &[&str]) -> Option<String> {
-    let input = input?;
-    keys.iter().find_map(|key| {
-        input
-            .get(*key)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-    })
-}
-
-pub(crate) fn u64_field(input: Option<&Value>, keys: &[&str]) -> Option<u64> {
-    let input = input?;
-    keys.iter()
-        .find_map(|key| input.get(*key).and_then(Value::as_u64))
-}
-
-pub(crate) fn count_fact(
-    singular: &str,
-    plural: &str,
-    value: u64,
-    detail: Option<String>,
-) -> ToolFact {
-    ToolFact::Count {
-        label: if value == 1 {
-            singular.into()
-        } else {
-            plural.into()
-        },
-        value,
-        detail,
-    }
-}
-
-pub(crate) fn quoted(text: &str, max_chars: usize) -> String {
-    format!("\"{}\"", truncate(text, max_chars.saturating_sub(2)))
-}
-
-pub(crate) fn truncate(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut out = text
-        .chars()
-        .take(max_chars.saturating_sub(1))
-        .collect::<String>();
-    out.push('…');
-    out
 }

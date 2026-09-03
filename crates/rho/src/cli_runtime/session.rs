@@ -13,16 +13,14 @@ use tokio::sync::watch;
 
 use rho_tools::cancellation::RunCancellation;
 
-use crate::claude_runtime::{
-    drain::{self, DrainEnd, DrainInput, StreamLineMapper},
-    line_decoder::MAX_NDJSON_LINE_BYTES,
-    persist::{RuntimeLabel, StatusSink},
-    stream::TerminalResult,
-    terminal::TerminalOutcome,
-};
 use crate::run_artifacts::RunArtifactIdentity;
 use crate::subagent::RunStatus;
 
+use super::drain::{self, DrainEnd, DrainInput, StreamLineMapper};
+use super::line_decoder::MAX_NDJSON_LINE_BYTES;
+use super::status_sink::{RateLimitRecorder, RuntimeLabel, StatusSink};
+use super::stream_effect::TerminalResult;
+use super::terminal::TerminalOutcome;
 use super::{read_log_tail, CliExecutable, OwnedChild};
 
 /// Seams a session may replace. Production leaves every field unset.
@@ -90,7 +88,7 @@ pub(crate) trait CliSessionPolicy: Send {
         log_tail: &str,
     ) -> TerminalOutcome;
 
-    fn rate_limit_state_path(&self) -> Option<PathBuf>;
+    fn rate_limit_recorder(&self) -> Option<Box<dyn RateLimitRecorder>>;
 }
 
 /// Run one CLI session to completion, writing the subagent contract.
@@ -105,7 +103,7 @@ pub(crate) async fn run_session<P: CliSessionPolicy>(
             &request.prompt,
             request.status_tx.take(),
             request.overrides.live_title.clone(),
-            policy.rate_limit_state_path(),
+            policy.rate_limit_recorder(),
             policy.label(),
         )?,
         None => StatusSink::new(
@@ -113,7 +111,7 @@ pub(crate) async fn run_session<P: CliSessionPolicy>(
             &request.identity,
             &request.prompt,
             request.status_tx.take(),
-            policy.rate_limit_state_path(),
+            policy.rate_limit_recorder(),
             policy.label(),
         )?,
     };

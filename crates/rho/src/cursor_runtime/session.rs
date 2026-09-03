@@ -8,14 +8,12 @@ use tokio::sync::watch;
 
 use rho_tools::cancellation::RunCancellation;
 
-use crate::claude_runtime::{
-    drain::DrainInput,
-    persist::{RuntimeLabel, StatusSink},
-    stream::{StreamEffect, TerminalResult},
-    terminal::{assess_terminal, TerminalOutcome},
-};
 use crate::cli_runtime::{
+    drain::DrainInput,
     session::{CliSessionOverrides, CliSessionPolicy, CliSessionRequest},
+    status_sink::{RateLimitRecorder, RuntimeLabel, StatusSink},
+    stream_effect::{StreamEffect, TerminalResult},
+    terminal::{assess_terminal, TerminalOutcome},
     CliExecutable,
 };
 use crate::run_artifacts::AttachmentEvent;
@@ -201,7 +199,7 @@ impl CliSessionPolicy for CursorPolicy {
         assess_terminal(pending, status, log_tail, CURSOR_PROGRAM_LABEL)
     }
 
-    fn rate_limit_state_path(&self) -> Option<PathBuf> {
+    fn rate_limit_recorder(&self) -> Option<Box<dyn RateLimitRecorder>> {
         None
     }
 }

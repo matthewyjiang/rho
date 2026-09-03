@@ -2,9 +2,9 @@
 //!
 //! Shared by Claude Code and Cursor. Labels and stream mappers differ per CLI.
 
-use super::stream::{TerminalClassification, TerminalResult};
+use super::stream_effect::{TerminalClassification, TerminalResult};
 
-/// The protocol and process result after Claude has exited.
+/// The protocol and process result after the CLI has exited.
 pub(crate) enum TerminalOutcome {
     Success(TerminalResult),
     Failure {
@@ -15,7 +15,7 @@ pub(crate) enum TerminalOutcome {
     },
 }
 
-/// Combine Claude's terminal message with its exit status.
+/// Combine the stream terminal message with process exit status.
 ///
 /// An explicit valid success and exit code zero are both required. Callers own
 /// their persistence and presentation policy, but share this protocol truth.
@@ -71,7 +71,7 @@ pub(crate) fn assess_terminal(
     }
 }
 
-/// Failure text when the Claude process exits uncleanly.
+/// Failure text when the CLI process exits uncleanly.
 ///
 /// Order of preference:
 /// 1. stream-json failure/invalid text (safeguards, API errors) when stderr is empty

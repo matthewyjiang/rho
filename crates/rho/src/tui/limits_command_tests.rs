@@ -15,7 +15,7 @@ fn sample_claude_state(observed_at_unix: i64) -> crate::claude_runtime::rate_lim
             .unwrap_or(0)
             .saturating_mul(1_000_000_000),
         observed_nonce: "test".into(),
-        info: crate::claude_runtime::stream::RateLimitInfo {
+        info: crate::cli_runtime::stream_effect::RateLimitInfo {
             status: Some("allowed".into()),
             rate_limit_type: Some("five_hour".into()),
             resets_at: Some(1_800_000_000),

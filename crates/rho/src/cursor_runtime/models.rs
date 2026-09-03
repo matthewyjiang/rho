@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::claude_runtime::persist::RuntimeLabel;
+use crate::cli_runtime::status_sink::RuntimeLabel;
 use crate::cli_runtime::{run_bounded_probe, BoundedOutput, ProbeError};
 
 use super::{auth, executable};

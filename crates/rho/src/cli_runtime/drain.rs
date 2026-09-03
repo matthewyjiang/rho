@@ -5,6 +5,18 @@
 //! cancellation - and leaves policy to the caller's mapper, effect closure,
 //! and how the caller reads [`DrainEnd`]. Only labels and stream mappers
 //! differ per CLI.
+//!
+//! # Stream-json stdin
+//!
+//! [`DrainInput::StreamJson`] takes an already-encoded `initial_line` plus an
+//! optional [`FollowUpSource`]. Claude's user-turn JSON
+//! (`encode_user_turn` / `frame_parent_message`) stays in the Claude messaging
+//! module; the drain only writes bytes. That keeps this module free of
+//! CLI-specific wire formats while avoiding a renamed generic inbox used at
+//! every parent-message call site.
+
+use std::future::Future;
+use std::pin::Pin;
 
 use rho_providers::provider_backend::line_decoder::LineDecoder;
 use rho_sdk::CancellationToken;
@@ -12,13 +24,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::ChildStdin;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::cli_runtime::{OwnedChild, StderrTail};
-
-use super::{
-    line_decoder::LineDecodeError,
-    messaging,
-    stream::{StreamEffect, TerminalResult},
-};
+use super::line_decoder::LineDecodeError;
+use super::stream_effect::{StreamEffect, TerminalResult};
+use super::{OwnedChild, StderrTail};
 
 const READ_CHUNK_BYTES: usize = 8 * 1024;
 
@@ -41,16 +49,26 @@ enum StdinWriteError {
     Other(String),
 }
 
+/// Source of already-encoded follow-up stdin lines after the initial user turn.
+///
+/// Implementors own framing. `recv` is boxed so the trait stays object-safe
+/// for [`DrainInput::StreamJson`].
+pub(crate) trait FollowUpSource: Send {
+    fn try_recv(&mut self) -> Result<String, mpsc::error::TryRecvError>;
+    fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>>;
+    fn seal(&self);
+}
+
 /// How the drain feeds the child's stdin.
 pub(crate) enum DrainInput {
     /// One plain-text prompt, then close stdin (one-shot path).
     Text { prompt: String },
-    /// stream-json user turns. Writes the initial prompt, keeps stdin open for
+    /// stream-json user turns. Writes `initial_line`, keeps stdin open for
     /// parent follow-ups, and closes after a terminal `result` once the parent
     /// queue is empty.
     StreamJson {
-        initial_prompt: String,
-        parent_messages: Option<messaging::ClaudeMessageInbox>,
+        initial_line: String,
+        follow_ups: Option<Box<dyn FollowUpSource>>,
     },
 }
 
@@ -118,19 +136,13 @@ pub(crate) async fn drain_child(
             (None, write)
         }
         DrainInput::StreamJson {
-            initial_prompt,
-            parent_messages,
+            initial_line,
+            follow_ups,
         } => {
             let (close_tx, close_rx) = oneshot::channel::<()>();
             let write = tokio::spawn(async move {
-                write_stream_json_stdin(
-                    stdin,
-                    initial_prompt,
-                    parent_messages,
-                    close_rx,
-                    program_label,
-                )
-                .await
+                write_stream_json_stdin(stdin, initial_line, follow_ups, close_rx, program_label)
+                    .await
             });
             (Some(close_tx), write)
         }
@@ -274,31 +286,26 @@ async fn write_text_stdin(
 
 async fn write_stream_json_stdin(
     mut stdin: ChildStdin,
-    initial_prompt: String,
-    mut parent_messages: Option<messaging::ClaudeMessageInbox>,
+    initial_line: String,
+    mut follow_ups: Option<Box<dyn FollowUpSource>>,
     close_rx: oneshot::Receiver<()>,
     program_label: &'static str,
 ) -> Result<(), StdinWriteError> {
-    write_all(
-        &mut stdin,
-        messaging::encode_user_turn(&initial_prompt).as_bytes(),
-        program_label,
-    )
-    .await?;
+    write_all(&mut stdin, initial_line.as_bytes(), program_label).await?;
 
     let mut close_rx = Some(close_rx);
     loop {
         // Drain any parent messages already queued, then wait for either a new
         // parent turn or the close signal from the stream side.
-        if let Some(inbox) = parent_messages.as_mut() {
+        if let Some(inbox) = follow_ups.as_mut() {
             match inbox.try_recv() {
-                Ok(text) => {
-                    write_parent_turn(&mut stdin, &text, program_label).await?;
+                Ok(line) => {
+                    write_all(&mut stdin, line.as_bytes(), program_label).await?;
                     continue;
                 }
                 Err(mpsc::error::TryRecvError::Empty) => {}
                 Err(mpsc::error::TryRecvError::Disconnected) => {
-                    parent_messages = None;
+                    follow_ups = None;
                 }
             }
         }
@@ -314,13 +321,13 @@ async fn write_stream_json_stdin(
                 close_rx = None;
                 // Stop acknowledging new parent sends before the final drain so
                 // a concurrent `agents message` cannot succeed and then vanish.
-                if let Some(inbox) = parent_messages.as_ref() {
+                if let Some(inbox) = follow_ups.as_ref() {
                     inbox.seal();
                 }
             }
-            maybe_text = recv_parent(&mut parent_messages), if parent_messages.is_some() => {
-                if let Some(text) = maybe_text {
-                    write_parent_turn(&mut stdin, &text, program_label).await?;
+            maybe_line = recv_follow_up(&mut follow_ups), if follow_ups.is_some() => {
+                if let Some(line) = maybe_line {
+                    write_all(&mut stdin, line.as_bytes(), program_label).await?;
                 }
             }
         }
@@ -328,28 +335,15 @@ async fn write_stream_json_stdin(
 
     // After seal, wait until every accepted (including in-flight) body is
     // written. `recv` ends only when all sender clones are gone.
-    if let Some(mut inbox) = parent_messages.take() {
+    if let Some(mut inbox) = follow_ups.take() {
         // Seal is idempotent; covers paths that broke without a close signal.
         inbox.seal();
-        while let Some(text) = inbox.recv().await {
-            write_parent_turn(&mut stdin, &text, program_label).await?;
+        while let Some(line) = inbox.recv().await {
+            write_all(&mut stdin, line.as_bytes(), program_label).await?;
         }
     }
 
     shutdown_stdin(&mut stdin, program_label).await
-}
-
-async fn write_parent_turn(
-    stdin: &mut ChildStdin,
-    text: &str,
-    program_label: &'static str,
-) -> Result<(), StdinWriteError> {
-    write_all(
-        stdin,
-        messaging::encode_user_turn(&messaging::frame_parent_message(text)).as_bytes(),
-        program_label,
-    )
-    .await
 }
 
 async fn write_all(
@@ -391,20 +385,18 @@ fn map_stdin_io_error(error: std::io::Error, program_label: &str) -> StdinWriteE
     }
 }
 
-/// Waits for the next parent message when a receiver is still installed.
+/// Waits for the next follow-up line when a source is still installed.
 ///
 /// Returns `None` when the parent handle is dropped (channel closed).
-async fn recv_parent(
-    parent_messages: &mut Option<messaging::ClaudeMessageInbox>,
-) -> Option<String> {
-    let Some(inbox) = parent_messages.as_mut() else {
+async fn recv_follow_up(follow_ups: &mut Option<Box<dyn FollowUpSource>>) -> Option<String> {
+    let Some(inbox) = follow_ups.as_mut() else {
         std::future::pending::<()>().await;
         unreachable!("pending future resolved");
     };
     match inbox.recv().await {
-        Some(text) => Some(text),
+        Some(line) => Some(line),
         None => {
-            *parent_messages = None;
+            *follow_ups = None;
             None
         }
     }

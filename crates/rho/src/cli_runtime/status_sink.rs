@@ -3,10 +3,12 @@
 //! Shared by Claude Code and Cursor. Labels and stream mappers differ per CLI.
 //!
 //! Translates stream-json effects into the generic status/attachment contract.
-//! Rate-limit cache updates are collected here and flushed once at settle so
-//! the artifact path never knows about `/limits`.
+//! Rate-limit persistence is a pluggable [`RateLimitRecorder`]: Claude records
+//! subscription windows; Cursor leaves the recorder unset.
 
+use std::future::Future;
 use std::path::PathBuf;
+use std::pin::Pin;
 
 use tokio::sync::watch;
 
@@ -15,10 +17,8 @@ use crate::{
     subagent::RunStatus,
 };
 
-use super::super::{
-    rate_limit::{self, RateLimitObservation, RateLimitState},
-    stream::{self, apply_status_patch, StreamEffect, TerminalResult},
-};
+use super::stream_effect::{RateLimitInfo, StreamEffect, TerminalResult};
+use super::stream_format::apply_status_patch;
 
 /// Starting activity, program name, and model-facing copy for a CLI runtime sink.
 #[derive(Clone, Copy, Debug)]
@@ -33,22 +33,21 @@ pub(crate) struct RuntimeLabel {
     pub(crate) cost_label: &'static str,
 }
 
-/// Claude Code labels for [`StatusSink`].
-pub(crate) const CLAUDE_LABEL: RuntimeLabel = RuntimeLabel {
-    starting_activity: "starting claude",
-    program: "claude code",
-    resume_command: "claude",
-    session_label: "claude session",
-    cost_label: "claude cost",
-};
+/// CLI-specific rate-limit cache updates collected during a run.
+///
+/// Object-safe so the sink can hold an optional recorder without knowing the
+/// owning runtime. `flush` is `'static` after taking pending state.
+pub(crate) trait RateLimitRecorder: Send {
+    /// Optional transcript notice for this observation.
+    fn notice(&self, info: &RateLimitInfo) -> Option<String>;
+    fn record(&mut self, info: RateLimitInfo);
+    fn flush(&mut self) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+}
 
-/// Thin Claude-facing handle around [`RunArtifactSink`].
+/// Thin CLI-facing handle around [`RunArtifactSink`].
 pub(crate) struct StatusSink {
     inner: RunArtifactSink,
-    pending_limits: RateLimitState,
-    /// Override for tests. Production leaves this unset and uses
-    /// [`rate_limit::default_state_path`] at flush time.
-    rate_limit_state_path: Option<PathBuf>,
+    rate_limits: Option<Box<dyn RateLimitRecorder>>,
 }
 
 impl StatusSink {
@@ -57,17 +56,13 @@ impl StatusSink {
         identity: &RunArtifactIdentity,
         prompt: &str,
         status_tx: Option<watch::Sender<RunStatus>>,
-        rate_limit_state_path: Option<PathBuf>,
+        rate_limits: Option<Box<dyn RateLimitRecorder>>,
         label: RuntimeLabel,
     ) -> anyhow::Result<Self> {
         let mut inner = RunArtifactSink::open(path, identity, prompt, status_tx)?;
         inner.status.last_activity = Some(label.starting_activity.into());
         inner.publish();
-        Ok(Self {
-            inner,
-            pending_limits: RateLimitState::default(),
-            rate_limit_state_path,
-        })
+        Ok(Self { inner, rate_limits })
     }
 
     /// Resume after the executor already wrote the Starting boundary.
@@ -77,18 +72,14 @@ impl StatusSink {
         prompt: &str,
         status_tx: Option<watch::Sender<RunStatus>>,
         live_title: Option<LiveRunTitle>,
-        rate_limit_state_path: Option<PathBuf>,
+        rate_limits: Option<Box<dyn RateLimitRecorder>>,
         label: RuntimeLabel,
     ) -> anyhow::Result<Self> {
         status.last_activity = Some(label.starting_activity.into());
         let mut inner =
             RunArtifactSink::continue_from(path, status, prompt, status_tx, live_title)?;
         inner.publish();
-        Ok(Self {
-            inner,
-            pending_limits: RateLimitState::default(),
-            rate_limit_state_path,
-        })
+        Ok(Self { inner, rate_limits })
     }
 
     pub(crate) fn status(&self) -> &RunStatus {
@@ -102,9 +93,9 @@ impl StatusSink {
     pub(crate) fn apply_effect(&mut self, effect: StreamEffect) {
         match effect {
             StreamEffect::Attachment(event) => {
-                // The Claude path deliberately mirrors reasoning into
-                // `last_text` as well as answer text, unlike the Rho reporter,
-                // which keeps the thinking out of the status file.
+                // CLI runtimes mirror reasoning into `last_text` as well as
+                // answer text, unlike the Rho reporter, which keeps thinking
+                // out of the status file.
                 if let AttachmentEvent::AssistantTextDelta(text)
                 | AttachmentEvent::ReasoningDelta(text) = &event
                 {
@@ -119,13 +110,13 @@ impl StatusSink {
                 self.inner.publish();
             }
             StreamEffect::RateLimit(info) => {
-                self.inner.write_attachment(AttachmentEvent::Notice(format!(
-                    "claude limits: {}",
-                    stream::describe_rate_limit(&info)
-                )));
-                self.pending_limits
-                    .merge_window(RateLimitObservation::capture(info));
-                self.inner.publish();
+                if let Some(recorder) = self.rate_limits.as_mut() {
+                    if let Some(notice) = recorder.notice(&info) {
+                        self.inner.write_attachment(AttachmentEvent::Notice(notice));
+                    }
+                    recorder.record(info);
+                    self.inner.publish();
+                }
             }
             // Terminal payloads are pending metadata until process exit.
             StreamEffect::Terminal(terminal) => {
@@ -181,37 +172,8 @@ impl StatusSink {
     }
 
     async fn flush_rate_limits(&mut self) {
-        let pending = std::mem::take(&mut self.pending_limits);
-        if pending.is_empty() {
-            return;
-        }
-        let path = match self.rate_limit_state_path.clone() {
-            Some(path) => path,
-            None => match rate_limit::default_state_path() {
-                Ok(path) => path,
-                Err(error) => {
-                    tracing::debug!(
-                        error = %error,
-                        "claude rate-limit cache path unavailable; dropping pending windows"
-                    );
-                    return;
-                }
-            },
-        };
-        // File lock + atomic write are blocking; keep them off the runtime worker.
-        let result =
-            tokio::task::spawn_blocking(move || rate_limit::store_state(&path, pending)).await;
-        match result {
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => {
-                tracing::warn!(error = %error, "failed to persist claude rate-limit cache");
-            }
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    "claude rate-limit cache flush task failed to join"
-                );
-            }
+        if let Some(recorder) = self.rate_limits.as_mut() {
+            recorder.flush().await;
         }
     }
 }
@@ -241,3 +203,7 @@ fn apply_terminal_metadata(status: &mut RunStatus, terminal: &TerminalResult) {
         status.error = Some(error);
     }
 }
+
+#[cfg(test)]
+#[path = "status_sink_tests.rs"]
+mod tests;
