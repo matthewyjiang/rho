@@ -843,3 +843,195 @@ fn derives_websocket_url_from_codex_api_base() {
         "ws://127.0.0.1:1234/codex/responses"
     );
 }
+
+async fn send_created(socket: &mut WebSocketStream<TcpStream>, response_id: &str) {
+    socket
+        .send(Message::Text(
+            json!({"type":"response.created","response":{"id": response_id, "status":"in_progress"}})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+}
+
+async fn send_steered_incomplete(
+    socket: &mut WebSocketStream<TcpStream>,
+    response_id: &str,
+    text: &str,
+) {
+    socket
+        .send(Message::Text(
+            json!({
+                "type":"response.incomplete",
+                "response":{
+                    "id": response_id,
+                    "status":"incomplete",
+                    "incomplete_details":{"reason":"steered"},
+                    "output_text": text
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+}
+
+async fn ws_server_accepts_steer_then_continuation() -> (String, Arc<StdMutex<Vec<Value>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let frames = Arc::new(StdMutex::new(Vec::new()));
+    let server_frames = Arc::clone(&frames);
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        let create = read_request_frame(&mut socket).await;
+        server_frames.lock().unwrap().push(create);
+        send_created(&mut socket, "resp_1").await;
+        socket
+            .send(Message::Text(
+                json!({"type":"response.output_text.delta","delta":"partial"})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        let steer = read_request_frame(&mut socket).await;
+        server_frames.lock().unwrap().push(steer);
+        socket
+            .send(Message::Text(
+                json!({
+                    "type":"response.steer.accepted",
+                    "sequence_number": 2,
+                    "steer":{"id":"steer_1","previous_response_id":"resp_1"}
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        send_steered_incomplete(&mut socket, "resp_1", "partial").await;
+        send_created(&mut socket, "resp_2").await;
+        send_completion(&mut socket, 2).await;
+    });
+    (format!("ws://{addr}/responses"), frames)
+}
+
+fn steer_receiver(
+    text: &str,
+) -> (
+    Option<rho_sdk::provider::ProviderSteeringReceiver>,
+    tokio::sync::mpsc::UnboundedSender<rho_sdk::provider::ProviderSteeringRequest>,
+) {
+    let (tx, rx) = rho_sdk::provider::provider_steering_channel();
+    let _ = text;
+    (Some(rx), tx)
+}
+
+// Covers: a steer is sent after first output, the original turn completes as
+// steered, and the next request reuses the continuation without response.create
+// Owner: openai websocket steering
+#[tokio::test]
+async fn steer_reuses_auto_continuation_without_a_new_create() {
+    let (url, frames) = ws_server_accepts_steer_then_continuation().await;
+    let transport = CodexWsTransport::new_with_url(url);
+    let (mut steering, offer) = steer_receiver("S1");
+    let first_output = std::sync::Arc::new(tokio::sync::Notify::new());
+    let notify = std::sync::Arc::clone(&first_output);
+    let mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)> =
+        Some(&mut move |event| {
+            if matches!(event, ModelEvent::OutputDelta(_)) {
+                notify.notify_one();
+            }
+            Ok(())
+        });
+    let first_turn = {
+        let body = body(vec![json!({"role":"user","content":"one"})]);
+        let tokens = tokens();
+        let turn =
+            transport.send_responses_turn_steerable(body, &tokens, &mut on_event, &mut steering);
+        tokio::pin!(turn);
+        let mut offered = false;
+        loop {
+            tokio::select! {
+                () = first_output.notified(), if !offered => {
+                    let (request, _outcomes) =
+                        rho_sdk::provider::ProviderSteeringRequest::test_unclaimed(vec![
+                            ContentBlock::Text("S1".into()),
+                        ]);
+                    offer.send(request).unwrap();
+                    offered = true;
+                }
+                result = &mut turn => break result.unwrap(),
+            }
+        }
+    };
+    let CodexWsTurn::Completed(response) = first_turn else {
+        panic!("expected steered original completion");
+    };
+    assert!(response.steered);
+    assert_eq!(
+        response.response,
+        ModelResponse::Assistant(vec![ContentBlock::Text("partial".into())])
+    );
+
+    let mut on_event = None;
+    let mut steering = None;
+    let continuation = immediate(transport.send_responses_turn_steerable(
+        body(vec![
+            json!({"role":"user","content":"one"}),
+            json!({"role":"assistant","content":"partial"}),
+            json!({"role":"user","content":[{"type":"input_text","text":"S1"}]}),
+        ]),
+        &tokens(),
+        &mut on_event,
+        &mut steering,
+    ))
+    .await
+    .unwrap();
+    let CodexWsTurn::Completed(response) = continuation else {
+        panic!("expected continuation completion");
+    };
+    assert!(!response.steered);
+    let frames = frames.lock().unwrap();
+    assert_eq!(frames.len(), 2);
+    assert_eq!(frames[0]["type"], "response.create");
+    assert_eq!(frames[1]["type"], "response.steer");
+    assert_eq!(frames[1]["previous_response_id"], "resp_1");
+}
+
+// Covers: an accepted steer is released when the original ends before any
+// representable output, and steer.failed releases without delivering
+// Owner: openai websocket steering
+#[tokio::test]
+async fn steer_is_released_when_unforwardable_or_failed() {
+    let (url, frames) = ws_server(1).await;
+    let transport = CodexWsTransport::new_with_url(url);
+    let (mut steering, offer) = steer_receiver("S1");
+    let (request, mut outcomes) =
+        rho_sdk::provider::ProviderSteeringRequest::test_unclaimed(vec![ContentBlock::Text(
+            "S1".into(),
+        )]);
+    offer.send(request).unwrap();
+    let mut on_event = None;
+    let turn = immediate(transport.send_responses_turn_steerable(
+        body(vec![json!({"role":"user","content":"one"})]),
+        &tokens(),
+        &mut on_event,
+        &mut steering,
+    ))
+    .await
+    .unwrap();
+    assert!(matches!(turn, CodexWsTurn::Completed(_)));
+    let outcome = outcomes.try_recv().ok();
+    assert!(
+        matches!(
+            outcome,
+            Some((_, rho_sdk::provider::ProviderSteeringOutcome::Released)) | None
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(frames.lock().unwrap().len(), 1);
+    assert_eq!(frames.lock().unwrap()[0]["type"], "response.create");
+}

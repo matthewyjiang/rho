@@ -220,7 +220,7 @@ pub(crate) struct CodexSseState {
     /// True after a `response.completed` event was applied.
     completed: bool,
     /// True when the original response ended because it was steered.
-    steered: bool,
+    pub(crate) steered: bool,
     /// Provider `response.status` from the completed envelope, when present.
     response_status: Option<String>,
     /// Distinct SSE event `type` values observed on this stream.

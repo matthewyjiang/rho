@@ -17,8 +17,8 @@ pub(super) struct CodexContinuationState {
 
 #[derive(Clone, Debug)]
 pub(super) struct CodexContinuationCandidate {
-    request_properties: Value,
-    input: Vec<Value>,
+    pub(super) request_properties: Value,
+    pub(super) input: Vec<Value>,
 }
 
 #[derive(Clone, Debug)]
