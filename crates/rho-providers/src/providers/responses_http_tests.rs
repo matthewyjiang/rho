@@ -14,15 +14,14 @@ use tokio::{
     sync::Mutex,
 };
 
-use super::super::{
-    auth::{Auth, CodexAuthSource},
-    codex_request::{build_responses_compact_body, build_responses_create_body, ResponsesProfile},
-    reasoning::OpenAiReasoningProfile,
+use super::super::openai::auth::{Auth, CodexAuthSource};
+use super::{
+    ResponsesEndpoint, ResponsesFailedAttemptKind, ResponsesHttpAuth, ResponsesHttpTransport,
 };
-use super::{ResponsesEndpoint, ResponsesFailedAttemptKind, ResponsesHttpTransport};
+use crate::providers::openai::responses_post::{self, codex_http_auth};
 use crate::{
     credentials::{CodexTokens, MemoryCredentialStore},
-    model::{Message, ModelError, ModelRequest},
+    model::ModelError,
 };
 
 #[derive(Clone, Default)]
@@ -136,7 +135,7 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
 
     let create = http
         .post_json(
-            Some(&Auth::ApiKey("sk-test".into())),
+            &ResponsesHttpAuth::api_key("sk-test"),
             ResponsesEndpoint::Create,
             &body,
             None,
@@ -147,7 +146,7 @@ async fn api_key_create_and_compact_send_expected_headers_and_paths() {
 
     let compact = http
         .post_json(
-            Some(&Auth::ApiKey("sk-test".into())),
+            &ResponsesHttpAuth::api_key("sk-test"),
             ResponsesEndpoint::Compact,
             &body,
             None,
@@ -184,13 +183,23 @@ async fn keyless_create_and_compact_omit_authorization() {
     let body = json!({"model":"gpt-5.4","store":false});
 
     let create = http
-        .post_json(None, ResponsesEndpoint::Create, &body, None)
+        .post_json(
+            &ResponsesHttpAuth::keyless(),
+            ResponsesEndpoint::Create,
+            &body,
+            None,
+        )
         .await;
     assert!(create.failed_attempts.is_empty());
     assert_eq!(create.response.unwrap().status(), reqwest::StatusCode::OK);
 
     let compact = http
-        .post_json(None, ResponsesEndpoint::Compact, &body, None)
+        .post_json(
+            &ResponsesHttpAuth::keyless(),
+            ResponsesEndpoint::Compact,
+            &body,
+            None,
+        )
         .await;
     assert!(compact.failed_attempts.is_empty());
     assert_eq!(compact.response.unwrap().status(), reqwest::StatusCode::OK);
@@ -227,14 +236,16 @@ async fn codex_create_and_compact_send_expected_headers_and_paths() {
     let http = transport(&client, &base);
     let body = json!({"model":"gpt-5.4","store":false});
 
+    let tokens = auth.codex_tokens_for_request().unwrap();
+    let request_auth = codex_http_auth(&tokens);
     let create = http
-        .post_json(Some(&auth), ResponsesEndpoint::Create, &body, None)
+        .post_json(&request_auth, ResponsesEndpoint::Create, &body, None)
         .await;
     assert!(create.failed_attempts.is_empty());
     assert!(create.response.is_ok());
 
     let compact = http
-        .post_json(Some(&auth), ResponsesEndpoint::Compact, &body, None)
+        .post_json(&request_auth, ResponsesEndpoint::Compact, &body, None)
         .await;
     assert!(compact.failed_attempts.is_empty());
     assert!(compact.response.is_ok());
@@ -307,16 +318,18 @@ async fn codex_compact_401_refresh_reports_auth_failed_attempt_and_retries() {
         account_id: Some("acct_1".into()),
     });
     let refresh_url = format!("{base}/oauth/token");
-    let http = transport(&client, &base).with_codex_refresh_url(&refresh_url);
+    let http = transport(&client, &base);
 
-    let result = http
-        .post_json(
-            Some(&auth),
-            ResponsesEndpoint::Compact,
-            &json!({"model":"gpt-5.4","store":false}),
-            None,
-        )
-        .await;
+    let result = responses_post::post(
+        &http,
+        &client,
+        Some(&auth),
+        &refresh_url,
+        ResponsesEndpoint::Compact,
+        &json!({"model":"gpt-5.4","store":false}),
+        None,
+    )
+    .await;
     assert_eq!(result.response.unwrap().status(), reqwest::StatusCode::OK);
     assert_eq!(result.failed_attempts.len(), 1);
     assert_eq!(
@@ -361,17 +374,12 @@ async fn cancellation_during_send_returns_interrupted() {
     });
 
     let client = crate::reqwest_client();
-    let auth = Auth::ApiKey("sk-test".into());
     let http = transport(&client, &base);
     let cancellation = rho_sdk::CancellationToken::new();
     let cancel = cancellation.clone();
     let body = json!({"model":"gpt-5.4"});
-    let post = http.post_json(
-        Some(&auth),
-        ResponsesEndpoint::Create,
-        &body,
-        Some(&cancellation),
-    );
+    let auth = ResponsesHttpAuth::api_key("sk-test");
+    let post = http.post_json(&auth, ResponsesEndpoint::Create, &body, Some(&cancellation));
     let cancel_task = async move {
         accepted.notified().await;
         cancel.cancel();
@@ -418,12 +426,15 @@ async fn cancellation_during_refresh_returns_interrupted() {
         account_id: None,
     });
     let refresh_url = format!("{base}/oauth/token");
-    let http = transport(&client, &base).with_codex_refresh_url(&refresh_url);
+    let http = transport(&client, &base);
     let cancellation = rho_sdk::CancellationToken::new();
     let cancel = cancellation.clone();
     let body = json!({"model":"gpt-5.4"});
-    let post = http.post_json(
+    let post = responses_post::post(
+        &http,
+        &client,
         Some(&auth),
+        &refresh_url,
         ResponsesEndpoint::Compact,
         &body,
         Some(&cancellation),
@@ -475,16 +486,18 @@ async fn refresh_failure_retains_authentication_failed_attempt() {
         account_id: None,
     });
     let refresh_url = format!("{base}/oauth/token");
-    let http = transport(&client, &base).with_codex_refresh_url(&refresh_url);
+    let http = transport(&client, &base);
 
-    let result = http
-        .post_json(
-            Some(&auth),
-            ResponsesEndpoint::Compact,
-            &json!({"model":"gpt-5.4"}),
-            None,
-        )
-        .await;
+    let result = responses_post::post(
+        &http,
+        &client,
+        Some(&auth),
+        &refresh_url,
+        ResponsesEndpoint::Compact,
+        &json!({"model":"gpt-5.4"}),
+        None,
+    )
+    .await;
     assert!(result.response.is_err());
     assert_eq!(result.failed_attempts.len(), 1);
     assert_eq!(
@@ -542,16 +555,18 @@ async fn retry_send_failure_retains_authentication_failed_attempt() {
         account_id: None,
     });
     let refresh_url = format!("{base}/oauth/token");
-    let http = transport(&client, &base).with_codex_refresh_url(&refresh_url);
+    let http = transport(&client, &base);
 
-    let result = http
-        .post_json(
-            Some(&auth),
-            ResponsesEndpoint::Compact,
-            &json!({"model":"gpt-5.4"}),
-            None,
-        )
-        .await;
+    let result = responses_post::post(
+        &http,
+        &client,
+        Some(&auth),
+        &refresh_url,
+        ResponsesEndpoint::Compact,
+        &json!({"model":"gpt-5.4"}),
+        None,
+    )
+    .await;
     assert!(result.response.is_err());
     assert_eq!(result.failed_attempts.len(), 1);
     assert_eq!(
@@ -561,34 +576,193 @@ async fn retry_send_failure_retains_authentication_failed_attempt() {
 }
 
 #[tokio::test]
-async fn create_and_compact_body_builders_diverge_on_tools() {
-    let profile = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-5.4");
-    let request = ModelRequest {
-        messages: &[Message::user_text("hello")],
-        tools: &[crate::model::ToolSpec {
-            name: "bash".into(),
-            description: "run".into(),
-            input_schema: json!({"type":"object"}),
-        }],
-        cancellation: Default::default(),
-        reasoning_level: Default::default(),
-        prompt_cache_key: None,
-    };
-    let create = build_responses_create_body(
-        &profile,
-        &OpenAiReasoningProfile::unknown(),
-        request.clone(),
-        None,
-        /*hosted_web_search*/ true,
-    )
-    .unwrap();
-    let compact =
-        build_responses_compact_body(&profile, &OpenAiReasoningProfile::unknown(), request)
-            .unwrap();
-    assert_eq!(create["stream"], true);
-    assert!(create.get("tools").is_some());
-    assert!(compact.get("stream").is_none());
-    assert!(compact.get("tools").is_none());
-    assert!(compact.get("tool_choice").is_none());
-    assert!(compact.get("parallel_tool_calls").is_none());
+async fn xai_create_and_compact_send_expected_headers_and_paths() {
+    let (base, captured) = spawn_sequential_server(vec![
+        Box::new(|_| (200, r#"{"ok":true}"#.into())),
+        Box::new(|_| (200, r#"{"ok":true}"#.into())),
+    ])
+    .await;
+    let client = crate::reqwest_client();
+    let http = transport(&client, &base);
+    let body = json!({"model":"grok-4.5"});
+    let auth = ResponsesHttpAuth::bearer("xai-token", crate::rho_user_agent());
+
+    let create = http
+        .post_json(&auth, ResponsesEndpoint::Create, &body, None)
+        .await;
+    assert!(create.failed_attempts.is_empty());
+    assert_eq!(create.response.unwrap().status(), reqwest::StatusCode::OK);
+
+    let compact = http
+        .post_json(&auth, ResponsesEndpoint::Compact, &body, None)
+        .await;
+    assert!(compact.failed_attempts.is_empty());
+    assert_eq!(compact.response.unwrap().status(), reqwest::StatusCode::OK);
+
+    let requests = captured.lock().await.clone();
+    assert_eq!(requests.len(), 2);
+    let expected_ua = crate::rho_user_agent().to_ascii_lowercase();
+    for (request, expected_path) in requests.iter().zip(["/responses", "/responses/compact"]) {
+        assert_eq!(request.path, expected_path);
+        let headers = request.headers.to_ascii_lowercase();
+        assert!(headers.contains("authorization: bearer xai-token"));
+        assert!(headers.contains(&format!("user-agent: {expected_ua}")));
+        assert!(!headers.contains("openai-beta"));
+        assert!(!headers.contains("originator"));
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RefreshHookOutcome {
+    Retry,
+    Decline,
+    Fail,
+}
+
+// Covers: 401 refresh hook must distinguish retry / final 401 / refresh error
+// Owner: providers responses transport
+#[tokio::test]
+async fn refresh_hook_accounts_for_401_outcomes() {
+    for outcome in [
+        RefreshHookOutcome::Retry,
+        RefreshHookOutcome::Decline,
+        RefreshHookOutcome::Fail,
+    ] {
+        let (base, captured) = spawn_sequential_server(vec![
+            Box::new(|_| (401, String::new())),
+            Box::new(|_| (200, r#"{"ok":true}"#.into())),
+        ])
+        .await;
+        let client = crate::reqwest_client();
+        let http = transport(&client, &base);
+        let auth = ResponsesHttpAuth::bearer("token-1", crate::rho_user_agent());
+        let result = http
+            .post_json_refreshing(
+                &auth,
+                || async move {
+                    match outcome {
+                        RefreshHookOutcome::Retry => Ok(Some(ResponsesHttpAuth::bearer(
+                            "token-2",
+                            crate::rho_user_agent(),
+                        ))),
+                        RefreshHookOutcome::Decline => Ok(None),
+                        RefreshHookOutcome::Fail => {
+                            Err(ModelError::InvalidResponse("xai refresh failed".into()))
+                        }
+                    }
+                },
+                || Ok(()),
+                ResponsesEndpoint::Create,
+                &json!({"model":"grok-4.5"}),
+                None,
+            )
+            .await;
+        let requests = captured.lock().await.clone();
+        match outcome {
+            RefreshHookOutcome::Retry => {
+                assert_eq!(result.response.unwrap().status(), reqwest::StatusCode::OK);
+                assert_eq!(result.failed_attempts.len(), 1);
+                assert_eq!(requests.len(), 2);
+                assert!(requests[1]
+                    .headers
+                    .to_ascii_lowercase()
+                    .contains("authorization: bearer token-2"));
+            }
+            RefreshHookOutcome::Decline => {
+                assert_eq!(
+                    result.response.unwrap().status(),
+                    reqwest::StatusCode::UNAUTHORIZED
+                );
+                assert!(result.failed_attempts.is_empty());
+                assert_eq!(requests.len(), 1);
+            }
+            RefreshHookOutcome::Fail => {
+                assert!(result.response.is_err());
+                assert_eq!(result.failed_attempts.len(), 1);
+                assert_eq!(
+                    result.failed_attempts[0].kind,
+                    ResponsesFailedAttemptKind::Authentication
+                );
+                assert_eq!(requests.len(), 1);
+            }
+        }
+    }
+}
+
+// Covers: RequestAttemptFailed must fire before the refresh retry POST
+// Owner: providers responses transport
+#[tokio::test]
+async fn refresh_retry_notifies_before_second_post() {
+    let (base, captured) = spawn_sequential_server(vec![
+        Box::new(|_| (401, String::new())),
+        Box::new(|_| (200, r#"{"ok":true}"#.into())),
+    ])
+    .await;
+    let client = crate::reqwest_client();
+    let http = transport(&client, &base);
+    let auth = ResponsesHttpAuth::bearer("token-1", crate::rho_user_agent());
+    let noticed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let noticed_at_retry = Arc::clone(&noticed);
+    let captured_at_retry = Arc::clone(&captured);
+    let result = http
+        .post_json_refreshing(
+            &auth,
+            || async {
+                Ok(Some(ResponsesHttpAuth::bearer(
+                    "token-2",
+                    crate::rho_user_agent(),
+                )))
+            },
+            || {
+                noticed_at_retry.fetch_add(1, Ordering::SeqCst);
+                let seen = captured_at_retry
+                    .try_lock()
+                    .expect("first request must be finished before retry notice");
+                assert_eq!(
+                    seen.len(),
+                    1,
+                    "retry POST must not start before the attempt event"
+                );
+                Ok(())
+            },
+            ResponsesEndpoint::Create,
+            &json!({"model":"grok-4.5"}),
+            None,
+        )
+        .await;
+    assert_eq!(result.response.unwrap().status(), reqwest::StatusCode::OK);
+    assert_eq!(noticed.load(Ordering::SeqCst), 1);
+    assert_eq!(captured.lock().await.len(), 2);
+}
+
+// Covers: before_retry error must skip the refresh retry POST
+// Owner: providers responses transport
+#[tokio::test]
+async fn refresh_retry_notice_error_skips_second_post() {
+    let (base, captured) = spawn_sequential_server(vec![
+        Box::new(|_| (401, String::new())),
+        Box::new(|_| (200, r#"{"ok":true}"#.into())),
+    ])
+    .await;
+    let client = crate::reqwest_client();
+    let http = transport(&client, &base);
+    let auth = ResponsesHttpAuth::bearer("token-1", crate::rho_user_agent());
+    let result = http
+        .post_json_refreshing(
+            &auth,
+            || async {
+                Ok(Some(ResponsesHttpAuth::bearer(
+                    "token-2",
+                    crate::rho_user_agent(),
+                )))
+            },
+            || Err(ModelError::Interrupted),
+            ResponsesEndpoint::Create,
+            &json!({"model":"grok-4.5"}),
+            None,
+        )
+        .await;
+    assert!(matches!(result.response, Err(ModelError::Interrupted)));
+    assert_eq!(result.failed_attempts.len(), 1);
+    assert_eq!(captured.lock().await.len(), 1);
 }

@@ -9,6 +9,9 @@
 use std::sync::Arc;
 
 use crate::protocol::openai_responses::collect_codex_sse_response;
+use crate::providers::responses_http::{
+    ResponsesEndpoint, ResponsesHttpAuth, ResponsesHttpResult, ResponsesHttpTransport,
+};
 
 use crate::{
     auth::xai_token::XaiAuthManager,
@@ -20,7 +23,6 @@ use crate::{credentials::CredentialStore, provider_backend::stream_timeout::prov
 
 mod bodies;
 mod compact;
-mod http;
 #[path = "reasoning.rs"]
 mod reasoning;
 
@@ -84,6 +86,52 @@ impl XaiProvider {
         ))
     }
 
+    pub(super) fn http(&self) -> ResponsesHttpTransport<'_> {
+        ResponsesHttpTransport::new(&self.client, &self.api_base)
+    }
+
+    fn responses_http_auth(access_token: &str) -> ResponsesHttpAuth {
+        ResponsesHttpAuth::bearer(access_token, crate::rho_user_agent())
+    }
+
+    pub(super) async fn post_responses(
+        &self,
+        endpoint: ResponsesEndpoint,
+        body: &serde_json::Value,
+        cancellation: Option<&rho_sdk::CancellationToken>,
+        before_retry: impl FnOnce() -> Result<(), ModelError>,
+    ) -> ResponsesHttpResult {
+        let material = match crate::provider_backend::cancel::cancel_aware(
+            cancellation,
+            self.auth.auth_material(),
+        )
+        .await
+        {
+            Ok(material) => material,
+            Err(error) => return ResponsesHttpResult::err(error),
+        };
+        let request_auth = Self::responses_http_auth(&material.access_token);
+        let access_token = material.access_token.clone();
+        self.http()
+            .post_json_refreshing(
+                &request_auth,
+                || async {
+                    match self.auth.force_refresh(&access_token).await {
+                        Ok(None) => Ok(None),
+                        Ok(Some(refreshed)) => {
+                            Ok(Some(Self::responses_http_auth(&refreshed.access_token)))
+                        }
+                        Err(error) => Err(error),
+                    }
+                },
+                before_retry,
+                endpoint,
+                body,
+                cancellation,
+            )
+            .await
+    }
+
     async fn send_request(
         &self,
         request: ModelRequest<'_>,
@@ -101,20 +149,25 @@ impl XaiProvider {
             self.hosted,
         )?;
         let mut on_request_event = on_request_event;
-        let result = self
-            .post_with_auth_retry("responses", &body, Some(&cancellation), || {
-                if let Some(on_request_event) = on_request_event.as_mut() {
-                    on_request_event(
-                        rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
-                            kind: rho_sdk::ProviderErrorKind::Authentication,
-                            usage: crate::model::ModelUsage::default(),
-                        },
-                    )?;
-                }
-                Ok(())
-            })
+        let http_result = self
+            .post_responses(
+                ResponsesEndpoint::Create,
+                &body,
+                Some(&cancellation),
+                || {
+                    if let Some(on_request_event) = on_request_event.as_mut() {
+                        on_request_event(
+                            rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
+                                kind: rho_sdk::ProviderErrorKind::Authentication,
+                                usage: crate::model::ModelUsage::default(),
+                            },
+                        )?;
+                    }
+                    Ok(())
+                },
+            )
             .await;
-        result.response
+        http_result.response
     }
 
     async fn send_responses_turn(

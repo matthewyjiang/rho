@@ -1,7 +1,7 @@
 use super::*;
 use crate::model::{Message, ToolSpec};
 use pretty_assertions::assert_eq;
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::super::auth::Auth;
 use super::super::codex_request::{codex_test_auth, ResponsesProfile};
@@ -101,10 +101,9 @@ async fn compact_with_http_malformed_retry_response_preserves_failed_attempts() 
         net::TcpListener,
     };
 
-    use super::super::{
-        auth::CodexAuthSource, codex_ws::CodexWsTransport, responses_http::ResponsesHttpTransport,
-    };
+    use super::super::{auth::CodexAuthSource, codex_ws::CodexWsTransport};
     use crate::credentials::{CodexTokens, MemoryCredentialStore};
+    use crate::providers::responses_http::ResponsesHttpTransport;
 
     async fn read_http_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
         let mut buf = vec![0; 16_384];
@@ -195,7 +194,7 @@ async fn compact_with_http_malformed_retry_response_preserves_failed_attempts() 
     );
     let profile = ResponsesProfile::from_auth(&auth, "gpt-5.4");
     let refresh_url = format!("{base}/oauth/token");
-    let http = ResponsesHttpTransport::new(&client, &base).with_codex_refresh_url(&refresh_url);
+    let http = ResponsesHttpTransport::new(&client, &base);
     let codex_ws = CodexWsTransport::new(&base);
     let messages = [
         Message::System("system".into()),
@@ -203,11 +202,15 @@ async fn compact_with_http_malformed_retry_response_preserves_failed_attempts() 
         Message::assistant_text("world"),
     ];
     let response = compact_with_http(
-        Some(&auth),
-        &profile,
-        &OpenAiReasoningProfile::unknown(),
-        &http,
-        &codex_ws,
+        CompactHttp {
+            auth: Some(&auth),
+            profile: &profile,
+            reasoning_profile: &OpenAiReasoningProfile::unknown(),
+            http: &http,
+            client: &client,
+            refresh_url: &refresh_url,
+            codex_ws: &codex_ws,
+        },
         ModelRequest {
             messages: &messages,
             tools: &[],
