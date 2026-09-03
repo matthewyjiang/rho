@@ -100,7 +100,7 @@ fn tools_picker_marks_current_allow_list_per_runtime() {
                 tools: vec![CursorTool::Grep],
                 model: None,
             }),
-            expected_on: &["grep_tool_call"],
+            expected_on: &["grep"],
             expected_len: CursorTool::ALL.len(),
         },
     ];

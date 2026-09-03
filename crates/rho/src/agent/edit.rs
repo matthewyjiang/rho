@@ -482,7 +482,7 @@ impl AgentDefinition {
             AgentRuntimeSpec::Cursor(config) => config
                 .tools
                 .iter()
-                .map(|tool| tool.as_flag().to_string())
+                .map(|tool| tool.label().to_string())
                 .collect(),
         }
     }

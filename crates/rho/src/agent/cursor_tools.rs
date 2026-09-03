@@ -91,6 +91,39 @@ impl CursorTool {
         }
     }
 
+    /// Short name for UI rows: the flag without its `_tool_call` suffix
+    /// (`read`, `sem_search`). The agent file still stores [`Self::as_flag`].
+    pub fn label(self) -> &'static str {
+        let flag = self.as_flag();
+        flag.strip_suffix("_tool_call").unwrap_or(flag)
+    }
+
+    /// One-line description for picker detail text.
+    pub fn detail(self) -> &'static str {
+        match self {
+            Self::Read => "Read a file.",
+            Self::Grep => "Search file contents with a regex.",
+            Self::Glob => "Find files by pattern.",
+            Self::Ls => "List a directory.",
+            Self::SemSearch => "Semantic search over the indexed codebase.",
+            Self::ReadLints => "Read linter diagnostics for a file.",
+            Self::Edit => "Edit or create a file.",
+            Self::Delete => "Delete a file.",
+            Self::Shell => "Run a shell command.",
+            Self::WriteShellStdin => "Write to a running shell command's stdin.",
+            Self::WebSearch => "Search the web.",
+            Self::WebFetch => "Fetch a web page.",
+            Self::Fetch => "Fetch a URL as text.",
+            Self::Mcp => "Call any tool on a configured MCP server.",
+            Self::ListMcpResources => "List resources exposed by MCP servers.",
+            Self::ReadMcpResource => "Read one MCP resource.",
+            Self::UpdateTodos => "Create or update the todo list.",
+            Self::ReadTodos => "Read the todo list.",
+            Self::CreatePlan => "Write a plan document.",
+            Self::ApplyAgentDiff => "Apply a diff produced by the agent.",
+        }
+    }
+
     pub fn capability_kind(self) -> CapabilityKind {
         match self {
             Self::Read

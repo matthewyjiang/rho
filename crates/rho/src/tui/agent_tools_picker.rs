@@ -121,8 +121,8 @@ fn cursor_items(current: &[CursorTool]) -> Vec<PickerItem> {
         .iter()
         .map(|tool| {
             tool_row(
-                tool.as_flag(),
-                format!("{} capability.", tool.capability_kind().label()),
+                tool.label(),
+                format!("{} ({})", tool.detail(), tool.capability_kind().label()),
                 current.contains(tool),
                 format!("{AGENT_TOOL_ROW_PREFIX}{}", tool.as_flag()),
             )
