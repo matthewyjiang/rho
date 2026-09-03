@@ -37,6 +37,7 @@ use serde_json::Value;
 
 use rho_sdk::model::ModelUsage;
 
+use super::drain::StreamLineMapper;
 use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 
 use blocks::{emit_complete_block, emit_open_snapshot_block, note_tool_started};
@@ -160,6 +161,13 @@ impl StreamMapper {
             }
         };
         self.map_message(message)
+    }
+}
+
+/// Drain-loop surface. Mapping policy stays on the inherent [`StreamMapper::push_line`].
+impl StreamLineMapper for StreamMapper {
+    fn push_line(&mut self, line: &str) -> Vec<StreamEffect> {
+        StreamMapper::push_line(self, line)
     }
 }
 

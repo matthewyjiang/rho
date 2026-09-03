@@ -1,9 +1,8 @@
-use std::time::Duration;
-
 use pretty_assertions::assert_eq;
 use tokio::process::Command;
 
 use super::*;
+use crate::cli_runtime::ProbeError;
 
 /// Stable system shell used by process tests.
 ///
@@ -31,6 +30,7 @@ async fn run_sh_probe(body: &str, args: &[&str]) -> Result<BoundedOutput, Claude
         PROBE_TIMEOUT,
     )
     .await
+    .map_err(ClaudeAuthError::from)
 }
 
 #[cfg(unix)]
@@ -223,7 +223,7 @@ exit 1
     );
     let error = query_sh(&body).await.unwrap_err();
     match error {
-        ClaudeAuthError::OutputTooLarge { stream, cap, .. } => {
+        ClaudeAuthError::Probe(ProbeError::OutputTooLarge { stream, cap, .. }) => {
             assert_eq!(stream, "stdout");
             assert_eq!(cap, PROBE_OUTPUT_CAP_BYTES);
         }
@@ -265,33 +265,6 @@ exit 1
     .await
     .unwrap_err();
     assert!(matches!(error, ClaudeAuthError::InvalidJson(_)));
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn query_program_times_out_and_kills_hanging_child() {
-    let body = r#"
-if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
-  sleep 30
-  exit 0
-fi
-exit 1
-"#;
-    let injected = Duration::from_millis(200);
-    let started = std::time::Instant::now();
-    let error = run_bounded_command_with_timeout(
-        sh_probe_command(body, &["auth", "status"]),
-        STABLE_SH.into(),
-        injected,
-    )
-    .await
-    .unwrap_err();
-    match error {
-        ClaudeAuthError::Timeout { timeout, .. } => assert_eq!(timeout, injected),
-        other => panic!("expected Timeout, got {other:?}"),
-    }
-    // Must not wait out the production PROBE_TIMEOUT (10s) or the child sleep.
-    assert!(started.elapsed() < Duration::from_secs(2));
 }
 
 #[cfg(unix)]

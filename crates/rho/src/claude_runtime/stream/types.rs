@@ -39,10 +39,12 @@ pub(crate) struct StatusPatch {
     pub(crate) append_text: Option<String>,
     pub(crate) result: Option<String>,
     pub(crate) error: Option<String>,
+    // NEXT_MAJOR(result.json): rename claude_session_id/claude_model to runtime_session_id/runtime_model; readers branch on runtime.
     pub(crate) claude_session_id: Option<String>,
     /// Concrete model Claude reported running, from the `init` frame. Rho
     /// passes `--model` through untouched, so this is the only report of what
     /// an alias such as `opus` actually resolved to.
+    // NEXT_MAJOR(result.json): rename claude_session_id/claude_model to runtime_session_id/runtime_model; readers branch on runtime.
     pub(crate) claude_model: Option<String>,
     pub(crate) total_cost_usd: Option<f64>,
 }

@@ -19,9 +19,10 @@ use super::{
     auth::{self, ClaudeAuthError, ClaudeAuthStatus},
     drain::{self, DrainEnd},
     executable,
-    persist::StatusSink,
+    line_decoder::MAX_NDJSON_LINE_BYTES,
+    persist::{StatusSink, CLAUDE_LABEL},
     spawn::{self, ClaudeSpawnPlan, ClaudeSpawnRequest},
-    stream::TerminalResult,
+    stream::{StreamMapper, TerminalResult},
     terminal::{assess_terminal, TerminalOutcome},
 };
 
@@ -95,6 +96,7 @@ pub(crate) async fn run_session(mut request: ClaudeSessionRequest) -> anyhow::Re
             request.status_tx.take(),
             request.overrides.live_title.clone(),
             request.overrides.rate_limit_state_path.clone(),
+            CLAUDE_LABEL,
         )?,
         None => StatusSink::new(
             request.output_file.clone(),
@@ -102,6 +104,7 @@ pub(crate) async fn run_session(mut request: ClaudeSessionRequest) -> anyhow::Re
             &request.prompt,
             request.status_tx.take(),
             request.overrides.rate_limit_state_path.clone(),
+            CLAUDE_LABEL,
         )?,
     };
     let outcome = drive_session(&mut request, &mut sink).await;
@@ -149,17 +152,34 @@ async fn settle(mut sink: StatusSink, outcome: SessionOutcome) {
             // Protocol type:error is pending metadata only; final Failed/Completed
             // is chosen here after exit. Leave already-terminal state alone.
             if !sink.status().state.is_terminal() {
-                match assess_terminal(pending.map(|terminal| *terminal), status, &log_tail) {
-                    TerminalOutcome::Success(terminal) => {
-                        sink.finalize_success_from_stream(&terminal).await;
-                    }
-                    TerminalOutcome::Failure {
-                        terminal,
-                        detail,
-                        prefer_detail,
-                    } => {
-                        sink.finalize_failure_from_stream(terminal.as_ref(), detail, prefer_detail)
+                let pending = pending.map(|terminal| *terminal);
+                if !status.success() && spawn::looks_like_max_turns_unsupported(&log_tail) {
+                    sink.finalize_failure_from_stream(
+                        pending.as_ref(),
+                        format!(
+                            "{}: this claude binary rejected --max-turns; upgrade Claude Code or remove the turn cap",
+                            CLAUDE_LABEL.program
+                        ),
+                        /* prefer_detail */ true,
+                    )
+                    .await;
+                } else {
+                    match assess_terminal(pending, status, &log_tail, CLAUDE_LABEL.program) {
+                        TerminalOutcome::Success(terminal) => {
+                            sink.finalize_success_from_stream(&terminal).await;
+                        }
+                        TerminalOutcome::Failure {
+                            terminal,
+                            detail,
+                            prefer_detail,
+                        } => {
+                            sink.finalize_failure_from_stream(
+                                terminal.as_ref(),
+                                detail,
+                                prefer_detail,
+                            )
                             .await;
+                        }
                     }
                 }
             }
@@ -341,9 +361,15 @@ async fn drain_child(
 
     // Stderr is a log file here, so the drain captures none of it.
     let drained = {
+        let mut mapper = StreamMapper::new();
         let mut on_effect = |effect| sink.apply_effect(effect);
         drain::drain_child(
             child,
+            drain::DrainConfig {
+                program_label: CLAUDE_LABEL.program,
+                max_line_bytes: MAX_NDJSON_LINE_BYTES,
+            },
+            &mut mapper,
             drain::DrainInput::StreamJson {
                 initial_prompt: request.prompt.clone(),
                 parent_messages,

@@ -1,9 +1,10 @@
-//! Drive one spawned Claude child: prompt in, stream-json out, exit status.
+//! Drive one spawned CLI child: prompt in, stream-json out, exit status.
 //!
 //! Both Claude paths share this loop. It owns the mechanics - concurrent stdin,
 //! line decoding, bounded stderr capture, cancellation - and leaves policy to
-//! the caller's effect closure and to how the caller reads [`DrainEnd`].
+//! the caller's mapper, effect closure, and how the caller reads [`DrainEnd`].
 
+use rho_providers::provider_backend::line_decoder::LineDecoder;
 use rho_sdk::CancellationToken;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::ChildStdin;
@@ -12,15 +13,31 @@ use tokio::sync::{mpsc, oneshot};
 use crate::cli_runtime::{OwnedChild, StderrTail};
 
 use super::{
-    line_decoder::{claude_ndjson_line_decoder, LineDecodeError},
+    line_decoder::{claude_ndjson_line_decoder, LineDecodeError, MAX_NDJSON_LINE_BYTES},
     messaging,
-    stream::{StreamEffect, StreamMapper, TerminalResult},
+    stream::{StreamEffect, TerminalResult},
 };
 
 const READ_CHUNK_BYTES: usize = 8 * 1024;
-/// Child closed stdin early (flag rejection, quick exit). Non-fatal for the
-/// drain so exit status and stderr diagnosis still win.
-const STDIN_BROKEN_PIPE: &str = "claude code: stdin closed by child (broken pipe)";
+
+/// One CLI's NDJSON-line → effect policy. Implementors must be fail-soft:
+/// bad JSON becomes a notice effect, never an error.
+pub(crate) trait StreamLineMapper: Send {
+    fn push_line(&mut self, line: &str) -> Vec<StreamEffect>;
+}
+
+/// Drain bounds and labels that differ per CLI.
+pub(crate) struct DrainConfig {
+    pub(crate) program_label: &'static str,
+    pub(crate) max_line_bytes: usize,
+}
+
+/// Typed stdin write failure so broken-pipe can be ignored without comparing
+/// formatted strings.
+enum StdinWriteError {
+    BrokenPipe,
+    Other(String),
+}
 
 /// How the drain feeds the child's stdin.
 pub(crate) enum DrainInput {
@@ -63,6 +80,8 @@ pub(crate) struct Drained {
 /// on the returned [`Drained`], because both callers judge them after exit.
 pub(crate) async fn drain_child(
     child: &mut OwnedChild,
+    config: DrainConfig,
+    mapper: &mut dyn StreamLineMapper,
     input: DrainInput,
     cancellation: &CancellationToken,
     on_effect: &mut (dyn FnMut(StreamEffect) + Send),
@@ -71,7 +90,10 @@ pub(crate) async fn drain_child(
         return Drained {
             terminal: None,
             stderr: String::new(),
-            end: DrainEnd::StreamFailed("claude code: child stdout was not captured".into()),
+            end: DrainEnd::StreamFailed(format!(
+                "{}: child stdout was not captured",
+                config.program_label
+            )),
         };
     };
 
@@ -79,13 +101,18 @@ pub(crate) async fn drain_child(
         return Drained {
             terminal: None,
             stderr: String::new(),
-            end: DrainEnd::StdinFailed("claude code: child stdin was not captured".into()),
+            end: DrainEnd::StdinFailed(format!(
+                "{}: child stdin was not captured",
+                config.program_label
+            )),
         };
     };
 
+    let program_label = config.program_label;
     let (close_tx, stdin_write) = match input {
         DrainInput::Text { prompt } => {
-            let write = tokio::spawn(async move { write_text_stdin(stdin, prompt).await });
+            let write =
+                tokio::spawn(async move { write_text_stdin(stdin, prompt, program_label).await });
             (None, write)
         }
         DrainInput::StreamJson {
@@ -94,7 +121,14 @@ pub(crate) async fn drain_child(
         } => {
             let (close_tx, close_rx) = oneshot::channel::<()>();
             let write = tokio::spawn(async move {
-                write_stream_json_stdin(stdin, initial_prompt, parent_messages, close_rx).await
+                write_stream_json_stdin(
+                    stdin,
+                    initial_prompt,
+                    parent_messages,
+                    close_rx,
+                    program_label,
+                )
+                .await
             });
             (Some(close_tx), write)
         }
@@ -106,8 +140,11 @@ pub(crate) async fn drain_child(
     tokio::pin!(read_stderr);
 
     let mut stdout = BufReader::new(stdout);
-    let mut decoder = claude_ndjson_line_decoder();
-    let mut mapper = StreamMapper::new();
+    let mut decoder = if config.max_line_bytes == MAX_NDJSON_LINE_BYTES {
+        claude_ndjson_line_decoder()
+    } else {
+        LineDecoder::with_max_line_bytes(config.max_line_bytes)
+    };
     let mut terminal: Option<TerminalResult> = None;
     let mut stderr_text = String::new();
     let mut stderr_done = false;
@@ -141,8 +178,11 @@ pub(crate) async fn drain_child(
                     // bare pipe error. Other write failures still abort: the
                     // child often exits uncleanly once its stdin is dropped
                     // mid-protocol.
-                    if error != STDIN_BROKEN_PIPE {
-                        break Some(DrainEnd::StdinFailed(error));
+                    match error {
+                        StdinWriteError::BrokenPipe => {}
+                        StdinWriteError::Other(message) => {
+                            break Some(DrainEnd::StdinFailed(message));
+                        }
                     }
                 }
             }
@@ -181,7 +221,7 @@ pub(crate) async fn drain_child(
                                 }
                                 Ok(None) => break,
                                 Err(error) => {
-                                    decode_error = Some(format_line_error(&error));
+                                    decode_error = Some(format_line_error(&error, program_label));
                                     break;
                                 }
                             }
@@ -192,7 +232,7 @@ pub(crate) async fn drain_child(
                     }
                     Err(error) => {
                         break Some(DrainEnd::StreamFailed(format!(
-                            "claude code: failed reading stdout: {error}"
+                            "{program_label}: failed reading stdout: {error}"
                         )));
                     }
                 }
@@ -203,7 +243,7 @@ pub(crate) async fn drain_child(
     let end = match early_end {
         Some(end) => end,
         None => match decoder.finish() {
-            Err(error) => DrainEnd::StreamFailed(format_line_error(&error)),
+            Err(error) => DrainEnd::StreamFailed(format_line_error(&error, program_label)),
             Ok(tail) => {
                 if let Some(line) = tail {
                     for effect in mapper.push_line(line) {
@@ -225,9 +265,13 @@ pub(crate) async fn drain_child(
     }
 }
 
-async fn write_text_stdin(mut stdin: ChildStdin, prompt: String) -> Result<(), String> {
-    write_all(&mut stdin, prompt.as_bytes()).await?;
-    shutdown_stdin(&mut stdin).await
+async fn write_text_stdin(
+    mut stdin: ChildStdin,
+    prompt: String,
+    program_label: &'static str,
+) -> Result<(), StdinWriteError> {
+    write_all(&mut stdin, prompt.as_bytes(), program_label).await?;
+    shutdown_stdin(&mut stdin, program_label).await
 }
 
 async fn write_stream_json_stdin(
@@ -235,10 +279,12 @@ async fn write_stream_json_stdin(
     initial_prompt: String,
     mut parent_messages: Option<messaging::ClaudeMessageInbox>,
     close_rx: oneshot::Receiver<()>,
-) -> Result<(), String> {
+    program_label: &'static str,
+) -> Result<(), StdinWriteError> {
     write_all(
         &mut stdin,
         messaging::encode_user_turn(&initial_prompt).as_bytes(),
+        program_label,
     )
     .await?;
 
@@ -249,7 +295,7 @@ async fn write_stream_json_stdin(
         if let Some(inbox) = parent_messages.as_mut() {
             match inbox.try_recv() {
                 Ok(text) => {
-                    write_parent_turn(&mut stdin, &text).await?;
+                    write_parent_turn(&mut stdin, &text, program_label).await?;
                     continue;
                 }
                 Err(mpsc::error::TryRecvError::Empty) => {}
@@ -276,7 +322,7 @@ async fn write_stream_json_stdin(
             }
             maybe_text = recv_parent(&mut parent_messages), if parent_messages.is_some() => {
                 if let Some(text) = maybe_text {
-                    write_parent_turn(&mut stdin, &text).await?;
+                    write_parent_turn(&mut stdin, &text, program_label).await?;
                 }
             }
         }
@@ -288,46 +334,62 @@ async fn write_stream_json_stdin(
         // Seal is idempotent; covers paths that broke without a close signal.
         inbox.seal();
         while let Some(text) = inbox.recv().await {
-            write_parent_turn(&mut stdin, &text).await?;
+            write_parent_turn(&mut stdin, &text, program_label).await?;
         }
     }
 
-    shutdown_stdin(&mut stdin).await
+    shutdown_stdin(&mut stdin, program_label).await
 }
 
-async fn write_parent_turn(stdin: &mut ChildStdin, text: &str) -> Result<(), String> {
+async fn write_parent_turn(
+    stdin: &mut ChildStdin,
+    text: &str,
+    program_label: &'static str,
+) -> Result<(), StdinWriteError> {
     write_all(
         stdin,
         messaging::encode_user_turn(&messaging::frame_parent_message(text)).as_bytes(),
+        program_label,
     )
     .await
 }
 
-async fn write_all(stdin: &mut ChildStdin, mut bytes: &[u8]) -> Result<(), String> {
+async fn write_all(
+    stdin: &mut ChildStdin,
+    mut bytes: &[u8],
+    program_label: &'static str,
+) -> Result<(), StdinWriteError> {
     while !bytes.is_empty() {
         match stdin.write(bytes).await {
             Ok(0) => {
-                return Err("claude code: failed to write prompt to stdin: wrote 0 bytes".into());
+                return Err(StdinWriteError::Other(format!(
+                    "{program_label}: failed to write prompt to stdin: wrote 0 bytes"
+                )));
             }
             Ok(count) => bytes = &bytes[count..],
-            Err(error) => return Err(map_stdin_io_error(error)),
+            Err(error) => return Err(map_stdin_io_error(error, program_label)),
         }
     }
     Ok(())
 }
 
-async fn shutdown_stdin(stdin: &mut ChildStdin) -> Result<(), String> {
+async fn shutdown_stdin(
+    stdin: &mut ChildStdin,
+    program_label: &'static str,
+) -> Result<(), StdinWriteError> {
     match stdin.shutdown().await {
         Ok(()) => Ok(()),
-        Err(error) => Err(map_stdin_io_error(error)),
+        Err(error) => Err(map_stdin_io_error(error, program_label)),
     }
 }
 
-fn map_stdin_io_error(error: std::io::Error) -> String {
+fn map_stdin_io_error(error: std::io::Error, program_label: &str) -> StdinWriteError {
     if error.kind() == std::io::ErrorKind::BrokenPipe {
-        STDIN_BROKEN_PIPE.into()
+        StdinWriteError::BrokenPipe
     } else {
-        format!("claude code: failed to write prompt to stdin: {error}")
+        StdinWriteError::Other(format!(
+            "{program_label}: failed to write prompt to stdin: {error}"
+        ))
     }
 }
 
@@ -350,13 +412,13 @@ async fn recv_parent(
     }
 }
 
-pub(crate) fn format_line_error(error: &LineDecodeError) -> String {
+pub(crate) fn format_line_error(error: &LineDecodeError, program_label: &str) -> String {
     match error {
         LineDecodeError::InvalidUtf8(_) => {
-            format!("claude code: malformed UTF-8 on stream-json stdout: {error}")
+            format!("{program_label}: malformed UTF-8 on stream-json stdout: {error}")
         }
         LineDecodeError::LineTooLong { .. } => {
-            format!("claude code: oversize stream-json line: {error}")
+            format!("{program_label}: oversize stream-json line: {error}")
         }
     }
 }

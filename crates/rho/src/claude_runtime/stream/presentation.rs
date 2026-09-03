@@ -514,6 +514,8 @@ pub(crate) fn reasoning_effects(text: &str) -> Vec<StreamEffect> {
 }
 
 /// Apply a status patch onto a live RunStatus.
+///
+/// NEXT_MAJOR(result.json): rename claude_session_id/claude_model to runtime_session_id/runtime_model; readers branch on runtime.
 pub(crate) fn apply_status_patch(status: &mut RunStatus, patch: StatusPatch) {
     if let Some(state) = patch.state {
         // Never let stream patches demote a terminal state back to nonterminal.

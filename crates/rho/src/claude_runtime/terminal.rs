@@ -1,9 +1,6 @@
 //! Decide whether a completed Claude process produced a usable result.
 
-use super::{
-    spawn,
-    stream::{TerminalClassification, TerminalResult},
-};
+use super::stream::{TerminalClassification, TerminalResult};
 
 /// The protocol and process result after Claude has exited.
 pub(crate) enum TerminalOutcome {
@@ -28,9 +25,10 @@ pub(crate) fn assess_terminal(
     pending: Option<TerminalResult>,
     exit_status: std::process::ExitStatus,
     stderr: &str,
+    program_label: &'static str,
 ) -> TerminalOutcome {
     if !exit_status.success() {
-        let detail = non_zero_exit_detail(pending.as_ref(), exit_status, stderr);
+        let detail = non_zero_exit_detail(pending.as_ref(), exit_status, stderr, program_label);
         return TerminalOutcome::Failure {
             terminal: pending,
             detail,
@@ -56,7 +54,7 @@ pub(crate) fn assess_terminal(
                 .error
                 .clone()
                 .or_else(|| terminal.result_text.clone())
-                .unwrap_or_else(|| "claude code: terminal result was not success".into());
+                .unwrap_or_else(|| format!("{program_label}: terminal result was not success"));
             TerminalOutcome::Failure {
                 terminal: Some(terminal),
                 detail,
@@ -65,7 +63,7 @@ pub(crate) fn assess_terminal(
         }
         None => TerminalOutcome::Failure {
             terminal: None,
-            detail: "claude code: stream ended without a terminal result message".into(),
+            detail: format!("{program_label}: stream ended without a terminal result message"),
             prefer_detail: true,
         },
     }
@@ -74,22 +72,18 @@ pub(crate) fn assess_terminal(
 /// Failure text when the Claude process exits uncleanly.
 ///
 /// Order of preference:
-/// 1. known unsupported-flag diagnosis from stderr
-/// 2. stream-json failure/invalid text (safeguards, API errors) when stderr is empty
-/// 3. exit status plus stderr, optionally followed by stream failure text
+/// 1. stream-json failure/invalid text (safeguards, API errors) when stderr is empty
+/// 2. exit status plus stderr, optionally followed by stream failure text
 fn non_zero_exit_detail(
     pending: Option<&TerminalResult>,
     exit_status: std::process::ExitStatus,
     stderr: &str,
+    program_label: &'static str,
 ) -> String {
-    if spawn::looks_like_max_turns_unsupported(stderr) {
-        return "claude code: this claude binary rejected --max-turns; upgrade Claude Code or remove the turn cap".into();
-    }
-
     let process_detail = if stderr.is_empty() {
-        format!("claude code: process exited with {exit_status}")
+        format!("{program_label}: process exited with {exit_status}")
     } else {
-        format!("claude code: process exited with {exit_status}: {stderr}")
+        format!("{program_label}: process exited with {exit_status}: {stderr}")
     };
 
     let Some(stream_error) = stream_failure_text(pending) else {

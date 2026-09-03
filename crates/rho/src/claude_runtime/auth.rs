@@ -6,14 +6,15 @@
 //! All probes are bounded: short timeout, capped stdout/stderr, and the child
 //! is killed and awaited on timeout when the host allows it.
 
-use std::{io, process::Stdio, time::Duration};
+use std::time::Duration;
 
 use serde::Deserialize;
 use thiserror::Error;
-use tokio::io::{AsyncRead, AsyncReadExt};
-use tokio::process::Command;
 
-use crate::cli_runtime::{CliExecutable, CliExecutableError};
+use crate::cli_runtime::{run_bounded_probe, BoundedOutput, CliExecutable, ProbeError};
+
+#[cfg(test)]
+pub(crate) use crate::cli_runtime::{run_bounded_command_with_timeout, PROBE_OUTPUT_CAP_BYTES};
 
 use super::executable;
 
@@ -24,11 +25,9 @@ pub(crate) const CLAUDE_PROGRAM: &str = "claude";
 ///
 /// Cold Claude starts and keychain access can exceed a few seconds. Ten seconds
 /// stays bounded for UI probes while avoiding false timeouts on first launch.
-/// Tests inject a shorter timeout via [`run_bounded_command_with_timeout`].
+/// Tests inject a shorter timeout via
+/// [`crate::cli_runtime::run_bounded_command_with_timeout`].
 pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Hard cap for each of stdout and stderr on a probe.
-pub(crate) const PROBE_OUTPUT_CAP_BYTES: usize = 64 * 1024;
 
 /// Parsed `claude auth status` payload.
 ///
@@ -57,31 +56,13 @@ pub(crate) struct ClaudeAuthStatus {
 pub(crate) enum ClaudeAuthError {
     #[error("claude code: binary not found on PATH")]
     BinaryMissing,
-    #[error("claude code: failed to run `{program}`: {source}")]
-    Spawn {
-        program: String,
-        #[source]
-        source: io::Error,
-    },
+    #[error("claude code: {0}")]
+    Probe(ProbeError),
     #[error("claude code: `{program}` exited with {status}")]
     ExitStatus {
         program: String,
         status: std::process::ExitStatus,
         stderr: String,
-    },
-    #[error("claude code: `{program}` timed out after {timeout:?}")]
-    Timeout { program: String, timeout: Duration },
-    #[error("claude code: `{program}` produced more than {cap} bytes of {stream}")]
-    OutputTooLarge {
-        program: String,
-        stream: &'static str,
-        cap: usize,
-    },
-    #[error("claude code: `{program}` cannot be invoked safely: {source}")]
-    Invocation {
-        program: String,
-        #[source]
-        source: CliExecutableError,
     },
     #[error("claude code: auth status output was not valid UTF-8")]
     InvalidUtf8,
@@ -89,6 +70,15 @@ pub(crate) enum ClaudeAuthError {
     EmptyOutput { program: String },
     #[error("claude code: could not parse auth status JSON: {0}")]
     InvalidJson(#[from] serde_json::Error),
+}
+
+impl From<ProbeError> for ClaudeAuthError {
+    fn from(error: ProbeError) -> Self {
+        match error {
+            ProbeError::BinaryMissing => Self::BinaryMissing,
+            other => Self::Probe(other),
+        }
+    }
 }
 
 impl ClaudeAuthError {
@@ -205,7 +195,7 @@ pub(crate) async fn query() -> Result<ClaudeAuthStatus, ClaudeAuthError> {
 pub(crate) async fn query_executable(
     executable: &CliExecutable,
 ) -> Result<ClaudeAuthStatus, ClaudeAuthError> {
-    let output = run_bounded_probe(executable, &["auth", "status"]).await?;
+    let output = run_bounded_probe(executable, &["auth", "status"], PROBE_TIMEOUT).await?;
     parse_auth_status_output(&executable.display(), &output)
 }
 
@@ -219,7 +209,7 @@ pub(crate) async fn logout() -> Result<(), ClaudeAuthError> {
 }
 
 pub(crate) async fn logout_executable(executable: &CliExecutable) -> Result<(), ClaudeAuthError> {
-    let output = run_bounded_probe(executable, &["auth", "logout"]).await?;
+    let output = run_bounded_probe(executable, &["auth", "logout"], PROBE_TIMEOUT).await?;
     if output.status.success() {
         Ok(())
     } else {
@@ -240,7 +230,7 @@ pub(crate) async fn version() -> Result<String, ClaudeAuthError> {
 pub(crate) async fn version_executable(
     executable: &CliExecutable,
 ) -> Result<String, ClaudeAuthError> {
-    let output = run_bounded_probe(executable, &["--version"]).await?;
+    let output = run_bounded_probe(executable, &["--version"], PROBE_TIMEOUT).await?;
     if !output.status.success() {
         return Err(ClaudeAuthError::ExitStatus {
             program: executable.display(),
@@ -260,7 +250,10 @@ pub(crate) async fn version_executable(
 #[cfg(test)]
 impl ClaudeAuthError {
     pub(crate) fn is_binary_missing(&self) -> bool {
-        matches!(self, Self::BinaryMissing)
+        matches!(
+            self,
+            Self::BinaryMissing | Self::Probe(ProbeError::BinaryMissing)
+        )
     }
 }
 
@@ -270,164 +263,6 @@ pub(crate) async fn probe_snapshot() -> ClaudeProbeSnapshot {
     let version = version();
     let (auth, version) = tokio::join!(auth, version);
     ClaudeProbeSnapshot::from_results(auth, version)
-}
-
-/// Bounded child run used by status/version/logout helpers.
-#[derive(Debug)]
-struct BoundedOutput {
-    status: std::process::ExitStatus,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-}
-
-impl BoundedOutput {
-    fn stderr_lossy_trimmed(&self) -> String {
-        String::from_utf8_lossy(&self.stderr).trim().to_string()
-    }
-}
-
-async fn run_bounded_probe(
-    executable: &CliExecutable,
-    args: &[&str],
-) -> Result<BoundedOutput, ClaudeAuthError> {
-    run_bounded_probe_with_timeout(executable, args, PROBE_TIMEOUT).await
-}
-
-async fn run_bounded_probe_with_timeout(
-    executable: &CliExecutable,
-    args: &[&str],
-    timeout: Duration,
-) -> Result<BoundedOutput, ClaudeAuthError> {
-    let program = executable.display();
-    let command = executable
-        .try_command(args.iter().copied())
-        .map_err(|source| ClaudeAuthError::Invocation {
-            program: program.clone(),
-            source,
-        })?;
-    run_bounded_command_with_timeout(command, program, timeout).await
-}
-
-/// Run an already-built probe command with the standard bounds.
-///
-/// Production helpers build the command from a resolved [`CliExecutable`].
-/// Tests inject a stable system shell (`/bin/sh -c …`) so they never exec a
-/// freshly written file (which can race with `ETXTBSY` under parallel load).
-async fn run_bounded_command_with_timeout(
-    mut command: Command,
-    program: String,
-    timeout: Duration,
-) -> Result<BoundedOutput, ClaudeAuthError> {
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-
-    let mut child = command
-        .spawn()
-        .map_err(|source| map_spawn_error(&program, source))?;
-
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-
-    let collect = async {
-        let stdout_task = async {
-            match stdout {
-                Some(pipe) => read_capped(pipe, PROBE_OUTPUT_CAP_BYTES).await,
-                None => Ok(Vec::new()),
-            }
-        };
-        let stderr_task = async {
-            match stderr {
-                Some(pipe) => read_capped(pipe, PROBE_OUTPUT_CAP_BYTES).await,
-                None => Ok(Vec::new()),
-            }
-        };
-        let (stdout, stderr) = tokio::join!(stdout_task, stderr_task);
-        let stdout = map_capped_read(stdout, &program, "stdout")?;
-        let stderr = map_capped_read(stderr, &program, "stderr")?;
-        let status = child
-            .wait()
-            .await
-            .map_err(|source| ClaudeAuthError::Spawn {
-                program: program.clone(),
-                source,
-            })?;
-        Ok::<BoundedOutput, ClaudeAuthError>(BoundedOutput {
-            status,
-            stdout,
-            stderr,
-        })
-    };
-
-    match tokio::time::timeout(timeout, collect).await {
-        Ok(result) => result,
-        Err(_) => {
-            // Kill and reap the direct child. Probes use short budgets and
-            // `kill_on_drop`; this path covers the timeout case explicitly so
-            // the direct child is not left running. Full process-tree ownership
-            // (descendants of a misbehaving binary) belongs to the Claude
-            // execution lifecycle worker, not these short status/version probes.
-            let _ = child.start_kill();
-            let _ = child.wait().await;
-            Err(ClaudeAuthError::Timeout { program, timeout })
-        }
-    }
-}
-
-/// Bounded-read failure: I/O errors stay distinct from the hard size cap.
-enum CappedReadError {
-    Io(io::Error),
-    TooLarge,
-}
-
-async fn read_capped<R>(mut reader: R, cap: usize) -> Result<Vec<u8>, CappedReadError>
-where
-    R: AsyncRead + Unpin,
-{
-    let mut buffer = Vec::new();
-    let mut chunk = [0_u8; 2048];
-    loop {
-        let read = reader.read(&mut chunk).await.map_err(CappedReadError::Io)?;
-        if read == 0 {
-            return Ok(buffer);
-        }
-        if buffer.len().saturating_add(read) > cap {
-            return Err(CappedReadError::TooLarge);
-        }
-        buffer.extend_from_slice(&chunk[..read]);
-    }
-}
-
-fn map_capped_read(
-    result: Result<Vec<u8>, CappedReadError>,
-    program: &str,
-    stream: &'static str,
-) -> Result<Vec<u8>, ClaudeAuthError> {
-    match result {
-        Ok(bytes) => Ok(bytes),
-        Err(CappedReadError::TooLarge) => Err(ClaudeAuthError::OutputTooLarge {
-            program: program.into(),
-            stream,
-            cap: PROBE_OUTPUT_CAP_BYTES,
-        }),
-        Err(CappedReadError::Io(source)) => Err(ClaudeAuthError::Spawn {
-            program: program.into(),
-            source,
-        }),
-    }
-}
-
-fn map_spawn_error(program: &str, source: io::Error) -> ClaudeAuthError {
-    if source.kind() == io::ErrorKind::NotFound {
-        ClaudeAuthError::BinaryMissing
-    } else {
-        ClaudeAuthError::Spawn {
-            program: program.into(),
-            source,
-        }
-    }
 }
 
 fn parse_auth_status_output(

@@ -18,6 +18,19 @@ use super::super::{
     stream::{self, apply_status_patch, StreamEffect, TerminalResult},
 };
 
+/// Starting activity and program name for a CLI runtime sink.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RuntimeLabel {
+    pub(crate) starting_activity: &'static str,
+    pub(crate) program: &'static str,
+}
+
+/// Claude Code labels for [`StatusSink`].
+pub(crate) const CLAUDE_LABEL: RuntimeLabel = RuntimeLabel {
+    starting_activity: "starting claude",
+    program: "claude code",
+};
+
 /// Thin Claude-facing handle around [`RunArtifactSink`].
 pub(crate) struct StatusSink {
     inner: RunArtifactSink,
@@ -34,9 +47,10 @@ impl StatusSink {
         prompt: &str,
         status_tx: Option<watch::Sender<RunStatus>>,
         rate_limit_state_path: Option<PathBuf>,
+        label: RuntimeLabel,
     ) -> anyhow::Result<Self> {
         let mut inner = RunArtifactSink::open(path, identity, prompt, status_tx)?;
-        inner.status.last_activity = Some("starting claude".into());
+        inner.status.last_activity = Some(label.starting_activity.into());
         inner.publish();
         Ok(Self {
             inner,
@@ -53,8 +67,9 @@ impl StatusSink {
         status_tx: Option<watch::Sender<RunStatus>>,
         live_title: Option<LiveRunTitle>,
         rate_limit_state_path: Option<PathBuf>,
+        label: RuntimeLabel,
     ) -> anyhow::Result<Self> {
-        status.last_activity = Some("starting claude".into());
+        status.last_activity = Some(label.starting_activity.into());
         let mut inner =
             RunArtifactSink::continue_from(path, status, prompt, status_tx, live_title)?;
         inner.publish();

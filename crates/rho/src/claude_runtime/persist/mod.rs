@@ -9,4 +9,4 @@ mod sink;
 #[path = "persist_tests.rs"]
 mod tests;
 
-pub(crate) use sink::StatusSink;
+pub(crate) use sink::{StatusSink, CLAUDE_LABEL};

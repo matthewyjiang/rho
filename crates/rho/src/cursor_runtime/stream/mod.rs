@@ -29,6 +29,7 @@ use std::path::PathBuf;
 
 use rho_sdk::model::ModelUsage;
 
+use crate::claude_runtime::drain::StreamLineMapper;
 #[cfg(test)]
 use crate::claude_runtime::stream::apply_status_patch;
 use crate::claude_runtime::stream::{
@@ -102,9 +103,7 @@ impl CursorStreamMapper {
         vec![StreamEffect::Status(StatusPatch {
             state: Some(RunState::Running),
             last_activity: Some("cursor init".into()),
-            // NEXT_MAJOR(RunStatus): rename claude_session_id / claude_model to
-            // agent_session_id / agent_model; Cursor reuses the Claude-named
-            // fields until then so the status contract stays minor-compatible.
+            // NEXT_MAJOR(result.json): rename claude_session_id/claude_model to runtime_session_id/runtime_model; readers branch on runtime.
             claude_session_id: init.session_id,
             claude_model: init
                 .model
@@ -253,6 +252,12 @@ impl CursorStreamMapper {
         self.step_started = true;
         effects.insert(0, StreamEffect::Attachment(AttachmentEvent::StepStarted));
         effects
+    }
+}
+
+impl StreamLineMapper for CursorStreamMapper {
+    fn push_line(&mut self, line: &str) -> Vec<StreamEffect> {
+        CursorStreamMapper::push_line(self, line)
     }
 }
 

@@ -2,7 +2,7 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 use tokio::sync::watch;
 
-use super::StatusSink;
+use super::{StatusSink, CLAUDE_LABEL};
 use crate::claude_runtime::stream::{
     StatusPatch, StreamEffect, TerminalClassification, TerminalResult,
 };
@@ -49,7 +49,15 @@ fn read_attachment_events(output: &std::path::Path) -> Vec<AttachmentEvent> {
 async fn sink_writes_prompt_and_starting_status() {
     let directory = TempDir::new().unwrap();
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
-    let sink = StatusSink::new(output.clone(), &identity(), "plan this", None, None).unwrap();
+    let sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "plan this",
+        None,
+        None,
+        CLAUDE_LABEL,
+    )
+    .unwrap();
     assert_eq!(sink.status().state, RunState::Starting);
     assert_eq!(sink.status().provider.as_deref(), Some("claude-code"));
     assert_eq!(sink.status().model.as_deref(), Some("opus"));
@@ -69,7 +77,15 @@ async fn sink_applies_stream_effects_and_finalizes_success() {
     let directory = TempDir::new().unwrap();
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
     let (tx, rx) = watch::channel(RunStatus::default());
-    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", Some(tx), None).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        Some(tx),
+        None,
+        CLAUDE_LABEL,
+    )
+    .unwrap();
 
     sink.mark_running();
     sink.apply_effect(StreamEffect::Attachment(AttachmentEvent::StepStarted));
@@ -103,7 +119,15 @@ async fn sink_applies_stream_effects_and_finalizes_success() {
 async fn sink_fail_and_stop_are_terminal() {
     let directory = TempDir::new().unwrap();
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
-    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", None, None).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        None,
+        CLAUDE_LABEL,
+    )
+    .unwrap();
     sink.fail("boom").await;
     let status = subagent::read_status(&output).expect("status");
     assert_eq!(status.state, RunState::Error);
@@ -114,7 +138,15 @@ async fn sink_fail_and_stop_are_terminal() {
 
     let directory = TempDir::new().unwrap();
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
-    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", None, None).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        None,
+        CLAUDE_LABEL,
+    )
+    .unwrap();
     sink.stop("cancelled", None).await;
     let status = subagent::read_status(&output).expect("status");
     assert_eq!(status.state, RunState::Stopped);
@@ -136,6 +168,7 @@ async fn sink_collects_rate_limits_until_settle() {
         "prompt",
         None,
         Some(rate_limit_path.clone()),
+        CLAUDE_LABEL,
     )
     .unwrap();
     sink.apply_effect(StreamEffect::RateLimit(
@@ -161,7 +194,15 @@ async fn sink_collects_rate_limits_until_settle() {
 async fn second_terminal_finish_is_ignored() {
     let directory = TempDir::new().unwrap();
     let output = directory.path().join(subagent::RESULT_FILE_NAME);
-    let mut sink = StatusSink::new(output.clone(), &identity(), "prompt", None, None).unwrap();
+    let mut sink = StatusSink::new(
+        output.clone(),
+        &identity(),
+        "prompt",
+        None,
+        None,
+        CLAUDE_LABEL,
+    )
+    .unwrap();
     sink.finalize_success_from_stream(&success_terminal()).await;
     sink.fail("later").await;
     let status = subagent::read_status(&output).expect("status");

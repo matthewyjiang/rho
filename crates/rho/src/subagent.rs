@@ -117,11 +117,22 @@ pub struct RunStatus {
     pub attachment_error: Option<String>,
     /// Claude Code session id from a `runtime: claude-cli` run. Resume with
     /// `claude --resume <id>`. Absent for Rho runtime runs.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(result.json): rename claude_session_id/claude_model to runtime_session_id/runtime_model; readers branch on runtime.
+    ///
+    /// Cursor reuses these Claude-named fields so the status contract stays
+    /// minor-compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_session_id: Option<String>,
     /// Model a `runtime: claude-cli` run reported binding. Rho passes `--model`
     /// through untouched, so this is what an alias such as `opus` resolved to.
     /// Absent for Rho runtime runs and until the run reports its init frame.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(result.json): rename claude_session_id/claude_model to runtime_session_id/runtime_model; readers branch on runtime.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_model: Option<String>,
     /// Terminal `total_cost_usd` from Claude's result message when present.

@@ -1,6 +1,15 @@
 use pretty_assertions::assert_eq;
 
+use super::super::line_decoder::MAX_NDJSON_LINE_BYTES;
+use super::super::stream::StreamMapper;
 use super::*;
+
+fn claude_drain_config() -> DrainConfig {
+    DrainConfig {
+        program_label: "claude code",
+        max_line_bytes: MAX_NDJSON_LINE_BYTES,
+    }
+}
 
 #[cfg(unix)]
 use std::process::Stdio;
@@ -26,10 +35,13 @@ async fn child_exit_closes_pipes_inherited_by_descendants() {
 
     // Three seconds is a generous CI tripwire for a process that exits at once,
     // while remaining far below the fixture descendant's 30-second lifetime.
+    let mut mapper = StreamMapper::new();
     let drained = tokio::time::timeout(
         std::time::Duration::from_secs(3),
         drain_child(
             &mut child,
+            claude_drain_config(),
+            &mut mapper,
             DrainInput::Text {
                 prompt: String::new(),
             },
@@ -66,10 +78,13 @@ async fn broken_pipe_on_stdin_still_reaps_exit_and_stderr() {
     let mut on_effect = |_| {};
     let prompt = "P".repeat(256 * 1024);
 
+    let mut mapper = StreamMapper::new();
     let drained = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         drain_child(
             &mut child,
+            claude_drain_config(),
+            &mut mapper,
             DrainInput::Text { prompt },
             &cancellation,
             &mut on_effect,
@@ -144,10 +159,13 @@ sys.stdin.read()
 
     handle.send("pivot now".into()).await.unwrap();
 
+    let mut mapper = StreamMapper::new();
     let drained = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         drain_child(
             &mut child,
+            claude_drain_config(),
+            &mut mapper,
             DrainInput::StreamJson {
                 initial_prompt: "start".into(),
                 parent_messages: Some(receiver),
