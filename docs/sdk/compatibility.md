@@ -93,11 +93,17 @@ opaque JSON scoped by exact `ModelIdentity`; it must not contain credentials.
 ### `rho_sdk::provider` and `rho_sdk::tool`
 
 The provider extension surface includes `ModelProvider`, `ModelRequestOptions`,
-its explicit future and event-channel types, and scripted downstream test support. The tool
+its explicit future and event-channel types, mid-turn steering ports
+(`ProviderSteeringRequest`, `ProviderSteeringReceiver`,
+`send_turn_stream_steerable`), and scripted downstream test support. The tool
 extension surface includes `Tool`, `ToolRegistry`, `ToolInvocation`,
 `ToolContext`, output/error/metadata/progress types, security declarations, and
 scripted downstream test support. Both extension traits are object-safe, require
 `Send + Sync`, and return `Send` futures.
+
+`send_turn_stream`, `send_turn_stream_with_options`, and
+`send_turn_stream_steerable` stay as three methods in this major.
+`NEXT_MAJOR(rho-sdk): collapse send_turn_stream, send_turn_stream_with_options and send_turn_stream_steerable into one method taking a request context that carries options and the steering port.`
 
 `ToolInvocation::arguments` and `into_arguments` intentionally support borrowed
 and owned argument parsing. `ToolRegistry::len` and `is_empty` intentionally

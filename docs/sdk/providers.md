@@ -19,7 +19,7 @@ A provider implementation must:
 7. keep credentials, authorization headers, signed URLs, raw secret-bearing payloads, and transport-specific errors out of public `Debug`, events, diagnostics, and error messages
 8. scope opaque provider-native replay data to the exact provider/API/model identity that produced it
 
-`send_turn` is the non-streaming primitive. `send_turn_stream` may be overridden for streaming. Its default implementation invokes `send_turn` while observing cancellation. Streaming providers send semantic `ModelEvent` values through the supplied bounded sender and still return a complete normalized response. The final response, not accumulated deltas, is the authoritative completed turn.
+`send_turn` is the non-streaming primitive. `send_turn_stream` may be overridden for streaming. Its default implementation invokes `send_turn` while observing cancellation. `send_turn_stream_with_options` adds request settings. `send_turn_stream_steerable` is the defaulted mid-turn steering port: dropping the receiver releases every request so existing providers keep today's boundary-apply behavior. Streaming providers send semantic `ModelEvent` values through the supplied bounded sender and still return a complete normalized response. The final response, not accumulated deltas, is the authoritative completed turn.
 
 ## Credentials and endpoints
 

@@ -84,6 +84,10 @@ event internally and never lowers it to a `RunEvent` or persists it.
 
 `Run::steer_retractable` is the same acceptance path but returns a `SteeringId`. While the input is still staged (provider streaming or tools running), the host may call `Run::retract_steering`. The runtime decides the race atomically and returns `SteeringRetraction::Retracted`, `AlreadyApplied`, or `NotFound`. Prefer retractable steering when the UI lets users pull back queued steer text.
 
+Providers that implement `ModelProvider::send_turn_stream_steerable` may claim a staged steer while the current turn is still streaming. `RunEvent::SteeringDelivered` means the backend acknowledged that input inside the current model turn. `RunEvent::SteeringApplied` still fires when the same id crosses into conversation history. The default provider method drops the steering port, so those steers apply only at the boundary and never emit `SteeringDelivered`.
+
+Retracting a steer that the provider already claimed or delivered returns `AlreadyApplied` in this major. The next major can add `SteeringRetraction::Delivered` for that case (`NEXT_MAJOR(rho-sdk): add SteeringRetraction::Delivered for steering already forwarded to the provider mid-turn`).
+
 `ToolHostInputRequested` moves the session into `WaitingForHostInput` and includes the owning tool call ID. The legacy `HostInputRequested` variant remains available for source compatibility. `Run::respond` validates a response and delivers it to a matching pending request exactly once. When no requests remain, the session returns to running. A response can fail because the ID is unknown, the shape is invalid, the requester was dropped, or the run no longer accepts commands.
 
 ## Retry contract

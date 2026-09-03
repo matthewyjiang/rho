@@ -82,3 +82,9 @@ Supported GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 Astra Codex models can use OpenAI
 - As a subscription auth mode, the statusline estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available) and labels it `(sub)`.
 - [`/limits`](/interactive-tui#commands) reports the usage windows for Codex OAuth when you are logged in.
 - Context windows come from cached model metadata. Set `usable_context_window` in `~/.rho/models.toml` to raise or cap a model. See [local model metadata](/configuration#local-model-metadata).
+
+## Mid-turn steering (`gpt-6-astra`)
+
+On `gpt-6-astra` over the Codex websocket, steering entered during a model turn is forwarded as `response.steer`. The original response ends `incomplete` with reason `steered` (or completes if it finished first). The server then continues automatically with the steer prepended; Rho reuses that continuation instead of sending another `response.create`. Already-streamed text is not rewritten. If the original turn ended waiting for a client tool result, Rho replays a full next request so the server does not prepend an orphaned steer.
+
+Steering is queued in the TUI as today. When the backend accepts it mid-turn, the pending-input row shows `delivered` until the steer is applied at the turn boundary. Disconnecting the websocket drops any unacked steer; Rho then applies it locally on the next step.
