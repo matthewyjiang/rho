@@ -12,6 +12,7 @@ pub(crate) mod rate_limit;
 pub(crate) mod session;
 pub(crate) mod spawn;
 pub(crate) mod stream;
+pub(crate) mod tools;
 pub(crate) mod usage_parse;
 pub(crate) mod usage_probe;
 #[cfg(unix)]

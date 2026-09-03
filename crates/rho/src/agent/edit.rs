@@ -14,6 +14,7 @@ use super::{
     parse_definition, parse_tools_list_text, serialize_definition, AgentDefinition, AgentRuntime,
     AgentRuntimeSpec, ClaudeAgentConfig, ClaudeToolPolicy, CursorAgentConfig, CursorTool,
     ModelPolicy, ModelSelection, PromptPolicy, ReasoningLevel, ToolCapability, ToolPolicy,
+    BUILTIN_TOOL_CAPABILITIES,
 };
 
 impl AgentDefinition {
@@ -303,6 +304,68 @@ impl AgentDefinition {
         }
     }
 
+    /// Flips one tool in the runtime allow list.
+    ///
+    /// Rho `all` expands to the built-in set first so a single tool can be
+    /// removed from it; [`Self::set_tools_all`] is the way back. Cursor may go
+    /// empty here because `validate_for_edit` rejects that at save.
+    pub(crate) fn toggle_tool(&mut self, name: &str) -> Result<(), String> {
+        match &mut self.runtime {
+            AgentRuntimeSpec::Rho { tools, .. } => {
+                let capability = ToolCapability::parse(name.to_string());
+                if matches!(capability, ToolCapability::Extension(_)) {
+                    return Err(format!("unknown tool '{name}' for runtime: rho"));
+                }
+                let mut set = match std::mem::replace(tools, ToolPolicy::All) {
+                    ToolPolicy::All => BUILTIN_TOOL_CAPABILITIES.iter().cloned().collect(),
+                    ToolPolicy::Allow(set) => set,
+                };
+                if !set.remove(&capability) {
+                    set.insert(capability);
+                }
+                *tools = ToolPolicy::Allow(set);
+                Ok(())
+            }
+            AgentRuntimeSpec::ClaudeCli(config) => {
+                let mut tools =
+                    std::mem::replace(&mut config.tools, ClaudeToolPolicy::None).into_vec();
+                match tools.iter().position(|tool| tool == name) {
+                    Some(index) => {
+                        tools.remove(index);
+                    }
+                    None => tools.push(name.to_string()),
+                }
+                config.tools = if tools.is_empty() {
+                    ClaudeToolPolicy::None
+                } else {
+                    ClaudeToolPolicy::Allow(tools)
+                };
+                Ok(())
+            }
+            AgentRuntimeSpec::Cursor(config) => {
+                let tool = CursorTool::from_str(name).map_err(|error| error.to_string())?;
+                match config.tools.iter().position(|current| *current == tool) {
+                    Some(index) => {
+                        config.tools.remove(index);
+                    }
+                    None => config.tools.push(tool),
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Sets the Rho policy to `all`. Other runtimes have no open allow list.
+    pub(crate) fn set_tools_all(&mut self) -> bool {
+        match &mut self.runtime {
+            AgentRuntimeSpec::Rho { tools, .. } => {
+                *tools = ToolPolicy::All;
+                true
+            }
+            AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => false,
+        }
+    }
+
     pub(crate) fn tools_text(&self) -> String {
         match &self.runtime {
             AgentRuntimeSpec::Rho {
@@ -364,39 +427,63 @@ impl AgentDefinition {
         }
     }
 
+    /// Short badge: `all`, `none`, the names when few, or a count.
+    ///
+    /// The nav column is narrow; past a handful of names the badge would
+    /// truncate to an ellipsis and say nothing. [`Self::tools_summary`] carries
+    /// the full list for the detail pane.
     pub(crate) fn tools_badge(&self) -> String {
+        /// Longest name list the badge shows before collapsing to a count.
+        /// Three snake_case names fit the picker nav column at default width.
+        const BADGE_NAME_LIMIT: usize = 3;
+        if let AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::All,
+            ..
+        } = &self.runtime
+        {
+            return "all".into();
+        }
+        let names = self.tool_names();
+        match names.len() {
+            0 => "none".into(),
+            count if count > BADGE_NAME_LIMIT => format!("{count} tools"),
+            _ => names.join(", "),
+        }
+    }
+
+    /// Full tool list for detail text: `all`, `none`, or every name.
+    pub(crate) fn tools_summary(&self) -> String {
+        if let AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::All,
+            ..
+        } = &self.runtime
+        {
+            return "all".into();
+        }
+        let names = self.tool_names();
+        if names.is_empty() {
+            "none".into()
+        } else {
+            names.join(", ")
+        }
+    }
+
+    fn tool_names(&self) -> Vec<String> {
         match &self.runtime {
             AgentRuntimeSpec::Rho {
                 tools: ToolPolicy::All,
                 ..
-            } => "all".into(),
+            } => Vec::new(),
             AgentRuntimeSpec::Rho {
                 tools: ToolPolicy::Allow(tools),
                 ..
-            } if tools.is_empty() => "none".into(),
-            AgentRuntimeSpec::Rho {
-                tools: ToolPolicy::Allow(tools),
-                ..
-            } => tools
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", "),
-            AgentRuntimeSpec::ClaudeCli(config) => {
-                let tools = config.tools.as_slice();
-                if tools.is_empty() {
-                    "none".into()
-                } else {
-                    tools.join(", ")
-                }
-            }
-            AgentRuntimeSpec::Cursor(config) if config.tools.is_empty() => "none".into(),
+            } => tools.iter().map(ToString::to_string).collect(),
+            AgentRuntimeSpec::ClaudeCli(config) => config.tools.as_slice().to_vec(),
             AgentRuntimeSpec::Cursor(config) => config
                 .tools
                 .iter()
-                .map(|tool| tool.as_flag())
-                .collect::<Vec<_>>()
-                .join(", "),
+                .map(|tool| tool.as_flag().to_string())
+                .collect(),
         }
     }
 

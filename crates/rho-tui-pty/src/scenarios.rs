@@ -90,8 +90,8 @@ use mermaid::MERMAID_FLOWCHART_RESIZE_STEPS;
 use paste::PASTE_MULTILINE_SCENARIO;
 use pickers::{
     setup_edit_user_agent, setup_pinned_models, CYCLE_AND_PINNED_MODEL_PICKER_STEPS,
-    EDIT_USER_AGENT_STEPS, OPENAI_AND_XAI_KEY_ENV, OPENAI_KEY_ENV, OPEN_AGENTS_PICKER_STEPS,
-    OPEN_MODEL_PICKER_STEPS, OPEN_WORKFLOW_HUB_EMPTY_STEPS,
+    EDIT_USER_AGENT_STEPS, EDIT_USER_AGENT_TOOLS_STEPS, OPENAI_AND_XAI_KEY_ENV, OPENAI_KEY_ENV,
+    OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS, OPEN_WORKFLOW_HUB_EMPTY_STEPS,
 };
 use process_rail::{
     PENDING_INPUT_BELOW_ACTIVITY_SCENARIO, PROCESS_RAIL_PEEK_SCENARIO, PROCESS_RAIL_SCENARIO,
@@ -718,6 +718,16 @@ const ALL_SCENARIOS: &[Scenario] = &[
         env: &[],
         args: &[],
         steps: EDIT_USER_AGENT_STEPS,
+        smoke: false,
+    },
+    Scenario {
+        id: "edit_user_agent_tools",
+        description: "Toggle tools in the agent editor multi-select and persist the narrowed list",
+        size: DEFAULT_SIZE,
+        setup: Some(setup_edit_user_agent),
+        env: &[],
+        args: &[],
+        steps: EDIT_USER_AGENT_TOOLS_STEPS,
         smoke: false,
     },
     Scenario::new(

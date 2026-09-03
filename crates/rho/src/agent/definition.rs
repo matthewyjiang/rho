@@ -9,7 +9,7 @@ use rho_providers::reasoning::ReasoningLevel;
 use super::CursorTool;
 
 macro_rules! define_tool_capabilities {
-    ($($variant:ident => $name:literal),+ $(,)?) => {
+    ($($variant:ident => $name:literal : $detail:literal),+ $(,)?) => {
         /// A parsed tool capability in an agent definition.
         ///
         /// Built-ins have stable variants so policy code does not parse names again.
@@ -42,31 +42,39 @@ macro_rules! define_tool_capabilities {
                     Self::Extension(name) => name,
                 }
             }
+
+            /// One-line description for pickers and help text.
+            pub fn detail(&self) -> &str {
+                match self {
+                    $(Self::$variant => $detail,)+
+                    Self::Extension(_) => "Host-supplied extension capability.",
+                }
+            }
         }
     };
 }
 
 define_tool_capabilities! {
-    Advisor => "advisor",
-    Agent => "agent",
-    Agents => "agents",
-    Bash => "bash",
-    Edit => "edit",
-    FetchContent => "fetch_content",
-    GetSearchContent => "get_search_content",
-    Glob => "glob",
-    Grep => "grep",
-    ListDir => "list_dir",
-    Powershell => "powershell",
-    Process => "process",
-    Questionnaire => "questionnaire",
-    ReadFile => "read_file",
-    Rho => "rho",
-    Shell => "shell",
-    Skill => "skill",
-    WebSearch => "web_search",
-    Workflow => "workflow",
-    WriteFile => "write",
+    Advisor => "advisor" : "Consult the advisor model for a second opinion.",
+    Agent => "agent" : "Delegate work to a subagent.",
+    Agents => "agents" : "Inspect and message running subagents.",
+    Bash => "bash" : "Run bash commands.",
+    Edit => "edit" : "Edit existing files (str_replace, hashline, or apply_patch).",
+    FetchContent => "fetch_content" : "Fetch URLs, repos, PDFs, and local files.",
+    GetSearchContent => "get_search_content" : "Read stored web search or fetch results.",
+    Glob => "glob" : "Find files by glob pattern.",
+    Grep => "grep" : "Search file contents by regex.",
+    ListDir => "list_dir" : "List a directory.",
+    Powershell => "powershell" : "Run PowerShell commands.",
+    Process => "process" : "Start, poll, and stop background processes.",
+    Questionnaire => "questionnaire" : "Ask the user structured questions.",
+    ReadFile => "read_file" : "Read files, documents, and images.",
+    Rho => "rho" : "Inspect the running Rho harness.",
+    Shell => "shell" : "Run shell commands.",
+    Skill => "skill" : "Load skill files.",
+    WebSearch => "web_search" : "Search the web.",
+    Workflow => "workflow" : "Validate, plan, and run workflows.",
+    WriteFile => "write" : "Create or overwrite files.",
 }
 
 impl fmt::Display for ToolCapability {

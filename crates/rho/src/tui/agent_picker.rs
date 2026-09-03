@@ -189,7 +189,7 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
             .map(|level| level.to_string())
             .unwrap_or_else(|| "inherit".to_string())
     };
-    let tools = definition.tools_badge();
+    let tools = definition.tools_summary();
     let inherit_claude_config = match &definition.runtime {
         AgentRuntimeSpec::ClaudeCli(config) => Some(if config.inherit_claude_config {
             "yes"

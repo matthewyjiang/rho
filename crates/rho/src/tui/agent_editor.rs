@@ -47,7 +47,17 @@ pub(super) enum AgentEditPhase {
     Fields,
     Choosing(AgentChoiceField),
     PickingModel(ModelPickerKind),
+    /// Multi-select tool list: Enter/Space toggles a row and the picker stays
+    /// open; Esc returns to the field list with the toggled draft.
+    PickingTools,
 }
+
+/// Stable value prefixes for tool picker rows.
+pub(super) const AGENT_TOOL_ROW_PREFIX: &str = "agent_tool:";
+/// Rho-only row that switches the policy back to `all`.
+pub(super) const AGENT_TOOL_ALL: &str = "agent_tool_all";
+/// Row that falls back to the bracket-list text input (specifiers, MCP names).
+pub(super) const AGENT_TOOL_OTHER: &str = "agent_tool_other";
 
 /// Which model list the `PickingModel` phase is showing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -317,7 +327,10 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
             ));
             items.push(field_item(
                 "Tools",
-                "Rho tool capabilities, as a bracket list (for example [read_file, shell]) or all.",
+                format!(
+                    "Rho tool capabilities this agent may call, or all.\n\nCurrent\n{}",
+                    draft.tools_summary()
+                ),
                 Some(draft.tools_badge()),
                 AGENT_FIELD_TOOLS,
             ));
@@ -337,7 +350,10 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
             ));
             items.push(field_item(
                 "Tools",
-                "Claude tool names, as a bracket list (for example [Read, Edit, \"Bash(git *)\"]).",
+                format!(
+                    "Claude Code tools this agent may call. Specifiers such as Bash(git *) go through Other….\n\nCurrent\n{}",
+                    draft.tools_summary()
+                ),
                 Some(draft.tools_badge()),
                 AGENT_FIELD_TOOLS,
             ));
@@ -361,7 +377,10 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
             ));
             items.push(field_item(
                 "Tools",
-                "Closed snake_case Cursor tool names as a bracket list (for example [read_tool_call, grep_tool_call]).",
+                format!(
+                    "Cursor tools this agent may call. At least one is required.\n\nCurrent\n{}",
+                    draft.tools_summary()
+                ),
                 Some(draft.tools_badge()),
                 AGENT_FIELD_TOOLS,
             ));
