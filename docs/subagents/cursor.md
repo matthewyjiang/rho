@@ -68,8 +68,9 @@ flowchart TD
 
    - `tools:` is required and nonempty. There is no `tools: all`. Names are the closed snake_case set Rho classified (`read_tool_call`, `edit_tool_call`, …). Unknown names fail parse and frozen resume.
    - `cursor-agent -p` enables every tool by default and `--exclude-tools` does not fence, so spawn always passes `--allowed-tools`.
-   - `model:` is passed through as `--model`. Rho `@alias` references are rejected. Cursor allows brackets and commas for overrides such as `claude-opus-5[effort=high,fast=false]`. Omit `model` to let Cursor choose.
-   - There is no `reasoning:` field. Put effort in the model id or a bracket override.
+   - `model:` is the exact Cursor id from `cursor-agent models` (1:1; effort/fast/thinking variants are not collapsed). Rho `@alias` references are rejected. Bracket overrides such as `claude-opus-5[effort=high,fast=false]` still work. Omit `model` to let Cursor choose.
+   - The agent editor lists cached models grouped by display-name family, with badges for default / current / no ZDR. **Other…** types an id or a bracket override. If a pinned id is missing from a non-empty cache, bind warns and still runs.
+   - There is no `reasoning:` field. Put effort in the model id or a bracket override. The reasoning selector stays hidden for `runtime: cursor`.
    - `prompt: replace` is rejected (`--system-prompt` is rejected server-side). Use `extend`.
 
 4. **Confirm setup** in the TUI:
@@ -126,6 +127,8 @@ Frozen workflow relaunches that narrow a Bypass agent under an Auto or Allow-edi
 A `runtime: cursor` agent runs as `cursor-agent -p` with stream-json output. Rho owns the parent tree node; Cursor owns the child loop and credential.
 
 Before spawn, Rho checks `cursor-agent status --format json`. If the binary is missing, the run fails immediately with `cursor: binary not found on PATH`. If the user is signed out, the run fails with the auth status from that probe.
+
+Model discovery is `cursor-agent models` (plain text, account-scoped). Rho caches the list for 24 hours in the provider-models SQLite cache under the `cursor` key, keyed to the signed-in account. `/login cursor` and `/doctor` refresh the cache when signed in. The agent editor opens immediately on cached rows and refreshes in the background; it never blocks the UI on the probe.
 
 Default concurrency is the same global pool as other delegated runs (`behavior.agent_concurrency`). Cursor takes only that global permit. There is no nested Cursor cap yet: unlike Claude, there is no measured subscription fan-out limit to size one against.
 

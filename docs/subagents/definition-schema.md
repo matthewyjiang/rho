@@ -85,6 +85,8 @@ Model selection depends on `runtime`. Rho can inherit or pin host models. Claude
 
 Cursor has no `--effort` / reasoning flag. Put effort in the model id (`gpt-5.3-codex-high`) or a bracket override (`claude-opus-5[effort=high,fast=false]`). Brackets and commas are allowed; whitespace is not.
 
+`model:` values are 1:1 with `cursor-agent models` ids. Rho caches that account-scoped list for 24 hours (refresh on `/login cursor`, `/doctor`, and lazily in the agent editor). The editor groups by display-name family and offers **Other…** to type an id or bracket override. A pin that is missing from a non-empty cache warns at bind and still runs.
+
 ## Tool vocabulary by runtime
 
 Tool lists are not shared across runtimes. Mixing Rho capability names, Claude tool entries, and Cursor tool names is a parse error.
