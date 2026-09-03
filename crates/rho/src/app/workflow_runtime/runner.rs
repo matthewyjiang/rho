@@ -145,20 +145,11 @@ fn validate_agent_access(
     if access == WorkspaceAccess::Mutating {
         return Ok(());
     }
-    match agent.runtime {
-        crate::workflow::AgentRuntime::ClaudeCli => {
-            return Err(RuntimeError::ReadOnlyCapability {
-                node: node.clone(),
-                capability: "claude-cli is mutating in workflow schema version 1".into(),
-            });
-        }
-        crate::workflow::AgentRuntime::Cursor => {
-            return Err(RuntimeError::ReadOnlyCapability {
-                node: node.clone(),
-                capability: "cursor is mutating in workflow schema version 1".into(),
-            });
-        }
-        crate::workflow::AgentRuntime::Rho => {}
+    if agent.runtime.is_external_cli() {
+        return Err(RuntimeError::ReadOnlyCapability {
+            node: node.clone(),
+            capability: format!("{} is mutating in workflow schema version 1", agent.runtime),
+        });
     }
     const MUTATING: &[&str] = &[
         "agent",

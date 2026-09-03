@@ -390,10 +390,6 @@ impl AgentExecutor {
         } = MessagingSupport::for_runtime(bound.runtime());
 
         let mut initial = bound.artifact_identity().starting_status();
-        if let Some(warning) = bound.bind_warnings().first() {
-            tracing::warn!("{warning}");
-            initial.last_activity = Some(warning.clone());
-        }
         initial.parent_session_id = parent_session_id.as_ref().map(ToString::to_string);
         // Executor owns the Starting boundary; sinks continue_from it.
         // Write Starting here so the handle can observe status before the task runs.
@@ -470,14 +466,14 @@ impl AgentExecutor {
                     session.parent_messages = claude_parent_rx;
                     session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
                     if let Some(frozen) = frozen_cli {
-                        apply_frozen_claude(&mut session, frozen);
+                        apply_frozen(&mut session.overrides, frozen);
                     }
                     crate::claude_runtime::session::run_session(session).await
                 }
                 Launch::Cursor(mut session) => {
                     session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
                     if let Some(frozen) = frozen_cli {
-                        apply_frozen_cursor(&mut session, frozen);
+                        apply_frozen(&mut session.overrides, frozen);
                     }
                     crate::cursor_runtime::session::run_session(session).await
                 }
@@ -640,42 +636,14 @@ fn into_launch(
     }
 }
 
-// Claude wraps argv with stream-json input; Cursor overlays identity at spawn.
-// The session types do not share overrides, so collapsing these is not smaller.
-fn apply_frozen_claude(
-    session: &mut crate::claude_runtime::session::ClaudeSessionRequest,
-    frozen: FrozenCliLaunch,
-) {
+fn apply_frozen(overrides: &mut crate::cli_runtime::CliSessionOverrides, frozen: FrozenCliLaunch) {
     let expected_identity = frozen.executable_identity;
     let verified_executable = frozen._verified_executable;
-    session.overrides.executable = Some(crate::cli_runtime::CliExecutable::from_path(
+    overrides.executable = Some(crate::cli_runtime::CliExecutable::from_path(
         frozen.executable,
     ));
-    session.set_frozen_argv(ensure_stream_json_input(frozen.arguments));
-    session.overrides.before_spawn = Some(Box::new(move |command| {
-        crate::workflow::verify_executable_identity(&expected_identity)
-            .map_err(std::io::Error::other)?;
-        let mut files = vec![&verified_executable.executable.file];
-        if let Some(interpreter) = &verified_executable.interpreter {
-            files.push(&interpreter.file);
-        }
-        crate::workflow::configure_handle_inheritance(command, &files)
-            .map_err(std::io::Error::other)
-    }));
-}
-
-fn apply_frozen_cursor(
-    session: &mut crate::cursor_runtime::session::CursorSessionRequest,
-    frozen: FrozenCliLaunch,
-) {
-    let expected_identity = frozen.executable_identity;
-    let verified_executable = frozen._verified_executable;
-    session.overrides.executable = Some(crate::cli_runtime::CliExecutable::from_path(
-        frozen.executable,
-    ));
-    // Cursor never uses stream-json input; identity overlay happens at spawn.
-    session.overrides.frozen_argv = Some(frozen.arguments);
-    session.overrides.before_spawn = Some(Box::new(move |command| {
+    overrides.frozen_argv = Some(frozen.arguments);
+    overrides.before_spawn = Some(Box::new(move |command| {
         crate::workflow::verify_executable_identity(&expected_identity)
             .map_err(std::io::Error::other)?;
         let mut files = vec![&verified_executable.executable.file];
@@ -882,18 +850,6 @@ fn spawn_run_title(
         });
         let _ = subagent::apply_generated_title(&sinks.output_file, &title);
     });
-}
-
-/// Ensures frozen Claude argv can accept parent messages over stream-json stdin.
-fn ensure_stream_json_input(mut arguments: Vec<String>) -> Vec<String> {
-    let has_stream_json = arguments
-        .windows(2)
-        .any(|window| window[0] == "--input-format" && window[1] == "stream-json");
-    if !has_stream_json {
-        arguments.push("--input-format".into());
-        arguments.push("stream-json".into());
-    }
-    arguments
 }
 
 #[cfg(test)]

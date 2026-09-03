@@ -100,13 +100,11 @@ async fn run_with_fake(
         status_tx: None,
         started_status: None,
         parent_messages: None,
-        overrides: ClaudeSessionOverrides {
+        auth_status: Some(Ok(logged_in())),
+        rate_limit_state_path: Some(rate_limit_state_path),
+        overrides: CliSessionOverrides {
             executable: Some(CliExecutable::from_path(fake)),
-            frozen_argv: None,
-            auth_status: Some(Ok(logged_in())),
-            rate_limit_state_path: Some(rate_limit_state_path),
-            live_title: None,
-            before_spawn: None,
+            ..CliSessionOverrides::default()
         },
     })
     .await
@@ -138,13 +136,11 @@ async fn run_with_fake_prompt(
         status_tx: None,
         started_status: None,
         parent_messages: None,
-        overrides: ClaudeSessionOverrides {
+        auth_status: Some(Ok(logged_in())),
+        rate_limit_state_path: Some(rate_limit_state_path),
+        overrides: CliSessionOverrides {
             executable: Some(CliExecutable::from_path(fake)),
-            frozen_argv: None,
-            auth_status: Some(Ok(logged_in())),
-            rate_limit_state_path: Some(rate_limit_state_path),
-            live_title: None,
-            before_spawn: None,
+            ..CliSessionOverrides::default()
         },
     })
     .await
@@ -230,11 +226,11 @@ async fn frozen_bypass_argv_narrows_to_auto_dont_ask() {
         status_tx: None,
         started_status: None,
         parent_messages: None,
-        overrides: ClaudeSessionOverrides {
+        auth_status: Some(Ok(logged_in())),
+        rate_limit_state_path: Some(rate_limit_dir.path().join("rate-limits.json")),
+        overrides: CliSessionOverrides {
             executable: Some(CliExecutable::from_path(&fake)),
             frozen_argv: Some(frozen),
-            auth_status: Some(Ok(logged_in())),
-            rate_limit_state_path: Some(rate_limit_dir.path().join("rate-limits.json")),
             live_title: None,
             before_spawn: Some(Box::new(move |command| {
                 let args = command

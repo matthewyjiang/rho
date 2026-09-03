@@ -126,7 +126,6 @@ impl App {
             pending_update_notice,
             pending_custom_models,
             pending_cursor_models: None,
-            cursor_model_picker_awaiting_refresh: false,
             pending_syntax_warmup,
             prompt_history,
             pending_herdr_graphics: None,

@@ -818,8 +818,13 @@ fn cli_provider_models_round_trip_without_canonicalizing_ids() {
     with_provider_models_cache_dir_for_tests(cache.clone(), || {
         let context = CliProviderRefreshContext {
             account_email: Some("dev@example.com".into()),
-            cursor_version: Some("2026.09.02".into()),
+            tool_version: Some("2026.09.02".into()),
         };
+        let from_legacy_key: CliProviderRefreshContext = serde_json::from_str(
+            r#"{"account_email":"dev@example.com","cursor_version":"2026.09.02"}"#,
+        )
+        .unwrap();
+        assert_eq!(from_legacy_key, context);
         replace_cli_provider_models(
             "cursor",
             vec![

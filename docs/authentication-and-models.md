@@ -120,7 +120,7 @@ Cursor Agent is a **runtime**, not a Rho provider. Agent definitions with `runti
 - Cursor Agent runs the sign-in UI and stores credentials in `~/.cursor`. Rho never sees or stores the token and never writes a Rho credential-store entry for it.
 - Rho reads signed-in state with bounded `cursor-agent status --format json` probes for `/info` and `/doctor`.
 - `/logout cursor` is not available from Rho. Sign out with `cursor-agent logout` yourself.
-- Bare `/login` lists **Cursor** at the top level and **Cursor Agent CLI (cursor-agent login)** under the Anthropic group next to Claude Code. Choosing either skips the Rho credential-store chooser.
+- Bare `/login` lists **Cursor** as a top-level row. Choosing it skips the Rho credential-store chooser.
 
 ## Selecting models
 

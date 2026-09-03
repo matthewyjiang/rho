@@ -143,7 +143,8 @@ fn claude_cli_models_describe_requested_and_resolved_without_ambient_state() {
             ];
 
             for case in cases {
-                let identity = PromptModel::ClaudeCli {
+                let identity = PromptModel::ExternalCli {
+                    runtime: AgentRuntime::ClaudeCli,
                     requested: case.requested.map(str::to_string),
                     resolved: case.resolved.map(str::to_string),
                 };
@@ -190,7 +191,8 @@ fn from_run_status_reconstructs_rho_and_claude_labels() {
             claude_model: Some("claude-opus-4-6".into()),
             ..RunStatus::default()
         }),
-        Some(PromptModel::ClaudeCli {
+        Some(PromptModel::ExternalCli {
+            runtime: AgentRuntime::ClaudeCli,
             requested: Some("opus".into()),
             resolved: Some("claude-opus-4-6".into()),
         })
@@ -206,7 +208,8 @@ fn from_run_status_reconstructs_rho_and_claude_labels() {
     };
     assert_eq!(
         PromptModel::from_run_status(&unpinned),
-        Some(PromptModel::ClaudeCli {
+        Some(PromptModel::ExternalCli {
+            runtime: AgentRuntime::ClaudeCli,
             requested: None,
             resolved: None,
         })
@@ -246,7 +249,8 @@ fn cursor_prompt_model_describes_requested_and_resolved() {
     ];
 
     for case in cases {
-        let identity = PromptModel::Cursor {
+        let identity = PromptModel::ExternalCli {
+            runtime: AgentRuntime::Cursor,
             requested: case.requested.map(str::to_string),
             resolved: case.resolved.map(str::to_string),
         };

@@ -58,6 +58,16 @@ fn write_runtime(out: &mut String, runtime: &AgentRuntimeSpec) {
 }
 
 fn write_model(out: &mut String, runtime: &AgentRuntimeSpec) {
+    if let Some(model) = runtime.pass_through_model() {
+        // External CLIs resolve model to a pass-through --model string.
+        // None maps to inherit; Some maps to select. The parser accepts
+        // `model: <name>` (implicit select) or `model-policy: select` +
+        // `model: <name>`. Emit just the model for brevity.
+        if let Some(model) = model.as_deref() {
+            let _ = writeln!(out, "model: {}", scalar(model));
+        }
+        return;
+    }
     match runtime {
         AgentRuntimeSpec::Rho { model, .. } => match model {
             ModelPolicy::Inherit => {
@@ -82,19 +92,8 @@ fn write_model(out: &mut String, runtime: &AgentRuntimeSpec) {
                 }
             }
         },
-        AgentRuntimeSpec::ClaudeCli(config) => {
-            // Claude CLI resolves model to a pass-through --model string.
-            // None maps to inherit; Some maps to select. The parser accepts
-            // `model: <name>` (implicit select) or `model-policy: select` +
-            // `model: <name>`. Emit just the model for brevity.
-            if let Some(model) = config.model.as_deref() {
-                let _ = writeln!(out, "model: {}", scalar(model));
-            }
-        }
-        AgentRuntimeSpec::Cursor(config) => {
-            if let Some(model) = config.model.as_deref() {
-                let _ = writeln!(out, "model: {}", scalar(model));
-            }
+        AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => {
+            unreachable!("external CLI runtimes expose a pass-through model")
         }
     }
 }

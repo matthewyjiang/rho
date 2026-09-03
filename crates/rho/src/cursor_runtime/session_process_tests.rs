@@ -92,12 +92,10 @@ async fn run_with_fake(
         cancellation,
         status_tx: None,
         started_status: None,
-        overrides: CursorSessionOverrides {
+        auth_status: Some(Ok(logged_in())),
+        overrides: CliSessionOverrides {
             executable: Some(CliExecutable::from_path(fake)),
-            frozen_argv: None,
-            auth_status: Some(Ok(logged_in())),
-            live_title: None,
-            before_spawn: None,
+            ..CliSessionOverrides::default()
         },
     })
     .await

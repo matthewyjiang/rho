@@ -254,6 +254,12 @@ fn validate_definition(definition: &AgentDefinition) -> anyhow::Result<()> {
             definition.id
         );
     }
+    if definition.runtime.runtime().is_external_cli() {
+        bail!(
+            "one-shot agent definition '{}' must use the rho runtime",
+            definition.id
+        );
+    }
     match &definition.runtime {
         AgentRuntimeSpec::Rho {
             tools: ToolPolicy::Allow(tools),
@@ -266,10 +272,7 @@ fn validate_definition(definition: &AgentDefinition) -> anyhow::Result<()> {
             );
         }
         AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => {
-            bail!(
-                "one-shot agent definition '{}' must use the rho runtime",
-                definition.id
-            );
+            unreachable!("external CLI runtimes are rejected above")
         }
     }
     Ok(())

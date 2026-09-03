@@ -19,8 +19,12 @@ use super::{
 pub struct CliProviderRefreshContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_email: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor_version: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "cursor_version"
+    )]
+    pub tool_version: Option<String>,
 }
 
 /// One CLI-discovered model plus the flags that do not fit [`ProviderModel`].

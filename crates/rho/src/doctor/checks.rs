@@ -23,7 +23,7 @@ use super::{
 use crate::{
     claude_runtime::auth::ClaudeProbeSnapshot,
     clipboard::ClipboardDoctorReport,
-    cursor_runtime::auth::{CursorAuthError, CursorAuthStatus},
+    cursor_runtime::auth::{CursorAuthError, CursorAuthStatus, CursorProbeSnapshot},
     herdr::HerdrReporter,
     plugins::{PluginLoadReport, PluginLoadSummary},
     tools::mcp::{McpLoadMode, McpSessionReport},
@@ -167,12 +167,8 @@ pub(super) fn claude_checks(claude: &ClaudeProbeSnapshot) -> Vec<DoctorCheck> {
     vec![auth, binary]
 }
 
-pub(super) fn cursor_check(
-    auth: &Result<CursorAuthStatus, CursorAuthError>,
-    version: Option<&str>,
-    models_cached: usize,
-) -> DoctorCheck {
-    match auth {
+pub(super) fn cursor_check(snapshot: &CursorProbeSnapshot) -> DoctorCheck {
+    match &snapshot.auth {
         Err(CursorAuthError::BinaryMissing) => DoctorCheck::new(
             DoctorCheckId::Cursor,
             CURSOR_LABEL,
@@ -183,7 +179,7 @@ pub(super) fn cursor_check(
             DoctorCheckId::Cursor,
             CURSOR_LABEL,
             DoctorStatus::Ok,
-            cursor_signed_in_summary(status, version, models_cached),
+            cursor_signed_in_summary(status, snapshot.version.as_deref(), snapshot.models_cached),
         ),
         Ok(_) => DoctorCheck::new(
             DoctorCheckId::Cursor,

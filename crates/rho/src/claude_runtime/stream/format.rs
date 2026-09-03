@@ -1,6 +1,6 @@
 //! Payload bounds, usage aggregation, and display formatting for stream-json.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 
 use serde_json::Value;
 
@@ -8,6 +8,10 @@ use rho_sdk::{
     ceil_char_boundary,
     model::{ContextUsage, ModelUsage},
     ELLIPSIS,
+};
+use rho_tools::{
+    tool::compact_display_path,
+    tool_card::{ToolBody, ToolCard, ToolFact},
 };
 
 use super::types::{MAX_RESULT_CHARS, MAX_TEXT_DELTA_CHARS, MAX_TOOL_PAYLOAD_CHARS};
@@ -218,4 +222,74 @@ pub(super) fn append_tail(buffer: &mut String, text: &str, max: usize) {
         let boundary = ceil_char_boundary(buffer, cut);
         *buffer = buffer[boundary..].to_string();
     }
+}
+
+pub(crate) fn set_lines_body(card: &mut ToolCard, content_text: &str) {
+    if content_text.trim().is_empty() {
+        return;
+    }
+    card.body = ToolBody::Lines(truncate_payload_lines(content_text, MAX_TOOL_BODY_LINES));
+}
+
+pub(crate) fn display_path_field(
+    input: Option<&Value>,
+    keys: &[&str],
+    cwd: Option<&Path>,
+) -> Option<String> {
+    let path = string_field(input, keys)?;
+    Some(match cwd {
+        Some(cwd) => compact_display_path(cwd, &path),
+        None => path,
+    })
+}
+
+pub(crate) fn string_field(input: Option<&Value>, keys: &[&str]) -> Option<String> {
+    let input = input?;
+    keys.iter().find_map(|key| {
+        input
+            .get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    })
+}
+
+pub(crate) fn u64_field(input: Option<&Value>, keys: &[&str]) -> Option<u64> {
+    let input = input?;
+    keys.iter()
+        .find_map(|key| input.get(*key).and_then(Value::as_u64))
+}
+
+pub(crate) fn count_fact(
+    singular: &str,
+    plural: &str,
+    value: u64,
+    detail: Option<String>,
+) -> ToolFact {
+    ToolFact::Count {
+        label: if value == 1 {
+            singular.into()
+        } else {
+            plural.into()
+        },
+        value,
+        detail,
+    }
+}
+
+pub(crate) fn quoted(text: &str, max_chars: usize) -> String {
+    format!("\"{}\"", truncate(text, max_chars.saturating_sub(2)))
+}
+
+pub(crate) fn truncate(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let mut out = text
+        .chars()
+        .take(max_chars.saturating_sub(1))
+        .collect::<String>();
+    out.push('…');
+    out
 }

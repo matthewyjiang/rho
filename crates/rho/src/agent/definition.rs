@@ -248,6 +248,14 @@ impl AgentRuntime {
             Self::Cursor => "cursor",
         }
     }
+
+    /// Whether this runtime delegates the agent loop to an external binary.
+    ///
+    /// True for [`Self::ClaudeCli`] and [`Self::Cursor`]. Those runtimes pass
+    /// `model` through as `--model` and do not use Rho provider or auth.
+    pub fn is_external_cli(self) -> bool {
+        matches!(self, Self::ClaudeCli | Self::Cursor)
+    }
 }
 
 impl fmt::Display for AgentRuntime {
@@ -369,6 +377,27 @@ impl AgentRuntimeSpec {
             Self::Cursor(_) => AgentRuntime::Cursor,
         }
     }
+
+    /// Pass-through `--model` for external CLI runtimes.
+    ///
+    /// `Some` for Claude Code and Cursor (inner `None` omits `--model`).
+    /// `None` for Rho, which uses [`ModelPolicy`] instead.
+    pub fn pass_through_model(&self) -> Option<&Option<String>> {
+        match self {
+            Self::ClaudeCli(config) => Some(&config.model),
+            Self::Cursor(config) => Some(&config.model),
+            Self::Rho { .. } => None,
+        }
+    }
+
+    /// Mutable pass-through `--model` for external CLI runtimes.
+    pub fn pass_through_model_mut(&mut self) -> Option<&mut Option<String>> {
+        match self {
+            Self::ClaudeCli(config) => Some(&mut config.model),
+            Self::Cursor(config) => Some(&mut config.model),
+            Self::Rho { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -382,17 +411,17 @@ pub struct AgentDefinition {
 impl AgentDefinition {
     /// Model policy for display and fingerprinting.
     ///
-    /// Taken from the Rho arm, or reconstructed from Claude's pass-through
-    /// model string (`None` → inherit, `Some` → select).
+    /// Taken from the Rho arm, or reconstructed from an external CLI
+    /// pass-through model string (`None` → inherit, `Some` → select).
     pub fn model_policy(&self) -> Cow<'_, ModelPolicy> {
-        match &self.runtime {
-            AgentRuntimeSpec::Rho { model, .. } => Cow::Borrowed(model),
-            AgentRuntimeSpec::ClaudeCli(config) => {
-                Cow::Owned(pass_through_model_policy(config.model.as_deref()))
-            }
-            AgentRuntimeSpec::Cursor(config) => {
-                Cow::Owned(pass_through_model_policy(config.model.as_deref()))
-            }
+        match self.runtime.pass_through_model() {
+            Some(model) => Cow::Owned(pass_through_model_policy(model.as_deref())),
+            None => match &self.runtime {
+                AgentRuntimeSpec::Rho { model, .. } => Cow::Borrowed(model),
+                AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => {
+                    unreachable!("external CLI runtimes expose a pass-through model")
+                }
+            },
         }
     }
 

@@ -48,7 +48,10 @@ use format::{
 // Generic effect builders and payload bounds also serve other NDJSON agent
 // runtimes (see `crate::cursor_runtime::stream`). Claude-shaped mapping stays
 // private to this module.
-pub(crate) use format::{bound_result_text, truncate_payload_lines, MAX_TOOL_BODY_LINES};
+pub(crate) use format::{
+    bound_result_text, count_fact, display_path_field, quoted, set_lines_body, string_field,
+    truncate, u64_field,
+};
 pub(crate) use presentation::{apply_status_patch, reasoning_effects, text_effects};
 use presentation::{
     clear_all_open_indexless, content_block_kind, fidelity_notice, map_error_message,

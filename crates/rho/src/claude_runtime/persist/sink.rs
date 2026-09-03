@@ -20,17 +20,26 @@ use super::super::{
     stream::{self, apply_status_patch, StreamEffect, TerminalResult},
 };
 
-/// Starting activity and program name for a CLI runtime sink.
+/// Starting activity, program name, and model-facing copy for a CLI runtime sink.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct RuntimeLabel {
     pub(crate) starting_activity: &'static str,
     pub(crate) program: &'static str,
+    /// Binary invoked for `--resume <session-id>`.
+    pub(crate) resume_command: &'static str,
+    /// Prefix for session metadata, e.g. `claude session`.
+    pub(crate) session_label: &'static str,
+    /// Cost line label, e.g. `claude cost`.
+    pub(crate) cost_label: &'static str,
 }
 
 /// Claude Code labels for [`StatusSink`].
 pub(crate) const CLAUDE_LABEL: RuntimeLabel = RuntimeLabel {
     starting_activity: "starting claude",
     program: "claude code",
+    resume_command: "claude",
+    session_label: "claude session",
+    cost_label: "claude cost",
 };
 
 /// Thin Claude-facing handle around [`RunArtifactSink`].

@@ -13,7 +13,10 @@ use thiserror::Error;
 
 use crate::cli_runtime::{run_bounded_probe, BoundedOutput, CliExecutable, ProbeError};
 
-use super::{executable, models::CURSOR_PROGRAM_LABEL};
+use super::{
+    executable,
+    models::{cached, CURSOR_PROGRAM_LABEL},
+};
 
 /// Default wall-clock budget for status/version probes.
 ///
@@ -95,6 +98,14 @@ impl CursorAuthStatus {
     }
 }
 
+/// Cursor Agent binary, auth, and cached model count as seen by doctor.
+#[derive(Debug)]
+pub(crate) struct CursorProbeSnapshot {
+    pub(crate) auth: Result<CursorAuthStatus, CursorAuthError>,
+    pub(crate) version: Option<String>,
+    pub(crate) models_cached: usize,
+}
+
 /// Run `cursor-agent status --format json` and parse its JSON.
 pub(crate) async fn query() -> Result<CursorAuthStatus, CursorAuthError> {
     let executable = executable::resolve()?;
@@ -105,6 +116,19 @@ async fn query_executable(executable: &CliExecutable) -> Result<CursorAuthStatus
     let output =
         run_bounded_probe(executable, &["status", "--format", "json"], PROBE_TIMEOUT).await?;
     parse_auth_status_output(&executable.display(), &output)
+}
+
+/// Auth, version, and cached model count for `/doctor`. Read-only: never fetches
+/// or writes the model cache.
+pub(crate) async fn probe_snapshot() -> CursorProbeSnapshot {
+    let auth = query();
+    let version = version();
+    let (auth, version) = tokio::join!(auth, version);
+    CursorProbeSnapshot {
+        auth,
+        version: version.ok(),
+        models_cached: cached().len(),
+    }
 }
 
 /// Probe `cursor-agent --version` for doctor diagnostics.

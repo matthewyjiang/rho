@@ -152,52 +152,40 @@ fn parse_reasoning(
     runtime: AgentRuntime,
     reasoning: Option<String>,
 ) -> Result<Option<ReasoningLevel>, AgentCatalogError> {
-    match runtime {
-        AgentRuntime::Cursor => {
-            if reasoning.is_some() {
+    if runtime == AgentRuntime::Cursor {
+        if reasoning.is_some() {
+            return Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "reasoning",
+                "cursor has no reasoning flag; put effort in `model` (for example gpt-5.3-codex-high or name[effort=high])",
+            ));
+        }
+        return Ok(None);
+    }
+
+    let reasoning = reasoning
+        .map(|value| {
+            value.parse::<ReasoningLevel>().map_err(|error| {
+                AgentCatalogError::at_field(path.to_path_buf(), "reasoning", error.to_string())
+            })
+        })
+        .transpose()?;
+    if runtime == AgentRuntime::ClaudeCli {
+        if let Some(level) = reasoning {
+            // Claude `--effort` accepts low/medium/high/xhigh/max only.
+            if matches!(level, ReasoningLevel::Off | ReasoningLevel::Minimal) {
                 return Err(AgentCatalogError::at_field(
                     path.to_path_buf(),
                     "reasoning",
-                    "cursor has no reasoning flag; put effort in `model` (for example gpt-5.3-codex-high or name[effort=high])",
+                    format!(
+                        "value '{level}' is not a Claude Code effort level; \
+expected one of: low, medium, high, xhigh, max (omit to inherit Claude's default)"
+                    ),
                 ));
             }
-            Ok(None)
         }
-        AgentRuntime::ClaudeCli => {
-            let reasoning = reasoning
-                .map(|value| {
-                    value.parse::<ReasoningLevel>().map_err(|error| {
-                        AgentCatalogError::at_field(
-                            path.to_path_buf(),
-                            "reasoning",
-                            error.to_string(),
-                        )
-                    })
-                })
-                .transpose()?;
-            if let Some(level) = reasoning {
-                // Claude `--effort` accepts low/medium/high/xhigh/max only.
-                if matches!(level, ReasoningLevel::Off | ReasoningLevel::Minimal) {
-                    return Err(AgentCatalogError::at_field(
-                        path.to_path_buf(),
-                        "reasoning",
-                        format!(
-                            "value '{level}' is not a Claude Code effort level; \
-expected one of: low, medium, high, xhigh, max (omit to inherit Claude's default)"
-                        ),
-                    ));
-                }
-            }
-            Ok(reasoning)
-        }
-        AgentRuntime::Rho => reasoning
-            .map(|value| {
-                value.parse::<ReasoningLevel>().map_err(|error| {
-                    AgentCatalogError::at_field(path.to_path_buf(), "reasoning", error.to_string())
-                })
-            })
-            .transpose(),
     }
+    Ok(reasoning)
 }
 
 fn parse_model_policy(
@@ -208,13 +196,8 @@ fn parse_model_policy(
     auth: Option<String>,
     policy: Option<String>,
 ) -> Result<ModelPolicy, AgentCatalogError> {
-    match runtime {
-        AgentRuntime::ClaudeCli | AgentRuntime::Cursor => {
-            return parse_external_runtime_model_policy(
-                path, runtime, model, provider, auth, policy,
-            );
-        }
-        AgentRuntime::Rho => {}
+    if runtime.is_external_cli() {
+        return parse_external_runtime_model_policy(path, runtime, model, provider, auth, policy);
     }
 
     let policy = policy
@@ -402,15 +385,15 @@ fn parse_runtime_spec(
     model: ModelPolicy,
     reasoning: Option<ReasoningLevel>,
 ) -> Result<AgentRuntimeSpec, AgentCatalogError> {
+    if runtime != AgentRuntime::ClaudeCli && inherit_claude_config {
+        return Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "inherit_claude_config",
+            "is only valid with runtime: claude-cli",
+        ));
+    }
     match runtime {
         AgentRuntime::Rho => {
-            if inherit_claude_config {
-                return Err(AgentCatalogError::at_field(
-                    path.to_path_buf(),
-                    "inherit_claude_config",
-                    "is only valid with runtime: claude-cli",
-                ));
-            }
             let tools = match tools.unwrap_or(RawTools::All) {
                 RawTools::All => ToolPolicy::All,
                 RawTools::Names(names) => ToolPolicy::Allow(validate_rho_tools(path, names)?),
@@ -456,13 +439,6 @@ fn parse_runtime_spec(
             }))
         }
         AgentRuntime::Cursor => {
-            if inherit_claude_config {
-                return Err(AgentCatalogError::at_field(
-                    path.to_path_buf(),
-                    "inherit_claude_config",
-                    "is only valid with runtime: claude-cli",
-                ));
-            }
             let tools = match tools {
                 None => {
                     return Err(AgentCatalogError::at_field(

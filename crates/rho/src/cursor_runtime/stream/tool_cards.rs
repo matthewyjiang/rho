@@ -9,15 +9,14 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use rho_tools::{
-    tool::compact_display_path,
-    tool_card::{
-        compact_diff_rows, diff_file_stats, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader,
-        ToolStatus,
-    },
+use rho_tools::tool_card::{
+    compact_diff_rows, diff_file_stats, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader,
+    ToolStatus,
 };
 
-use crate::claude_runtime::stream::{truncate_payload_lines, MAX_TOOL_BODY_LINES};
+use crate::claude_runtime::stream::{
+    count_fact, display_path_field, quoted, set_lines_body, string_field, truncate, u64_field,
+};
 
 /// Header primary width for queries and URLs. Matches the Claude cards so
 /// mixed transcripts align; a header wider than this wraps in an 80-col pane.
@@ -428,33 +427,6 @@ fn push_edit_result(card: &mut ToolCard, success: Option<&Value>) {
     }
 }
 
-fn set_lines_body(card: &mut ToolCard, text: &str) {
-    if text.trim().is_empty() {
-        return;
-    }
-    card.body = ToolBody::Lines(truncate_payload_lines(text, MAX_TOOL_BODY_LINES));
-}
-
-fn display_path_field(args: Option<&Value>, keys: &[&str], cwd: Option<&Path>) -> Option<String> {
-    let path = string_field(args, keys)?;
-    Some(match cwd {
-        Some(cwd) => compact_display_path(cwd, &path),
-        None => path,
-    })
-}
-
-fn string_field(value: Option<&Value>, keys: &[&str]) -> Option<String> {
-    let value = value?;
-    keys.iter().find_map(|key| {
-        value
-            .get(*key)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .map(str::to_string)
-    })
-}
-
 fn string_list(value: Option<&Value>, key: &str) -> Vec<String> {
     value
         .and_then(|value| value.get(key))
@@ -467,38 +439,8 @@ fn string_list(value: Option<&Value>, key: &str) -> Vec<String> {
         .collect()
 }
 
-fn u64_field(value: Option<&Value>, keys: &[&str]) -> Option<u64> {
-    let value = value?;
-    keys.iter()
-        .find_map(|key| value.get(*key).and_then(Value::as_u64))
-}
-
 fn i64_field(value: Option<&Value>, keys: &[&str]) -> Option<i64> {
     let value = value?;
     keys.iter()
         .find_map(|key| value.get(*key).and_then(Value::as_i64))
-}
-
-fn count_fact(singular: &str, plural: &str, value: u64, detail: Option<String>) -> ToolFact {
-    ToolFact::Count {
-        label: if value == 1 { singular } else { plural }.into(),
-        value,
-        detail,
-    }
-}
-
-fn quoted(text: &str, max_chars: usize) -> String {
-    format!("\"{}\"", truncate(text, max_chars.saturating_sub(2)))
-}
-
-fn truncate(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut out = text
-        .chars()
-        .take(max_chars.saturating_sub(1))
-        .collect::<String>();
-    out.push('…');
-    out
 }

@@ -3,17 +3,16 @@
 //! This path never touches Rho's credential store. Claude Code owns the
 //! sign-in, stores the token, and remains the source of truth after handoff.
 
-use anyhow::Context;
 use ratatui::DefaultTerminal;
 
 use crate::claude_runtime::{
     auth::{self, ClaudeAuthError, ClaudeAuthStatus},
     executable,
 };
-use rho_providers::provider::OpenAiCompatibleApi;
 
 use super::{
-    external_editor, App, ComposerMode, Entry, InlineChoice, InlineChoiceModal, InlineChoiceOption,
+    external_login::{CompleteAnnouncement, ExternalLoginSpec, LoginAuthCopy, LoginConfirm},
+    App, ComposerMode, Entry, InlineChoice, InlineChoiceModal, InlineChoiceOption,
     InlineChoicePending,
 };
 
@@ -26,105 +25,13 @@ pub(super) const CANCEL_LOGIN_VALUE: &str = "cancel";
 pub(super) const CONFIRM_LOGOUT_VALUE: &str = "confirm";
 pub(super) const CANCEL_LOGOUT_VALUE: &str = "cancel";
 
-/// Login methods that are not Rho provider credentials.
-///
-/// The picker renders whatever it is handed; which group Claude Code belongs to
-/// is this feature's policy, not the picker's.
-pub(super) const EXTERNAL_LOGIN_METHODS: &[ExternalLoginMethod] = &[
-    ExternalLoginMethod {
-        // Claude Code is an Anthropic-family runtime for delegation, not a separate
-        // top-level provider group. Keep it beside the Anthropic API key method.
-        group_id: "anthropic",
-        value: CLAUDE_CODE_TARGET,
-        label: "Claude Code (delegation only)",
-        detail: "External Claude binary subscription, not Anthropic API billing. \
-Credentials are managed by Claude Code, not Rho.",
-    },
-    ExternalLoginMethod {
-        group_id: "anthropic",
-        value: super::cursor_login::CURSOR_TARGET,
-        label: "Cursor Agent CLI (cursor-agent login)",
-        detail: "External cursor-agent login. Credentials stay in ~/.cursor, not Rho.",
-    },
-];
-
-/// One login method backed by an external runtime rather than a Rho credential.
-pub(super) struct ExternalLoginMethod {
-    /// Login group this method is offered under.
-    pub(super) group_id: &'static str,
-    /// Picker value, which is also the `/login` argument.
-    pub(super) value: &'static str,
-    pub(super) label: &'static str,
-    pub(super) detail: &'static str,
-}
-
-/// What a `/login` or `/logout` argument names.
-///
-/// Parsed once at each command or picker boundary so the provider flows never
-/// re-sniff for the external runtime.
-pub(super) enum SignInTarget {
-    /// Claude Code, whose credential the `claude` binary owns.
-    ClaudeCode,
-    /// Cursor Agent CLI, whose credential `cursor-agent` owns.
-    Cursor,
-    /// Onboarding for a host that does not exist yet.
-    NewCustomHost { api: OpenAiCompatibleApi },
-    /// A Rho provider credential.
-    Provider(String),
-}
-
-impl SignInTarget {
-    pub(super) fn parse(value: &str) -> Self {
-        let value = value.trim();
-        if value.eq_ignore_ascii_case(CLAUDE_CODE_TARGET) {
-            Self::ClaudeCode
-        } else if super::cursor_login::is_cursor_login_target(value) {
-            Self::Cursor
-        } else if let Some(api) = super::custom_provider_login::parse_custom_host_api(value) {
-            Self::NewCustomHost { api }
-        } else {
-            Self::Provider(value.to_string())
-        }
-    }
-}
-
-/// Post-login status outcome recorded in the transcript.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ClaudeLoginAuthOutcome {
-    Complete { notice: String },
-    Incomplete { message: String },
-    Failed { message: String },
-}
-
-impl ClaudeLoginAuthOutcome {
-    fn status_line(&self) -> &'static str {
-        match self {
-            Self::Complete { .. } => "claude code login complete",
-            Self::Incomplete { .. } => "claude code login incomplete",
-            Self::Failed { .. } => "claude code login failed",
-        }
-    }
-}
-
 impl App {
-    pub(super) async fn execute_claude_code_login(&mut self) -> anyhow::Result<()> {
-        match auth::query().await {
-            Ok(status) if status.logged_in => {
-                self.prompt_claude_code_relogin(status);
-                Ok(())
-            }
-            Ok(_) | Err(ClaudeAuthError::BinaryMissing) => {
-                // Confirm before the first-time handoff. Missing binary still
-                // uses this path so a later confirm shows a clear spawn failure.
-                self.prompt_claude_code_login();
-                Ok(())
-            }
-            Err(error) => {
-                self.insert_entry(&Entry::Error(error.to_string()));
-                self.set_status("claude code login failed");
-                Ok(())
-            }
-        }
+    pub(super) async fn execute_claude_code_login(
+        &mut self,
+        terminal: &mut DefaultTerminal,
+    ) -> anyhow::Result<()> {
+        self.start_external_login(terminal, claude_login_spec())
+            .await
     }
 
     pub(super) async fn submit_claude_code_login_choice(
@@ -133,7 +40,7 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         match choice.selected_value() {
-            RELAY_LOGIN_VALUE => self.run_claude_code_login(terminal).await,
+            RELAY_LOGIN_VALUE => self.run_external_login(terminal, claude_login_spec()).await,
             _ => {
                 self.set_status("claude code login cancelled");
                 Ok(())
@@ -147,7 +54,7 @@ impl App {
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
         match choice.selected_value() {
-            RELAY_LOGIN_VALUE => self.run_claude_code_login(terminal).await,
+            RELAY_LOGIN_VALUE => self.run_external_login(terminal, claude_login_spec()).await,
             _ => {
                 self.set_status("claude code login unchanged");
                 Ok(())
@@ -315,167 +222,44 @@ Cancel if you did not mean to sign in.",
             }));
         self.set_status("claude code already signed in");
     }
-
-    async fn run_claude_code_login(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
-        self.insert_entry(&Entry::Notice(auth::login_handoff_notice().into()));
-        // Draw the ownership notice before leaving the alternate screen so the
-        // handoff message is part of session history after resume.
-        terminal.draw(|frame| self.draw(frame))?;
-
-        let mut terminal_session = self
-            .terminal_session
-            .take()
-            .context("terminal session is unavailable")?;
-        let suspended_run = terminal_session
-            .run_suspended(terminal, &auth::login_handoff_status(), || async move {
-                let executable = executable::resolve().map_err(anyhow::Error::new)?;
-                let mut command = executable
-                    .try_command(auth::login_args().iter().copied())
-                    .map_err(anyhow::Error::new)?;
-                command
-                    .stdin(std::process::Stdio::inherit())
-                    .stdout(std::process::Stdio::inherit())
-                    .stderr(std::process::Stdio::inherit());
-                #[cfg(unix)]
-                let _signal_guard =
-                    external_editor::unix_suspended_child_signals::SuspendedChildSignalGuard::install(
-                        &mut command,
-                    )
-                    .context("could not prepare claude login signal handling")?;
-                let status = command.status().await.map_err(|source| {
-                    if source.kind() == std::io::ErrorKind::NotFound {
-                        anyhow::Error::new(ClaudeAuthError::BinaryMissing)
-                    } else {
-                        anyhow::Error::from(source).context("could not start claude auth login")
-                    }
-                })?;
-                if !status.success() {
-                    return Err(anyhow::anyhow!("claude auth login exited with {status}"));
-                }
-                Ok(())
-            })
-            .await;
-        self.terminal_session = Some(terminal_session);
-
-        // resume_result owns terminal lifecycle and must win first. Auth status
-        // and child-exit presentation are only safe once the TUI is back.
-        match resolve_claude_login_after_suspend(
-            suspended_run.resume_result,
-            suspended_run.operation_result,
-            auth::query,
-        )
-        .await
-        {
-            ClaudeLoginAfterSuspend::ResumeFailed { error } => return Err(error),
-            ClaudeLoginAfterSuspend::AuthResolved { outcome } => {
-                self.record_claude_login_auth_outcome(&outcome);
-            }
-        }
-
-        self.ctrl_c_streak = 0;
-        self.input_ui.clear_paste_burst();
-        Ok(())
-    }
-
-    fn record_claude_login_auth_outcome(&mut self, outcome: &ClaudeLoginAuthOutcome) {
-        match outcome {
-            ClaudeLoginAuthOutcome::Complete { notice } => {
-                self.set_status(notice);
-            }
-            ClaudeLoginAuthOutcome::Incomplete { message }
-            | ClaudeLoginAuthOutcome::Failed { message } => {
-                self.insert_entry(&Entry::Error(message.clone()));
-                self.set_status(outcome.status_line());
-            }
-        }
-    }
 }
 
-/// Result of post-suspend Claude login handling.
-#[derive(Debug)]
-enum ClaudeLoginAfterSuspend {
-    ResumeFailed { error: anyhow::Error },
-    AuthResolved { outcome: ClaudeLoginAuthOutcome },
-}
-
-/// Check terminal resume before any auth status work or child-result UI.
-///
-/// `query` is injected so unit tests can prove resume failures never call it,
-/// while successful resume always re-queries regardless of child exit.
-async fn resolve_claude_login_after_suspend<F, Fut>(
-    resume_result: Result<(), anyhow::Error>,
-    operation_result: Result<(), anyhow::Error>,
-    query: F,
-) -> ClaudeLoginAfterSuspend
-where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<ClaudeAuthStatus, ClaudeAuthError>>,
-{
-    if let Err(resume_error) = resume_result {
-        let error = match operation_result {
-            Ok(()) => resume_error,
-            Err(operation_error) => resume_error.context(format!(
-                "claude auth login also failed: {operation_error:#}"
-            )),
-        };
-        return ClaudeLoginAfterSuspend::ResumeFailed { error };
-    }
-
-    ClaudeLoginAfterSuspend::AuthResolved {
-        outcome: resolve_claude_login_auth_outcome(operation_result, query).await,
-    }
-}
-
-/// Map login child result plus a fresh auth status probe into UI state.
-///
-/// `query` is injected so unit tests can cover the state machine without
-/// spawning `claude` or reading personal auth.
-async fn resolve_claude_login_auth_outcome<F, Fut>(
-    operation_result: Result<(), anyhow::Error>,
-    query: F,
-) -> ClaudeLoginAuthOutcome
-where
-    F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = Result<ClaudeAuthStatus, ClaudeAuthError>>,
-{
-    match operation_result {
-        Ok(()) => match query().await {
-            Ok(status) if status.logged_in => ClaudeLoginAuthOutcome::Complete {
-                notice: status.describe_login_success(),
-            },
-            Ok(status) => ClaudeLoginAuthOutcome::Incomplete {
-                message: format!(
+fn claude_login_spec() -> ExternalLoginSpec<ClaudeAuthStatus, ClaudeAuthError> {
+    ExternalLoginSpec {
+        command_label: "claude auth login",
+        resolve: executable::resolve,
+        login_args: auth::login_args(),
+        query: || Box::pin(auth::query()),
+        is_signed_in: |status| status.logged_in,
+        copy: LoginAuthCopy {
+            status_line_prefix: "claude code login",
+            signed_in_notice: ClaudeAuthStatus::describe_login_success,
+            incomplete_signed_out: |status| {
+                format!(
                     "claude auth login finished, but status still reports signed out ({})",
                     status.describe()
-                ),
+                )
             },
-            Err(error) => ClaudeLoginAuthOutcome::Incomplete {
-                message: format!(
-                    "claude auth login finished, but status could not be read: {error}"
-                ),
+            incomplete_query_error: |error| {
+                format!("claude auth login finished, but status could not be read: {error}")
+            },
+            failed: |error| format!("claude code login failed: {error:#}"),
+            child_failed_but_signed_in: |error, status| {
+                format!(
+                    "claude auth login reported an error ({error:#}), but status shows signed in.\n{}",
+                    status.describe_login_success()
+                )
             },
         },
-        Err(error) => {
-            // Prefer a post-status check when the child failed; the user may
-            // already be signed in from a previous attempt.
-            match query().await {
-                Ok(status) if status.logged_in => ClaudeLoginAuthOutcome::Complete {
-                    notice: format!(
-                        "claude auth login reported an error ({error:#}), but status shows signed in.\n{}",
-                        status.describe_login_success()
-                    ),
-                },
-                _ => ClaudeLoginAuthOutcome::Failed {
-                    message: format!("claude code login failed: {error:#}"),
-                },
-            }
-        }
+        confirm: LoginConfirm::Prompt {
+            prompt_unsigned: App::prompt_claude_code_login,
+            prompt_signed_in: App::prompt_claude_code_relogin,
+            failed_status: "claude code login failed",
+            is_binary_missing: |error| matches!(error, ClaudeAuthError::BinaryMissing),
+        },
+        handoff_notice: auth::login_handoff_notice(),
+        handoff_status: auth::login_handoff_status(),
+        complete_announcement: CompleteAnnouncement::StatusOnly,
+        after_success: None,
     }
 }
-
-#[cfg(test)]
-#[path = "claude_login_tests.rs"]
-mod tests;

@@ -2,7 +2,7 @@ use crate::{
     agent::{
         effective_internal_agent_reasoning, internal_agent_accepts_claude_runtime,
         internal_agent_requires_model, AgentCatalog, AgentCatalogEntry, AgentOrigin,
-        AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy, ToolPolicy,
+        AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy,
     },
     config::{InternalAgentModelConfig, InternalAgentTarget},
 };
@@ -189,51 +189,14 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Strin
             .map(|level| level.to_string())
             .unwrap_or_else(|| "inherit".to_string())
     };
-    let (tools, inherit_claude_config) = match &definition.runtime {
-        AgentRuntimeSpec::Rho {
-            tools: ToolPolicy::All,
-            ..
-        } => ("all".to_string(), None),
-        AgentRuntimeSpec::Rho {
-            tools: ToolPolicy::Allow(tools),
-            ..
-        } if tools.is_empty() => ("none".to_string(), None),
-        AgentRuntimeSpec::Rho {
-            tools: ToolPolicy::Allow(tools),
-            ..
-        } => (
-            tools
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", "),
-            None,
-        ),
-        AgentRuntimeSpec::ClaudeCli(config) => (
-            if config.tools.as_slice().is_empty() {
-                "none".to_string()
-            } else {
-                config.tools.as_slice().join(", ")
-            },
-            Some(if config.inherit_claude_config {
-                "yes"
-            } else {
-                "no"
-            }),
-        ),
-        AgentRuntimeSpec::Cursor(config) => (
-            if config.tools.is_empty() {
-                "none".to_string()
-            } else {
-                config
-                    .tools
-                    .iter()
-                    .map(|tool| tool.as_flag().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            },
-            None,
-        ),
+    let tools = definition.tools_badge();
+    let inherit_claude_config = match &definition.runtime {
+        AgentRuntimeSpec::ClaudeCli(config) => Some(if config.inherit_claude_config {
+            "yes"
+        } else {
+            "no"
+        }),
+        AgentRuntimeSpec::Rho { .. } | AgentRuntimeSpec::Cursor(_) => None,
     };
     let runtime = definition.runtime.runtime().to_string();
     let prompt = match &definition.prompt {

@@ -7,7 +7,8 @@ use rho_providers::model::provider_models::{
     replace_cli_provider_models, CliProviderModel, CliProviderRefreshContext, ProviderModel,
 };
 use rho_providers::model::ReasoningCapabilities;
-use serde_json::{json, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::claude_runtime::persist::RuntimeLabel;
@@ -18,18 +19,25 @@ use super::{auth, executable};
 /// Program name resolved on `PATH`. Not `agent`: that collides with other tools.
 pub(crate) const CURSOR_PROGRAM: &str = "cursor-agent";
 
-/// How Cursor names itself in a `<source>/<model>` slot.
+/// `<source>` token in a `<source>/<model>` slot (picker / config identity).
 ///
-/// Phase D wires this into pickers and `/login cursor`.
+/// Same string as [`CURSOR_PROGRAM_LABEL`]; keep both names so call sites
+/// stay explicit about which role they mean.
 pub(crate) const CURSOR_SOURCE_LABEL: &str = "cursor";
 
 /// Error prefixes and [`RuntimeLabel::program`]: `cursor: ...`.
+///
+/// Same string as [`CURSOR_SOURCE_LABEL`]; keep both names so call sites
+/// stay explicit about which role they mean.
 pub(crate) const CURSOR_PROGRAM_LABEL: &str = "cursor";
 
 /// Starting activity and program name for the shared artifact sink.
 pub(crate) const CURSOR_LABEL: RuntimeLabel = RuntimeLabel {
     starting_activity: "starting cursor",
     program: CURSOR_PROGRAM_LABEL,
+    resume_command: CURSOR_PROGRAM,
+    session_label: "cursor session",
+    cost_label: "cursor cost",
 };
 
 /// Same wall-clock budget as auth/version probes.
@@ -57,6 +65,34 @@ pub(crate) struct CursorModel {
     pub is_current: bool,
     pub zdr: bool,
 }
+
+/// CLI flags stored on each cached model row as `raw_json`.
+///
+/// Wire keys stay `default` / `current` / `zdr`. Missing `zdr` is true, matching
+/// `cursor-agent models` (ZDR unless annotated `NO ZDR`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+struct CursorModelFlags {
+    #[serde(rename = "default")]
+    is_default: bool,
+    #[serde(rename = "current")]
+    is_current: bool,
+    zdr: bool,
+}
+
+impl Default for CursorModelFlags {
+    fn default() -> Self {
+        Self {
+            is_default: false,
+            is_current: false,
+            zdr: true,
+        }
+    }
+}
+
+/// Spawned `refresh()` task, so callers do not repeat the JoinHandle type.
+pub(crate) type RefreshHandle =
+    tokio::task::JoinHandle<Result<Vec<CursorModel>, CursorModelsError>>;
 
 /// Failures when listing or caching Cursor models.
 #[derive(Debug, Error)]
@@ -153,6 +189,17 @@ pub(crate) async fn refresh() -> Result<Vec<CursorModel>, CursorModelsError> {
     Ok(models)
 }
 
+/// Fetch and cache models when the snapshot is empty, stale, or for another account.
+pub(crate) async fn refresh_if_stale(
+    email: Option<&str>,
+) -> Result<Vec<CursorModel>, CursorModelsError> {
+    if needs_refresh_for_account(email) {
+        refresh().await
+    } else {
+        Ok(cached())
+    }
+}
+
 pub(crate) fn cache_models(
     models: &[CursorModel],
     context: CliProviderRefreshContext,
@@ -168,11 +215,12 @@ pub(crate) fn cache_models(
                 max_output_tokens: None,
                 reasoning_capabilities: ReasoningCapabilities::Unknown,
             },
-            raw_json: json!({
-                "default": model.is_default,
-                "current": model.is_current,
-                "zdr": model.zdr,
-            }),
+            raw_json: serde_json::to_value(CursorModelFlags {
+                is_default: model.is_default,
+                is_current: model.is_current,
+                zdr: model.zdr,
+            })
+            .unwrap_or(Value::Null),
         })
         .collect();
     replace_cli_provider_models(CURSOR_SOURCE_LABEL, rows, &context)
@@ -189,7 +237,7 @@ pub(crate) async fn current_refresh_context() -> CliProviderRefreshContext {
     };
     CliProviderRefreshContext {
         account_email,
-        cursor_version: auth::version().await.ok(),
+        tool_version: auth::version().await.ok(),
     }
 }
 
@@ -290,20 +338,14 @@ fn suffix_token(haystack: &str, suffix: &str) -> bool {
 }
 
 fn cursor_model_from_cached(entry: CliProviderModel) -> CursorModel {
+    let flags = serde_json::from_value::<CursorModelFlags>(entry.raw_json).unwrap_or_default();
     CursorModel {
         id: entry.model.model,
         display_name: entry.model.display_name,
-        is_default: flag(&entry.raw_json, "default", false),
-        is_current: flag(&entry.raw_json, "current", false),
-        zdr: flag(&entry.raw_json, "zdr", true),
+        is_default: flags.is_default,
+        is_current: flags.is_current,
+        zdr: flags.zdr,
     }
-}
-
-fn flag(raw_json: &Value, key: &str, default: bool) -> bool {
-    raw_json
-        .get(key)
-        .and_then(Value::as_bool)
-        .unwrap_or(default)
 }
 
 #[cfg(test)]

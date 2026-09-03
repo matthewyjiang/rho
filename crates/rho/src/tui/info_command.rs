@@ -14,6 +14,7 @@ use super::{
     workspace::git_branch,
     App, Entry,
 };
+use crate::agent::AgentRuntime;
 use crate::claude_runtime::auth::{self, ClaudeProbeSnapshot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,10 +66,8 @@ pub(super) struct RuntimeInfo {
     model_metadata: Option<ModelMetadata>,
     tree: Option<crate::session::tree::SessionTreeFacts>,
     tree_error: Option<String>,
-    /// Claude Code auth summary. Outside provider credentials on purpose.
-    claude_code: String,
-    /// Cursor Agent auth summary. Outside provider credentials on purpose.
-    cursor: String,
+    /// Auth summaries for runtimes outside provider credentials (Claude, Cursor).
+    external_runtimes: Vec<String>,
     /// Cumulative cost from all completed subagents, including failed/canceled ones.
     subagent_total_cost_usd_micros: u64,
     /// Cumulative cost from finished advisor calls in this conversation.
@@ -90,19 +89,27 @@ impl App {
             },
             None => (None, None),
         };
-        // During a turn never block stream draining on a Claude child probe.
-        let claude_code = if self.is_ui_busy() {
-            ClaudeProbeSnapshot::not_refreshed_during_turn().auth_description()
+        // During a turn never block stream draining on a child probe.
+        let external_runtimes = if self.is_ui_busy() {
+            vec![
+                ClaudeProbeSnapshot::not_refreshed_during_turn().auth_description(),
+                format!(
+                    "{}: status not refreshed during a model turn",
+                    AgentRuntime::Cursor.as_str()
+                ),
+            ]
         } else {
-            self.claude_probe_snapshot().await.auth_description()
-        };
-        let cursor = if self.is_ui_busy() {
-            "cursor: status not refreshed during a model turn".into()
-        } else {
-            match crate::cursor_runtime::auth::query().await {
-                Ok(status) => status.auth_description(),
-                Err(error) => error.to_string(),
-            }
+            let (claude, cursor) = tokio::join!(
+                self.claude_probe_snapshot(),
+                crate::cursor_runtime::auth::query(),
+            );
+            vec![
+                claude.auth_description(),
+                match cursor {
+                    Ok(status) => status.auth_description(),
+                    Err(error) => error.to_string(),
+                },
+            ]
         };
         let info = RuntimeInfo {
             version: identity.rho_version.to_string(),
@@ -143,8 +150,7 @@ impl App {
             model_metadata: self.model_metadata.clone(),
             tree,
             tree_error,
-            claude_code,
-            cursor,
+            external_runtimes,
             subagent_total_cost_usd_micros: self.usage.subagent_total_cost_usd_micros,
             advisor_total_cost_usd_micros: self.usage.advisor_total_cost_usd_micros,
         };
@@ -172,8 +178,9 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
     block.push_field("Billing", info.billing.description());
 
     block.push_section("External runtimes");
-    block.push_note(&info.claude_code);
-    block.push_note(&info.cursor);
+    for line in &info.external_runtimes {
+        block.push_note(line);
+    }
 
     block.push_section("Session");
     if let Some(tree) = &info.tree {

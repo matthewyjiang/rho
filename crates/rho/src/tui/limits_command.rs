@@ -16,7 +16,7 @@ use super::{
     panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
     render::display_width,
     theme::Theme,
-    App, ComposerMode, Entry,
+    App, ComposerMode,
 };
 use crate::usage_limits::{
     fetch_usage_provider, now_unix, usage_provider_is_connected, UsageLimitWindow,
@@ -193,11 +193,6 @@ impl App {
     }
 
     pub(super) fn start_limits_command(&mut self) {
-        if self.info.runtime.provider == crate::cursor_runtime::models::CURSOR_SOURCE_LABEL {
-            self.insert_entry(&Entry::Notice(
-                "usage limits are not available for cursor".into(),
-            ));
-        }
         let claude_disk = crate::claude_runtime::rate_limit::load();
         self.open_limits_overlay(claude_disk.as_ref());
         self.spawn_missing_usage_fetches(claude_disk.as_ref());

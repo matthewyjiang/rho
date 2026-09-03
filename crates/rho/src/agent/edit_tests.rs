@@ -79,7 +79,7 @@ fn switching_to_cursor_resets_reasoning_and_requires_tools() {
     let mut draft = AgentDefinition {
         id: AgentId::new("switch-cursor").unwrap(),
         description: "switch agent".into(),
-        prompt: PromptPolicy::Extend("body".into()),
+        prompt: PromptPolicy::Replace("body".into()),
         runtime: AgentRuntimeSpec::Rho {
             tools: ToolPolicy::Allow(
                 [ToolCapability::ReadFile, ToolCapability::Shell]
@@ -96,6 +96,7 @@ fn switching_to_cursor_resets_reasoning_and_requires_tools() {
     };
 
     assert!(draft.switch_runtime_kind("cursor"));
+    assert_eq!(draft.prompt, PromptPolicy::Extend("body".into()));
     match &draft.runtime {
         AgentRuntimeSpec::Cursor(config) => {
             assert_eq!(config.model.as_deref(), Some("gpt-5.3-codex-high"));

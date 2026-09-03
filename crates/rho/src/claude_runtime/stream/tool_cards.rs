@@ -11,11 +11,8 @@ use serde_json::Value;
 
 use rho_sdk::floor_char_boundary;
 
-use rho_tools::{
-    tool::compact_display_path,
-    tool_card::{
-        DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
-    },
+use rho_tools::tool_card::{
+    DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
 };
 
 use crate::tools::mcp::{
@@ -23,7 +20,10 @@ use crate::tools::mcp::{
     exported_name::{parse_exported_name, ExportedNameDialect},
 };
 
-use super::format::{truncate_payload_lines, MAX_TOOL_BODY_LINES};
+use super::format::{
+    count_fact, display_path_field, quoted, set_lines_body, string_field, truncate,
+    truncate_payload_lines, u64_field, MAX_TOOL_BODY_LINES,
+};
 use super::types::MAX_TOOL_PAYLOAD_CHARS;
 
 /// Raw `input_json_delta` assembly budget. Larger than the presentation cap
@@ -656,13 +656,6 @@ fn filenames_from_result(tool_use_result: Option<&Value>) -> Option<Vec<String>>
     Some(files)
 }
 
-fn set_lines_body(card: &mut ToolCard, content_text: &str) {
-    if content_text.trim().is_empty() {
-        return;
-    }
-    card.body = ToolBody::Lines(truncate_payload_lines(content_text, MAX_TOOL_BODY_LINES));
-}
-
 fn push_error_output(card: &mut ToolCard, content: &str) {
     let trimmed = content.trim();
     if trimmed.is_empty() {
@@ -686,44 +679,6 @@ fn grep_primary(input: Option<&Value>, cwd: Option<&Path>) -> Option<String> {
     match display_path_field(input, &["path"], cwd) {
         Some(path) => Some(format!("{pattern}, {path}")),
         None => Some(pattern),
-    }
-}
-
-fn display_path_field(input: Option<&Value>, keys: &[&str], cwd: Option<&Path>) -> Option<String> {
-    let path = string_field(input, keys)?;
-    Some(match cwd {
-        Some(cwd) => compact_display_path(cwd, &path),
-        None => path,
-    })
-}
-
-fn string_field(input: Option<&Value>, keys: &[&str]) -> Option<String> {
-    let input = input?;
-    keys.iter().find_map(|key| {
-        input
-            .get(*key)
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-    })
-}
-
-fn u64_field(input: Option<&Value>, keys: &[&str]) -> Option<u64> {
-    let input = input?;
-    keys.iter()
-        .find_map(|key| input.get(*key).and_then(Value::as_u64))
-}
-
-fn count_fact(singular: &str, plural: &str, value: u64, detail: Option<String>) -> ToolFact {
-    ToolFact::Count {
-        label: if value == 1 {
-            singular.into()
-        } else {
-            plural.into()
-        },
-        value,
-        detail,
     }
 }
 
@@ -839,22 +794,6 @@ fn clean_name(name: Option<&str>) -> String {
         .filter(|name| !name.is_empty())
         .unwrap_or("tool")
         .to_string()
-}
-
-fn quoted(text: &str, max_chars: usize) -> String {
-    format!("\"{}\"", truncate(text, max_chars.saturating_sub(2)))
-}
-
-fn truncate(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut out = text
-        .chars()
-        .take(max_chars.saturating_sub(1))
-        .collect::<String>();
-    out.push('…');
-    out
 }
 
 #[cfg(test)]

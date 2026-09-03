@@ -81,7 +81,6 @@ pub(crate) struct BoundAgent {
     fingerprint: AgentFingerprint,
     runtime: BoundRuntime,
     step_limit: u64,
-    bind_warnings: Vec<String>,
 }
 
 impl BoundAgent {
@@ -118,11 +117,13 @@ impl BoundAgent {
         use crate::model_identity::PromptModel;
         match &self.runtime {
             BoundRuntime::Rho { config, .. } => PromptModel::from_config(config),
-            BoundRuntime::ClaudeCli { model, .. } => PromptModel::ClaudeCli {
+            BoundRuntime::ClaudeCli { model, .. } => PromptModel::ExternalCli {
+                runtime: crate::agent::AgentRuntime::ClaudeCli,
                 requested: model.clone(),
                 resolved: None,
             },
-            BoundRuntime::Cursor { model, .. } => PromptModel::Cursor {
+            BoundRuntime::Cursor { model, .. } => PromptModel::ExternalCli {
+                runtime: crate::agent::AgentRuntime::Cursor,
                 requested: model.clone(),
                 resolved: None,
             },
@@ -135,11 +136,6 @@ impl BoundAgent {
             BoundRuntime::Rho { capabilities, .. } => Some(capabilities),
             BoundRuntime::ClaudeCli { .. } | BoundRuntime::Cursor { .. } => None,
         }
-    }
-
-    /// Non-fatal notices from bind (unknown Cursor model, …).
-    pub(crate) fn bind_warnings(&self) -> &[String] {
-        &self.bind_warnings
     }
 
     pub(crate) fn step_limit(&self) -> u64 {
@@ -220,8 +216,10 @@ impl BoundAgent {
             cancellation,
             status_tx,
             started_status,
-            overrides: Default::default(),
             parent_messages: None,
+            auth_status: None,
+            rate_limit_state_path: None,
+            overrides: Default::default(),
         })
     }
 
@@ -255,6 +253,7 @@ impl BoundAgent {
             cancellation,
             status_tx,
             started_status,
+            auth_status: None,
             overrides: Default::default(),
         })
     }
@@ -302,13 +301,11 @@ impl AgentBinder {
                 bind_cursor_runtime(&definition, config, &invocation, host_config)?
             }
         };
-        let bind_warnings = cursor_bind_warnings(&runtime);
         Ok(BoundAgent {
             definition,
             fingerprint,
             runtime,
             step_limit: super::sdk_config::run_step_limit().get() as u64,
-            bind_warnings,
         })
     }
 
@@ -388,13 +385,11 @@ impl AgentBinder {
                 }
             }
         };
-        let bind_warnings = cursor_bind_warnings(&runtime);
         Ok(BoundAgent {
             definition,
             fingerprint,
             runtime,
             step_limit: frozen.step_limit,
-            bind_warnings,
         })
     }
 }
@@ -636,11 +631,13 @@ fn prompt_model_for_definition(
     use crate::model_identity::PromptModel;
 
     match &definition.runtime {
-        AgentRuntimeSpec::ClaudeCli(claude) => Some(PromptModel::ClaudeCli {
+        AgentRuntimeSpec::ClaudeCli(claude) => Some(PromptModel::ExternalCli {
+            runtime: crate::agent::AgentRuntime::ClaudeCli,
             requested: claude.model.clone(),
             resolved: None,
         }),
-        AgentRuntimeSpec::Cursor(cursor) => Some(PromptModel::Cursor {
+        AgentRuntimeSpec::Cursor(cursor) => Some(PromptModel::ExternalCli {
+            runtime: crate::agent::AgentRuntime::Cursor,
             requested: cursor.model.clone(),
             resolved: None,
         }),
@@ -800,29 +797,6 @@ set a Cursor model name (for example gpt-5.3-codex), not '{model}'",
         tools: config.tools.clone(),
         permission_mode: host_config.permission_mode,
     })
-}
-
-fn cursor_bind_warnings(runtime: &BoundRuntime) -> Vec<String> {
-    let BoundRuntime::Cursor { model, .. } = runtime else {
-        return Vec::new();
-    };
-    unknown_cursor_model_warning(model.as_deref())
-        .into_iter()
-        .collect()
-}
-
-/// Warn when a pinned Cursor model is missing from a non-empty cache.
-fn unknown_cursor_model_warning(model: Option<&str>) -> Option<String> {
-    let model = model.filter(|value| !value.is_empty())?;
-    let cached = crate::cursor_runtime::models::cached();
-    if cached.is_empty() {
-        return None;
-    }
-    let lookup = model.split_once('[').map(|(id, _)| id).unwrap_or(model);
-    if cached.iter().any(|row| row.id == lookup) {
-        return None;
-    }
-    Some(format!("cursor model '{model}' is not in the cached list"))
 }
 
 #[cfg(test)]

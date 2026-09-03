@@ -46,7 +46,14 @@ pub(super) const AGENT_FIELD_CANCEL: &str = "agent_field:cancel";
 pub(super) enum AgentEditPhase {
     Fields,
     Choosing(AgentChoiceField),
-    PickingModel,
+    PickingModel(ModelPickerKind),
+}
+
+/// Which model list the `PickingModel` phase is showing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ModelPickerKind {
+    RhoCatalog,
+    CursorCached,
 }
 
 /// Choice sub-picker fields.
@@ -167,11 +174,8 @@ impl AgentEditSession {
     }
 
     fn switch_runtime(&mut self, value: &str) -> bool {
-        let next = match value {
-            "rho" => AgentRuntime::Rho,
-            "claude-cli" => AgentRuntime::ClaudeCli,
-            "cursor" => AgentRuntime::Cursor,
-            _ => return false,
+        let Ok(next) = value.parse::<AgentRuntime>() else {
+            return false;
         };
         self.runtime_stash
             .insert(self.draft.runtime.runtime(), self.draft.runtime.clone());
@@ -179,9 +183,6 @@ impl AgentEditSession {
             self.draft.runtime = runtime;
         } else if !self.draft.switch_runtime_kind(value) {
             return false;
-        }
-        if matches!(self.draft.runtime, AgentRuntimeSpec::Cursor(_)) {
-            let _ = self.draft.set_prompt_policy_kind("extend");
         }
         true
     }
@@ -491,10 +492,16 @@ fn agent_choice_picker(
                 "runtime",
                 choice_items(
                     &[
-                        ("rho", "Rho's own loop and tool vocabulary."),
-                        ("claude-cli", "Delegate the loop to the claude binary."),
                         (
-                            "cursor",
+                            AgentRuntime::Rho.as_str(),
+                            "Rho's own loop and tool vocabulary.",
+                        ),
+                        (
+                            AgentRuntime::ClaudeCli.as_str(),
+                            "Delegate the loop to the claude binary.",
+                        ),
+                        (
+                            AgentRuntime::Cursor.as_str(),
                             "Delegate the loop to cursor-agent with a closed tool allow list.",
                         ),
                     ],

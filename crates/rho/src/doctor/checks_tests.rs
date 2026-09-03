@@ -8,7 +8,9 @@ use rho_providers::{
 use super::*;
 use crate::{
     claude_runtime::auth::ClaudeProbeSnapshot,
-    cursor_runtime::auth::{CursorAuthError, CursorAuthStatus, CursorUserInfo},
+    cursor_runtime::auth::{
+        CursorAuthError, CursorAuthStatus, CursorProbeSnapshot, CursorUserInfo,
+    },
     plugins::{PluginOrigin, PluginReportEntry, PluginScope, PluginStatus},
     tools::mcp::{
         report::{ConnectedServerReport, McpLiveServerState},
@@ -260,8 +262,8 @@ fn claude_rows_cover_signed_in_signed_out_and_error() {
 // Owner: pure unit
 #[test]
 fn cursor_row_covers_signed_in_signed_out_and_not_installed() {
-    let signed_in = cursor_check(
-        &Ok(CursorAuthStatus {
+    let signed_in = cursor_check(&CursorProbeSnapshot {
+        auth: Ok(CursorAuthStatus {
             status: "authenticated".into(),
             is_authenticated: true,
             message: None,
@@ -269,20 +271,24 @@ fn cursor_row_covers_signed_in_signed_out_and_not_installed() {
                 email: Some("dev@example.com".into()),
             }),
         }),
-        Some("2026.08.25"),
-        217,
-    );
-    let signed_out = cursor_check(
-        &Ok(CursorAuthStatus {
+        version: Some("2026.08.25".into()),
+        models_cached: 217,
+    });
+    let signed_out = cursor_check(&CursorProbeSnapshot {
+        auth: Ok(CursorAuthStatus {
             status: "unauthenticated".into(),
             is_authenticated: false,
             message: Some("Not logged in".into()),
             user_info: None,
         }),
-        Some("2026.08.25"),
-        0,
-    );
-    let missing = cursor_check(&Err(CursorAuthError::BinaryMissing), None, 0);
+        version: Some("2026.08.25".into()),
+        models_cached: 0,
+    });
+    let missing = cursor_check(&CursorProbeSnapshot {
+        auth: Err(CursorAuthError::BinaryMissing),
+        version: None,
+        models_cached: 0,
+    });
 
     let cases = [
         (

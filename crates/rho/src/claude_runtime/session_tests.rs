@@ -53,10 +53,9 @@ async fn cancelled_before_start_writes_stopped_status() {
         status_tx: None,
         started_status: None,
         parent_messages: None,
-        overrides: ClaudeSessionOverrides {
-            auth_status: Some(Ok(logged_in())),
-            ..ClaudeSessionOverrides::default()
-        },
+        auth_status: Some(Ok(logged_in())),
+        rate_limit_state_path: None,
+        overrides: CliSessionOverrides::default(),
     })
     .await
     .unwrap();
@@ -64,6 +63,17 @@ async fn cancelled_before_start_writes_stopped_status() {
     assert_eq!(status.state, RunState::Stopped);
     assert_eq!(status.provider.as_deref(), Some("claude-code"));
     assert_eq!(status.model.as_deref(), Some("opus"));
+}
+
+#[test]
+fn ensure_stream_json_input_is_idempotent() {
+    let bare = vec!["-p".into(), "--output-format".into(), "stream-json".into()];
+    let once = ensure_stream_json_input(bare);
+    assert!(once
+        .windows(2)
+        .any(|window| window == ["--input-format", "stream-json"]));
+    let twice = ensure_stream_json_input(once.clone());
+    assert_eq!(once, twice);
 }
 
 #[cfg(unix)]

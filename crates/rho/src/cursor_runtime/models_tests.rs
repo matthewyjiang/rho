@@ -139,7 +139,7 @@ fn cached_models_restore_raw_json_flags() {
             &models,
             CliProviderRefreshContext {
                 account_email: Some("dev@example.com".into()),
-                cursor_version: Some("2026.09.02".into()),
+                tool_version: Some("2026.09.02".into()),
             },
         )
         .unwrap();
