@@ -21,6 +21,8 @@
 //! combines it with process exit, as for Claude. Cursor has no `error` frame:
 //! startup failures surface on stderr with a nonzero exit.
 
+#![allow(dead_code)] // Phase D session drain; mapper is wired, session is not reachable from app
+
 mod protocol;
 mod tool_cards;
 

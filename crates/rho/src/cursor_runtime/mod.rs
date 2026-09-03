@@ -10,6 +10,12 @@
 //!
 //! Nothing here is a Rho credential; Rho never stores Cursor tokens.
 
-// Consumed once `session` wires the mapper into the shared drain loop.
-#[allow(dead_code)]
+// Phase D bind/execute/login; this process layer is complete but unreachable from app.
+#![allow(dead_code)]
+
+pub(crate) mod auth;
+pub(crate) mod executable;
+pub(crate) mod models;
+pub(crate) mod session;
+pub(crate) mod spawn;
 pub(crate) mod stream;

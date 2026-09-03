@@ -91,7 +91,7 @@ impl CursorTool {
         }
     }
 
-    // Consumed by cursor_runtime::spawn once the session layer lands.
+    // Spawn maps Plan via `is_read_only`; Phase D has not wired session yet.
     #[allow(dead_code)]
     pub fn capability_kind(self) -> CapabilityKind {
         match self {
@@ -119,18 +119,7 @@ impl CursorTool {
 
     #[allow(dead_code)]
     pub fn is_read_only(self) -> bool {
-        matches!(
-            self,
-            Self::Read
-                | Self::Grep
-                | Self::Glob
-                | Self::Ls
-                | Self::SemSearch
-                | Self::ReadLints
-                | Self::ReadTodos
-                | Self::ReadMcpResource
-                | Self::ListMcpResources
-        )
+        matches!(self.capability_kind(), CapabilityKind::Read)
     }
 
     fn accepted_names() -> String {
