@@ -27,8 +27,6 @@ pub(super) fn tree_connector(is_last: bool) -> &'static str {
 
 /// Visible stacked rows shared by the subagent and process rails.
 pub(super) const MAX_VISIBLE_RAIL_ROWS: usize = 2;
-/// Content width clamp shared by stacked activity-rail rows.
-const MAX_RAIL_CONTENT_WIDTH: usize = 52;
 
 /// Agent-row identity prefix (glyph + space).
 pub(super) const AGENT_GLYPH: &str = "◉ ";
@@ -71,58 +69,67 @@ impl RailRow {
         const SEPARATOR: &str = "  ·  ";
         const MIN_GAP: usize = 2;
 
-        let connector_width = display_width(self.connector);
-        let content_width = width
-            .saturating_sub(connector_width)
-            .min(MAX_RAIL_CONTENT_WIDTH);
+        let content_width = width.saturating_sub(display_width(self.connector));
+        let row_style = self.row_style;
+        let identity_style = self.identity_style();
+        let mut spans = Vec::with_capacity(self.identity.len() + 5);
+        spans.push(Span::styled(self.connector, Theme::dim().patch(row_style)));
+
+        let trailing_reserve = if self.trailing.is_empty() {
+            0
+        } else {
+            (MIN_GAP + display_width(&self.trailing)).min(content_width)
+        };
         let identity_plain: String = self
             .identity
             .iter()
             .map(|span| span.content.as_ref())
             .collect();
         let identity_width = display_width(&identity_plain);
+        let identity_budget = content_width.saturating_sub(trailing_reserve);
+        let mut used = if identity_width <= identity_budget {
+            spans.extend(self.identity);
+            identity_width
+        } else {
+            let identity = truncate_one_line(&identity_plain, identity_budget);
+            let shown = display_width(&identity);
+            if shown > 0 {
+                spans.push(Span::styled(identity, identity_style.patch(row_style)));
+            }
+            shown
+        };
+
         let separator_width = display_width(SEPARATOR);
-        let trailing_width = display_width(&self.trailing);
-        let fixed_width = identity_width + separator_width + MIN_GAP + trailing_width;
-        let row_style = self.row_style;
-
-        if self.activity.is_empty() && self.trailing.is_empty() {
-            let identity = truncate_one_line(&identity_plain, content_width);
-            return Line::from(vec![
-                Span::styled(self.connector, Theme::dim().patch(row_style)),
-                Span::styled(identity, self.identity_style().patch(row_style)),
-            ]);
+        let activity_budget =
+            content_width.saturating_sub(used + trailing_reserve + separator_width);
+        // Skip the middle column unless it can show more than a lone ellipsis.
+        if !self.activity.is_empty() && activity_budget > 1 {
+            let activity = truncate_one_line(&self.activity, activity_budget);
+            if !activity.is_empty() {
+                used += separator_width + display_width(&activity);
+                spans.push(Span::styled(SEPARATOR, Theme::dim().patch(row_style)));
+                spans.push(Span::styled(activity, row_style.patch(self.activity_style)));
+            }
         }
 
-        if fixed_width >= content_width {
-            let detail = truncate_one_line(
-                &format!(
-                    "{identity_plain}{SEPARATOR}{}  {}",
-                    self.activity, self.trailing
-                ),
-                content_width,
-            );
-            return Line::from(vec![
-                Span::styled(self.connector, Theme::dim().patch(row_style)),
-                Span::styled(detail, Theme::dim().patch(row_style)),
-            ]);
+        if !self.trailing.is_empty() {
+            let remaining = content_width.saturating_sub(used);
+            let gap = if remaining > MIN_GAP { MIN_GAP } else { 0 };
+            let trailing_budget = remaining.saturating_sub(gap);
+            if trailing_budget > 0 {
+                let trailing = truncate_one_line(&self.trailing, trailing_budget);
+                used += gap + display_width(&trailing);
+                if gap > 0 {
+                    spans.push(Span::styled(" ".repeat(gap), row_style));
+                }
+                spans.push(Span::styled(trailing, row_style.patch(self.trailing_style)));
+            }
         }
 
-        let activity_width = content_width.saturating_sub(fixed_width);
-        let activity = truncate_one_line(&self.activity, activity_width);
-        let gap = " ".repeat(content_width.saturating_sub(
-            identity_width + separator_width + display_width(&activity) + trailing_width,
-        ));
-        let mut spans = Vec::with_capacity(self.identity.len() + 5);
-        spans.push(Span::styled(self.connector, Theme::dim().patch(row_style)));
-        spans.extend(self.identity);
-        spans.push(Span::styled(SEPARATOR, Theme::dim().patch(row_style)));
-        spans.push(Span::styled(activity, row_style.patch(self.activity_style)));
-        spans.push(Span::styled(gap, row_style));
-        spans.push(Span::styled(
-            self.trailing,
-            row_style.patch(self.trailing_style),
-        ));
+        let fill = content_width.saturating_sub(used);
+        if fill > 0 {
+            spans.push(Span::styled(" ".repeat(fill), row_style));
+        }
         Line::from(spans)
     }
 
