@@ -46,6 +46,8 @@ Additional tools:
 | `rho` | Read-only harness diagnostics |
 | `advisor` | Second-model review when [advisor mode](/configuration/advisor-mode) is on |
 
+The `bash` tool and the [inline shell](/inline-shell) (bash or zsh) run a login shell (`-lc`), so `~/.profile` installs (cargo, nvm, pyenv) are available. Login init on Debian/Ubuntu (`/etc/profile`) and macOS (`path_helper`) resets or reorders `PATH` before user dotfiles run, so Rho re-prepends the `PATH` it inherited from the launching terminal after login init. Tools activated only in `~/.zshrc` or `~/.bashrc` (mise, nix, direnv, conda) keep working, with the parent entries taking precedence. The child sees the parent value as `RHO_PARENT_PATH`.
+
 Prefer `grep` and `glob` over shell search for workspace inspection. Both honor `.gitignore`, skip hidden files by default, never follow symlinks, and request read access only, so workspace-scoped searches work in every permission mode including `plan`. Agent shell commands can use [RTK](/integrations/rtk) for token-efficient output when the binary is installed.
 
 Built-in skills that ship with the binary include `rho-config`, `rho-agent-creator`, and `rho-workflow-authoring`. The agent creator powers `/agents create` and `/create-agent`; it is hidden from automatic model invocation. The `rho` tool documents its read-only diagnostics actions in its input schema. Custom skills live under `~/.rho/skills/<name>/SKILL.md`, `~/.agents/skills/<name>/SKILL.md`, or `<project-root>/.agents/skills/<name>/SKILL.md`. Set `disable-model-invocation: true` in a skill's frontmatter to keep it available only through `/skill:<name>`.

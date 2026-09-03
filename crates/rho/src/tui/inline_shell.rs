@@ -168,18 +168,11 @@ async fn execute_streaming(
     max_output_bytes: usize,
 ) -> std::io::Result<ShellOutput> {
     let mut process = Command::new(shell);
-    match executable_name(shell).to_ascii_lowercase().as_str() {
-        "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => {
-            process.args(["-NoLogo", "-NoProfile", "-Command", command]);
-        }
-        "cmd" | "cmd.exe" => {
-            process.args(["/C", command]);
-        }
-        "sh" | "sh.exe" => {
-            process.args(["-c", command]);
-        }
-        _ => {
-            process.args(["-lc", command]);
+    let plan = ShellArgv::for_shell(shell, command);
+    process.args(&plan.args);
+    if plan.carries_parent_path {
+        if let Some(path) = rho_tools::parent_path_for(&rho_sdk::ProcessEnvironment::InheritAll) {
+            process.env(rho_tools::PARENT_PATH_VAR, path);
         }
     }
     let mut child = process
@@ -429,6 +422,39 @@ impl<'a> ShellCardParts<'a> {
             });
         }
         card
+    }
+}
+
+/// Argument vector for one inline shell invocation.
+///
+/// Login shells lose parent `PATH` entries to `/etc/profile`, so bash and zsh
+/// get the `rho_tools::login_shell_script` wrapper plus `RHO_PARENT_PATH`,
+/// matching the bash tool. The wrapper is POSIX parameter expansion, so fish
+/// and unknown shells run the command unwrapped rather than fail to parse.
+#[derive(Debug, PartialEq, Eq)]
+struct ShellArgv {
+    args: Vec<String>,
+    carries_parent_path: bool,
+}
+
+impl ShellArgv {
+    fn for_shell(shell: &str, command: &str) -> Self {
+        let plain = |args: &[&str]| Self {
+            args: args.iter().map(|arg| (*arg).to_string()).collect(),
+            carries_parent_path: false,
+        };
+        match executable_name(shell).to_ascii_lowercase().as_str() {
+            "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => {
+                plain(&["-NoLogo", "-NoProfile", "-Command", command])
+            }
+            "cmd" | "cmd.exe" => plain(&["/C", command]),
+            "sh" | "sh.exe" => plain(&["-c", command]),
+            "bash" | "bash.exe" | "zsh" => Self {
+                args: vec!["-lc".into(), rho_tools::login_shell_script(command)],
+                carries_parent_path: true,
+            },
+            _ => plain(&["-lc", command]),
+        }
     }
 }
 
