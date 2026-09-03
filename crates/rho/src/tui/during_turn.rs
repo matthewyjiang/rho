@@ -504,6 +504,9 @@ impl App {
             config_picker::ENABLE_SUBAGENTS_VALUE => {
                 self.toggle_enable_subagents()?;
             }
+            config_picker::AGENT_CONCURRENCY_VALUE => {
+                self.open_agent_concurrency_editor()?;
+            }
             config_picker::ADVISOR_MODE_VALUE
             | config_picker::ADVISOR_MODEL_VALUE
             | config_picker::ADVISOR_REASONING_VALUE => {

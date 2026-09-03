@@ -13,6 +13,7 @@ use {
 
 use super::{
     agent_binding::{AgentBinder, AgentInvocation, AgentRole, CapacityClass},
+    agent_concurrency::AgentConcurrency,
     automation::{self, RunReporter},
     subagent_host_input::{SubagentHostInputBridge, SubagentHostInputResponder},
     subagent_messaging::{
@@ -21,29 +22,13 @@ use super::{
     },
 };
 
-/// Default total concurrency across all delegated agents (Rho + Claude).
-const DEFAULT_TOTAL_CONCURRENCY: usize = 4;
-/// Default Claude-specific concurrency. Always nested under the total pool so
-/// Claude fan-out cannot exceed this even when Rho capacity remains.
-const DEFAULT_CLAUDE_CONCURRENCY: usize = 2;
-
 #[derive(Clone)]
 pub(crate) struct AgentExecutor {
     config: Arc<std::sync::RwLock<Config>>,
     config_path: PathBuf,
     cwd: PathBuf,
-    /// Global permit pool for every delegated agent (Rho and Claude).
-    ///
-    /// `RHO_AGENT_CONCURRENCY` overrides this total. Claude runs also take a
-    /// permit from [`Self::claude_permits`] (Claude pool first, then global) so
-    /// one env override never opens a 2N fan-out window and queued Claude work
-    /// cannot starve Rho of spare global capacity.
-    /// `RHO_CLAUDE_AGENT_CONCURRENCY` overrides the Claude nested cap and is
-    /// clamped to the total.
-    total_permits: Arc<tokio::sync::Semaphore>,
-    /// Claude-only nested pool. Sized to min(total, Claude default/override).
-    /// Acquired before the global pool for Claude runs.
-    claude_permits: Arc<tokio::sync::Semaphore>,
+    /// Live-resizable global + nested Claude capacity for delegated runs.
+    concurrency: AgentConcurrency,
     host_input: SubagentHostInputBridge,
     notices: SubagentNoticeBridge,
     approval_session: Option<rho_sdk::ApprovalSession>,
@@ -206,13 +191,12 @@ impl AgentExecutor {
         host_input: SubagentHostInputBridge,
         notices: SubagentNoticeBridge,
     ) -> Self {
-        let limits = concurrency_limits();
+        let concurrency = AgentConcurrency::from_config(config.agent_concurrency);
         Self {
             config: Arc::new(std::sync::RwLock::new(config)),
             config_path,
             cwd,
-            total_permits: Arc::new(tokio::sync::Semaphore::new(limits.total)),
-            claude_permits: Arc::new(tokio::sync::Semaphore::new(limits.claude)),
+            concurrency,
             host_input,
             notices,
             approval_session: None,
@@ -270,6 +254,10 @@ impl AgentExecutor {
             .write()
             .expect("delegated config lock")
             .permission_mode = mode;
+    }
+
+    pub(crate) fn concurrency(&self) -> AgentConcurrency {
+        self.concurrency.clone()
     }
 
     #[cfg(test)]
@@ -425,8 +413,7 @@ impl AgentExecutor {
         let host_input = self.host_input.clone();
         let notices = self.notices.clone();
         let persisted_output = output_file.clone();
-        let total_permits = Arc::clone(&self.total_permits);
-        let claude_permits = Arc::clone(&self.claude_permits);
+        let concurrency = self.concurrency.clone();
         // Auto resolves the classifier template (or builds a fresh one) inside
         // automation; non-Auto keeps approval_session. Both may be set; Auto
         // ignores the session.
@@ -447,13 +434,9 @@ impl AgentExecutor {
             // take Claude capacity first so queued Claude work cannot occupy
             // global permits while waiting on the nested pool; Rho takes only
             // the global pool. Dropping the guard returns every held permit.
-            let Some(_runtime_permits) = acquire_runtime_permits(
-                total_permits,
-                claude_permits,
-                capacity_class,
-                &task_cancellation,
-            )
-            .await?
+            let Some(_runtime_permits) = concurrency
+                .acquire(capacity_class, &task_cancellation)
+                .await
             else {
                 let mut stopped = task_status_tx.borrow().clone();
                 stopped.state = RunState::Stopped;
@@ -733,45 +716,6 @@ impl NoticePoster for DelegatedNoticePoster {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ConcurrencyLimits {
-    total: usize,
-    claude: usize,
-}
-
-fn concurrency_limits() -> ConcurrencyLimits {
-    concurrency_limits_from_env(
-        std::env::var("RHO_AGENT_CONCURRENCY").ok().as_deref(),
-        std::env::var("RHO_CLAUDE_AGENT_CONCURRENCY")
-            .ok()
-            .as_deref(),
-    )
-}
-
-/// Parse concurrency env values without reading process environment.
-///
-/// Both values must be positive `usize` integers when present. Zero, empty,
-/// non-numeric, and overflow values fall back to the matching default. The
-/// Claude nested cap is always clamped to the resolved total so Claude fan-out
-/// cannot exceed the global pool.
-fn concurrency_limits_from_env(
-    total_raw: Option<&str>,
-    claude_raw: Option<&str>,
-) -> ConcurrencyLimits {
-    let total = parse_positive_concurrency(total_raw).unwrap_or(DEFAULT_TOTAL_CONCURRENCY);
-    let claude_requested =
-        parse_positive_concurrency(claude_raw).unwrap_or(DEFAULT_CLAUDE_CONCURRENCY);
-    // Nested Claude pool never exceeds the global total, so overrides cannot
-    // open total + Claude = 2N concurrent delegated runs.
-    let claude = claude_requested.min(total);
-    ConcurrencyLimits { total, claude }
-}
-
-fn parse_positive_concurrency(raw: Option<&str>) -> Option<usize> {
-    raw.and_then(|value| value.parse().ok())
-        .filter(|limit: &usize| *limit > 0)
-}
-
 /// Whether a delegated Rho run may expose the questionnaire tool.
 ///
 /// Needs a parent session id and a bound parent host-input bridge. Foreground
@@ -781,87 +725,6 @@ fn delegated_questionnaire_available(
     host_input_bound: bool,
 ) -> bool {
     parent_session_id.is_some() && host_input_bound
-}
-
-/// Concurrency capacity held for the lifetime of one delegated run.
-///
-/// Dropping this value returns every acquired permit. Field drop order is not
-/// load-bearing; each permit returns to its own semaphore independently.
-struct RuntimePermits {
-    _total: tokio::sync::OwnedSemaphorePermit,
-    _claude: Option<tokio::sync::OwnedSemaphorePermit>,
-}
-
-/// Acquire concurrency for a delegated run in runtime-aware order.
-///
-/// - Rho: one global permit only.
-/// - Claude: Claude nested permit first, then one global permit.
-///
-/// Claude-first ordering keeps queued Claude tasks off the global pool until
-/// Claude capacity exists, so spare global slots stay available for Rho.
-/// Cancellation at either wait stage returns `Ok(None)` and drops any permit
-/// already held so capacity cannot leak. A closed semaphore surfaces as an
-/// error rather than a silent cancel.
-async fn acquire_runtime_permits(
-    total_permits: Arc<tokio::sync::Semaphore>,
-    claude_permits: Arc<tokio::sync::Semaphore>,
-    capacity_class: CapacityClass,
-    cancellation: &RunCancellation,
-) -> anyhow::Result<Option<RuntimePermits>> {
-    let claude = match capacity_class {
-        CapacityClass::Claude => {
-            let Some(permit) = acquire_permit_or_cancel(
-                claude_permits,
-                cancellation,
-                "Claude agent concurrency pool closed before the run could start",
-            )
-            .await?
-            else {
-                return Ok(None);
-            };
-            Some(permit)
-        }
-        CapacityClass::Rho => None,
-    };
-
-    let Some(total) = acquire_permit_or_cancel(
-        total_permits,
-        cancellation,
-        "agent concurrency pool closed before the run could start",
-    )
-    .await?
-    else {
-        // Drop any Claude permit acquired above before returning cancelled.
-        return Ok(None);
-    };
-
-    Ok(Some(RuntimePermits {
-        _total: total,
-        _claude: claude,
-    }))
-}
-
-async fn acquire_permit_or_cancel(
-    permits: Arc<tokio::sync::Semaphore>,
-    cancellation: &RunCancellation,
-    closed_message: &str,
-) -> anyhow::Result<Option<tokio::sync::OwnedSemaphorePermit>> {
-    tokio::select! {
-        biased;
-        () = cancellation.cancelled() => Ok(None),
-        permit = permits.acquire_owned() => {
-            // Map a closed semaphore to a clear startup error. Dropping the
-            // failed acquire path holds nothing, so no permit can leak here.
-            let permit = permit.map_err(|_| anyhow::anyhow!("{closed_message}"))?;
-            // Re-check after acquire wins the select so a cancel that arrived
-            // in the same poll drops the permit via this None return.
-            if cancellation.is_cancelled() {
-                Ok(None)
-            } else {
-                Ok(Some(permit))
-            }
-        }
-    }
 }
 
 struct RunTitleSinks {

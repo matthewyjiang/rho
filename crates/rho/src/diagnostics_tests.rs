@@ -84,6 +84,7 @@ fn runtime_updates_do_not_replace_restart_only_config() {
             "xai_image_generation": true,
             "check_for_updates": false,
             "enable_subagents": true,
+            "agent_concurrency": 10,
             "advisor_mode": false,
             "edit_tool": "str_replace",
             "rtk": true,

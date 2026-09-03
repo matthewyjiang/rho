@@ -91,6 +91,7 @@ impl App {
             subagent_panel: SubagentPanel::default(),
             process_panel: ProcessPanel::default(),
             subagent_inbox: crate::tui::subagent_inbox::SubagentInbox::default(),
+            agent_concurrency: None,
             pending_subagent_questionnaire: None,
             input_ui: InputUi::default(),
             palette_caches: PaletteCaches::default(),
