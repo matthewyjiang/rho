@@ -146,6 +146,46 @@ fn openai_reasoning_normalization_never_turns_requested_reasoning_off() {
     );
 }
 
+// Covers: `/responses/compact` is only advertised for first-party OpenAI
+// hosts; catalog gateways reusing this transport (opencode-go) fall straight
+// to portable summary compaction instead of a guaranteed-failing round trip.
+// Owner: OpenAI provider native compaction policy
+#[test]
+fn native_compact_is_advertised_only_for_first_party_hosts() {
+    use rho_sdk::provider::ModelProvider as _;
+
+    let cases: [(&'static str, bool); 3] = [
+        ("openai", true),
+        ("openai-codex", true),
+        ("opencode-go", false),
+    ];
+    let messages = [Message::user_text("hello")];
+
+    for (identity_provider, expected) in cases {
+        let provider = OpenAiProvider::new_with_identity(
+            "test-model".into(),
+            Some(Auth::ApiKey("test-key".into())),
+            provider_client(),
+            None,
+            /*hosted_web_search*/ false,
+            identity_provider,
+        );
+        let request = ModelRequest {
+            messages: &messages,
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::Off,
+            prompt_cache_key: None,
+        };
+
+        assert_eq!(
+            provider.native_compact(request).is_some(),
+            expected,
+            "identity_provider={identity_provider}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn api_responses_body_uses_each_request_reasoning_level() {
     let provider = OpenAiProvider::new_with_auth(

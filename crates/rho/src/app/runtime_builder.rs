@@ -228,10 +228,12 @@ impl Compactor for ModelCompactor {
 
             // Clone only after native compact is unavailable or failed and fallback needs ownership.
             let messages = request.messages().to_vec();
-            let target_tokens = self
-                .context_window
-                .map(|window| self.config.target_tokens(window))
-                .unwrap_or(u64::MAX / 2);
+            let target_tokens = self.config.target_tokens_for_trigger(
+                self.context_window,
+                request.trigger(),
+                &messages,
+                &self.tool_specs,
+            );
             let Some(partition) =
                 partition_messages_for_compaction(&messages, &self.tool_specs, target_tokens)
             else {

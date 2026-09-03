@@ -276,7 +276,9 @@ The setting is xAI-only. Other providers ignore it. The omitted key means on, an
 
 `auto_compact` enables summarizing older conversation history when the estimated current context approaches the effective model window. It is disabled by default. `compact_threshold_percent` controls the trigger point. `compact_target_percent` controls the post-compaction target as a percent of the effective model window; it must stay below the threshold, so values at or above `compact_threshold_percent` are clamped to one below it when the config is loaded or saved. Rho keeps the recent verbatim tail by token budget and safe tool-call boundaries, not by message count. Context estimates are anchored to the most recent provider-reported token usage when available.
 
-For `openai-codex` and API-key `openai`, Rho prefers OpenAI server-side compaction via `POST /responses/compact`. Both use the Responses API so the encrypted compaction artifact stays replayable. The threshold still decides when auto compaction runs, but `compact_target_percent` applies only if that path falls back to text-summary compaction.
+For `openai-codex` and API-key `openai`, Rho prefers OpenAI server-side compaction via `POST /responses/compact`. Both use the Responses API so the encrypted compaction artifact stays replayable. The threshold still decides when auto compaction runs, but `compact_target_percent` applies only if that path falls back to text-summary compaction. Catalog gateways that reuse the Responses shape (for example `opencode-go`) do not serve that endpoint, so they go straight to text-summary compaction.
+
+Manual `/compact` ignores `compact_target_percent` when it would keep everything: the retained tail is capped at half the current estimated context, so an explicit request always removes history even on large-window models that have not reached the auto threshold.
 
 Auto compaction affects only future model context. Session files remain append-only and keep the original transcript entries, then append a replacement-history entry used for resume. It is not a privacy or deletion feature.
 

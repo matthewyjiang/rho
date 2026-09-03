@@ -412,6 +412,7 @@ async fn maybe_compact(
     .await?;
     let previous = HistoryMetrics::from_history(history);
     let request = crate::CompactionRequest::new(history.clone(), cancellation.clone())
+        .with_trigger(crate::CompactionTrigger::Automatic)
         .with_request_context(
             scope.session_id.clone(),
             scope.runtime.usage_parent_session_id.clone(),
