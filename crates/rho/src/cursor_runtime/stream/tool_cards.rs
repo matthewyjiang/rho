@@ -5,8 +5,6 @@
 //! families and body types native Rho cards use. Unknown tools degrade to a
 //! generic named card so new Cursor tools never break rendering.
 
-#![allow(dead_code)] // Phase D session drain
-
 use std::path::Path;
 
 use serde_json::Value;

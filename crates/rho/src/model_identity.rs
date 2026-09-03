@@ -45,6 +45,16 @@ pub(crate) enum PromptModel {
         requested: Option<String>,
         resolved: Option<String>,
     },
+    /// The Cursor Agent CLI.
+    ///
+    /// `requested` is the `--model` value Rho passes through, or `None` when Rho
+    /// omits the flag and Cursor chooses. `resolved` is the concrete id a run
+    /// reported, when one has. Config and bind paths leave `resolved` empty;
+    /// run status fills it from the shared `claude_model` field.
+    Cursor {
+        requested: Option<String>,
+        resolved: Option<String>,
+    },
 }
 
 impl PromptModel {
@@ -87,7 +97,20 @@ impl PromptModel {
         use crate::agent::AgentRuntime;
 
         match status.runtime {
-            Some(AgentRuntime::Cursor) => None,
+            Some(AgentRuntime::Cursor) => Some(Self::Cursor {
+                requested: status
+                    .model
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                    .map(str::to_string),
+                resolved: status
+                    .claude_model
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                    .map(str::to_string),
+            }),
             Some(AgentRuntime::ClaudeCli) => Some(Self::ClaudeCli {
                 requested: status
                     .model
@@ -135,6 +158,10 @@ impl PromptModel {
                 requested,
                 resolved,
             } => describe_claude_cli(requested.as_deref(), resolved.as_deref()),
+            Self::Cursor {
+                requested,
+                resolved,
+            } => describe_cursor(requested.as_deref(), resolved.as_deref()),
         })
     }
 }
@@ -167,6 +194,14 @@ fn one_line(text: String) -> String {
 /// ids are looked up under Anthropic even though `claude-code` is what Rho
 /// shows as the source.
 const CLAUDE_CATALOG_PROVIDER: &str = "anthropic";
+
+fn describe_cursor(requested: Option<&str>, resolved: Option<&str>) -> String {
+    use crate::cursor_runtime::models::CURSOR_SOURCE_LABEL;
+    match resolved.or(requested) {
+        Some(model) => rho_providers::provider::model_reference(CURSOR_SOURCE_LABEL, model),
+        None => format!("{CURSOR_SOURCE_LABEL} (no model pinned; Cursor chooses)"),
+    }
+}
 
 fn describe_claude_cli(requested: Option<&str>, resolved: Option<&str>) -> String {
     match (requested, resolved) {

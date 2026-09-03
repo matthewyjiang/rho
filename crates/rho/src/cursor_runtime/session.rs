@@ -1,7 +1,5 @@
 //! Execute a `runtime: cursor` delegated run via `cursor-agent -p`.
 
-#![allow(dead_code)] // Phase D AgentExecutor wiring
-
 use std::process::Stdio;
 
 use tokio::sync::watch;
@@ -219,7 +217,6 @@ async fn prepare_launch(request: &mut CursorSessionRequest) -> Result<Launch, St
     let prompt = spawn::compose_prompt(&request.system_prompt, &request.prompt)
         .map_err(|error| error.to_string())?;
     let mut plan = spawn::build_spawn_plan(&CursorSpawnRequest {
-        system_prompt: request.system_prompt.clone(),
         model: request.identity.model.clone(),
         tools,
         permission_mode,

@@ -10,9 +10,6 @@
 //!
 //! Nothing here is a Rho credential; Rho never stores Cursor tokens.
 
-// Phase D bind/execute/login; this process layer is complete but unreachable from app.
-#![allow(dead_code)]
-
 pub(crate) mod auth;
 pub(crate) mod executable;
 pub(crate) mod models;

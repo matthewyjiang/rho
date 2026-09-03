@@ -1,7 +1,5 @@
 //! Build argv for `cursor-agent -p` subagent runs.
 
-#![allow(dead_code)] // Phase D bind/execute
-
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -28,9 +26,6 @@ pub(crate) enum CursorPermissionMode {
 /// re-interpreting parent provider/model config.
 #[derive(Clone, Debug)]
 pub(crate) struct CursorSpawnRequest {
-    /// Agent system prompt policy. Prompt text is never placed on argv;
-    /// [`compose_prompt`] applies it to stdin.
-    pub(crate) system_prompt: PromptPolicy,
     /// Cursor `--model` value. `None` means omit the flag (Cursor inherit).
     pub(crate) model: Option<String>,
     /// Closed allow list already mapped for this permission class.

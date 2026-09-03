@@ -36,9 +36,9 @@ Parentless runs, including delegated work started by `rho run`, remain under `~/
 
 Each run directory can contain:
 
-- `result.json` - live status, agent ID, runtime (`rho` or `claude-cli`), provider, model, reasoning level, start/finish timestamps, semantic fingerprint, usage, final result, optional `parent_session_id`, and optional `claude_session_id`
+- `result.json` - live status, agent ID, runtime (`rho`, `claude-cli`, or `cursor`), provider, model, reasoning level, start/finish timestamps, semantic fingerprint, usage, final result, optional `parent_session_id`, and optional `claude_session_id` (Claude and Cursor share this field until the next major; Cursor resume uses `cursor-agent --resume <id>`)
 - `events.jsonl` - display events used by attachment
-- `log.txt` - Claude stderr for `runtime: claude-cli` runs
+- `log.txt` - Claude stderr for `runtime: claude-cli` runs, Cursor stderr for `runtime: cursor` runs
 
 Run IDs stay globally unique. `rho attach` first checks the global run index, then scans folder-layout sessions, then checks the legacy global path. This lets another process attach from any working directory while keeping unindexed older runs available.
 

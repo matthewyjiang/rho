@@ -4,8 +4,6 @@
 //! [`crate::cli_runtime`]; the only Cursor-specific policy is how a missing
 //! binary is reported. Claude has no path-env override, so neither does this.
 
-#![allow(dead_code)] // Phase D session launch
-
 use crate::cli_runtime::CliExecutable;
 
 use super::{auth::CursorAuthError, models::CURSOR_PROGRAM};

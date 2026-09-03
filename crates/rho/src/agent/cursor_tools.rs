@@ -91,8 +91,6 @@ impl CursorTool {
         }
     }
 
-    // Spawn maps Plan via `is_read_only`; Phase D has not wired session yet.
-    #[allow(dead_code)]
     pub fn capability_kind(self) -> CapabilityKind {
         match self {
             Self::Read
@@ -117,7 +115,6 @@ impl CursorTool {
         }
     }
 
-    #[allow(dead_code)]
     pub fn is_read_only(self) -> bool {
         matches!(self.capability_kind(), CapabilityKind::Read)
     }

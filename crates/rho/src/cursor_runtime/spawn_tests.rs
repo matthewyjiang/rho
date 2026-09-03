@@ -11,7 +11,6 @@ fn request(
     permission_mode: CursorPermissionMode,
 ) -> CursorSpawnRequest {
     CursorSpawnRequest {
-        system_prompt: PromptPolicy::Extend(String::new()),
         model: model.map(str::to_string),
         tools,
         permission_mode,

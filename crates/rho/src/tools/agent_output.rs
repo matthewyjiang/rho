@@ -231,9 +231,14 @@ fn run_model_line(status: &crate::subagent::RunStatus) -> Option<String> {
 
 fn push_claude_metadata(lines: &mut Vec<String>, snapshot: &SubagentSnapshot) {
     if let Some(session_id) = &snapshot.status.claude_session_id {
-        lines.push(format!(
-            "claude session: {session_id} (resume with `claude --resume {session_id}`)"
-        ));
+        lines.push(match snapshot.status.runtime {
+            Some(crate::agent::AgentRuntime::Cursor) => format!(
+                "cursor session: {session_id} (resume with `cursor-agent --resume {session_id}`)"
+            ),
+            _ => {
+                format!("claude session: {session_id} (resume with `claude --resume {session_id}`)")
+            }
+        });
     }
     if let Some(cost) = snapshot.status.total_cost_usd {
         lines.push(format!("claude cost: ${cost:.4}"));
@@ -276,3 +281,7 @@ pub(super) fn format_list_entry(snapshot: &SubagentSnapshot) -> String {
 fn format_token_count(tokens: Option<u64>) -> String {
     tokens.map_or_else(|| "?".into(), |tokens| tokens.to_string())
 }
+
+#[cfg(test)]
+#[path = "agent_output_tests.rs"]
+mod tests;

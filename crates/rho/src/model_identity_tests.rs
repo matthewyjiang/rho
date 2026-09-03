@@ -213,6 +213,47 @@ fn from_run_status_reconstructs_rho_and_claude_labels() {
     );
 }
 
+// Covers: Cursor labels prefer resolved over requested, and unpinned runs say Cursor chooses.
+// Owner: pure unit
+#[test]
+fn cursor_prompt_model_describes_requested_and_resolved() {
+    struct Case {
+        name: &'static str,
+        requested: Option<&'static str>,
+        resolved: Option<&'static str>,
+        expected: &'static str,
+    }
+
+    let cases = [
+        Case {
+            name: "no pin and no resolution names Cursor as the chooser",
+            requested: None,
+            resolved: None,
+            expected: "cursor (no model pinned; Cursor chooses)",
+        },
+        Case {
+            name: "a requested model with no resolution is the pass-through id",
+            requested: Some("gpt-5.3-codex"),
+            resolved: None,
+            expected: "cursor/gpt-5.3-codex",
+        },
+        Case {
+            name: "a resolved id wins over the requested pin",
+            requested: Some("gpt-5.3-codex"),
+            resolved: Some("composer-2.5"),
+            expected: "cursor/composer-2.5",
+        },
+    ];
+
+    for case in cases {
+        let identity = PromptModel::Cursor {
+            requested: case.requested.map(str::to_string),
+            resolved: case.resolved.map(str::to_string),
+        };
+        assert_eq!(identity.describe(), case.expected, "{}", case.name);
+    }
+}
+
 #[test]
 fn from_sdk_identity_uses_provider_and_model() {
     let identity = rho_sdk::model::ModelIdentity::new("openai", "responses", "gpt-5.6-sol");

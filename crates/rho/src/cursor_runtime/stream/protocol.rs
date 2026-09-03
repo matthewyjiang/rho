@@ -4,8 +4,6 @@
 //! Unknown `type` / `subtype` pairs become [`CursorFrame::Unknown`] so schema
 //! drift degrades to a notice rather than failing the run.
 
-#![allow(dead_code)] // Phase D session drain
-
 use serde::Deserialize;
 use serde_json::Value;
 

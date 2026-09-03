@@ -6,8 +6,6 @@
 //! All probes are bounded: short timeout, capped stdout/stderr, and the child
 //! is killed and awaited on timeout when the host allows it.
 
-#![allow(dead_code)] // Phase D /login /doctor probes
-
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -110,6 +108,7 @@ async fn query_executable(executable: &CliExecutable) -> Result<CursorAuthStatus
 }
 
 /// Probe `cursor-agent --version` for doctor diagnostics.
+#[allow(dead_code)] // Phase E /doctor
 pub(crate) async fn version() -> Result<String, CursorAuthError> {
     let executable = executable::resolve()?;
     let output = run_bounded_probe(&executable, &["--version"], PROBE_TIMEOUT).await?;
@@ -130,6 +129,7 @@ pub(crate) async fn version() -> Result<String, CursorAuthError> {
 }
 
 /// Login argv for suspended interactive handoff (fixed tokens only).
+#[allow(dead_code)] // Phase E /login cursor
 pub(crate) fn login_args() -> &'static [&'static str] {
     &["login"]
 }

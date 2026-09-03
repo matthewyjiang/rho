@@ -258,7 +258,9 @@ fn frozen_claude_cli_bypass_ceiling_narrows_to_current_auto() {
             assert_eq!(*permission_mode, crate::permission::PermissionMode::Auto);
             assert_eq!(*max_turns, 9);
         }
-        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
+        BoundRuntime::Rho { .. } | BoundRuntime::Cursor { .. } => {
+            panic!("expected Claude bound runtime")
+        }
     }
 }
 
@@ -497,7 +499,9 @@ fn claude_binding_is_typed_and_does_not_resolve_aliases_or_mutate_host_config() 
             );
             assert!(reasoning.is_none());
         }
-        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
+        BoundRuntime::Rho { .. } | BoundRuntime::Cursor { .. } => {
+            panic!("expected Claude bound runtime")
+        }
     }
     assert!(bound.rho_config().is_none());
     assert!(bound.rho_capabilities().is_none());
@@ -571,7 +575,9 @@ fn claude_runtime_maps_supported_reasoning_and_rejects_unmapped() {
         BoundRuntime::ClaudeCli { reasoning, .. } => {
             assert_eq!(*reasoning, Some(rho_sdk::ReasoningLevel::High));
         }
-        BoundRuntime::Rho { .. } => panic!("expected Claude bound runtime"),
+        BoundRuntime::Rho { .. } | BoundRuntime::Cursor { .. } => {
+            panic!("expected Claude bound runtime")
+        }
     }
 
     let mut unmapped = claude_definition(ModelPolicy::Inherit).as_ref().clone();
@@ -894,4 +900,124 @@ fn predicted_claude_agent_model_is_the_pass_through_value() {
         );
         assert_eq!(predicted, bound.prompt_model());
     }
+}
+
+fn cursor_definition(
+    model: Option<&str>,
+    tools: &[crate::agent::CursorTool],
+) -> Arc<AgentDefinition> {
+    Arc::new(AgentDefinition {
+        id: AgentId::new("cursor-test").unwrap(),
+        description: "cursor".into(),
+        prompt: PromptPolicy::Extend("instructions".into()),
+        runtime: AgentRuntimeSpec::Cursor(crate::agent::CursorAgentConfig {
+            tools: tools.to_vec(),
+            model: model.map(str::to_string),
+        }),
+    })
+}
+
+// Covers: a cursor agent binds as delegated with pass-through model and tools.
+// Owner: delegated agent binding
+#[test]
+fn cursor_binds_delegated_with_model_and_tools() {
+    use crate::agent::CursorTool;
+    use pretty_assertions::assert_eq;
+
+    let bound = AgentBinder::bind(
+        cursor_definition(
+            Some("gpt-5.3-codex[effort=high]"),
+            &[CursorTool::Read, CursorTool::Grep],
+        ),
+        AgentInvocation {
+            role: AgentRole::Delegated,
+            available_tools: capabilities(),
+        },
+        &Config::default(),
+    )
+    .unwrap();
+
+    match bound.runtime() {
+        BoundRuntime::Cursor {
+            model,
+            tools,
+            permission_mode,
+        } => {
+            assert_eq!(model.as_deref(), Some("gpt-5.3-codex[effort=high]"));
+            assert_eq!(tools.as_slice(), [CursorTool::Read, CursorTool::Grep]);
+            assert_eq!(*permission_mode, crate::permission::PermissionMode::Bypass);
+        }
+        BoundRuntime::Rho { .. } | BoundRuntime::ClaudeCli { .. } => {
+            panic!("expected Cursor bound runtime")
+        }
+    }
+    assert!(bound.rho_config().is_none());
+    assert!(bound.rho_capabilities().is_none());
+    assert_eq!(bound.runtime().capacity_class(), CapacityClass::Cursor);
+}
+
+// Covers: Auto / Allow edits / Supervised cannot reach Cursor spawn.
+// Owner: delegated agent binding
+#[test]
+fn cursor_refuses_auto_allow_edits_supervised_at_bind() {
+    use crate::agent::CursorTool;
+
+    let modes = [
+        crate::permission::PermissionMode::Auto,
+        crate::permission::PermissionMode::AllowEdits,
+        crate::permission::PermissionMode::Supervised,
+    ];
+    for mode in modes {
+        let error = AgentBinder::bind(
+            cursor_definition(None, &[CursorTool::Read]),
+            AgentInvocation {
+                role: AgentRole::Delegated,
+                available_tools: capabilities(),
+            },
+            &Config {
+                permission_mode: mode,
+                ..Config::default()
+            },
+        )
+        .unwrap_err();
+        let message = error.to_string();
+        assert!(
+            message.contains("Plan or Bypass"),
+            "mode {mode:?}: {message}"
+        );
+    }
+}
+
+// Covers: frozen Cursor capabilities are a closed set; unknown names fail bind.
+// Owner: frozen workflow agent binding
+#[test]
+fn cursor_frozen_capabilities_fail_closed_on_unknown_tool() {
+    use crate::agent::CursorTool;
+
+    let source = cursor_definition(Some("composer-2.5"), &[CursorTool::Read]);
+    let frozen = crate::workflow::ResolvedAgent {
+        agent_id: source.id.to_string(),
+        fingerprint: source.fingerprint().to_string(),
+        runtime: crate::workflow::AgentRuntime::Cursor,
+        source_origin: "project".into(),
+        trust_required: true,
+        prompt_policy: "extend:frozen".into(),
+        provider: None,
+        model: Some("composer-2.5".into()),
+        reasoning: None,
+        step_limit: 9,
+        capabilities: ["read_tool_call", "not_a_cursor_tool"]
+            .into_iter()
+            .map(str::to_owned)
+            .collect(),
+        permission_ceiling: "bypass".into(),
+        auth_profile: None,
+        executable: None,
+        executable_identity: None,
+        arguments: Vec::new(),
+    };
+    let error = AgentBinder::bind_frozen(&frozen, &Config::default(), &capabilities()).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("unknown Cursor tool"), "{message}");
+    assert!(message.contains("not_a_cursor_tool"), "{message}");
 }

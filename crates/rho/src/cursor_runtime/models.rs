@@ -1,7 +1,5 @@
 //! Cursor Agent program names and sink labels.
 
-#![allow(dead_code)] // Phase D pickers / login
-
 use crate::claude_runtime::persist::RuntimeLabel;
 
 /// Program name resolved on `PATH`. Not `agent`: that collides with other tools.

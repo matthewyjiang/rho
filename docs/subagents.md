@@ -18,7 +18,7 @@ rho run --agent worker "address the issue"
 
 Agent switching within an active session is intentionally unsupported.
 
-This page covers how to define and run agents. Expansive reference lives on linked subpages: [definition schema](/subagents/definition-schema), [Claude Code runtime](/subagents/claude-cli), and [attachment and artifacts](/subagents/attachment-and-artifacts).
+This page covers how to define and run agents. Expansive reference lives on linked subpages: [definition schema](/subagents/definition-schema), [Claude Code runtime](/subagents/claude-cli), [Cursor Agent runtime](/subagents/cursor), and [attachment and artifacts](/subagents/attachment-and-artifacts).
 
 Use `/agents create` or `/create-agent` to define an agent through a guided questionnaire. Use bare `/agents` to inspect the loaded catalog. Press Enter on an internal agent to set its model override. Press Enter on an agent loaded from `~/.rho/agents` or a trusted project `.agents/agents` directory to edit its definition. Frontmatter fields use structured TUI controls, while the prompt body opens in `$VISUAL` or `$EDITOR`. Review the draft and choose **Save** to validate and write the source file. Agents loaded from `~/.agents/agents` and built-in agents remain read-only.
 
@@ -70,7 +70,7 @@ For the full value set, constraints, and defaults, see [Agent definition schema]
 | --- | --- | --- |
 | `id` | no | Stable lowercase identifier; defaults to the file name |
 | `description` | yes | Description shown by the `agent` tool |
-| `runtime` | no | Execution harness: `rho` (default) or `claude-cli` |
+| `runtime` | no | Execution harness: `rho` (default), `claude-cli`, or `cursor` |
 | `prompt` | no | `extend` (default) or `replace` |
 | `model-policy` | no | For `runtime: rho`: `inherit`, `prefer`, `require`, or `select`. For `runtime: claude-cli`: omit, `inherit`, or `select` |
 | `model` | policy-dependent | Model selected by non-inherit policies. On `runtime: rho`, use `@name` to reference a [model alias](/configuration#model-aliases). On `runtime: claude-cli`, the value is passed through as Claude's `--model` and must be a Claude model name or Claude alias such as `claude-opus-5` (Rho `@alias` references are rejected) |
@@ -103,6 +103,14 @@ Rho can hand a **delegated** agent to the installed `claude` binary so a child r
 Quick path: install `claude`, run `/login claude-code`, define an agent with `runtime: claude-cli`, then launch it through the `agent` tool under Plan or Bypass. Auto and Allow edits work only for proven no-prompt `tools:` with `inherit_claude_config: false`; unknown Claude, plugin, and MCP names fail closed.
 
 Full guide: [Claude Code as a delegated runtime](/subagents/claude-cli).
+
+## Cursor Agent as a delegated runtime
+
+Rho can hand a **delegated** agent to the installed `cursor-agent` binary so a child run can use a Cursor sign-in while the parent stays in Rho. This is not available as the root session runtime.
+
+Quick path: install `cursor-agent`, run `/login cursor`, define an agent with `runtime: cursor` and a nonempty classified `tools:` list, then launch it through the `agent` tool under Plan or Bypass. Auto, Allow edits, and Supervised refuse at bind. Cursor children cannot be messaged (process-per-turn).
+
+Full guide: [Cursor Agent as a delegated runtime](/subagents/cursor).
 
 ## Attachment and artifacts
 

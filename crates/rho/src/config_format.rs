@@ -140,6 +140,7 @@ impl<'a> PersistedInternalAgentModelConfig<'a> {
 /// Matches the agent frontmatter vocabulary (`runtime: claude-cli`).
 pub const CLAUDE_CLI_RUNTIME_KEY: &str = "claude-cli";
 pub const RHO_RUNTIME_KEY: &str = "rho";
+pub const CURSOR_RUNTIME_KEY: &str = "cursor";
 
 #[derive(Serialize)]
 struct XaiConfig {
