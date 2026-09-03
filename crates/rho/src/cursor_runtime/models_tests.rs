@@ -144,8 +144,15 @@ fn cached_models_restore_raw_json_flags() {
         )
         .unwrap();
         assert_eq!(cached(), models);
-        assert!(!needs_refresh());
-        assert!(!needs_refresh_for_account(Some("dev@example.com")));
-        assert!(needs_refresh_for_account(Some("other@example.com")));
+        let same_account = CliProviderRefreshContext {
+            account_email: Some("dev@example.com".into()),
+            tool_version: None,
+        };
+        let other_account = CliProviderRefreshContext {
+            account_email: Some("other@example.com".into()),
+            tool_version: None,
+        };
+        assert!(!needs_refresh_for(&same_account));
+        assert!(needs_refresh_for(&other_account));
     });
 }

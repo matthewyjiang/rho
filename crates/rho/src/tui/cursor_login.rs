@@ -69,12 +69,8 @@ fn signed_in_notice(status: &CursorAuthStatus) -> String {
     }
 }
 
-fn refresh_cursor_models_after_login(status: &CursorAuthStatus) -> AfterSuccessFuture {
-    let email = status
-        .user_info
-        .as_ref()
-        .and_then(|info| info.email.clone());
-    Box::pin(async move {
-        let _ = models::refresh_if_stale(email.as_deref()).await;
+fn refresh_cursor_models_after_login(_status: &CursorAuthStatus) -> AfterSuccessFuture {
+    Box::pin(async {
+        let _ = models::refresh_if_stale().await;
     })
 }

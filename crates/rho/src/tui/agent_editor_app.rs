@@ -378,11 +378,16 @@ impl App {
         self.set_status("select model");
     }
 
+    /// Refresh the cached Cursor list off the UI thread when it is empty,
+    /// stale, or belongs to another account. The account check needs a probe,
+    /// so the whole decision runs inside the task.
     fn spawn_cursor_model_refresh_if_needed(&mut self) {
-        if self.pending_cursor_models.is_some() || !crate::cursor_runtime::models::needs_refresh() {
+        if self.pending_cursor_models.is_some() {
             return;
         }
-        self.pending_cursor_models = Some(tokio::spawn(crate::cursor_runtime::models::refresh()));
+        self.pending_cursor_models = Some(tokio::spawn(
+            crate::cursor_runtime::models::refresh_if_stale(),
+        ));
     }
 
     pub(in crate::tui) async fn poll_cursor_model_refresh(&mut self) {

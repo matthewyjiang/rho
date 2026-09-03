@@ -161,43 +161,48 @@ pub(crate) fn cached() -> Vec<CursorModel> {
         .collect()
 }
 
-pub(crate) fn needs_refresh() -> bool {
+/// True when the snapshot is empty or older than the freshness window.
+fn needs_refresh() -> bool {
     cached().is_empty() || !provider_models_are_fresh(CURSOR_SOURCE_LABEL)
 }
 
-/// True when the cached snapshot belongs to a different Cursor account.
-pub(crate) fn needs_refresh_for_account(email: Option<&str>) -> bool {
+/// True when the cached snapshot is stale or belongs to a different Cursor
+/// account than `context` describes. Rows are account-scoped, so a switch
+/// outside Rho must not present the previous account's list.
+fn needs_refresh_for(context: &CliProviderRefreshContext) -> bool {
     if needs_refresh() {
         return true;
     }
     let cached_email = cli_provider_refresh_context(CURSOR_SOURCE_LABEL)
         .and_then(|context| context.account_email)
         .filter(|value| !value.is_empty());
-    match (
-        email.filter(|value| !value.is_empty()),
-        cached_email.as_deref(),
-    ) {
+    match (context.account_email.as_deref(), cached_email.as_deref()) {
         (Some(current), Some(cached)) => current != cached,
         (Some(_), None) => true,
         _ => false,
     }
 }
 
-pub(crate) async fn refresh() -> Result<Vec<CursorModel>, CursorModelsError> {
-    let models = fetch().await?;
-    cache_models(&models, current_refresh_context().await)?;
-    Ok(models)
-}
-
-/// Fetch and cache models when the snapshot is empty, stale, or for another account.
-pub(crate) async fn refresh_if_stale(
-    email: Option<&str>,
-) -> Result<Vec<CursorModel>, CursorModelsError> {
-    if needs_refresh_for_account(email) {
-        refresh().await
+/// Fetch and cache models when the snapshot is empty, stale, or belongs to
+/// another Cursor account. The single refresh entry for login and the editor.
+///
+/// The account is probed before the list so the stored rows can never be
+/// tagged with an email that was read after they were produced.
+pub(crate) async fn refresh_if_stale() -> Result<Vec<CursorModel>, CursorModelsError> {
+    let context = current_refresh_context().await;
+    if needs_refresh_for(&context) {
+        refresh_with_context(context).await
     } else {
         Ok(cached())
     }
+}
+
+async fn refresh_with_context(
+    context: CliProviderRefreshContext,
+) -> Result<Vec<CursorModel>, CursorModelsError> {
+    let models = fetch().await?;
+    cache_models(&models, context)?;
+    Ok(models)
 }
 
 pub(crate) fn cache_models(
@@ -227,17 +232,17 @@ pub(crate) fn cache_models(
         .map_err(|error| CursorModelsError::Cache(error.to_string()))
 }
 
+/// Probe the signed-in account and binary version together.
 pub(crate) async fn current_refresh_context() -> CliProviderRefreshContext {
-    let account_email = match auth::query().await {
-        Ok(status) => status
-            .user_info
-            .and_then(|info| info.email)
-            .filter(|email| !email.is_empty()),
-        Err(_) => None,
-    };
+    let (auth, version) = tokio::join!(auth::query(), auth::version());
     CliProviderRefreshContext {
-        account_email,
-        tool_version: auth::version().await.ok(),
+        account_email: auth.ok().and_then(|status| {
+            status
+                .user_info
+                .and_then(|info| info.email)
+                .filter(|email| !email.is_empty())
+        }),
+        tool_version: version.ok(),
     }
 }
 
