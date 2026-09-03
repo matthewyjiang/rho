@@ -458,7 +458,7 @@ pub(crate) async fn run(
                 app.terminal_session = Some(TerminalSession::acquire());
                 if let Some(manager) = agent.subagents() {
                     app.subagent_inbox.bind(manager);
-                    let pool = manager.concurrency();
+                    let pool = manager.executor.concurrency();
                     app.info
                         .services
                         .diagnostics

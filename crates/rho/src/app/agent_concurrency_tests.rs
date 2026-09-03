@@ -421,6 +421,30 @@ async fn lowering_total_does_not_preempt_active_runs() {
     assert_eq!(pool.available_total(), 1);
 }
 
+// Covers: a lower cap that lands after the acquire snapshot is observed must
+// reject the increment instead of admitting over-limit work.
+// Owner: delegated agent concurrency
+#[test]
+fn lowering_limit_between_observe_and_cas_rejects_acquire() {
+    let pool = AdjustablePool::new(2);
+    let held = pool.try_acquire().expect("first slot");
+    assert_eq!(pool.active(), 1);
+    assert_eq!(pool.limit(), 2);
+
+    let mut resized = false;
+    let admitted = pool.try_acquire_after_observe(|pool| {
+        if !resized {
+            pool.set_limit(1);
+            resized = true;
+        }
+    });
+    assert!(admitted.is_none(), "must not admit a run over the new cap");
+    assert_eq!(pool.limit(), 1);
+    assert_eq!(pool.active(), 1);
+    drop(held);
+    assert_eq!(pool.active(), 0);
+}
+
 // Covers: raising total restores the nested Claude cap instead of leaving it clamped.
 // Owner: delegated agent concurrency
 #[tokio::test(flavor = "current_thread")]

@@ -5,7 +5,7 @@
 //! Claude work cannot occupy spare global slots.
 
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicU64, AtomicUsize, Ordering},
     Arc,
 };
 
@@ -45,9 +45,27 @@ pub(crate) struct RuntimePermits {
     _claude: Option<PoolPermit>,
 }
 
+/// Packed as `(limit << 32) | active` so resize and acquire CAS the same word.
+/// A lower cap that lands after a snapshot is loaded fails that CAS; the retry
+/// observes the new limit before it increments active work.
+const ACTIVE_BITS: u64 = 32;
+const ACTIVE_MASK: u64 = (1 << ACTIVE_BITS) - 1;
+
+fn pack(limit: usize, active: usize) -> u64 {
+    debug_assert!(u32::try_from(limit).is_ok(), "limit fits in 32 bits");
+    debug_assert!(u32::try_from(active).is_ok(), "active fits in 32 bits");
+    ((limit as u64) << ACTIVE_BITS) | (active as u64)
+}
+
+fn unpack(state: u64) -> (usize, usize) {
+    (
+        (state >> ACTIVE_BITS) as usize,
+        (state & ACTIVE_MASK) as usize,
+    )
+}
+
 struct AdjustablePool {
-    limit: AtomicUsize,
-    active: AtomicUsize,
+    state: AtomicU64,
     notify: Notify,
 }
 
@@ -57,7 +75,9 @@ struct PoolPermit {
 
 impl Drop for PoolPermit {
     fn drop(&mut self) {
-        self.pool.active.fetch_sub(1, Ordering::Release);
+        // Active occupies the low bits, so a saturating decrement cannot
+        // disturb `limit` while in-flight work still holds a permit.
+        self.pool.state.fetch_sub(1, Ordering::Release);
         self.pool.notify.notify_waiters();
     }
 }
@@ -65,18 +85,17 @@ impl Drop for PoolPermit {
 impl AdjustablePool {
     fn new(limit: usize) -> Arc<Self> {
         Arc::new(Self {
-            limit: AtomicUsize::new(limit),
-            active: AtomicUsize::new(0),
+            state: AtomicU64::new(pack(limit, 0)),
             notify: Notify::new(),
         })
     }
 
     fn limit(&self) -> usize {
-        self.limit.load(Ordering::Acquire)
+        unpack(self.state.load(Ordering::Acquire)).0
     }
 
     fn active(&self) -> usize {
-        self.active.load(Ordering::Acquire)
+        unpack(self.state.load(Ordering::Acquire)).1
     }
 
     #[cfg(test)]
@@ -85,20 +104,48 @@ impl AdjustablePool {
     }
 
     fn set_limit(&self, limit: usize) {
-        self.limit.store(limit, Ordering::Release);
-        self.notify.notify_waiters();
+        loop {
+            let state = self.state.load(Ordering::Acquire);
+            let active = unpack(state).1;
+            if self
+                .state
+                .compare_exchange(
+                    state,
+                    pack(limit, active),
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
+                .is_ok()
+            {
+                self.notify.notify_waiters();
+                return;
+            }
+        }
     }
 
     fn try_acquire(self: &Arc<Self>) -> Option<PoolPermit> {
+        self.try_acquire_after_observe(|_| {})
+    }
+
+    fn try_acquire_after_observe(
+        self: &Arc<Self>,
+        mut after_observe: impl FnMut(&Arc<Self>),
+    ) -> Option<PoolPermit> {
         loop {
-            let limit = self.limit();
-            let active = self.active();
+            let state = self.state.load(Ordering::Acquire);
+            after_observe(self);
+            let (limit, active) = unpack(state);
             if active >= limit {
                 return None;
             }
             if self
-                .active
-                .compare_exchange(active, active + 1, Ordering::AcqRel, Ordering::Acquire)
+                .state
+                .compare_exchange(
+                    state,
+                    pack(limit, active + 1),
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                )
                 .is_ok()
             {
                 return Some(PoolPermit {

@@ -85,7 +85,7 @@ pub struct SubagentNotification {
 #[derive(Clone)]
 pub struct SubagentManager {
     inner: Arc<Mutex<HashMap<String, AgentEntry>>>,
-    executor: AgentExecutor,
+    pub(crate) executor: AgentExecutor,
     parent_placement: Arc<Mutex<subagent::RunPlacement>>,
 }
 
@@ -143,10 +143,6 @@ impl SubagentManager {
     /// agents retain the mode captured when they were launched.
     pub(crate) fn update_permission_mode(&self, mode: crate::permission::PermissionMode) {
         self.executor.update_permission_mode(mode);
-    }
-
-    pub(crate) fn concurrency(&self) -> crate::app::agent_concurrency::AgentConcurrency {
-        self.executor.concurrency()
     }
 
     #[cfg(test)]
