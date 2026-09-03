@@ -484,7 +484,7 @@ fn non_empty_key(tool_use_id: &str) -> Option<String> {
     (!tool_use_id.is_empty()).then(|| tool_use_id.to_string())
 }
 
-pub(super) fn text_effects(text: &str) -> Vec<StreamEffect> {
+pub(crate) fn text_effects(text: &str) -> Vec<StreamEffect> {
     if text.is_empty() {
         return Vec::new();
     }
@@ -499,7 +499,7 @@ pub(super) fn text_effects(text: &str) -> Vec<StreamEffect> {
     ]
 }
 
-pub(super) fn reasoning_effects(text: &str) -> Vec<StreamEffect> {
+pub(crate) fn reasoning_effects(text: &str) -> Vec<StreamEffect> {
     if text.is_empty() {
         return Vec::new();
     }

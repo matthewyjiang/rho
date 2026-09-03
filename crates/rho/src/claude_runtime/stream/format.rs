@@ -17,7 +17,7 @@ use super::types::{MAX_RESULT_CHARS, MAX_TEXT_DELTA_CHARS, MAX_TOOL_PAYLOAD_CHAR
 /// Collapsed paint uses `max_tool_output_lines` (default 10). This cap is
 /// larger so attach expand can reveal more than a couple of extra rows. The
 /// 16 KiB payload bound still limits journal size.
-pub(super) const MAX_TOOL_BODY_LINES: usize = 50;
+pub(crate) const MAX_TOOL_BODY_LINES: usize = 50;
 
 /// Bytes retained on [`crate::subagent::RunStatus::last_text`].
 pub(super) const LAST_TEXT_BYTES: usize = 400;
@@ -183,7 +183,7 @@ fn compact_value_preview(value: &Value) -> String {
     bound_text(&rendered, MAX_TOOL_PAYLOAD_CHARS, "json")
 }
 
-pub(super) fn bound_text(text: &str, max_chars: usize, label: &str) -> String {
+pub(crate) fn bound_text(text: &str, max_chars: usize, label: &str) -> String {
     if text.chars().count() <= max_chars {
         return text.to_string();
     }
@@ -192,7 +192,7 @@ pub(super) fn bound_text(text: &str, max_chars: usize, label: &str) -> String {
     out
 }
 
-pub(super) fn truncate_payload_lines(text: &str, max_lines: usize) -> Vec<String> {
+pub(crate) fn truncate_payload_lines(text: &str, max_lines: usize) -> Vec<String> {
     let bounded = bound_text(text, MAX_TOOL_PAYLOAD_CHARS, "tool payload");
     let mut lines = bounded.lines().map(str::to_string).collect::<Vec<_>>();
     if lines.len() > max_lines {
@@ -203,11 +203,11 @@ pub(super) fn truncate_payload_lines(text: &str, max_lines: usize) -> Vec<String
     lines
 }
 
-pub(super) fn bound_result_text(text: &str) -> String {
+pub(crate) fn bound_result_text(text: &str) -> String {
     bound_text(text, MAX_RESULT_CHARS, "result")
 }
 
-pub(super) fn bound_delta_text(text: &str, label: &str) -> String {
+pub(crate) fn bound_delta_text(text: &str, label: &str) -> String {
     bound_text(text, MAX_TEXT_DELTA_CHARS, label)
 }
 

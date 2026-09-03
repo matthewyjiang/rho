@@ -42,16 +42,19 @@ use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 use blocks::{emit_complete_block, emit_open_snapshot_block, note_tool_started};
 use events::{decode_stream_event, ContentBlockStart, ContentDelta, StreamEventPayload};
 use format::{
-    bound_result_text, context_usage_from_result, format_permission_denial, raw_usage_to_model,
-    stringify_content,
+    context_usage_from_result, format_permission_denial, raw_usage_to_model, stringify_content,
 };
-pub(crate) use presentation::apply_status_patch;
+// Generic effect builders and payload bounds also serve other NDJSON agent
+// runtimes (see `crate::cursor_runtime::stream`). Claude-shaped mapping stays
+// private to this module.
+pub(crate) use format::{bound_result_text, truncate_payload_lines, MAX_TOOL_BODY_LINES};
+pub(crate) use presentation::{apply_status_patch, reasoning_effects, text_effects};
 use presentation::{
     clear_all_open_indexless, content_block_kind, fidelity_notice, map_error_message,
     map_rate_limit, map_system, mark_and_text, mark_slot_emitted, push_block_slot,
-    reasoning_effects, reconcile_complete_block, resolve_partial_slot, set_slot_tool_id,
-    stable_message_id, text_effects, tool_finished_effects, tool_id_for_slot, tool_started_effects,
-    tool_updated_effects, ContentBlockKind,
+    reconcile_complete_block, resolve_partial_slot, set_slot_tool_id, stable_message_id,
+    tool_finished_effects, tool_id_for_slot, tool_started_effects, tool_updated_effects,
+    ContentBlockKind,
 };
 use protocol::{
     decode_line, AssistantMessage, ClaudeStreamMessage, ResultMessage, StreamEventMessage,
