@@ -314,8 +314,9 @@ impl App {
     }
 
     /// Enter/Space on a tools row. Toggles the draft and rebuilds the picker in
-    /// place so badges refresh while cursor and filter stay put. `all` and
-    /// `Other…` leave the multi-select instead.
+    /// place so badges refresh while cursor and filter stay put. `all` is a
+    /// toggle too (off restores the set it replaced); only `Other…` leaves the
+    /// multi-select.
     fn submit_agent_tool_toggle(&mut self, value: &str) {
         let Some(draft) = self
             .agent_editor_session
@@ -342,10 +343,9 @@ impl App {
                 .unwrap_or(Ok(())),
             None if value == AGENT_TOOL_ALL => {
                 if let Some(session) = &mut self.agent_editor_session {
-                    session.with_draft_mut(|draft| draft.set_tools_all());
+                    session.toggle_tools_all();
                 }
-                self.reopen_agent_field_picker(AGENT_FIELD_TOOLS);
-                return;
+                Ok(())
             }
             None => Ok(()),
         };

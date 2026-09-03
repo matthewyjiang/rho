@@ -52,11 +52,14 @@ fn rho_items(tools: &ToolPolicy) -> Vec<PickerItem> {
     let mut items = vec![PickerItem {
         section: None,
         label: "all".into(),
-        detail: Some("Every host tool, including ones added later.".into()),
+        detail: Some(
+            "Every host tool, including ones added later. Toggle off to return to the explicit list it replaced."
+                .into(),
+        ),
         preview: None,
         badge: all.then(on_badge),
         value: AGENT_TOOL_ALL.into(),
-        selection_verb: Some("select"),
+        selection_verb: None,
         allow_filter_completion: true,
     }];
     items.extend(BUILTIN_TOOL_CAPABILITIES.iter().map(|capability| {

@@ -5,7 +5,8 @@ use pretty_assertions::assert_eq;
 use super::*;
 use crate::agent::{
     AgentDefinition, AgentId, AgentOrigin, AgentRuntimeSpec, ClaudeAgentConfig, ClaudeToolPolicy,
-    CursorAgentConfig, CursorTool, ModelPolicy, ModelSelection, PromptPolicy, ToolPolicy,
+    CursorAgentConfig, CursorTool, ModelPolicy, ModelSelection, PromptPolicy, ToolCapability,
+    ToolCapabilitySet, ToolPolicy,
 };
 use crate::model_aliases::ModelAliases;
 use crate::tui::line_editor::LineEditor;
@@ -200,6 +201,51 @@ fn edit_session_restores_inactive_runtime_settings() {
         }
         _ => panic!("expected claude runtime"),
     }
+}
+
+// Covers: toggling `all` on and off within one session returns to the explicit
+// set it replaced, and starting from `all` lands on an empty set instead of
+// every built-in.
+// Owner: tui agent editor
+#[test]
+fn edit_session_all_toggle_round_trips_explicit_tools() {
+    let rho_tools = |session: &AgentEditSession| match &session.draft().runtime {
+        AgentRuntimeSpec::Rho { tools, .. } => tools.clone(),
+        other => panic!("expected rho runtime, got {other:?}"),
+    };
+    let narrow: ToolCapabilitySet = [ToolCapability::ReadFile, ToolCapability::Grep]
+        .into_iter()
+        .collect();
+    let mut draft = rho_draft();
+    draft.runtime = AgentRuntimeSpec::Rho {
+        tools: ToolPolicy::Allow(narrow.clone()),
+        model: ModelPolicy::Inherit,
+        reasoning: None,
+    };
+    let mut session = AgentEditSession::new(
+        draft,
+        "agent.md".into(),
+        AgentOrigin::RhoHome,
+        ".".into(),
+        String::new(),
+    );
+    session.toggle_tools_all();
+    assert_eq!(rho_tools(&session), ToolPolicy::All);
+    session.toggle_tools_all();
+    assert_eq!(rho_tools(&session), ToolPolicy::Allow(narrow));
+
+    let mut from_all = AgentEditSession::new(
+        rho_draft(),
+        "agent.md".into(),
+        AgentOrigin::RhoHome,
+        ".".into(),
+        String::new(),
+    );
+    from_all.toggle_tools_all();
+    assert_eq!(
+        rho_tools(&from_all),
+        ToolPolicy::Allow(ToolCapabilitySet::new())
+    );
 }
 
 // Covers: model policy choice for claude only offers inherit and select

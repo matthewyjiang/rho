@@ -294,7 +294,13 @@ fn toggle_tool_flips_membership_per_runtime() {
         rho.toggle_tool("Read").unwrap_err(),
         "unknown tool 'Read' for runtime: rho"
     );
-    assert!(rho.set_tools_all());
+    let narrow: ToolCapabilitySet = [ToolCapability::ReadFile].into_iter().collect();
+    match rho.toggle_tools_all(narrow.clone()) {
+        ToolsAllToggle::TurnedOn { replaced } => {
+            assert_eq!(replaced.len(), BUILTIN_TOOL_CAPABILITIES.len())
+        }
+        other => panic!("expected TurnedOn, got {other:?}"),
+    }
     assert!(matches!(
         rho.runtime,
         AgentRuntimeSpec::Rho {
@@ -302,6 +308,18 @@ fn toggle_tool_flips_membership_per_runtime() {
             ..
         }
     ));
+    assert_eq!(
+        rho.toggle_tools_all(narrow.clone()),
+        ToolsAllToggle::TurnedOff
+    );
+    assert_eq!(
+        rho.runtime,
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(narrow),
+            model: ModelPolicy::Inherit,
+            reasoning: None,
+        }
+    );
 
     let mut claude = claude_draft();
     claude.toggle_tool("Read").unwrap();
@@ -314,7 +332,10 @@ fn toggle_tool_flips_membership_per_runtime() {
     claude.toggle_tool("Read").unwrap();
     claude.toggle_tool("Bash(git *)").unwrap();
     assert_eq!(claude.tools_text(), "[]");
-    assert!(!claude.set_tools_all());
+    assert_eq!(
+        claude.toggle_tools_all(ToolCapabilitySet::new()),
+        ToolsAllToggle::Unsupported
+    );
 
     let mut cursor = rho_draft();
     assert!(cursor.switch_runtime_kind("cursor"));

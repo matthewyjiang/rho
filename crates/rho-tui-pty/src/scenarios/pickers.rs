@@ -197,7 +197,8 @@ pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
 /// Tools is a multi-select: Space toggles a row and the picker stays open, Esc
 /// returns to the field list with the toggled draft, and Save persists it.
 /// Starts from `tools: all`, so removing `shell` must expand the policy to the
-/// explicit built-in set minus shell.
+/// explicit built-in set minus shell; toggling `all` on and back off must
+/// return to that set rather than leave every tool on.
 pub(super) const EDIT_USER_AGENT_TOOLS_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -232,6 +233,29 @@ pub(super) const EDIT_USER_AGENT_TOOLS_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Key(Key::Char(' ')),
+    // `all` is a toggle: on replaces the narrowed set, off restores it, so the
+    // saved policy below must still be the explicit list minus shell.
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::TypeText("^all"),
+    Step::WaitText {
+        text: "Every host tool",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Char(' ')),
+    Step::WaitText {
+        text: "tools: all",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Char(' ')),
+    Step::WaitText {
+        text: "tools: advisor",
+        timeout: SETTLE,
+    },
     // The picker stays open after a toggle; Esc lands on the field list with
     // the "Tools" filter restored, so its badge is the durable outcome.
     Step::Key(Key::Esc),

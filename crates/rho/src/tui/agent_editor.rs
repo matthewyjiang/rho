@@ -20,7 +20,7 @@ use super::{
 
 use crate::agent::{
     AgentDefinition, AgentOrigin, AgentRuntime, AgentRuntimeSpec, ModelPolicy, PromptPolicy,
-    ReasoningLevel,
+    ReasoningLevel, ToolCapabilitySet, ToolsAllToggle,
 };
 use crate::claude_runtime::models as claude_models;
 use crate::model_aliases::ModelAliases;
@@ -144,6 +144,9 @@ pub(super) struct AgentEditSession {
     original_contents: String,
     phase: AgentEditPhase,
     runtime_stash: BTreeMap<AgentRuntime, AgentRuntimeSpec>,
+    /// Explicit Rho tool set the last `all` toggle replaced, so toggling
+    /// `all` off again returns to it instead of leaving every tool on.
+    tools_stash: ToolCapabilitySet,
 }
 
 impl AgentEditSession {
@@ -164,6 +167,7 @@ impl AgentEditSession {
             original_contents,
             phase: AgentEditPhase::Fields,
             runtime_stash,
+            tools_stash: ToolCapabilitySet::new(),
         }
     }
 
@@ -181,6 +185,18 @@ impl AgentEditSession {
 
     pub(super) fn with_draft_mut<R>(&mut self, f: impl FnOnce(&mut AgentDefinition) -> R) -> R {
         f(&mut self.draft)
+    }
+
+    /// Flips Rho `all`. Turning it on remembers the explicit set it replaced;
+    /// turning it off restores that set (empty when `all` was the original
+    /// policy, so the user starts picking from nothing rather than from all).
+    pub(super) fn toggle_tools_all(&mut self) -> ToolsAllToggle {
+        let restore = std::mem::take(&mut self.tools_stash);
+        let outcome = self.draft.toggle_tools_all(restore);
+        if let ToolsAllToggle::TurnedOn { replaced } = &outcome {
+            self.tools_stash = replaced.clone();
+        }
+        outcome
     }
 
     fn switch_runtime(&mut self, value: &str) -> bool {

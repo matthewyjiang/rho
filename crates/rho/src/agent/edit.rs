@@ -13,9 +13,20 @@ use std::{
 use super::{
     parse_definition, parse_tools_list_text, serialize_definition, AgentDefinition, AgentRuntime,
     AgentRuntimeSpec, ClaudeAgentConfig, ClaudeToolPolicy, CursorAgentConfig, CursorTool,
-    ModelPolicy, ModelSelection, PromptPolicy, ReasoningLevel, ToolCapability, ToolPolicy,
-    BUILTIN_TOOL_CAPABILITIES,
+    ModelPolicy, ModelSelection, PromptPolicy, ReasoningLevel, ToolCapability, ToolCapabilitySet,
+    ToolPolicy, BUILTIN_TOOL_CAPABILITIES,
 };
+
+/// Outcome of [`AgentDefinition::toggle_tools_all`].
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ToolsAllToggle {
+    /// Policy is now `all`; `replaced` is the explicit set it overwrote.
+    TurnedOn { replaced: ToolCapabilitySet },
+    /// Policy is now the explicit set passed as `restore`.
+    TurnedOff,
+    /// Runtime has no open allow list; nothing changed.
+    Unsupported,
+}
 
 impl AgentDefinition {
     /// Switches prompt policy while preserving the existing body.
@@ -307,7 +318,7 @@ impl AgentDefinition {
     /// Flips one tool in the runtime allow list.
     ///
     /// Rho `all` expands to the built-in set first so a single tool can be
-    /// removed from it; [`Self::set_tools_all`] is the way back. Cursor may go
+    /// removed from it; [`Self::toggle_tools_all`] is the way back. Cursor may go
     /// empty here because `validate_for_edit` rejects that at save.
     pub(crate) fn toggle_tool(&mut self, name: &str) -> Result<(), String> {
         match &mut self.runtime {
@@ -355,14 +366,25 @@ impl AgentDefinition {
         }
     }
 
-    /// Sets the Rho policy to `all`. Other runtimes have no open allow list.
-    pub(crate) fn set_tools_all(&mut self) -> bool {
+    /// Flips the Rho policy between `all` and an explicit set.
+    ///
+    /// Turning `all` on hands back the set it replaced so the caller can
+    /// stash it; turning it off installs `restore`. Other runtimes have no
+    /// open allow list and report [`ToolsAllToggle::Unsupported`].
+    pub(crate) fn toggle_tools_all(&mut self, restore: ToolCapabilitySet) -> ToolsAllToggle {
         match &mut self.runtime {
             AgentRuntimeSpec::Rho { tools, .. } => {
-                *tools = ToolPolicy::All;
-                true
+                match std::mem::replace(tools, ToolPolicy::All) {
+                    ToolPolicy::All => {
+                        *tools = ToolPolicy::Allow(restore);
+                        ToolsAllToggle::TurnedOff
+                    }
+                    ToolPolicy::Allow(replaced) => ToolsAllToggle::TurnedOn { replaced },
+                }
             }
-            AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => false,
+            AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => {
+                ToolsAllToggle::Unsupported
+            }
         }
     }
 
