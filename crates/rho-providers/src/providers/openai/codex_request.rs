@@ -3,11 +3,10 @@ use serde_json::{json, Value};
 use crate::model::{ModelError, ModelIdentity, ModelRequest};
 use rho_sdk::model::{ServiceTier, ToolSpec};
 
-use crate::protocol::openai_responses::{
-    codex_input_items_for_target, codex_reasoning_param, to_responses_tool, ToolStrictness,
-};
+use crate::protocol::openai_responses::{codex_reasoning_param, to_responses_tool, ToolStrictness};
 
 use super::auth::Auth;
+use super::configuration_update::{lower_responses_input, ReasoningUpdatePolicy};
 use super::reasoning::OpenAiReasoningProfile;
 
 /// Complete wire policy for one OpenAI Responses endpoint variant.
@@ -139,17 +138,19 @@ fn lower_responses_request(
     profile: &ResponsesProfile,
     reasoning_profile: &OpenAiReasoningProfile,
     request: ModelRequest<'_>,
+    update_policy: ReasoningUpdatePolicy,
 ) -> Result<ResponsesLowered, ModelError> {
     let reasoning =
         reasoning_profile.config(profile.provider(), profile.model(), request.reasoning_level)?;
     let mut instructions = Vec::new();
-    let input = codex_input_items_for_target(
+    let (input, request_effort) = lower_responses_input(
         request.messages,
         &mut instructions,
-        Some(profile.identity()),
+        profile.identity(),
+        reasoning.effort.as_deref(),
+        update_policy,
     )?;
-    let reasoning =
-        codex_reasoning_param(reasoning.effort.as_deref(), reasoning.summary.as_deref());
+    let reasoning = codex_reasoning_param(request_effort.as_deref(), reasoning.summary.as_deref());
     Ok(ResponsesLowered {
         instructions: instructions.join("\n\n"),
         input,
@@ -198,7 +199,12 @@ pub(super) fn build_responses_create_body(
         input,
         prompt_cache_key,
         reasoning,
-    } = lower_responses_request(profile, reasoning_profile, request)?;
+    } = lower_responses_request(
+        profile,
+        reasoning_profile,
+        request,
+        ReasoningUpdatePolicy::PreservePrefix,
+    )?;
 
     let mut body = base_responses_body(profile);
     body["stream"] = json!(true);
@@ -234,7 +240,12 @@ pub(super) fn build_responses_compact_body(
         input,
         prompt_cache_key,
         reasoning,
-    } = lower_responses_request(profile, reasoning_profile, request)?;
+    } = lower_responses_request(
+        profile,
+        reasoning_profile,
+        request,
+        ReasoningUpdatePolicy::CurrentLevel,
+    )?;
     let mut body = base_responses_body(profile);
     body["instructions"] = json!(instructions);
     body["input"] = json!(input);

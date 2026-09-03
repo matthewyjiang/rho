@@ -77,6 +77,62 @@ async fn api_key_responses_stream_accepts_data_without_space_after_colon() {
         .any(|event| matches!(event, ModelEvent::OutputDelta(delta) if delta == "hello")));
 }
 
+// Covers: completed Responses turns must persist the in-force effort for later astra replay
+// Owner: openai Responses stream
+#[tokio::test]
+async fn completed_responses_turn_emits_reasoning_effort_context() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let api_base = format!("http://{}", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0; 4096];
+        let bytes = stream.read(&mut request).await.unwrap();
+        let request = String::from_utf8_lossy(&request[..bytes]);
+        assert!(request.starts_with("POST /responses HTTP/1.1"));
+
+        let body = concat!(
+            "data:{\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+            "data:{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"output_text\":\"hello\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n",
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    });
+
+    let mut provider =
+        OpenAiProvider::new_with_auth("gpt-5.5".into(), Auth::ApiKey("test-key".into()));
+    provider.api_base = api_base;
+    provider.client = crate::reqwest_client();
+
+    let mut events = Vec::new();
+    provider
+        .stream_turn(
+            ModelRequest {
+                messages: &[Message::user_text("hello")],
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: crate::reasoning::ReasoningLevel::Low,
+                prompt_cache_key: None,
+            },
+            &mut |event| {
+                events.push(event);
+                Ok(())
+            },
+            &mut |_| Ok(()),
+        )
+        .await
+        .unwrap();
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        ModelEvent::ProviderContext { kind, position: None, data }
+            if kind == super::configuration_update::OPENAI_REASONING_EFFORT_KIND
+                && data.as_str() == Some("low")
+    )));
+}
+
 #[tokio::test]
 async fn cancelling_codex_stream_resets_websocket_before_next_turn() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

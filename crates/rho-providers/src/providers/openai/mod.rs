@@ -5,6 +5,7 @@ pub mod cache;
 mod codex_continuation;
 mod codex_request;
 mod codex_ws;
+mod configuration_update;
 mod reasoning;
 mod remote_compaction;
 pub(crate) mod responses_post;
@@ -216,6 +217,22 @@ impl OpenAiProvider {
                 .await
         }
     }
+
+    fn emit_turn_reasoning_effort(
+        &self,
+        reasoning_level: crate::reasoning::ReasoningLevel,
+        on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+    ) -> Result<(), ModelError> {
+        let effort = self
+            .reasoning
+            .config(
+                self.profile.provider(),
+                self.profile.model(),
+                reasoning_level,
+            )?
+            .effort;
+        configuration_update::emit_reasoning_effort(effort.as_deref(), on_event)
+    }
 }
 
 crate::impl_sdk_model_provider!(OpenAiProvider, native_compact, request_options);
@@ -274,6 +291,7 @@ impl OpenAiProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
+        let reasoning_level = request.reasoning_level;
         let body = self.create_body(request, options)?;
         let tokens = Auth::codex_tokens_for_auth(self.auth.as_ref())?;
         let body = match self
@@ -287,6 +305,7 @@ impl OpenAiProvider {
                     response.service_tier.as_deref(),
                     &mut on_event,
                 )?;
+                self.emit_turn_reasoning_effort(reasoning_level, &mut on_event)?;
                 return Ok(response.response);
             }
             CodexWsTurn::FullSseFallback {
@@ -329,14 +348,21 @@ impl OpenAiProvider {
             self.codex_ws.reset().await;
             return Err(crate::provider_backend::http_error::from_response(response).await);
         }
-        self.collect_codex_sse_response(response, options.service_tier(), &mut on_event, &body)
-            .await
+        self.collect_codex_sse_response(
+            response,
+            options.service_tier(),
+            reasoning_level,
+            &mut on_event,
+            &body,
+        )
+        .await
     }
 
     async fn collect_codex_sse_response(
         &self,
         response: reqwest::Response,
         requested_service_tier: Option<rho_sdk::model::ServiceTier>,
+        reasoning_level: crate::reasoning::ReasoningLevel,
         on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
         body: &Value,
     ) -> Result<ModelResponse, ModelError> {
@@ -347,6 +373,7 @@ impl OpenAiProvider {
                     output.service_tier.as_deref(),
                     on_event,
                 )?;
+                self.emit_turn_reasoning_effort(reasoning_level, on_event)?;
                 self.codex_ws
                     .record_full_request_success(body, &output)
                     .await?;
@@ -429,6 +456,7 @@ impl OpenAiProvider {
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
+        let reasoning_level = request.reasoning_level;
         let body = self.create_body(request, options)?;
         let http_result = self
             .post_responses(ResponsesEndpoint::Create, &body, Some(&cancellation))
@@ -438,9 +466,9 @@ impl OpenAiProvider {
             return Err(crate::provider_backend::http_error::from_response(response).await);
         }
         let mut on_event = Some(on_event);
-        collect_codex_sse_response(response, &mut on_event)
-            .await
-            .map(|output| output.response)
+        let output = collect_codex_sse_response(response, &mut on_event).await?;
+        self.emit_turn_reasoning_effort(reasoning_level, &mut on_event)?;
+        Ok(output.response)
     }
 }
 
