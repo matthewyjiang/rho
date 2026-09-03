@@ -2,7 +2,7 @@ use rho_sdk::{floor_char_boundary, TRUNCATION_MARKER};
 use rho_tools::tool::truncate;
 
 use {
-    super::agent::SubagentSnapshot,
+    super::agent::{SubagentNotification, SubagentSnapshot},
     crate::subagent::{self, RunState},
 };
 
@@ -135,6 +135,30 @@ pub(super) fn format_notification(snapshots: &[&SubagentSnapshot]) -> String {
     }
 
     format!("{NOTIFICATION_HEADER}{body}{NOTIFICATION_FOOTER}")
+}
+
+/// Formats a drained batch of terminal runs as one bounded notification. The
+/// formatter puts every run's status before the result excerpts.
+pub fn notification_prompts(notifications: &[SubagentNotification]) -> (String, String) {
+    let snapshots = notifications
+        .iter()
+        .map(|notification| &notification.snapshot)
+        .collect::<Vec<_>>();
+    let model = format_notification(&snapshots);
+    let display = notifications
+        .iter()
+        .map(|notification| {
+            let snapshot = &notification.snapshot;
+            format!(
+                "agent {} ({}) finished - {}",
+                snapshot.id,
+                snapshot.agent_id,
+                snapshot.status.state.as_str()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    (model, display)
 }
 
 pub(crate) fn merge_notification_context(existing: Option<&str>, newer: &str) -> String {

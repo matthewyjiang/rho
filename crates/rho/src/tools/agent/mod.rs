@@ -28,8 +28,7 @@ use {
 };
 
 use super::agent_output::{
-    format_background_start, format_list_entry, format_notification, format_running,
-    format_snapshot, SnapshotFormat,
+    format_background_start, format_list_entry, format_running, format_snapshot, SnapshotFormat,
 };
 
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -85,7 +84,7 @@ pub struct SubagentNotification {
 #[derive(Clone)]
 pub struct SubagentManager {
     inner: Arc<Mutex<HashMap<String, AgentEntry>>>,
-    pub(crate) executor: AgentExecutor,
+    executor: AgentExecutor,
     parent_placement: Arc<Mutex<subagent::RunPlacement>>,
 }
 
@@ -143,6 +142,10 @@ impl SubagentManager {
     /// agents retain the mode captured when they were launched.
     pub(crate) fn update_permission_mode(&self, mode: crate::permission::PermissionMode) {
         self.executor.update_permission_mode(mode);
+    }
+
+    pub(crate) fn concurrency(&self) -> crate::app::agent_concurrency::AgentConcurrency {
+        self.executor.concurrency()
     }
 
     #[cfg(test)]
@@ -467,31 +470,8 @@ impl SubagentManager {
     }
 }
 
-/// Formats a drained batch of terminal runs as one bounded notification. The
-/// formatter puts every run's status before the result excerpts.
-pub fn notification_prompts(notifications: &[SubagentNotification]) -> (String, String) {
-    let snapshots = notifications
-        .iter()
-        .map(|notification| &notification.snapshot)
-        .collect::<Vec<_>>();
-    let model = format_notification(&snapshots);
-    let display = notifications
-        .iter()
-        .map(|notification| {
-            let snapshot = &notification.snapshot;
-            format!(
-                "agent {} ({}) finished - {}",
-                snapshot.id,
-                snapshot.agent_id,
-                snapshot.status.state.as_str()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    (model, display)
-}
-
 pub(crate) use super::agent_output::merge_notification_context;
+pub use super::agent_output::notification_prompts;
 #[cfg(test)]
 pub(crate) use super::agent_output::MODEL_NOTIFICATION_BYTES as NOTIFICATION_CONTEXT_BYTES;
 
