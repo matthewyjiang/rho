@@ -85,7 +85,7 @@ pub struct SubagentNotification {
 #[derive(Clone)]
 pub struct SubagentManager {
     inner: Arc<Mutex<HashMap<String, AgentEntry>>>,
-    executor: AgentExecutor,
+    pub(crate) executor: AgentExecutor,
     parent_placement: Arc<Mutex<subagent::RunPlacement>>,
 }
 

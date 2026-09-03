@@ -67,4 +67,4 @@ Use the read-only `rho` tool with action `config` to see the sanitized live conf
 
 ## Applying a change
 
-State which mechanism you recommend and, when relevant, when it takes effect. Settings that apply to the current session or the next turn need no restart, including `advisor_mode` and `edit_tool`; `enable_subagents`, web search hosted state, templates, and keybindings apply on the next session or at startup. When the user edits config directly, tell them a restart may be required and offer to check whether the setting is restart-only.
+State which mechanism you recommend and, when relevant, when it takes effect. Settings that apply to the current session or the next turn need no restart, including `advisor_mode`, `edit_tool`, and `agent_concurrency`; `enable_subagents`, web search hosted state, templates, and keybindings apply on the next session or at startup. When the user edits config directly, tell them a restart may be required and offer to check whether the setting is restart-only. `agent_concurrency` is under Agent behavior in `/config` (Concurrent agents) or `behavior.agent_concurrency` in config; it defaults to 10, max 64, and applies immediately.

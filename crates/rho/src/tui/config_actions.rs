@@ -63,6 +63,7 @@ impl App {
             config_picker::THEME_VALUE => self.open_theme_picker_from_config(),
             config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(),
             config_picker::ENABLE_SUBAGENTS_VALUE => self.toggle_enable_subagents(),
+            config_picker::AGENT_CONCURRENCY_VALUE => self.open_agent_concurrency_editor(),
             config_picker::ADVISOR_MODE_VALUE => self.toggle_advisor_mode(agent).await,
             config_picker::ADVISOR_MODEL_VALUE => {
                 self.open_advisor_model_prompt(
@@ -360,6 +361,28 @@ impl App {
                 }
             },
         )
+    }
+
+    pub(super) fn open_agent_concurrency_editor(&mut self) -> anyhow::Result<()> {
+        let value = self
+            .agent_concurrency
+            .as_ref()
+            .map(|pool| pool.total_limit())
+            .unwrap_or_else(|| {
+                self.info
+                    .services
+                    .config_repository
+                    .load()
+                    .map(|config| config.agent_concurrency)
+                    .unwrap_or(crate::config::DEFAULT_AGENT_CONCURRENCY)
+            });
+        self.input_ui
+            .set_composer(ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
+                ConfigNumberKey::AgentConcurrency,
+                value,
+            )));
+        self.set_status("edit concurrent agents");
+        Ok(())
     }
 
     pub(super) fn toggle_enable_subagents(&mut self) -> anyhow::Result<()> {

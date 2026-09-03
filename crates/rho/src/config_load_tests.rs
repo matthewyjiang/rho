@@ -386,6 +386,55 @@ enable_subagents = true
     assert_eq!(default_warnings, Vec::<ConfigWarning>::new());
 }
 
+// Covers: agent_concurrency defaults to 10 and clamps 0 / over-max with a warning.
+// Owner: config load
+#[test]
+fn agent_concurrency_defaults_and_clamps() {
+    let (defaulted, warnings) = parse_settings("").unwrap();
+    assert_eq!(
+        defaulted.agent_concurrency,
+        crate::config::DEFAULT_AGENT_CONCURRENCY
+    );
+    assert!(warnings.is_empty());
+
+    let (config, warnings) = parse_settings(
+        r#"
+[behavior]
+agent_concurrency = 0
+"#,
+    )
+    .unwrap();
+    assert_eq!(config.agent_concurrency, 1);
+    assert_eq!(
+        warnings,
+        vec![ConfigWarning::Clamped {
+            key: "behavior.agent_concurrency",
+            from: "0".into(),
+            to: "1".into(),
+        }]
+    );
+
+    let (config, warnings) = parse_settings(
+        r#"
+[behavior]
+agent_concurrency = 1000
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        config.agent_concurrency,
+        crate::config::MAX_AGENT_CONCURRENCY
+    );
+    assert_eq!(
+        warnings,
+        vec![ConfigWarning::Clamped {
+            key: "behavior.agent_concurrency",
+            from: "1000".into(),
+            to: crate::config::MAX_AGENT_CONCURRENCY.to_string(),
+        }]
+    );
+}
+
 // Covers: Rho-only keys under a delegating entry are reported and dropped, not
 // silently kept where nothing would ever read them.
 // Owner: config load

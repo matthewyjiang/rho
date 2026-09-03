@@ -44,6 +44,17 @@ pub(crate) use provider_config::ProviderConfigs;
 pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = rho_tools::DEFAULT_MAX_OUTPUT_BYTES;
 pub(crate) const DEFAULT_PROMPT_HISTORY_LIMIT: usize = 1000;
 pub(crate) const MAX_PROMPT_HISTORY_LIMIT: usize = 10_000;
+/// Default live delegated-agent slots (foreground and background).
+///
+/// Receipt: 4 serialized a 6-way background fan-out behind a permit queue.
+/// 10 is the asked default; each slot is a full child agent, so this stays a
+/// tripwire rather than a hardware measurement.
+pub const DEFAULT_AGENT_CONCURRENCY: usize = 10;
+/// Named ceiling for `behavior.agent_concurrency`.
+///
+/// Receipt: generous versus the default of 10. A typo like 100000 must fail at
+/// check time instead of spawning. Raise this if a real workload hits it.
+pub const MAX_AGENT_CONCURRENCY: usize = 64;
 
 /// Persisted application configuration owned by `rho-coding-agent`.
 ///
@@ -96,6 +107,8 @@ pub struct Config {
     pub edit_tool: EditTool,
     pub check_for_updates: bool,
     pub enable_subagents: bool,
+    /// Maximum delegated agents that may execute at once, including background.
+    pub agent_concurrency: usize,
     /// Offer the `advisor` tool, which reviews the session with the model
     /// configured for the `advisor` internal agent.
     pub advisor_mode: bool,
@@ -158,6 +171,7 @@ impl Default for Config {
             edit_tool: EditTool::default(),
             check_for_updates: true,
             enable_subagents: true,
+            agent_concurrency: DEFAULT_AGENT_CONCURRENCY,
             advisor_mode: false,
             experimental_workspace_rewind: false,
             permission_mode: PermissionMode::Bypass,
@@ -699,6 +713,10 @@ impl Config {
     pub fn set_compact_threshold_percent(&mut self, value: u8) {
         self.compact_threshold_percent = clamp_percent(value);
         self.normalize_compaction_percentages();
+    }
+
+    pub fn set_agent_concurrency(&mut self, value: usize) {
+        self.agent_concurrency = value.clamp(1, MAX_AGENT_CONCURRENCY);
     }
 
     pub fn set_compact_target_percent(&mut self, value: u8) {
