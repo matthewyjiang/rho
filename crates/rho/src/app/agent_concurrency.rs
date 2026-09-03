@@ -94,6 +94,7 @@ impl AdjustablePool {
         unpack(self.state.load(Ordering::Acquire)).0
     }
 
+    #[cfg(test)]
     fn active(&self) -> usize {
         unpack(self.state.load(Ordering::Acquire)).1
     }
@@ -241,18 +242,11 @@ impl AgentConcurrency {
         cancellation: &RunCancellation,
     ) -> Option<RuntimePermits> {
         let claude = match capacity_class {
-            CapacityClass::Claude => {
-                let Some(permit) = self.claude.acquire(cancellation).await else {
-                    return None;
-                };
-                Some(permit)
-            }
+            CapacityClass::Claude => Some(self.claude.acquire(cancellation).await?),
             CapacityClass::Rho => None,
         };
 
-        let Some(total) = self.total.acquire(cancellation).await else {
-            return None;
-        };
+        let total = self.total.acquire(cancellation).await?;
 
         Some(RuntimePermits {
             _total: total,
