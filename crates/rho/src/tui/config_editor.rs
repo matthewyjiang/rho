@@ -7,6 +7,7 @@ use {
 
 use super::{
     config_picker,
+    line_editor::LineEditor,
     render::{styled_line, truncate_one_line, LineFill},
     theme::Theme,
 };
@@ -14,8 +15,7 @@ use super::{
 #[derive(Clone, Debug)]
 pub(super) struct ConfigNumberInput {
     pub(super) key: ConfigNumberKey,
-    pub(super) value: String,
-    pub(super) cursor: usize,
+    pub(super) editor: LineEditor,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -215,6 +215,7 @@ impl ConfigTextKey {
 impl ConfigNumberInput {
     pub(super) fn parsed_value(&self) -> anyhow::Result<usize> {
         let value = self
+            .editor
             .value
             .parse::<usize>()
             .map_err(|_| anyhow::anyhow!("{} must be a whole number", self.key.label()))?;
@@ -226,58 +227,23 @@ impl ConfigNumberInput {
     }
 
     pub(super) fn new(key: ConfigNumberKey, value: usize) -> Self {
-        let value = value.to_string();
-        let cursor = value.chars().count();
-        Self { key, value, cursor }
-    }
-
-    fn byte_index(&self, char_index: usize) -> usize {
-        self.value
-            .char_indices()
-            .nth(char_index)
-            .map(|(index, _)| index)
-            .unwrap_or(self.value.len())
+        Self {
+            key,
+            editor: LineEditor::new(value.to_string()),
+        }
     }
 
     pub(super) fn insert_char(&mut self, ch: char) {
         if !ch.is_ascii_digit() {
             return;
         }
-        let byte_index = self.byte_index(self.cursor);
-        self.value.insert(byte_index, ch);
-        self.cursor += 1;
+        self.editor.insert_char(ch);
     }
 
     pub(super) fn insert_text(&mut self, text: &str) {
         for ch in text.chars().filter(|ch| ch.is_ascii_digit()) {
             self.insert_char(ch);
         }
-    }
-
-    pub(super) fn move_cursor_left(&mut self) {
-        self.cursor = self.cursor.saturating_sub(1);
-    }
-
-    pub(super) fn move_cursor_right(&mut self) {
-        self.cursor = (self.cursor + 1).min(self.value.chars().count());
-    }
-
-    pub(super) fn move_cursor_home(&mut self) {
-        self.cursor = 0;
-    }
-
-    pub(super) fn move_cursor_end(&mut self) {
-        self.cursor = self.value.chars().count();
-    }
-
-    pub(super) fn backspace(&mut self) {
-        if self.cursor == 0 {
-            return;
-        }
-        let start = self.byte_index(self.cursor - 1);
-        let end = self.byte_index(self.cursor);
-        self.value.replace_range(start..end, "");
-        self.cursor -= 1;
     }
 }
 
@@ -300,7 +266,7 @@ pub(super) fn config_number_input_lines(
             LineFill::Natural,
         ),
         styled_line(
-            truncate_one_line(&input.value, width),
+            truncate_one_line(&input.editor.value, width),
             width,
             Theme::text(),
             LineFill::Natural,

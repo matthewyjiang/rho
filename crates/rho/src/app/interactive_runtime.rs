@@ -790,7 +790,7 @@ impl InteractiveRuntime {
         )
     }
 
-    pub(crate) fn subagents(&self) -> Option<&crate::tools::agent::SubagentManager> {
+    pub(crate) fn subagents(&self) -> Option<&crate::app::SubagentManager> {
         self.tools.subagents()
     }
 

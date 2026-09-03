@@ -5,14 +5,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use futures_util::StreamExt;
-
 use crate::{
     model::{
         ContentBlock, ImageContent, ModelError, ModelEvent, ModelResponse,
         ProviderReportedErrorKind,
     },
-    provider_backend::line_decoder::LineDecoder,
+    provider_backend::line_stream::collect_line_stream,
 };
 use rho_sdk::model::ToolCall;
 
@@ -160,23 +158,10 @@ pub(crate) async fn collect_codex_sse_response(
     on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
 ) -> Result<CodexSseResponse, ModelError> {
     let mut state = CodexSseState::default();
-    let mut decoder = LineDecoder::default();
-    let mut stream = response.bytes_stream();
-    let mut idle_deadline = crate::provider_backend::stream_timeout::StreamIdleDeadline::new();
-    loop {
-        let Some(chunk) = idle_deadline.wait_for(stream.next()).await? else {
-            break;
-        };
-        decoder.push(&chunk?);
-        while let Some(line) = decoder.next_line().map_err(line_decode_error)? {
-            if handle_codex_sse_line(line, &mut state, on_event)? {
-                idle_deadline.record_activity();
-            }
-        }
-    }
-    if let Some(line) = decoder.finish().map_err(line_decode_error)? {
-        handle_codex_sse_line(line, &mut state, on_event)?;
-    }
+    collect_line_stream(response, line_decode_error, |line| {
+        handle_codex_sse_line(line, &mut state, on_event)
+    })
+    .await?;
     state.into_response()
 }
 

@@ -1,10 +1,4 @@
-use std::{
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 mod advisor;
 mod attach;
@@ -12,20 +6,15 @@ mod compact;
 mod docs_demo;
 mod edit;
 mod goal;
+mod response_scenarios;
+mod stream_scenarios;
 
 use rho_sdk::{
     model::{
         ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ToolCall,
     },
     provider::{ModelProvider, NativeCompactionFuture, ProviderEventSender, ProviderFuture},
-    CancellationToken, ProviderError, ProviderErrorKind, Retryability,
-};
-
-use goal::{
-    delegation_result_was_reviewed, is_blocked_goal_evaluation, is_delegation_goal_evaluation,
-    is_delegation_retry_goal_evaluation, is_goal_delegation_prompt,
-    is_goal_delegation_retry_continuation, is_goal_questionnaire_evaluation,
-    is_goal_questionnaire_prompt, is_goal_retry_prompt, DELEGATION_REVIEW_RESPONSE,
+    CancellationToken, ProviderError,
 };
 
 const MODE_ENV: &str = "RHO_TUI_TEST_MODE";
@@ -48,9 +37,6 @@ const GOAL_RETRY_AGENT_CALL_ID: &str = "tui-fixture-goal-retry-agent";
 const AGENTS_LIST_CALL_ID: &str = "tui-fixture-agents-list";
 const BACKGROUND_QUESTIONNAIRE_COMPLETION: &str =
     "background agent questionnaire completed with color blue";
-static GOAL_RETRY_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
-static GOAL_BLOCKED_EVALUATIONS: AtomicUsize = AtomicUsize::new(0);
-static GOAL_DELEGATION_RETRY_ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
 
 pub(super) fn from_env(
     provider: &str,
@@ -113,477 +99,29 @@ async fn fixture_stream(
     if let Some(response) = attach::intercept(&prompt, &request, &events).await {
         return response;
     }
-    if is_goal_retry_prompt(&prompt) {
-        if GOAL_RETRY_ATTEMPTS.fetch_add(1, Ordering::SeqCst) == 0 {
-            return Err(ProviderError::new(
-                ProviderErrorKind::Unavailable,
-                "deterministic transient goal turn failure",
-                Retryability::Retryable,
-            ));
-        }
-        return completed("fixture goal retry completed after reusing the original prompt");
+    if let Some(response) = goal::intercept(&prompt, &request, &events).await {
+        return response;
     }
-    if is_goal_delegation_retry_continuation(&prompt) {
-        if delegation_result_was_reviewed(&request) {
-            return completed("goal retry resumed after delegated agent finished");
-        }
-        if tool_result(&request, GOAL_RETRY_AGENT_CALL_ID).is_none() {
-            if GOAL_DELEGATION_RETRY_ATTEMPTS.fetch_add(1, Ordering::SeqCst) == 0 {
-                return completed_tool_call(
-                    GOAL_RETRY_AGENT_CALL_ID,
-                    "agent",
-                    serde_json::json!({
-                        "agent_id": "worker",
-                        "prompt": "fixture slow stream",
-                        "background": true,
-                    }),
-                );
-            }
-            return completed("goal retry started before delegated agent finished");
-        }
-        return Err(ProviderError::new(
-            ProviderErrorKind::Unavailable,
-            "deterministic goal delegation retry failure",
-            Retryability::Retryable,
-        ));
+    if let Some(response) = stream_scenarios::intercept(&prompt, &request, &events).await {
+        return response;
     }
-    if is_goal_questionnaire_prompt(&prompt)
-        && tool_result(&request, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID).is_none()
-    {
-        return completed_tool_call(
-            BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID,
-            "agent",
-            serde_json::json!({
-                "agent_id": "worker",
-                "prompt": "fixture delayed child questionnaire",
-                "background": true,
-            }),
-        );
+    if let Some(response) = edit::intercept(&prompt, &request, &events).await {
+        return response;
     }
-    if is_goal_delegation_prompt(&prompt)
-        && tool_result(&request, BACKGROUND_AGENT_CALL_ID).is_none()
-    {
-        return completed_tool_call(
-            BACKGROUND_AGENT_CALL_ID,
-            "agent",
-            serde_json::json!({
-                "agent_id": "worker",
-                "prompt": "fixture stream",
-                "background": true,
-            }),
-        );
+    if let Some(response) = advisor::intercept(&prompt, &request, &events).await {
+        return response;
     }
-    match prompt.as_str() {
-        "fixture slow stream" => {
-            fixture_sleep(&request.cancellation, Duration::from_secs(4)).await?;
-            completed("assistant stream part one part two")
-        }
-        "fixture stream" => {
-            events
-                .send(ModelEvent::ReasoningDelta(
-                    "deterministic reasoning phase one\n".into(),
-                ))
-                .await?;
-            fixture_sleep(&request.cancellation, Duration::from_millis(250)).await?;
-            events
-                .send(ModelEvent::ReasoningDelta(
-                    "deterministic reasoning phase two\n".into(),
-                ))
-                .await?;
-            events
-                .send(ModelEvent::OutputDelta("assistant stream part one ".into()))
-                .await?;
-            fixture_sleep(&request.cancellation, Duration::from_millis(350)).await?;
-            events
-                .send(ModelEvent::OutputDelta("part two".into()))
-                .await?;
-            completed("assistant stream part one part two")
-        }
-        "fixture markdown headings" => {
-            let mut response = String::new();
-            for delta in [
-                "# Level one\n## Lev",
-                "el two\n### Level three\n",
-                "#### Level four\n##### Lev",
-                "el five\n###### Level six",
-            ] {
-                events.send(ModelEvent::OutputDelta(delta.into())).await?;
-                response.push_str(delta);
-                fixture_sleep(&request.cancellation, Duration::from_millis(40)).await?;
-            }
-            completed(response)
-        }
-        // Stable prose must stay drawn while later emphasis markers complete.
-        "fixture markdown emphasis stream" => {
-            let mut response = String::new();
-            // Hold the open-emphasis delta longer so PTY scenarios can sample
-            // ALPHA staying visible before BETA arrives. CI runners under load
-            // miss a shorter window when the PTY poll thread is starved.
-            for (delta, pause_ms) in [
-                ("Stable prose ALPHA remains drawn ", 250),
-                ("while **hold", 1500),
-                ("ing closes** and trailing BETA completes.", 250),
-            ] {
-                events.send(ModelEvent::OutputDelta(delta.into())).await?;
-                response.push_str(delta);
-                fixture_sleep(&request.cancellation, Duration::from_millis(pause_ms)).await?;
-            }
-            completed(response)
-        }
-        "fixture mermaid flowchart" => {
-            let mut response = String::new();
-            // Hold the last open-fence body so PTY can sample live art before
-            // the closing fence arrives.
-            for (delta, pause_ms) in [
-                ("```mermaid\nflowchart LR\n", 60),
-                (
-                    "  P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
-                    60,
-                ),
-                ("  P2 --> P3[\"Phase 3: session delete API + CLI\"]\n", 60),
-                (
-                    "  P3 --> P4[\"Phase 4: TUI delete in resume picker\"]\n",
-                    60,
-                ),
-                ("  P3 --> P5[\"Phase 5: nest runs under session\"]\n", 500),
-                ("```\ndiagram delivered", 60),
-            ] {
-                events.send(ModelEvent::OutputDelta(delta.into())).await?;
-                response.push_str(delta);
-                fixture_sleep(&request.cancellation, Duration::from_millis(pause_ms)).await?;
-            }
-            completed(response)
-        }
-        "fixture approval long" if tool_result(&request, LONG_APPROVAL_CALL_ID).is_none() => {
-            // Prefix stays long enough that common PTY widths bury the suffix
-            // below the first approval detail page under command-first layout.
-            let mut command = String::from("printf 'reviewing harmless fixture'; printf '");
-            for index in 1..=40 {
-                command.push_str(&format!("segment-{index:02} "));
-            }
-            command.push_str("'; echo DANGEROUS_SUFFIX_INSPECTABLE");
-            completed_tool_call(
-                LONG_APPROVAL_CALL_ID,
-                "bash",
-                serde_json::json!({ "command": command }),
-            )
-        }
-        "fixture tool" if tool_result(&request, TOOL_CALL_ID).is_none() => {
-            let arguments = serde_json::json!({
-                "path": ".rho-tui-fixture-output.txt",
-                "content": "deterministic tool output\n",
-            });
-            events
-                .send(ModelEvent::ToolCallDelta {
-                    index: 0,
-                    id: Some(TOOL_CALL_ID.into()),
-                    name: Some("write".into()),
-                    arguments: "{\"path\":\".rho-tui-fixture-output.txt\",".into(),
-                })
-                .await?;
-            fixture_sleep(&request.cancellation, Duration::from_millis(300)).await?;
-            events
-                .send(ModelEvent::ToolCallDelta {
-                    index: 0,
-                    id: None,
-                    name: None,
-                    arguments: "\"content\":\"deterministic tool output\\n\"}".into(),
-                })
-                .await?;
-            completed_tool_call(TOOL_CALL_ID, "write", arguments)
-        }
-        edit::PROMPT if edit::is_pending(&request) => edit::stream(&request, &events).await,
-        // Long write body so the collapsed card truncates and becomes
-        // click-toggleable; used by the tool-card hover lift scenario.
-        "fixture hover tool" if tool_result(&request, HOVER_TOOL_CALL_ID).is_none() => {
-            let content = (1..=40)
-                .map(|line| format!("hover fixture line {line:02}\n"))
-                .collect::<String>();
-            let arguments = serde_json::json!({
-                "path": ".rho-tui-fixture-hover.txt",
-                "content": content,
-            });
-            completed_tool_call(HOVER_TOOL_CALL_ID, "write", arguments)
-        }
-        edit::CANCEL_PROMPT => edit::stream_until_cancelled(&request, &events).await,
-        "fixture questionnaire" if tool_result(&request, QUESTIONNAIRE_CALL_ID).is_none() => {
-            completed_tool_call(
-                QUESTIONNAIRE_CALL_ID,
-                "questionnaire",
-                serde_json::json!({
-                    "title": "Deterministic questionnaire",
-                    "reason": "Validate exactly-once host input delivery.",
-                    "questions": [{
-                        "id": "color",
-                        "question": "Choose one color",
-                        "type": "choice",
-                        "choices": [
-                            {
-                                "label": "red",
-                                "description": "A warm primary color"
-                            },
-                            {
-                                "label": "blue",
-                                "description": "A cool primary color"
-                            }
-                        ],
-                        "default": "red",
-                        "required": true,
-                    }],
-                }),
-            )
-        }
-        "fixture concurrent progress"
-            if tool_result(&request, CONCURRENT_SLOW_CALL_ID).is_none()
-                && tool_result(&request, CONCURRENT_FAST_CALL_ID).is_none() =>
-        {
-            Ok(ModelResponse::Assistant(vec![
-                ContentBlock::ToolCall(ToolCall {
-                    id: CONCURRENT_SLOW_CALL_ID.into(),
-                    name: "tui_fixture_progress".into(),
-                    arguments: serde_json::json!({"label": "slow fixture", "delay_ms": 2500}),
-                }),
-                ContentBlock::ToolCall(ToolCall {
-                    id: CONCURRENT_FAST_CALL_ID.into(),
-                    name: "tui_fixture_progress".into(),
-                    arguments: serde_json::json!({"label": "fast fixture", "delay_ms": 200}),
-                }),
-            ]))
-        }
-        "fixture progress tool" if tool_result(&request, PROGRESS_CALL_ID).is_none() => {
-            events
-                .send(ModelEvent::ToolCallDelta {
-                    index: 0,
-                    id: Some(PROGRESS_CALL_ID.into()),
-                    name: Some("tui_fixture_progress".into()),
-                    arguments: "{}".into(),
-                })
-                .await?;
-            fixture_sleep(&request.cancellation, Duration::from_millis(500)).await?;
-            completed_tool_call(
-                PROGRESS_CALL_ID,
-                "tui_fixture_progress",
-                serde_json::json!({}),
-            )
-        }
-        "fixture process rail" if tool_result(&request, PROCESS_RAIL_CALL_ID).is_none() => {
-            completed_tool_call(
-                PROCESS_RAIL_CALL_ID,
-                "process",
-                serde_json::json!({
-                    "action": "start",
-                    "command": "sleep 60",
-                }),
-            )
-        }
-        "fixture subagent rail" if tool_result(&request, SUBAGENT_RAIL_AGENT_CALL_ID).is_none() => {
-            completed_tool_call(
-                SUBAGENT_RAIL_AGENT_CALL_ID,
-                "agent",
-                serde_json::json!({
-                    "agent_id": "worker",
-                    "prompt": "fixture delay",
-                    "background": true,
-                }),
-            )
-        }
-        "fixture background agent" if tool_result(&request, BACKGROUND_AGENT_CALL_ID).is_none() => {
-            events
-                .send(ModelEvent::ToolCallDelta {
-                    index: 0,
-                    id: Some(BACKGROUND_AGENT_CALL_ID.into()),
-                    name: Some("agent".into()),
-                    arguments: r#"{"agent_id":"wor"#.into(),
-                })
-                .await?;
-            fixture_sleep(&request.cancellation, Duration::from_millis(250)).await?;
-            events
-                .send(ModelEvent::ToolCallDelta {
-                    index: 0,
-                    id: None,
-                    name: None,
-                    arguments: r#"ker","prompt":"fixture stream","background":true}"#.into(),
-                })
-                .await?;
-            completed_tool_call(
-                BACKGROUND_AGENT_CALL_ID,
-                "agent",
-                serde_json::json!({
-                    "agent_id": "worker",
-                    "prompt": "fixture stream",
-                    "background": true,
-                }),
-            )
-        }
-        "fixture claude agent" if tool_result(&request, CLAUDE_AGENT_CALL_ID).is_none() => {
-            // Foreground delegation into a runtime: claude-cli agent definition.
-            // The PTY E2E installs that definition and a fake `claude` on PATH.
-            completed_tool_call(
-                CLAUDE_AGENT_CALL_ID,
-                "agent",
-                serde_json::json!({
-                    "agent_id": "claude-planner",
-                    "prompt": "Say hello in one short sentence.",
-                    "background": false,
-                }),
-            )
-        }
-        "fixture background claude agent"
-            if tool_result(&request, BACKGROUND_CLAUDE_AGENT_CALL_ID).is_none() =>
-        {
-            // Background Claude run so terminal cost lands through automatic
-            // completion delivery rather than the foreground tool result path.
-            completed_tool_call(
-                BACKGROUND_CLAUDE_AGENT_CALL_ID,
-                "agent",
-                serde_json::json!({
-                    "agent_id": "claude-planner",
-                    "prompt": "Say hello in one short sentence.",
-                    "background": true,
-                }),
-            )
-        }
-        "fixture claude agent error"
-            if tool_result(&request, CLAUDE_AGENT_ERROR_CALL_ID).is_none() =>
-        {
-            completed_tool_call(
-                CLAUDE_AGENT_ERROR_CALL_ID,
-                "agent",
-                serde_json::json!({
-                    "agent_id": "claude-planner",
-                    "prompt": "Force a deterministic Claude error path.",
-                    "background": false,
-                }),
-            )
-        }
-        "fixture background questionnaire"
-            if tool_result(&request, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID).is_none() =>
-        {
-            completed_tool_call(
-                BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID,
-                "agent",
-                serde_json::json!({
-                    "agent_id": "worker",
-                    "prompt": "fixture child questionnaire",
-                    "background": true,
-                }),
-            )
-        }
-        "fixture child questionnaire" | "fixture delayed child questionnaire"
-            if tool_result(&request, QUESTIONNAIRE_CALL_ID).is_none() =>
-        {
-            if prompt == "fixture delayed child questionnaire" {
-                fixture_sleep(&request.cancellation, Duration::from_secs(1)).await?;
-            }
-            completed_tool_call(
-                QUESTIONNAIRE_CALL_ID,
-                "questionnaire",
-                serde_json::json!({
-                    "title": "Background questionnaire",
-                    "reason": "Validate delegated host input routing.",
-                    "questions": [{
-                        "id": "color",
-                        "question": "Choose one color",
-                        "type": "choice",
-                        "choices": [
-                            {
-                                "label": "red",
-                                "description": "A warm primary color"
-                            },
-                            {
-                                "label": "blue",
-                                "description": "A cool primary color"
-                            }
-                        ],
-                        "default": "red",
-                        "required": true,
-                    }],
-                }),
-            )
-        }
-        advisor::PROMPT | advisor::FAILURE_PROMPT if advisor::is_pending(&request) => {
-            advisor::call()
-        }
-        "fixture agents list" if tool_result(&request, AGENTS_LIST_CALL_ID).is_none() => {
-            completed_tool_call(
-                AGENTS_LIST_CALL_ID,
-                "agents",
-                serde_json::json!({"action": "list"}),
-            )
-        }
-        "fixture steering" => {
-            events
-                .send(ModelEvent::OutputDelta(
-                    "initial turn waiting for steering".into(),
-                ))
-                .await?;
-            fixture_sleep(&request.cancellation, Duration::from_secs(2)).await?;
-            completed("initial turn waiting for steering")
-        }
-        "fixture delay" => {
-            events
-                .send(ModelEvent::OutputDelta(
-                    "partial assistant before cancellation".into(),
-                ))
-                .await?;
-            fixture_sleep(&request.cancellation, Duration::from_secs(30)).await?;
-            completed("delay unexpectedly completed")
-        }
-        "fixture input flood" => {
-            let mut response = String::new();
-            for index in 1..=400 {
-                let chunk = format!("input flood event {index:03}\n");
-                events.send(ModelEvent::OutputDelta(chunk.clone())).await?;
-                response.push_str(&chunk);
-                fixture_sleep(&request.cancellation, Duration::from_millis(5)).await?;
-            }
-            // The 400 deltas finish in ~2s. type_during_stream still needs a
-            // live turn after typing and clearing a draft so Esc can interrupt.
-            fixture_sleep(&request.cancellation, Duration::from_secs(30)).await?;
-            completed(response)
-        }
-        "fixture scroll checkpoint" => {
-            let response = (1..=100)
-                .map(|index| format!("scroll checkpoint event {index:03}\n"))
-                .collect::<String>();
-            events.send(ModelEvent::OutputDelta(response)).await?;
-            fixture_sleep(&request.cancellation, Duration::from_secs(30)).await?;
-            completed("scroll checkpoint unexpectedly completed")
-        }
-        "fixture stream failure" => {
-            events
-                .send(ModelEvent::OutputDelta(
-                    "partial assistant before forced stream termination".into(),
-                ))
-                .await?;
-            fixture_sleep(&request.cancellation, Duration::from_millis(300)).await?;
-            Err(ProviderError::new(
-                ProviderErrorKind::Other,
-                "deterministic forced stream termination",
-                Retryability::Permanent,
-            ))
-        }
-        "fixture bulk one" | "fixture bulk two" => {
-            let response = bulk_response(&prompt);
-            events
-                .send(ModelEvent::OutputDelta(response.clone()))
-                .await?;
-            completed(response)
-        }
-        _ => {
-            if prompt == "fixture background questionnaire" {
-                fixture_sleep(&request.cancellation, Duration::from_secs(2)).await?;
-            }
-            let response = fixture_response(&request)?;
-            let ModelResponse::Assistant(blocks) = &response;
-            for block in blocks {
-                if let ContentBlock::Text(text) = block {
-                    events.send(ModelEvent::OutputDelta(text.clone())).await?;
-                }
-            }
-            Ok(response)
+    if prompt == "fixture background questionnaire" {
+        fixture_sleep(&request.cancellation, Duration::from_secs(2)).await?;
+    }
+    let response = fixture_response(&request)?;
+    let ModelResponse::Assistant(blocks) = &response;
+    for block in blocks {
+        if let ContentBlock::Text(text) = block {
+            events.send(ModelEvent::OutputDelta(text.clone())).await?;
         }
     }
+    Ok(response)
 }
 
 fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, ProviderError> {
@@ -593,162 +131,16 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
     if let Some(review) = advisor::review(request) {
         return review;
     }
-    if is_compaction_request(request) {
-        return completed("deterministic compacted conversation summary");
+    if let Some(response) = response_scenarios::compaction(request) {
+        return response;
     }
-    if is_blocked_goal_evaluation(request) {
-        let evaluation = if GOAL_BLOCKED_EVALUATIONS.fetch_add(1, Ordering::SeqCst) == 0 {
-            r#"{"state":"Blocked","reason":"all fixture work is complete; publishing requires user authority","human_steps":[{"action":"publish the fixture release","reason":"requires the user's credentials"}]}"#
-        } else {
-            r#"{"state":"Met","reason":"the fixture release is now published","human_steps":[]}"#
-        };
-        return completed(evaluation);
+    if let Some(response) = goal::intercept_response(request) {
+        return response;
     }
-    if is_goal_questionnaire_evaluation(request) {
-        return completed(
-            r#"{"state":"Met","reason":"the delegated questionnaire was answered","human_steps":[]}"#,
-        );
-    }
-    if is_delegation_retry_goal_evaluation(request) {
-        let reviewed = last_user_text(request)
-            .is_some_and(|prompt| prompt.contains(DELEGATION_REVIEW_RESPONSE));
-        let evaluation = if reviewed {
-            r#"{"state":"Met","reason":"the delegated retry result was reviewed","human_steps":[]}"#
-        } else {
-            r#"{"state":"Unmet","reason":"delegate work before continuing","human_steps":[]}"#
-        };
-        return completed(evaluation);
-    }
-    if is_delegation_goal_evaluation(request) {
-        let reviewed = last_user_text(request)
-            .is_some_and(|prompt| prompt.contains(DELEGATION_REVIEW_RESPONSE));
-        let evaluation = if reviewed {
-            r#"{"state":"Met","reason":"the delegated result was reviewed","human_steps":[]}"#
-        } else {
-            r#"{"state":"Unmet","reason":"the delegated result still needs review","human_steps":[]}"#
-        };
-        return completed(evaluation);
-    }
-    if let Some(result) = tool_result_for_name(request, "skill") {
-        let instruction = result
-            .content
-            .lines()
-            .rev()
-            .find(|line| !line.trim().is_empty())
-            .unwrap_or_default();
-        return completed(format!(
-            "skill command loaded before model response: {instruction}"
-        ));
-    }
-    if let Some(result) = tool_result(request, TOOL_CALL_ID) {
-        return completed(format!(
-            "tool lifecycle complete with one result: {}",
-            result.content.lines().next().unwrap_or_default()
-        ));
-    }
-    if tool_result(request, HOVER_TOOL_CALL_ID).is_some() {
-        return completed("hover tool lifecycle complete");
-    }
-    if let Some(text) = edit::completion_text(request) {
-        return completed(text);
-    }
-    if let (Some(slow), Some(fast)) = (
-        tool_result(request, CONCURRENT_SLOW_CALL_ID),
-        tool_result(request, CONCURRENT_FAST_CALL_ID),
-    ) {
-        return completed(format!(
-            "concurrent progress complete in model order: {}; {}",
-            slow.content, fast.content
-        ));
-    }
-    if let Some(result) = tool_result(request, PROGRESS_CALL_ID) {
-        return completed(format!(
-            "progress tool lifecycle complete with one result: {}",
-            result.content
-        ));
-    }
-    if let Some(result) = tool_result(request, PROCESS_RAIL_CALL_ID) {
-        let receipt = result.content.lines().next().unwrap_or_default();
-        return completed(format!("process rail fixture dispatched: {receipt}"));
-    }
-    if let Some(result) = tool_result(request, SUBAGENT_RAIL_AGENT_CALL_ID) {
-        let receipt = result.content.lines().next().unwrap_or_default();
-        return completed(format!("subagent rail fixture dispatched: {receipt}"));
-    }
-    if let Some(result) = tool_result(request, BACKGROUND_AGENT_CALL_ID) {
-        // Echo the spawn receipt so PTY scenarios can assert from screen text
-        // that the tool resolved immediately with a start line, then end the
-        // turn so completion arrives through automatic delivery.
-        let receipt = result.content.lines().next().unwrap_or_default();
-        return completed(format!("background agent dispatched: {receipt}"));
-    }
-    if let Some(result) = tool_result(request, CLAUDE_AGENT_CALL_ID) {
-        // Foreground Claude runs return the full completion snapshot as the tool
-        // result. Echo a short marker so the parent turn ends cleanly after the
-        // user-visible completion text is already on screen.
-        let receipt = result.content.lines().next().unwrap_or_default();
-        return completed(format!("claude agent tool finished: {receipt}"));
-    }
-    if let Some(result) = tool_result(request, BACKGROUND_CLAUDE_AGENT_CALL_ID) {
-        let receipt = result.content.lines().next().unwrap_or_default();
-        return completed(format!("background claude agent dispatched: {receipt}"));
-    }
-    if let Some(result) = tool_result(request, CLAUDE_AGENT_ERROR_CALL_ID) {
-        // Foreground failures surface as tool errors; the fixture still ends the
-        // parent turn so the PTY can observe the failed agent presentation.
-        let receipt = result.content.lines().next().unwrap_or_default();
-        return completed(format!("claude agent tool error observed: {receipt}"));
-    }
-    if let Some(result) = tool_result(request, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID) {
-        let receipt = result.content.lines().next().unwrap_or_default();
-        return completed(format!(
-            "background questionnaire agent dispatched: {receipt}"
-        ));
-    }
-    if let Some(result) = tool_result(request, QUESTIONNAIRE_CALL_ID) {
-        let count = current_turn_tool_results(request)
-            .filter(|result| result.id == QUESTIONNAIRE_CALL_ID)
-            .count();
-        let prompt = last_user_text(request).unwrap_or_default();
-        if matches!(
-            prompt.as_str(),
-            "fixture child questionnaire" | "fixture delayed child questionnaire"
-        ) {
-            if result.content.contains("blue") {
-                return completed(format!(
-                    "{BACKGROUND_QUESTIONNAIRE_COMPLETION}: {}",
-                    result.content
-                ));
-            }
-            return completed(format!(
-                "background agent questionnaire received wrong answer: {}",
-                result.content
-            ));
-        }
-        return completed(format!(
-            "questionnaire response observed exactly {count} time(s): {}",
-            result.content
-        ));
-    }
-    if tool_result(request, AGENTS_LIST_CALL_ID).is_some() {
-        return completed("agents list complete");
-    }
-    if let Some(completion) = advisor::completion(request) {
-        return completion;
+    if let Some(response) = response_scenarios::intercept(request) {
+        return response;
     }
     let prompt = last_user_text(request).unwrap_or_default();
-    if prompt.starts_with("[agent notification]") {
-        return completed(describe_agent_notification(request, &prompt));
-    }
-    if prompt.starts_with("Continue working toward this goal:") {
-        return completed("goal continued before delegated agent finished");
-    }
-    if prompt.starts_with("Resume the following goal after it was blocked") {
-        return completed("verified that the fixture release is now published");
-    }
-    if prompt == "fixture steer detail" {
-        return completed("steering applied exactly once: fixture steer detail");
-    }
     completed(format!("fixture response: {prompt}"))
 }
 
@@ -777,44 +169,6 @@ fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {
                 .collect::<String>(),
         )
     })
-}
-
-/// Validates the automatic completion notification's real payload - agent
-/// identity, terminal state, and delegated result - and reports how many
-/// notification turns the conversation has seen so scenarios can assert
-/// exactly-once delivery from screen text.
-fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> String {
-    let deliveries = request
-        .messages
-        .iter()
-        .filter(|message| {
-            matches!(
-                message,
-                Message::User(content) if content.iter().any(|block| matches!(
-                    block,
-                    ContentBlock::Text(text) if text.starts_with("[agent notification]")
-                ))
-            )
-        })
-        .count();
-    if prompt.contains("(worker): ok")
-        && (prompt.contains("assistant stream part one part two")
-            || prompt.contains(BACKGROUND_QUESTIONNAIRE_COMPLETION))
-    {
-        if prompt.contains(BACKGROUND_QUESTIONNAIRE_COMPLETION) {
-            format!("background agent questionnaire completion received (delivery {deliveries})")
-        } else {
-            format!(
-                "background agent completion received with delegated result (delivery {deliveries})"
-            )
-        }
-    } else if prompt.contains("(claude-planner): ok") && prompt.contains("rho-claude-e2e-ok") {
-        format!(
-            "background claude agent completion received with delegated result (delivery {deliveries})"
-        )
-    } else {
-        format!("unexpected agent notification payload: {prompt}")
-    }
 }
 
 fn tool_result_for_name<'a>(
@@ -863,14 +217,6 @@ fn tool_result<'a>(
     current_turn_tool_results(request).find(|result| result.id == id)
 }
 
-fn is_compaction_request(request: &ModelRequest<'_>) -> bool {
-    matches!(
-        request.messages.first(),
-        Some(Message::System(message))
-            if message.starts_with("Summarize the compacted conversation history")
-    )
-}
-
 fn completed(text: impl Into<String>) -> Result<ModelResponse, ProviderError> {
     Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
         text.into(),
@@ -889,17 +235,6 @@ fn completed_tool_call(
             arguments,
         },
     )]))
-}
-
-fn bulk_response(prompt: &str) -> String {
-    (1..=180)
-        .map(|line| {
-            format!(
-                "{prompt} line {line:03}: deterministic transcript payload {}\n",
-                "x".repeat(64)
-            )
-        })
-        .collect()
 }
 
 async fn fixture_sleep(

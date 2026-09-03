@@ -39,6 +39,7 @@ mod config_actions;
 mod config_editor;
 mod config_input;
 mod config_picker;
+mod config_row;
 mod context_handoff;
 mod copy_interaction;
 mod divider;

@@ -2,9 +2,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::{header::ACCEPT, StatusCode};
 use serde::Deserialize;
-use tokio::time::{sleep, Instant};
+use tokio::time::sleep;
 
 use crate::{credentials::KimiTokens, model::TransportError};
+
+use super::device_code::{
+    poll_device_token, standard_device_poll_step, DeviceCodeResponse, DevicePollHttp,
+    DevicePollOutcome, DevicePollRequest, DevicePollStep, FirstPoll,
+};
 
 pub(crate) const CLIENT_ID: &str = "17e5f671-d194-4dfb-9706-5516cb48c098";
 pub(crate) const TOKEN_URL: &str = "https://auth.kimi.com/api/oauth/token";
@@ -54,18 +59,6 @@ impl From<reqwest::Error> for KimiOAuthError {
     fn from(error: reqwest::Error) -> Self {
         Self::Request(TransportError::from_reqwest(error))
     }
-}
-
-#[derive(Deserialize)]
-struct DeviceResponse {
-    device_code: Option<String>,
-    user_code: Option<String>,
-    verification_uri: Option<String>,
-    verification_uri_complete: Option<String>,
-    expires_in: Option<u64>,
-    interval: Option<u64>,
-    error: Option<String>,
-    error_description: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -155,7 +148,7 @@ async fn start_with_endpoint(
         .send()
         .await?;
     let status = response.status();
-    let body: DeviceResponse = response.json().await?;
+    let body: DeviceCodeResponse = response.json().await?;
     if !status.is_success() {
         return Err(KimiOAuthError::Device(oauth_error(
             body.error,
@@ -182,44 +175,51 @@ async fn complete_with_endpoint(
     login: KimiDeviceLogin,
     endpoint: &str,
 ) -> Result<KimiTokens, KimiOAuthError> {
-    let deadline = Instant::now() + login.expires_in;
-    let mut interval = login.interval;
-    loop {
-        if Instant::now() >= deadline {
-            return Err(KimiOAuthError::Timeout);
-        }
-        let response = client
-            .post(endpoint)
-            .header(ACCEPT, "application/json")
-            .form(&[
-                ("client_id", CLIENT_ID),
-                ("device_code", login.device_code.as_str()),
-                ("grant_type", DEVICE_GRANT),
-            ])
-            .send()
-            .await?;
-        if response.status().is_success() {
-            return parse_token(response).await;
-        }
-        let body: TokenResponse = response.json().await?;
-        match body.error.as_deref() {
-            Some("authorization_pending") => {}
-            Some("slow_down") => interval += Duration::from_secs(5),
-            Some("expired_token") => return Err(KimiOAuthError::Timeout),
-            _ => {
-                return Err(KimiOAuthError::Device(oauth_error(
-                    body.error,
-                    body.error_description,
-                )))
+    let form = [
+        ("client_id", CLIENT_ID),
+        ("device_code", login.device_code.as_str()),
+        ("grant_type", DEVICE_GRANT),
+    ];
+    let extra_headers = [("accept", "application/json")];
+    match poll_device_token(
+        DevicePollRequest {
+            client,
+            endpoint,
+            form: &form,
+            extra_headers: &extra_headers,
+            expires_in: login.expires_in,
+            interval: login.interval,
+            first_poll: FirstPoll::Immediate,
+            http: DevicePollHttp::Json,
+        },
+        |status, body: TokenResponse| {
+            if status.is_success() {
+                return DevicePollStep::Tokens(body);
             }
-        }
-        sleep(interval).await;
+            if let Some(step) = standard_device_poll_step(body.error.as_deref()) {
+                return step;
+            }
+            DevicePollStep::Fatal {
+                error: oauth_error(body.error, body.error_description),
+            }
+        },
+    )
+    .await?
+    {
+        DevicePollOutcome::Tokens(body) => tokens_from_body(StatusCode::OK, body),
+        DevicePollOutcome::Denied { description } => Err(KimiOAuthError::Device(description)),
+        DevicePollOutcome::Timeout => Err(KimiOAuthError::Timeout),
+        DevicePollOutcome::Fatal { error } => Err(KimiOAuthError::Device(error)),
     }
 }
 
 async fn parse_token(response: reqwest::Response) -> Result<KimiTokens, KimiOAuthError> {
     let status = response.status();
     let body: TokenResponse = response.json().await?;
+    tokens_from_body(status, body)
+}
+
+fn tokens_from_body(status: StatusCode, body: TokenResponse) -> Result<KimiTokens, KimiOAuthError> {
     if status == StatusCode::UNAUTHORIZED
         || status == StatusCode::FORBIDDEN
         || body.error.as_deref() == Some("invalid_grant")

@@ -11,9 +11,9 @@ use super::{
     theme::Theme,
 };
 use crate::{
+    app::subagent_manager::SubagentManager,
     subagent::{self, RunState},
     title::activity_label,
-    tools::agent::SubagentManager,
 };
 
 const OPEN_ATTACH_PICKER_ID: &str = "/attach";

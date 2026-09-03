@@ -1,30 +1,30 @@
-use super::*;
-use crate::questionnaire::QuestionnaireDefaultSelection;
+use rho_sdk::{HostChoice, HostInputRequest, HostQuestion, SelectionMode};
 
-fn text_question() -> QuestionnaireQuestion {
-    QuestionnaireQuestion {
-        id: "file".into(),
-        question: "Which file?".into(),
-        header: None,
-        help: None,
-        default: None,
-        default_selection: QuestionnaireDefaultSelection::Selected,
-        kind: QuestionnaireQuestionKind::Text,
-        required: true,
-        choices: Vec::new(),
-        allow_other: false,
-    }
+use super::*;
+
+fn choice(label: &str) -> HostChoice {
+    HostChoice::new(label, label)
+}
+
+fn yes_no() -> Vec<HostChoice> {
+    vec![HostChoice::new("yes", "yes"), HostChoice::new("no", "no")]
+}
+
+fn other_question() -> HostQuestion {
+    HostQuestion::new("file", "Which file?", vec![choice("a")], SelectionMode::One)
+        .unwrap()
+        .allow_other()
+}
+
+fn host_request(title: &str, questions: Vec<HostQuestion>) -> HostInputRequest {
+    HostInputRequest::questionnaire(title, questions).unwrap()
 }
 
 #[test]
 fn cancel_sends_user_cancelled_reply() {
     let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
     let mut composer = QuestionnaireComposer::new(
-        QuestionnaireRequest {
-            title: None,
-            reason: None,
-            questions: vec![text_question()],
-        },
+        host_request("", vec![other_question()]),
         QuestionnaireResponseChannel::new(reply_tx),
     );
 
@@ -42,48 +42,31 @@ fn cancel_sends_user_cancelled_reply() {
 fn submit_sends_selection_answers() {
     let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
     let mut composer = QuestionnaireComposer::new(
-        QuestionnaireRequest {
-            title: Some("PR details".into()),
-            reason: Some("Need missing preferences".into()),
-            questions: vec![
-                QuestionnaireQuestion {
-                    id: "branch".into(),
-                    question: "Which branch?".into(),
-                    header: None,
-                    help: None,
-                    default: Some(serde_json::json!("main")),
-                    default_selection: QuestionnaireDefaultSelection::Selected,
-                    kind: QuestionnaireQuestionKind::Choice,
-                    required: true,
-                    choices: vec!["main".into(), "develop".into()],
-                    allow_other: true,
-                },
-                QuestionnaireQuestion {
-                    id: "test_suites".into(),
-                    question: "Which test suites should I run?".into(),
-                    header: None,
-                    help: None,
-                    default: Some(serde_json::json!(["unit"])),
-                    default_selection: QuestionnaireDefaultSelection::Selected,
-                    kind: QuestionnaireQuestionKind::MultiSelect,
-                    required: true,
-                    choices: vec!["unit".into(), "e2e".into(), "lint".into()],
-                    allow_other: false,
-                },
-                QuestionnaireQuestion {
-                    id: "apply".into(),
-                    question: "Apply changes?".into(),
-                    header: None,
-                    help: None,
-                    default: Some(serde_json::json!("yes")),
-                    default_selection: QuestionnaireDefaultSelection::Selected,
-                    kind: QuestionnaireQuestionKind::Confirm,
-                    required: true,
-                    choices: Vec::new(),
-                    allow_other: false,
-                },
+        host_request(
+            "PR details",
+            vec![
+                HostQuestion::new(
+                    "branch",
+                    "Which branch?",
+                    vec![choice("main"), choice("develop")],
+                    SelectionMode::One,
+                )
+                .unwrap()
+                .default_value(serde_json::json!("main"))
+                .allow_other(),
+                HostQuestion::new(
+                    "test_suites",
+                    "Which test suites should I run?",
+                    vec![choice("unit"), choice("e2e"), choice("lint")],
+                    SelectionMode::Many,
+                )
+                .unwrap()
+                .default_value(serde_json::json!(["unit"])),
+                HostQuestion::new("apply", "Apply changes?", yes_no(), SelectionMode::One)
+                    .unwrap()
+                    .default_value(serde_json::json!("yes")),
             ],
-        },
+        ),
         QuestionnaireResponseChannel::new(reply_tx),
     );
     composer.fields[0].selection = FieldSelection::Other;
@@ -112,18 +95,8 @@ fn submit_sends_selection_answers() {
 
 #[test]
 fn required_confirm_without_default_requires_explicit_choice() {
-    let question = QuestionnaireQuestion {
-        id: "apply".into(),
-        question: "Apply changes?".into(),
-        header: None,
-        help: None,
-        default: None,
-        default_selection: QuestionnaireDefaultSelection::Selected,
-        kind: QuestionnaireQuestionKind::Confirm,
-        required: true,
-        choices: Vec::new(),
-        allow_other: false,
-    };
+    let question =
+        HostQuestion::new("apply", "Apply changes?", yes_no(), SelectionMode::One).unwrap();
     let field = QuestionnaireFieldState::new(&question);
 
     assert_eq!(field.selection, FieldSelection::None);
@@ -142,18 +115,15 @@ fn required_confirm_without_default_requires_explicit_choice() {
 
 #[test]
 fn multi_select_default_preserves_commas() {
-    let question = QuestionnaireQuestion {
-        id: "targets".into(),
-        question: "Targets?".into(),
-        header: None,
-        help: None,
-        default: Some(serde_json::json!(["New York, NY", "Los Angeles, CA"])),
-        default_selection: QuestionnaireDefaultSelection::Selected,
-        kind: QuestionnaireQuestionKind::MultiSelect,
-        required: true,
-        choices: vec!["New York, NY".into(), "Boston, MA".into()],
-        allow_other: true,
-    };
+    let question = HostQuestion::new(
+        "targets",
+        "Targets?",
+        vec![choice("New York, NY"), choice("Boston, MA")],
+        SelectionMode::Many,
+    )
+    .unwrap()
+    .default_value(serde_json::json!(["New York, NY", "Los Angeles, CA"]))
+    .allow_other();
 
     let field = QuestionnaireFieldState::new(&question);
 
@@ -173,36 +143,27 @@ fn multi_select_default_preserves_commas() {
 
 fn form_composer() -> QuestionnaireComposer {
     QuestionnaireComposer::new(
-        QuestionnaireRequest {
-            title: Some("PR details".into()),
-            reason: Some("Need missing preferences".into()),
-            questions: vec![
-                QuestionnaireQuestion {
-                    id: "branch".into(),
-                    question: "Which branch?".into(),
-                    header: None,
-                    help: None,
-                    default: Some(serde_json::json!("main")),
-                    default_selection: QuestionnaireDefaultSelection::Selected,
-                    kind: QuestionnaireQuestionKind::Choice,
-                    required: true,
-                    choices: vec!["main".into(), "develop".into()],
-                    allow_other: true,
-                },
-                QuestionnaireQuestion {
-                    id: "suites".into(),
-                    question: "Which suites?".into(),
-                    header: None,
-                    help: None,
-                    default: None,
-                    default_selection: QuestionnaireDefaultSelection::Selected,
-                    kind: QuestionnaireQuestionKind::MultiSelect,
-                    required: true,
-                    choices: vec!["unit".into(), "e2e".into()],
-                    allow_other: false,
-                },
+        host_request(
+            "PR details",
+            vec![
+                HostQuestion::new(
+                    "branch",
+                    "Which branch?",
+                    vec![choice("main"), choice("develop")],
+                    SelectionMode::One,
+                )
+                .unwrap()
+                .default_value(serde_json::json!("main"))
+                .allow_other(),
+                HostQuestion::new(
+                    "suites",
+                    "Which suites?",
+                    vec![choice("unit"), choice("e2e")],
+                    SelectionMode::Many,
+                )
+                .unwrap(),
             ],
-        },
+        ),
         QuestionnaireResponseChannel::new(tokio::sync::oneshot::channel().0),
     )
 }
@@ -247,11 +208,7 @@ fn arrow_navigation_flows_across_questions() {
 #[test]
 fn word_navigation_and_deletion_stay_with_composer_state() {
     let mut composer = QuestionnaireComposer::new(
-        QuestionnaireRequest {
-            title: None,
-            reason: None,
-            questions: vec![text_question()],
-        },
+        host_request("", vec![other_question()]),
         QuestionnaireResponseChannel::new(tokio::sync::oneshot::channel().0),
     );
     composer.insert_text("alpha beta");

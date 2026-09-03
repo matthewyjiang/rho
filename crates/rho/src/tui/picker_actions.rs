@@ -207,7 +207,7 @@ impl App {
                 PickerCommit::Idle { terminal, agent } => {
                     self.submit_config_selection(value, agent, terminal).await
                 }
-                PickerCommit::DuringTurn => self.submit_config_selection_during_turn(value),
+                PickerCommit::DuringTurn => self.submit_config_selection_during_turn(value).await,
             },
             PickerAction::SelectTheme => self.submit_theme_selection(value),
             PickerAction::ViewAgent => self.submit_view_agent_selection(value),

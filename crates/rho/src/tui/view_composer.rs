@@ -34,6 +34,13 @@ pub(super) struct ComposerFrame {
     pub(super) copy_hit: Option<CopyHit>,
 }
 
+fn overlay_editor_caret(value: &str, cursor: usize, width: usize) -> Position {
+    Position {
+        x: char_prefix_display_width(value, cursor).min(width.max(1)) as u16,
+        y: 1,
+    }
+}
+
 impl ComposerFrame {
     fn new(lines: Vec<Line<'static>>, cursor: Position) -> Self {
         Self {
@@ -162,27 +169,15 @@ impl App {
             }
             ComposerMode::SecretInput(secret) => ComposerFrame::new(
                 secret_input_lines(secret, width),
-                Position {
-                    x: char_prefix_display_width(&secret.value, secret.cursor).min(width.max(1))
-                        as u16,
-                    y: 1,
-                },
+                overlay_editor_caret(&secret.editor.value, secret.editor.cursor, width),
             ),
             ComposerMode::ConfigNumberInput(input) => ComposerFrame::new(
                 config_number_input_lines(input, width),
-                Position {
-                    x: char_prefix_display_width(&input.value, input.cursor).min(width.max(1))
-                        as u16,
-                    y: 1,
-                },
+                overlay_editor_caret(&input.editor.value, input.editor.cursor, width),
             ),
             ComposerMode::TextInput(input) => ComposerFrame::new(
                 text_input_lines(input, width),
-                Position {
-                    x: char_prefix_display_width(&input.editor.value, input.editor.cursor)
-                        .min(width.max(1)) as u16,
-                    y: 1,
-                },
+                overlay_editor_caret(&input.editor.value, input.editor.cursor, width),
             ),
             ComposerMode::InteractivePending(pending) => {
                 let view =

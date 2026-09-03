@@ -53,7 +53,7 @@ enum Incoming {
 
 impl SubagentInbox {
     /// Binds both channels to the delegated-run manager.
-    pub(super) fn bind(&mut self, manager: &crate::tools::agent::SubagentManager) {
+    pub(super) fn bind(&mut self, manager: &crate::app::subagent_manager::SubagentManager) {
         self.questionnaires = Some(manager.bind_host_input());
         let rebind = manager.rebind_notices(self.notices.take());
         self.install_notice_rebind(rebind);

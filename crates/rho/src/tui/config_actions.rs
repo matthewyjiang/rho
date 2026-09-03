@@ -2,8 +2,10 @@ use ratatui::DefaultTerminal;
 use rho_providers::credentials::load_web_search_api_key;
 
 use super::{
-    config_editor, config_picker, resolve_web_search_editor_value, App, ComposerMode,
-    ConfigNumberInput, ConfigNumberKey, ConfigTextKey, ConfigToggle, Entry, InteractiveRuntime,
+    config_editor, config_picker,
+    config_row::{ConfigCommitCtx, ConfigRow},
+    resolve_web_search_editor_value, App, ComposerMode, ConfigNumberInput, ConfigNumberKey,
+    ConfigTextKey, ConfigToggle, Entry, InteractiveRuntime,
 };
 
 /// Static description of one boolean `/config` row.
@@ -27,57 +29,134 @@ impl App {
         agent: &mut InteractiveRuntime,
         terminal: &mut DefaultTerminal,
     ) -> anyhow::Result<()> {
-        match value {
-            value if config_picker::is_category(value) => self.open_config_category(value),
-            config_picker::CONVERSATION_MODEL_VALUE => {
+        let Some(row) = ConfigRow::parse(value) else {
+            return Ok(());
+        };
+        self.commit_config_row(row, ConfigCommitCtx::Idle { agent, terminal })
+            .await
+    }
+
+    pub(super) async fn submit_config_selection_during_turn(
+        &mut self,
+        value: &str,
+    ) -> anyhow::Result<()> {
+        let Some(row) = ConfigRow::parse(value) else {
+            return Ok(());
+        };
+        self.commit_config_row(row, ConfigCommitCtx::DuringTurn)
+            .await
+    }
+
+    async fn commit_config_row(
+        &mut self,
+        row: ConfigRow,
+        ctx: ConfigCommitCtx<'_>,
+    ) -> anyhow::Result<()> {
+        match (row, ctx) {
+            (ConfigRow::Category(category), _) => self.open_config_category(&category),
+            (ConfigRow::ConversationModel, ConfigCommitCtx::Idle { .. }) => {
                 self.open_config_conversation_model_picker();
                 Ok(())
             }
-            config_picker::REFRESH_MODEL_LIST_VALUE => {
+            (ConfigRow::ConversationModel, ConfigCommitCtx::DuringTurn) => {
+                self.open_config_conversation_model_picker_during_turn();
+                Ok(())
+            }
+            (
+                ConfigRow::RefreshModelList
+                | ConfigRow::RefreshModelsDev
+                | ConfigRow::ProviderLogin
+                | ConfigRow::ProviderLogout
+                | ConfigRow::SwitchAuthMode,
+                ConfigCommitCtx::DuringTurn,
+            ) => {
+                self.set_status(
+                    "provider configuration is unavailable while a model turn is running",
+                );
+                Ok(())
+            }
+            (ConfigRow::RefreshModelList, ConfigCommitCtx::Idle { .. }) => {
                 self.open_config_refresh_model_picker();
                 Ok(())
             }
-            config_picker::REFRESH_MODELS_DEV_VALUE => self
+            (ConfigRow::RefreshModelsDev, ConfigCommitCtx::Idle { terminal, agent }) => self
                 .refresh_models_dev_catalog(terminal, agent)
                 .await
                 .map(|_| ()),
-            config_picker::PROVIDER_LOGIN_VALUE => {
+            (ConfigRow::ProviderLogin, ConfigCommitCtx::Idle { .. }) => {
                 self.open_config_login_picker();
                 Ok(())
             }
-            config_picker::PROVIDER_LOGOUT_VALUE => self.open_config_logout_picker().await,
-            config_picker::SWITCH_AUTH_MODE_VALUE => self.open_config_auth_mode_picker(),
-            config_picker::PERMISSION_MODE_VALUE => {
+            (ConfigRow::ProviderLogout, ConfigCommitCtx::Idle { .. }) => {
+                self.open_config_logout_picker().await
+            }
+            (ConfigRow::SwitchAuthMode, ConfigCommitCtx::Idle { .. }) => {
+                self.open_config_auth_mode_picker()
+            }
+            (ConfigRow::PermissionMode, ConfigCommitCtx::Idle { .. }) => {
                 let child =
                     config_picker::permission_mode_picker(self.info.runtime.permission_mode);
                 self.open_child_picker(child);
                 Ok(())
             }
-            value if value.starts_with(config_picker::PERMISSION_MODE_PREFIX) => {
-                let mode = value[config_picker::PERMISSION_MODE_PREFIX.len()..].parse()?;
+            (
+                ConfigRow::PermissionMode | ConfigRow::PermissionModeChoice(_),
+                ConfigCommitCtx::DuringTurn,
+            ) => {
+                self.reject_permission_mode_change();
+                Ok(())
+            }
+            (ConfigRow::PermissionModeChoice(selected), ConfigCommitCtx::Idle { agent, .. }) => {
+                let mode = selected.parse()?;
                 self.select_permission_mode_from_config(mode, agent).await
             }
-            config_picker::REASONING_VALUE => self.cycle_reasoning(agent).await,
-            config_picker::SHOW_REASONING_OUTPUT_VALUE => self.toggle_reasoning_output(),
-            config_picker::ZEN_MODE_VALUE => self.toggle_zen_mode(),
-            config_picker::THEME_VALUE => self.open_theme_picker_from_config(),
-            config_picker::CHECK_FOR_UPDATES_VALUE => self.toggle_check_for_updates(),
-            config_picker::ENABLE_SUBAGENTS_VALUE => self.toggle_enable_subagents(),
-            config_picker::ADVISOR_MODE_VALUE => self.toggle_advisor_mode(agent).await,
-            config_picker::ADVISOR_MODEL_VALUE => {
+            (ConfigRow::Reasoning, ConfigCommitCtx::Idle { agent, .. }) => {
+                self.cycle_reasoning(agent).await
+            }
+            (ConfigRow::Reasoning, ConfigCommitCtx::DuringTurn) => {
+                self.set_status("reasoning changes are unavailable while a model turn is running");
+                Ok(())
+            }
+            (ConfigRow::ShowReasoningOutput, _) => self.toggle_reasoning_output(),
+            (ConfigRow::ZenMode, _) => self.toggle_zen_mode(),
+            (ConfigRow::Theme, _) => self.open_theme_picker_from_config(),
+            (ConfigRow::CheckForUpdates, _) => self.toggle_check_for_updates(),
+            (ConfigRow::EnableSubagents, _) => self.toggle_enable_subagents(),
+            (
+                ConfigRow::AdvisorMode | ConfigRow::AdvisorModel | ConfigRow::AdvisorReasoning,
+                ConfigCommitCtx::DuringTurn,
+            ) => {
+                self.set_status("advisor settings are unavailable while a model turn is running");
+                Ok(())
+            }
+            (ConfigRow::AdvisorMode, ConfigCommitCtx::Idle { agent, .. }) => {
+                self.toggle_advisor_mode(agent).await
+            }
+            (ConfigRow::AdvisorModel, ConfigCommitCtx::Idle { .. }) => {
                 self.open_advisor_model_prompt(
                     super::agent_picker::InternalAgentModelPickerOrigin::AdvisorModelConfigRow,
                 );
                 Ok(())
             }
-            config_picker::ADVISOR_REASONING_VALUE => self.cycle_advisor_reasoning(agent).await,
-            config_picker::PERMISSION_CLASSIFIER_MODEL_VALUE => {
+            (ConfigRow::AdvisorReasoning, ConfigCommitCtx::Idle { agent, .. }) => {
+                self.cycle_advisor_reasoning(agent).await
+            }
+            (
+                ConfigRow::PermissionClassifierModel | ConfigRow::PermissionClassifierReasoning,
+                ConfigCommitCtx::DuringTurn,
+            ) => {
+                self.set_status(
+                    "permission classifier settings are unavailable while a model turn is running",
+                );
+                Ok(())
+            }
+            (ConfigRow::PermissionClassifierModel, ConfigCommitCtx::Idle { .. }) => {
                 self.open_permission_classifier_model_prompt(
                     super::agent_picker::InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow,
                 );
                 Ok(())
             }
-            config_picker::PERMISSION_CLASSIFIER_REASONING_VALUE => {
+            (ConfigRow::PermissionClassifierReasoning, ConfigCommitCtx::Idle { agent, .. }) => {
                 self.cycle_permission_classifier_reasoning(agent)?;
                 let status = self.status().to_string();
                 self.refresh_main_config_picker_if_open(
@@ -86,67 +165,31 @@ impl App {
                 self.set_status(status);
                 Ok(())
             }
-            config_picker::AUTO_COMPACT_VALUE => self.toggle_auto_compact(),
-            config_picker::CACHE_MISS_NOTICES_VALUE => self.toggle_cache_miss_notices(),
-            config_picker::COMPACT_THRESHOLD_PERCENT_VALUE => {
+            (ConfigRow::AutoCompact, _) => self.toggle_auto_compact(),
+            (ConfigRow::CacheMissNotices, _) => self.toggle_cache_miss_notices(),
+            (ConfigRow::Number(key), _) => self.open_config_number_editor(key),
+            (ConfigRow::ClearPromptHistory, _) => self.prompt_clear_prompt_history(),
+            (ConfigRow::InlineShell, ctx) => {
                 let config = self.info.services.config_repository.load()?;
-                self.input_ui.set_composer(ComposerMode::ConfigNumberInput(
-                    ConfigNumberInput::new(
-                        ConfigNumberKey::CompactThresholdPercent,
-                        config.compact_threshold_percent as usize,
-                    ),
-                ));
-                self.set_status("edit compact threshold percent");
+                self.open_child_picker(config_picker::inline_shell_picker(&config));
+                if matches!(ctx, ConfigCommitCtx::DuringTurn) {
+                    self.set_status("select inline shell");
+                }
                 Ok(())
             }
-            config_picker::COMPACT_TARGET_PERCENT_VALUE => {
-                let config = self.info.services.config_repository.load()?;
-                self.input_ui.set_composer(ComposerMode::ConfigNumberInput(
-                    ConfigNumberInput::new(
-                        ConfigNumberKey::CompactTargetPercent,
-                        config.compact_target_percent as usize,
-                    ),
-                ));
-                self.set_status("edit compact target percent");
-                Ok(())
-            }
-            config_picker::MAX_OUTPUT_BYTES_VALUE => {
-                let config = self.info.services.config_repository.load()?;
-                self.input_ui.set_composer(ComposerMode::ConfigNumberInput(
-                    ConfigNumberInput::new(
-                        ConfigNumberKey::MaxOutputBytes,
-                        config.max_output_bytes,
-                    ),
-                ));
-                self.set_status("edit max output bytes");
-                Ok(())
-            }
-            config_picker::MAX_TOOL_OUTPUT_LINES_VALUE => {
-                let config = self.info.services.config_repository.load()?;
-                self.input_ui.set_composer(ComposerMode::ConfigNumberInput(
-                    ConfigNumberInput::new(
-                        ConfigNumberKey::MaxToolOutputLines,
-                        config.max_tool_output_lines,
-                    ),
-                ));
-                self.set_status("edit max tool output lines");
-                Ok(())
-            }
-            config_picker::PROMPT_HISTORY_LIMIT_VALUE => self.open_prompt_history_limit_editor(),
-            config_picker::CLEAR_PROMPT_HISTORY_VALUE => self.prompt_clear_prompt_history(),
-            config_picker::INLINE_SHELL_VALUE => {
-                let config = self.info.services.config_repository.load()?;
-                let child = config_picker::inline_shell_picker(&config);
-                self.open_child_picker(child);
-                Ok(())
-            }
-            config_picker::EDIT_TOOL_VALUE => {
+            (ConfigRow::EditTool, ctx) => {
                 let config = self.info.services.config_repository.load()?;
                 self.open_child_picker(config_picker::edit_tool_picker(config.edit_tool));
+                if matches!(ctx, ConfigCommitCtx::DuringTurn) {
+                    self.set_status("select edit tool");
+                }
                 Ok(())
             }
-            value if value.starts_with(config_picker::EDIT_TOOL_PREFIX) => {
-                let selected = &value[config_picker::EDIT_TOOL_PREFIX.len()..];
+            (ConfigRow::EditToolChoice(_), ConfigCommitCtx::DuringTurn) => {
+                self.reject_edit_tool_change();
+                Ok(())
+            }
+            (ConfigRow::EditToolChoice(selected), ConfigCommitCtx::Idle { agent, .. }) => {
                 let edit_tool: crate::config::EditTool =
                     selected.parse().map_err(anyhow::Error::msg)?;
                 self.apply_edit_tool(edit_tool, agent).await?;
@@ -155,8 +198,7 @@ impl App {
                 self.set_status(status);
                 Ok(())
             }
-            value if value.starts_with(config_picker::INLINE_SHELL_PREFIX) => {
-                let shell = value[config_picker::INLINE_SHELL_PREFIX.len()..].to_string();
+            (ConfigRow::InlineShellChoice(shell), _) => {
                 self.info.services.config_repository.update(|config| {
                     config.inline_shell.clone_from(&shell);
                 })?;
@@ -164,29 +206,41 @@ impl App {
                 self.set_status(format!("inline shell: {shell}"));
                 Ok(())
             }
-            config_picker::WEB_SEARCH_VALUE => {
+            (ConfigRow::WebSearch, ctx) => {
                 let config = self.info.services.config_repository.load()?;
-                let child = config_picker::web_search_config_picker(
+                self.open_child_picker(config_picker::web_search_config_picker(
                     &config,
                     self.credential_store.as_ref(),
-                );
-                self.open_child_picker(child);
+                ));
+                if matches!(ctx, ConfigCommitCtx::DuringTurn) {
+                    self.set_status("web search config");
+                }
                 Ok(())
             }
-            config_picker::WEB_SEARCH_HOSTED_VALUE => self.toggle_web_search_hosted(),
-            config_picker::WEB_SEARCH_PROVIDER_VALUE => self.cycle_web_search_provider(),
-            config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
-                self.open_web_search_api_key_editor(ConfigTextKey::OpenAiSearch)
-            }
-            config_picker::WEB_SEARCH_EXA_KEY_VALUE => {
-                self.open_web_search_api_key_editor(ConfigTextKey::Exa)
-            }
-            config_picker::WEB_SEARCH_BRAVE_KEY_VALUE => {
-                self.open_web_search_api_key_editor(ConfigTextKey::Brave)
-            }
-            config_picker::XAI_IMAGE_GENERATION_VALUE => self.toggle_xai_image_generation(),
-            _ => Ok(()),
+            (ConfigRow::WebSearchHosted, _) => self.toggle_web_search_hosted(),
+            (ConfigRow::WebSearchProvider, _) => self.cycle_web_search_provider(),
+            (ConfigRow::WebSearchApiKey(key), _) => self.open_web_search_api_key_editor(key),
+            (ConfigRow::XaiImageGeneration, _) => self.toggle_xai_image_generation(),
         }
+    }
+
+    fn open_config_number_editor(&mut self, key: ConfigNumberKey) -> anyhow::Result<()> {
+        let config = self.info.services.config_repository.load()?;
+        let value = match key {
+            ConfigNumberKey::MaxOutputBytes => config.max_output_bytes,
+            ConfigNumberKey::MaxToolOutputLines => config.max_tool_output_lines,
+            ConfigNumberKey::CompactThresholdPercent => config.compact_threshold_percent as usize,
+            ConfigNumberKey::CompactTargetPercent => config.compact_target_percent as usize,
+            ConfigNumberKey::PromptHistoryLimit => {
+                return self.open_prompt_history_limit_editor();
+            }
+        };
+        self.input_ui
+            .set_composer(ComposerMode::ConfigNumberInput(ConfigNumberInput::new(
+                key, value,
+            )));
+        self.set_status(format!("edit {}", key.label()));
+        Ok(())
     }
 
     pub(super) fn open_web_search_api_key_editor(

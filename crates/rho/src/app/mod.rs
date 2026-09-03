@@ -27,6 +27,7 @@ mod session_assembly;
 mod sessions_cli;
 pub(crate) mod side_chat;
 pub(crate) mod subagent_host_input;
+pub(crate) mod subagent_manager;
 pub(crate) mod subagent_messaging;
 mod tools_prompt;
 pub(crate) mod workflow_cli;
@@ -34,3 +35,4 @@ pub(crate) mod workflow_runtime;
 
 pub use automation::{AutomationExit, AutomationInterrupted};
 pub use bootstrap::run;
+pub(crate) use subagent_manager::SubagentManager;

@@ -7,6 +7,7 @@
 
 use rho_sdk::{
     model::{Message, ModelRequest, ModelResponse},
+    provider::ProviderEventSender,
     ProviderError, ProviderErrorKind, Retryability,
 };
 
@@ -15,10 +16,10 @@ use super::{completed, completed_tool_call, last_user_text, tool_result};
 const CALL_ID: &str = "tui-fixture-advisor";
 
 /// Prompt that makes the executor consult the advisor once.
-pub(super) const PROMPT: &str = "fixture advisor";
+const PROMPT: &str = "fixture advisor";
 
 /// Same, but the advisor model itself fails, so the tool result is an error.
-pub(super) const FAILURE_PROMPT: &str = "fixture advisor failure";
+const FAILURE_PROMPT: &str = "fixture advisor failure";
 
 /// Opening of the advisor internal agent's system prompt, which is how an
 /// advisor one-shot is told apart from the executor's own requests.
@@ -26,12 +27,23 @@ const SYSTEM_PROMPT_PREFIX: &str = "You are a senior advisor reviewing";
 
 const GUIDANCE: &str = "advisor guidance: land the smallest change first";
 
-pub(super) fn is_pending(request: &ModelRequest<'_>) -> bool {
+pub(super) async fn intercept(
+    prompt: &str,
+    request: &ModelRequest<'_>,
+    _events: &ProviderEventSender,
+) -> Option<Result<ModelResponse, ProviderError>> {
+    if (prompt == PROMPT || prompt == FAILURE_PROMPT) && is_pending(request) {
+        return Some(call());
+    }
+    None
+}
+
+fn is_pending(request: &ModelRequest<'_>) -> bool {
     tool_result(request, CALL_ID).is_none()
 }
 
 /// The executor's single `advisor` call. It takes no arguments.
-pub(super) fn call() -> Result<ModelResponse, ProviderError> {
+fn call() -> Result<ModelResponse, ProviderError> {
     completed_tool_call(CALL_ID, "advisor", serde_json::json!({}))
 }
 

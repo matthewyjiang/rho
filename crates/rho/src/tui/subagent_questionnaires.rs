@@ -264,7 +264,7 @@ impl App {
         let (reply_tx, reply_rx) = oneshot::channel();
         let title = pending.request.title().to_string();
         self.open_questionnaire(QuestionAnswerRequest {
-            request: event_adapter::questionnaire_request(&pending.request),
+            request: pending.request,
             response: QuestionnaireResponseChannel::new(reply_tx),
             notice: Some(format!(
                 "agent {} ({}) asks: {title}",

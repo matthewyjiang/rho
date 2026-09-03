@@ -1,3 +1,4 @@
+use rho_sdk::{DefaultSelection, HostChoice, HostInputRequest, HostQuestion, SelectionMode};
 use tokio::sync::oneshot;
 
 mod render;
@@ -5,86 +6,7 @@ mod render;
 pub(in crate::tui) use render::{questionnaire_cursor_position, questionnaire_lines};
 
 use super::paste_burst::{next_word_boundary, previous_word_boundary};
-use crate::questionnaire::{
-    QuestionnaireAnswer, QuestionnaireDefaultSelection, QuestionnaireQuestionKind,
-    QuestionnaireResponse,
-};
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct QuestionnaireRequest {
-    pub(super) title: Option<String>,
-    pub(super) reason: Option<String>,
-    pub(super) questions: Vec<QuestionnaireQuestion>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct QuestionnaireQuestion {
-    pub(super) id: String,
-    pub(super) question: String,
-    pub(super) header: Option<String>,
-    pub(super) help: Option<String>,
-    pub(super) default: Option<serde_json::Value>,
-    pub(super) default_selection: QuestionnaireDefaultSelection,
-    pub(super) kind: QuestionnaireQuestionKind,
-    pub(super) required: bool,
-    pub(super) choices: Vec<QuestionnaireChoice>,
-    pub(super) allow_other: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct QuestionnaireChoice {
-    value: String,
-    label: String,
-    description: Option<String>,
-}
-
-impl QuestionnaireChoice {
-    pub(super) fn new(value: impl Into<String>, label: impl Into<String>) -> Self {
-        Self {
-            value: value.into(),
-            label: label.into(),
-            description: None,
-        }
-    }
-
-    pub(super) fn description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
-    }
-
-    fn same(value: impl Into<String>) -> Self {
-        let value = value.into();
-        Self::new(value.clone(), value)
-    }
-
-    pub(super) fn value(&self) -> &str {
-        &self.value
-    }
-
-    pub(super) fn label(&self) -> &str {
-        &self.label
-    }
-
-    pub(super) fn description_text(&self) -> Option<&str> {
-        self.description.as_deref()
-    }
-
-    fn matches_default(&self, default: &str) -> bool {
-        self.value.eq_ignore_ascii_case(default) || self.label.eq_ignore_ascii_case(default)
-    }
-}
-
-impl From<String> for QuestionnaireChoice {
-    fn from(value: String) -> Self {
-        Self::same(value)
-    }
-}
-
-impl From<&str> for QuestionnaireChoice {
-    fn from(value: &str) -> Self {
-        Self::same(value)
-    }
-}
+use crate::questionnaire::{QuestionnaireAnswer, QuestionnaireResponse};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum QuestionnaireCancelReason {
@@ -138,14 +60,14 @@ impl Drop for QuestionnaireResponseChannel {
 
 #[derive(Debug)]
 pub(super) struct QuestionAnswerRequest {
-    pub(super) request: QuestionnaireRequest,
+    pub(super) request: HostInputRequest,
     pub(super) response: QuestionnaireResponseChannel,
     pub(super) notice: Option<String>,
 }
 
 #[derive(Debug)]
 pub(super) struct QuestionnaireComposer {
-    request: QuestionnaireRequest,
+    request: HostInputRequest,
     response: QuestionnaireResponseChannel,
     fields: Vec<QuestionnaireFieldState>,
     active_index: usize,
@@ -167,20 +89,37 @@ struct QuestionnaireFieldState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum FieldSelection {
-    Text,
     None,
     Single(usize),
     Multi { selected: Vec<usize>, other: bool },
     Other,
 }
 
+/// Confirm is a view of `SelectionMode::One` with yes/no choice values, not a
+/// stored question kind.
+pub(super) fn is_confirm(question: &HostQuestion) -> bool {
+    question.selection() == SelectionMode::One
+        && matches!(
+            question.choices(),
+            [yes, no]
+                if yes.value().eq_ignore_ascii_case("yes")
+                    && no.value().eq_ignore_ascii_case("no")
+        )
+}
+
+fn request_title(request: &HostInputRequest) -> Option<&str> {
+    let title = request.title();
+    (!title.is_empty()).then_some(title)
+}
+
+fn choice_matches_default(choice: &HostChoice, default: &str) -> bool {
+    choice.value().eq_ignore_ascii_case(default) || choice.label().eq_ignore_ascii_case(default)
+}
+
 impl QuestionnaireComposer {
-    pub(super) fn new(
-        request: QuestionnaireRequest,
-        response: QuestionnaireResponseChannel,
-    ) -> Self {
+    pub(super) fn new(request: HostInputRequest, response: QuestionnaireResponseChannel) -> Self {
         let fields = request
-            .questions
+            .questions()
             .iter()
             .map(QuestionnaireFieldState::new)
             .collect::<Vec<_>>();
@@ -192,8 +131,8 @@ impl QuestionnaireComposer {
         }
     }
 
-    fn active_question(&self) -> &QuestionnaireQuestion {
-        &self.request.questions[self.active_index]
+    fn active_question(&self) -> &HostQuestion {
+        &self.request.questions()[self.active_index]
     }
 
     fn active_field(&self) -> &QuestionnaireFieldState {
@@ -248,8 +187,7 @@ impl QuestionnaireComposer {
     }
 
     fn active_choice_navigable(&self) -> bool {
-        !matches!(self.active_field().selection, FieldSelection::Text)
-            && choice_count(self.active_question()) > 0
+        choice_count(self.active_question()) > 0
     }
 
     pub(super) fn toggle_active_choice(&mut self) {
@@ -268,11 +206,11 @@ impl QuestionnaireComposer {
     }
 
     pub(super) fn accepts_paste_burst_char(&self, ch: char) -> bool {
-        self.active_text_entry_active() || (ch != ' ' && self.active_question().allow_other)
+        self.active_text_entry_active() || (ch != ' ' && self.active_question().permits_other())
     }
 
     pub(super) fn accepts_pending_paste_burst_enter(&self) -> bool {
-        self.active_text_entry_active() || self.active_question().allow_other
+        self.active_text_entry_active() || self.active_question().permits_other()
     }
 
     pub(super) fn insert_char(&mut self, ch: char) -> bool {
@@ -367,10 +305,7 @@ impl QuestionnaireComposer {
 
     pub(super) fn confirm_active_question(&mut self) -> QuestionnaireEnterAction {
         let question = self.active_question().clone();
-        if matches!(
-            question.kind,
-            QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::Confirm
-        ) {
+        if question.selection() != SelectionMode::Many {
             self.active_field_mut().toggle_highlighted(&question);
         }
         if self.on_last_question() {
@@ -404,15 +339,15 @@ impl QuestionnaireComposer {
 
     fn activate_other_for_typing(&mut self) -> bool {
         let question = self.active_question().clone();
-        if !question.allow_other {
+        if !question.permits_other() {
             return false;
         }
         match &mut self.active_field_mut().selection {
-            FieldSelection::Text | FieldSelection::Other => true,
+            FieldSelection::Other => true,
             FieldSelection::None | FieldSelection::Single(_) => {
                 let field = self.active_field_mut();
                 field.selection = FieldSelection::Other;
-                field.choice_cursor = question.choices.len();
+                field.choice_cursor = question.choices().len();
                 true
             }
             FieldSelection::Multi { .. } => {
@@ -420,7 +355,7 @@ impl QuestionnaireComposer {
                 if let FieldSelection::Multi { other, .. } = &mut field.selection {
                     *other = true;
                 }
-                field.choice_cursor = question.choices.len();
+                field.choice_cursor = question.choices().len();
                 true
             }
         }
@@ -433,15 +368,13 @@ pub(super) struct SubmittedQuestionnaire {
 }
 
 impl QuestionnaireFieldState {
-    fn empty(question: &QuestionnaireQuestion) -> Self {
-        let selection = match question.kind {
-            QuestionnaireQuestionKind::Text => FieldSelection::Text,
-            QuestionnaireQuestionKind::Choice => FieldSelection::None,
-            QuestionnaireQuestionKind::MultiSelect => FieldSelection::Multi {
+    fn empty(question: &HostQuestion) -> Self {
+        let selection = match question.selection() {
+            SelectionMode::Many => FieldSelection::Multi {
                 selected: Vec::new(),
                 other: false,
             },
-            QuestionnaireQuestionKind::Confirm => FieldSelection::None,
+            _ => FieldSelection::None,
         };
         Self {
             selection,
@@ -451,20 +384,11 @@ impl QuestionnaireFieldState {
         }
     }
 
-    fn new(question: &QuestionnaireQuestion) -> Self {
-        let (selection, choice_cursor, other_value) = match question.kind {
-            QuestionnaireQuestionKind::Text => (
-                FieldSelection::Text,
-                0,
-                question
-                    .default
-                    .as_ref()
-                    .map(questionnaire_default_string)
-                    .unwrap_or_default(),
-            ),
-            QuestionnaireQuestionKind::Choice => default_choice_selection(question),
-            QuestionnaireQuestionKind::MultiSelect => default_multi_selection(question),
-            QuestionnaireQuestionKind::Confirm => default_confirm_selection(question),
+    fn new(question: &HostQuestion) -> Self {
+        let (selection, choice_cursor, other_value) = match question.selection() {
+            SelectionMode::Many => default_multi_selection(question),
+            _ if is_confirm(question) => default_confirm_selection(question),
+            _ => default_choice_selection(question),
         };
         let other_cursor = other_value.chars().count();
         Self {
@@ -518,39 +442,38 @@ impl QuestionnaireFieldState {
         self.other_value.replace_range(start..end, "");
     }
 
-    fn text_entry_active(&self, question: &QuestionnaireQuestion) -> bool {
+    fn text_entry_active(&self, question: &HostQuestion) -> bool {
         match &self.selection {
-            FieldSelection::Text | FieldSelection::Other => true,
+            FieldSelection::Other => true,
             FieldSelection::None | FieldSelection::Single(_) => false,
             FieldSelection::Multi { other, .. } => {
-                *other && self.choice_cursor == question.choices.len()
+                *other && self.choice_cursor == question.choices().len()
             }
         }
     }
 
-    fn move_choice_previous(&mut self, question: &QuestionnaireQuestion) {
+    fn move_choice_previous(&mut self, question: &HostQuestion) {
         let count = choice_count(question);
-        if count == 0 || matches!(self.selection, FieldSelection::Text) {
+        if count == 0 {
             return;
         }
         self.choice_cursor = self.choice_cursor.saturating_sub(1);
         self.select_highlighted_for_single(question);
     }
 
-    fn move_choice_next(&mut self, question: &QuestionnaireQuestion) {
+    fn move_choice_next(&mut self, question: &HostQuestion) {
         let count = choice_count(question);
-        if count == 0 || matches!(self.selection, FieldSelection::Text) {
+        if count == 0 {
             return;
         }
         self.choice_cursor = (self.choice_cursor + 1).min(count.saturating_sub(1));
         self.select_highlighted_for_single(question);
     }
 
-    fn toggle_highlighted(&mut self, question: &QuestionnaireQuestion) {
+    fn toggle_highlighted(&mut self, question: &HostQuestion) {
         match &mut self.selection {
-            FieldSelection::Text => {}
             FieldSelection::None | FieldSelection::Single(_) => {
-                if question.allow_other && self.choice_cursor == question.choices.len() {
+                if question.permits_other() && self.choice_cursor == question.choices().len() {
                     self.selection = FieldSelection::Other;
                 } else {
                     self.selection = FieldSelection::Single(
@@ -560,12 +483,12 @@ impl QuestionnaireFieldState {
                 }
             }
             FieldSelection::Multi { selected, other } => {
-                if question.allow_other && self.choice_cursor == question.choices.len() {
+                if question.permits_other() && self.choice_cursor == question.choices().len() {
                     *other = !*other;
                 } else {
                     let cursor = self
                         .choice_cursor
-                        .min(question.choices.len().saturating_sub(1));
+                        .min(question.choices().len().saturating_sub(1));
                     if selected.contains(&cursor) {
                         selected.retain(|index| *index != cursor);
                     } else {
@@ -576,17 +499,17 @@ impl QuestionnaireFieldState {
                 }
             }
             FieldSelection::Other => {
-                if self.choice_cursor < question.choices.len() {
+                if self.choice_cursor < question.choices().len() {
                     self.selection = FieldSelection::Single(self.choice_cursor);
                 }
             }
         }
     }
 
-    fn select_highlighted_for_single(&mut self, question: &QuestionnaireQuestion) {
+    fn select_highlighted_for_single(&mut self, question: &HostQuestion) {
         match &mut self.selection {
             FieldSelection::None | FieldSelection::Single(_) => {
-                if question.allow_other && self.choice_cursor == question.choices.len() {
+                if question.permits_other() && self.choice_cursor == question.choices().len() {
                     self.selection = FieldSelection::Other;
                 } else {
                     self.selection = FieldSelection::Single(
@@ -595,55 +518,57 @@ impl QuestionnaireFieldState {
                     );
                 }
             }
-            FieldSelection::Other if self.choice_cursor < question.choices.len() => {
+            FieldSelection::Other if self.choice_cursor < question.choices().len() => {
                 self.selection = FieldSelection::Single(self.choice_cursor);
             }
-            FieldSelection::Text | FieldSelection::Multi { .. } | FieldSelection::Other => {}
+            FieldSelection::Multi { .. } | FieldSelection::Other => {}
         }
     }
 }
 
-fn default_choice_selection(question: &QuestionnaireQuestion) -> (FieldSelection, usize, String) {
-    let Some(default) = question.default.as_ref().map(questionnaire_default_string) else {
+fn default_choice_selection(question: &HostQuestion) -> (FieldSelection, usize, String) {
+    let Some(default) = question
+        .default_value_ref()
+        .map(questionnaire_default_string)
+    else {
         return (FieldSelection::None, 0, String::new());
     };
     if let Some(index) = question
-        .choices
+        .choices()
         .iter()
-        .position(|choice| choice.matches_default(&default))
+        .position(|choice| choice_matches_default(choice, &default))
     {
-        let selection = match question.default_selection {
-            QuestionnaireDefaultSelection::Selected => FieldSelection::Single(index),
-            QuestionnaireDefaultSelection::Focused => FieldSelection::None,
+        let selection = match question.default_selection_mode() {
+            DefaultSelection::Selected => FieldSelection::Single(index),
+            DefaultSelection::Focused => FieldSelection::None,
         };
         return (selection, index, String::new());
     }
-    if question.allow_other {
-        let selection = match question.default_selection {
-            QuestionnaireDefaultSelection::Selected => FieldSelection::Other,
-            QuestionnaireDefaultSelection::Focused => FieldSelection::None,
+    if question.permits_other() {
+        let selection = match question.default_selection_mode() {
+            DefaultSelection::Selected => FieldSelection::Other,
+            DefaultSelection::Focused => FieldSelection::None,
         };
-        return (selection, question.choices.len(), default);
+        return (selection, question.choices().len(), default);
     }
     (FieldSelection::None, 0, String::new())
 }
 
-fn default_multi_selection(question: &QuestionnaireQuestion) -> (FieldSelection, usize, String) {
+fn default_multi_selection(question: &HostQuestion) -> (FieldSelection, usize, String) {
     let mut selected = Vec::new();
     let mut other_values = Vec::new();
     for value in question
-        .default
-        .as_ref()
+        .default_value_ref()
         .map(questionnaire_default_strings)
         .unwrap_or_default()
     {
         if let Some(index) = question
-            .choices
+            .choices()
             .iter()
-            .position(|choice| choice.matches_default(&value))
+            .position(|choice| choice_matches_default(choice, &value))
         {
             selected.push(index);
-        } else if question.allow_other {
+        } else if question.permits_other() {
             other_values.push(value);
         }
     }
@@ -651,13 +576,13 @@ fn default_multi_selection(question: &QuestionnaireQuestion) -> (FieldSelection,
     selected.dedup();
     let other = !other_values.is_empty();
     let preselect = matches!(
-        question.default_selection,
-        QuestionnaireDefaultSelection::Selected
+        question.default_selection_mode(),
+        DefaultSelection::Selected
     );
     let choice_cursor = selected
         .first()
         .copied()
-        .or_else(|| other.then_some(question.choices.len()))
+        .or_else(|| other.then_some(question.choices().len()))
         .unwrap_or(0);
     (
         FieldSelection::Multi {
@@ -671,10 +596,9 @@ fn default_multi_selection(question: &QuestionnaireQuestion) -> (FieldSelection,
     )
 }
 
-fn default_confirm_selection(question: &QuestionnaireQuestion) -> (FieldSelection, usize, String) {
+fn default_confirm_selection(question: &HostQuestion) -> (FieldSelection, usize, String) {
     let default = question
-        .default
-        .as_ref()
+        .default_value_ref()
         .map(questionnaire_default_string)
         .unwrap_or_default()
         .to_ascii_lowercase();
@@ -683,9 +607,9 @@ fn default_confirm_selection(question: &QuestionnaireQuestion) -> (FieldSelectio
         "no" | "n" | "false" => 1,
         _ => return (FieldSelection::None, 0, String::new()),
     };
-    let selection = match question.default_selection {
-        QuestionnaireDefaultSelection::Selected => FieldSelection::Single(index),
-        QuestionnaireDefaultSelection::Focused => FieldSelection::None,
+    let selection = match question.default_selection_mode() {
+        DefaultSelection::Selected => FieldSelection::Single(index),
+        DefaultSelection::Focused => FieldSelection::None,
     };
     (selection, index, String::new())
 }
@@ -718,20 +642,13 @@ fn questionnaire_default_string(default: &serde_json::Value) -> String {
     }
 }
 
-pub(super) fn choice_is_focused_default(
-    question: &QuestionnaireQuestion,
-    choice_index: usize,
-) -> bool {
-    if !matches!(
-        question.default_selection,
-        QuestionnaireDefaultSelection::Focused
-    ) {
+pub(super) fn choice_is_focused_default(question: &HostQuestion, choice_index: usize) -> bool {
+    if !matches!(question.default_selection_mode(), DefaultSelection::Focused) {
         return false;
     }
-    match question.kind {
-        QuestionnaireQuestionKind::Confirm => match question
-            .default
-            .as_ref()
+    if is_confirm(question) {
+        return match question
+            .default_value_ref()
             .map(questionnaire_default_string)
             .unwrap_or_default()
             .to_ascii_lowercase()
@@ -740,38 +657,34 @@ pub(super) fn choice_is_focused_default(
             "yes" | "y" | "true" => choice_index == 0,
             "no" | "n" | "false" => choice_index == 1,
             _ => false,
-        },
-        QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect => {
-            let defaults = question
-                .default
-                .as_ref()
-                .map(questionnaire_default_strings)
-                .unwrap_or_default();
-            let is_other = question.allow_other && choice_index == question.choices.len();
-            if is_other {
-                return defaults.iter().any(|value| {
-                    !question
-                        .choices
-                        .iter()
-                        .any(|choice| choice.matches_default(value))
-                });
-            }
-            let Some(choice) = question.choices.get(choice_index) else {
-                return false;
-            };
-            defaults.iter().any(|value| choice.matches_default(value))
-        }
-        QuestionnaireQuestionKind::Text => false,
+        };
     }
+    let defaults = question
+        .default_value_ref()
+        .map(questionnaire_default_strings)
+        .unwrap_or_default();
+    let is_other = question.permits_other() && choice_index == question.choices().len();
+    if is_other {
+        return defaults.iter().any(|value| {
+            !question
+                .choices()
+                .iter()
+                .any(|choice| choice_matches_default(choice, value))
+        });
+    }
+    let Some(choice) = question.choices().get(choice_index) else {
+        return false;
+    };
+    defaults
+        .iter()
+        .any(|value| choice_matches_default(choice, value))
 }
 
-fn choice_count(question: &QuestionnaireQuestion) -> usize {
-    match question.kind {
-        QuestionnaireQuestionKind::Text => 0,
-        QuestionnaireQuestionKind::Confirm => 2,
-        QuestionnaireQuestionKind::Choice | QuestionnaireQuestionKind::MultiSelect => {
-            question.choices.len() + usize::from(question.allow_other)
-        }
+fn choice_count(question: &HostQuestion) -> usize {
+    if is_confirm(question) {
+        2
+    } else {
+        question.choices().len() + usize::from(question.permits_other())
     }
 }
 
@@ -780,7 +693,7 @@ pub(super) fn questionnaire_answers(
 ) -> Result<Vec<QuestionnaireAnswer>, (usize, String)> {
     questionnaire
         .request
-        .questions
+        .questions()
         .iter()
         .zip(questionnaire.fields.iter())
         .enumerate()
@@ -790,9 +703,9 @@ pub(super) fn questionnaire_answers(
             Ok((question, answer))
         })
         .filter_map(|result| match result {
-            Ok((question, answer)) if !question.required && answer_is_empty(&answer) => None,
+            Ok((question, answer)) if !question.is_required() && answer_is_empty(&answer) => None,
             Ok((question, answer)) => Some(Ok(QuestionnaireAnswer {
-                id: question.id.clone(),
+                id: question.id().to_string(),
                 answer,
             })),
             Err(error) => Some(Err(error)),
@@ -812,32 +725,33 @@ fn answer_is_empty(answer: &serde_json::Value) -> bool {
 }
 
 fn normalize_questionnaire_answer(
-    question: &QuestionnaireQuestion,
+    question: &HostQuestion,
     field: &QuestionnaireFieldState,
 ) -> Result<serde_json::Value, String> {
-    match question.kind {
-        QuestionnaireQuestionKind::Text => {
-            normalize_text_answer(question, &field.other_value).map(serde_json::Value::String)
-        }
-        QuestionnaireQuestionKind::Choice => match &field.selection {
-            FieldSelection::Single(index) => question
-                .choices
-                .get(*index)
-                .map(|choice| serde_json::Value::String(choice.value().to_string()))
-                .ok_or_else(|| "answer is not selected".into()),
-            FieldSelection::Other => {
-                normalize_text_answer(question, &field.other_value).map(serde_json::Value::String)
-            }
-            FieldSelection::None if !question.required => Ok(serde_json::Value::Null),
-            FieldSelection::Text | FieldSelection::None | FieldSelection::Multi { .. } => {
-                Err("answer is not selected".into())
-            }
-        },
-        QuestionnaireQuestionKind::MultiSelect => match &field.selection {
+    if is_confirm(question) {
+        return match field.selection {
+            FieldSelection::Single(index @ 0..=1) => Ok(serde_json::Value::String(
+                question
+                    .choices()
+                    .get(index)
+                    .map_or(if index == 0 { "yes" } else { "no" }, |choice| {
+                        choice.value()
+                    })
+                    .to_string(),
+            )),
+            FieldSelection::None if !question.is_required() => Ok(serde_json::Value::Null),
+            FieldSelection::None
+            | FieldSelection::Single(_)
+            | FieldSelection::Multi { .. }
+            | FieldSelection::Other => Err("answer is not selected".into()),
+        };
+    }
+    match question.selection() {
+        SelectionMode::Many => match &field.selection {
             FieldSelection::Multi { selected, other } => {
                 let mut answers = selected
                     .iter()
-                    .filter_map(|index| question.choices.get(*index))
+                    .filter_map(|index| question.choices().get(*index))
                     .map(|choice| choice.value().to_string())
                     .collect::<Vec<_>>();
                 if *other {
@@ -846,41 +760,37 @@ fn normalize_questionnaire_answer(
                         answers.push(other_answer);
                     }
                 }
-                if answers.is_empty() && question.required {
+                if answers.is_empty() && question.is_required() {
                     return Err("select at least one answer".into());
                 }
                 Ok(serde_json::Value::Array(
                     answers.into_iter().map(serde_json::Value::String).collect(),
                 ))
             }
-            FieldSelection::Text
-            | FieldSelection::None
-            | FieldSelection::Single(_)
-            | FieldSelection::Other => Err("answer is not selected".into()),
+            FieldSelection::None | FieldSelection::Single(_) | FieldSelection::Other => {
+                Err("answer is not selected".into())
+            }
         },
-        QuestionnaireQuestionKind::Confirm => match field.selection {
-            FieldSelection::Single(index @ 0..=1) => Ok(serde_json::Value::String(
-                question
-                    .choices
-                    .get(index)
-                    .map_or(if index == 0 { "yes" } else { "no" }, |choice| {
-                        choice.value()
-                    })
-                    .to_string(),
-            )),
-            FieldSelection::None if !question.required => Ok(serde_json::Value::Null),
-            FieldSelection::Text
-            | FieldSelection::None
-            | FieldSelection::Single(_)
-            | FieldSelection::Multi { .. }
-            | FieldSelection::Other => Err("answer is not selected".into()),
+        _ => match &field.selection {
+            FieldSelection::Single(index) => question
+                .choices()
+                .get(*index)
+                .map(|choice| serde_json::Value::String(choice.value().to_string()))
+                .ok_or_else(|| "answer is not selected".into()),
+            FieldSelection::Other => {
+                normalize_text_answer(question, &field.other_value).map(serde_json::Value::String)
+            }
+            FieldSelection::None if !question.is_required() => Ok(serde_json::Value::Null),
+            FieldSelection::None | FieldSelection::Multi { .. } => {
+                Err("answer is not selected".into())
+            }
         },
     }
 }
 
-fn normalize_text_answer(question: &QuestionnaireQuestion, value: &str) -> Result<String, String> {
+fn normalize_text_answer(question: &HostQuestion, value: &str) -> Result<String, String> {
     let answer = value.trim().to_string();
-    if answer.is_empty() && question.required {
+    if answer.is_empty() && question.is_required() {
         Err("answer cannot be empty".into())
     } else {
         Ok(answer)
@@ -888,33 +798,33 @@ fn normalize_text_answer(question: &QuestionnaireQuestion, value: &str) -> Resul
 }
 
 pub(super) fn submitted_questionnaire_entry(
-    request: &QuestionnaireRequest,
+    request: &HostInputRequest,
     response: &QuestionnaireResponse,
 ) -> String {
     if let [answer] = response.answers.as_slice() {
         let question = request
-            .questions
+            .questions()
             .iter()
-            .find(|question| question.id == answer.id);
+            .find(|question| question.id() == answer.id);
         return questionnaire_answer_display(question, &answer.answer);
     }
     let mut lines = Vec::new();
-    if let Some(title) = &request.title {
-        lines.push(title.clone());
+    if let Some(title) = request_title(request) {
+        lines.push(title.to_string());
     } else {
         lines.push("questionnaire answers".into());
     }
     for answer in &response.answers {
         let label = request
-            .questions
+            .questions()
             .iter()
-            .find(|question| question.id == answer.id)
-            .map(|question| question.question.as_str())
+            .find(|question| question.id() == answer.id)
+            .map(HostQuestion::prompt)
             .unwrap_or(answer.id.as_str());
         let question = request
-            .questions
+            .questions()
             .iter()
-            .find(|question| question.id == answer.id);
+            .find(|question| question.id() == answer.id);
         lines.push(format!(
             "{label}: {}",
             questionnaire_answer_display(question, &answer.answer)
@@ -924,7 +834,7 @@ pub(super) fn submitted_questionnaire_entry(
 }
 
 fn questionnaire_answer_display(
-    question: Option<&QuestionnaireQuestion>,
+    question: Option<&HostQuestion>,
     answer: &serde_json::Value,
 ) -> String {
     match answer {
@@ -936,7 +846,7 @@ fn questionnaire_answer_display(
         serde_json::Value::String(value) => question
             .and_then(|question| {
                 question
-                    .choices
+                    .choices()
                     .iter()
                     .find(|choice| choice.value() == value)
             })
@@ -948,10 +858,10 @@ fn questionnaire_answer_display(
     }
 }
 
-pub(super) fn questionnaire_notice_text(request: &QuestionnaireRequest) -> String {
-    match (&request.title, request.questions.as_slice()) {
+pub(super) fn questionnaire_notice_text(request: &HostInputRequest) -> String {
+    match (request_title(request), request.questions()) {
         (Some(title), _) => format!("agent asks: {title}"),
-        (None, [question]) => format!("agent asks: {}", question.question),
+        (None, [question]) => format!("agent asks: {}", question.prompt()),
         (None, questions) => format!("agent asks {} questions", questions.len()),
     }
 }

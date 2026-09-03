@@ -1,4 +1,4 @@
-use std::{ffi::OsString, num::NonZeroUsize, sync::MutexGuard};
+use std::{ffi::OsString, num::NonZeroUsize, sync::MutexGuard, time::Duration};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -10,11 +10,7 @@ use rho_sdk::{
 };
 
 use super::*;
-use crate::app::subagent_host_input::SubagentHostInputBridge;
-use crate::{
-    app::agent_executor::AgentExecutor, config::Config,
-    tools::agent_output::MODEL_NOTIFICATION_BYTES,
-};
+use crate::{config::Config, tools::agent_output::MODEL_NOTIFICATION_BYTES};
 
 /// Isolates delegated-run storage and agent discovery from the developer's own
 /// home, so these tests see the same catalog everywhere they run.
@@ -67,13 +63,11 @@ impl ManagerFixture {
     fn new(root: &Path) -> Self {
         let rho_home = IsolatedRhoHome::new();
         Self {
-            manager: SubagentManager::new(AgentExecutor::new(
+            manager: SubagentManager::new(
                 Config::default(),
                 root.join("rho.toml"),
                 root.to_path_buf(),
-                SubagentHostInputBridge::new(),
-                crate::app::subagent_messaging::SubagentNoticeBridge::new(),
-            )),
+            ),
             _rho_home: rho_home,
         }
     }
