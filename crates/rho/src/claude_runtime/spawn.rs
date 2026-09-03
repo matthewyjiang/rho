@@ -236,8 +236,8 @@ fn dont_ask_preserves_bound_set(
 
 fn dont_ask_tool_preserves_bound_set(mode: PermissionMode, tool: &str) -> bool {
     let base = tool_base_name(tool);
-    if base.eq_ignore_ascii_case("Task") {
-        // Task is always denied separately.
+    if is_nested_claude_agent_tool(base) {
+        // Nested agents are always denied separately.
         return true;
     }
     // Specifiers expose a broader base tool via `--tools`.
@@ -354,10 +354,11 @@ pub(crate) fn build_spawn_plan(request: &ClaudeSpawnRequest) -> ClaudeSpawnPlan 
     // A specifier such as `Bash(git *)` still lists `Bash` here, and any tool
     // that is not proven free for this Rho approval class skips the remaining
     // gate, which is why Auto / Allow edits refuse those shapes under dontAsk.
-    // `--allowedTools` carries every declared non-Task entry (bare names and
-    // patterns) as separate argv items and executes them without prompting, so
-    // unknown names must never reach a mapped Auto / Allow edits spawn. Task
-    // is always denied so nested Claude agents stay off.
+    // `--allowedTools` carries every declared non-nested-agent entry (bare
+    // names and patterns) as separate argv items and executes them without
+    // prompting, so unknown names must never reach a mapped Auto / Allow
+    // edits spawn. Task (legacy) and Agent are always denied so nested
+    // Claude agents stay off.
     let tool_base_names = tool_base_names(&request.tools);
     let allowed_tool_entries = allowed_tool_entries(&request.tools);
 
@@ -370,7 +371,7 @@ pub(crate) fn build_spawn_plan(request: &ClaudeSpawnRequest) -> ClaudeSpawnPlan 
         "--permission-mode".into(),
         permission_mode.into(),
         "--disallowedTools".into(),
-        "Task".into(),
+        DISALLOWED_NESTED_AGENT_TOOLS.into(),
         "--setting-sources".into(),
         setting_sources.into(),
         "--strict-mcp-config".into(),
@@ -486,13 +487,21 @@ fn system_prompt_plan(prompt: &PromptPolicy) -> SystemPromptPlan {
     }
 }
 
+/// Claude `--disallowedTools` value that keeps nested subagents off.
+const DISALLOWED_NESTED_AGENT_TOOLS: &str = "Task,Agent";
+
+/// True when `base` is a Claude nested-subagent tool (legacy `Task` or `Agent`).
+fn is_nested_claude_agent_tool(base: &str) -> bool {
+    base.eq_ignore_ascii_case("Task") || base.eq_ignore_ascii_case("Agent")
+}
+
 /// Base Claude tool names for `--tools` availability.
 fn tool_base_names(tools: &[String]) -> Vec<String> {
     let mut names = Vec::new();
     for tool in tools {
         let base = tool_base_name(tool);
-        if base.eq_ignore_ascii_case("Task") {
-            // Task is always denied separately; never make it available.
+        if is_nested_claude_agent_tool(base) {
+            // Nested agents are always denied separately; never make them available.
             continue;
         }
         if !names.iter().any(|existing| existing == base) {
@@ -502,11 +511,11 @@ fn tool_base_names(tools: &[String]) -> Vec<String> {
     names
 }
 
-/// Every declared non-Task tool entry for `--allowedTools` (bare + patterns).
+/// Every declared non-nested-agent tool entry for `--allowedTools` (bare + patterns).
 fn allowed_tool_entries(tools: &[String]) -> Vec<String> {
     tools
         .iter()
-        .filter(|tool| !tool_base_name(tool).eq_ignore_ascii_case("Task"))
+        .filter(|tool| !is_nested_claude_agent_tool(tool_base_name(tool)))
         .cloned()
         .collect()
 }

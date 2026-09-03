@@ -19,6 +19,7 @@ mod advisor_status;
 mod agent_creator_command;
 mod agent_editor;
 mod agent_picker;
+mod agent_tools_picker;
 mod app_construct;
 mod app_state;
 mod approval;

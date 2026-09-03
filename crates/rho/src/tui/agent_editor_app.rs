@@ -121,6 +121,10 @@ impl App {
                 self.submit_agent_model_selection(kind, value);
                 Ok(())
             }
+            AgentEditPhase::PickingTools => {
+                self.submit_agent_tool_toggle(value);
+                Ok(())
+            }
         }
     }
 
@@ -163,9 +167,7 @@ impl App {
             AGENT_FIELD_REASONING => {
                 self.open_agent_choice(AgentChoiceField::Reasoning, &draft);
             }
-            AGENT_FIELD_TOOLS => {
-                self.open_agent_text_input(AgentField::Tools, draft.tools_text());
-            }
+            AGENT_FIELD_TOOLS => self.open_agent_tools_picker(&draft),
             AGENT_FIELD_INHERIT_CLAUDE_CONFIG => {
                 self.open_agent_choice(AgentChoiceField::InheritClaudeConfig, &draft);
             }
@@ -301,6 +303,76 @@ impl App {
                 self.reopen_agent_field_picker(AGENT_FIELD_MODEL);
             }
         }
+    }
+
+    fn open_agent_tools_picker(&mut self, draft: &crate::agent::AgentDefinition) {
+        if let Some(session) = &mut self.agent_editor_session {
+            session.set_phase(AgentEditPhase::PickingTools);
+        }
+        self.open_child_picker(crate::tui::agent_tools_picker::agent_tools_picker(draft));
+        self.set_status("toggle tools");
+    }
+
+    /// Enter/Space on a tools row. Toggles the draft and rebuilds the picker in
+    /// place so badges refresh while cursor and filter stay put. `all` is a
+    /// toggle too (off restores the set it replaced); only `Other…` leaves the
+    /// multi-select.
+    fn submit_agent_tool_toggle(&mut self, value: &str) {
+        let Some(draft) = self
+            .agent_editor_session
+            .as_ref()
+            .map(|session| session.draft().clone())
+        else {
+            self.cancel_agent_editor();
+            return;
+        };
+        if value == AGENT_TOOL_OTHER {
+            // Drop the tools picker so the text input returns to the field list.
+            self.pop_picker_level();
+            if let Some(session) = &mut self.agent_editor_session {
+                session.set_phase(AgentEditPhase::Fields);
+            }
+            self.open_agent_text_input(AgentField::Tools, draft.tools_text());
+            return;
+        }
+        let result = match value.strip_prefix(AGENT_TOOL_ROW_PREFIX) {
+            Some(name) => self
+                .agent_editor_session
+                .as_mut()
+                .map(|session| session.with_draft_mut(|draft| draft.toggle_tool(name)))
+                .unwrap_or(Ok(())),
+            None if value == AGENT_TOOL_ALL => {
+                if let Some(session) = &mut self.agent_editor_session {
+                    session.toggle_tools_all();
+                }
+                Ok(())
+            }
+            None => Ok(()),
+        };
+        if let Err(message) = result {
+            self.insert_entry(&Entry::Error(format!("tools: {message}")));
+            self.set_status("tools edit failed");
+            return;
+        }
+        let (filter, parent) = match self.input_ui.composer_mut() {
+            ComposerMode::Picker(picker) => (picker.filter.clone(), picker.take_parent()),
+            _ => (String::new(), None),
+        };
+        let Some(draft) = self
+            .agent_editor_session
+            .as_ref()
+            .map(|session| session.draft().clone())
+        else {
+            self.cancel_agent_editor();
+            return;
+        };
+        let mut picker = crate::tui::agent_tools_picker::agent_tools_picker(&draft);
+        Self::restore_picker_position(&mut picker, value, filter);
+        if let Some(parent) = parent {
+            picker = picker.with_parent(parent);
+        }
+        self.input_ui.set_composer(ComposerMode::Picker(picker));
+        self.set_status(format!("tools: {}", draft.tools_summary()));
     }
 
     fn open_agent_model_or_text(&mut self, draft: &crate::agent::AgentDefinition) {
@@ -550,7 +622,12 @@ impl App {
             .map(|session| session.phase());
         match phase {
             Some(AgentEditPhase::Fields) | None => self.cancel_agent_editor(),
-            Some(_) => {
+            // Toggles already landed in the draft; rebuild the field list so
+            // the Tools badge shows them.
+            Some(AgentEditPhase::PickingTools) => {
+                self.reopen_agent_field_picker(AGENT_FIELD_TOOLS);
+            }
+            Some(AgentEditPhase::Choosing(_) | AgentEditPhase::PickingModel(_)) => {
                 if self.pop_picker_level() {
                     if let Some(session) = &mut self.agent_editor_session {
                         session.set_phase(AgentEditPhase::Fields);

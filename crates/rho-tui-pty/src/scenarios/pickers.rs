@@ -194,6 +194,137 @@ pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+/// Tools is a multi-select: Space toggles a row and the picker stays open, Esc
+/// returns to the field list with the toggled draft, and Save persists it.
+/// Starts from `tools: all`, so removing `shell` must expand the policy to the
+/// explicit built-in set minus shell; toggling `all` on and back off must
+/// return to that set rather than leave every tool on.
+pub(super) const EDIT_USER_AGENT_TOOLS_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/agents"),
+    Step::WaitText {
+        text: "(editable)",
+        timeout: SETTLE,
+    },
+    Step::TypeText("editable-fixture"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "edit agent editable-fixture",
+        timeout: SETTLE,
+    },
+    Step::TypeText("Tools"),
+    Step::WaitText {
+        text: "Rho tool capabilities",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Every host tool",
+        timeout: SETTLE,
+    },
+    // Regex filter: `^shell` skips powershell.
+    Step::TypeText("^shell"),
+    Step::WaitText {
+        text: "Run shell commands.",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Char(' ')),
+    // `all` is a toggle: on replaces the narrowed set, off restores it, so the
+    // saved policy below must still be the explicit list minus shell.
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::TypeText("^all"),
+    Step::WaitText {
+        text: "Every host tool",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Char(' ')),
+    Step::WaitText {
+        text: "tools: all",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Char(' ')),
+    Step::WaitText {
+        text: "tools: advisor",
+        timeout: SETTLE,
+    },
+    // The picker stays open after a toggle; Esc lands on the field list with
+    // the "Tools" filter restored, so its badge is the durable outcome.
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Rho tool capabilities",
+        timeout: SETTLE,
+    },
+    Step::Custom(assert_tools_badge_excludes_shell),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::Key(Key::Backspace),
+    Step::TypeText("Save"),
+    Step::WaitText {
+        text: "Serialize, validate",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "agent editable-fixture saved",
+        timeout: SETTLE,
+    },
+    // Reopen from disk: the Tools badge must show the narrowed explicit list.
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "edit agent editable-fixture",
+        timeout: SETTLE,
+    },
+    Step::TypeText("Tools"),
+    Step::WaitText {
+        text: "Rho tool capabilities",
+        timeout: SETTLE,
+    },
+    Step::Custom(assert_tools_badge_excludes_shell),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Loaded agents",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::ExitCommand,
+];
+
+/// The Tools row detail pane lists the current allow list after "Current".
+/// Toggling `shell` off from `all` must leave the other built-ins and drop
+/// `shell` (but keep `powershell`, which merely contains the substring).
+fn assert_tools_badge_excludes_shell(harness: &mut PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    let detail: Vec<&str> = screen
+        .lines()
+        .skip_while(|line| !line.contains("Current"))
+        .skip(1)
+        .take_while(|line| line.contains('│'))
+        .collect();
+    let names: Vec<&str> = detail
+        .iter()
+        .flat_map(|line| line.split(['│', ',', ' ']))
+        .filter(|token| !token.is_empty())
+        .collect();
+    if !names.contains(&"read_file") || !names.contains(&"powershell") {
+        anyhow::bail!("Tools detail did not list explicit capabilities:\n{screen}");
+    }
+    if names.contains(&"shell") {
+        anyhow::bail!("Tools detail still lists shell after toggling it off:\n{screen}");
+    }
+    Ok(())
+}
+
 /// Word near the end of the goal-judge prompt body. On the default scenario
 /// size it sits below the first detail viewport and becomes visible after
 /// paging the detail pane. A single word cannot be split by detail wrapping,

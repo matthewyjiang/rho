@@ -53,7 +53,7 @@ Do **not** choose `claude-cli` merely because the user said "Opus" or "Claude". 
 - Delegated only. Interactive and `rho run` roots cannot bind `runtime: claude-cli`. A Rho parent must launch the agent through the `agent` tool.
 - Requires the `claude` binary on `PATH` and a Claude Code login (`/login claude-code`). Offer to remind the user after write if they have not signed in yet.
 - Launch in Plan or Bypass. Auto and Allow edits spawn only when every `tools:` entry is a proven no-prompt Claude built-in for that Rho approval class and `inherit_claude_config` is false. Those runs use Claude `dontAsk`, which also auto-approves read-only Bash and PreToolUse hooks, and `--allowedTools` runs listed tools without prompting, so specifiers such as `Bash(git *)`, write/process tools, unknown Claude/plugin/MCP names, or inherited Claude config refuse spawn. Supervised always refuses because `claude -p` cannot prompt through Rho.
-- No nested Claude `Task` agents. Fan-out stays under Rho.
+- No nested Claude `Task` / `Agent` tools. Fan-out stays under Rho.
 - No Rho `provider`, no Rho `@alias` models, no `tools: all`
 - `reasoning:` is optional and maps to Claude `--effort` (`low`, `medium`, `high`, `xhigh`, `max`). Do not emit `off` or `minimal`.
 
@@ -153,7 +153,7 @@ You are a planning specialist running under Claude Code for a Rho parent.
 
 - Prefer reading before proposing edits.
 - Return a self-contained plan the parent can act on.
-- Do not claim you can open nested Task agents; fan-out stays in Rho.
+- Do not claim you can open nested Task or Agent tools; fan-out stays in Rho.
 ```
 
 `prompt` must be `extend` or `replace`. `runtime` must be `rho` or `claude-cli`. For Rho, `model-policy` must be `inherit`, `prefer`, `require`, or `select`, and `tools` must be `all` or a YAML list of Rho capability names. For Claude, never set `provider`, `tools` must be a YAML list of Claude tool names or patterns, and `reasoning` when set must be one of `low`, `medium`, `high`, `xhigh`, `max`. Present the exact destination tree and complete proposed file to the user, then ask for confirmation with a confirm questionnaire. Revise and reconfirm if requested.

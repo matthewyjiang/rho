@@ -20,7 +20,7 @@ use super::{
 
 use crate::agent::{
     AgentDefinition, AgentOrigin, AgentRuntime, AgentRuntimeSpec, ModelPolicy, PromptPolicy,
-    ReasoningLevel,
+    ReasoningLevel, ToolCapabilitySet, ToolsAllToggle,
 };
 use crate::claude_runtime::models as claude_models;
 use crate::model_aliases::ModelAliases;
@@ -47,7 +47,17 @@ pub(super) enum AgentEditPhase {
     Fields,
     Choosing(AgentChoiceField),
     PickingModel(ModelPickerKind),
+    /// Multi-select tool list: Enter/Space toggles a row and the picker stays
+    /// open; Esc returns to the field list with the toggled draft.
+    PickingTools,
 }
+
+/// Stable value prefixes for tool picker rows.
+pub(super) const AGENT_TOOL_ROW_PREFIX: &str = "agent_tool:";
+/// Rho-only row that switches the policy back to `all`.
+pub(super) const AGENT_TOOL_ALL: &str = "agent_tool_all";
+/// Row that falls back to the bracket-list text input (specifiers, MCP names).
+pub(super) const AGENT_TOOL_OTHER: &str = "agent_tool_other";
 
 /// Which model list the `PickingModel` phase is showing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -134,6 +144,9 @@ pub(super) struct AgentEditSession {
     original_contents: String,
     phase: AgentEditPhase,
     runtime_stash: BTreeMap<AgentRuntime, AgentRuntimeSpec>,
+    /// Explicit Rho tool set the last `all` toggle replaced, so toggling
+    /// `all` off again returns to it instead of leaving every tool on.
+    tools_stash: ToolCapabilitySet,
 }
 
 impl AgentEditSession {
@@ -154,6 +167,7 @@ impl AgentEditSession {
             original_contents,
             phase: AgentEditPhase::Fields,
             runtime_stash,
+            tools_stash: ToolCapabilitySet::new(),
         }
     }
 
@@ -171,6 +185,18 @@ impl AgentEditSession {
 
     pub(super) fn with_draft_mut<R>(&mut self, f: impl FnOnce(&mut AgentDefinition) -> R) -> R {
         f(&mut self.draft)
+    }
+
+    /// Flips Rho `all`. Turning it on remembers the explicit set it replaced;
+    /// turning it off restores that set (empty when `all` was the original
+    /// policy, so the user starts picking from nothing rather than from all).
+    pub(super) fn toggle_tools_all(&mut self) -> ToolsAllToggle {
+        let restore = std::mem::take(&mut self.tools_stash);
+        let outcome = self.draft.toggle_tools_all(restore);
+        if let ToolsAllToggle::TurnedOn { replaced } = &outcome {
+            self.tools_stash = replaced.clone();
+        }
+        outcome
     }
 
     fn switch_runtime(&mut self, value: &str) -> bool {
@@ -317,7 +343,10 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
             ));
             items.push(field_item(
                 "Tools",
-                "Rho tool capabilities, as a bracket list (for example [read_file, shell]) or all.",
+                format!(
+                    "Rho tool capabilities this agent may call, or all.\n\nCurrent\n{}",
+                    draft.tools_summary()
+                ),
                 Some(draft.tools_badge()),
                 AGENT_FIELD_TOOLS,
             ));
@@ -337,7 +366,10 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
             ));
             items.push(field_item(
                 "Tools",
-                "Claude tool names, as a bracket list (for example [Read, Edit, \"Bash(git *)\"]).",
+                format!(
+                    "Claude Code tools this agent may call. Specifiers such as Bash(git *) go through Other….\n\nCurrent\n{}",
+                    draft.tools_summary()
+                ),
                 Some(draft.tools_badge()),
                 AGENT_FIELD_TOOLS,
             ));
@@ -361,7 +393,10 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
             ));
             items.push(field_item(
                 "Tools",
-                "Closed snake_case Cursor tool names as a bracket list (for example [read_tool_call, grep_tool_call]).",
+                format!(
+                    "Cursor tools this agent may call. At least one is required.\n\nCurrent\n{}",
+                    draft.tools_summary()
+                ),
                 Some(draft.tools_badge()),
                 AGENT_FIELD_TOOLS,
             ));

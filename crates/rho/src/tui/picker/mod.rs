@@ -124,6 +124,8 @@ pub(super) struct UiPicker {
     restore_status: &'static str,
     /// When set, overrides [`PickerAction::uses_regex_filter`] for this picker.
     pub(super) force_fuzzy_filter: bool,
+    /// When set, Space confirms the row like Enter (toggle-style pickers).
+    space_confirms: bool,
     pub(super) overlay_chrome: Option<OverlayChrome>,
     parent: Option<Box<UiPicker>>,
     matches: RefCell<PickerMatchCache>,
@@ -237,6 +239,7 @@ impl UiPicker {
             empty_message: None,
             restore_status: "ready",
             force_fuzzy_filter: false,
+            space_confirms: false,
             overlay_chrome: None,
             parent: None,
             matches: RefCell::default(),
@@ -286,7 +289,7 @@ impl UiPicker {
     }
 
     pub(in crate::tui) fn space_confirms_selection(&self) -> bool {
-        self.action.space_confirms_selection()
+        self.space_confirms || self.action.space_confirms_selection()
     }
 
     pub(in crate::tui) fn restore_status(&self) -> &'static str {
@@ -305,6 +308,11 @@ impl UiPicker {
 
     pub(super) fn with_fuzzy_filter(mut self) -> Self {
         self.force_fuzzy_filter = true;
+        self
+    }
+
+    pub(super) fn with_space_confirm(mut self) -> Self {
+        self.space_confirms = true;
         self
     }
 
@@ -512,7 +520,9 @@ impl UiPicker {
         } else {
             parts.push(format!("Enter {confirm}"));
         }
-        if self.action.space_confirms_selection() {
+        if self.space_confirms {
+            parts.push(format!("Space {confirm}"));
+        } else if self.action.space_confirms_selection() {
             parts.push("Space confirm".into());
         }
         if let Some(key) = &self.key_hints.pin_toggle {

@@ -268,6 +268,111 @@ fn tools_text_round_trips_for_rho_and_claude() {
     assert_eq!(claude.tools_text(), "[Read, Edit]");
 }
 
+// Covers: toggling a tool flips membership per runtime; rho `all` expands to
+// the built-in set on the first removal and `set_tools_all` restores it.
+// Owner: agent edit
+#[test]
+fn toggle_tool_flips_membership_per_runtime() {
+    let mut rho = rho_draft();
+    rho.toggle_tool("shell").unwrap();
+    match &rho.runtime {
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(set),
+            ..
+        } => {
+            assert_eq!(set.len(), BUILTIN_TOOL_CAPABILITIES.len() - 1);
+            assert!(!set.contains(&ToolCapability::Shell));
+        }
+        other => panic!("expected allow set, got {other:?}"),
+    }
+    rho.toggle_tool("shell").unwrap();
+    assert!(matches!(
+        &rho.runtime,
+        AgentRuntimeSpec::Rho { tools: ToolPolicy::Allow(set), .. } if set.contains(&ToolCapability::Shell)
+    ));
+    assert_eq!(
+        rho.toggle_tool("Read").unwrap_err(),
+        "unknown tool 'Read' for runtime: rho"
+    );
+    let narrow: ToolCapabilitySet = [ToolCapability::ReadFile].into_iter().collect();
+    match rho.toggle_tools_all(narrow.clone()) {
+        ToolsAllToggle::TurnedOn { replaced } => {
+            assert_eq!(replaced.len(), BUILTIN_TOOL_CAPABILITIES.len())
+        }
+        other => panic!("expected TurnedOn, got {other:?}"),
+    }
+    assert!(matches!(
+        rho.runtime,
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::All,
+            ..
+        }
+    ));
+    assert_eq!(
+        rho.toggle_tools_all(narrow.clone()),
+        ToolsAllToggle::TurnedOff
+    );
+    assert_eq!(
+        rho.runtime,
+        AgentRuntimeSpec::Rho {
+            tools: ToolPolicy::Allow(narrow),
+            model: ModelPolicy::Inherit,
+            reasoning: None,
+        }
+    );
+
+    let mut claude = claude_draft();
+    claude.toggle_tool("Read").unwrap();
+    claude.toggle_tool("Bash(git *)").unwrap();
+    assert_eq!(
+        claude.tools_text(),
+        "[Read, Bash(git *)]",
+        "unoffered names must survive the toggle so free-text edits see them"
+    );
+    claude.toggle_tool("Read").unwrap();
+    claude.toggle_tool("Bash(git *)").unwrap();
+    assert_eq!(claude.tools_text(), "[]");
+    assert_eq!(
+        claude.toggle_tools_all(ToolCapabilitySet::new()),
+        ToolsAllToggle::Unsupported
+    );
+
+    let mut cursor = rho_draft();
+    assert!(cursor.switch_runtime_kind("cursor"));
+    assert!(cursor.toggle_tool("task_tool_call").is_err());
+    cursor.toggle_tool("grep_tool_call").unwrap();
+    cursor.toggle_tool("read_tool_call").unwrap();
+    assert_eq!(cursor.tools_text(), "[grep_tool_call, read_tool_call]");
+    cursor.toggle_tool("grep_tool_call").unwrap();
+    assert_eq!(cursor.tools_text(), "[read_tool_call]");
+}
+
+// Covers: the nav badge collapses long lists to a count while the summary
+// keeps every name for the detail pane.
+// Owner: agent edit
+#[test]
+fn tools_badge_collapses_to_count_but_summary_keeps_names() {
+    let mut rho = rho_draft();
+    assert_eq!(
+        (rho.tools_badge(), rho.tools_summary()),
+        ("all".into(), "all".into())
+    );
+
+    rho.set_tools_text("[]").unwrap();
+    assert_eq!(
+        (rho.tools_badge(), rho.tools_summary()),
+        ("none".into(), "none".into())
+    );
+
+    rho.set_tools_text("[read_file, grep, glob]").unwrap();
+    assert_eq!(rho.tools_badge(), "glob, grep, read_file");
+
+    rho.set_tools_text("[read_file, grep, glob, shell]")
+        .unwrap();
+    assert_eq!(rho.tools_badge(), "4 tools");
+    assert_eq!(rho.tools_summary(), "glob, grep, read_file, shell");
+}
+
 // Covers: prompt policy preserves body
 // Owner: agent edit
 #[test]
