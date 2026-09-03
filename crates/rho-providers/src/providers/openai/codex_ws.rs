@@ -16,7 +16,7 @@ use super::codex_continuation::{
     CodexContinuationCandidate, CodexContinuationResponse, CodexContinuationState,
 };
 use crate::protocol::openai_responses::{
-    handle_codex_sse_value, CodexSseResponse, CodexSseState, CodexTransport,
+    handle_codex_sse_value, is_codex_turn_complete, CodexSseResponse, CodexSseState, CodexTransport,
 };
 
 /// WebSocket transport for Codex Responses turns.
@@ -562,7 +562,7 @@ fn handle_codex_ws_value(
     .map_err(|error| classify_model_error(error, *events_emitted))?;
     let event_type = value.get("type").and_then(Value::as_str);
     Ok((
-        event_type == Some("response.completed"),
+        is_codex_turn_complete(value),
         event_type.is_some_and(|event_type| event_type.starts_with("response.")),
     ))
 }
@@ -576,7 +576,7 @@ fn handle_codex_ws_value_silent(
         .map_err(|error| classify_model_error(error, /*events_emitted*/ false))?;
     let event_type = value.get("type").and_then(Value::as_str);
     Ok((
-        event_type == Some("response.completed"),
+        is_codex_turn_complete(value),
         event_type.is_some_and(|event_type| event_type.starts_with("response.")),
     ))
 }

@@ -112,13 +112,8 @@ fn codex_terminal_failure(
                     .to_string(),
             ))
         }
-        "response.incomplete" => {
-            let reason = value
-                .get("response")
-                .and_then(|response| response.get("incomplete_details"))
-                .and_then(|details| details.get("reason"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
+        "response.incomplete" if !is_steered_incomplete(value) => {
+            let reason = incomplete_reason(value).unwrap_or("unknown");
             Some((
                 "response_incomplete".to_string(),
                 format!("incomplete response returned, reason: {reason}"),
@@ -151,6 +146,25 @@ pub(crate) struct CodexSseResponse {
     pub(crate) response: ModelResponse,
     pub(crate) response_id: Option<String>,
     pub(crate) service_tier: Option<String>,
+    pub(crate) steered: bool,
+}
+
+fn incomplete_reason(value: &serde_json::Value) -> Option<&str> {
+    value
+        .get("response")
+        .and_then(|response| response.get("incomplete_details"))
+        .and_then(|details| details.get("reason"))
+        .and_then(|v| v.as_str())
+}
+
+pub(crate) fn is_steered_incomplete(value: &serde_json::Value) -> bool {
+    value.get("type").and_then(|v| v.as_str()) == Some("response.incomplete")
+        && incomplete_reason(value) == Some("steered")
+}
+
+pub(crate) fn is_codex_turn_complete(value: &serde_json::Value) -> bool {
+    value.get("type").and_then(|v| v.as_str()) == Some("response.completed")
+        || is_steered_incomplete(value)
 }
 
 pub(crate) async fn collect_codex_sse_response(
@@ -205,6 +219,8 @@ pub(crate) struct CodexSseState {
     pub(crate) output_items: Vec<serde_json::Value>,
     /// True after a `response.completed` event was applied.
     completed: bool,
+    /// True when the original response ended because it was steered.
+    steered: bool,
     /// Provider `response.status` from the completed envelope, when present.
     response_status: Option<String>,
     /// Distinct SSE event `type` values observed on this stream.
@@ -255,6 +271,7 @@ impl CodexSseState {
             response: ModelResponse::Assistant(blocks),
             response_id: self.response_id,
             service_tier: self.service_tier,
+            steered: self.steered,
         })
     }
 
@@ -818,14 +835,7 @@ pub(crate) fn handle_codex_sse_value(
             }
             state.tool_calls.push(call);
         }
-    } else if event_type == "response.completed" {
-        state.completed = true;
-        state.service_tier = value
-            .get("response")
-            .and_then(|response| response.get("service_tier"))
-            .or_else(|| value.get("service_tier"))
-            .and_then(|tier| tier.as_str())
-            .map(str::to_owned);
+    } else if event_type == "response.created" {
         if let Some(response_id) = value
             .get("response")
             .and_then(|response| response.get("id"))
@@ -833,6 +843,25 @@ pub(crate) fn handle_codex_sse_value(
             .and_then(|id| id.as_str())
         {
             state.response_id = Some(response_id.to_string());
+        }
+    } else if event_type == "response.completed" || is_steered_incomplete(value) {
+        state.completed = true;
+        state.steered = is_steered_incomplete(value);
+        state.service_tier = value
+            .get("response")
+            .and_then(|response| response.get("service_tier"))
+            .or_else(|| value.get("service_tier"))
+            .and_then(|tier| tier.as_str())
+            .map(str::to_owned);
+        if state.response_id.is_none() || !state.steered {
+            if let Some(response_id) = value
+                .get("response")
+                .and_then(|response| response.get("id"))
+                .or_else(|| value.get("id"))
+                .and_then(|id| id.as_str())
+            {
+                state.response_id = Some(response_id.to_string());
+            }
         }
         state.response_status = value
             .get("response")
