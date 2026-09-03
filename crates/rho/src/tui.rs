@@ -230,8 +230,6 @@ use picker::{
 };
 use process_panel::ProcessPanel;
 use prompt_turn::FailedTurn;
-#[cfg(test)]
-use questionnaire::QuestionnaireComposer;
 use questionnaire::{
     questionnaire_cursor_position, questionnaire_lines, questionnaire_notice_text,
     QuestionAnswerRequest, QuestionnaireReply, QuestionnaireResponseChannel,
