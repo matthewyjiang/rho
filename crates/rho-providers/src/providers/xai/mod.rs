@@ -99,6 +99,7 @@ impl XaiProvider {
         endpoint: ResponsesEndpoint,
         body: &serde_json::Value,
         cancellation: Option<&rho_sdk::CancellationToken>,
+        before_retry: impl FnOnce() -> Result<(), ModelError>,
     ) -> ResponsesHttpResult {
         let material = match crate::provider_backend::cancel::cancel_aware(
             cancellation,
@@ -123,6 +124,7 @@ impl XaiProvider {
                         Err(error) => Err(error),
                     }
                 },
+                before_retry,
                 endpoint,
                 body,
                 cancellation,
@@ -146,19 +148,25 @@ impl XaiProvider {
             request,
             self.hosted,
         )?;
+        let mut on_request_event = on_request_event;
         let http_result = self
-            .post_responses(ResponsesEndpoint::Create, &body, Some(&cancellation))
+            .post_responses(
+                ResponsesEndpoint::Create,
+                &body,
+                Some(&cancellation),
+                || {
+                    if let Some(on_request_event) = on_request_event.as_mut() {
+                        on_request_event(
+                            rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
+                                kind: rho_sdk::ProviderErrorKind::Authentication,
+                                usage: crate::model::ModelUsage::default(),
+                            },
+                        )?;
+                    }
+                    Ok(())
+                },
+            )
             .await;
-        if let Some(on_request_event) = on_request_event {
-            for attempt in &http_result.failed_attempts {
-                on_request_event(
-                    rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
-                        kind: attempt.kind.provider_error_kind(),
-                        usage: crate::model::ModelUsage::default(),
-                    },
-                )?;
-            }
-        }
         http_result.response
     }
 

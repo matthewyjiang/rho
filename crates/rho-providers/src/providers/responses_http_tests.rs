@@ -651,6 +651,7 @@ async fn refresh_hook_accounts_for_401_outcomes() {
                         }
                     }
                 },
+                || Ok(()),
                 ResponsesEndpoint::Create,
                 &json!({"model":"grok-4.5"}),
                 None,
@@ -686,4 +687,82 @@ async fn refresh_hook_accounts_for_401_outcomes() {
             }
         }
     }
+}
+
+// Covers: RequestAttemptFailed must fire before the refresh retry POST
+// Owner: providers responses transport
+#[tokio::test]
+async fn refresh_retry_notifies_before_second_post() {
+    let (base, captured) = spawn_sequential_server(vec![
+        Box::new(|_| (401, String::new())),
+        Box::new(|_| (200, r#"{"ok":true}"#.into())),
+    ])
+    .await;
+    let client = crate::reqwest_client();
+    let http = transport(&client, &base);
+    let auth = ResponsesHttpAuth::bearer("token-1", crate::rho_user_agent());
+    let noticed = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let noticed_at_retry = Arc::clone(&noticed);
+    let captured_at_retry = Arc::clone(&captured);
+    let result = http
+        .post_json_refreshing(
+            &auth,
+            || async {
+                Ok(Some(ResponsesHttpAuth::bearer(
+                    "token-2",
+                    crate::rho_user_agent(),
+                )))
+            },
+            || {
+                noticed_at_retry.fetch_add(1, Ordering::SeqCst);
+                let seen = captured_at_retry
+                    .try_lock()
+                    .expect("first request must be finished before retry notice");
+                assert_eq!(
+                    seen.len(),
+                    1,
+                    "retry POST must not start before the attempt event"
+                );
+                Ok(())
+            },
+            ResponsesEndpoint::Create,
+            &json!({"model":"grok-4.5"}),
+            None,
+        )
+        .await;
+    assert_eq!(result.response.unwrap().status(), reqwest::StatusCode::OK);
+    assert_eq!(noticed.load(Ordering::SeqCst), 1);
+    assert_eq!(captured.lock().await.len(), 2);
+}
+
+// Covers: before_retry error must skip the refresh retry POST
+// Owner: providers responses transport
+#[tokio::test]
+async fn refresh_retry_notice_error_skips_second_post() {
+    let (base, captured) = spawn_sequential_server(vec![
+        Box::new(|_| (401, String::new())),
+        Box::new(|_| (200, r#"{"ok":true}"#.into())),
+    ])
+    .await;
+    let client = crate::reqwest_client();
+    let http = transport(&client, &base);
+    let auth = ResponsesHttpAuth::bearer("token-1", crate::rho_user_agent());
+    let result = http
+        .post_json_refreshing(
+            &auth,
+            || async {
+                Ok(Some(ResponsesHttpAuth::bearer(
+                    "token-2",
+                    crate::rho_user_agent(),
+                )))
+            },
+            || Err(ModelError::Interrupted),
+            ResponsesEndpoint::Create,
+            &json!({"model":"grok-4.5"}),
+            None,
+        )
+        .await;
+    assert!(matches!(result.response, Err(ModelError::Interrupted)));
+    assert_eq!(result.failed_attempts.len(), 1);
+    assert_eq!(captured.lock().await.len(), 1);
 }

@@ -31,7 +31,12 @@ impl XaiProvider {
         };
 
         let http_result = self
-            .post_responses(ResponsesEndpoint::Compact, &body, Some(&cancellation))
+            .post_responses(
+                ResponsesEndpoint::Compact,
+                &body,
+                Some(&cancellation),
+                || Ok(()),
+            )
             .await;
         Ok(native_compact_from_http(
             http_result,

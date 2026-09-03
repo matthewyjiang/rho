@@ -120,6 +120,7 @@ async fn post_codex(
                 Ok(Some(codex_http_auth(&refreshed)))
             }
         },
+        || Ok(()),
         endpoint,
         body,
         cancellation,

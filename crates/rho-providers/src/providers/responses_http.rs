@@ -170,14 +170,15 @@ impl<'a> ResponsesHttpTransport<'a> {
     /// Posts JSON and, on `401`, invokes `refresh` once.
     ///
     /// `refresh` returning `Ok(None)` means the `401` is final and records no
-    /// failed attempt. `Ok(Some(auth))` retries once and records an
-    /// authentication failed attempt. `Err` keeps that attempt and does not
-    /// retry. Cancellation during refresh is an `Err` and also keeps the
-    /// attempt.
-    pub(crate) async fn post_json_refreshing<F, Fut>(
+    /// failed attempt. `Ok(Some(auth))` records an authentication failed
+    /// attempt, runs `before_retry`, then retries once. `before_retry` errors
+    /// keep that attempt and skip the retry POST. `refresh` `Err` (including
+    /// cancel) keeps the attempt and does not retry.
+    pub(crate) async fn post_json_refreshing<F, Fut, N>(
         &self,
         auth: &ResponsesHttpAuth,
         refresh: F,
+        before_retry: N,
         endpoint: ResponsesEndpoint,
         body: &Value,
         cancellation: Option<&rho_sdk::CancellationToken>,
@@ -185,6 +186,7 @@ impl<'a> ResponsesHttpTransport<'a> {
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Option<ResponsesHttpAuth>, ModelError>> + Send,
+        N: FnOnce() -> Result<(), ModelError>,
     {
         let response = match self.send(endpoint, body, auth, cancellation).await {
             Ok(response) => response,
@@ -196,10 +198,15 @@ impl<'a> ResponsesHttpTransport<'a> {
 
         match cancel_aware(cancellation, refresh()).await {
             Ok(None) => ResponsesHttpResult::ok(response),
-            Ok(Some(refreshed)) => self
-                .post_json(&refreshed, endpoint, body, cancellation)
-                .await
-                .with_failed_attempts(authentication_failed_attempt()),
+            Ok(Some(refreshed)) => {
+                let failed_attempts = authentication_failed_attempt();
+                if let Err(error) = before_retry() {
+                    return ResponsesHttpResult::err(error).with_failed_attempts(failed_attempts);
+                }
+                self.post_json(&refreshed, endpoint, body, cancellation)
+                    .await
+                    .with_failed_attempts(failed_attempts)
+            }
             Err(error) => ResponsesHttpResult::err(error)
                 .with_failed_attempts(authentication_failed_attempt()),
         }
