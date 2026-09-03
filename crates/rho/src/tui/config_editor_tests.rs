@@ -7,7 +7,7 @@ use crate::tui::text_input::{TextInput, TextInputTarget};
 #[test]
 fn agent_concurrency_clamps_to_named_max() {
     let mut over_max = ConfigNumberInput::new(ConfigNumberKey::AgentConcurrency, 1);
-    over_max.value = "1000".into();
+    over_max.editor.value = "1000".into();
     assert_eq!(
         over_max.parsed_value().unwrap(),
         crate::config::MAX_AGENT_CONCURRENCY
