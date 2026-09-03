@@ -75,6 +75,7 @@ pub(crate) enum DoctorCheckId {
     SelectedModel,
     ClaudeAuth,
     ClaudeBinary,
+    Cursor,
     Rtk,
     Herdr,
     ConfigPath,
@@ -94,7 +95,7 @@ impl DoctorCheckId {
             Self::ModelCache { .. } | Self::ProviderEndpoint { .. } | Self::SelectedModel => {
                 DoctorSectionId::Providers
             }
-            Self::ClaudeAuth | Self::ClaudeBinary | Self::Rtk | Self::Herdr => {
+            Self::ClaudeAuth | Self::ClaudeBinary | Self::Cursor | Self::Rtk | Self::Herdr => {
                 DoctorSectionId::Runtimes
             }
             Self::ConfigPath | Self::SessionRoot | Self::ClipboardText | Self::ClipboardImage => {

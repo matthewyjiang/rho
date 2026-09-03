@@ -67,6 +67,8 @@ pub(super) struct RuntimeInfo {
     tree_error: Option<String>,
     /// Claude Code auth summary. Outside provider credentials on purpose.
     claude_code: String,
+    /// Cursor Agent auth summary. Outside provider credentials on purpose.
+    cursor: String,
     /// Cumulative cost from all completed subagents, including failed/canceled ones.
     subagent_total_cost_usd_micros: u64,
     /// Cumulative cost from finished advisor calls in this conversation.
@@ -93,6 +95,14 @@ impl App {
             ClaudeProbeSnapshot::not_refreshed_during_turn().auth_description()
         } else {
             self.claude_probe_snapshot().await.auth_description()
+        };
+        let cursor = if self.is_ui_busy() {
+            "cursor: status not refreshed during a model turn".into()
+        } else {
+            match crate::cursor_runtime::auth::query().await {
+                Ok(status) => status.auth_description(),
+                Err(error) => error.to_string(),
+            }
         };
         let info = RuntimeInfo {
             version: identity.rho_version.to_string(),
@@ -134,6 +144,7 @@ impl App {
             tree,
             tree_error,
             claude_code,
+            cursor,
             subagent_total_cost_usd_micros: self.usage.subagent_total_cost_usd_micros,
             advisor_total_cost_usd_micros: self.usage.advisor_total_cost_usd_micros,
         };
@@ -162,6 +173,7 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
 
     block.push_section("External runtimes");
     block.push_note(&info.claude_code);
+    block.push_note(&info.cursor);
 
     block.push_section("Session");
     if let Some(tree) = &info.tree {

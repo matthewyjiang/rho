@@ -74,6 +74,7 @@ mod chat_media;
 mod choice_actions;
 mod claude_login;
 mod composer_layout;
+mod cursor_login;
 mod custom_provider_login;
 mod during_turn;
 mod exclusive_screen;

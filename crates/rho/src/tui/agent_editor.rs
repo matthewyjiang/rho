@@ -5,7 +5,10 @@
 //! decides how the selected value is interpreted. Save serializes through the agent
 //! crate helpers.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::anyhow;
 
@@ -123,8 +126,7 @@ pub(super) struct AgentEditSession {
     authorized_root: PathBuf,
     original_contents: String,
     phase: AgentEditPhase,
-    rho_runtime: Option<AgentRuntimeSpec>,
-    claude_runtime: Option<AgentRuntimeSpec>,
+    runtime_stash: BTreeMap<AgentRuntime, AgentRuntimeSpec>,
 }
 
 impl AgentEditSession {
@@ -135,11 +137,8 @@ impl AgentEditSession {
         authorized_root: PathBuf,
         original_contents: String,
     ) -> Self {
-        let (rho_runtime, claude_runtime) = match &draft.runtime {
-            runtime @ AgentRuntimeSpec::Rho { .. } => (Some(runtime.clone()), None),
-            runtime @ AgentRuntimeSpec::ClaudeCli(_) => (None, Some(runtime.clone())),
-            AgentRuntimeSpec::Cursor(_) => (None, None),
-        };
+        let mut runtime_stash = BTreeMap::new();
+        runtime_stash.insert(draft.runtime.runtime(), draft.runtime.clone());
         Self {
             draft,
             path,
@@ -147,8 +146,7 @@ impl AgentEditSession {
             authorized_root,
             original_contents,
             phase: AgentEditPhase::Fields,
-            rho_runtime,
-            claude_runtime,
+            runtime_stash,
         }
     }
 
@@ -169,25 +167,23 @@ impl AgentEditSession {
     }
 
     fn switch_runtime(&mut self, value: &str) -> bool {
-        match &self.draft.runtime {
-            runtime @ AgentRuntimeSpec::Rho { .. } => self.rho_runtime = Some(runtime.clone()),
-            runtime @ AgentRuntimeSpec::ClaudeCli(_) => {
-                self.claude_runtime = Some(runtime.clone());
-            }
-            AgentRuntimeSpec::Cursor(_) => {}
-        }
-        let saved = match value {
-            "rho" => self.rho_runtime.clone(),
-            "claude-cli" => self.claude_runtime.clone(),
-            "cursor" => None,
+        let next = match value {
+            "rho" => AgentRuntime::Rho,
+            "claude-cli" => AgentRuntime::ClaudeCli,
+            "cursor" => AgentRuntime::Cursor,
             _ => return false,
         };
-        if let Some(runtime) = saved {
+        self.runtime_stash
+            .insert(self.draft.runtime.runtime(), self.draft.runtime.clone());
+        if let Some(runtime) = self.runtime_stash.get(&next).cloned() {
             self.draft.runtime = runtime;
-            true
-        } else {
-            self.draft.switch_runtime_kind(value)
+        } else if !self.draft.switch_runtime_kind(value) {
+            return false;
         }
+        if matches!(self.draft.runtime, AgentRuntimeSpec::Cursor(_)) {
+            let _ = self.draft.set_prompt_policy_kind("extend");
+        }
+        true
     }
 }
 
@@ -358,13 +354,13 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
         AgentRuntime::Cursor => {
             items.push(field_item(
                 "Model",
-                "Cursor model id passed as --model. Bracket overrides such as name[effort=high,fast=false] are allowed. Default lets Cursor choose.",
+                "Cursor model id passed as --model. Effort lives in the model id for cursor; bracket overrides such as name[effort=high,fast=false] are allowed. Default lets Cursor choose.",
                 Some(draft.model_badge()),
                 AGENT_FIELD_MODEL,
             ));
             items.push(field_item(
                 "Tools",
-                "Closed Cursor tool names, as a bracket list (for example [read_tool_call]).",
+                "Closed snake_case Cursor tool names as a bracket list (for example [read_tool_call, grep_tool_call]).",
                 Some(draft.tools_badge()),
                 AGENT_FIELD_TOOLS,
             ));
@@ -477,20 +473,17 @@ fn agent_choice_picker(
                 PromptPolicy::Extend(_) => "extend",
                 PromptPolicy::Replace(_) => "replace",
             };
-            (
-                "prompt policy",
-                choice_items(
-                    &[
-                        ("extend", "Add the body to the system prompt."),
-                        (
-                            "replace",
-                            "Use the body as the full system prompt. Must be non-empty.",
-                        ),
-                    ],
-                    current,
-                    prefix,
-                ),
-            )
+            let options: &[(&str, &str)] = match draft.runtime.runtime() {
+                AgentRuntime::Cursor => &[("extend", "Add the body to the system prompt.")],
+                AgentRuntime::Rho | AgentRuntime::ClaudeCli => &[
+                    ("extend", "Add the body to the system prompt."),
+                    (
+                        "replace",
+                        "Use the body as the full system prompt. Must be non-empty.",
+                    ),
+                ],
+            };
+            ("prompt policy", choice_items(options, current, prefix))
         }
         AgentChoiceField::Runtime => {
             let current = draft.runtime.runtime().as_str();

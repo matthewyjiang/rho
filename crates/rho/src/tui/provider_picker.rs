@@ -31,6 +31,16 @@ pub(super) fn login_group_picker() -> UiPicker {
         })
         .collect::<Vec<_>>();
     items.extend(super::custom_provider_login::login_group_items());
+    items.push(PickerItem {
+        section: None,
+        label: "Cursor".into(),
+        detail: Some("Cursor Agent CLI (cursor-agent login)".into()),
+        preview: None,
+        badge: None,
+        value: super::cursor_login::CURSOR_TARGET.into(),
+        selection_verb: None,
+        allow_filter_completion: true,
+    });
     sort_items_by_ascii_label(&mut items);
     UiPicker::login_group("Select provider to login", items).with_key_hints(super::PickerKeyHints {
         tab_complete: true,

@@ -96,7 +96,7 @@ flowchart TD
 
 Interactive logins always show the authorize URL, including when a local browser opened. Headless or remote sessions (SSH, no display, nested harness) skip launching a browser and prefer a device-code flow when the provider has one. In the TUI the URL and any device code stay in the composer, including on first-run setup, so they are visible without the transcript. Press `c` to copy the URL (OSC-52 over SSH), or click **COPY** next to the link. Esc cancels. `rho login` prints the same URL and code; it selects device-code automatically when no browser can appear, so you do not need `--device-auth` after the fact. `--device-auth` still forces device-code on a graphical session.
 
-Claude Code login is the exception: `/login claude-code` hands the terminal to `claude auth login` and never sees an authorize URL.
+Claude Code login is the exception: `/login claude-code` hands the terminal to `claude auth login` and never sees an authorize URL. `/login cursor` does the same for `cursor-agent login`.
 
 Successful login normally stores credentials only. It does not switch the active provider/model, because provider switching is model-driven through `/model`. If Rho started without usable auth and is running on an unauthenticated placeholder, a successful login selects that provider's default model so the session becomes usable.
 
@@ -111,6 +111,16 @@ Claude Code is a **runtime**, not a Rho provider. It is separate from the [Anthr
 - Rho reads signed-in state with bounded `claude auth status` probes for `/info` and `/doctor`. Ownership wording stays explicit (`managed by the claude binary`).
 - Sign out with `/logout claude-code` (after an explicit confirmation that this signs out of Claude Code everywhere) or with `claude auth logout` yourself. That is a global Claude Code logout, not a Rho token delete. Rho cannot remove a Claude token from the Rho credential store because it never stored one.
 - Bare `/login` lists Claude Code under the Anthropic group next to the Anthropic API key method. Choosing it skips the Rho credential-store chooser entirely.
+
+### Cursor Agent runtime sign-in
+
+Cursor Agent is a **runtime**, not a Rho provider. Agent definitions with `runtime: cursor` delegate to `cursor-agent`. Install that binary first ([installation](/installation#cursor-agent-binary-optional)).
+
+- `/login cursor` (alias `/login cursor-agent`) suspends the TUI and hands the terminal to `cursor-agent login`. Set `NO_OPEN_BROWSER=1` on the child environment if you need the URL printed instead of a browser open. After the handoff there is no cancel key inside the Cursor prompt.
+- Cursor Agent runs the sign-in UI and stores credentials in `~/.cursor`. Rho never sees or stores the token and never writes a Rho credential-store entry for it.
+- Rho reads signed-in state with bounded `cursor-agent status --format json` probes for `/info` and `/doctor`.
+- `/logout cursor` is not available from Rho. Sign out with `cursor-agent logout` yourself.
+- Bare `/login` lists **Cursor** at the top level and **Cursor Agent CLI (cursor-agent login)** under the Anthropic group next to Claude Code. Choosing either skips the Rho credential-store chooser.
 
 ## Selecting models
 

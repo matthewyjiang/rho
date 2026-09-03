@@ -30,15 +30,23 @@ pub(super) const CANCEL_LOGOUT_VALUE: &str = "cancel";
 ///
 /// The picker renders whatever it is handed; which group Claude Code belongs to
 /// is this feature's policy, not the picker's.
-pub(super) const EXTERNAL_LOGIN_METHODS: &[ExternalLoginMethod] = &[ExternalLoginMethod {
-    // Claude Code is an Anthropic-family runtime for delegation, not a separate
-    // top-level provider group. Keep it beside the Anthropic API key method.
-    group_id: "anthropic",
-    value: CLAUDE_CODE_TARGET,
-    label: "Claude Code (delegation only)",
-    detail: "External Claude binary subscription, not Anthropic API billing. \
+pub(super) const EXTERNAL_LOGIN_METHODS: &[ExternalLoginMethod] = &[
+    ExternalLoginMethod {
+        // Claude Code is an Anthropic-family runtime for delegation, not a separate
+        // top-level provider group. Keep it beside the Anthropic API key method.
+        group_id: "anthropic",
+        value: CLAUDE_CODE_TARGET,
+        label: "Claude Code (delegation only)",
+        detail: "External Claude binary subscription, not Anthropic API billing. \
 Credentials are managed by Claude Code, not Rho.",
-}];
+    },
+    ExternalLoginMethod {
+        group_id: "anthropic",
+        value: super::cursor_login::CURSOR_TARGET,
+        label: "Cursor Agent CLI (cursor-agent login)",
+        detail: "External cursor-agent login. Credentials stay in ~/.cursor, not Rho.",
+    },
+];
 
 /// One login method backed by an external runtime rather than a Rho credential.
 pub(super) struct ExternalLoginMethod {
@@ -57,6 +65,8 @@ pub(super) struct ExternalLoginMethod {
 pub(super) enum SignInTarget {
     /// Claude Code, whose credential the `claude` binary owns.
     ClaudeCode,
+    /// Cursor Agent CLI, whose credential `cursor-agent` owns.
+    Cursor,
     /// Onboarding for a host that does not exist yet.
     NewCustomHost { api: OpenAiCompatibleApi },
     /// A Rho provider credential.
@@ -68,6 +78,8 @@ impl SignInTarget {
         let value = value.trim();
         if value.eq_ignore_ascii_case(CLAUDE_CODE_TARGET) {
             Self::ClaudeCode
+        } else if super::cursor_login::is_cursor_login_target(value) {
+            Self::Cursor
         } else if let Some(api) = super::custom_provider_login::parse_custom_host_api(value) {
             Self::NewCustomHost { api }
         } else {

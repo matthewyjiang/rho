@@ -16,7 +16,11 @@ fn plan_follows_gate_and_selected_or_configured_hosts() {
     assert!(plan_probes(&config, &config.provider, DoctorProbeGate::Disabled).is_empty());
     assert_eq!(
         plan_probes(&config, &config.provider, DoctorProbeGate::Live),
-        vec![DoctorProbeId::Claude, DoctorProbeId::Rtk]
+        vec![
+            DoctorProbeId::Claude,
+            DoctorProbeId::Cursor,
+            DoctorProbeId::Rtk,
+        ]
     );
 
     let active = Config {
@@ -55,7 +59,14 @@ fn assert_endpoint_then_binaries(config: &Config, active_provider: &str, provide
         config.resolved_provider_endpoint(provider).as_ref(),
         Some(endpoint)
     );
-    assert_eq!(&probes[1..], &[DoctorProbeId::Claude, DoctorProbeId::Rtk]);
+    assert_eq!(
+        &probes[1..],
+        &[
+            DoctorProbeId::Claude,
+            DoctorProbeId::Cursor,
+            DoctorProbeId::Rtk
+        ]
+    );
 }
 
 // Covers: placeholder rows, timed-out rows, and finished rows all cover the

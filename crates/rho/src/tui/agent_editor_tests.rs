@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 use super::*;
 use crate::agent::{
     AgentDefinition, AgentId, AgentOrigin, AgentRuntimeSpec, ClaudeAgentConfig, ClaudeToolPolicy,
-    ModelPolicy, ModelSelection, PromptPolicy, ToolPolicy,
+    CursorAgentConfig, CursorTool, ModelPolicy, ModelSelection, PromptPolicy, ToolPolicy,
 };
 use crate::model_aliases::ModelAliases;
 use crate::tui::line_editor::LineEditor;
@@ -34,6 +34,18 @@ fn claude_draft() -> AgentDefinition {
             inherit_claude_config: false,
             model: None,
             reasoning: None,
+        }),
+    }
+}
+
+fn cursor_draft() -> AgentDefinition {
+    AgentDefinition {
+        id: AgentId::new("cursor-draft").unwrap(),
+        description: "cursor draft".into(),
+        prompt: PromptPolicy::Extend("body".into()),
+        runtime: AgentRuntimeSpec::Cursor(CursorAgentConfig {
+            tools: vec![CursorTool::Read],
+            model: None,
         }),
     }
 }
@@ -122,6 +134,36 @@ fn claude_field_picker_hides_rho_only_fields() {
     assert!(values.contains(&AGENT_FIELD_TOOLS));
     assert!(!values.contains(&AGENT_FIELD_MODEL_POLICY));
     assert!(!values.contains(&AGENT_FIELD_PROVIDER));
+}
+
+// Covers: cursor editor hides reasoning, offers only extend, and rejects unknown tools
+// Owner: tui agent editor
+#[test]
+fn cursor_runtime_hides_reasoning_and_validates_tools() {
+    let picker = agent_field_picker(&cursor_draft());
+    let values = field_values(&picker);
+    assert!(!values.contains(&AGENT_FIELD_REASONING));
+    assert!(values.contains(&AGENT_FIELD_MODEL));
+    assert!(values.contains(&AGENT_FIELD_TOOLS));
+    assert!(!values.contains(&AGENT_FIELD_MODEL_POLICY));
+    assert!(!values.contains(&AGENT_FIELD_INHERIT_CLAUDE_CONFIG));
+
+    let aliases = ModelAliases::default();
+    let prompt_picker = agent_choice_picker(
+        AgentChoiceField::PromptPolicy,
+        &cursor_draft(),
+        conversation("acme", "unlisted", &aliases),
+    );
+    assert_eq!(picker_labels(&prompt_picker), ["extend"]);
+
+    let mut draft = cursor_draft();
+    for (tools, expect_ok) in [
+        ("[read_tool_call, grep_tool_call]", true),
+        ("[readToolCall]", false),
+        ("[task_tool_call]", false),
+    ] {
+        assert_eq!(draft.set_tools_text(tools).is_ok(), expect_ok, "{tools}");
+    }
 }
 
 // Covers: runtime toggles retain edits made to each runtime within one session

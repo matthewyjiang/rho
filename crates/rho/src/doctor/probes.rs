@@ -17,7 +17,11 @@ use super::{
     checks,
     report::{DoctorCheck, DoctorCheckId, DoctorStatus},
 };
-use crate::{claude_runtime::auth::ClaudeProbeSnapshot, config::Config};
+use crate::{
+    claude_runtime::auth::ClaudeProbeSnapshot,
+    config::Config,
+    cursor_runtime::auth::{CursorAuthError, CursorAuthStatus},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum DoctorProbeId {
@@ -27,8 +31,17 @@ pub(crate) enum DoctorProbeId {
     },
     /// `claude auth status` and `claude --version`.
     Claude,
+    /// `cursor-agent status --format json` and `cursor-agent --version`.
+    Cursor,
     /// `rtk --version`.
     Rtk,
+}
+
+/// Cursor Agent binary and auth as seen by doctor.
+#[derive(Debug)]
+pub(crate) struct CursorProbeSnapshot {
+    pub(crate) auth: Result<CursorAuthStatus, CursorAuthError>,
+    pub(crate) version: Option<String>,
 }
 
 #[derive(Debug)]
@@ -38,6 +51,7 @@ pub(crate) enum DoctorProbeOutcome {
         health: ProviderModelHealth,
     },
     Claude(ClaudeProbeSnapshot),
+    Cursor(CursorProbeSnapshot),
     Rtk {
         available: bool,
     },
@@ -92,6 +106,7 @@ pub(crate) fn plan_probes(
         })
         .collect::<Vec<_>>();
     probes.push(DoctorProbeId::Claude);
+    probes.push(DoctorProbeId::Cursor);
     probes.push(DoctorProbeId::Rtk);
     probes
 }
@@ -108,6 +123,10 @@ pub(crate) async fn run_probe(
         DoctorProbeId::Claude => {
             DoctorProbeOutcome::Claude(crate::claude_runtime::auth::probe_snapshot().await)
         }
+        DoctorProbeId::Cursor => DoctorProbeOutcome::Cursor(CursorProbeSnapshot {
+            auth: crate::cursor_runtime::auth::query().await,
+            version: crate::cursor_runtime::auth::version().await.ok(),
+        }),
         DoctorProbeId::Rtk => DoctorProbeOutcome::Rtk {
             available: probe_rtk().await,
         },
@@ -196,6 +215,10 @@ pub(crate) fn probe_checks(
             vec![checks::endpoint_check(provider, health, active_provider)]
         }
         DoctorProbeOutcome::Claude(snapshot) => checks::claude_checks(snapshot),
+        DoctorProbeOutcome::Cursor(snapshot) => vec![checks::cursor_check(
+            &snapshot.auth,
+            snapshot.version.as_deref(),
+        )],
         DoctorProbeOutcome::Rtk { available } => vec![checks::rtk_check(*available)],
         DoctorProbeOutcome::Failed(id) => failed_rows(
             id,
@@ -227,6 +250,7 @@ fn failed_rows(
         }
         DoctorProbeId::ProviderEndpoint { .. } => DoctorStatus::Info,
         DoctorProbeId::Claude | DoctorProbeId::Rtk => DoctorStatus::Warn,
+        DoctorProbeId::Cursor => DoctorStatus::Info,
     };
     probe_rows(id)
         .into_iter()
@@ -249,6 +273,7 @@ fn probe_rows(id: &DoctorProbeId) -> Vec<(DoctorCheckId, String)> {
                 checks::CLAUDE_BINARY_LABEL.into(),
             ),
         ],
+        DoctorProbeId::Cursor => vec![(DoctorCheckId::Cursor, checks::CURSOR_LABEL.into())],
         DoctorProbeId::Rtk => vec![(DoctorCheckId::Rtk, checks::RTK_LABEL.into())],
     }
 }

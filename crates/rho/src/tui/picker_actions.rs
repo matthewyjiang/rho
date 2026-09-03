@@ -127,6 +127,12 @@ impl App {
             }
             PickerAction::LoginProvider => match claude_login::SignInTarget::parse(value) {
                 claude_login::SignInTarget::ClaudeCode => self.execute_claude_code_login().await,
+                claude_login::SignInTarget::Cursor => {
+                    let PickerCommit::Idle { terminal, .. } = commit else {
+                        unreachable!("cursor login commit is idle-only");
+                    };
+                    self.execute_cursor_login(terminal).await
+                }
                 claude_login::SignInTarget::NewCustomHost { api } => {
                     self.start_custom_provider_onboarding(api);
                     Ok(())
@@ -141,6 +147,10 @@ impl App {
             },
             PickerAction::LogoutProvider => match claude_login::SignInTarget::parse(value) {
                 claude_login::SignInTarget::ClaudeCode => self.execute_claude_code_logout().await,
+                claude_login::SignInTarget::Cursor => {
+                    self.report_cursor_logout_unsupported();
+                    Ok(())
+                }
                 // Nothing is stored for a host that was never created.
                 claude_login::SignInTarget::NewCustomHost { .. } => Ok(()),
                 claude_login::SignInTarget::Provider(provider) => {
@@ -319,6 +329,7 @@ impl App {
             claude_login::SignInTarget::ClaudeCode => {
                 return self.execute_claude_code_login().await
             }
+            claude_login::SignInTarget::Cursor => return self.execute_cursor_login(terminal).await,
             claude_login::SignInTarget::NewCustomHost { api } => {
                 self.start_custom_provider_onboarding(api);
                 return Ok(());
