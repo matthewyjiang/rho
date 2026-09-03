@@ -161,7 +161,8 @@ async fn output_larger_than_the_bound_is_captured_up_to_the_bound_and_flagged() 
 
     assert!(output.truncated);
     assert!(output.stdout.len() <= crate::hooks::protocol::MAX_DECISION_BYTES + 1);
-    assert!(output.stderr.len() <= MAX_STDERR_BYTES);
+    assert!(output.stderr.len() <= crate::cli_runtime::MAX_STDERR_BYTES + rho_sdk::ELLIPSIS.len());
+    assert!(output.stderr.starts_with(rho_sdk::ELLIPSIS));
 }
 
 #[tokio::test]

@@ -1,6 +1,8 @@
-use super::*;
-use pretty_assertions::assert_eq;
 use std::path::PathBuf;
+
+use pretty_assertions::assert_eq;
+
+use super::*;
 
 fn line(script: &str, args: &[&str]) -> String {
     bat_command_line(Path::new(script), args)
@@ -19,24 +21,24 @@ fn tail(script: &str, args: &[&str]) -> String {
 #[test]
 fn bat_line_wraps_script_and_simple_args() {
     assert_eq!(
-        tail(r"C:\shims\claude.cmd", &["auth", "status"]),
-        r#"/e:ON /v:OFF /d /c ""C:\shims\claude.cmd" auth status""#
+        tail(r"C:\shims\tool.cmd", &["run", "status"]),
+        r#"/e:ON /v:OFF /d /c ""C:\shims\tool.cmd" run status""#
     );
-    assert!(line(r"C:\shims\claude.cmd", &["auth"]).starts_with("cmd.exe "));
+    assert!(line(r"C:\shims\tool.cmd", &["run"]).starts_with("cmd.exe "));
 }
 
 #[test]
 fn bat_line_quotes_spaces_and_empty() {
     assert_eq!(
-        tail(r"C:\shims\claude.cmd", &["--system", "a b", ""]),
-        r#"/e:ON /v:OFF /d /c ""C:\shims\claude.cmd" --system "a b" """"#
+        tail(r"C:\shims\tool.cmd", &["--system", "a b", ""]),
+        r#"/e:ON /v:OFF /d /c ""C:\shims\tool.cmd" --system "a b" """"#
     );
 }
 
 #[test]
 fn bat_line_quotes_metacharacters() {
     let got = tail(
-        r"C:\shims\claude.cmd",
+        r"C:\shims\tool.cmd",
         &["a&b", "c|d", "e(f)", "x^y", "p>q", "r<s"],
     );
     assert!(got.contains(r#""a&b""#), "{got}");
@@ -49,13 +51,13 @@ fn bat_line_quotes_metacharacters() {
 
 #[test]
 fn bat_line_doubles_embedded_quotes() {
-    let got = tail(r"C:\shims\claude.cmd", &[r#"say "hi""#]);
+    let got = tail(r"C:\shims\tool.cmd", &[r#"say "hi""#]);
     assert!(got.contains(r#""say ""hi""""#), "{got}");
 }
 
 #[test]
 fn bat_line_percent_uses_std_null_slice_hack() {
-    let got = tail(r"C:\shims\claude.cmd", &["100%sure", "%PATH%"]);
+    let got = tail(r"C:\shims\tool.cmd", &["100%sure", "%PATH%"]);
     // Each `%` becomes `%%cd:~,` + `%` (std yt-dlp null-slice of %cd%).
     assert!(got.contains("100%%cd:~,%sure"), "{got}");
     assert!(got.contains("%%cd:~,%PATH%%cd:~,%"), "{got}");
@@ -63,14 +65,14 @@ fn bat_line_percent_uses_std_null_slice_hack() {
 
 #[test]
 fn bat_line_exclamation_is_quoted_under_v_off() {
-    let got = tail(r"C:\shims\claude.cmd", &["wow!"]);
+    let got = tail(r"C:\shims\tool.cmd", &["wow!"]);
     assert!(got.contains(r#""wow!""#), "{got}");
     assert!(got.contains("/v:OFF"), "{got}");
 }
 
 #[test]
 fn bat_line_unicode_passthrough() {
-    let got = tail(r"C:\shims\claude.cmd", &["模型", "café"]);
+    let got = tail(r"C:\shims\tool.cmd", &["模型", "café"]);
     assert!(got.contains("模型"), "{got}");
     assert!(got.contains("café"), "{got}");
 }
@@ -78,11 +80,11 @@ fn bat_line_unicode_passthrough() {
 #[test]
 fn bat_line_rejects_cr_lf() {
     assert_eq!(
-        bat_raw_arg_tail(Path::new(r"C:\claude.cmd"), &["ok\nbad"]).unwrap_err(),
+        bat_raw_arg_tail(Path::new(r"C:\tool.cmd"), &["ok\nbad"]).unwrap_err(),
         WindowsShimArgError::CmdDisallowedByte
     );
     assert_eq!(
-        bat_raw_arg_tail(Path::new(r"C:\claude.cmd"), &["ok\rbad"]).unwrap_err(),
+        bat_raw_arg_tail(Path::new(r"C:\tool.cmd"), &["ok\rbad"]).unwrap_err(),
         WindowsShimArgError::CmdDisallowedByte
     );
 }
@@ -111,19 +113,19 @@ fn powershell_rejects_nul_only() {
 
 #[test]
 fn trailing_backslash_argument_is_quoted_and_doubled() {
-    let got = tail(r"C:\shims\claude.cmd", &[r"C:\path\"]);
+    let got = tail(r"C:\shims\tool.cmd", &[r"C:\path\"]);
     assert!(got.contains(r#""C:\path\\""#), "{got}");
 }
 
 #[test]
 fn script_path_buf_round_trip_in_line() {
-    let script = PathBuf::from(r"C:\Users\me\scoop\shims\claude.cmd");
+    let script = PathBuf::from(r"C:\Users\me\scoop\shims\tool.cmd");
     let got = bat_raw_arg_tail(&script, &["logout"])
         .unwrap()
         .to_string_lossy()
         .into_owned();
     assert!(
-        got.contains(r#""C:\Users\me\scoop\shims\claude.cmd""#),
+        got.contains(r#""C:\Users\me\scoop\shims\tool.cmd""#),
         "{got}"
     );
 }

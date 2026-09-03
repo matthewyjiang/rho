@@ -1,4 +1,4 @@
-//! Windows shim argument encoding for Claude Code `.cmd` / `.bat` / `.ps1`.
+//! Windows shim argument encoding for external CLI `.cmd` / `.bat` / `.ps1` wrappers.
 //!
 //! ## `.cmd` / `.bat`
 //!
@@ -36,17 +36,17 @@ use std::path::Path;
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum WindowsShimArgError {
     #[error(
-        "claude code: argument cannot be passed safely through a Windows cmd/bat shim \
+        "argument cannot be passed safely through a Windows cmd/bat shim \
 (contains CR, LF, or NUL)"
     )]
     CmdDisallowedByte,
     #[error(
-        "claude code: Windows cmd/bat shim path is invalid \
+        "Windows cmd/bat shim path is invalid \
 (contains quote or ends with backslash)"
     )]
     InvalidScriptPath,
     #[error(
-        "claude code: argument cannot be passed safely through a Windows PowerShell shim \
+        "argument cannot be passed safely through a Windows PowerShell shim \
 (contains NUL)"
     )]
     PowerShellDisallowedByte,
@@ -117,7 +117,7 @@ fn append_bat_arg_str(out: &mut String, arg: &OsStr) -> Result<(), WindowsShimAr
         return Err(WindowsShimArgError::CmdDisallowedByte);
     }
     let Some(text) = arg.to_str() else {
-        // Non-unicode args are not used by Claude spawns; refuse rather than lossy-send.
+        // Non-unicode args are not used by external CLI spawns; refuse rather than lossy-send.
         return Err(WindowsShimArgError::CmdDisallowedByte);
     };
     if text.chars().any(|c| c == '\r' || c == '\n') {

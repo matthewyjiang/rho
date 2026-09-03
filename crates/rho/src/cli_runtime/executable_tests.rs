@@ -4,56 +4,57 @@ use std::path::PathBuf;
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::claude_runtime::windows_shim_args::WindowsShimArgError;
+use crate::cli_runtime::windows_shim_args::bat_command_line;
 
+/// Covers: a bare name that is not on PATH and an explicit path that does not
+/// exist both resolve to nothing; resolution never invents a binary.
+/// Owner: `CliExecutable::resolve`.
 #[test]
-fn missing_program_is_binary_missing() {
+fn missing_program_resolves_to_none() {
     for name in [
-        "definitely-not-a-claude-binary-xyz",
-        "/tmp/rho-missing-claude-binary",
+        "definitely-not-an-external-cli-binary-xyz",
+        "/tmp/rho-missing-cli-binary-xyz",
     ] {
-        let error = resolve_named(name).unwrap_err();
-        assert!(error.is_binary_missing(), "name={name}");
+        assert!(CliExecutable::resolve(name).is_none(), "name={name}");
     }
 }
 
+/// Covers: a `.cmd` shim keeps the script as the spawn image with verbatim argv,
+/// and the encoded line is std's `cmd.exe /e:ON /v:OFF /d /c` wrapper rather
+/// than a bare `cmd /C` that cmd re-parses loosely.
+/// Owner: `CliExecutable::plan` for `CmdScript`.
 #[test]
-fn classifies_cmd_shim_uses_script_image_and_bat_command_line() {
-    let shim = ClaudeExecutable::from_path(r"C:\Users\me\scoop\shims\claude.cmd");
-    assert_eq!(shim.kind(), ClaudeInvocationKind::CmdScript);
+fn cmd_shim_uses_script_image_and_bat_command_line() {
+    let shim = CliExecutable::from_path(r"C:\Users\me\scoop\shims\agent.cmd");
+    assert_eq!(shim.kind(), CliInvocationKind::CmdScript);
     let plan = shim.plan(["auth", "logout"]).unwrap();
     assert_eq!(
-        plan.program,
-        PathBuf::from(r"C:\Users\me\scoop\shims\claude.cmd")
+        plan,
+        CliArgv {
+            program: PathBuf::from(r"C:\Users\me\scoop\shims\agent.cmd"),
+            args: vec![OsString::from("auth"), OsString::from("logout")],
+        }
     );
+    let line = bat_command_line(&plan.program, &plan.args)
+        .expect("cmd shim encodes bat command line")
+        .to_string_lossy()
+        .into_owned();
     assert_eq!(
-        plan.args,
-        vec![OsString::from("auth"), OsString::from("logout")]
+        line,
+        r#"cmd.exe /e:ON /v:OFF /d /c ""C:\Users\me\scoop\shims\agent.cmd" auth logout""#
     );
-    let line =
-        crate::claude_runtime::windows_shim_args::bat_command_line(&plan.program, &plan.args)
-            .expect("cmd shim encodes bat command line")
-            .to_string_lossy()
-            .into_owned();
-    // std-compatible wrapper: not bare `cmd /C` + separate unquoted argv.
-    assert!(line.starts_with("cmd.exe /e:ON /v:OFF /d /c "), "{line}");
-    assert!(
-        line.contains(r#""C:\Users\me\scoop\shims\claude.cmd""#),
-        "{line}"
-    );
-    assert!(line.contains("auth"), "{line}");
-    assert!(line.contains("logout"), "{line}");
-    // Must not be the old unsafe multi-arg form that cmd re-parses loosely.
-    assert!(!line.contains("cmd.exe /D /C"), "{line}");
 }
 
+/// Covers: a `.ps1` shim is launched through `powershell.exe -File` with the
+/// script and args as structured argv.
+/// Owner: `CliExecutable::plan` for `PowerShellScript`.
 #[test]
-fn classifies_ps1_shim_as_fixed_argv_powershell_invocation() {
-    let shim = ClaudeExecutable::from_path(r"C:\Tools\claude.ps1");
-    assert_eq!(shim.kind(), ClaudeInvocationKind::PowerShellScript);
+fn ps1_shim_plans_fixed_argv_powershell_invocation() {
+    let shim = CliExecutable::from_path(r"C:\Tools\agent.ps1");
+    assert_eq!(shim.kind(), CliInvocationKind::PowerShellScript);
     assert_eq!(
         shim.plan(["auth", "status"]).unwrap(),
-        ClaudeArgv {
+        CliArgv {
             program: PathBuf::from("powershell.exe"),
             args: vec![
                 OsString::from("-NoProfile"),
@@ -61,7 +62,7 @@ fn classifies_ps1_shim_as_fixed_argv_powershell_invocation() {
                 OsString::from("-ExecutionPolicy"),
                 OsString::from("Bypass"),
                 OsString::from("-File"),
-                OsString::from(r"C:\Tools\claude.ps1"),
+                OsString::from(r"C:\Tools\agent.ps1"),
                 OsString::from("auth"),
                 OsString::from("status"),
             ],
@@ -69,9 +70,28 @@ fn classifies_ps1_shim_as_fixed_argv_powershell_invocation() {
     );
 }
 
+/// Covers: a program without a shim extension spawns directly with verbatim argv.
+/// Owner: `CliExecutable::plan` for `Direct`.
+#[test]
+fn direct_executable_plans_verbatim_argv() {
+    let exe = CliExecutable::from_path("/usr/local/bin/agent");
+    assert_eq!(exe.kind(), CliInvocationKind::Direct);
+    assert_eq!(
+        exe.plan(["--format", "json"]).unwrap(),
+        CliArgv {
+            program: PathBuf::from("/usr/local/bin/agent"),
+            args: vec![OsString::from("--format"), OsString::from("json")],
+        }
+    );
+}
+
+/// Covers: every cmd metacharacter, quote, percent, and path-with-spaces case
+/// is encoded so it survives cmd's re-parse as one literal token.
+/// Owner: the bat encoder as driven through `plan`; the exact algorithm lives
+/// in `windows_shim_args_tests`.
 #[test]
 fn cmd_shim_argv_encodes_special_characters() {
-    let shim = ClaudeExecutable::from_path(r"C:\shims\claude.cmd");
+    let shim = CliExecutable::from_path(r"C:\shims\agent.cmd");
     let cases: &[(&str, &str)] = &[
         ("a b", r#""a b""#),
         ("", r#""""#),
@@ -99,11 +119,10 @@ fn cmd_shim_argv_encodes_special_characters() {
     ];
     for &(arg, needle) in cases {
         let plan = shim.plan([arg]).unwrap();
-        let line =
-            crate::claude_runtime::windows_shim_args::bat_command_line(&plan.program, &plan.args)
-                .unwrap()
-                .to_string_lossy()
-                .into_owned();
+        let line = bat_command_line(&plan.program, &plan.args)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
         assert!(
             line.contains(needle),
             "arg={arg:?} needle={needle:?} line={line}"
@@ -111,46 +130,62 @@ fn cmd_shim_argv_encodes_special_characters() {
     }
 }
 
+/// Covers: CR and LF in a cmd shim argument are rejected by `plan` and
+/// `try_command` before any process exists, since they truncate the bat line.
+/// Owner: `CliExecutable::plan` for `CmdScript`.
 #[test]
 fn cmd_shim_rejects_cr_lf_before_spawn() {
-    let shim = ClaudeExecutable::from_path(r"C:\shims\claude.cmd");
-    let err = shim.plan(["ok\nbad"]).unwrap_err();
+    let shim = CliExecutable::from_path(r"C:\shims\agent.cmd");
+    assert_eq!(
+        shim.plan(["ok\nbad"]).unwrap_err(),
+        CliExecutableError::WindowsShim(WindowsShimArgError::CmdDisallowedByte)
+    );
     assert!(matches!(
-        err,
-        ClaudeExecutableError::WindowsShim(WindowsShimArgError::CmdDisallowedByte)
-    ));
-    let err = shim.try_command(["ok\rbad"]).unwrap_err();
-    assert!(matches!(
-        err,
-        ClaudeExecutableError::WindowsShim(WindowsShimArgError::CmdDisallowedByte)
+        shim.try_command(["ok\rbad"]).unwrap_err(),
+        CliExecutableError::WindowsShim(WindowsShimArgError::CmdDisallowedByte)
     ));
 }
 
+/// Covers: PowerShell `-File` argv stays structured, so metacharacters, percent,
+/// spaces, unicode, and empty strings pass through untouched; only NUL is fatal.
+/// Owner: `CliExecutable::plan` for `PowerShellScript`.
 #[test]
-fn powershell_try_command_accepts_metacharacters() {
-    let shim = ClaudeExecutable::from_path(r"C:\Tools\claude.ps1");
+fn ps1_shim_keeps_metacharacters_and_rejects_nul() {
+    let shim = CliExecutable::from_path(r"C:\Tools\agent.ps1");
     let plan = shim.plan(["a&b", "%PATH%", "x y", "模型", ""]).unwrap();
     assert_eq!(plan.program, PathBuf::from("powershell.exe"));
-    assert!(plan.args.iter().any(|a| a == "a&b"));
-    assert!(plan.args.iter().any(|a| a == "%PATH%"));
-    assert!(plan.args.iter().any(|a| a == "x y"));
-    assert!(plan.args.iter().any(|a| a == "模型"));
-    assert!(plan.args.iter().any(|a| a.is_empty()));
+    assert_eq!(
+        &plan.args[6..],
+        [
+            OsString::from("a&b"),
+            OsString::from("%PATH%"),
+            OsString::from("x y"),
+            OsString::from("模型"),
+            OsString::from(""),
+        ]
+    );
+    assert_eq!(
+        shim.plan(["bad\0arg"]).unwrap_err(),
+        CliExecutableError::WindowsShim(WindowsShimArgError::PowerShellDisallowedByte)
+    );
 }
 
+/// Covers: an explicit absolute path to a real file resolves as a direct
+/// invocation of that exact file.
+/// Owner: `CliExecutable::resolve` explicit-path branch.
 #[cfg(unix)]
 #[test]
-fn resolve_named_absolute_file_uses_direct_invocation() {
+fn resolve_absolute_file_uses_direct_invocation() {
     use std::os::unix::fs::PermissionsExt;
 
     let directory = tempfile::tempdir().unwrap();
-    let program = directory.path().join("claude");
+    let program = directory.path().join("agent");
     std::fs::write(&program, "#!/bin/sh\n").unwrap();
     std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let resolved = resolve_named(program.to_str().unwrap()).unwrap();
-    assert_eq!(resolved.kind(), ClaudeInvocationKind::Direct);
-    assert_eq!(resolved.program(), program.as_path());
+    let resolved = CliExecutable::resolve(program.to_str().unwrap()).unwrap();
+    assert_eq!(resolved.kind(), CliInvocationKind::Direct);
+    assert_eq!(resolved.path(), program.as_path());
 }
 
 /// On Windows CI, spawn fake `.cmd` and `.ps1` shims that write argv to a file
@@ -162,16 +197,14 @@ mod windows_round_trip {
 
     use pretty_assertions::assert_eq;
 
-    use super::{
-        ClaudeExecutable, ClaudeExecutableError, ClaudeInvocationKind, WindowsShimArgError,
-    };
+    use super::{CliExecutable, CliExecutableError, CliInvocationKind, WindowsShimArgError};
 
-    /// Fake Claude `.cmd` shim: forward `%*` to a native argv consumer.
+    /// Fake `.cmd` shim: forward `%*` to a native argv consumer.
     ///
-    /// Real npm/scoop `claude.cmd` shims end with `node.exe ... %*`. Observing
+    /// Real npm/scoop `.cmd` shims end with `node.exe ... %*`. Observing
     /// batch `%1` is the wrong boundary: cmd keeps surrounding quotes in `%1`
     /// (`ARG2="a b"`), while CRT / PowerShell `-File` / Node `process.argv`
-    /// dequote. Probe that native boundary so expectations match what Claude
+    /// dequote. Probe that native boundary so expectations match what the tool
     /// receives. Delayed expansion stays off; extensions stay on so the std
     /// `%` null-slice hack can restore literal percent chars before forward.
     fn write_cmd_recorder(path: &std::path::Path, out_file: &std::path::Path) {
@@ -236,12 +269,12 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
     #[tokio::test]
     async fn cmd_shim_round_trips_special_argv() {
         let directory = tempfile::tempdir().unwrap();
-        let shim = directory.path().join("claude.cmd");
+        let shim = directory.path().join("agent.cmd");
         let out = directory.path().join("argv.txt");
         write_cmd_recorder(&shim, &out);
 
-        let exe = ClaudeExecutable::from_path(&shim);
-        assert_eq!(exe.kind(), ClaudeInvocationKind::CmdScript);
+        let exe = CliExecutable::from_path(&shim);
+        assert_eq!(exe.kind(), CliInvocationKind::CmdScript);
 
         let args = [
             "auth",
@@ -283,11 +316,11 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
         let prompt_file = run_dir.join("system-prompt.txt");
         std::fs::write(&prompt_file, "multi\nline").unwrap();
 
-        let shim = directory.path().join("claude.cmd");
+        let shim = directory.path().join("agent.cmd");
         let out = directory.path().join("argv.txt");
         write_cmd_recorder(&shim, &out);
 
-        let exe = ClaudeExecutable::from_path(&shim);
+        let exe = CliExecutable::from_path(&shim);
         let prompt_path = prompt_file.to_string_lossy().into_owned();
         let args = [
             "-p",
@@ -317,12 +350,12 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
     #[tokio::test]
     async fn ps1_shim_round_trips_special_argv() {
         let directory = tempfile::tempdir().unwrap();
-        let shim = directory.path().join("claude.ps1");
+        let shim = directory.path().join("agent.ps1");
         let out = directory.path().join("argv.txt");
         write_ps1_recorder(&shim, &out);
 
-        let exe = ClaudeExecutable::from_path(&shim);
-        assert_eq!(exe.kind(), ClaudeInvocationKind::PowerShellScript);
+        let exe = CliExecutable::from_path(&shim);
+        assert_eq!(exe.kind(), CliInvocationKind::PowerShellScript);
 
         let args = [
             "auth",
@@ -365,11 +398,11 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
         let prompt_file = run_dir.join("system-prompt.txt");
         std::fs::write(&prompt_file, "multi\nline").unwrap();
 
-        let shim = directory.path().join("claude.ps1");
+        let shim = directory.path().join("agent.ps1");
         let out = directory.path().join("argv.txt");
         write_ps1_recorder(&shim, &out);
 
-        let exe = ClaudeExecutable::from_path(&shim);
+        let exe = CliExecutable::from_path(&shim);
         let prompt_path = prompt_file.to_string_lossy().into_owned();
         let args = [
             "-p",
@@ -387,24 +420,24 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
         assert_eq!(lines[0], "-p", "{body}");
         assert_eq!(lines[1], "--system-prompt-file", "{body}");
         assert_eq!(lines[2], prompt_path, "{body}");
-        assert_eq!(lines[3], "a&b", "{body}");
-        assert_eq!(lines[4], "%PATH%", "{body}");
-        assert_eq!(lines[5], "x^y", "{body}");
-        assert_eq!(lines[6], "p>q", "{body}");
-        assert_eq!(lines[7], "r<s", "{body}");
+        assert_eq!(
+            &lines[3..],
+            ["a&b", "%PATH%", "x^y", "p>q", "r<s"],
+            "{body}"
+        );
     }
 
     #[tokio::test]
     async fn cmd_shim_try_command_rejects_newline_arg() {
         let directory = tempfile::tempdir().unwrap();
-        let shim = directory.path().join("claude.cmd");
+        let shim = directory.path().join("agent.cmd");
         let out = directory.path().join("argv.txt");
         write_cmd_recorder(&shim, &out);
-        let exe = ClaudeExecutable::from_path(&shim);
+        let exe = CliExecutable::from_path(&shim);
         let err = exe.try_command(["ok\nbad"]).unwrap_err();
         assert!(matches!(
             err,
-            ClaudeExecutableError::WindowsShim(WindowsShimArgError::CmdDisallowedByte)
+            CliExecutableError::WindowsShim(WindowsShimArgError::CmdDisallowedByte)
         ));
     }
 }

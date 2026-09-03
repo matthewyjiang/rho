@@ -101,7 +101,7 @@ async fn run_with_fake(
         started_status: None,
         parent_messages: None,
         overrides: ClaudeSessionOverrides {
-            executable: Some(ClaudeExecutable::from_path(fake)),
+            executable: Some(CliExecutable::from_path(fake)),
             frozen_argv: None,
             auth_status: Some(Ok(logged_in())),
             rate_limit_state_path: Some(rate_limit_state_path),
@@ -139,7 +139,7 @@ async fn run_with_fake_prompt(
         started_status: None,
         parent_messages: None,
         overrides: ClaudeSessionOverrides {
-            executable: Some(ClaudeExecutable::from_path(fake)),
+            executable: Some(CliExecutable::from_path(fake)),
             frozen_argv: None,
             auth_status: Some(Ok(logged_in())),
             rate_limit_state_path: Some(rate_limit_state_path),
@@ -231,7 +231,7 @@ async fn frozen_bypass_argv_narrows_to_auto_dont_ask() {
         started_status: None,
         parent_messages: None,
         overrides: ClaudeSessionOverrides {
-            executable: Some(ClaudeExecutable::from_path(&fake)),
+            executable: Some(CliExecutable::from_path(&fake)),
             frozen_argv: Some(frozen),
             auth_status: Some(Ok(logged_in())),
             rate_limit_state_path: Some(rate_limit_dir.path().join("rate-limits.json")),

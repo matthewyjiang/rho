@@ -6,6 +6,7 @@ use tokio::sync::watch;
 
 use rho_tools::cancellation::RunCancellation;
 
+use crate::cli_runtime::{CliExecutable, OwnedChild};
 #[cfg(test)]
 use crate::subagent;
 
@@ -16,9 +17,8 @@ use crate::{
 
 use super::{
     auth::{self, ClaudeAuthError, ClaudeAuthStatus},
-    child::OwnedChild,
     drain::{self, DrainEnd},
-    executable::{self, ClaudeExecutable},
+    executable,
     persist::StatusSink,
     spawn::{self, ClaudeSpawnPlan, ClaudeSpawnRequest},
     stream::TerminalResult,
@@ -66,7 +66,7 @@ impl ClaudeSessionRequest {
 #[derive(Default)]
 pub(crate) struct ClaudeSessionOverrides {
     /// Claude binary to run instead of the resolved one.
-    pub(crate) executable: Option<ClaudeExecutable>,
+    pub(crate) executable: Option<CliExecutable>,
     /// Frozen workflow identity arguments. Permission-sensitive flags are not
     /// reused as-is; launch regenerates those from the effective bound mode.
     pub(crate) frozen_argv: Option<Vec<String>>,
@@ -186,7 +186,7 @@ async fn drive_session(
 
 /// Everything needed to spawn, resolved before the child exists.
 struct Launch {
-    executable: ClaudeExecutable,
+    executable: CliExecutable,
     plan: ClaudeSpawnPlan,
     spawn_args: Vec<std::ffi::OsString>,
     log_path: std::path::PathBuf,
@@ -286,7 +286,7 @@ async fn run_child(
     // before spawn instead of a generic I/O failure at CreateProcess.
     let mut command = match executable.try_command(&spawn_args) {
         Ok(command) => command,
-        Err(error) => return SessionOutcome::Failed(error.to_string()),
+        Err(error) => return SessionOutcome::Failed(format!("claude code: {error}")),
     };
     command
         .current_dir(&plan.cwd)
