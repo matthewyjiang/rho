@@ -234,8 +234,9 @@ impl App {
                 }
             }
             Ok(rho_sdk::SteeringRetraction::AlreadyApplied) => {
-                self.record_applied_steering(std::slice::from_ref(&id));
-                self.notify_status("steer was already applied and can no longer be changed");
+                // Claimed or delivered steering still remains staged until the SDK emits
+                // SteeringApplied. That event is the authority for transcript insertion.
+                self.notify_status("steer can no longer be changed");
             }
             Ok(rho_sdk::SteeringRetraction::NotFound) => {
                 let _ = self.take_accepted_steering(std::slice::from_ref(&id));
