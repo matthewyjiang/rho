@@ -237,7 +237,7 @@ async fn codex_create_and_compact_send_expected_headers_and_paths() {
     let body = json!({"model":"gpt-5.4","store":false});
 
     let tokens = auth.codex_tokens_for_request().unwrap();
-    let request_auth = codex_http_auth(&tokens);
+    let request_auth = codex_http_auth(&tokens, "model=gpt-5.4;tier=priority");
     let create = http
         .post_json(&request_auth, ResponsesEndpoint::Create, &body, None)
         .await;
@@ -260,6 +260,7 @@ async fn codex_create_and_compact_send_expected_headers_and_paths() {
         assert!(headers.contains("originator: codex_cli_rs"));
         assert!(headers.contains("chatgpt-account-id: acct_1"));
         assert!(headers.contains("openai-beta: responses=experimental"));
+        assert!(headers.contains("x-codex-routing-hint: model=gpt-5.4;tier=priority"));
     }
 }
 
