@@ -33,21 +33,18 @@ async fn complete_policy_timeout_aborts_worker() {
         arguments: serde_json::json!({}),
     };
     let (_progress, progress) = tool_progress_channel(NonZeroUsize::MIN);
-    let result = settle_job(
-        ToolCallId::from_string("call-a").unwrap(),
-        AsyncJob {
-            call: call.clone(),
-            name: call.name.clone(),
-            cancellation: CancellationToken::new(),
-            cancellation_policy: ToolCancellationPolicy::Complete {
-                timeout: Duration::ZERO,
-            },
-            progress,
-            worker,
-            started: Instant::now(),
-            first_capability: FirstCapability::default(),
+    let result = settle_job(AsyncJob {
+        call: call.clone(),
+        name: call.name.clone(),
+        cancellation: CancellationToken::new(),
+        cancellation_policy: ToolCancellationPolicy::Complete {
+            timeout: Duration::ZERO,
         },
-    )
+        progress,
+        worker,
+        started: Instant::now(),
+        first_capability: FirstCapability::default(),
+    })
     .await;
 
     assert_eq!(result, interrupted_result(&call));

@@ -382,7 +382,7 @@ impl AsyncJobSet {
             let name = job.name.clone();
             let duration = Some(job.started.elapsed());
             let capability = job.first_capability.get().cloned();
-            let result = settle_job(id.clone(), job).await;
+            let result = settle_job(job).await;
             let completion = if result.ok {
                 ToolCompletion::Success(crate::tool::ToolOutput::text(result.content.clone()))
             } else {
@@ -586,7 +586,7 @@ async fn run_detached_job(
     }
 }
 
-async fn settle_job(_id: ToolCallId, mut job: AsyncJob) -> ToolResult {
+async fn settle_job(mut job: AsyncJob) -> ToolResult {
     let result = match job.cancellation_policy {
         ToolCancellationPolicy::Complete { timeout } => {
             match tokio::time::timeout(timeout, &mut job.worker).await {
