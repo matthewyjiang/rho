@@ -169,24 +169,14 @@ async fn execute_turn_loop(
                 async_jobs: &mut async_jobs,
             };
             if let Err(error) = harvest_ready_jobs(&mut control).await {
-                async_jobs.interrupt(&mut history).await;
-                return match error {
-                    Error::Cancelled => {
-                        commit_terminal_history(core, history, TerminalKind::Cancelled, &events)
-                            .await
-                    }
-                    Error::Interrupted { .. } => Err(error),
-                    error => {
-                        commit_terminal(
-                            core,
-                            history,
-                            StreamCapture::default(),
-                            TerminalKind::Failed(error),
-                            &events,
-                        )
-                        .await
-                    }
-                };
+                return terminate_after_harvest_failure(
+                    core,
+                    history,
+                    &mut async_jobs,
+                    error,
+                    &events,
+                )
+                .await;
             }
         }
         async_jobs.drain_finished(&mut history);
@@ -436,35 +426,29 @@ async fn execute_turn_loop(
             continue;
         }
 
-        let _ = harvest_ready_jobs(&mut control).await;
+        if let Err(error) = harvest_ready_jobs(&mut control).await {
+            return terminate_after_harvest_failure(
+                core,
+                history,
+                control.async_jobs,
+                error,
+                &events,
+            )
+            .await;
+        }
         control.async_jobs.drain_finished(&mut history);
         if control.async_jobs.has_pending() {
             match await_first_job(&mut control).await {
                 Ok(AwaitJobs::Finished | AwaitJobs::Steered) => {
                     if let Err(error) = harvest_ready_jobs(&mut control).await {
-                        control.async_jobs.interrupt(&mut history).await;
-                        return match error {
-                            Error::Cancelled => {
-                                commit_terminal_history(
-                                    core,
-                                    history,
-                                    TerminalKind::Cancelled,
-                                    &events,
-                                )
-                                .await
-                            }
-                            Error::Interrupted { .. } => Err(error),
-                            error => {
-                                commit_terminal(
-                                    core,
-                                    history,
-                                    StreamCapture::default(),
-                                    TerminalKind::Failed(error),
-                                    &events,
-                                )
-                                .await
-                            }
-                        };
+                        return terminate_after_harvest_failure(
+                            core,
+                            history,
+                            control.async_jobs,
+                            error,
+                            &events,
+                        )
+                        .await;
                     }
                     if let Err(error) = apply_staged_steering(
                         control.steering,
@@ -550,6 +534,36 @@ async fn execute_turn_loop(
     )
     .await;
     Ok(outcome)
+}
+
+/// Routes a failed async-job harvest to the matching terminal commit.
+///
+/// Every harvest site interrupts pending jobs first so committed history never
+/// holds a dangling detached call. Event-consumer interrupts stay uncommitted.
+async fn terminate_after_harvest_failure(
+    core: Arc<SessionCore>,
+    mut history: Vec<Message>,
+    async_jobs: &mut AsyncJobSet,
+    error: Error,
+    events: &mpsc::Sender<RunEvent>,
+) -> Result<RunOutcome, Error> {
+    async_jobs.interrupt(&mut history).await;
+    match error {
+        Error::Cancelled => {
+            commit_terminal_history(core, history, TerminalKind::Cancelled, events).await
+        }
+        Error::Interrupted { .. } => Err(error),
+        error => {
+            commit_terminal(
+                core,
+                history,
+                StreamCapture::default(),
+                TerminalKind::Failed(error),
+                events,
+            )
+            .await
+        }
+    }
 }
 
 async fn maybe_compact(
