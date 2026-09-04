@@ -189,6 +189,21 @@ impl std::fmt::Debug for PendingConfirmSend {
     }
 }
 
+#[cfg(test)]
+impl PendingConfirmSend {
+    pub(super) fn for_test() -> Self {
+        Self {
+            submission: SendSubmission::turn(
+                TurnPrompt::standard("model body".into(), "display body".into()),
+                Vec::new(),
+                Vec::new(),
+            ),
+            confirmation_identity: ModelIdentity::new("openai", "responses", "gpt-5"),
+            can_compact: false,
+        }
+    }
+}
+
 fn confirm_send_choice(
     target_label: &str,
     omissions: &HandoffReport,

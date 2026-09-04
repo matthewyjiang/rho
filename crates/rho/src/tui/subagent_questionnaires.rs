@@ -363,7 +363,7 @@ impl App {
             && self.goal.is_none()
             && self.pending.queued_prompts().is_empty()
             && self.pending_subagent_questionnaire.is_none()
-            && !matches!(self.input_ui.composer(), ComposerMode::Questionnaire(_))
+            && matches!(self.input_ui.composer(), ComposerMode::Input)
             && !self.subagent_inbox.has_queued_questionnaires()
     }
 }
