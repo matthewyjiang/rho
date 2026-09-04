@@ -1,9 +1,13 @@
+use std::collections::BTreeSet;
+
 use serde_json::{json, Value};
 
 use crate::model::{ModelError, ModelIdentity, ModelRequest};
 use rho_sdk::model::{ServiceTier, ToolSpec};
 
-use crate::protocol::openai_responses::{codex_reasoning_param, to_responses_tool, ToolStrictness};
+use crate::protocol::openai_responses::{
+    codex_reasoning_param, to_responses_tool, ToolAsync, ToolStrictness,
+};
 
 use super::auth::Auth;
 use super::configuration_update::{
@@ -54,12 +58,17 @@ impl ResponsesWireContract {
         }
     }
 
-    fn serialize_tool(self, tool: ToolSpec, hosted_web_search: bool) -> Value {
+    fn serialize_tool(
+        self,
+        tool: ToolSpec,
+        hosted_web_search: bool,
+        async_mode: ToolAsync,
+    ) -> Value {
         let strictness = match self {
             Self::OpenAiStandard => ToolStrictness::Explicit(false),
             Self::CodexStandard => ToolStrictness::Unspecified,
         };
-        to_responses_tool(tool, strictness, hosted_web_search)
+        to_responses_tool(tool, strictness, hosted_web_search, async_mode)
     }
 }
 
@@ -200,13 +209,23 @@ pub(super) fn build_responses_create_body(
     request: ModelRequest<'_>,
     service_tier: Option<ServiceTier>,
     hosted_web_search: bool,
+    async_tools: &BTreeSet<String>,
 ) -> Result<ResponsesCreateBody, ModelError> {
     let contract = profile.contract();
     let tools = request
         .tools
         .iter()
         .cloned()
-        .map(|tool| contract.serialize_tool(tool, hosted_web_search))
+        .map(|tool| {
+            let async_mode = if super::supports_async_tools(profile.provider(), profile.model())
+                && async_tools.contains(&tool.name)
+            {
+                ToolAsync::On
+            } else {
+                ToolAsync::Off
+            };
+            contract.serialize_tool(tool, hosted_web_search, async_mode)
+        })
         .collect::<Vec<_>>();
     let ResponsesLowered {
         instructions,
@@ -308,6 +327,7 @@ fn build_codex_responses_body_with_tier(
         request,
         service_tier,
         hosted_web_search,
+        &BTreeSet::new(),
     )?
     .body)
 }

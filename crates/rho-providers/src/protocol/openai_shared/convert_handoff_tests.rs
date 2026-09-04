@@ -402,3 +402,53 @@ fn codex_handoff_replays_only_exact_model_context() {
             .is_some_and(|content| content.contains("<reasoning_summary>"))
     }));
 }
+
+// Covers: async-call markers stamp `"async": true` on replayed function_call
+// input items for the matching target and drop it for a foreign target.
+// Owner: OpenAI Responses history conversion
+#[test]
+fn codex_handoff_replays_async_true_only_for_matching_target() {
+    let source =
+        crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-6-astra");
+    let message = Message::assistant(crate::model::AssistantMessage {
+        content: vec![ContentBlock::ToolCall(ToolCall {
+            id: "call_1".into(),
+            name: "one_agent".into(),
+            arguments: json!({}),
+        })],
+        provenance: Some(source.clone()),
+        reasoning_summary: None,
+        provider_context: vec![crate::model::ProviderContextBlock::async_tool_call(
+            source.clone(),
+            "call_1",
+        )],
+    });
+
+    let exact = codex_input_items_for_target(
+        std::slice::from_ref(&message),
+        &mut Vec::new(),
+        Some(&source),
+    )
+    .unwrap();
+    let foreign = codex_input_items_for_target(
+        std::slice::from_ref(&message),
+        &mut Vec::new(),
+        Some(&crate::model::ModelIdentity::new(
+            "anthropic",
+            "anthropic-messages",
+            "claude-test",
+        )),
+    )
+    .unwrap();
+
+    let exact_call = exact
+        .iter()
+        .find(|item| item["type"] == "function_call")
+        .expect("matching target keeps the function_call");
+    assert_eq!(exact_call["async"], true);
+    let foreign_call = foreign
+        .iter()
+        .find(|item| item["type"] == "function_call")
+        .expect("foreign target still lowers the portable call");
+    assert!(foreign_call.get("async").is_none());
+}

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 use rho_providers::model::ModelIdentity;
-use rho_providers::model::{ContentBlock, Message};
+use rho_providers::model::{ContentBlock, Message, ToolResult};
 #[cfg(test)]
 use rho_sdk::SessionId;
 use rho_sdk::{CompactionState, Revision, SessionSnapshot};
@@ -630,8 +630,8 @@ pub(super) fn histories_from_tree(
     };
     let state = tree.active_state().expect("active leaf has restored state");
     Ok(SessionHistories {
-        model: drop_incomplete_tool_turn_tail(state.model.clone()),
-        display: drop_incomplete_tool_turn_tail(
+        model: insert_interrupted_tool_placeholders(state.model.clone()),
+        display: insert_interrupted_tool_placeholders(
             tree.projected_display(active_leaf_id)?
                 .into_iter()
                 .map(|entry| entry.message)
@@ -749,58 +749,91 @@ fn summarize_session_file_with_tree(
     Ok((record, tree))
 }
 
-pub(crate) fn complete_turn_tail_len<T, F>(items: &[T], get_message: F) -> usize
-where
-    F: Fn(&T) -> &Message,
-{
+const INTERRUPTED_TOOL_RESULT_CONTENT: &str = "tool call interrupted before completion";
+
+fn completed_tool_call_ids(message: &Message) -> Vec<&str> {
+    let Some(blocks) = message.completed_assistant_content() else {
+        return Vec::new();
+    };
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::ToolCall(call) => Some(call.id.as_str()),
+            ContentBlock::Text(_) | ContentBlock::Image(_) => None,
+        })
+        .collect()
+}
+
+pub(crate) fn insert_interrupted_tool_placeholders(mut messages: Vec<Message>) -> Vec<Message> {
+    insert_interrupted_placeholders_by(
+        &mut messages,
+        |message| message,
+        |_source, result| Message::ToolResult(result),
+    );
+    messages
+}
+
+pub(crate) fn insert_interrupted_display_placeholders(
+    mut messages: Vec<StoredDisplayMessage>,
+) -> Vec<StoredDisplayMessage> {
+    insert_interrupted_placeholders_by(
+        &mut messages,
+        |stored| &stored.message,
+        |source, result| StoredDisplayMessage {
+            timestamp: source.timestamp.clone(),
+            message: Message::ToolResult(result),
+        },
+    );
+    messages
+}
+
+fn insert_interrupted_placeholders_by<T>(
+    messages: &mut Vec<T>,
+    get_message: impl Fn(&T) -> &Message,
+    make_placeholder: impl Fn(&T, ToolResult) -> T,
+) {
     let mut index = 0usize;
-    while index < items.len() {
-        let message = get_message(&items[index]);
-        let Some(blocks) = message.completed_assistant_content() else {
-            index += 1;
-            continue;
-        };
-        let tool_call_ids = blocks
-            .iter()
-            .filter_map(|block| match block {
-                rho_providers::model::ContentBlock::ToolCall(call) => Some(call.id.as_str()),
-                rho_providers::model::ContentBlock::Text(_)
-                | rho_providers::model::ContentBlock::Image(_) => None,
-            })
-            .collect::<Vec<_>>();
+    while index < messages.len() {
+        let tool_call_ids = completed_tool_call_ids(get_message(&messages[index]));
         if tool_call_ids.is_empty() {
             index += 1;
             continue;
         }
-
-        let results_start = index + 1;
-        let results_end = results_start + tool_call_ids.len();
-        if results_end > items.len() {
-            return index;
+        let mut remaining: std::collections::BTreeSet<String> =
+            tool_call_ids.iter().map(|id| (*id).to_owned()).collect();
+        for item in &messages[index + 1..] {
+            let Message::ToolResult(result) = get_message(item) else {
+                continue;
+            };
+            remaining.remove(&result.id);
+            if remaining.is_empty() {
+                break;
+            }
         }
-
-        let complete = tool_call_ids.iter().enumerate().all(|(offset, id)| {
-            matches!(
-                get_message(&items[results_start + offset]),
-                Message::ToolResult(result) if result.id == *id
-            )
-        });
-        if !complete {
-            return index;
+        if remaining.is_empty() {
+            index += 1;
+            continue;
         }
-        index = results_end;
+        let placeholders = remaining
+            .into_iter()
+            .map(|id| {
+                make_placeholder(
+                    &messages[index],
+                    ToolResult {
+                        id,
+                        ok: false,
+                        content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let insert_at = index + 1;
+        let added = placeholders.len();
+        for (offset, placeholder) in placeholders.into_iter().enumerate() {
+            messages.insert(insert_at + offset, placeholder);
+        }
+        index = insert_at + added;
     }
-    items.len()
-}
-
-pub(crate) fn complete_message_len(messages: &[Message]) -> usize {
-    complete_turn_tail_len(messages, |m| m)
-}
-
-pub(crate) fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
-    let valid_len = complete_message_len(&messages);
-    messages.truncate(valid_len);
-    messages
 }
 
 /// History after the same resume normalization `snapshot_for_resume` applies.
@@ -809,7 +842,7 @@ pub(crate) fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<
 /// local copy when `crates/rho/Cargo.toml` moves off `rho-sdk = "4.0.0"`.
 /// Keep `resume_normalized_history_matches_sdk_sanitize_history` until then.
 pub(crate) fn resume_normalized_history(history: Vec<Message>) -> Vec<Message> {
-    let mut history = drop_incomplete_tool_turn_tail(history);
+    let mut history = insert_interrupted_tool_placeholders(history);
     for message in &mut history {
         if let Message::AbortedAssistant(assistant) = message {
             assistant.reasoning.clear();
@@ -906,3 +939,7 @@ fn system_time_secs(time: SystemTime) -> i64 {
         .map(|duration| clamp_u64_to_i64(duration.as_secs()))
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+#[path = "persistence_complete_turn_tests.rs"]
+mod complete_turn_tests;

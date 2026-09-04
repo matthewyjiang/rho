@@ -9,7 +9,7 @@ use crate::{
     model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
     protocol::openai_chat::{
         convert_openai_response, invalid_stream_utf8, response_without_stream_context,
-        to_openai_message_for_target, to_openai_tool, ChatRequest, ChatResponse,
+        to_openai_messages_for_target, to_openai_tool, ChatRequest, ChatResponse,
         ChatStreamAccumulator, ChatStreamOptions,
     },
     provider_backend::line_stream::collect_line_stream,
@@ -113,11 +113,7 @@ impl OpenAiCompatibleProvider {
         stream: bool,
     ) -> Result<ChatRequest, ModelError> {
         let target = self.model_identity();
-        let messages = request
-            .messages
-            .iter()
-            .map(|message| to_openai_message_for_target(message, Some(&target)))
-            .collect::<Result<Vec<_>, _>>()?;
+        let messages = to_openai_messages_for_target(request.messages, Some(&target))?;
         let tools = request
             .tools
             .iter()

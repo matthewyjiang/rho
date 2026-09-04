@@ -134,6 +134,7 @@ fn astra_compaction_preserves_reasoning_baseline() {
         },
         None,
         /*hosted_web_search*/ true,
+        /*async_tools*/ &Default::default(),
     )
     .unwrap();
 

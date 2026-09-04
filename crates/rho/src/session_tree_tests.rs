@@ -1,4 +1,4 @@
-use super::persistence::{drop_incomplete_tool_turn_tail, resume_normalized_history};
+use super::persistence::{insert_interrupted_tool_placeholders, resume_normalized_history};
 use super::tree::{NodeId, SessionNode, SessionNodeKind, StoredStateTransition};
 use super::*;
 use rho_providers::model::AbortedAssistant;
@@ -1023,7 +1023,7 @@ fn resume_normalized_history_matches_sdk_sanitize_history() {
     for history in cases {
         pretty_assertions::assert_eq!(
             resume_normalized_history(history.clone()),
-            SessionSnapshot::sanitize_history(drop_incomplete_tool_turn_tail(history))
+            SessionSnapshot::sanitize_history(insert_interrupted_tool_placeholders(history))
         );
     }
 }

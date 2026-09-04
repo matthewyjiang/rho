@@ -192,3 +192,43 @@ fn interrupted_entries_drop_the_live_clock() {
         .iter()
         .all(|entry| entry.card.status == ToolStatus::Interrupted));
 }
+
+// Covers: detached cards survive clear and leave only when finished.
+// Owner: pure unit (tool call batch)
+#[test]
+fn detached_survives_clear_and_finished_evicts() {
+    struct Case {
+        name: &'static str,
+        finish: bool,
+        expected_live: usize,
+    }
+    let cases = [
+        Case {
+            name: "detached survives clear",
+            finish: false,
+            expected_live: 1,
+        },
+        Case {
+            name: "finished evicts detached",
+            finish: true,
+            expected_live: 0,
+        },
+    ];
+    for case in cases {
+        let mut batch = ToolCallBatch::default();
+        let call = call_id("call-agent");
+        batch.started(call.clone(), card("running"));
+        batch.detach(call.clone());
+        batch.clear();
+        if case.finish {
+            batch.finished(&call);
+        }
+        assert_eq!(
+            batch.live_entries().count(),
+            case.expected_live,
+            "{}",
+            case.name
+        );
+        assert_eq!(batch.is_running(), case.expected_live > 0, "{}", case.name);
+    }
+}

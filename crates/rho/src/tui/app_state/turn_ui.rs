@@ -184,6 +184,10 @@ impl TurnUi {
         self.tool_calls.started(call_id, card);
     }
 
+    pub(in crate::tui) fn tool_detached(&mut self, call_id: ToolCallId) {
+        self.tool_calls.detach(call_id);
+    }
+
     pub(in crate::tui) fn tool_updated(&mut self, call_id: ToolCallId, card: ToolCard) {
         self.tool_calls.updated(call_id, card);
     }

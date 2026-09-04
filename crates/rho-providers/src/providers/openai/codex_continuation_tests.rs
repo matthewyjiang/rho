@@ -240,6 +240,7 @@ fn astra_reasoning_change_keeps_request_properties_and_deltas_update_item() {
         },
         None,
         /*hosted_web_search*/ true,
+        &std::collections::BTreeSet::new(),
     )
     .unwrap()
     .body;
@@ -270,6 +271,7 @@ fn astra_reasoning_change_keeps_request_properties_and_deltas_update_item() {
         },
         None,
         /*hosted_web_search*/ true,
+        &std::collections::BTreeSet::new(),
     )
     .unwrap()
     .body;
@@ -304,5 +306,51 @@ fn astra_reasoning_change_keeps_request_properties_and_deltas_update_item() {
             {"type":"configuration_update","reasoning":{"effort":"high"}},
             {"role":"user","content":[{"type":"input_text","text":"three"}]},
         ])
+    );
+}
+
+// Covers: extra `"async": true` on a server function_call still matches the
+// local representation, and the next delta is only the tool result.
+// Owner: openai Codex continuation
+#[test]
+fn continuation_matches_function_call_when_server_item_is_async() {
+    let first = candidate(vec![
+        json!({"role":"user","content":[{"type":"input_text","text":"delegate"}]}),
+    ]);
+    let next = candidate(vec![
+        json!({"role":"user","content":[{"type":"input_text","text":"delegate"}]}),
+        json!({"type":"function_call","call_id":"call_1","name":"one_agent","arguments":"{}","async":true}),
+        json!({"type":"function_call_output","call_id":"call_1","output":"done"}),
+    ]);
+    let response = ModelResponse::Assistant(vec![ContentBlock::ToolCall(crate::model::ToolCall {
+        id: "call_1".into(),
+        name: "one_agent".into(),
+        arguments: json!({}),
+    })]);
+    let mut state = CodexContinuationState::default();
+    state.record_success(
+        &first,
+        CodexContinuationResponse::from_response(
+            &response,
+            Some("resp_1".into()),
+            vec![json!({
+                "id":"fc_1",
+                "type":"function_call",
+                "call_id":"call_1",
+                "name":"one_agent",
+                "arguments":"{}",
+                "async":true
+            })],
+        ),
+    );
+
+    let plan = state
+        .continuation_delta(&next)
+        .expect("snapshot extends this turn");
+
+    assert_eq!(plan["previous_response_id"], "resp_1");
+    assert_eq!(
+        plan["input"],
+        json!([{"type":"function_call_output","call_id":"call_1","output":"done"}])
     );
 }

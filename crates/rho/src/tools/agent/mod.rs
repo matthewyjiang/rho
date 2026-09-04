@@ -15,9 +15,9 @@ use {
     crate::app::subagent_manager::ValidatedMessage,
     crate::subagent::RunState,
     rho_sdk::tool::{
-        OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation,
-        ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolProgress,
-        ToolResource, ToolResourceAccess, ToolSecurity,
+        OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolExecutionMode,
+        ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
+        ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
     },
 };
 
@@ -48,11 +48,18 @@ impl BackgroundSubagents {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AgentAsyncCalls {
+    Off,
+    On,
+}
+
 pub struct AgentTool {
     manager: SubagentManager,
     catalog: Arc<AgentCatalog>,
     agent_summaries: Vec<(String, String)>,
     background_subagents: BackgroundSubagents,
+    async_calls: AgentAsyncCalls,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 }
 
@@ -61,6 +68,7 @@ impl AgentTool {
         manager: SubagentManager,
         cwd: &Path,
         background_subagents: BackgroundSubagents,
+        async_calls: AgentAsyncCalls,
         catalog: Option<Arc<AgentCatalog>>,
     ) -> Self {
         let catalog = catalog.unwrap_or_else(|| {
@@ -81,6 +89,7 @@ impl AgentTool {
             catalog,
             agent_summaries,
             background_subagents,
+            async_calls,
             mutation_observer: Arc::new(()),
         }
     }
@@ -217,16 +226,27 @@ impl Tool for AgentTool {
             }
         });
         if self.background_subagents.is_enabled() {
+            let description = if self.async_calls == AgentAsyncCalls::On {
+                "Starts a separately managed background run and returns an id immediately. Omit or set false to use an async tool call whose final result arrives later. Only background=true uses background notifications; parallel batching does not. Independent agent calls in the same batch run together either way."
+            } else {
+                "Starts the run and returns an id immediately instead of waiting. Omit or set false to wait for the final result. Only background=true backgrounds a run; parallel batching does not. Independent agent calls in the same batch run together either way."
+            };
             properties["background"] = json!({
                 "type": "boolean",
-                "description": "Starts the run and returns an id immediately instead of waiting. Omit or set false to wait for the final result. Only background=true backgrounds a run; parallel batching does not. Independent agent calls in the same batch run together either way."
+                "description": description
             });
         }
         // Parallel batch behavior is always true; background delivery text is
         // capability-gated so disabled runs do not advertise a missing path.
         let parallel_guidance =
             " Independent agent calls in the same batch run together - issue them in one turn for parallel work.";
-        let background_guidance = if self.background_subagents.is_enabled() {
+        let background_guidance = if self.async_calls == AgentAsyncCalls::On
+            && self.background_subagents.is_enabled()
+        {
+            " Foreground calls (background omitted or false) return while the agent keeps working, with the final result arriving as a late tool result. Set background=true to use a separately managed run with an id and turn-boundary completion notifications."
+        } else if self.async_calls == AgentAsyncCalls::On {
+            " Calls return while the agent keeps working, with the final result arriving as a late tool result."
+        } else if self.background_subagents.is_enabled() {
             " Foreground calls (background omitted or false) wait for completion. Issuing a foreground agent beside other tools does not background it and can delay the rest of that batch until the run finishes. Set background=true to start a run and return an id immediately; completions arrive automatically at the next turn boundary (multiple completions are batched in one notification). After starting background runs, end your turn once no other work remains - never sleep or poll for results."
         } else {
             " Calls wait for completion. Issuing an agent beside other tools can delay the rest of that batch until the run finishes."
@@ -247,6 +267,10 @@ impl Tool for AgentTool {
 
     fn security(&self) -> ToolSecurity {
         ToolSecurity::built_in([])
+    }
+
+    fn execution_mode(&self) -> ToolExecutionMode {
+        ToolExecutionMode::Async
     }
 
     fn prepare<'a>(
@@ -519,6 +543,14 @@ pub(super) fn sdk_bundle(
                 manager.clone(),
                 &options.cwd,
                 options.background,
+                if rho_providers::providers::openai::supports_async_tools(
+                    &config.provider,
+                    &config.model,
+                ) {
+                    AgentAsyncCalls::On
+                } else {
+                    AgentAsyncCalls::Off
+                },
                 options.catalog,
             )
             .with_mutation_observer(mutation_observer),

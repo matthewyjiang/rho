@@ -177,7 +177,7 @@ fn tree_summary_follows_active_leaf_after_branch_switch() {
 }
 
 #[test]
-fn summarize_drops_incomplete_tool_tail_from_active_display() {
+fn summarize_counts_incomplete_active_display() {
     let root = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
     let id = "tool-tail";
@@ -212,7 +212,7 @@ fn summarize_drops_incomplete_tool_tail_from_active_display() {
     );
 
     let summary = summarize_session_file(&path, cwd.path()).unwrap().summary;
-    assert_eq!(summary.message_count, 1);
+    assert_eq!(summary.message_count, 2);
     assert_eq!(summary.first_user_message.as_deref(), Some("please run"));
     assert_eq!(summary.last_user_message.as_deref(), Some("please run"));
 }

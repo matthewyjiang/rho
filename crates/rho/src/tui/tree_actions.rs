@@ -80,7 +80,7 @@ impl App {
         };
         let items = storage.tree_items()?;
         if items.is_empty() {
-            self.set_status("this session tree has no completed turns");
+            self.set_status("this session tree has no turns");
             return Ok(());
         }
         self.input_ui

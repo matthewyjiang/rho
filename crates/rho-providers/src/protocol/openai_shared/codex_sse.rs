@@ -239,6 +239,11 @@ pub(crate) struct CodexSseState {
     /// stream carried no text or function calls yet; skip those keys so
     /// WebSearch / HostedToolActivity are not dual-emitted.
     emitted_activity_keys: BTreeSet<String>,
+    /// Async-call ids already published as `rho.sdk.async_tool_call.v1`.
+    ///
+    /// `response.completed` may restate the same `function_call` items that
+    /// `output_item.done` already marked.
+    emitted_async_call_ids: BTreeSet<String>,
     /// True once a non-empty reasoning or reasoning-summary delta streamed.
     /// Decides whether reasoning wall time sits inside the generation window
     /// when the completed usage payload is converted to a throughput count.
@@ -493,6 +498,38 @@ fn emit_output_item_replay(
             kind: COMPACTION_OUTPUT_ITEM_KIND.into(),
             position,
             data,
+        })?;
+    }
+    Ok(())
+}
+
+fn emit_async_tool_call_marker(
+    item: &serde_json::Value,
+    state: &mut CodexSseState,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+) -> Result<(), ModelError> {
+    if item.get("type").and_then(|value| value.as_str()) != Some("function_call") {
+        return Ok(());
+    }
+    if item.get("async") != Some(&serde_json::Value::Bool(true)) {
+        return Ok(());
+    }
+    let Some(call_id) = item
+        .get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(|value| value.as_str())
+        .filter(|id| !id.is_empty())
+    else {
+        return Ok(());
+    };
+    if !state.emitted_async_call_ids.insert(call_id.to_string()) {
+        return Ok(());
+    }
+    if let Some(on_event) = on_event.as_mut() {
+        on_event(ModelEvent::ProviderContext {
+            kind: rho_sdk::model::ASYNC_TOOL_CALL_CONTEXT_KIND.into(),
+            position: None,
+            data: serde_json::Value::String(call_id.to_string()),
         })?;
     }
     Ok(())
@@ -833,6 +870,7 @@ pub(crate) fn handle_codex_sse_value(
                     })?;
                 }
             }
+            emit_async_tool_call_marker(item, state, on_event)?;
             state.tool_calls.push(call);
         }
     } else if event_type == "response.created" {
@@ -904,6 +942,7 @@ pub(crate) fn handle_codex_sse_value(
             for item in output {
                 emit_codex_search_activity(item, state, on_event)?;
                 emit_image_generation_activity(item, state, on_event)?;
+                emit_async_tool_call_marker(item, state, on_event)?;
                 if codex_output_item_was_processed(state, item) {
                     continue;
                 }
@@ -942,3 +981,7 @@ mod image_tests;
 #[cfg(test)]
 #[path = "codex_sse_terminal_tests.rs"]
 mod terminal_tests;
+
+#[cfg(test)]
+#[path = "codex_sse_async_tests.rs"]
+mod async_tests;

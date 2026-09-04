@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::BTreeMap;
 
 use {
     crate::app::interactive_presenter::InteractiveToolPresenter,
@@ -89,7 +89,7 @@ pub(super) fn transcript_entries_from_messages(
 ) -> Vec<Entry> {
     let presenter = InteractiveToolPresenter::new(cwd.to_path_buf());
     let mut entries = Vec::new();
-    let mut pending_tools = VecDeque::new();
+    let mut pending_tools = BTreeMap::<String, ToolCall>::new();
     for message in messages {
         match message {
             Message::System(_) => {}
@@ -106,7 +106,7 @@ pub(super) fn transcript_entries_from_messages(
                 }
                 push_generated_image_entries(&mut entries, blocks);
                 pending_tools.extend(blocks.iter().filter_map(|block| match block {
-                    ContentBlock::ToolCall(call) => Some(call.clone()),
+                    ContentBlock::ToolCall(call) => Some((call.id.clone(), call.clone())),
                     ContentBlock::Text(_) | ContentBlock::Image(_) => None,
                 }));
             }
@@ -118,7 +118,7 @@ pub(super) fn transcript_entries_from_messages(
                 }
                 push_generated_image_entries(&mut entries, blocks);
                 pending_tools.extend(blocks.iter().filter_map(|block| match block {
-                    ContentBlock::ToolCall(call) => Some(call.clone()),
+                    ContentBlock::ToolCall(call) => Some((call.id.clone(), call.clone())),
                     ContentBlock::Text(_) | ContentBlock::Image(_) => None,
                 }));
             }
@@ -141,11 +141,13 @@ pub(super) fn transcript_entries_from_messages(
                 entries.push(Entry::Notice("model interrupted".into()));
             }
             Message::ToolResult(result) => {
-                let call = pending_tools.pop_front().unwrap_or_else(|| ToolCall {
-                    id: result.id.clone(),
-                    name: "tool".into(),
-                    arguments: serde_json::Value::Object(Default::default()),
-                });
+                let call = pending_tools
+                    .remove(&result.id)
+                    .unwrap_or_else(|| ToolCall {
+                        id: result.id.clone(),
+                        name: "tool".into(),
+                        arguments: serde_json::Value::Object(Default::default()),
+                    });
                 let presented = presenter.historical(&call, result.ok, &result.content);
                 entries.push(Entry::Tool(ToolEntry::new(
                     presented.card,
@@ -177,3 +179,7 @@ impl super::App {
         self.history.images_mut().clear();
     }
 }
+
+#[cfg(test)]
+#[path = "message_history_tests.rs"]
+mod tests;

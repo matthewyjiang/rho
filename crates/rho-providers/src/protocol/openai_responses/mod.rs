@@ -11,6 +11,7 @@ pub(crate) use super::openai_shared::{
     compact::{parse_compact_response, retained_system_messages, CompactUserRetention},
     convert::{
         codex_input_items, codex_input_items_for_target, codex_reasoning_param,
-        lower_codex_history_message, to_responses_lite_tool, to_responses_tool, ToolStrictness,
+        lower_codex_history_message, to_responses_lite_tool, to_responses_tool, ToolAsync,
+        ToolStrictness,
     },
 };

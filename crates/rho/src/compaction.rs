@@ -181,33 +181,39 @@ fn message_groups(messages: &[Message], start: usize) -> Vec<MessageGroup> {
 
 fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize> {
     let blocks = messages[index].completed_assistant_content()?;
-    let tool_call_ids = blocks
+    if !blocks
         .iter()
-        .filter_map(|block| match block {
-            ContentBlock::ToolCall(call) => Some(call.id.as_str()),
-            ContentBlock::Text(_) | ContentBlock::Image(_) => None,
-        })
-        .collect::<Vec<_>>();
-    if tool_call_ids.is_empty() {
+        .any(|block| matches!(block, ContentBlock::ToolCall(_)))
+    {
         return None;
     }
 
-    let results_start = index + 1;
-    let results_end = results_start + tool_call_ids.len();
-    if results_end > messages.len() {
-        return Some(messages.len());
+    let mut end = index + 1;
+    loop {
+        let call_ids = messages[index..end]
+            .iter()
+            .filter_map(Message::completed_assistant_content)
+            .flatten()
+            .filter_map(|block| match block {
+                ContentBlock::ToolCall(call) => Some(call.id.as_str()),
+                ContentBlock::Text(_) | ContentBlock::Image(_) => None,
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        let Some(last_result_offset) = messages[end..]
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, message)| match message {
+                Message::ToolResult(result) if call_ids.contains(result.id.as_str()) => {
+                    Some(offset)
+                }
+                _ => None,
+            })
+            .next_back()
+        else {
+            return Some(end);
+        };
+        end += last_result_offset + 1;
     }
-    let complete = tool_call_ids.iter().enumerate().all(|(offset, id)| {
-        matches!(
-            &messages[results_start + offset],
-            Message::ToolResult(result) if result.id == *id
-        )
-    });
-    Some(if complete {
-        results_end
-    } else {
-        messages.len()
-    })
 }
 
 fn summary_reserve_tokens(target_tokens: u64) -> u64 {
@@ -509,3 +515,7 @@ mod tests {
         assert!(matches!(replacement[2], Message::User(_)));
     }
 }
+
+#[cfg(test)]
+#[path = "compaction_group_tests.rs"]
+mod group_tests;

@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::model::{Message, ModelError, ModelResponse};
 
@@ -78,6 +78,13 @@ impl CodexContinuationResponse {
             canonical_server_output_items(&server_output_items)
                 .is_some_and(|server_output_items| server_output_items == *local_output_items)
         });
+        // Stamp `async: true` after the canonical match so extra keys on the
+        // server item do not break recognition, while stored local items still
+        // match the next request's replayed input.
+        let local_output_items = local_output_items.map(|mut items| {
+            stamp_async_function_calls(&mut items, &server_output_items);
+            items
+        });
         Self {
             response_id,
             server_output_items,
@@ -120,6 +127,29 @@ fn canonical_server_output_items(items: &[Value]) -> Option<Vec<Value>> {
         }
     }
     (!canonical.is_empty()).then_some(canonical)
+}
+
+fn stamp_async_function_calls(items: &mut [Value], server_items: &[Value]) {
+    let async_ids = server_items
+        .iter()
+        .filter_map(|item| {
+            (item.get("type").and_then(Value::as_str) == Some("function_call")
+                && item.get("async") == Some(&Value::Bool(true)))
+            .then(|| item.get("call_id")?.as_str().map(str::to_owned))
+            .flatten()
+        })
+        .collect::<BTreeSet<_>>();
+    for item in items {
+        if item.get("type").and_then(Value::as_str) != Some("function_call") {
+            continue;
+        }
+        let Some(call_id) = item.get("call_id").and_then(Value::as_str) else {
+            continue;
+        };
+        if async_ids.contains(call_id) {
+            item["async"] = json!(true);
+        }
+    }
 }
 
 fn canonical_json_string(input: &str) -> Option<String> {

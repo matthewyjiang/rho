@@ -84,6 +84,14 @@ pub(crate) fn canonical_tool_is_mutating(name: &str) -> Option<bool> {
     }
 }
 
+/// Function tools advertised as async on Responses when the model allows it.
+///
+/// v1: the `agent` tool is the only async tool. The provider stamps `"async":
+/// true` only when the model supports it and the name is in the request.
+pub(crate) fn async_tool_names(_config: &crate::config::Config) -> Vec<String> {
+    vec!["agent".into()]
+}
+
 /// Built-ins registered only on provider-free host tool registries.
 #[cfg(test)]
 pub(crate) const HOST_ONLY_TOOL_NAMES: &[&str] = &["workflow_command"];

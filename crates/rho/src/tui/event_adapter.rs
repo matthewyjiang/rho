@@ -65,6 +65,9 @@ pub(super) enum ViewModelEvent {
         card: ToolCard,
         image_asset: Option<rho_sdk::tool::ToolAsset>,
     },
+    ToolDetached {
+        call_id: rho_sdk::ToolCallId,
+    },
 }
 
 impl ViewModelEvent {
@@ -80,7 +83,9 @@ impl ViewModelEvent {
             Self::ToolStarted { call_id, .. } if call_id == &compaction_call_id() => {
                 Some(ActivityPhase::Compacting)
             }
-            Self::ToolStarted { .. } | Self::ToolUpdated { .. } => Some(ActivityPhase::RunningTool),
+            Self::ToolStarted { .. } | Self::ToolUpdated { .. } | Self::ToolDetached { .. } => {
+                Some(ActivityPhase::RunningTool)
+            }
             Self::ToolCallUpdated { .. } | Self::ToolCallProposed { .. } => {
                 Some(ActivityPhase::PreparingTool)
             }
@@ -305,6 +310,9 @@ impl SdkEventAdapter {
                     card: presented.card,
                     image_asset: presented.image_asset,
                 })]
+            }
+            RunEvent::ToolDetached { call_id } => {
+                vec![ViewEvent::Update(ViewModelEvent::ToolDetached { call_id })]
             }
             RunEvent::UsageUpdated { usage } => {
                 vec![ViewEvent::Update(ViewModelEvent::Usage(usage))]

@@ -168,6 +168,7 @@ fn native_compact_is_advertised_only_for_first_party_hosts() {
             provider_client(),
             None,
             /*hosted_web_search*/ false,
+            std::collections::BTreeSet::new(),
             identity_provider,
         );
         let request = ModelRequest {
