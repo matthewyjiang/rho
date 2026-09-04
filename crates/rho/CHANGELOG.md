@@ -1,5 +1,23 @@
 # Changelog
 
+## [2.7.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.6.0...rho-coding-agent-v2.7.0) (2026-09-04)
+
+
+### Features
+
+* **config:** configure auto edit tools for custom providers ([#1156](https://github.com/matthewyjiang/rho/issues/1156)) ([9a6f320](https://github.com/matthewyjiang/rho/commit/9a6f320192ce58824e521fa54b98d6c0cdf6e9ee))
+* **openai:** forward mid-turn steering over the Codex websocket on gpt-6-astra ([#1150](https://github.com/matthewyjiang/rho/issues/1150)) ([3628bda](https://github.com/matthewyjiang/rho/commit/3628bda95035a5b13da18f1bd42404622d1a39cd))
+* **openai:** wire async tool calling for gpt-6-astra ([#1152](https://github.com/matthewyjiang/rho/issues/1152)) ([9fcc988](https://github.com/matthewyjiang/rho/commit/9fcc9886d9905745b14dd86d36bde690648e145b))
+* **tui:** confirm sends with unreplayable context instead of prompting at model switch ([#1155](https://github.com/matthewyjiang/rho/issues/1155)) ([e575220](https://github.com/matthewyjiang/rho/commit/e575220b69b2ec3e4b6144ced32240bafec21356))
+* **tui:** highlight shell commands in tool cards ([#1157](https://github.com/matthewyjiang/rho/issues/1157)) ([69fc3da](https://github.com/matthewyjiang/rho/commit/69fc3da8771d56b512579d00099ad65379056818))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.2.0 to 2.3.0
+
 ## [2.6.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.5.0...rho-coding-agent-v2.6.0) (2026-09-03)
 
 

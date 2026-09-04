@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.0.4...rho-agent-tools-v1.1.0) (2026-09-04)
+
+
+### Features
+
+* **openai:** forward mid-turn steering over the Codex websocket on gpt-6-astra ([#1150](https://github.com/matthewyjiang/rho/issues/1150)) ([3628bda](https://github.com/matthewyjiang/rho/commit/3628bda95035a5b13da18f1bd42404622d1a39cd))
+
 ## [1.0.4](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.0.3...rho-agent-tools-v1.0.4) (2026-09-03)
 
 
