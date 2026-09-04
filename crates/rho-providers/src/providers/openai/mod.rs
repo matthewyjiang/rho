@@ -31,7 +31,7 @@ use crate::providers::responses_http::{
 use auth::Auth;
 #[cfg(test)]
 use codex_request::build_codex_responses_body;
-use codex_request::{build_responses_create_body, ResponsesProfile};
+use codex_request::{build_responses_create_body, ResponsesCreateBody, ResponsesProfile};
 use codex_ws::{CodexWsTransport, CodexWsTurn};
 use reasoning::OpenAiReasoningProfile;
 
@@ -148,7 +148,7 @@ impl OpenAiProvider {
         &self,
         request: ModelRequest<'_>,
         options: ModelRequestOptions,
-    ) -> Result<Value, ModelError> {
+    ) -> Result<ResponsesCreateBody, ModelError> {
         build_responses_create_body(
             &self.profile,
             &self.reasoning,
@@ -163,7 +163,9 @@ impl OpenAiProvider {
         &self,
         request: ModelRequest<'_>,
     ) -> Result<Value, ModelError> {
-        self.create_body(request, ModelRequestOptions::default())
+        Ok(self
+            .create_body(request, ModelRequestOptions::default())?
+            .body)
     }
 }
 
@@ -220,18 +222,10 @@ impl OpenAiProvider {
 
     fn emit_turn_reasoning_effort(
         &self,
-        reasoning_level: crate::reasoning::ReasoningLevel,
+        in_force_effort: Option<&str>,
         on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<(), ModelError> {
-        let effort = self
-            .reasoning
-            .config(
-                self.profile.provider(),
-                self.profile.model(),
-                reasoning_level,
-            )?
-            .effort;
-        configuration_update::emit_reasoning_effort(effort.as_deref(), on_event)
+        configuration_update::emit_reasoning_effort(in_force_effort, on_event)
     }
 }
 
@@ -242,7 +236,9 @@ impl OpenAiProvider {
         &self,
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
-        let body = self.create_body(request, ModelRequestOptions::default())?;
+        let body = self
+            .create_body(request, ModelRequestOptions::default())?
+            .body;
         let tokens = Auth::codex_tokens_for_auth(self.auth.as_ref())?;
         let body = match self
             .codex_ws
@@ -291,8 +287,10 @@ impl OpenAiProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        let reasoning_level = request.reasoning_level;
-        let body = self.create_body(request, options)?;
+        let ResponsesCreateBody {
+            body,
+            in_force_effort,
+        } = self.create_body(request, options)?;
         let tokens = Auth::codex_tokens_for_auth(self.auth.as_ref())?;
         let body = match self
             .codex_ws
@@ -305,7 +303,7 @@ impl OpenAiProvider {
                     response.service_tier.as_deref(),
                     &mut on_event,
                 )?;
-                self.emit_turn_reasoning_effort(reasoning_level, &mut on_event)?;
+                self.emit_turn_reasoning_effort(in_force_effort.as_deref(), &mut on_event)?;
                 return Ok(response.response);
             }
             CodexWsTurn::FullSseFallback {
@@ -351,7 +349,7 @@ impl OpenAiProvider {
         self.collect_codex_sse_response(
             response,
             options.service_tier(),
-            reasoning_level,
+            in_force_effort.as_deref(),
             &mut on_event,
             &body,
         )
@@ -362,7 +360,7 @@ impl OpenAiProvider {
         &self,
         response: reqwest::Response,
         requested_service_tier: Option<rho_sdk::model::ServiceTier>,
-        reasoning_level: crate::reasoning::ReasoningLevel,
+        in_force_effort: Option<&str>,
         on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
         body: &Value,
     ) -> Result<ModelResponse, ModelError> {
@@ -373,7 +371,7 @@ impl OpenAiProvider {
                     output.service_tier.as_deref(),
                     on_event,
                 )?;
-                self.emit_turn_reasoning_effort(reasoning_level, on_event)?;
+                self.emit_turn_reasoning_effort(in_force_effort, on_event)?;
                 self.codex_ws
                     .record_full_request_success(body, &output)
                     .await?;
@@ -438,7 +436,9 @@ impl OpenAiProvider {
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
-        let body = self.create_body(request, ModelRequestOptions::default())?;
+        let body = self
+            .create_body(request, ModelRequestOptions::default())?
+            .body;
         let http_result = self
             .post_responses(ResponsesEndpoint::Create, &body, Some(&cancellation))
             .await;
@@ -456,8 +456,10 @@ impl OpenAiProvider {
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
         let cancellation = request.cancellation.clone();
-        let reasoning_level = request.reasoning_level;
-        let body = self.create_body(request, options)?;
+        let ResponsesCreateBody {
+            body,
+            in_force_effort,
+        } = self.create_body(request, options)?;
         let http_result = self
             .post_responses(ResponsesEndpoint::Create, &body, Some(&cancellation))
             .await;
@@ -467,7 +469,7 @@ impl OpenAiProvider {
         }
         let mut on_event = Some(on_event);
         let output = collect_codex_sse_response(response, &mut on_event).await?;
-        self.emit_turn_reasoning_effort(reasoning_level, &mut on_event)?;
+        self.emit_turn_reasoning_effort(in_force_effort.as_deref(), &mut on_event)?;
         Ok(output.response)
     }
 }

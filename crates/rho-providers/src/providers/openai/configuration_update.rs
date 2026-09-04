@@ -31,7 +31,7 @@ pub(super) enum ReasoningUpdatePolicy {
     PreservePrefix,
 }
 
-fn preserves_prefix_for(model: &str) -> bool {
+pub(super) fn preserves_prefix_for(model: &str) -> bool {
     model == CONFIGURATION_UPDATE_MODEL
 }
 
@@ -94,10 +94,21 @@ fn baseline_effort<'a>(
         .or(current_effort)
 }
 
-/// Lowers history and, when preserving the prefix, inserts effort updates.
+/// History lowered for a Responses request, plus the two effort values.
 ///
-/// Returns the request-level effort that must stay on the body (baseline when
-/// preserving, otherwise the current turn).
+/// `request_effort` stays on the create/compact body (prefix baseline when
+/// preserving). `in_force_effort` is what the upcoming assistant turn will
+/// actually run at after any inserted `configuration_update` items. When the
+/// request ends on an assistant message there is no trailing segment to host
+/// an update, so in-force stays at the last applied effort even if the user
+/// asked for a new level.
+pub(super) struct LoweredResponsesInput {
+    pub(super) input: Vec<Value>,
+    pub(super) request_effort: Option<String>,
+    pub(super) in_force_effort: Option<String>,
+}
+
+/// Lowers history and, when preserving the prefix, inserts effort updates.
 ///
 /// Each `configuration_update` is emitted immediately before the first input
 /// item of the segment whose next assistant turn uses a different effort.
@@ -114,18 +125,23 @@ pub(super) fn lower_responses_input(
     identity: &ModelIdentity,
     current_effort: Option<&str>,
     policy: ReasoningUpdatePolicy,
-) -> Result<(Vec<Value>, Option<String>), ModelError> {
+) -> Result<LoweredResponsesInput, ModelError> {
     if policy == ReasoningUpdatePolicy::CurrentLevel || !preserves_prefix_for(&identity.model) {
         let input = crate::protocol::openai_responses::codex_input_items_for_target(
             messages,
             instructions,
             Some(identity),
         )?;
-        return Ok((input, current_effort.map(str::to_owned)));
+        let effort = current_effort.map(str::to_owned);
+        return Ok(LoweredResponsesInput {
+            input,
+            request_effort: effort.clone(),
+            in_force_effort: effort,
+        });
     }
 
     let baseline = baseline_effort(messages, identity, current_effort);
-    let input = interleave_configuration_updates(
+    let (input, in_force_effort) = interleave_configuration_updates(
         messages,
         instructions,
         identity,
@@ -136,7 +152,11 @@ pub(super) fn lower_responses_input(
         !has_adjacent_configuration_updates(&input),
         "configuration_update items must be followed by a real input item"
     );
-    Ok((input, baseline.map(str::to_owned)))
+    Ok(LoweredResponsesInput {
+        input,
+        request_effort: baseline.map(str::to_owned),
+        in_force_effort,
+    })
 }
 
 fn interleave_configuration_updates(
@@ -145,7 +165,7 @@ fn interleave_configuration_updates(
     identity: &ModelIdentity,
     baseline: Option<&str>,
     trailing_effort: Option<&str>,
-) -> Result<Vec<Value>, ModelError> {
+) -> Result<(Vec<Value>, Option<String>), ModelError> {
     let mut input = Vec::new();
     let mut current_effort = baseline;
     let mut index = 0;
@@ -186,7 +206,7 @@ fn interleave_configuration_updates(
         }
         input.append(&mut segment);
     }
-    Ok(input)
+    Ok((input, current_effort.map(str::to_owned)))
 }
 
 pub(super) fn has_adjacent_configuration_updates(input: &[Value]) -> bool {

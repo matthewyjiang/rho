@@ -10,7 +10,8 @@ use crate::reasoning::ReasoningLevel;
 
 use super::super::auth::Auth;
 use super::super::codex_request::{
-    build_responses_compact_body, build_responses_create_body, codex_test_auth, ResponsesProfile,
+    build_responses_compact_body, build_responses_create_body, codex_test_auth,
+    ResponsesCreateBody, ResponsesProfile,
 };
 use super::super::reasoning::OpenAiReasoningProfile;
 
@@ -63,7 +64,7 @@ fn request<'a>(messages: &'a [Message], level: ReasoningLevel) -> ModelRequest<'
     }
 }
 
-fn create_body(model: &str, messages: &[Message], level: ReasoningLevel) -> Value {
+fn create_body(model: &str, messages: &[Message], level: ReasoningLevel) -> ResponsesCreateBody {
     let profile = ResponsesProfile::from_auth(&codex_test_auth(), model);
     build_responses_create_body(
         &profile,
@@ -114,6 +115,7 @@ fn astra_create_bodies_preserve_prefix_effort() {
         messages: Vec<Message>,
         level: ReasoningLevel,
         expected_effort: &'static str,
+        expected_in_force: &'static str,
         expected_input: Vec<Value>,
     }
 
@@ -127,6 +129,7 @@ fn astra_create_bodies_preserve_prefix_effort() {
             ],
             level: ReasoningLevel::High,
             expected_effort: "low",
+            expected_in_force: "high",
             expected_input: vec![
                 user_item("one"),
                 assistant_item("two"),
@@ -143,6 +146,7 @@ fn astra_create_bodies_preserve_prefix_effort() {
             ],
             level: ReasoningLevel::Low,
             expected_effort: "low",
+            expected_in_force: "low",
             expected_input: vec![user_item("one"), assistant_item("two"), user_item("three")],
         },
         Case {
@@ -158,6 +162,7 @@ fn astra_create_bodies_preserve_prefix_effort() {
             ],
             level: ReasoningLevel::High,
             expected_effort: "low",
+            expected_in_force: "high",
             expected_input: vec![
                 user_item("read it"),
                 json!({
@@ -185,6 +190,7 @@ fn astra_create_bodies_preserve_prefix_effort() {
             ],
             level: ReasoningLevel::High,
             expected_effort: "low",
+            expected_in_force: "high",
             expected_input: vec![
                 user_item("one"),
                 assistant_item("two"),
@@ -203,16 +209,35 @@ fn astra_create_bodies_preserve_prefix_effort() {
             ],
             level: ReasoningLevel::High,
             expected_effort: "high",
+            expected_in_force: "high",
             expected_input: vec![user_item("one"), assistant_item("two"), user_item("three")],
+        },
+        Case {
+            name:
+                "history ending on assistant emits no trailing update and keeps baseline in force",
+            messages: vec![
+                Message::user_text("one"),
+                assistant_text(&astra, "two", Some("low")),
+            ],
+            level: ReasoningLevel::High,
+            expected_effort: "low",
+            expected_in_force: "low",
+            expected_input: vec![user_item("one"), assistant_item("two")],
         },
     ];
 
     for case in cases {
-        let body = create_body("gpt-6-astra", &case.messages, case.level);
-        let input = body["input"].as_array().expect(case.name);
+        let created = create_body("gpt-6-astra", &case.messages, case.level);
+        let input = created.body["input"].as_array().expect(case.name);
         assert_no_adjacent_updates(input);
         assert_eq!(
-            body["reasoning"]["effort"], case.expected_effort,
+            created.body["reasoning"]["effort"], case.expected_effort,
+            "{}",
+            case.name
+        );
+        assert_eq!(
+            created.in_force_effort.as_deref(),
+            Some(case.expected_in_force),
             "{}",
             case.name
         );
@@ -230,9 +255,10 @@ fn non_astra_create_body_follows_current_level_without_updates() {
         assistant_text(&gpt55, "two", Some("low")),
         Message::user_text("three"),
     ];
-    let body = create_body("gpt-5.5", &messages, ReasoningLevel::High);
-    let input = body["input"].as_array().expect("input");
-    assert_eq!(body["reasoning"]["effort"], "high");
+    let created = create_body("gpt-5.5", &messages, ReasoningLevel::High);
+    let input = created.body["input"].as_array().expect("input");
+    assert_eq!(created.body["reasoning"]["effort"], "high");
+    assert_eq!(created.in_force_effort.as_deref(), Some("high"));
     assert!(input.iter().all(|item| !is_configuration_update_item(item)));
     assert_eq!(
         *input,
@@ -279,9 +305,10 @@ fn api_key_astra_create_body_emits_configuration_update() {
         /*hosted_web_search*/ true,
     )
     .unwrap();
-    assert_eq!(body["reasoning"]["effort"], "medium");
+    assert_eq!(body.body["reasoning"]["effort"], "medium");
+    assert_eq!(body.in_force_effort.as_deref(), Some("max"));
     assert_eq!(
-        body["input"],
+        body.body["input"],
         json!([
             user_item("one"),
             assistant_item("two"),

@@ -241,7 +241,8 @@ fn astra_reasoning_change_keeps_request_properties_and_deltas_update_item() {
         None,
         /*hosted_web_search*/ true,
     )
-    .unwrap();
+    .unwrap()
+    .body;
     let next_messages = [
         Message::user_text("one"),
         Message::assistant(AssistantMessage {
@@ -270,7 +271,8 @@ fn astra_reasoning_change_keeps_request_properties_and_deltas_update_item() {
         None,
         /*hosted_web_search*/ true,
     )
-    .unwrap();
+    .unwrap()
+    .body;
 
     let mut first_properties = first.clone();
     first_properties.as_object_mut().unwrap().remove("input");
