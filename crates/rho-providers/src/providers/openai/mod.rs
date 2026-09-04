@@ -225,6 +225,9 @@ impl OpenAiProvider {
         in_force_effort: Option<&str>,
         on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
     ) -> Result<(), ModelError> {
+        if !configuration_update::preserves_prefix_for(self.profile.model()) {
+            return Ok(());
+        }
         configuration_update::emit_reasoning_effort(in_force_effort, on_event)
     }
 }

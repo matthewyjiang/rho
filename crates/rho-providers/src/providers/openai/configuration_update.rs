@@ -7,6 +7,8 @@
 //!
 //! Recorded effort lives on assistant messages as provider context so resume
 //! and `/responses/compact` replacement history can recompute the same prefix.
+//! Non-astra turns record nothing; later astra turns fall back to the current
+//! request effort when no record exists.
 
 use serde_json::{json, Value};
 

@@ -102,7 +102,7 @@ async fn completed_responses_turn_emits_reasoning_effort_context() {
     });
 
     let mut provider =
-        OpenAiProvider::new_with_auth("gpt-5.5".into(), Auth::ApiKey("test-key".into()));
+        OpenAiProvider::new_with_auth("gpt-6-astra".into(), Auth::ApiKey("test-key".into()));
     provider.api_base = api_base;
     provider.client = crate::reqwest_client();
 
