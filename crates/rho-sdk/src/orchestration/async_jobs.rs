@@ -268,11 +268,18 @@ impl AsyncJobSet {
                     first_capability: first_capability.clone(),
                 },
             );
-            let ready = tokio::select! {
-                result = ready_rx => result,
-                () = cancellation.cancelled() => {
-                    job_cancellation.cancel();
-                    return Err(Error::Cancelled);
+            let mut ready_rx = ready_rx;
+            let ready = loop {
+                tokio::select! {
+                    biased;
+                    result = &mut ready_rx => break result,
+                    notice = self.poll_event() => {
+                        forward_job_notice(notice, self, hooks, events, cancellation).await?;
+                    }
+                    () = cancellation.cancelled() => {
+                        job_cancellation.cancel();
+                        return Err(Error::Cancelled);
+                    }
                 }
             };
             match ready {

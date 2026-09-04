@@ -117,6 +117,55 @@ impl Tool for GatedAsyncTool {
     }
 }
 
+struct ProgressBurstAsyncTool {
+    name: &'static str,
+    reports: usize,
+}
+
+impl Tool for ProgressBurstAsyncTool {
+    fn spec(&self) -> ToolSpec {
+        tool_spec(self.name)
+    }
+
+    fn execution_mode(&self) -> ToolExecutionMode {
+        ToolExecutionMode::Async
+    }
+
+    fn prepare<'a>(
+        &'a self,
+        _invocation: ToolInvocation,
+        _context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
+        let reports = self.reports;
+        Box::pin(async move {
+            Ok(PreparedToolInvocation::resource_aware(
+                [],
+                [],
+                Default::default(),
+                move |context| {
+                    Box::pin(async move {
+                        for index in 0..reports {
+                            assert!(
+                                context
+                                    .progress()
+                                    .send(crate::tool::ToolProgress::message(format!(
+                                        "progress {index}"
+                                    )))
+                                    .await
+                            );
+                        }
+                        Ok(ToolOutput::text("done"))
+                    })
+                },
+            ))
+        })
+    }
+
+    fn call<'a>(&'a self, _invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
+        Box::pin(async { Ok(ToolOutput::text("sync")) })
+    }
+}
+
 struct ImmediateAsyncTool {
     name: &'static str,
 }
@@ -461,6 +510,46 @@ async fn detached_jobs_respect_max_parallel_tools() {
     tokio::time::timeout(TEST_TIMEOUT, run.outcome())
         .await
         .expect("run timed out")
+        .unwrap();
+}
+
+// Covers: starting a queued detached call keeps draining progress from the
+// running call, so a full bounded progress channel cannot deadlock the slot.
+// Owner: sdk orchestration
+#[tokio::test]
+async fn queued_async_start_drains_running_job_progress() {
+    let event_capacity = NonZeroUsize::new(2).unwrap();
+    let provider = ScriptedProvider::new(
+        identity(),
+        [
+            ScriptedTurn::streaming(
+                vec![async_marker("call-a"), async_marker("call-b")],
+                ModelResponse::Assistant(vec![
+                    ContentBlock::ToolCall(tool_call("call-a", "progress")),
+                    ContentBlock::ToolCall(tool_call("call-b", "immediate")),
+                ]),
+            ),
+            text_turn("done"),
+        ],
+    );
+    let session = Rho::builder()
+        .provider(provider)
+        .event_capacity(event_capacity)
+        .max_parallel_tools(NonZeroUsize::new(1).unwrap())
+        .tool(ProgressBurstAsyncTool {
+            name: "progress",
+            reports: event_capacity.get() + 1,
+        })
+        .tool(ImmediateAsyncTool { name: "immediate" })
+        .build()
+        .unwrap()
+        .session(SessionOptions::default())
+        .await
+        .unwrap();
+
+    tokio::time::timeout(TEST_TIMEOUT, session.complete("start"))
+        .await
+        .expect("queued async startup deadlocked")
         .unwrap();
 }
 
