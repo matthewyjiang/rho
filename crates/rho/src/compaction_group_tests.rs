@@ -61,6 +61,11 @@ fn completed_tool_group_end_is_id_set_based() {
             expected: Some(4),
         },
         Case {
+            name: "partial multi-call assistant keeps the covered result",
+            messages: vec![calls(&["a", "b"]), result("a")],
+            expected: Some(2),
+        },
+        Case {
             name: "covered initial call stays paired when nested call is unresolved",
             messages: vec![call("a"), call("b"), result("a")],
             expected: Some(3),
