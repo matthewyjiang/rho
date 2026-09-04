@@ -391,13 +391,13 @@ async fn descendant_case(action: &str) {
         .start(
             command,
             std::path::Path::new("."),
-            // Must outlast the pid-file poll below. macos-latest failed when
-            // 500ms killed the shell before `echo $!`; equal 5s budgets race.
-            (action == "timeout").then_some(Duration::from_secs(15)),
+            // Pid poll must finish while the process is still alive. macos-latest
+            // failed when 500ms killed the shell before `echo $!`.
+            (action == "timeout").then_some(Duration::from_secs(5)),
         )
         .await
         .unwrap();
-    let pid = tokio::time::timeout(Duration::from_secs(5), async {
+    let pid = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             if let Some(pid) = std::fs::read_to_string(&pid_file)
                 .ok()

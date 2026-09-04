@@ -719,7 +719,7 @@ impl App {
     }
 
     /// When edit preference is Auto, advertise the preferred format for
-    /// `provider`. Failures are reported as notices and do not undo a model
+    /// `provider`. Failures are reported as notices and do not undo the live
     /// switch.
     pub(super) async fn apply_auto_edit_tool_for_provider(
         &mut self,
@@ -730,7 +730,7 @@ impl App {
             Ok(config) => config,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!(
-                    "model switched, but auto edit tool could not follow the provider: {error}"
+                    "could not follow auto edit tool: {error}"
                 )));
                 return;
             }
@@ -741,7 +741,7 @@ impl App {
         let resolved = config.resolved_edit_tool_for_provider(provider);
         match self
             .apply_resolved_edit_tool(agent, resolved, config.max_output_bytes, |error| {
-                format!("model switched, but auto edit tool could not follow the provider: {error}")
+                format!("could not follow auto edit tool: {error}")
             })
             .await
         {
