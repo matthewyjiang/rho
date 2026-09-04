@@ -434,7 +434,6 @@ impl InputUi {
             .collect()
     }
 
-    #[cfg(test)]
     pub(in crate::tui) fn push_ready_attachment(
         &mut self,
         media: ChatMedia,

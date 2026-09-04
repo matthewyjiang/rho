@@ -272,10 +272,6 @@ impl InteractiveRuntime {
         rho_sdk::model::handoff::report_message_omissions(&self.sessions.history(), target)
     }
 
-    pub(crate) fn live_context_warm(&self) -> bool {
-        self.live_context_warm
-    }
-
     pub(crate) fn mark_live_context_warm(&mut self) {
         self.live_context_warm = true;
     }

@@ -6,6 +6,7 @@ use super::super::{
     TurnPrompt,
 };
 use super::HeldTurn;
+use crate::tui::send_confirm::SendSubmission;
 
 fn attached_document() -> ChatMedia {
     ChatMedia::TextDocument(ChatTextDocument {
@@ -118,6 +119,30 @@ fn compact_prompts_use_the_pending_input_list() {
     assert!(line_text(&lines[1]).contains("STEER"));
     assert!(line_text(&lines[2]).contains("NEXT"));
     assert!(line_text(&lines[2]).contains("after compact"));
+}
+
+// Covers: moving a queued follow-up into confirmation leaves no second queue
+// owner that could send the same prompt after the confirmed copy.
+// Owner: queued follow-up ownership
+#[test]
+fn confirmation_submission_takes_single_ownership_from_queue() {
+    let mut app = test_app();
+    app.pending.push_follow_up(super::super::QueuedPrompt {
+        prompt: "model body".into(),
+        display_prompt: "display body".into(),
+        paste_segments: Vec::new(),
+        media: vec![attached_document()],
+    });
+
+    let prompt = app.pending.pop_follow_up().expect("queued prompt");
+    let submission = SendSubmission::turn(
+        TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
+        prompt.media,
+        prompt.paste_segments,
+    );
+
+    assert!(app.pending.queued_prompts().is_empty());
+    assert_eq!(submission.turn_display(), Some("display body"));
 }
 
 // Covers: Unchanged/Failed compaction still starts the parked follow-up; cancel does not.

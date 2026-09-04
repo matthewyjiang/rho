@@ -5,7 +5,7 @@ use tokio::sync::oneshot;
 #[cfg(unix)]
 use crate::herdr::test_support::{reporter_for_socket, TestHerdrServer};
 
-use super::ParentActivity;
+use super::{subagent_completion_changed, ParentActivity, SubagentCompletionTurn};
 use crate::{
     app::subagent_host_input::SubagentHostInputRequest,
     tui::{
@@ -188,4 +188,17 @@ async fn cancelled_visible_questionnaire_restores_input_composer() {
     assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
     assert!(app.pending_subagent_questionnaire.is_none());
     assert_eq!(app.status(), "ready");
+}
+
+// Covers: opening the send-confirmation modal during an idle completion poll
+// must request a redraw, while an empty poll stays quiet.
+// Owner: delegated completion polling
+#[test]
+fn pending_completion_confirmation_counts_as_a_visible_change() {
+    assert!(!subagent_completion_changed(
+        &SubagentCompletionTurn::NoDelivery
+    ));
+    assert!(subagent_completion_changed(
+        &SubagentCompletionTurn::PendingConfirmation
+    ));
 }

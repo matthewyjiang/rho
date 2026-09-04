@@ -76,6 +76,7 @@ pub(super) enum InlineChoicePending {
         next: super::login::StoreChoiceNext,
     },
     ContextHandoff(Box<super::context_handoff::PendingContextHandoff>),
+    ConfirmSend(Box<super::send_confirm::PendingConfirmSend>),
     ClaudeCodeLogin,
     ClaudeCodeRelogin,
     ClaudeCodeLogout,
@@ -103,7 +104,10 @@ pub(super) enum InlineChoicePending {
 
 impl InlineChoiceModal {
     pub(super) fn blocks_auto_continue(&self) -> bool {
-        matches!(self.pending, InlineChoicePending::ContextHandoff(_))
+        matches!(
+            self.pending,
+            InlineChoicePending::ContextHandoff(_) | InlineChoicePending::ConfirmSend(_)
+        )
     }
 }
 

@@ -4,7 +4,9 @@ use std::time::Instant;
 use ratatui::text::Line;
 
 use super::*;
-use crate::tui::{tests::test_app, Entry, StreamKind};
+use crate::tui::{
+    tests::test_app, ChatMedia, ChatTextDocument, ComposerAttachment, Entry, StreamKind,
+};
 
 fn prompt(text: &str) -> QueuedPrompt {
     QueuedPrompt {
@@ -17,6 +19,33 @@ fn prompt(text: &str) -> QueuedPrompt {
 
 fn key(code: KeyCode, modifiers: KeyModifiers) -> KeyEvent {
     KeyEvent::new(code, modifiers)
+}
+
+// Covers: cancelling a gated or compact-start-failed send restores owned media
+// with its text instead of silently dropping the attachment.
+// Owner: pending prompt restoration
+#[test]
+fn restoring_owned_prompt_restores_ready_media() {
+    let mut app = test_app();
+    let media = ChatMedia::TextDocument(ChatTextDocument {
+        name: "notes.txt".into(),
+        mime: "text/plain".into(),
+        body: "owned attachment".into(),
+        truncated: false,
+        warnings: Vec::new(),
+    });
+    app.restore_pending_prompt(QueuedPrompt {
+        prompt: "model text".into(),
+        display_prompt: "display text".into(),
+        paste_segments: Vec::new(),
+        media: vec![media.clone()],
+    });
+
+    assert_eq!(app.input_ui.text(), "display text");
+    assert_eq!(
+        app.input_ui.attachments(),
+        vec![ComposerAttachment::Ready(media)]
+    );
 }
 
 fn line_text(line: &Line<'_>) -> String {

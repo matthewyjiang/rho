@@ -28,6 +28,7 @@ mod process_rail;
 mod resume_delete;
 mod resume_scrollback;
 mod runtime_info;
+mod send_confirm;
 mod sessions_hub;
 mod side_chat;
 mod startup;
@@ -574,6 +575,17 @@ const ALL_SCENARIOS: &[Scenario] = &[
         &[],
         /*smoke*/ false,
     ),
+    // Custom multi-process scenario: see send_confirm::run_send_confirm_handoff.
+    Scenario::new(
+        send_confirm::SEND_CONFIRM_HANDOFF_ID,
+        "Confirm a send whose conversation holds unreplayable native context",
+        PtySize {
+            rows: 16,
+            cols: 100,
+        },
+        &[],
+        /*smoke*/ false,
+    ),
     Scenario::new(
         "progress_tool",
         "Run the fixture progress tool to completion",
@@ -913,6 +925,9 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
     }
     if config::is_auto_recovered_handoff_scenario(name) {
         return config::run_auto_recovered_handoff(runner);
+    }
+    if send_confirm::is_send_confirm_scenario(name) {
+        return send_confirm::run_send_confirm_handoff(runner);
     }
     if resume_scrollback::is_resume_scrollback_scenario(name) {
         return resume_scrollback::run_resume_scrollback(runner);

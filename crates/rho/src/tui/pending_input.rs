@@ -426,13 +426,8 @@ impl App {
             }
             PendingInputRef::FollowUp(index) => {
                 if let Some(prompt) = self.pending.remove_follow_up(index) {
-                    let had_media = !prompt.media.is_empty();
                     self.restore_pending_prompt(prompt);
-                    self.notify_status(if had_media {
-                        "editing queued follow-up; attach the files again"
-                    } else {
-                        "editing queued follow-up"
-                    });
+                    self.notify_status("editing queued follow-up");
                 }
             }
         }
@@ -470,18 +465,21 @@ impl App {
         self.pending_input_changed();
     }
 
-    fn composer_available_for_pending_edit(&self) -> bool {
+    pub(super) fn composer_available_for_pending_edit(&self) -> bool {
         matches!(self.input_ui.composer(), ComposerMode::Input)
-            && self.input_ui.text().is_empty()
+            && !self.input_ui.has_pending_draft()
             && self.input_ui.paste_segments().is_empty()
-            && self.input_ui.attachments().is_empty()
-            && self.input_ui.shell_mode().is_none()
     }
 
     pub(super) fn restore_pending_prompt(&mut self, prompt: QueuedPrompt) {
         self.input_ui.set_shell_mode(None);
         self.input_ui.set_text(prompt.display_prompt);
         self.input_ui.set_paste_segments(prompt.paste_segments);
+        for media in prompt.media {
+            // Restore the owned model payload; image previews are optional
+            // presentation state, so cancellation never needs to retain them.
+            self.input_ui.push_ready_attachment(media, None);
+        }
         self.input_ui
             .set_submission_mode(InputSubmissionMode::ParseCommands);
         self.input_ui.set_cursor(self.input_char_len());

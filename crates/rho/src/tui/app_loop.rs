@@ -91,7 +91,7 @@ impl App {
                 || agent.startup_hydrate_pending();
             self.poll_model_metadata_fetch(agent).await;
             needs_redraw |= self.poll_startup_hydrates(agent).await?;
-            needs_redraw |= self.poll_compact(terminal, agent).await?;
+            needs_redraw |= self.poll_compact(agent).await?;
             needs_redraw |= self.release_pending_held_turn(terminal, agent).await?;
             needs_redraw |= self.start_next_follow_up(terminal, agent).await?;
             if !first_frame {

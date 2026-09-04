@@ -142,6 +142,7 @@ mod rendered_entry;
 mod run_lifecycle;
 mod screen_layout;
 mod scrollbar;
+mod send_confirm;
 mod session_actions;
 mod session_picker;
 mod session_title;
@@ -548,9 +549,9 @@ struct App {
     /// Turns held until MCP connect settles.
     held_turns: VecDeque<idle_input::HeldTurn>,
     compact_follow_up: compact_work::CompactFollowUp,
-    /// When set, start the next queued follow-up once the composer is free.
-    /// The bool is whether that start may auto-compact.
-    start_follow_ups: Option<bool>,
+    /// Work made runnable by compact settlement. A confirmed send remains a
+    /// distinct owned submission rather than being cloned into the edit queue.
+    start_follow_ups: Option<compact_work::ReadyFollowUp>,
     pending_model_selection: Option<InteractiveModelSelection>,
     /// Explicit all/pinned choice from the scope-toggle key. `None` means
     /// prefer pinned, falling back to all when no pin has auth.

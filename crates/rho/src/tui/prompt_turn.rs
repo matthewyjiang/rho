@@ -142,6 +142,7 @@ impl App {
         &mut self,
         prompt: TurnPrompt,
         media: Vec<ChatMedia>,
+        authorization: super::send_confirm::SendAuthorization,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TurnOutcome> {
@@ -151,6 +152,7 @@ impl App {
                 media,
                 pre_drained_batch: None,
             },
+            authorization,
             terminal,
             agent,
         )
@@ -164,6 +166,7 @@ impl App {
         &mut self,
         prompt: TurnPrompt,
         batch: super::subagent_questionnaires::TurnBoundaryBatch,
+        authorization: super::send_confirm::SendAuthorization,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TurnOutcome> {
@@ -173,6 +176,7 @@ impl App {
                 media: Vec::new(),
                 pre_drained_batch: Some(batch),
             },
+            authorization,
             terminal,
             agent,
         )
@@ -182,19 +186,30 @@ impl App {
     pub(super) async fn retry_failed_prompt_turn(
         &mut self,
         failed_turn: FailedTurn,
+        authorization: super::send_confirm::SendAuthorization,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TurnOutcome> {
-        self.run_prompt_turn_request(PromptTurnRequest::Retry(failed_turn), terminal, agent)
-            .await
+        self.run_prompt_turn_request(
+            PromptTurnRequest::Retry(failed_turn),
+            authorization,
+            terminal,
+            agent,
+        )
+        .await
     }
 
     async fn run_prompt_turn_request(
         &mut self,
         request: PromptTurnRequest,
+        authorization: super::send_confirm::SendAuthorization,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TurnOutcome> {
+        anyhow::ensure!(
+            authorization.matches(&agent.provider_identity()),
+            "send authorization became stale before provider start"
+        );
         let (mut failed_turn, pre_drained_batch) = match request {
             PromptTurnRequest::New {
                 prompt,
@@ -670,7 +685,7 @@ impl App {
             self.preserve_unapplied_steering_as_follow_ups();
         }
         self.clear_accepted_steering();
-        self.apply_pending_model_selection(agent, completed).await?;
+        self.apply_pending_model_selection(agent).await?;
         if self.pending_subagent_questionnaire.is_some() {
             self.set_status(HerdrUserWait::Questionnaire.message());
         }
