@@ -128,7 +128,6 @@ pub(super) fn merge_toml_override(
     if let Some(levels) = toml_reasoning_levels(table, "supported_reasoning_levels") {
         metadata.supported_reasoning_levels = Some(levels);
         metadata.reasoning_capabilities_known = true;
-        metadata.reasoning_metadata_complete = true;
     }
     metadata
 }
