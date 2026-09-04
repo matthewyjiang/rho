@@ -600,6 +600,8 @@ impl SteerCollect {
         }
         let steered = state.steered;
         if let Some(in_flight) = self.in_flight.take() {
+            // An earlier acknowledged steer already explains the steered
+            // terminal, so a later unacknowledged send stays unconfirmed.
             if steered && self.accepted_items.is_empty() {
                 self.accepted_items.extend(in_flight.items);
                 in_flight.request.accept();
