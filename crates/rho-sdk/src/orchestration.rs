@@ -169,16 +169,7 @@ async fn execute_turn_loop(
                 async_jobs: &mut async_jobs,
             };
             if let Err(error) = harvest_ready_jobs(&mut control).await {
-                return terminate_run(
-                    core,
-                    history,
-                    &mut async_jobs,
-                    hooks,
-                    &events,
-                    &cancellation,
-                    error,
-                )
-                .await;
+                return terminate_run(core, history, &mut async_jobs, hooks, &events, error).await;
             }
         }
         async_jobs.drain_finished(&mut history);
@@ -201,16 +192,8 @@ async fn execute_turn_loop(
             {
                 Ok(()) => {}
                 Err(error) => {
-                    return terminate_run(
-                        core,
-                        history,
-                        &mut async_jobs,
-                        hooks,
-                        &events,
-                        &cancellation,
-                        error,
-                    )
-                    .await;
+                    return terminate_run(core, history, &mut async_jobs, hooks, &events, error)
+                        .await;
                 }
             }
         } else if runtime.compaction_policy.is_some() {
@@ -228,16 +211,8 @@ async fn execute_turn_loop(
             match apply_staged_steering(&mut steering, &mut history, &events, &cancellation).await {
                 Ok(()) => {}
                 Err(error) => {
-                    return terminate_run(
-                        core,
-                        history,
-                        &mut async_jobs,
-                        hooks,
-                        &events,
-                        &cancellation,
-                        error,
-                    )
-                    .await;
+                    return terminate_run(core, history, &mut async_jobs, hooks, &events, error)
+                        .await;
                 }
             }
         }
@@ -258,16 +233,7 @@ async fn execute_turn_loop(
         {
             Ok(()) => {}
             Err(error) => {
-                return terminate_run(
-                    core,
-                    history,
-                    &mut async_jobs,
-                    hooks,
-                    &events,
-                    &cancellation,
-                    error,
-                )
-                .await;
+                return terminate_run(core, history, &mut async_jobs, hooks, &events, error).await;
             }
         }
 
@@ -356,16 +322,7 @@ async fn execute_turn_loop(
             )
             .await
         {
-            return terminate_run(
-                core,
-                history,
-                control.async_jobs,
-                hooks,
-                &events,
-                &cancellation,
-                error,
-            )
-            .await;
+            return terminate_run(core, history, control.async_jobs, hooks, &events, error).await;
         }
 
         // Detached jobs may keep using shared resources for their lifetime.
@@ -374,16 +331,8 @@ async fn execute_turn_loop(
         if !sync_calls.is_empty() {
             if control.async_jobs.has_pending() {
                 if let Err(error) = await_all_jobs(&mut control).await {
-                    return terminate_run(
-                        core,
-                        history,
-                        control.async_jobs,
-                        hooks,
-                        &events,
-                        &cancellation,
-                        error,
-                    )
-                    .await;
+                    return terminate_run(core, history, control.async_jobs, hooks, &events, error)
+                        .await;
                 }
             }
             control.async_jobs.drain_finished(&mut history);
@@ -426,31 +375,14 @@ async fn execute_turn_loop(
             )
             .await
             {
-                return terminate_run(
-                    core,
-                    history,
-                    control.async_jobs,
-                    hooks,
-                    &events,
-                    &cancellation,
-                    error,
-                )
-                .await;
+                return terminate_run(core, history, control.async_jobs, hooks, &events, error)
+                    .await;
             }
             continue;
         }
 
         if let Err(error) = harvest_ready_jobs(&mut control).await {
-            return terminate_run(
-                core,
-                history,
-                control.async_jobs,
-                hooks,
-                &events,
-                &cancellation,
-                error,
-            )
-            .await;
+            return terminate_run(core, history, control.async_jobs, hooks, &events, error).await;
         }
         if control.async_jobs.drain_finished(&mut history) > 0 {
             continue;
@@ -465,7 +397,6 @@ async fn execute_turn_loop(
                             control.async_jobs,
                             hooks,
                             &events,
-                            &cancellation,
                             error,
                         )
                         .await;
@@ -485,7 +416,6 @@ async fn execute_turn_loop(
                             control.async_jobs,
                             hooks,
                             &events,
-                            &cancellation,
                             error,
                         )
                         .await;
@@ -499,22 +429,13 @@ async fn execute_turn_loop(
                         control.async_jobs,
                         hooks,
                         &events,
-                        &cancellation,
                         Error::Cancelled,
                     )
                     .await;
                 }
                 Err(error) => {
-                    return terminate_run(
-                        core,
-                        history,
-                        control.async_jobs,
-                        hooks,
-                        &events,
-                        &cancellation,
-                        error,
-                    )
-                    .await;
+                    return terminate_run(core, history, control.async_jobs, hooks, &events, error)
+                        .await;
                 }
             }
         }
@@ -564,7 +485,6 @@ async fn terminate_run(
     async_jobs: &mut AsyncJobSet,
     hooks: &RunHooks,
     events: &mpsc::Sender<RunEvent>,
-    cancellation: &CancellationToken,
     error: Error,
 ) -> Result<RunOutcome, Error> {
     async_jobs.interrupt(&mut history, hooks, events).await;
