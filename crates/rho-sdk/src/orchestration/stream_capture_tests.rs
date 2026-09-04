@@ -228,6 +228,83 @@ fn web_search_activity_keeps_stable_run_event_shape() {
     );
 }
 
+// Covers: turn metadata must not split aborted text, while positioned context remains a boundary.
+// Owner: SDK stream capture
+#[test]
+fn provider_context_only_splits_text_at_positioned_boundaries() {
+    struct Case {
+        name: &'static str,
+        initial_text: Option<&'static str>,
+        positions: &'static [Option<usize>],
+        expected: Vec<ContentBlock>,
+    }
+    let cases = [
+        Case {
+            name: "turn metadata between deltas",
+            initial_text: Some("pre"),
+            positions: &[None],
+            expected: vec![ContentBlock::Text("prehello".into())],
+        },
+        Case {
+            name: "content boundary between deltas",
+            initial_text: Some("pre"),
+            positions: &[Some(0)],
+            expected: vec![
+                ContentBlock::Text("pre".into()),
+                ContentBlock::Text("hel".into()),
+                ContentBlock::Text("lo".into()),
+            ],
+        },
+        Case {
+            name: "turn metadata after a content boundary",
+            initial_text: None,
+            positions: &[Some(0), None],
+            expected: vec![
+                ContentBlock::Text("hel".into()),
+                ContentBlock::Text("lo".into()),
+            ],
+        },
+    ];
+    for case in cases {
+        let mut capture = StreamCapture::default();
+        if let Some(text) = case.initial_text {
+            capture_provider_event(
+                ModelEvent::OutputDelta(text.into()),
+                &identity(),
+                &ModelUsage::default(),
+                &mut capture,
+            );
+        }
+        for position in case.positions {
+            capture_provider_event(
+                ModelEvent::ProviderContext {
+                    kind: "test.context".into(),
+                    position: *position,
+                    data: serde_json::json!({}),
+                },
+                &identity(),
+                &ModelUsage::default(),
+                &mut capture,
+            );
+        }
+        for text in ["hel", "lo"] {
+            capture_provider_event(
+                ModelEvent::OutputDelta(text.into()),
+                &identity(),
+                &ModelUsage::default(),
+                &mut capture,
+            );
+        }
+
+        assert_eq!(
+            capture.into_aborted_assistant().unwrap().content,
+            case.expected,
+            "{}",
+            case.name
+        );
+    }
+}
+
 // Covers: service-tier fallback must lower to a typed run event without replay state.
 // Owner: SDK stream capture
 #[test]

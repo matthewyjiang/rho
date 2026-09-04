@@ -3,11 +3,12 @@ use serde_json::{json, Value};
 use crate::model::{ModelError, ModelIdentity, ModelRequest};
 use rho_sdk::model::{ServiceTier, ToolSpec};
 
-use crate::protocol::openai_responses::{
-    codex_input_items_for_target, codex_reasoning_param, to_responses_tool, ToolStrictness,
-};
+use crate::protocol::openai_responses::{codex_reasoning_param, to_responses_tool, ToolStrictness};
 
 use super::auth::Auth;
+use super::configuration_update::{
+    lower_responses_input, LoweredResponsesInput, ReasoningUpdatePolicy,
+};
 use super::reasoning::OpenAiReasoningProfile;
 
 /// Complete wire policy for one OpenAI Responses endpoint variant.
@@ -132,6 +133,13 @@ struct ResponsesLowered {
     input: Vec<Value>,
     prompt_cache_key: Option<String>,
     reasoning: Option<Value>,
+    in_force_effort: Option<String>,
+}
+
+/// Create-body plus the effort actually in force for the upcoming assistant turn.
+pub(super) struct ResponsesCreateBody {
+    pub(super) body: Value,
+    pub(super) in_force_effort: Option<String>,
 }
 
 /// Lowers request history into common Responses fields.
@@ -139,22 +147,29 @@ fn lower_responses_request(
     profile: &ResponsesProfile,
     reasoning_profile: &OpenAiReasoningProfile,
     request: ModelRequest<'_>,
+    update_policy: ReasoningUpdatePolicy,
 ) -> Result<ResponsesLowered, ModelError> {
     let reasoning =
         reasoning_profile.config(profile.provider(), profile.model(), request.reasoning_level)?;
     let mut instructions = Vec::new();
-    let input = codex_input_items_for_target(
+    let LoweredResponsesInput {
+        input,
+        request_effort,
+        in_force_effort,
+    } = lower_responses_input(
         request.messages,
         &mut instructions,
-        Some(profile.identity()),
+        profile.identity(),
+        reasoning.effort.as_deref(),
+        update_policy,
     )?;
-    let reasoning =
-        codex_reasoning_param(reasoning.effort.as_deref(), reasoning.summary.as_deref());
+    let reasoning = codex_reasoning_param(request_effort.as_deref(), reasoning.summary.as_deref());
     Ok(ResponsesLowered {
         instructions: instructions.join("\n\n"),
         input,
         prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
         reasoning,
+        in_force_effort,
     })
 }
 
@@ -185,7 +200,7 @@ pub(super) fn build_responses_create_body(
     request: ModelRequest<'_>,
     service_tier: Option<ServiceTier>,
     hosted_web_search: bool,
-) -> Result<Value, ModelError> {
+) -> Result<ResponsesCreateBody, ModelError> {
     let contract = profile.contract();
     let tools = request
         .tools
@@ -198,7 +213,13 @@ pub(super) fn build_responses_create_body(
         input,
         prompt_cache_key,
         reasoning,
-    } = lower_responses_request(profile, reasoning_profile, request)?;
+        in_force_effort,
+    } = lower_responses_request(
+        profile,
+        reasoning_profile,
+        request,
+        ReasoningUpdatePolicy::PreservePrefix,
+    )?;
 
     let mut body = base_responses_body(profile);
     body["stream"] = json!(true);
@@ -218,7 +239,10 @@ pub(super) fn build_responses_create_body(
     }
     attach_prompt_cache_and_reasoning(&mut body, prompt_cache_key, reasoning);
     body["include"] = json!(["reasoning.encrypted_content"]);
-    Ok(body)
+    Ok(ResponsesCreateBody {
+        body,
+        in_force_effort,
+    })
 }
 
 /// Builds a unary `/responses/compact` body.
@@ -234,7 +258,13 @@ pub(super) fn build_responses_compact_body(
         input,
         prompt_cache_key,
         reasoning,
-    } = lower_responses_request(profile, reasoning_profile, request)?;
+        in_force_effort: _,
+    } = lower_responses_request(
+        profile,
+        reasoning_profile,
+        request,
+        ReasoningUpdatePolicy::CurrentLevel,
+    )?;
     let mut body = base_responses_body(profile);
     body["instructions"] = json!(instructions);
     body["input"] = json!(input);
@@ -272,13 +302,14 @@ fn build_codex_responses_body_with_tier(
     hosted_web_search: bool,
 ) -> Result<Value, ModelError> {
     let profile = ResponsesProfile::from_auth(&codex_test_auth(), model);
-    build_responses_create_body(
+    Ok(build_responses_create_body(
         &profile,
         &OpenAiReasoningProfile::unknown(),
         request,
         service_tier,
         hosted_web_search,
-    )
+    )?
+    .body)
 }
 
 #[cfg(test)]

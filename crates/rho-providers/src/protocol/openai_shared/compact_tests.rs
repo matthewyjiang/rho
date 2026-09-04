@@ -52,6 +52,7 @@ fn replacement_uses_server_output_users_and_compaction_marker() {
         &output,
         NOTICE,
         CompactUserRetention::KeepServerUsers,
+        &[],
     )
     .unwrap();
 
@@ -102,6 +103,7 @@ fn xai_policy_drops_server_user_messages() {
         &output,
         NOTICE,
         CompactUserRetention::CompactionItemOnly,
+        &[],
     )
     .unwrap();
     assert_eq!(replacement.len(), 2);
@@ -138,6 +140,7 @@ fn parse_compact_response_reads_usage() {
         &body,
         NOTICE,
         CompactUserRetention::KeepServerUsers,
+        &[],
     )
     .unwrap();
     assert_eq!(messages.len(), 2);
@@ -161,6 +164,7 @@ fn parse_compact_response_malformed_output_is_invalid() {
         &body,
         NOTICE,
         CompactUserRetention::KeepServerUsers,
+        &[],
     )
     .expect_err("malformed compact output must fail");
     assert!(matches!(error, ModelError::InvalidResponse(_)));
@@ -195,6 +199,7 @@ fn native_compact_from_response_body_success_and_failure() {
         }),
         NOTICE,
         CompactUserRetention::CompactionItemOnly,
+        &[],
         Vec::new(),
     );
     let (result, failed) = ok.into_parts();
@@ -209,6 +214,7 @@ fn native_compact_from_response_body_success_and_failure() {
         &json!({ "output": { "not": "array" } }),
         NOTICE,
         CompactUserRetention::CompactionItemOnly,
+        &[],
         vec![rho_sdk::provider::NativeCompactionFailedAttempt::new(
             rho_sdk::ProviderErrorKind::Authentication,
             ModelUsage::default(),
@@ -245,6 +251,7 @@ fn xai_single_compaction_item_replaces_history() {
         &body,
         NOTICE,
         CompactUserRetention::CompactionItemOnly,
+        &[],
     )
     .unwrap();
 

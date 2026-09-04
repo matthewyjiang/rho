@@ -59,7 +59,8 @@ async fn priority_service_tier_is_limited_to_codex_auth() {
         Some(ServiceTier::Priority),
         /*hosted_web_search*/ true,
     )
-    .unwrap();
+    .unwrap()
+    .body;
 
     assert!(body.get("service_tier").is_none());
 }
@@ -225,7 +226,8 @@ async fn standard_create_wire_contract_is_auth_flavor_specific() {
             /* service_tier */ None,
             /*hosted_web_search*/ true,
         )
-        .unwrap();
+        .unwrap()
+        .body;
 
         assert_eq!(
             body["tools"][0].get("strict").cloned(),
@@ -319,7 +321,8 @@ fn create_and_compact_body_builders_diverge_on_tools() {
         None,
         /*hosted_web_search*/ true,
     )
-    .unwrap();
+    .unwrap()
+    .body;
     let compact =
         build_responses_compact_body(&profile, &OpenAiReasoningProfile::unknown(), request)
             .unwrap();

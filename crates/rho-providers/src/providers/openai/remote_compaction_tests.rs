@@ -86,6 +86,68 @@ async fn compact_request_body_uses_codex_standard_shape_for_gpt56_models() {
         .is_none());
 }
 
+// Covers: compact replacement history preserves the effort used to create the
+// encrypted artifact, so a later effort change stays out of the cached prefix.
+// Owner: OpenAI native compaction
+#[test]
+fn astra_compaction_preserves_reasoning_baseline() {
+    let profile = codex_profile("gpt-6-astra");
+    let identity = profile.identity().clone();
+    let compact = build_responses_compact_body(
+        &profile,
+        &OpenAiReasoningProfile::unknown(),
+        ModelRequest {
+            messages: &[Message::user_text("before compact")],
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: crate::reasoning::ReasoningLevel::Low,
+            prompt_cache_key: None,
+        },
+    )
+    .unwrap();
+    let context = compact_assistant_context(&identity, &compact);
+    let (mut replacement, _) = crate::protocol::openai_responses::parse_compact_response(
+        identity,
+        &[],
+        &json!({
+            "output": [{
+                "type": "compaction",
+                "encrypted_content": "opaque"
+            }]
+        }),
+        PORTABLE_HANDOFF_NOTICE,
+        CompactUserRetention::KeepServerUsers,
+        &context,
+    )
+    .unwrap();
+    replacement.push(Message::user_text("after compact"));
+
+    let created = super::super::codex_request::build_responses_create_body(
+        &profile,
+        &OpenAiReasoningProfile::unknown(),
+        ModelRequest {
+            messages: &replacement,
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: crate::reasoning::ReasoningLevel::High,
+            prompt_cache_key: None,
+        },
+        None,
+        /*hosted_web_search*/ true,
+    )
+    .unwrap();
+
+    assert_eq!(created.body["reasoning"]["effort"], "low");
+    assert!(created.body["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| {
+            item.get("type").and_then(Value::as_str) == Some("configuration_update")
+                && item["reasoning"]["effort"] == "high"
+        }));
+}
+
 #[tokio::test]
 async fn compact_with_http_malformed_retry_response_preserves_failed_attempts() {
     use std::{

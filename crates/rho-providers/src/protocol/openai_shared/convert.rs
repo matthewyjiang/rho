@@ -253,47 +253,71 @@ pub(crate) fn codex_input_items_for_target(
 ) -> Result<Vec<serde_json::Value>, ModelError> {
     let mut input = Vec::new();
     for message in messages {
-        match message {
-            Message::System(content) => instructions.push(content.clone()),
-            Message::User(blocks) => input.push(json!({
-                "role": "user",
-                "content": codex_content_blocks(blocks),
-            })),
-            Message::Assistant(blocks) => {
-                append_codex_assistant(&mut input, blocks)?;
-            }
-            Message::EnrichedAssistant(message) => {
-                let fallback_target = message.provenance.clone().unwrap_or_else(|| {
-                    crate::model::ModelIdentity::new("foreign", "openai-responses", "foreign")
-                });
-                let prepared =
-                    prepare_assistant((**message).clone(), target.unwrap_or(&fallback_target));
-                append_codex_prepared_assistant(&mut input, prepared)?;
-            }
-            Message::AbortedAssistant(message) => {
-                let mut enriched = crate::model::AssistantMessage {
-                    content: aborted_content_as_non_executable(message),
-                    provenance: message.provenance.clone(),
-                    reasoning_summary: message.reasoning_summary.clone(),
-                    provider_context: message.provider_context.clone(),
-                };
-                enriched
-                    .content
-                    .push(ContentBlock::Text("[Operation aborted]".into()));
-                let fallback_target = enriched.provenance.clone().unwrap_or_else(|| {
-                    crate::model::ModelIdentity::new("foreign", "openai-responses", "foreign")
-                });
-                let prepared = prepare_assistant(enriched, target.unwrap_or(&fallback_target));
-                append_codex_prepared_assistant(&mut input, prepared)?;
-            }
-            Message::ToolResult(result) => input.push(json!({
-                "type": "function_call_output",
-                "call_id": &result.id,
-                "output": &result.content,
-            })),
-        }
+        append_codex_history_message(message, &mut input, instructions, target)?;
     }
     Ok(input)
+}
+
+/// Lowers one history message into Responses input items (or instructions).
+///
+/// Providers that interleave policy items (for example `configuration_update`)
+/// can call this per message without teaching this converter about that policy.
+pub(crate) fn lower_codex_history_message(
+    message: &Message,
+    instructions: &mut Vec<String>,
+    target: Option<&crate::model::ModelIdentity>,
+) -> Result<Vec<serde_json::Value>, ModelError> {
+    let mut input = Vec::new();
+    append_codex_history_message(message, &mut input, instructions, target)?;
+    Ok(input)
+}
+
+fn append_codex_history_message(
+    message: &Message,
+    input: &mut Vec<serde_json::Value>,
+    instructions: &mut Vec<String>,
+    target: Option<&crate::model::ModelIdentity>,
+) -> Result<(), ModelError> {
+    match message {
+        Message::System(content) => instructions.push(content.clone()),
+        Message::User(blocks) => input.push(json!({
+            "role": "user",
+            "content": codex_content_blocks(blocks),
+        })),
+        Message::Assistant(blocks) => {
+            append_codex_assistant(input, blocks)?;
+        }
+        Message::EnrichedAssistant(message) => {
+            let fallback_target = message.provenance.clone().unwrap_or_else(|| {
+                crate::model::ModelIdentity::new("foreign", "openai-responses", "foreign")
+            });
+            let prepared =
+                prepare_assistant((**message).clone(), target.unwrap_or(&fallback_target));
+            append_codex_prepared_assistant(input, prepared)?;
+        }
+        Message::AbortedAssistant(message) => {
+            let mut enriched = crate::model::AssistantMessage {
+                content: aborted_content_as_non_executable(message),
+                provenance: message.provenance.clone(),
+                reasoning_summary: message.reasoning_summary.clone(),
+                provider_context: message.provider_context.clone(),
+            };
+            enriched
+                .content
+                .push(ContentBlock::Text("[Operation aborted]".into()));
+            let fallback_target = enriched.provenance.clone().unwrap_or_else(|| {
+                crate::model::ModelIdentity::new("foreign", "openai-responses", "foreign")
+            });
+            let prepared = prepare_assistant(enriched, target.unwrap_or(&fallback_target));
+            append_codex_prepared_assistant(input, prepared)?;
+        }
+        Message::ToolResult(result) => input.push(json!({
+            "type": "function_call_output",
+            "call_id": &result.id,
+            "output": &result.content,
+        })),
+    }
+    Ok(())
 }
 
 fn append_codex_prepared_assistant(
@@ -339,6 +363,7 @@ fn merge_replay_items(
     let mut replay_items = replay_context
         .into_iter()
         .enumerate()
+        // Other kinds (including recorded reasoning effort) stay off this wire.
         .filter(|(_, block)| block.kind == "openai_response_output_item")
         .collect::<Vec<_>>();
     // Positionless items sort to the tail, so a single position-ordered pass

@@ -210,3 +210,99 @@ fn continuation_falls_back_to_full_request_for_unrepresentable_server_output() {
 
     assert_eq!(state.continuation_delta(&next), None);
 }
+
+// Covers: astra effort changes must stay on configuration_update so WS deltas keep working
+// Owner: openai Codex continuation
+#[test]
+fn astra_reasoning_change_keeps_request_properties_and_deltas_update_item() {
+    use crate::model::{AssistantMessage, Message, ModelRequest, ProviderContextBlock};
+    use crate::reasoning::ReasoningLevel;
+    use pretty_assertions::assert_eq;
+
+    use super::super::codex_request::{
+        build_responses_create_body, codex_test_auth, ResponsesProfile,
+    };
+    use super::super::configuration_update::OPENAI_REASONING_EFFORT_KIND;
+    use super::super::reasoning::OpenAiReasoningProfile;
+
+    let profile = ResponsesProfile::from_auth(&codex_test_auth(), "gpt-6-astra");
+    let identity = profile.identity().clone();
+    let first_messages = [Message::user_text("one")];
+    let first = build_responses_create_body(
+        &profile,
+        &OpenAiReasoningProfile::unknown(),
+        ModelRequest {
+            messages: &first_messages,
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::Low,
+            prompt_cache_key: None,
+        },
+        None,
+        /*hosted_web_search*/ true,
+    )
+    .unwrap()
+    .body;
+    let next_messages = [
+        Message::user_text("one"),
+        Message::assistant(AssistantMessage {
+            content: vec![ContentBlock::Text("two".into())],
+            provenance: Some(identity.clone()),
+            reasoning_summary: None,
+            provider_context: vec![ProviderContextBlock {
+                identity,
+                kind: OPENAI_REASONING_EFFORT_KIND.into(),
+                position: None,
+                data: json!("low"),
+            }],
+        }),
+        Message::user_text("three"),
+    ];
+    let next = build_responses_create_body(
+        &profile,
+        &OpenAiReasoningProfile::unknown(),
+        ModelRequest {
+            messages: &next_messages,
+            tools: &[],
+            cancellation: Default::default(),
+            reasoning_level: ReasoningLevel::High,
+            prompt_cache_key: None,
+        },
+        None,
+        /*hosted_web_search*/ true,
+    )
+    .unwrap()
+    .body;
+
+    let mut first_properties = first.clone();
+    first_properties.as_object_mut().unwrap().remove("input");
+    let mut next_properties = next.clone();
+    next_properties.as_object_mut().unwrap().remove("input");
+    assert_eq!(first_properties, next_properties);
+    assert_eq!(first["reasoning"]["effort"], "low");
+    assert_eq!(next["reasoning"]["effort"], "low");
+
+    let first_candidate = CodexContinuationCandidate::from_responses_body(&first).unwrap();
+    let next_candidate = CodexContinuationCandidate::from_responses_body(&next).unwrap();
+    let mut state = CodexContinuationState::default();
+    state.record_success(
+        &first_candidate,
+        CodexContinuationResponse::from_response(
+            &text_response("two"),
+            Some("resp_1".into()),
+            vec![json!({"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"two"}]})],
+        ),
+    );
+
+    let plan = state
+        .continuation_delta(&next_candidate)
+        .expect("snapshot extends this turn");
+    assert_eq!(plan["previous_response_id"], "resp_1");
+    assert_eq!(
+        plan["input"],
+        json!([
+            {"type":"configuration_update","reasoning":{"effort":"high"}},
+            {"role":"user","content":[{"type":"input_text","text":"three"}]},
+        ])
+    );
+}

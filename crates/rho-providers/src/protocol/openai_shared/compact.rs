@@ -45,6 +45,7 @@ pub(crate) fn parse_compact_response(
     body: &Value,
     portable_handoff_notice: &str,
     user_retention: CompactUserRetention,
+    assistant_context: &[ProviderContextBlock],
 ) -> Result<(Vec<Message>, ModelUsage), ModelError> {
     let output = body
         .get("output")
@@ -59,6 +60,7 @@ pub(crate) fn parse_compact_response(
         output,
         portable_handoff_notice,
         user_retention,
+        assistant_context,
     )?;
     Ok((messages, usage))
 }
@@ -69,6 +71,7 @@ pub(crate) fn replacement_from_compact_output<'a>(
     output_items: &[Value],
     portable_handoff_notice: &str,
     user_retention: CompactUserRetention,
+    assistant_context: &[ProviderContextBlock],
 ) -> Result<Vec<Message>, ModelError> {
     let compaction_item = extract_compaction_item(output_items)?;
     let mut replacement = Vec::new();
@@ -104,17 +107,19 @@ pub(crate) fn replacement_from_compact_output<'a>(
         }
     }
 
+    let mut provider_context = vec![ProviderContextBlock {
+        identity: identity.clone(),
+        kind: COMPACTION_OUTPUT_ITEM_KIND.into(),
+        position: Some(0),
+        data: compaction_item,
+    }];
+    provider_context.extend_from_slice(assistant_context);
     replacement.push(Message::assistant(
         AssistantMessage {
             content: Vec::new(),
-            provenance: Some(identity.clone()),
+            provenance: Some(identity),
             reasoning_summary: None,
-            provider_context: vec![ProviderContextBlock {
-                identity,
-                kind: COMPACTION_OUTPUT_ITEM_KIND.into(),
-                position: Some(0),
-                data: compaction_item,
-            }],
+            provider_context,
         }
         .with_portable_fallback(portable_handoff_notice),
     ));

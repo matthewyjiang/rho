@@ -51,6 +51,7 @@ impl XaiProvider {
                 retained_system_messages: &retained_system_messages,
                 portable_handoff_notice: COMPACT_PORTABLE_HANDOFF_NOTICE,
                 user_retention: CompactUserRetention::CompactionItemOnly,
+                assistant_context: &[],
             },
         )
         .await)
