@@ -4,9 +4,8 @@
 //! re-run syntect for every animation frame. Cache lives on [`ToolEntry`]: card
 //! replacement (preview/start/update/finish) drops it automatically. Hits key
 //! on layout inputs (width, tool-output budget, image budget, theme
-//! generation, syntax readiness, expanded). The live elapsed clock lives in the
-//! cheap header/timeout prefix; a tick rebuilds that prefix and reuses the
-//! cached body.
+//! generation, syntax readiness, expanded). The live elapsed clock reuses the
+//! highlighted header and rebuilds only timeout facts.
 
 use ratatui::text::Line;
 
@@ -68,9 +67,12 @@ impl ToolEntry {
             live_shell_elapsed(self),
         );
         let last_fact_is_end = sections.last_fact_is_end;
-        let prefix_len = sections.prefix.len();
+        let header = sections.header;
+        let mut prefix = header.clone();
+        prefix.extend(sections.facts);
+        let prefix_len = prefix.len();
         let body = sections.body;
-        let lines = finish_live_card(self, width, max_image_height, sections.prefix, &body);
+        let lines = finish_live_card(self, width, max_image_height, prefix, &body);
         #[cfg(test)]
         let paints = self
             .render_cache
@@ -88,6 +90,7 @@ impl ToolEntry {
             elapsed_label,
             last_fact_is_end,
             prefix_len,
+            header,
             body,
             lines,
             #[cfg(test)]
@@ -115,6 +118,7 @@ impl ToolEntry {
             inner_width,
             live_shell_elapsed(self),
             cache.last_fact_is_end,
+            &cache.header,
         );
         if prefix.len() != cache.prefix_len {
             return false;

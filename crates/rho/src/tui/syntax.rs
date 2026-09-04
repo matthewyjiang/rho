@@ -408,7 +408,7 @@ pub(in crate::tui) fn spans_plain_with_matches(
 /// Highlight `source` in `language`, preserving exact text including newlines.
 ///
 /// Over-budget source or an unknown language stays one plain span so callers
-/// can wrap without syntect, including elapsed-clock prefix rebuilds.
+/// can wrap without syntect.
 pub(in crate::tui) fn highlight_source_spans(
     language: &str,
     source: &str,
