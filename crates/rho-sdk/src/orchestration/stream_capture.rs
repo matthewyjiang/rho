@@ -17,7 +17,6 @@ pub(super) struct StreamCapture {
     seal_next_text_part: bool,
     /// Maps provider tool-call stream indexes onto `content` positions.
     tool_call_content_index: BTreeMap<usize, usize>,
-    reasoning: String,
     reasoning_summary: String,
     provider_context: Vec<ProviderContextBlock>,
     partial_tool_calls: BTreeMap<usize, CapturedToolCall>,
@@ -223,7 +222,6 @@ pub(super) fn capture_provider_event(
         ModelEvent::ReasoningDelta(text) => {
             capture.merge_output_text = false;
             capture.seal_next_text_part = false;
-            capture.reasoning.push_str(&text);
             Some(RunEvent::ReasoningDelta { text })
         }
         ModelEvent::ReasoningSummaryDelta(text) => {
@@ -308,3 +306,7 @@ pub(super) fn capture_provider_event(
 #[cfg(test)]
 #[path = "stream_capture_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "stream_capture_perf_tests.rs"]
+mod perf_tests;

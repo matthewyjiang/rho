@@ -35,7 +35,7 @@ fn continuation_uses_only_new_user_input_after_server_assistant_output() {
     ]);
     let mut state = CodexContinuationState::default();
     state.record_success(
-        &first,
+        first,
         CodexContinuationResponse::from_response(
             &text_response("two"),
             Some("resp_1".into()),
@@ -71,7 +71,7 @@ fn continuation_retains_tool_result_after_server_function_call() {
     })]);
     let mut state = CodexContinuationState::default();
     state.record_success(
-        &first,
+        first,
         CodexContinuationResponse::from_response(
             &response,
             Some("resp_1".into()),
@@ -107,7 +107,7 @@ fn continuation_accepts_semantically_equivalent_function_call_arguments() {
     })]);
     let mut state = CodexContinuationState::default();
     state.record_success(
-        &first,
+        first,
         CodexContinuationResponse::from_response(
             &response,
             Some("resp_1".into()),
@@ -144,7 +144,7 @@ fn continuation_falls_back_to_full_request_when_server_output_is_unavailable() {
     ]);
     let mut state = CodexContinuationState::default();
     state.record_success(
-        &first,
+        first,
         CodexContinuationResponse::from_response(
             &text_response("two"),
             Some("resp_1".into()),
@@ -177,7 +177,7 @@ fn continuation_falls_back_to_full_request_when_request_properties_change() {
     let next = CodexContinuationCandidate::from_responses_body(&next_body).unwrap();
     let mut state = CodexContinuationState::default();
     state.record_success(
-        &first,
+        first,
         CodexContinuationResponse::from_response(
             &text_response("two"),
             Some("resp_1".into()),
@@ -200,7 +200,7 @@ fn continuation_falls_back_to_full_request_for_unrepresentable_server_output() {
     ]);
     let mut state = CodexContinuationState::default();
     state.record_success(
-        &first,
+        first,
         CodexContinuationResponse::from_response(
             &text_response("two"),
             Some("resp_1".into()),
@@ -288,7 +288,7 @@ fn astra_reasoning_change_keeps_request_properties_and_deltas_update_item() {
     let next_candidate = CodexContinuationCandidate::from_responses_body(&next).unwrap();
     let mut state = CodexContinuationState::default();
     state.record_success(
-        &first_candidate,
+        first_candidate,
         CodexContinuationResponse::from_response(
             &text_response("two"),
             Some("resp_1".into()),
@@ -329,7 +329,7 @@ fn continuation_matches_function_call_when_server_item_is_async() {
     })]);
     let mut state = CodexContinuationState::default();
     state.record_success(
-        &first,
+        first,
         CodexContinuationResponse::from_response(
             &response,
             Some("resp_1".into()),

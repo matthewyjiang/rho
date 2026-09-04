@@ -101,12 +101,19 @@ impl SessionSnapshot {
     ///
     /// Raw aborted-assistant reasoning is cleared. Other messages are unchanged.
     pub fn sanitize_history(mut history: Vec<Message>) -> Vec<Message> {
-        for message in &mut history {
+        Self::sanitize_history_in_place(&mut history);
+        history
+    }
+
+    /// Clears raw aborted-assistant reasoning in a history slice without
+    /// allocating a new vector. Hosts replaying deltas can sanitize only the
+    /// newly appended messages instead of rescanning the existing history.
+    pub fn sanitize_history_in_place(history: &mut [Message]) {
+        for message in history {
             if let Message::AbortedAssistant(assistant) = message {
                 assistant.reasoning.clear();
             }
         }
-        history
     }
 
     pub fn provider(&self) -> &ModelIdentity {

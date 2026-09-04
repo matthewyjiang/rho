@@ -264,7 +264,7 @@ impl CodexWsTransport {
                 );
                 state
                     .continuation
-                    .record_success(&candidate, continuation_response);
+                    .record_success(candidate, continuation_response);
                 state.turn_open = false;
                 Ok(CodexWsTurn::Completed(response))
             }
@@ -289,7 +289,7 @@ impl CodexWsTransport {
         let mut state = self.state.lock().await;
         state
             .continuation
-            .record_success(&candidate, continuation_response);
+            .record_success(candidate, continuation_response);
         state.turn_open = false;
         Ok(())
     }
@@ -695,7 +695,7 @@ fn finish_ws_turn(
                 );
                 state
                     .continuation
-                    .record_success(&candidate, continuation_response);
+                    .record_success(candidate, continuation_response);
             }
             state.pending_steer = if reuse {
                 // The matched continuation consumed the old pending steer. Keep

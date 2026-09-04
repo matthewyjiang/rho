@@ -9,6 +9,65 @@ fn identity() -> ModelIdentity {
     ModelIdentity::new("scripted", "test", "model")
 }
 
+// Covers: raw reasoning remains host-visible but is never replayed on abort;
+// portable summaries and opaque provider context survive both completion paths.
+// Owner: SDK stream capture.
+#[test]
+fn reasoning_forwarding_preserves_summary_and_abort_contracts() {
+    use crate::model::{AbortedAssistant, ProviderContextBlock};
+    use pretty_assertions::assert_eq;
+
+    for aborted in [false, true] {
+        let mut capture = StreamCapture::default();
+        let forwarded = capture_provider_event(
+            ModelEvent::ReasoningDelta("raw".into()),
+            &identity(),
+            &ModelUsage::default(),
+            &mut capture,
+        );
+        assert!(matches!(forwarded, Some(RunEvent::ReasoningDelta { text }) if text == "raw"));
+        // Raw reasoning alone has never constituted a replayable assistant turn.
+        assert_eq!(std::mem::take(&mut capture).into_aborted_assistant(), None);
+        let context = ProviderContextBlock {
+            identity: identity(),
+            kind: "opaque".into(),
+            position: None,
+            data: serde_json::json!({"signature": "signed"}),
+        };
+        for event in [
+            ModelEvent::ReasoningDelta("more raw".into()),
+            ModelEvent::ReasoningSummaryDelta("summary".into()),
+            ModelEvent::ProviderContext {
+                kind: context.kind.clone(),
+                position: context.position,
+                data: context.data.clone(),
+            },
+        ] {
+            capture_provider_event(event, &identity(), &ModelUsage::default(), &mut capture);
+        }
+        if aborted {
+            assert_eq!(
+                capture.into_aborted_assistant(),
+                Some(AbortedAssistant {
+                    content: Vec::new(),
+                    reasoning: String::new(),
+                    provenance: None,
+                    reasoning_summary: Some("summary".into()),
+                    provider_context: vec![context],
+                    tool_calls: Vec::new(),
+                    usage: ModelUsage::default(),
+                })
+            );
+        } else {
+            assert_eq!(
+                capture.take_assistant_context(),
+                (Some("summary".into()), vec![context])
+            );
+            assert_eq!(capture.into_aborted_assistant(), None);
+        }
+    }
+}
+
 fn capture_tool_delta(
     capture: &mut StreamCapture,
     index: usize,

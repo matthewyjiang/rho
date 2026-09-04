@@ -312,7 +312,7 @@ impl HistoryLineCache {
     ) -> &[CachedCodeBlock] {
         self.ensure_current(entries, settings, image_resolver);
         if self.projected_code_blocks.is_none() {
-            self.projected_code_blocks = Some(self.project_code_blocks());
+            self.projected_code_blocks = Some(self.project_code_blocks(entries));
         }
         self.projected_code_blocks.as_deref().unwrap_or(&[])
     }
@@ -470,13 +470,27 @@ impl HistoryLineCache {
         }
     }
 
-    fn project_code_blocks(&self) -> Vec<CachedCodeBlock> {
+    fn project_code_blocks(&self, transcript: &[Entry]) -> Vec<CachedCodeBlock> {
         let mut blocks = Vec::new();
-        for (entry, range) in self.entries.iter().zip(self.entry_ranges.iter()) {
-            blocks.extend(entry.code_blocks.iter().map(|block| CachedCodeBlock {
-                line: range.start.saturating_add(block.line),
-                copy_columns: block.copy_columns.clone(),
-                text: Arc::clone(&block.text),
+        for ((entry, range), source) in self
+            .entries
+            .iter()
+            .zip(&self.entry_ranges)
+            .zip(&transcript[self.measured_from..])
+        {
+            blocks.extend(entry.code_blocks.iter().map(|block| {
+                CachedCodeBlock {
+                    line: range.start.saturating_add(block.line),
+                    copy_columns: block.copy_columns.clone(),
+                    text: entry
+                        .incremental
+                        .as_ref()
+                        .and_then(|cache| {
+                            incremental_entry_source(source)
+                                .and_then(|(text, _)| cache.fence_copy_source(text, block.line))
+                        })
+                        .map_or_else(|| Arc::clone(&block.text), Arc::from),
+                }
             }));
         }
         blocks
@@ -750,7 +764,9 @@ impl HistoryLineCache {
                 return false;
             }
             let mutable_source = &text[cache.stable_source_len..];
-            if !super::markdown_image::collect_markdown_image_sources(mutable_source).is_empty() {
+            if !cache.remains_inside_fence(text)
+                && !super::markdown_image::collect_markdown_image_sources(mutable_source).is_empty()
+            {
                 return false;
             }
         }
@@ -765,7 +781,16 @@ impl HistoryLineCache {
             content_end,
             reasoning,
         ) {
-            self.recompute_ranges();
+            if cache_index + 1 == self.entries.len()
+                && self.entry_ranges.len() == self.entries.len()
+            {
+                self.entry_ranges[cache_index].end = range
+                    .start
+                    .saturating_add(self.entries[cache_index].lines.len());
+                self.projected_code_blocks = None;
+            } else {
+                self.recompute_ranges();
+            }
             return true;
         }
         false

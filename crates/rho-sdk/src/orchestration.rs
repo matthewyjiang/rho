@@ -179,6 +179,7 @@ async fn execute_turn_loop(
             run_id: &run_id,
             step_index: step,
         };
+        let mut compaction_estimate = None;
         if !async_jobs.has_pending() {
             match maybe_compact(
                 &core,
@@ -190,7 +191,7 @@ async fn execute_turn_loop(
             )
             .await
             {
-                Ok(()) => {}
+                Ok(estimate) => compaction_estimate = estimate,
                 Err(error) => {
                     return terminate_run(core, history, &mut async_jobs, hooks, &events, error)
                         .await;
@@ -208,6 +209,11 @@ async fn execute_turn_loop(
         // between steps (including during compact) are applied before the next
         // request so default providers do not spend a turn just to release them.
         if !steering.has_delivered() {
+            // This is the only history mutation between compaction and StepStarted.
+            // Tools are immutable for this run; jobs were drained before compaction.
+            if steering.has_staged() {
+                compaction_estimate = None;
+            }
             match apply_staged_steering(&mut steering, &mut history, &events, &cancellation).await {
                 Ok(()) => {}
                 Err(error) => {
@@ -219,8 +225,9 @@ async fn execute_turn_loop(
         // Emit before the provider call so quiet hosts still show context fill
         // while thinking and tool-call JSON stream (usage often arrives only at
         // the end of the OpenAI-compatible stream).
-        let estimated_context_tokens =
-            crate::model::context::estimate_context_tokens(&history, &tool_specs);
+        let estimated_context_tokens = compaction_estimate.unwrap_or_else(|| {
+            crate::model::context::estimate_context_tokens(&history, &tool_specs)
+        });
         match emit(
             &events,
             &cancellation,
@@ -513,13 +520,13 @@ async fn maybe_compact(
     history: &mut Vec<Message>,
     cancellation: &CancellationToken,
     events: &mpsc::Sender<RunEvent>,
-) -> Result<(), Error> {
+) -> Result<Option<u64>, Error> {
     let Some(policy) = &scope.runtime.compaction_policy else {
-        return Ok(());
+        return Ok(None);
     };
     let context_tokens = crate::model::context::estimate_context_tokens(history, tool_specs);
     if !policy.should_compact(history.len(), context_tokens) {
-        return Ok(());
+        return Ok(Some(context_tokens));
     }
     let compactor = scope
         .runtime
@@ -571,7 +578,9 @@ async fn maybe_compact(
             outcome,
         },
     )
-    .await
+    .await?;
+    // Replacement can change content without changing the message count.
+    Ok(None)
 }
 
 pub(super) struct RunControl<'a> {
@@ -866,3 +875,11 @@ mod async_tests;
 #[cfg(test)]
 #[path = "orchestration_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "orchestration/context_estimate_perf_tests.rs"]
+mod context_estimate_perf_tests;
+
+#[cfg(test)]
+#[path = "orchestration/context_estimate_tests.rs"]
+mod context_estimate_tests;

@@ -21,6 +21,9 @@ use serde_json::{json, Value};
 
 use super::{tests::test_app, App, Entry, ReasoningEntry, ToolEntry};
 
+#[path = "scaling_benchmarks.rs"]
+mod scaling;
+
 /// Geometric transcript sizes expose non-linear frame-cost regressions.
 const TRANSCRIPT_SIZES: [usize; 3] = [250, 1_000, 4_000];
 /// Streamed commit counts for one growing entry; growth should stay near-linear.

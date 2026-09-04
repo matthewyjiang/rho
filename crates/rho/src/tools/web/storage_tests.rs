@@ -92,6 +92,7 @@ fn memory_cache_evicts_by_count_bytes_and_recency() {
         insert: &'static [&'static str],
         touch: Option<&'static str>,
         extra: Option<(&'static str, &'static str)>,
+        extra_metadata: Option<&'static str>,
         retain: &'static [&'static str],
         drop: &'static [&'static str],
     }
@@ -103,6 +104,7 @@ fn memory_cache_evicts_by_count_bytes_and_recency() {
             insert: &["a", "b"],
             touch: None,
             extra: Some(("c", "c")),
+            extra_metadata: None,
             retain: &["b", "c"],
             drop: &["a"],
         },
@@ -112,6 +114,7 @@ fn memory_cache_evicts_by_count_bytes_and_recency() {
             insert: &["a", "b"],
             touch: Some("a"),
             extra: Some(("c", "c")),
+            extra_metadata: None,
             retain: &["a", "c"],
             drop: &["b"],
         },
@@ -121,6 +124,7 @@ fn memory_cache_evicts_by_count_bytes_and_recency() {
             insert: &["a", "b"],
             touch: None,
             extra: Some(("big", "0123456789")),
+            extra_metadata: None,
             retain: &["a", "b"],
             drop: &["big"],
         },
@@ -130,8 +134,19 @@ fn memory_cache_evicts_by_count_bytes_and_recency() {
             insert: &["aaaaaaaa"],
             touch: None,
             extra: Some(("overflow", "0123456789")),
+            extra_metadata: None,
             retain: &["overflow"],
             drop: &["aaaaaaaa"],
+        },
+        Case {
+            entry_limit: 2,
+            byte_limit: 8,
+            insert: &["a", "b"],
+            touch: None,
+            extra: Some(("metadata-heavy", "")),
+            extra_metadata: Some("0123456789"),
+            retain: &["a", "b"],
+            drop: &["metadata-heavy"],
         },
     ];
 
@@ -141,13 +156,17 @@ fn memory_cache_evicts_by_count_bytes_and_recency() {
             /*byte_limit*/ case.byte_limit,
         );
         for id in case.insert {
-            cache.insert((*id).to_owned(), stored_body(id));
+            cache.insert((*id).to_owned(), Arc::new(stored_body(id)));
         }
         if let Some(id) = case.touch {
             assert!(cache.get(id).is_some());
         }
         if let Some((id, body)) = case.extra {
-            cache.insert(id.to_owned(), stored_body(body));
+            let mut content = stored_body(body);
+            if let Some(metadata) = case.extra_metadata {
+                content.items[0].metadata = json!(metadata);
+            }
+            cache.insert(id.to_owned(), Arc::new(content));
         }
         for id in case.retain {
             assert!(cache.contains(id), "expected {id} retained");
@@ -177,8 +196,58 @@ fn evicted_memory_entry_still_loads_from_disk() {
     assert!(store.memory_contains(ids.last().expect("inserted ids")));
 
     let loaded = store.load(&ids[0]).unwrap();
-    assert_eq!(loaded, stored_body("body-0"));
+    assert_eq!(*loaded, stored_body("body-0"));
     assert!(store.memory_contains(&ids[0]));
+}
+
+// Covers: old-session I/O must not populate a newly bound session's cache.
+// Owner: web storage. Inject the rebind at the I/O boundary, without sleep races.
+#[test]
+fn rebind_during_io_does_not_publish_old_session_content() {
+    enum Operation {
+        Store,
+        Load,
+    }
+    for operation in [Operation::Store, Operation::Load] {
+        let old_root = tempfile::tempdir().unwrap();
+        let new_root = tempfile::tempdir().unwrap();
+        let store = WebAccessStore::new();
+        store.bind_session(Some(old_root.path().to_path_buf()));
+        let response_id = new_response_id();
+        let expected = stored_body("old session");
+        match operation {
+            Operation::Store => {
+                store
+                    .store_with_writer(response_id.clone(), expected.clone(), |root, id, body| {
+                        assert_eq!(root, old_root.path());
+                        store.bind_session(Some(new_root.path().to_path_buf()));
+                        write_at(root, id, body)
+                    })
+                    .unwrap();
+            }
+            Operation::Load => {
+                write_at(old_root.path(), &response_id, &expected).unwrap();
+                let loaded = store
+                    .load_with_reader(&response_id, |root, id| {
+                        assert_eq!(root, old_root.path());
+                        store.bind_session(Some(new_root.path().to_path_buf()));
+                        read_at(root, id)
+                    })
+                    .unwrap();
+                assert_eq!(*loaded, expected);
+            }
+        }
+        assert!(!store.memory_contains(&response_id));
+        assert!(store.load(&response_id).is_err());
+        assert_eq!(read_at(old_root.path(), &response_id).unwrap(), expected);
+        store
+            .store(response_id.clone(), stored_body("new session"))
+            .unwrap();
+        assert_eq!(
+            *store.load(&response_id).unwrap(),
+            stored_body("new session")
+        );
+    }
 }
 
 fn stored_body(content: &str) -> StoredContent {
