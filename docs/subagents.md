@@ -90,6 +90,21 @@ Both modes use the same `AgentExecutor`. Rho-runtime agents stay in-process. `ru
 
 Pass `--no-subagents` to remove delegation capabilities from a root invocation.
 
+### Parent-to-child messages in the transcript
+
+Messages sent through `agents` action `message` show the task title first, then muted
+`parent → <agent role> · queued` routing and an excerpt of the message itself. If a
+run has no generated title yet, its first nonempty prompt line identifies the task.
+This keeps different tasks using the same agent role distinguishable.
+
+The excerpt uses your `display.max_tool_output_lines` setting. Press `Ctrl+O` or click
+the card to see the complete message, full task title, run ID, and attach command.
+Surrounding whitespace is trimmed to match the text accepted for delivery. The
+durable receipt remains plain text for ACP clients and exported transcripts.
+Short messages can also expand to show those details. Queued means the message was
+accepted for delivery, not that the child has acted on it or completed its task.
+Child-to-parent `message_parent` notices keep their existing notification display.
+
 ## Binding and security
 
 Every invocation goes through the same binder. Rho-runtime agents resolve aliases and tool capabilities against the host. Claude-cli agents are delegated-only and keep Claude's model/tool vocabulary. Delegated Rho agents cannot recurse through `agent`/`agents`.

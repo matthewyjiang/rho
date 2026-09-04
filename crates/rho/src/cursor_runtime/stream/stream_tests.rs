@@ -48,7 +48,10 @@ fn finished_cards(effects: &[StreamEffect]) -> Vec<&rho_tools::tool_card::ToolCa
     effects
         .iter()
         .filter_map(|effect| match effect {
-            StreamEffect::Attachment(AttachmentEvent::ToolFinished { card, .. }) => Some(card),
+            StreamEffect::Attachment(AttachmentEvent::ToolFinished {
+                presentation: crate::presentation::Presentation::Card(card),
+                ..
+            }) => Some(card),
             _ => None,
         })
         .collect()

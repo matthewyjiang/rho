@@ -25,7 +25,12 @@ pub(super) fn tool_output_toggleable(
     width: usize,
 ) -> bool {
     let width = width.max(1);
-    card_is_toggleable(&tool.card, width, max_tool_output_lines, tool.expanded)
+    match &tool.presentation {
+        crate::presentation::Presentation::Message(_) => true,
+        crate::presentation::Presentation::Card(card) => {
+            card_is_toggleable(card, width, max_tool_output_lines, tool.expanded)
+        }
+    }
 }
 
 impl App {

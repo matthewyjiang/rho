@@ -67,20 +67,24 @@ fn parallel_pending_tools_keep_independent_slots() {
 
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-b".into()),
-        card: card_b
+        presentation: card_b
             .clone()
             .with_facts(vec![rho_tools::tool_card::ToolFact::Count {
                 label: "lines".into(),
                 value: 2,
                 detail: None,
-            }]),
+            }])
+            .into(),
     });
     assert_eq!(app.pending_order, vec!["call-a".to_string()]);
     assert!(app.pending_tools.contains_key("call-a"));
     assert!(!app.pending_tools.contains_key("call-b"));
     match app.transcript.last() {
-        Some(Entry::Tool(tool)) => {
-            assert_eq!(tool.card.header_text(), "● read_file(b.rs)");
+        Some(Entry::Tool(ToolEntry {
+            presentation: crate::presentation::Presentation::Card(card),
+            ..
+        })) => {
+            assert_eq!(card.header_text(), "● read_file(b.rs)");
         }
         other => panic!("unexpected transcript tail: {other:?}"),
     }
@@ -95,11 +99,12 @@ fn provider_retry_replaces_output_but_preserves_presented_events() {
     app.apply_event(AttachmentEvent::Notice("keep notice".into()));
     app.apply_event(AttachmentEvent::ToolFinished {
         key: None,
-        card: rho_tools::tool_card::ToolCard::new(
+        presentation: rho_tools::tool_card::ToolCard::new(
             rho_tools::tool_card::ToolStatus::Ok,
             rho_tools::tool_card::ToolFamily::Default,
             rho_tools::tool_card::ToolHeader::call("keep tool", None),
-        ),
+        )
+        .into(),
     });
     app.apply_event(AttachmentEvent::ReasoningDelta("discard reasoning".into()));
     app.apply_event(AttachmentEvent::ProviderStreamReset);
@@ -110,11 +115,11 @@ fn provider_retry_replaces_output_but_preserves_presented_events() {
         [
             Entry::User(prompt),
             Entry::Notice(notice),
-            Entry::Tool(tool),
+            Entry::Tool(ToolEntry { presentation: crate::presentation::Presentation::Card(card), .. }),
             Entry::Assistant(answer)
         ] if prompt == "delegated task"
             && notice == "keep notice"
-            && tool.card.header_text() == "✓ keep tool"
+            && card.header_text() == "✓ keep tool"
             && answer.text == "keep me"
     ));
 }
@@ -216,11 +221,12 @@ fn history_lines_follow_display_settings() {
     app.apply_event(AttachmentEvent::AssistantTextDelta("answer".into()));
     app.apply_event(AttachmentEvent::ToolFinished {
         key: None,
-        card: rho_tools::tool_card::ToolCard::new(
+        presentation: rho_tools::tool_card::ToolCard::new(
             rho_tools::tool_card::ToolStatus::Ok,
             rho_tools::tool_card::ToolFamily::Default,
             rho_tools::tool_card::ToolHeader::call("read_file", Some("a.rs".into())),
-        ),
+        )
+        .into(),
     });
 
     let visible = |app: &AttachmentApp| line_text(&app.paint_history(80).lines);
@@ -275,12 +281,13 @@ fn history_lines_honor_max_tool_output_lines() {
     let body = (0..5).map(|i| format!("line-{i}")).collect::<Vec<_>>();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: None,
-        card: rho_tools::tool_card::ToolCard::new(
+        presentation: rho_tools::tool_card::ToolCard::new(
             rho_tools::tool_card::ToolStatus::Ok,
             rho_tools::tool_card::ToolFamily::Default,
             rho_tools::tool_card::ToolHeader::call("bash", None),
         )
-        .with_body(rho_tools::tool_card::ToolBody::Lines(body)),
+        .with_body(rho_tools::tool_card::ToolBody::Lines(body))
+        .into(),
     });
 
     let lines = line_text(&app.paint_history(80).lines);
@@ -597,7 +604,7 @@ fn click_toggles_finished_over_budget_card() {
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-1".into()),
-        card: long_body_card(),
+        presentation: long_body_card().into(),
     });
     sync_view(&mut app, 80, 30);
     let collapsed_len = app.paint_history(80).lines.len();
@@ -619,7 +626,7 @@ fn mouse_events_reuse_painted_history() {
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-1".into()),
-        card: long_body_card(),
+        presentation: long_body_card().into(),
     });
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
@@ -696,7 +703,7 @@ fn click_ignores_under_budget_card() {
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-1".into()),
-        card: short_body_card(),
+        presentation: short_body_card().into(),
     });
     sync_view(&mut app, 80, 20);
     click_card(&mut app, 8, 5);
@@ -732,7 +739,7 @@ fn draw_hover_lift_follows_pointer_and_survives_toggle() {
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-1".into()),
-        card: long_body_card(),
+        presentation: long_body_card().into(),
     });
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
@@ -787,7 +794,7 @@ fn draw_hover_lift_skips_untoggleable_card() {
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-1".into()),
-        card: short_body_card(),
+        presentation: short_body_card().into(),
     });
     let mut terminal =
         ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 30)).expect("test terminal");
@@ -815,7 +822,7 @@ fn scrollbar_drag_release_does_not_toggle() {
     for i in 0..8 {
         app.apply_event(AttachmentEvent::ToolFinished {
             key: Some(format!("call-{i}")),
-            card: long_body_card(),
+            presentation: long_body_card().into(),
         });
     }
     sync_view(&mut app, 80, 8);
@@ -842,11 +849,11 @@ fn card_to_card_drag_release_does_not_toggle() {
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-1".into()),
-        card: long_body_card(),
+        presentation: long_body_card().into(),
     });
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-2".into()),
-        card: long_body_card(),
+        presentation: long_body_card().into(),
     });
     sync_view(&mut app, 80, 40);
     let first_height = match app.transcript.first() {
@@ -870,11 +877,11 @@ fn drag_away_and_back_does_not_toggle() {
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-1".into()),
-        card: long_body_card(),
+        presentation: long_body_card().into(),
     });
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-2".into()),
-        card: long_body_card(),
+        presentation: long_body_card().into(),
     });
     sync_view(&mut app, 80, 40);
     let first_height = match app.transcript.first() {
@@ -903,7 +910,7 @@ fn intra_card_drag_does_not_toggle() {
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("call-1".into()),
-        card: long_body_card(),
+        presentation: long_body_card().into(),
     });
     sync_view(&mut app, 80, 30);
 
@@ -927,7 +934,7 @@ fn pending_finish_during_click_still_toggles() {
     app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("live".into()),
-        card: long_body_card(),
+        presentation: long_body_card().into(),
     });
     app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, 5));
     assert!(transcript_tool(&app, 0).expanded);
@@ -962,7 +969,7 @@ fn pending_finish_during_click_still_toggles_with_sibling_pending() {
     ));
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("second".into()),
-        card: long_body_card(),
+        presentation: long_body_card().into(),
     });
     app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, second_row));
     assert!(transcript_tool(&app, 0).expanded);
@@ -1003,7 +1010,7 @@ fn pending_finish_then_reset_still_toggles_pressed_card() {
     ));
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("live".into()),
-        card: long_body_card(),
+        presentation: long_body_card().into(),
     });
     app.apply_event(AttachmentEvent::ProviderStreamReset);
     app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 8, pending_row));
@@ -1019,7 +1026,7 @@ fn interrupted_press_does_not_toggle() {
         let (_directory, mut app) = test_app();
         app.apply_event(AttachmentEvent::ToolFinished {
             key: Some("call-1".into()),
-            card: long_body_card(),
+            presentation: long_body_card().into(),
         });
         sync_view(&mut app, 80, 30);
         app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 8, 5));
@@ -1037,7 +1044,7 @@ fn ctrl_o_prefers_pending_and_collapses_others() {
     let (_directory, mut app) = test_app();
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("done".into()),
-        card: long_body_card(),
+        presentation: long_body_card().into(),
     });
     app.apply_event(AttachmentEvent::ToolStarted {
         key: Some("live".into()),
@@ -1054,7 +1061,7 @@ fn ctrl_o_prefers_pending_and_collapses_others() {
 
     app.apply_event(AttachmentEvent::ToolFinished {
         key: Some("live".into()),
-        card: long_body_card(),
+        presentation: long_body_card().into(),
     });
     assert!(transcript_tool(&app, 1).expanded);
     assert!(!transcript_tool(&app, 0).expanded);

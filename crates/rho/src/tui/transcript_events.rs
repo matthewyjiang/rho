@@ -356,12 +356,18 @@ impl App {
             }
             ViewModelEvent::ToolFinished {
                 call_id,
-                mut card,
+                mut presentation,
                 image_asset,
             } => {
-                let command = match &card.header {
-                    rho_tools::tool_card::ToolHeader::Shell { command, .. } => command.as_deref(),
-                    _ => None,
+                let command = match &presentation {
+                    crate::presentation::Presentation::Card(card) => match &card.header {
+                        rho_tools::tool_card::ToolHeader::Shell { command, .. } => {
+                            command.as_deref()
+                        }
+                        rho_tools::tool_card::ToolHeader::Call { .. }
+                        | rho_tools::tool_card::ToolHeader::StatusFirst { .. } => None,
+                    },
+                    crate::presentation::Presentation::Message(_) => None,
                 };
                 self.refresh_git_after_command(command);
                 let expanded = self.turn.tool_finished(&call_id);
@@ -377,13 +383,22 @@ impl App {
                         .and_then(|asset| match self.load_feed_image(asset) {
                             Ok(image) => image,
                             Err(error) => {
-                                card.push_fact(rho_tools::tool_card::ToolFact::Error {
-                                    text: format!("image preview unavailable: {error}"),
-                                });
+                                if let crate::presentation::Presentation::Card(card) =
+                                    &mut presentation
+                                {
+                                    card.push_fact(rho_tools::tool_card::ToolFact::Error {
+                                        text: format!("image preview unavailable: {error}"),
+                                    });
+                                }
                                 None
                             }
                         });
-                Some(Entry::Tool(ToolEntry::new(card, expanded, image, None)))
+                Some(Entry::Tool(ToolEntry::new(
+                    presentation,
+                    expanded,
+                    image,
+                    None,
+                )))
             }
         }
     }

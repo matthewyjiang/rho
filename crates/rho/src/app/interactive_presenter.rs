@@ -12,11 +12,18 @@ use rho_tools::tool_card::ToolCard;
 mod agent_format;
 #[path = "interactive_presenter_format.rs"]
 mod format;
+#[path = "interactive_presenter_message.rs"]
+mod message_format;
 use format::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ToolPresentation {
     pub(crate) card: ToolCard,
+    pub(crate) image_asset: Option<ToolAsset>,
+}
+
+pub(crate) struct FinishedToolPresentation {
+    pub(crate) presentation: crate::presentation::Presentation,
     pub(crate) image_asset: Option<ToolAsset>,
 }
 
@@ -261,14 +268,19 @@ impl InteractiveToolPresenter {
         presentation(&view, interrupted_card(&view, partial_arguments, &self.cwd))
     }
 
-    pub(crate) fn historical(&self, call: &ToolCall, ok: bool, content: &str) -> ToolPresentation {
+    pub(crate) fn historical(
+        &self,
+        call: &ToolCall,
+        ok: bool,
+        content: &str,
+    ) -> FinishedToolPresentation {
         let view = ToolView {
             kind: ToolKind::from_name_and_args(&call.name, Some(&call.arguments)),
             name: call.name.clone(),
             arguments: call.arguments.clone(),
             metadata: ToolMetadata::default(),
         };
-        presentation(&view, finished_card(&view, content, ok, &self.cwd))
+        self.finished_presentation(&view, content, ok)
     }
 
     pub(crate) fn proposed(&mut self, call: ToolCall) -> ToolPresentation {
@@ -331,7 +343,7 @@ impl InteractiveToolPresenter {
         &mut self,
         call_id: &ToolCallId,
         result: ToolCompletion,
-    ) -> (bool, ToolPresentation) {
+    ) -> (bool, FinishedToolPresentation) {
         let mut view = self
             .calls
             .remove(&call_id.to_string())
@@ -352,8 +364,26 @@ impl InteractiveToolPresenter {
             ToolCompletion::Unavailable => (false, "tool is unavailable".into()),
             _ => (false, "unknown tool result".into()),
         };
-        let card = finished_card(&view, &content, ok, &self.cwd);
-        (ok, presentation(&view, card))
+        (ok, self.finished_presentation(&view, &content, ok))
+    }
+
+    fn finished_presentation(
+        &self,
+        view: &ToolView,
+        content: &str,
+        ok: bool,
+    ) -> FinishedToolPresentation {
+        if let Some(message) = message_format::finished_message(view, content, ok) {
+            return FinishedToolPresentation {
+                presentation: crate::presentation::Presentation::Message(message),
+                image_asset: None,
+            };
+        }
+        let presented = presentation(view, finished_card(view, content, ok, &self.cwd));
+        FinishedToolPresentation {
+            presentation: presented.card.into(),
+            image_asset: presented.image_asset,
+        }
     }
 }
 

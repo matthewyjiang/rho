@@ -150,7 +150,7 @@ pub(super) fn transcript_entries_from_messages(
                     });
                 let presented = presenter.historical(&call, result.ok, &result.content);
                 entries.push(Entry::Tool(ToolEntry::new(
-                    presented.card,
+                    presented.presentation,
                     false,
                     None,
                     None,

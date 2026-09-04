@@ -29,7 +29,9 @@ pub(crate) enum AttachmentEvent {
     ToolFinished {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
-        card: ToolCard,
+        // Retain the legacy {card: ...} wire shape; messages write {message: ...}.
+        #[serde(flatten)]
+        presentation: crate::presentation::Presentation,
     },
     Notice(String),
     ContextUsage(ContextUsage),

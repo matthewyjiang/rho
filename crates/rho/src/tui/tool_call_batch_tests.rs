@@ -17,7 +17,10 @@ fn card(label: &str) -> ToolCard {
 fn live_labels(batch: &ToolCallBatch) -> Vec<String> {
     batch
         .live_entries()
-        .map(|entry| entry.card.header_text())
+        .map(|entry| match &entry.presentation {
+            crate::presentation::Presentation::Card(card) => card.header_text(),
+            crate::presentation::Presentation::Message(_) => panic!("expected live tool card"),
+        })
         .collect()
 }
 
@@ -190,7 +193,8 @@ fn interrupted_entries_drop_the_live_clock() {
     assert!(interrupted.iter().all(|entry| entry.started_at.is_none()));
     assert!(interrupted
         .iter()
-        .all(|entry| entry.card.status == ToolStatus::Interrupted));
+        .all(|entry| matches!(&entry.presentation,
+            crate::presentation::Presentation::Card(card) if card.status == ToolStatus::Interrupted)));
 }
 
 // Covers: detached cards survive clear and leave only when finished.

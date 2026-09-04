@@ -193,7 +193,7 @@ impl CursorStreamMapper {
                 vec![
                     StreamEffect::Attachment(AttachmentEvent::ToolFinished {
                         key: Some(call_id),
-                        card,
+                        presentation: card.into(),
                     }),
                     StreamEffect::Status(StatusPatch {
                         last_activity: Some(format!("tool result: {}", tool.verb())),

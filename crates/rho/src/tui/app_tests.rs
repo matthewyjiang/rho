@@ -396,7 +396,7 @@ fn recovered_session_messages_become_transcript_entries() {
     assert!(matches!(
         entries[2],
         Entry::Tool(ToolEntry {
-            ref card,
+            presentation: crate::presentation::Presentation::Card(ref card),
             ..
         }) if card.header_text().contains("read_file")
             && card.header_text().contains("src/main.rs")
@@ -422,10 +422,13 @@ fn recovered_assistant_images_become_summary_cards() {
     let Entry::Tool(tool) = &entries[0] else {
         panic!("expected generated image card");
     };
-    assert_eq!(tool.card.header, ToolHeader::call("image_generation", None));
+    let crate::presentation::Presentation::Card(card) = &tool.presentation else {
+        panic!("expected generated image card");
+    };
+    assert_eq!(card.header, ToolHeader::call("image_generation", None));
     assert!(tool.image.is_none());
     assert_eq!(
-        tool.card.facts,
+        card.facts,
         vec![
             ToolFact::Text {
                 text: image_summary(&image),
@@ -450,10 +453,13 @@ fn generated_image_entry_records_preview_errors() {
     let Entry::Tool(tool) = generated_image_entry(Err("boom".into()), &image) else {
         panic!("expected generated image card");
     };
-    assert_eq!(tool.card.header, ToolHeader::call("image_generation", None));
+    let crate::presentation::Presentation::Card(card) = &tool.presentation else {
+        panic!("expected generated image card");
+    };
+    assert_eq!(card.header, ToolHeader::call("image_generation", None));
     assert!(tool.image.is_none());
     assert_eq!(
-        tool.card.facts,
+        card.facts,
         vec![
             ToolFact::Error {
                 text: "image preview unavailable: boom".into(),

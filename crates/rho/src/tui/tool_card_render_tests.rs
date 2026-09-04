@@ -635,25 +635,23 @@ fn render_with_elapsed(card: &ToolCard, width: usize, elapsed: Option<Duration>)
 #[test]
 fn live_shell_elapsed_requires_shell_header_and_running_status() {
     let started = std::time::Instant::now() - Duration::from_millis(250);
-    let mut entry = ToolEntry::new(
-        ToolCard::new(
+    let shell = ToolHeader::shell("$", Some("sleep 1".into()));
+    for (header, status, expected) in [
+        (shell.clone(), ToolStatus::Running, true),
+        (shell.clone(), ToolStatus::Ok, false),
+        (shell, ToolStatus::Error, false),
+        (
+            ToolHeader::call("read_file", Some("a.rs".into())),
             ToolStatus::Running,
-            ToolFamily::FileCommand,
-            ToolHeader::shell("$", Some("sleep 1".into())),
+            false,
         ),
-        false,
-        None,
-        Some(started),
-    );
-    assert!(live_shell_elapsed(&entry).is_some());
-
-    entry.card.status = ToolStatus::Ok;
-    assert!(live_shell_elapsed(&entry).is_none());
-
-    entry.card.status = ToolStatus::Error;
-    assert!(live_shell_elapsed(&entry).is_none());
-
-    entry.card.status = ToolStatus::Running;
-    entry.card.header = ToolHeader::call("read_file", Some("a.rs".into()));
-    assert!(live_shell_elapsed(&entry).is_none());
+    ] {
+        let entry = ToolEntry::new(
+            ToolCard::new(status, ToolFamily::FileCommand, header),
+            false,
+            None,
+            Some(started),
+        );
+        assert_eq!(live_shell_elapsed(&entry).is_some(), expected);
+    }
 }

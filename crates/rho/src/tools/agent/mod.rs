@@ -1,5 +1,7 @@
 //! Delegated agent tools backed by in-process SDK runtimes.
 
+pub(crate) mod message_receipt;
+
 use std::{
     future::Future,
     path::{Path, PathBuf},
@@ -361,7 +363,15 @@ impl AgentsTool {
                     .message(id, &message)
                     .await
                     .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-                format!("queued parent message for delegated run '{id}'")
+                match self.manager.task_identity(id) {
+                    Some(identity) => message_receipt::MessageReceipt {
+                        run_id: identity.run_id,
+                        agent_id: identity.agent_id,
+                        task: identity.task,
+                    }
+                    .content(),
+                    None => format!("queued parent message for delegated run '{id}'"),
+                }
             }
             other => {
                 return Err(ToolError::new(

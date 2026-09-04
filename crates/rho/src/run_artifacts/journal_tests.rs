@@ -3,6 +3,49 @@ use tempfile::TempDir;
 
 use super::*;
 
+// Covers: old card-only journals remain readable while message rows persist
+// only their real presentation. Owner: attachment journal wire contract.
+#[test]
+fn finished_presentations_preserve_journal_shape() {
+    use crate::presentation::{MessageCard, MessageDelivery, Presentation};
+    use rho_tools::tool_card::{ToolFamily, ToolHeader, ToolStatus};
+
+    let card = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::Default,
+        ToolHeader::call("read_file", None),
+    );
+    let message = Box::new(MessageCard {
+        title: "Inspect routing".into(),
+        sender: "parent".into(),
+        recipient: "reviewer".into(),
+        delivery: MessageDelivery::Queued,
+        body: "Check the queued route.".into(),
+        details: vec!["run: abc123".into()],
+    });
+    for (presentation, data) in [
+        (
+            Presentation::Card(card.clone()),
+            serde_json::json!({"card": card}),
+        ),
+        (
+            Presentation::Message(message.clone()),
+            serde_json::json!({"message": message}),
+        ),
+    ] {
+        let wire = serde_json::json!({"type": "tool_finished", "data": data});
+        let event = AttachmentEvent::ToolFinished {
+            key: None,
+            presentation,
+        };
+        assert_eq!(
+            serde_json::from_value::<AttachmentEvent>(wire.clone()).unwrap(),
+            event
+        );
+        assert_eq!(serde_json::to_value(event).unwrap(), wire);
+    }
+}
+
 #[test]
 fn attachment_stream_skips_malformed_events() {
     let directory = TempDir::new().unwrap();

@@ -62,7 +62,7 @@ pub(super) enum ViewModelEvent {
     },
     ToolFinished {
         call_id: rho_sdk::ToolCallId,
-        card: ToolCard,
+        presentation: crate::presentation::Presentation,
         image_asset: Option<rho_sdk::tool::ToolAsset>,
     },
     ToolDetached {
@@ -307,7 +307,7 @@ impl SdkEventAdapter {
                 let (_ok, presented) = self.presenter().finished(&call_id, result);
                 vec![ViewEvent::Update(ViewModelEvent::ToolFinished {
                     call_id,
-                    card: presented.card,
+                    presentation: presented.presentation,
                     image_asset: presented.image_asset,
                 })]
             }
@@ -441,7 +441,7 @@ fn provider_native_activity_finished(name: &str, detail: String, family: ToolFam
     });
     ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: rho_sdk::ToolCallId::new(),
-        card,
+        presentation: card.into(),
         image_asset: None,
     })
 }
@@ -450,7 +450,7 @@ fn provider_native_activity_finished(name: &str, detail: String, family: ToolFam
 pub(super) fn compact_finished_event(outcome: CompactionUiOutcome) -> ViewModelEvent {
     ViewModelEvent::ToolFinished {
         call_id: compaction_call_id(),
-        card: outcome.card(),
+        presentation: outcome.card().into(),
         image_asset: None,
     }
 }

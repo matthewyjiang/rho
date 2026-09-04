@@ -398,8 +398,8 @@ impl AttachmentApp {
             | AttachmentEvent::ToolUpdated { key, card } => {
                 self.upsert_pending_tool(key, card);
             }
-            AttachmentEvent::ToolFinished { key, card } => {
-                self.finish_pending_tool(key, card);
+            AttachmentEvent::ToolFinished { key, presentation } => {
+                self.finish_pending_tool(key, presentation);
             }
             AttachmentEvent::Notice(notice) => self.transcript.push(Entry::Notice(notice)),
             AttachmentEvent::ContextUsage(usage) => self.context_usage = Some(usage),
@@ -451,15 +451,23 @@ impl AttachmentApp {
             .insert(key, ToolEntry::new(card, expanded, None, started_at));
     }
 
-    fn finish_pending_tool(&mut self, key: Option<String>, card: ToolCard) {
+    fn finish_pending_tool(
+        &mut self,
+        key: Option<String>,
+        presentation: crate::presentation::Presentation,
+    ) {
         let key = attachment_tool_key(key);
         let expanded = self
             .pending_tools
             .remove(&key)
             .is_some_and(|entry| entry.expanded);
         self.pending_order.retain(|pending| pending != &key);
-        self.transcript
-            .push(Entry::Tool(ToolEntry::new(card, expanded, None, None)));
+        self.transcript.push(Entry::Tool(ToolEntry::new(
+            presentation,
+            expanded,
+            None,
+            None,
+        )));
         self.finished_tool_index
             .insert(key, self.transcript.len() - 1);
     }

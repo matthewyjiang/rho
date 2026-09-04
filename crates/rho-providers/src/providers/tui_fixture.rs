@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 mod advisor;
+mod agent_message;
 mod attach;
 mod compact;
 mod docs_demo;
@@ -111,7 +112,13 @@ async fn fixture_stream(
 ) -> Result<ModelResponse, ProviderError> {
     let prompt = last_user_text(&request).unwrap_or_default();
     if is_subagent_title_request(&request) {
+        if agent_message::is_untitled_task(&prompt) {
+            return completed("");
+        }
         return completed("Fixture run title");
+    }
+    if let Some(response) = agent_message::intercept(&prompt, &request).await {
+        return response;
     }
     if let Some(response) = docs_demo::intercept(&prompt, &request, &events).await {
         return response;
@@ -146,6 +153,9 @@ async fn fixture_stream(
 
 fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, ProviderError> {
     if is_subagent_title_request(request) {
+        if last_user_text(request).is_some_and(|prompt| agent_message::is_untitled_task(&prompt)) {
+            return completed("");
+        }
         return completed("Fixture run title");
     }
     if let Some(review) = advisor::review(request) {

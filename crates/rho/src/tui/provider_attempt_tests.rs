@@ -29,10 +29,10 @@ fn retry_removes_only_replaceable_provider_output() {
     assert_eq!(attempt.reset_output(&mut transcript), Some(1));
     assert!(matches!(
         transcript.as_slice(),
-        [Entry::User(prompt), Entry::Notice(notice), Entry::Tool(tool)]
+        [Entry::User(prompt), Entry::Notice(notice), Entry::Tool(ToolEntry { presentation: crate::presentation::Presentation::Card(card), .. })]
             if prompt == "prompt"
                 && notice == "keep notice"
-                && tool.card.header_text() == "● keep tool"
+                && card.header_text() == "● keep tool"
     ));
 }
 

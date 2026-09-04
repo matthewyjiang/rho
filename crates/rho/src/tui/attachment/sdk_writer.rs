@@ -105,11 +105,15 @@ fn attachment_update(
                 card,
             })
         }
-        ViewModelEvent::ToolFinished { call_id, card, .. } => {
+        ViewModelEvent::ToolFinished {
+            call_id,
+            presentation,
+            ..
+        } => {
             let key = adapter.take_attachment_key_for_call(&call_id);
             Some(AttachmentEvent::ToolFinished {
                 key: Some(key),
-                card,
+                presentation,
             })
         }
         ViewModelEvent::ToolDetached { .. } => None,

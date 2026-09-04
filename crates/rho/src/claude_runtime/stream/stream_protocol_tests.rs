@@ -153,7 +153,10 @@ fn maps_tool_call_and_result_display() {
     assert!(started[0].contains("Read"));
     assert!(started[0].contains("README.md"));
     let finished = effects.iter().find_map(|effect| match effect {
-        StreamEffect::Attachment(AttachmentEvent::ToolFinished { card, .. }) => Some(card),
+        StreamEffect::Attachment(AttachmentEvent::ToolFinished {
+            presentation: crate::presentation::Presentation::Card(card),
+            ..
+        }) => Some(card),
         _ => None,
     });
     let finished = finished.expect("tool finished");
@@ -570,9 +573,10 @@ fn finished_cards(lines: &[&str]) -> Vec<(Option<String>, rho_tools::tool_card::
         .iter()
         .flat_map(|line| mapper.push_line(line))
         .filter_map(|effect| match effect {
-            StreamEffect::Attachment(AttachmentEvent::ToolFinished { key, card }) => {
-                Some((key, card))
-            }
+            StreamEffect::Attachment(AttachmentEvent::ToolFinished {
+                key,
+                presentation: crate::presentation::Presentation::Card(card),
+            }) => Some((key, card)),
             _ => None,
         })
         .collect()

@@ -469,7 +469,7 @@ pub(super) fn tool_finished_effects(
     vec![
         StreamEffect::Attachment(AttachmentEvent::ToolFinished {
             key: non_empty_key(tool_use_id),
-            card,
+            presentation: card.into(),
         }),
         StreamEffect::Status(StatusPatch {
             last_activity: Some(format!("tool result: {name}")),
