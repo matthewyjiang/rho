@@ -18,6 +18,7 @@ use crate::{
 
 mod first_capability;
 mod preparation;
+mod worker;
 
 pub(crate) use first_capability::FirstCapability;
 use preparation::call_prepared_for;
@@ -26,6 +27,7 @@ pub use preparation::{
     ToolCancellationPolicy, ToolExecutionPolicy, ToolPreparationContext, ToolPrepareFuture,
     ToolResource, ToolResourceAccess, ToolResourceKind,
 };
+pub(crate) use worker::{ToolHostWorker, ToolWorkerServices};
 
 /// How the runtime delivers a tool's result to the model.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

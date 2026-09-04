@@ -1,25 +1,15 @@
-use std::{
-    future::Future,
-    num::NonZeroUsize,
-    pin::Pin,
-    sync::{Arc, Mutex},
-    time::Instant,
-};
+use std::{future::Future, num::NonZeroUsize, pin::Pin, sync::Arc};
 
 use serde_json::Value;
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
-    hooks::{
-        BoundedFailure, HookDelegation, HookHostLabels, HookPayloadBounds, HookToolIdentity,
-        HookToolStatus, HookWiring,
-    },
+    hooks::{HookDelegation, HookHostLabels, HookPayloadBounds, HookWiring},
     host_input::HostInputEnvelope,
     tool::{
-        tool_progress_channel, Tool, ToolContext, ToolError, ToolErrorKind, ToolInvocation,
-        ToolOutput, ToolPreparationContext, ToolProgress, ToolRegistry,
+        tool_progress_channel, Tool, ToolContext, ToolHostWorker, ToolOutput, ToolProgress,
+        ToolRegistry, ToolWorkerServices,
     },
-    workspace::CapabilityRequest,
     ApprovalAuditRecord, ApprovalHandler, ApprovalSession, CancellationToken, DenyAllPolicy,
     DenyApprovals, Error, HostInputRequest, HostInputResponse, RunId, SessionId, ToolCallId,
     Workspace, WorkspacePolicy,
@@ -92,6 +82,13 @@ pub struct PendingToolHostInput {
 }
 
 impl PendingToolHostInput {
+    pub(crate) fn from_envelope(envelope: HostInputEnvelope) -> Self {
+        Self {
+            request: envelope.request,
+            response: Some(envelope.response),
+        }
+    }
+
     pub fn request(&self) -> &HostInputRequest {
         &self.request
     }
@@ -336,7 +333,7 @@ impl ToolHostBuilder {
             )
         });
         Ok(ToolHost {
-            core: Arc::new(ToolHostCore {
+            core: Arc::new(ToolWorkerServices {
                 tools,
                 workspace: self.workspace,
                 workspace_policy: self
@@ -361,17 +358,7 @@ impl ToolHostBuilder {
     }
 }
 
-struct ToolHostCore {
-    tools: ToolRegistry,
-    workspace: Option<Workspace>,
-    workspace_policy: Arc<dyn WorkspacePolicy>,
-    approval_handler: Arc<dyn ApprovalHandler>,
-    approvals: Arc<crate::workspace::SessionApprovals>,
-    approval_audit: Arc<crate::workspace::ApprovalAuditLog>,
-    hooks: HookWiring,
-    event_capacity: NonZeroUsize,
-    session_id: SessionId,
-}
+type ToolHostCore = ToolWorkerServices;
 
 /// Provider-free host for registered SDK tools.
 ///
@@ -466,232 +453,6 @@ impl ToolHost {
             let mut run = self.start(call)?;
             run.outcome().await
         })
-    }
-}
-
-struct ToolHostWorker {
-    core: Arc<ToolHostCore>,
-    tool: Arc<dyn Tool>,
-    call: ToolHostCall,
-    run_id: RunId,
-    context: ToolContext,
-    cancellation: CancellationToken,
-    events: mpsc::Sender<ToolHostEvent>,
-    progress: crate::tool::ToolProgressReceiver,
-    host_input: mpsc::Receiver<HostInputEnvelope>,
-}
-
-impl ToolHostWorker {
-    async fn run(self) -> Result<ToolOutput, Error> {
-        let Self {
-            core,
-            tool,
-            call,
-            run_id,
-            context,
-            cancellation,
-            events,
-            mut progress,
-            mut host_input,
-        } = self;
-        let started = Instant::now();
-        let invocation = ToolInvocation::from_host(call.id.clone(), call.arguments.clone());
-        let workspace = core.workspace.clone();
-        let first_capability = context.first_capability();
-        let cancellation_cleanup_timeout = Arc::new(Mutex::new(None));
-        let execution_completion = Arc::clone(&cancellation_cleanup_timeout);
-        let execution = async {
-            let prepared = tool
-                .prepare(
-                    invocation,
-                    ToolPreparationContext::new(workspace, cancellation.clone()),
-                )
-                .await?;
-            for capability in prepared.capabilities() {
-                context
-                    .authorize(capability.clone())
-                    .await
-                    .map_err(|error| {
-                        if matches!(error.kind(), crate::AuthorizationDenialKind::Cancelled) {
-                            ToolError::cancelled()
-                        } else {
-                            ToolError::policy_denied(&error)
-                        }
-                    })?;
-            }
-            *execution_completion
-                .lock()
-                .expect("tool cancellation policy lock") = match prepared.cancellation_policy() {
-                crate::tool::ToolCancellationPolicy::Abort => None,
-                crate::tool::ToolCancellationPolicy::Complete { timeout } => Some(timeout),
-            };
-            prepared.execute(context).await
-        };
-        tokio::pin!(execution);
-        let mut progress_open = true;
-        let mut host_input_open = true;
-        let mut cancellation_deferred = false;
-        let mut cancellation_cleanup_deadline: Option<Pin<Box<tokio::time::Sleep>>> = None;
-        let result = loop {
-            tokio::select! {
-                biased;
-                next = progress.recv(), if progress_open && !cancellation.is_cancelled() => {
-                    if let Some(progress) = next {
-                        if !send_event(&events, ToolHostEvent::Progress(progress), &cancellation).await {
-                            let timeout = *cancellation_cleanup_timeout
-                                .lock()
-                                .expect("tool cancellation policy lock");
-                            if let Err(error) = begin_cancellation_cleanup(
-                                timeout,
-                                &mut cancellation_cleanup_deadline,
-                                &mut cancellation_deferred,
-                            ) {
-                                break Err(error);
-                            }
-                        }
-                    } else {
-                        progress_open = false;
-                    }
-                }
-                next = host_input.recv(), if host_input_open && !cancellation.is_cancelled() => {
-                    if let Some(envelope) = next {
-                        let pending = PendingToolHostInput {
-                            request: envelope.request,
-                            response: Some(envelope.response),
-                        };
-                        if !send_event(
-                            &events,
-                            ToolHostEvent::HostInputRequested(pending),
-                            &cancellation,
-                        )
-                        .await
-                        {
-                            let timeout = *cancellation_cleanup_timeout
-                                .lock()
-                                .expect("tool cancellation policy lock");
-                            if let Err(error) = begin_cancellation_cleanup(
-                                timeout,
-                                &mut cancellation_cleanup_deadline,
-                                &mut cancellation_deferred,
-                            ) {
-                                break Err(error);
-                            }
-                        }
-                    } else {
-                        host_input_open = false;
-                    }
-                }
-                result = &mut execution => break result,
-                () = async {
-                    cancellation_cleanup_deadline
-                        .as_mut()
-                        .expect("guarded cancellation cleanup deadline")
-                        .await
-                }, if cancellation_cleanup_deadline.is_some() => {
-                    let timeout = cancellation_cleanup_timeout
-                        .lock()
-                        .expect("tool cancellation policy lock")
-                        .expect("cleanup deadline requires a timeout");
-                    break Err(ToolError::new(
-                        ToolErrorKind::Cancelled,
-                        format!("tool cancellation cleanup exceeded {timeout:?}"),
-                    ));
-                }
-                () = cancellation.cancelled(), if !cancellation_deferred => {
-                    let timeout = *cancellation_cleanup_timeout
-                        .lock()
-                        .expect("tool cancellation policy lock");
-                    if let Err(error) = begin_cancellation_cleanup(
-                        timeout,
-                        &mut cancellation_cleanup_deadline,
-                        &mut cancellation_deferred,
-                    ) {
-                        break Err(error);
-                    }
-                }
-            }
-        };
-        while let Some(update) = progress.try_recv() {
-            if !send_event(&events, ToolHostEvent::Progress(update), &cancellation).await {
-                break;
-            }
-        }
-        observe_after_tool_use(
-            &core,
-            &call,
-            &run_id,
-            &result,
-            started,
-            first_capability.get(),
-        );
-        result.map_err(Error::Tool)
-    }
-}
-
-fn begin_cancellation_cleanup(
-    timeout: Option<std::time::Duration>,
-    deadline: &mut Option<Pin<Box<tokio::time::Sleep>>>,
-    deferred: &mut bool,
-) -> Result<(), ToolError> {
-    let Some(timeout) = timeout else {
-        return Err(ToolError::cancelled());
-    };
-    *deadline = Some(Box::pin(tokio::time::sleep(timeout)));
-    *deferred = true;
-    Ok(())
-}
-
-async fn send_event(
-    sender: &mpsc::Sender<ToolHostEvent>,
-    event: ToolHostEvent,
-    cancellation: &CancellationToken,
-) -> bool {
-    tokio::select! {
-        result = sender.send(event) => result.is_ok(),
-        () = cancellation.cancelled() => false,
-    }
-}
-
-fn observe_after_tool_use(
-    core: &ToolHostCore,
-    call: &ToolHostCall,
-    run_id: &RunId,
-    result: &Result<ToolOutput, ToolError>,
-    started: Instant,
-    capability: Option<&CapabilityRequest>,
-) {
-    let (status, failure) = match result {
-        Ok(_) => (HookToolStatus::Succeeded, None),
-        Err(error) => (
-            HookToolStatus::Failed,
-            Some(BoundedFailure {
-                kind: tool_error_label(error.kind()),
-                message: error.message(),
-                field: "payload.failure",
-            }),
-        ),
-    };
-    core.hooks.observe_after_tool_use(
-        HookToolIdentity {
-            session_id: Some(&core.session_id),
-            run_id: Some(run_id),
-            workspace_root: core.workspace.as_ref().map(Workspace::root),
-            tool_name: call.name(),
-            call_id: call.call_id(),
-        },
-        status,
-        failure,
-        Some(started.elapsed().as_millis() as u64),
-        capability,
-    );
-}
-
-const fn tool_error_label(kind: ToolErrorKind) -> &'static str {
-    match kind {
-        ToolErrorKind::InvalidArguments => "invalid_arguments",
-        ToolErrorKind::Execution => "execution",
-        ToolErrorKind::PolicyDenied => "policy_denied",
-        ToolErrorKind::Cancelled => "cancelled",
     }
 }
 
