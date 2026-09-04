@@ -11,7 +11,7 @@ use crate::{
     },
     provider::{
         provider_event_channel, provider_steering_channel, ModelRequestOptions,
-        ProviderCancellationMode, ProviderSteeringOutcome,
+        ProviderCancellationMode,
     },
     run::RunCommand,
     session::{HistoryMetrics, RunStart, SessionCore, SessionState},
@@ -36,6 +36,7 @@ const MAX_HONORED_RETRY_AFTER: std::time::Duration = std::time::Duration::from_s
 mod model_call_timer;
 mod provider_cancellation;
 mod run_hooks;
+mod steering_control;
 mod stream_capture;
 mod terminal;
 mod tool_batch;
@@ -46,6 +47,10 @@ use provider_cancellation::{
     drain_cancelled_provider_events, drain_cooperative_provider_on_cancellation,
 };
 use run_hooks::RunHooks;
+use steering_control::{
+    accept_command as accept_non_tool_command, apply_staged as apply_staged_steering,
+    drain_commands, handle_outcome as handle_steering_outcome,
+};
 use stream_capture::{capture_provider_event, StreamCapture};
 use terminal::{commit_terminal, commit_terminal_history, send_terminal, TerminalKind};
 use tool_turn::{execute_staged_tool_turn, StagedToolTurn, ToolTurnStatus};
@@ -903,62 +908,6 @@ async fn handle_timed_provider_stream_event(
             timer.discard_attempt_output(observed_at);
             handle_provider_request_event(event, capture, events, cancellation).await
         }
-    }
-}
-
-async fn handle_steering_outcome(
-    (id, outcome): (crate::SteeringId, ProviderSteeringOutcome),
-    steering: &mut SteeringQueue,
-    events: &mpsc::Sender<RunEvent>,
-    cancellation: &CancellationToken,
-) -> Result<(), Error> {
-    match outcome {
-        ProviderSteeringOutcome::Accepted => {
-            steering.mark_delivered(&id);
-            emit(events, cancellation, RunEvent::SteeringDelivered { id }).await
-        }
-        ProviderSteeringOutcome::Released => {
-            steering.mark_released(&id);
-            Ok(())
-        }
-    }
-}
-
-async fn apply_staged_steering(
-    steering: &mut SteeringQueue,
-    history: &mut Vec<Message>,
-    events: &mpsc::Sender<RunEvent>,
-    cancellation: &CancellationToken,
-) -> Result<(), Error> {
-    let ids = steering.planned_apply_ids();
-    if ids.is_empty() {
-        return Ok(());
-    }
-    // Publish before mutating history so cancellation cannot hide applied IDs from hosts.
-    // There is deliberately no await between successful publication and the mutation.
-    emit(events, cancellation, RunEvent::SteeringApplied { ids }).await?;
-    steering.apply(history);
-    Ok(())
-}
-
-fn accept_non_tool_command(command: RunCommand, steering: &mut SteeringQueue) {
-    match command {
-        RunCommand::Steer { input, accepted } => {
-            let id = steering.accept(input);
-            let _ = accepted.send(id);
-        }
-        RunCommand::RetractSteering { id, completed } => {
-            let _ = completed.send(steering.retract(&id));
-        }
-        RunCommand::Respond { accepted, .. } => {
-            let _ = accepted.send(Err("no host input request is awaiting a response".into()));
-        }
-    }
-}
-
-fn drain_commands(commands: &mut mpsc::Receiver<RunCommand>, steering: &mut SteeringQueue) {
-    while let Ok(command) = commands.try_recv() {
-        accept_non_tool_command(command, steering);
     }
 }
 
