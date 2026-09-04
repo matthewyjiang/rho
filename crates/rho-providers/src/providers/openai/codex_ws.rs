@@ -600,7 +600,7 @@ impl SteerCollect {
         }
         let steered = state.steered;
         if let Some(in_flight) = self.in_flight.take() {
-            if steered {
+            if steered && self.accepted_items.is_empty() {
                 self.accepted_items.extend(in_flight.items);
                 in_flight.request.accept();
             } else {

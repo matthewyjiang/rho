@@ -202,7 +202,7 @@ async fn steer_is_released_when_unforwardable_or_failed() {
     assert_eq!(frames.lock().unwrap()[0]["type"], "response.create");
 }
 
-async fn ws_server_accepts_two_queued_steers() -> (String, Arc<StdMutex<Vec<Value>>>) {
+async fn ws_server_acknowledges_first_of_two_steers() -> (String, Arc<StdMutex<Vec<Value>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let frames = Arc::new(StdMutex::new(Vec::new()));
@@ -224,30 +224,32 @@ async fn ws_server_accepts_two_queued_steers() -> (String, Arc<StdMutex<Vec<Valu
         for sequence in 1..=2 {
             let steer = read_request_frame(&mut socket).await;
             server_frames.lock().unwrap().push(steer);
-            socket
-                .send(Message::Text(
-                    json!({
-                        "type":"response.steer.accepted",
-                        "sequence_number": sequence,
-                        "steer":{"id":format!("steer_{sequence}"),"previous_response_id":"resp_1"}
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await
-                .unwrap();
+            if sequence == 1 {
+                socket
+                    .send(Message::Text(
+                        json!({
+                            "type":"response.steer.accepted",
+                            "sequence_number": sequence,
+                            "steer":{"id":format!("steer_{sequence}"),"previous_response_id":"resp_1"}
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await
+                    .unwrap();
+            }
         }
         send_steered_incomplete(&mut socket, "resp_1", "partial").await;
     });
     (format!("ws://{addr}/responses"), frames)
 }
 
-// Covers: acknowledgement of one steer immediately releases the delivery slot
-// for another steer already queued during the same response.
+// Covers: acknowledgement of one steer releases the delivery slot, while that
+// steer—not a later unacknowledged send—accounts for the steered completion.
 // Owner: openai websocket steering
 #[tokio::test]
 async fn queued_steer_sends_after_prior_acknowledgement() {
-    let (url, frames) = ws_server_accepts_two_queued_steers().await;
+    let (url, frames) = ws_server_acknowledges_first_of_two_steers().await;
     let transport = CodexWsTransport::new_with_url(url);
     let (mut steering, offer) = steer_receiver("unused");
     let first_output = Arc::new(tokio::sync::Notify::new());
@@ -261,23 +263,36 @@ async fn queued_steer_sends_after_prior_acknowledgement() {
         });
     let body = body(vec![json!({"role":"user","content":"one"})]);
     let tokens = tokens();
+    let mut steer_outcomes = Vec::new();
     let turn = transport.send_responses_turn_steerable(body, &tokens, &mut on_event, &mut steering);
     tokio::pin!(turn);
     let result = loop {
         tokio::select! {
             () = first_output.notified() => {
                 for text in ["S1", "S2"] {
-                    let (request, _outcomes) =
+                    let (request, outcomes) =
                         rho_sdk::provider::ProviderSteeringRequest::test_unclaimed(vec![
                             ContentBlock::Text(text.into()),
                         ]);
                     offer.send(request).unwrap();
+                    steer_outcomes.push(outcomes);
                 }
             }
             result = &mut turn => break result.unwrap(),
         }
     };
     assert!(matches!(result, CodexWsTurn::Completed(response) if response.steered));
+    let outcomes = steer_outcomes
+        .iter_mut()
+        .map(|outcomes| outcomes.try_recv().expect("steer settled").1)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outcomes,
+        vec![
+            rho_sdk::provider::ProviderSteeringOutcome::Accepted,
+            rho_sdk::provider::ProviderSteeringOutcome::Released,
+        ]
+    );
     let frames = frames.lock().unwrap();
     assert_eq!(frames.len(), 3);
     assert_eq!(frames[1]["type"], "response.steer");
