@@ -133,6 +133,25 @@ fn path_extension_resolves_highlighter() {
     assert!(BlockHighlighter::for_path("unknown.nope").is_none());
 }
 
+// Covers: PowerShell cmdlets highlight, double-dash flags do not
+// Owner: pure unit (bundled PowerShell grammar)
+#[test]
+fn powershell_cmdlets_do_not_match_double_dash_flags() {
+    let mut highlighter = highlighter("powershell");
+    let segments = highlighter.highlight_line("git commit --no-verify; Write-Output 1");
+    assert_eq!(
+        role_of(&segments, "Write-Output"),
+        Some(SyntaxRole::Function)
+    );
+    assert!(
+        segments
+            .iter()
+            .filter(|segment| segment.text.contains("no-verify"))
+            .all(|segment| segment.role != Some(SyntaxRole::Function)),
+        "double-dash flags must not paint as cmdlets: {segments:?}"
+    );
+}
+
 // Covers: callers map plain roles onto their own base style at paint time
 // Owner: pure unit (highlight segment style)
 #[test]

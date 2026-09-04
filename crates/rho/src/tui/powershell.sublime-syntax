@@ -23,7 +23,7 @@ contexts:
       push: double-quoted-string
     - match: '(?i)\b(?:begin|break|catch|class|continue|data|do|dynamicparam|else|elseif|end|exit|filter|finally|for|foreach|from|function|hidden|if|in|param|process|return|static|switch|throw|trap|try|until|using|var|while|workflow)\b'
       scope: keyword.control.powershell
-    - match: '(?i)\b(?:[a-z]+)-[a-z][\w-]*\b'
+    - match: '(?i)(?<![-\w])[a-z]+-[a-z][\w-]*\b'
       scope: support.function.powershell
     - match: '(?i)\$(?:false|null|true)\b'
       scope: constant.language.powershell
