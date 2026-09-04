@@ -271,10 +271,10 @@ pub(super) fn capture_provider_event(
             position,
             data,
         } => {
-            // Provider-native boundaries (for example Gemini thought signatures)
-            // must not be collapsed into a single cancelled text block.
+            // Positioned provider context marks a content-part boundary (for example a
+            // Gemini thought signature). Turn-scoped metadata must not split text.
             capture.merge_output_text = false;
-            capture.seal_next_text_part = true;
+            capture.seal_next_text_part = position.is_some();
             capture.provider_context.push(ProviderContextBlock {
                 identity: identity.clone(),
                 kind: kind.clone(),

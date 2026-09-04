@@ -228,6 +228,53 @@ fn web_search_activity_keeps_stable_run_event_shape() {
     );
 }
 
+// Covers: turn metadata must not split aborted text, while positioned context remains a boundary.
+// Owner: SDK stream capture
+#[test]
+fn provider_context_only_splits_text_at_positioned_boundaries() {
+    for (name, position, expected) in [
+        (
+            "turn metadata",
+            None,
+            vec![ContentBlock::Text("hello".into())],
+        ),
+        (
+            "content boundary",
+            Some(0),
+            vec![
+                ContentBlock::Text("hel".into()),
+                ContentBlock::Text("lo".into()),
+            ],
+        ),
+    ] {
+        let mut capture = StreamCapture::default();
+        capture_provider_event(
+            ModelEvent::ProviderContext {
+                kind: "test.context".into(),
+                position,
+                data: serde_json::json!({}),
+            },
+            &identity(),
+            &ModelUsage::default(),
+            &mut capture,
+        );
+        for text in ["hel", "lo"] {
+            capture_provider_event(
+                ModelEvent::OutputDelta(text.into()),
+                &identity(),
+                &ModelUsage::default(),
+                &mut capture,
+            );
+        }
+
+        assert_eq!(
+            capture.into_aborted_assistant().unwrap().content,
+            expected,
+            "{name}"
+        );
+    }
+}
+
 // Covers: service-tier fallback must lower to a typed run event without replay state.
 // Owner: SDK stream capture
 #[test]
