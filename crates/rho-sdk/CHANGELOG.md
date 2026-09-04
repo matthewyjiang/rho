@@ -1,5 +1,14 @@
 # Changelog
 
+## [5.2.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.1.2...rho-sdk-v5.2.0) (2026-09-04)
+
+
+### Features
+
+* **openai:** forward mid-turn steering over the Codex websocket on gpt-6-astra ([#1150](https://github.com/matthewyjiang/rho/issues/1150)) ([3628bda](https://github.com/matthewyjiang/rho/commit/3628bda95035a5b13da18f1bd42404622d1a39cd))
+* **openai:** send reasoning changes as configuration_update on gpt-6-astra ([#1149](https://github.com/matthewyjiang/rho/issues/1149)) ([7928476](https://github.com/matthewyjiang/rho/commit/792847602525f27743240ae9aa194c4ce9f50324))
+* **rho-sdk:** run async tool calls as detached jobs ([#1151](https://github.com/matthewyjiang/rho/issues/1151)) ([ed4c276](https://github.com/matthewyjiang/rho/commit/ed4c276011a5d649b258b9583774db65ba44c4e2))
+
 ## [5.1.2](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.1.1...rho-sdk-v5.1.2) (2026-09-03)
 
 

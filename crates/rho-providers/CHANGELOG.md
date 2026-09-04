@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.3.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.2.0...rho-providers-v2.3.0) (2026-09-04)
+
+
+### Features
+
+* **openai:** forward mid-turn steering over the Codex websocket on gpt-6-astra ([#1150](https://github.com/matthewyjiang/rho/issues/1150)) ([3628bda](https://github.com/matthewyjiang/rho/commit/3628bda95035a5b13da18f1bd42404622d1a39cd))
+* **openai:** send reasoning changes as configuration_update on gpt-6-astra ([#1149](https://github.com/matthewyjiang/rho/issues/1149)) ([7928476](https://github.com/matthewyjiang/rho/commit/792847602525f27743240ae9aa194c4ce9f50324))
+* **openai:** support GPT-6 Astra on Codex OAuth ([#1146](https://github.com/matthewyjiang/rho/issues/1146)) ([2efb33e](https://github.com/matthewyjiang/rho/commit/2efb33eb4c217a5f8601f516e3fd0ba2c9148147))
+* **openai:** wire async tool calling for gpt-6-astra ([#1152](https://github.com/matthewyjiang/rho/issues/1152)) ([9fcc988](https://github.com/matthewyjiang/rho/commit/9fcc9886d9905745b14dd86d36bde690648e145b))
+
 ## [2.2.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.1.2...rho-providers-v2.2.0) (2026-09-03)
 
 

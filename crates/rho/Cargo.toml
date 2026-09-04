@@ -1,6 +1,6 @@
 [package]
 name = "rho-coding-agent"
-version = "2.6.0"
+version = "2.7.0"
 edition = "2021"
 rust-version = "1.92"
 description = "A fast Rust agent harness with a small footprint and opinionated defaults"
@@ -23,8 +23,8 @@ path = "src/main.rs"
 
 [dependencies]
 rho-sdk = { version = "5.2.0", path = "../rho-sdk" }
-rho-providers = { version = "2.2.0", path = "../rho-providers", default-features = false }
-rho-tools = { version = "1.0.4", path = "../rho-tools", package = "rho-agent-tools" }
+rho-providers = { version = "2.3.0", path = "../rho-providers", default-features = false }
+rho-tools = { version = "1.1.0", path = "../rho-tools", package = "rho-agent-tools" }
 tokio = { version = "1", features = ["full"] }
 reqwest = { workspace = true }
 serde = { version = "1", features = ["derive"] }
