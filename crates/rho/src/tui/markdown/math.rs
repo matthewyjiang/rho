@@ -4,13 +4,13 @@ use std::panic::AssertUnwindSafe;
 
 use super::super::{render::display_width, theme::Theme};
 use super::panel::ClosedPanel;
-use super::txm::ratatui::Math;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     text::{Line, Span},
     widgets::Widget,
 };
+use txm::ratatui::Math;
 
 const MAX_SOURCE_BYTES: usize = 16 * 1024;
 const MAX_SOURCE_LINES: usize = 256;
