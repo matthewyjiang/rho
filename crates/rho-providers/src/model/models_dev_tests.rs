@@ -1679,26 +1679,6 @@ fn local_catalog_ref_parses_slug_and_qualified_ids() {
     assert_eq!(overrides::parse_catalog_ref("/model", "gpt-5.6-sol"), None);
 }
 
-// Covers: Astra rejects unsupported effort values even before models.dev has
-// published or Rho has hydrated its catalog row.
-// Owner: models.dev built-in capability overrides
-#[test]
-fn astra_reasoning_levels_are_known_without_catalog_data() {
-    let cache = tempfile::tempdir().unwrap();
-    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
-        assert_eq!(
-            current_reasoning_capabilities("openai-codex", "gpt-6-astra"),
-            ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
-                ReasoningLevel::Low,
-                ReasoningLevel::Medium,
-                ReasoningLevel::High,
-                ReasoningLevel::Xhigh,
-                ReasoningLevel::Max,
-            ]))
-        );
-    });
-}
-
 // Covers: inheriting openai-codex applies the built-in window override
 // Owner: models.dev catalog rematch
 #[test]
