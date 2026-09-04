@@ -383,7 +383,7 @@ pub(super) fn live_started_at(
 /// Keyed paint of one live tool card.
 ///
 /// Lives on [`ToolEntry`] so card replacement drops it. Hits skip syntect.
-/// Elapsed ticks reuse the highlighted header and rebuild only dynamic facts.
+/// Elapsed ticks rebuild the cheap prefix and reuse `body`.
 pub(in crate::tui) struct LiveCardRenderCache {
     pub(in crate::tui) width: usize,
     pub(in crate::tui) max_tool_output_lines: usize,
@@ -394,7 +394,6 @@ pub(in crate::tui) struct LiveCardRenderCache {
     pub(in crate::tui) elapsed_label: Option<String>,
     pub(in crate::tui) last_fact_is_end: bool,
     pub(in crate::tui) prefix_len: usize,
-    pub(in crate::tui) header: Vec<Line<'static>>,
     pub(in crate::tui) body: Vec<Line<'static>>,
     pub(in crate::tui) lines: Vec<Line<'static>>,
     #[cfg(test)]

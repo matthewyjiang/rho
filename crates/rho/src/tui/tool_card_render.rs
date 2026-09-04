@@ -18,10 +18,7 @@ use super::{
         push_wrapped_text, slice_spans_by_bytes, soft_wrap_visible_ranges, spans_display_width,
         styled_blank_line, wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
     },
-    syntax::{
-        spans_from_segments_with_matches, BlockHighlighter, MAX_TOOL_SYNTAX_LINES,
-        MAX_TOOL_SYNTAX_LINE_BYTES,
-    },
+    syntax::{highlight_source_spans, spans_from_segments_with_matches},
     theme::Theme,
     tool_diff::{self, DiffSyntax},
     tool_search::SearchSyntax,
@@ -154,7 +151,6 @@ pub(super) fn push_tool_card(
 /// when the timeout clock ticks.
 pub(super) struct CardSections {
     pub(super) prefix: Vec<Line<'static>>,
-    pub(super) header_len: usize,
     pub(super) body: Vec<Line<'static>>,
     pub(super) last_fact_is_end: bool,
 }
@@ -168,7 +164,6 @@ pub(super) fn paint_card_sections(
 ) -> CardSections {
     let mut prefix = Vec::new();
     push_header_line(&mut prefix, card, card.status, width);
-    let header_len = prefix.len();
 
     let budget = max_tool_output_lines.max(1);
     // Collapsed: paint only the visible budget (syntax is the costly part).
@@ -268,7 +263,6 @@ pub(super) fn paint_card_sections(
     }
     CardSections {
         prefix,
-        header_len,
         body,
         last_fact_is_end,
     }
@@ -281,9 +275,9 @@ pub(super) fn paint_live_prefix(
     width: usize,
     live_elapsed: Option<Duration>,
     last_fact_is_end: bool,
-    header: &[Line<'static>],
 ) -> Vec<Line<'static>> {
-    let mut prefix = header.to_vec();
+    let mut prefix = Vec::new();
+    push_header_line(&mut prefix, card, card.status, width);
     let last = card.facts.len().saturating_sub(1);
     for (index, fact) in card.facts.iter().enumerate() {
         let mut fact_lines = push_wrapped_tree_fact(fact_spans(fact, live_elapsed), width);
@@ -623,7 +617,7 @@ fn push_header_line(
             match command.as_ref().filter(|command| !command.is_empty()) {
                 Some(command) => {
                     prefix.push(Span::raw(" "));
-                    let wrappable = shell_command_spans(prompt, command);
+                    let wrappable = shell_command_spans(&card.header, command);
                     push_wrapped_prefixed(
                         lines,
                         prefix,
@@ -658,40 +652,11 @@ fn push_header_line(
 }
 
 /// Highlight a shell header while preserving its exact text for styled wrapping.
-fn shell_command_spans(prompt: &str, command: &str) -> Vec<Span<'static>> {
-    let language = if prompt.eq_ignore_ascii_case("PS") {
-        "powershell"
-    } else {
-        "bash"
-    };
-    let within_budget = command.lines().take(MAX_TOOL_SYNTAX_LINES + 1).count()
-        <= MAX_TOOL_SYNTAX_LINES
-        && command
-            .lines()
-            .all(|line| line.len() <= MAX_TOOL_SYNTAX_LINE_BYTES);
-    let Some(mut highlighter) = within_budget
-        .then(|| BlockHighlighter::for_language(language))
-        .flatten()
-    else {
+fn shell_command_spans(header: &ToolHeader, command: &str) -> Vec<Span<'static>> {
+    let Some(language) = header.shell_syntax_token() else {
         return vec![Span::styled(command.to_string(), Theme::tool_primary())];
     };
-
-    let mut spans = Vec::new();
-    for line in command.split_inclusive('\n') {
-        let (source, newline) = line
-            .strip_suffix('\n')
-            .map_or((line, ""), |source| (source, "\n"));
-        let segments = highlighter.highlight_line(source);
-        spans.extend(spans_from_segments_with_matches(
-            &segments,
-            Theme::tool_primary(),
-            &[],
-        ));
-        if !newline.is_empty() {
-            spans.push(Span::styled(newline.to_string(), Theme::tool_primary()));
-        }
-    }
-    spans
+    highlight_source_spans(language, command, Theme::tool_primary())
 }
 
 /// Wrap styled text under a fixed first-line prefix.

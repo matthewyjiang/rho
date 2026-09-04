@@ -98,11 +98,11 @@ fn warmup_names_dedup_skip_markdown_and_cap() {
     assert_eq!(names.iter().filter(|name| **name == rust).count(), 1);
     assert!(names.contains(&bash), "{names:?}");
     assert!(names.contains(&powershell), "{names:?}");
+    assert_eq!(names.len(), MAX_WARMED_SYNTAXES + 2);
     assert!(
         names
             .iter()
             .all(|name| !name.eq_ignore_ascii_case("markdown")),
         "{names:?}"
     );
-    assert_eq!(names.len(), MAX_WARMED_SYNTAXES);
 }

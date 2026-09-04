@@ -32,6 +32,10 @@ pub(super) const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
     Step::Phase("spawn_background_agent"),
     Step::SubmitText("fixture background agent"),
     Step::WaitText {
+        text: "● wor  starting",
+        timeout: STREAM,
+    },
+    Step::WaitText {
         text: "● worker  running in background",
         timeout: STREAM,
     },
