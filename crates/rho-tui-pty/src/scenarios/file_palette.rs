@@ -67,7 +67,7 @@ pub(super) const FILE_PATH_AUTOCOMPLETE_SCENARIO: Scenario = Scenario::new(
 .with_setup(setup_file_autocomplete);
 
 fn select_file_path(harness: &mut PtyHarness) -> Result<()> {
-    harness.settle_input();
+    harness.settle_plain_text_input();
     harness.inject_key(&Key::Enter)
 }
 

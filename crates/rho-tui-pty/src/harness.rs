@@ -203,6 +203,13 @@ impl PtyHarness {
         self.settle_for(Duration::from_millis(50));
     }
 
+    /// Outlast the composer's 120 ms plain-key paste Enter suppression window.
+    pub fn settle_plain_text_input(&mut self) {
+        // The 30 ms margin keeps the test beyond the product deadline even when
+        // the final key and harness clock reads straddle a scheduler tick.
+        self.settle_for(Duration::from_millis(150));
+    }
+
     fn settle_for(&mut self, duration: Duration) {
         let deadline = Instant::now() + duration;
         while Instant::now() < deadline {
