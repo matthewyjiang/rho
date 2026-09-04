@@ -51,7 +51,7 @@ const FILE_PATH_AUTOCOMPLETE_STEPS: &[Step] = &[
     },
     Step::Custom(assert_file_palette_filtered_to_alpha),
     Step::Phase("select"),
-    Step::Key(Key::Enter),
+    Step::Custom(select_file_path),
     Step::Custom(assert_file_path_inserted),
     Step::Key(Key::Ctrl('c')),
     Step::ExitCommand,
@@ -65,6 +65,11 @@ pub(super) const FILE_PATH_AUTOCOMPLETE_SCENARIO: Scenario = Scenario::new(
     /* smoke */ false,
 )
 .with_setup(setup_file_autocomplete);
+
+fn select_file_path(harness: &mut PtyHarness) -> Result<()> {
+    harness.settle_input();
+    harness.inject_key(&Key::Enter)
+}
 
 fn assert_file_palette_filtered_to_alpha(harness: &mut PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
