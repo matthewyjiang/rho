@@ -98,6 +98,7 @@ struct ShellRenderCache {
     max_tool_output_lines: usize,
     max_image_height: u16,
     theme_generation: u64,
+    syntax_ready: bool,
     lines: Vec<ratatui::text::Line<'static>>,
 }
 
@@ -736,6 +737,7 @@ impl PendingShellTask {
         max_image_height: u16,
     ) -> &[ratatui::text::Line<'static>] {
         let theme_generation = super::Theme::generation();
+        let syntax_ready = super::syntax::syntax_set_ready();
         let fresh = self.render_cache.as_ref().is_some_and(|cache| {
             cache.stdout_len == self.stdout.len()
                 && cache.stderr_len == self.stderr.len()
@@ -743,6 +745,7 @@ impl PendingShellTask {
                 && cache.max_tool_output_lines == max_tool_output_lines
                 && cache.max_image_height == max_image_height
                 && cache.theme_generation == theme_generation
+                && cache.syntax_ready == syntax_ready
         });
         if !fresh {
             let lines = super::tool_entry_lines(
@@ -758,6 +761,7 @@ impl PendingShellTask {
                 max_tool_output_lines,
                 max_image_height,
                 theme_generation,
+                syntax_ready,
                 lines,
             });
         }

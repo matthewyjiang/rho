@@ -152,6 +152,7 @@ pub(crate) async fn run(
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         anyhow::bail!("rho attach requires an interactive terminal");
     }
+    let _syntax_warmup = tokio::task::spawn_blocking(crate::tui::syntax::warm_syntax_set);
     let mut terminal = ratatui::init();
     let _restore_terminal = RestoreTerminal {
         mouse_capture: mouse_capture::Guard::acquire(),
@@ -226,6 +227,7 @@ pub(crate) struct AttachmentApp {
     history_area: Rect,
     history_width: usize,
     content_len: usize,
+    syntax_ready: bool,
 }
 
 impl AttachmentApp {
@@ -255,6 +257,7 @@ impl AttachmentApp {
             history_area: Rect::default(),
             history_width: 0,
             content_len: 0,
+            syntax_ready: crate::tui::syntax::syntax_set_ready(),
         }
     }
 
@@ -327,8 +330,9 @@ impl AttachmentApp {
     }
 
     pub(crate) fn refresh(&mut self) -> anyhow::Result<bool> {
+        let mut changed = self.take_syntax_ready_change();
         let events = self.reader.read_new()?;
-        let mut changed = !events.is_empty();
+        changed |= !events.is_empty();
         for event in events {
             self.apply_event(event);
         }
@@ -489,6 +493,16 @@ impl AttachmentApp {
 
     fn invalidate_painted(&mut self) {
         self.painted = None;
+    }
+
+    fn take_syntax_ready_change(&mut self) -> bool {
+        let ready = crate::tui::syntax::syntax_set_ready();
+        if ready == self.syntax_ready {
+            return false;
+        }
+        self.syntax_ready = ready;
+        self.invalidate_painted();
+        true
     }
 
     /// Rebuild the cached history render when missing or wrapped for another

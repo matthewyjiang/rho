@@ -132,14 +132,17 @@ fn live_card_cache_invalidates_on_expand_and_patches_elapsed() {
         first.iter().any(|line| line.contains("timeout 30s · 1.2s")),
         "first paint must include elapsed: {first:?}"
     );
+    assert!(take_highlight_line_calls() > 0);
     let paints = shell.render_cache_paints();
     shell.started_at = Some(Instant::now() - Duration::from_millis(1_300));
+    reset_highlight_line_calls();
     let second = shell
         .rendered_lines(60, 8, 4)
         .iter()
         .map(line_text)
         .collect::<Vec<_>>();
     assert_eq!(shell.render_cache_paints(), paints);
+    assert_eq!(take_highlight_line_calls(), 0);
     assert!(
         second
             .iter()

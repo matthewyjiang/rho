@@ -1,0 +1,55 @@
+%YAML 1.2
+---
+# two-face omits its full PowerShell grammar under fancy-regex. This compact
+# grammar covers the shell-card tokens that carry the most useful distinction.
+name: PowerShell
+file_extensions:
+  - ps1
+  - psm1
+  - psd1
+scope: source.powershell
+contexts:
+  main:
+    - match: '<#'
+      scope: punctuation.definition.comment.begin.powershell
+      push: block-comment
+    - match: '#.*$'
+      scope: comment.line.number-sign.powershell
+    - match: "'"
+      scope: punctuation.definition.string.begin.powershell
+      push: single-quoted-string
+    - match: '"'
+      scope: punctuation.definition.string.begin.powershell
+      push: double-quoted-string
+    - match: '(?i)\b(?:begin|break|catch|class|continue|data|do|dynamicparam|else|elseif|end|exit|filter|finally|for|foreach|from|function|hidden|if|in|param|process|return|static|switch|throw|trap|try|until|using|var|while|workflow)\b'
+      scope: keyword.control.powershell
+    - match: '(?i)(?<![-\w])[a-z]+-[a-z][\w-]*\b'
+      scope: support.function.powershell
+    - match: '(?i)\$(?:false|null|true)\b'
+      scope: constant.language.powershell
+    - match: '\b(?:0[xX][0-9a-fA-F]+|\d+(?:\.\d+)?)\b'
+      scope: constant.numeric.powershell
+    - match: '(?:-and|-as|-band|-bnot|-bor|-bxor|-contains|-eq|-ge|-gt|-in|-is|-isnot|-join|-le|-like|-lt|-match|-ne|-not|-notcontains|-notin|-notlike|-notmatch|-or|-replace|-shl|-shr|-split|-xor)\b|&&|\|\||\?\?'
+      scope: keyword.operator.powershell
+
+  block-comment:
+    - meta_scope: comment.block.powershell
+    - match: '#>'
+      scope: punctuation.definition.comment.end.powershell
+      pop: true
+
+  single-quoted-string:
+    - meta_scope: string.quoted.single.powershell
+    - match: "''"
+      scope: constant.character.escape.powershell
+    - match: "'"
+      scope: punctuation.definition.string.end.powershell
+      pop: true
+
+  double-quoted-string:
+    - meta_scope: string.quoted.double.powershell
+    - match: '`.'
+      scope: constant.character.escape.powershell
+    - match: '"'
+      scope: punctuation.definition.string.end.powershell
+      pop: true

@@ -77,7 +77,7 @@ fn typescript_fence_tokens_resolve() {
 #[test]
 fn common_fence_aliases_resolve() {
     warm_syntax_set();
-    for token in ["jsx", "shell", "console", "toml"] {
+    for token in ["jsx", "shell", "console", "toml", "ps1", "powershell"] {
         assert!(
             BlockHighlighter::for_language(token).is_some(),
             "expected highlighter for fence token {token}"
@@ -117,7 +117,13 @@ fn empty_line_yields_one_empty_plain_segment() {
 #[test]
 fn path_extension_resolves_highlighter() {
     warm_syntax_set();
-    for path in ["src/lib.rs", "foo.ts", "pkg/main.py", "Makefile"] {
+    for path in [
+        "src/lib.rs",
+        "foo.ts",
+        "pkg/main.py",
+        "Makefile",
+        "script.ps1",
+    ] {
         assert!(
             BlockHighlighter::for_path(path).is_some(),
             "expected highlighter for path {path}"
@@ -125,6 +131,25 @@ fn path_extension_resolves_highlighter() {
     }
     assert!(BlockHighlighter::for_path("/dev/null").is_none());
     assert!(BlockHighlighter::for_path("unknown.nope").is_none());
+}
+
+// Covers: PowerShell cmdlets highlight, double-dash flags do not
+// Owner: pure unit (bundled PowerShell grammar)
+#[test]
+fn powershell_cmdlets_do_not_match_double_dash_flags() {
+    let mut highlighter = highlighter("powershell");
+    let segments = highlighter.highlight_line("git commit --no-verify; Write-Output 1");
+    assert_eq!(
+        role_of(&segments, "Write-Output"),
+        Some(SyntaxRole::Function)
+    );
+    assert!(
+        segments
+            .iter()
+            .filter(|segment| segment.text.contains("no-verify"))
+            .all(|segment| segment.role != Some(SyntaxRole::Function)),
+        "double-dash flags must not paint as cmdlets: {segments:?}"
+    );
 }
 
 // Covers: callers map plain roles onto their own base style at paint time

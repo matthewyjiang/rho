@@ -114,6 +114,16 @@ fn warm_plan(plan: SyntaxWarmupPlan) {
 fn planned_warmups(plan: &SyntaxWarmupPlan) -> Vec<(&'static str, BlockHighlighter)> {
     let mut budget = WarmBudget::default();
     let mut planned = Vec::new();
+    // Shell headers show up in almost every session. Compile them without
+    // consuming the recovered-session budget.
+    for token in ["bash", "powershell"] {
+        let Some(name) = budget.claim_always(syntax_name_for_language(token)) else {
+            continue;
+        };
+        if let Some(highlighter) = BlockHighlighter::for_language(token) {
+            planned.push((name, highlighter));
+        }
+    }
     for token in &plan.tokens {
         let Some(name) = budget.claim(syntax_name_for_language(token)) else {
             continue;
@@ -136,14 +146,24 @@ fn planned_warmups(plan: &SyntaxWarmupPlan) -> Vec<(&'static str, BlockHighlight
 #[derive(Default)]
 struct WarmBudget {
     seen: HashSet<&'static str>,
+    recovered: usize,
 }
 
 impl WarmBudget {
-    fn claim(&mut self, name: Option<&'static str>) -> Option<&'static str> {
+    fn claim_always(&mut self, name: Option<&'static str>) -> Option<&'static str> {
         let name = name?;
-        if self.seen.len() >= MAX_WARMED_SYNTAXES || !self.seen.insert(name) {
+        if !self.seen.insert(name) {
             return None;
         }
+        Some(name)
+    }
+
+    fn claim(&mut self, name: Option<&'static str>) -> Option<&'static str> {
+        let name = name?;
+        if self.recovered >= MAX_WARMED_SYNTAXES || !self.seen.insert(name) {
+            return None;
+        }
+        self.recovered += 1;
         Some(name)
     }
 }

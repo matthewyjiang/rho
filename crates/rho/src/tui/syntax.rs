@@ -1,14 +1,15 @@
-//! Syntect-backed syntax highlighting for code fences and diff bodies.
+//! Syntect-backed syntax highlighting for code fences, diffs, and shell cards.
 //!
 //! Parses scopes only; no syntect theme is involved. Each scope region maps
 //! onto a [`SyntaxRole`] (or plain). Callers resolve roles against the active
 //! palette so highlighting follows fixed, custom, and terminal-sampled themes
 //! and so diff add/remove colors can supply their own plain style.
 //!
-//! Language grammars come from [`two_face`]'s bat-derived dump (defaults plus
-//! extras such as TypeScript and TOML), not syntect's smaller default set.
-//! Interactive startup loads that dump off the UI thread; lookups stay `None`
-//! until it is ready so the first resume frame does not hitch.
+//! Language grammars come from two-face's bat-derived dump (defaults plus extras
+//! such as TypeScript and TOML), merged at build time with a small bundled
+//! PowerShell grammar because two-face excludes PowerShell when using the
+//! fancy-regex backend. Interactive startup loads that dump off the UI thread;
+//! lookups stay `None` until it is ready so the first resume frame does not hitch.
 
 use std::{
     cell::Cell,
@@ -35,20 +36,28 @@ fn ready_syntax_set() -> &'static SyntaxSet {
         .expect("BlockHighlighter is only built after the syntax set is ready")
 }
 
+/// Whether syntax-backed render caches may retain their current paint.
+pub(in crate::tui) fn syntax_set_ready() -> bool {
+    syntax_set().is_some()
+}
+
 /// Inflate the bat dump and role selectors. Safe to call more than once.
 pub(crate) fn warm_syntax_set() {
-    let _ = SYNTAX_SET.get_or_init(two_face::syntax::extra_newlines);
+    let _ = SYNTAX_SET.get_or_init(load_syntax_set);
     LazyLock::force(&ROLE_SELECTORS);
+}
+
+fn load_syntax_set() -> SyntaxSet {
+    syntect::dumps::from_uncompressed_data(include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/syntaxes-newlines.bin"
+    )))
+    .expect("bundled syntax dump must be valid")
 }
 
 /// Dump-native syntax name for a fence token, when the set is ready and known.
 pub(in crate::tui) fn syntax_name_for_language(token: &str) -> Option<&'static str> {
-    Some(
-        syntax_set()?
-            .find_syntax_by_token(canonical_language_token(token))?
-            .name
-            .as_str(),
-    )
+    Some(syntax_for_language(token)?.name.as_str())
 }
 
 /// Dump-native syntax name for a display path, when the set is ready and known.
@@ -56,13 +65,12 @@ pub(in crate::tui) fn syntax_name_for_path(path: &str) -> Option<&'static str> {
     Some(syntax_for_path(path)?.name.as_str())
 }
 
-/// Soft cap on language-aware lines painted in one tool-card body pass. Beyond
-/// this, remaining rows keep solid row colors so huge write/edit cards stay
-/// interactive.
+/// Soft cap on language-aware lines painted in one tool-card source pass.
+/// Beyond this, content stays plain so huge cards remain interactive.
 pub(in crate::tui) const MAX_TOOL_SYNTAX_LINES: usize = 2_500;
 
 /// Soft cap on bytes per line for language-aware tool-card paint. Longer rows
-/// keep solid add/remove/context colors.
+/// keep their caller-provided plain style.
 ///
 /// Syntect's Markdown grammar is pathological on dense inline-code spans: a
 /// single ~800-byte docs prose line with many `` `backticks` `` can take tens
@@ -231,9 +239,14 @@ fn push_merged(segments: &mut Vec<HighlightSegment>, text: &str, role: Option<Sy
 fn canonical_language_token(token: &str) -> &str {
     match token {
         "jsx" => "javascript",
+        "ps1" => "powershell",
         "shell" | "console" => "bash",
         other => other,
     }
+}
+
+fn syntax_for_language(token: &str) -> Option<&'static SyntaxReference> {
+    syntax_set()?.find_syntax_by_token(canonical_language_token(token))
 }
 
 /// Resolve a bundled syntax from a display path without opening the file.
@@ -390,6 +403,46 @@ pub(in crate::tui) fn spans_plain_with_matches(
         role: None,
     }];
     spans_from_segments_with_matches(&segments, plain, match_ranges)
+}
+
+/// Highlight `source` in `language`, preserving exact text including newlines.
+///
+/// Over-budget source or an unknown language stays one plain span so callers
+/// can wrap without syntect.
+pub(in crate::tui) fn highlight_source_spans(
+    language: &str,
+    source: &str,
+    plain: Style,
+) -> Vec<Span<'static>> {
+    if !source_within_syntax_budget(source) {
+        return vec![Span::styled(source.to_string(), plain)];
+    }
+    let Some(mut highlighter) = BlockHighlighter::for_language(language) else {
+        return vec![Span::styled(source.to_string(), plain)];
+    };
+    let mut spans = Vec::new();
+    for line in source.split_inclusive('\n') {
+        let (text, newline) = line
+            .strip_suffix('\n')
+            .map_or((line, ""), |text| (text, "\n"));
+        let segments = highlighter.highlight_line(text);
+        spans.extend(spans_from_segments_with_matches(&segments, plain, &[]));
+        if !newline.is_empty() {
+            spans.push(Span::styled(newline.to_string(), plain));
+        }
+    }
+    spans
+}
+
+fn source_within_syntax_budget(source: &str) -> bool {
+    let mut lines = 0usize;
+    for line in source.lines() {
+        lines += 1;
+        if lines > MAX_TOOL_SYNTAX_LINES || line.len() > MAX_TOOL_SYNTAX_LINE_BYTES {
+            return false;
+        }
+    }
+    true
 }
 
 fn record_highlight_call() {
