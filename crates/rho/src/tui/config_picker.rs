@@ -239,7 +239,7 @@ fn tools_summary(info: &super::RuntimeModelView, config: &Config) -> String {
     let summary = format!(
         "{} shell · {} · {}",
         config.inline_shell,
-        config.edit_tool.display_label(&info.provider),
+        config.edit_tool_display_label_for_provider(&info.provider),
         web_search_summary(config)
     );
     if xai_image_generation_visible(&info.provider) {
@@ -442,7 +442,7 @@ pub(super) fn category_picker(
                 item(
                     "Edit tool",
                     "File edit format exposed to models. Auto follows the active provider.",
-                    Some(config.edit_tool.display_label(&info.provider)),
+                    Some(config.edit_tool_display_label_for_provider(&info.provider)),
                     EDIT_TOOL_VALUE,
                 ),
                 item(

@@ -197,7 +197,7 @@ impl AppToolSet {
         let process_environment =
             rho_sdk::ProcessEnvironment::inherit_except(rho_providers::credential_env_vars());
 
-        let edit_format = config.edit_tool.resolve(&config.provider);
+        let edit_format = config.resolved_edit_tool();
         tool_set.file_view.set(edit_format);
         tool_set.add_bundle(super::coding::sdk_bundle(
             &capabilities,

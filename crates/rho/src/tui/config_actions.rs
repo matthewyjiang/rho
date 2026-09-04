@@ -650,9 +650,11 @@ impl App {
         edit_tool: crate::config::EditTool,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let config = self.info.services.config_repository.load()?;
+        let mut config = self.info.services.config_repository.load()?;
         let provider = self.info.runtime.provider.clone();
-        let resolved = edit_tool.resolve(&provider);
+        config.edit_tool = edit_tool;
+        config.provider.clone_from(&provider);
+        let resolved = config.resolved_edit_tool();
         let change = match self
             .apply_resolved_edit_tool(agent, resolved, config.max_output_bytes, |error| {
                 format!("could not apply edit tool: {error}")
@@ -712,7 +714,7 @@ impl App {
                 .update_tools(&agent.tool_specs());
             self.insert_entry(&Entry::Notice(change.display.clone()));
         }
-        self.set_status(format!("edit tool: {}", edit_tool.display_label(&provider)));
+        self.set_status(format!("edit tool: {}", config.edit_tool_display_label()));
         Ok(())
     }
 
@@ -728,7 +730,7 @@ impl App {
         if config.edit_tool != crate::config::EditTool::Auto {
             return Ok(());
         }
-        let resolved = config.edit_tool.resolve(provider);
+        let resolved = config.resolved_edit_tool_for_provider(provider);
         match self
             .apply_resolved_edit_tool(agent, resolved, config.max_output_bytes, |error| {
                 format!("model switched, but auto edit tool could not follow the provider: {error}")

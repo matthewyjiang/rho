@@ -68,6 +68,7 @@ base_url = "http://127.0.0.1:11434/v1"
 base_url = "http://127.0.0.1:8787/v1"
 # catalog = "llmgateway" # optional models.dev slug for context, price, and reasoning
 # catalog_mode = "model-id" # look up unsplit slug/model ids in models.dev
+# edit_tool = "apply_patch" # auto preference: hashline, apply_patch, or str_replace
 
 [behavior]
 advisor_mode = false

@@ -42,11 +42,12 @@ impl App {
         )
     }
 
-    pub(super) fn activate_provider(
+    pub(super) async fn activate_provider(
         &mut self,
         activation: ProviderActivation,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<ProviderActivationOutcome> {
+        let provider = activation.provider.clone();
         agent.replace_provider(
             activation.replacement,
             activation.reasoning.effective,
@@ -60,10 +61,13 @@ impl App {
         self.info.services.auth_unavailable = None;
         self.using_unavailable_provider = false;
         self.start_model_metadata_fetch(agent);
-        Ok(match self.save_current_config() {
+        let outcome = match self.save_current_config() {
             Ok(()) => ProviderActivationOutcome::Saved,
             Err(error) => ProviderActivationOutcome::ConfigSaveFailed(error),
-        })
+        };
+        self.apply_auto_edit_tool_for_provider(&provider, agent)
+            .await?;
+        Ok(outcome)
     }
 
     pub(super) async fn switch_active_auth_mode(
@@ -126,7 +130,7 @@ impl App {
             auth: mode.id.into(),
             replacement: new_provider,
         };
-        let outcome = self.activate_provider(activation, agent)?;
+        let outcome = self.activate_provider(activation, agent).await?;
         self.refresh_available_auths();
         match outcome {
             ProviderActivationOutcome::Saved => {

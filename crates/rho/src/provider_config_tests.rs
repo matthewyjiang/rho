@@ -360,24 +360,40 @@ fn custom_catalog_rejects_model_qualified_and_ollama_values() {
     );
 }
 
-// Covers: rewriting a custom host URL must not drop a configured catalog
+// Covers: endpoint updates change only their declared fields, so current and
+// future provider options cannot be erased by an incomplete copy list.
 // Owner: provider config
 #[test]
-fn set_endpoint_preserves_custom_catalog() {
+fn endpoint_updates_preserve_unrelated_custom_options() {
     let mut providers = ProviderConfigs::default();
+    let original = ProviderEndpointConfig {
+        base_url: Url::parse("http://127.0.0.1:8317/v1").unwrap(),
+        catalog: Some("llmgateway".into()),
+        catalog_lookup: rho_providers::provider::CatalogLookupMode::Slug,
+        api: rho_providers::provider::OpenAiCompatibleApi::Responses,
+        edit_tool: Some(rho_tools::EditFormat::ApplyPatch),
+    };
     providers
-        .set_endpoint("cliproxyapi", "http://127.0.0.1:8317/v1")
-        .unwrap();
-    providers
-        .set_catalog("cliproxyapi", Some("llmgateway".into()))
-        .unwrap();
+        .custom
+        .insert("cliproxyapi".into(), original.clone());
+
     providers
         .set_endpoint("cliproxyapi", "http://127.0.0.1:8318/v1")
         .unwrap();
-    assert_eq!(
-        providers.custom["cliproxyapi"].catalog.as_deref(),
-        Some("llmgateway")
-    );
+    let mut expected = original;
+    expected.base_url = Url::parse("http://127.0.0.1:8318/v1").unwrap();
+    assert_eq!(providers.custom["cliproxyapi"], expected);
+
+    providers
+        .set_custom_endpoint(
+            "cliproxyapi",
+            "http://127.0.0.1:8319/v1",
+            rho_providers::provider::OpenAiCompatibleApi::ChatCompletions,
+        )
+        .unwrap();
+    expected.base_url = Url::parse("http://127.0.0.1:8319/v1").unwrap();
+    expected.api = rho_providers::provider::OpenAiCompatibleApi::ChatCompletions;
+    assert_eq!(providers.custom["cliproxyapi"], expected);
 }
 
 // Covers: catalog_mode loads, persists, and survives a URL rewrite
@@ -474,24 +490,44 @@ fn custom_catalog_mode_rejects_unknown_and_ollama_values() {
     );
 }
 
-// Covers: rewriting a custom host URL must not drop catalog_mode
+// Covers: a custom provider can choose Auto's edit format without overriding a
+// globally pinned edit preference, and the choice survives config persistence.
 // Owner: provider config
 #[test]
-fn set_endpoint_preserves_custom_catalog_mode() {
-    let mut providers = ProviderConfigs::default();
-    providers
-        .set_endpoint("cliproxyapi", "http://127.0.0.1:8317/v1")
-        .unwrap();
-    providers
-        .set_catalog_mode("cliproxyapi", Some("model-id".into()))
-        .unwrap();
-    providers
-        .set_endpoint("cliproxyapi", "http://127.0.0.1:8318/v1")
-        .unwrap();
+fn custom_provider_edit_tool_configures_auto_resolution() {
+    let _lock = rho_providers::provider::custom_provider_registry_test_lock();
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "provider = \"vllm\"\nmodel = \"qwen2.5-coder\"\n[providers.custom.vllm]\nbase_url = \"http://127.0.0.1:8000/v1\"\nedit_tool = \"apply_patch\"\n[behavior]\nedit_tool = \"auto\"\n",
+    )
+    .unwrap();
+
+    let mut config = Config::load_with_store(
+        path.clone(),
+        &rho_providers::credentials::MemoryCredentialStore::default(),
+    )
+    .unwrap();
+
     assert_eq!(
-        providers.custom["cliproxyapi"].catalog_lookup,
-        rho_providers::provider::CatalogLookupMode::ModelId
+        config.resolved_edit_tool(),
+        rho_tools::EditFormat::ApplyPatch
     );
+    config.edit_tool = crate::config::EditTool::Pinned(rho_tools::EditFormat::StrReplace);
+    assert_eq!(
+        config.resolved_edit_tool(),
+        rho_tools::EditFormat::StrReplace
+    );
+
+    config.write_settings(path.clone()).unwrap();
+    let saved = std::fs::read_to_string(path).unwrap();
+    assert!(
+        saved.contains("edit_tool = \"apply_patch\""),
+        "saved config must keep the custom provider edit tool: {saved}"
+    );
+    rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
 // Covers: api=responses loads, persists, and interns Responses construction
@@ -587,25 +623,5 @@ fn custom_api_rejects_unknown_and_ollama_values() {
     assert!(
         format!("{ollama_error:#}").contains("providers.ollama does not accept api"),
         "{ollama_error:#}"
-    );
-}
-
-// Covers: rewriting a custom host URL must not drop api
-// Owner: provider config
-#[test]
-fn set_endpoint_preserves_custom_api() {
-    let mut providers = ProviderConfigs::default();
-    providers
-        .set_endpoint("litellm", "http://127.0.0.1:4000/v1")
-        .unwrap();
-    providers
-        .set_api("litellm", Some("responses".into()))
-        .unwrap();
-    providers
-        .set_endpoint("litellm", "http://127.0.0.1:4001/v1")
-        .unwrap();
-    assert_eq!(
-        providers.custom["litellm"].api,
-        rho_providers::provider::OpenAiCompatibleApi::Responses
     );
 }

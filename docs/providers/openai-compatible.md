@@ -13,7 +13,10 @@ You can also edit `~/.rho/config.toml`. The table key is the provider name used 
 ```toml
 [providers.custom.vllm]
 base_url = "http://127.0.0.1:8000/v1"
+edit_tool = "apply_patch"
 ```
+
+`edit_tool` is optional. It sets the format that `[behavior].edit_tool = "auto"` uses for this provider. Choose `hashline`, `apply_patch`, or `str_replace`. A pinned global edit tool still wins.
 
 A mixed proxy that is not itself in [models.dev](https://models.dev/) can borrow another catalog for context windows, prices, and reasoning lists. Set `catalog` to that models.dev provider slug. Model ids must match the borrowed catalog (`gpt-5.6-sol`, not `openai/gpt-5.6-sol`):
 
@@ -37,7 +40,7 @@ base_url = "http://127.0.0.1:4000/v1"
 api = "responses"
 ```
 
-`api` accepts `"chat-completions"` (default, omitted on save) or `"responses"`. Restart Rho after you hand-edit this table, including `api` or `base_url`. Creating or re-creating a host through `/login` applies immediately and writes `api` to the **Custom** row you pick. Hand-editing only `base_url` keeps a previously saved `api`.
+`api` accepts `"chat-completions"` (default, omitted on save) or `"responses"`. Restart Rho after you hand-edit this table, including `api`, `base_url`, or `edit_tool`. Creating or re-creating a host through `/login` applies immediately and writes `api` to the **Custom** row you pick. Hand-editing only `base_url` keeps previously saved `api` and `edit_tool` values.
 
 Names must be lowercase letters, digits, and hyphens, start with a letter, and must not match a built-in provider.
 

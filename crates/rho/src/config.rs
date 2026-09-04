@@ -348,20 +348,35 @@ impl EditTool {
             },
         }
     }
+}
 
-    /// Resolves the model-facing format for `provider`.
-    pub fn resolve(self, provider: &str) -> rho_tools::EditFormat {
-        match self {
-            Self::Auto => preferred_edit_format_for_provider(provider),
-            Self::Pinned(format) => format,
+impl Config {
+    /// Resolves the edit preference for the configured provider.
+    pub(crate) fn resolved_edit_tool(&self) -> rho_tools::EditFormat {
+        self.resolved_edit_tool_for_provider(&self.provider)
+    }
+
+    /// Resolves the configured edit preference for a provider, including its
+    /// custom `auto` override. This explicit form supports a live provider that
+    /// differs from the last config saved to disk.
+    pub(crate) fn resolved_edit_tool_for_provider(&self, provider: &str) -> rho_tools::EditFormat {
+        match self.edit_tool {
+            EditTool::Auto => self
+                .providers
+                .auto_edit_format(provider)
+                .unwrap_or_else(|| preferred_edit_format_for_provider(provider)),
+            EditTool::Pinned(format) => format,
         }
     }
 
-    /// Label for config rows, including the resolved format when Auto.
-    pub fn display_label(self, provider: &str) -> String {
-        match self {
-            Self::Auto => format!("auto ({})", self.resolve(provider).label()),
-            Self::Pinned(format) => format.label().into(),
+    pub(crate) fn edit_tool_display_label(&self) -> String {
+        self.edit_tool_display_label_for_provider(&self.provider)
+    }
+
+    pub(crate) fn edit_tool_display_label_for_provider(&self, provider: &str) -> String {
+        match self.edit_tool {
+            EditTool::Auto => format!("auto ({})", self.resolved_edit_tool_for_provider(provider)),
+            EditTool::Pinned(format) => format.label().into(),
         }
     }
 }
