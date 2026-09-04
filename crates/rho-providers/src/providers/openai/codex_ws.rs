@@ -598,10 +598,15 @@ impl SteerCollect {
         for request in self.held.drain(..) {
             request.release();
         }
-        if let Some(in_flight) = self.in_flight.take() {
-            in_flight.request.release();
-        }
         let steered = state.steered;
+        if let Some(in_flight) = self.in_flight.take() {
+            if steered {
+                self.accepted_items.extend(in_flight.items);
+                in_flight.request.accept();
+            } else {
+                in_flight.request.release();
+            }
+        }
         let response_id = state.response_id.clone();
         let response = state
             .into_response()

@@ -42,7 +42,7 @@ async fn send_steered_incomplete(
         .unwrap();
 }
 
-async fn ws_server_accepts_steer_then_continuation() -> (String, Arc<StdMutex<Vec<Value>>>) {
+async fn ws_server_completes_steer_before_ack() -> (String, Arc<StdMutex<Vec<Value>>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let frames = Arc::new(StdMutex::new(Vec::new()));
@@ -63,18 +63,6 @@ async fn ws_server_accepts_steer_then_continuation() -> (String, Arc<StdMutex<Ve
             .unwrap();
         let steer = read_request_frame(&mut socket).await;
         server_frames.lock().unwrap().push(steer);
-        socket
-            .send(Message::Text(
-                json!({
-                    "type":"response.steer.accepted",
-                    "sequence_number": 2,
-                    "steer":{"id":"steer_1","previous_response_id":"resp_1"}
-                })
-                .to_string()
-                .into(),
-            ))
-            .await
-            .unwrap();
         send_steered_incomplete(&mut socket, "resp_1", "partial").await;
         send_created(&mut socket, "resp_2").await;
         send_completion(&mut socket, 2).await;
@@ -93,12 +81,12 @@ fn steer_receiver(
     (Some(rx), tx)
 }
 
-// Covers: a steer is sent after first output, the original turn completes as
-// steered, and the next request reuses the continuation without response.create
+// Covers: a steered completion proves consumption even when its explicit ack
+// is delayed, so the next request reuses the continuation without response.create.
 // Owner: openai websocket steering
 #[tokio::test]
-async fn steer_reuses_auto_continuation_without_a_new_create() {
-    let (url, frames) = ws_server_accepts_steer_then_continuation().await;
+async fn steer_reuses_auto_continuation_when_completion_precedes_ack() {
+    let (url, frames) = ws_server_completes_steer_before_ack().await;
     let transport = CodexWsTransport::new_with_url(url);
     let (mut steering, offer) = steer_receiver("S1");
     let first_output = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -110,6 +98,7 @@ async fn steer_reuses_auto_continuation_without_a_new_create() {
             }
             Ok(())
         });
+    let mut steer_outcomes = None;
     let first_turn = {
         let body = body(vec![json!({"role":"user","content":"one"})]);
         let tokens = tokens();
@@ -120,11 +109,12 @@ async fn steer_reuses_auto_continuation_without_a_new_create() {
         loop {
             tokio::select! {
                 () = first_output.notified(), if !offered => {
-                    let (request, _outcomes) =
+                    let (request, outcomes) =
                         rho_sdk::provider::ProviderSteeringRequest::test_unclaimed(vec![
                             ContentBlock::Text("S1".into()),
                         ]);
                     offer.send(request).unwrap();
+                    steer_outcomes = Some(outcomes);
                     offered = true;
                 }
                 result = &mut turn => break result.unwrap(),
@@ -138,6 +128,18 @@ async fn steer_reuses_auto_continuation_without_a_new_create() {
     assert_eq!(
         response.response,
         ModelResponse::Assistant(vec![ContentBlock::Text("partial".into())])
+    );
+    let outcome = steer_outcomes
+        .as_mut()
+        .expect("steer was offered")
+        .try_recv()
+        .ok();
+    assert!(
+        matches!(
+            outcome,
+            Some((_, rho_sdk::provider::ProviderSteeringOutcome::Accepted))
+        ),
+        "{outcome:?}"
     );
 
     let mut on_event = None;
