@@ -35,7 +35,7 @@ fn result(id: &str) -> Message {
 }
 
 // Covers: compaction groups an assistant with later/out-of-order results, and
-// a missing result swallows the remainder.
+// an unresolved call ends the group at the last result it covers.
 // Owner: compaction grouping
 #[test]
 fn completed_tool_group_end_is_id_set_based() {
