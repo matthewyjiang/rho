@@ -208,7 +208,7 @@ fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize>
     Some(if remaining.is_empty() {
         last_result.expect("covered ids have a last result") + 1
     } else {
-        messages.len()
+        index + 1
     })
 }
 

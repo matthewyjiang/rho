@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 use rho_providers::model::ModelIdentity;
-use rho_providers::model::{ContentBlock, Message};
+use rho_providers::model::{ContentBlock, Message, ToolResult};
 #[cfg(test)]
 use rho_sdk::SessionId;
 use rho_sdk::{CompactionState, Revision, SessionSnapshot};
@@ -749,23 +749,15 @@ fn summarize_session_file_with_tree(
     Ok((record, tree))
 }
 
-pub(crate) fn complete_turn_tail_len<T, F>(items: &[T], get_message: F) -> usize
+const INTERRUPTED_TOOL_RESULT_CONTENT: &str = "tool call interrupted before completion";
+
+pub(crate) fn complete_turn_tail_len<T, F>(items: &[T], _get_message: F) -> usize
 where
     F: Fn(&T) -> &Message,
 {
-    let mut index = 0usize;
-    while index < items.len() {
-        let message = get_message(&items[index]);
-        let tool_call_ids = completed_tool_call_ids(message);
-        if tool_call_ids.is_empty() {
-            index += 1;
-            continue;
-        }
-        if !tool_results_cover_later(items, index + 1, &tool_call_ids, &get_message) {
-            return index;
-        }
-        index += 1;
-    }
+    // Uncovered tool calls get interrupted placeholders on resume instead of
+    // truncating later completed turns, so the persisted tail is the full list.
+    let _ = _get_message;
     items.len()
 }
 
@@ -782,31 +774,55 @@ fn completed_tool_call_ids(message: &Message) -> Vec<&str> {
         .collect()
 }
 
-fn tool_results_cover_later<T, F>(items: &[T], start: usize, ids: &[&str], get_message: F) -> bool
-where
-    F: Fn(&T) -> &Message,
-{
-    let mut remaining: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
-    for item in &items[start..] {
-        let Message::ToolResult(result) = get_message(item) else {
-            continue;
-        };
-        remaining.remove(result.id.as_str());
-        if remaining.is_empty() {
-            return true;
-        }
-    }
-    remaining.is_empty()
-}
-
 pub(crate) fn complete_message_len(messages: &[Message]) -> usize {
     complete_turn_tail_len(messages, |m| m)
 }
 
 pub(crate) fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
-    let valid_len = complete_message_len(&messages);
-    messages.truncate(valid_len);
+    insert_interrupted_tool_placeholders(&mut messages);
     messages
+}
+
+fn insert_interrupted_tool_placeholders(messages: &mut Vec<Message>) {
+    let mut index = 0usize;
+    while index < messages.len() {
+        let tool_call_ids = completed_tool_call_ids(&messages[index]);
+        if tool_call_ids.is_empty() {
+            index += 1;
+            continue;
+        }
+        let mut remaining: std::collections::BTreeSet<String> =
+            tool_call_ids.iter().map(|id| (*id).to_owned()).collect();
+        for message in &messages[index + 1..] {
+            let Message::ToolResult(result) = message else {
+                continue;
+            };
+            remaining.remove(&result.id);
+            if remaining.is_empty() {
+                break;
+            }
+        }
+        if remaining.is_empty() {
+            index += 1;
+            continue;
+        }
+        let placeholders = remaining
+            .into_iter()
+            .map(|id| {
+                Message::ToolResult(ToolResult {
+                    id,
+                    ok: false,
+                    content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let insert_at = index + 1;
+        let added = placeholders.len();
+        for (offset, placeholder) in placeholders.into_iter().enumerate() {
+            messages.insert(insert_at + offset, placeholder);
+        }
+        index = insert_at + added;
+    }
 }
 
 /// History after the same resume normalization `snapshot_for_resume` applies.

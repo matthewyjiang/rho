@@ -56,9 +56,19 @@ fn completed_tool_group_end_is_id_set_based() {
             expected: Some(3),
         },
         Case {
-            name: "missing result truncates",
+            name: "missing result ends at the assistant",
             messages: vec![call("a"), Message::user_text("next")],
-            expected: Some(2),
+            expected: Some(1),
+        },
+        Case {
+            name: "uncovered async call does not swallow later completed turn",
+            messages: vec![
+                call("a"),
+                Message::user_text("later"),
+                call("b"),
+                result("b"),
+            ],
+            expected: Some(1),
         },
     ];
     for case in cases {
