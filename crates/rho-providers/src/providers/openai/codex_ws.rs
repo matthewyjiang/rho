@@ -629,9 +629,7 @@ fn pending_from_collect(
     response: &crate::model::ModelResponse,
 ) -> Option<PendingSteer> {
     let candidate = candidate?;
-    if response_id.is_none() {
-        return None;
-    }
+    response_id.as_ref()?;
     if steer_items.is_empty() {
         return None;
     }
