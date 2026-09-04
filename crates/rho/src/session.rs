@@ -291,7 +291,9 @@ impl Session {
             });
 
         let messages = match tree.active_leaf_id() {
-            Some(active_leaf_id) => tree.projected_display(active_leaf_id)?,
+            Some(active_leaf_id) => persistence::insert_interrupted_display_placeholders(
+                tree.projected_display(active_leaf_id)?,
+            ),
             None => Vec::new(),
         };
         Ok(SessionExport {

@@ -2,8 +2,8 @@ use rho_providers::model::{Message, ModelIdentity};
 use rho_sdk::{SessionId, SessionSnapshot};
 
 use super::persistence::{
-    drop_incomplete_tool_turn_tail, timestamp, AppendCursor, PersistedSessionState, SessionEntry,
-    StoredDisplayMessage,
+    insert_interrupted_tool_placeholders, timestamp, AppendCursor, PersistedSessionState,
+    SessionEntry, StoredDisplayMessage,
 };
 use super::snapshot_delta::{SnapshotDeltaBase, StoredSnapshotDelta};
 #[cfg(test)]
@@ -230,8 +230,8 @@ impl Session {
             let state = tree.state_for(target_id)?;
             let display = tree.projected_display(target_id)?;
             Ok(super::SessionHistories {
-                model: drop_incomplete_tool_turn_tail(state.model),
-                display: drop_incomplete_tool_turn_tail(
+                model: insert_interrupted_tool_placeholders(state.model),
+                display: insert_interrupted_tool_placeholders(
                     display.into_iter().map(|entry| entry.message).collect(),
                 ),
             })
@@ -324,7 +324,7 @@ impl Session {
         provider: ModelIdentity,
         prompt_cache_key: String,
     ) -> anyhow::Result<SessionSnapshot> {
-        let history = drop_incomplete_tool_turn_tail(state.model);
+        let history = insert_interrupted_tool_placeholders(state.model);
         let mut snapshot = if let Some(snapshot) = state.snapshot {
             if snapshot.session_id().as_str() != self.id {
                 anyhow::bail!(

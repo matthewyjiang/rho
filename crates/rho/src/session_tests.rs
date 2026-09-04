@@ -267,7 +267,7 @@ fn workspace_key_avoids_separator_collisions() {
 }
 
 #[test]
-fn drops_incomplete_tool_call_tail_on_load() {
+fn inserts_interrupted_tool_results_on_load() {
     let plain = Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
         id: "call-1".into(),
         name: "bash".into(),
@@ -444,7 +444,7 @@ fn creates_session_paths_with_private_permissions() {
 }
 
 #[test]
-fn export_by_id_uses_display_history_and_drops_incomplete_tool_tail() {
+fn export_by_id_normalizes_incomplete_display_tool_calls() {
     let root = temp_session_root();
     let cwd = temp_cwd();
     let session = Session::create_in_root(&root, &cwd).unwrap();
@@ -466,7 +466,7 @@ fn export_by_id_uses_display_history_and_drops_incomplete_tool_tail() {
 
     let export = Session::export_by_id_in_root(&root, &cwd, session.id()).unwrap();
 
-    assert_eq!(export.messages.len(), 3);
+    assert_eq!(export.messages.len(), 4);
     assert!(
         matches!(&export.messages[0].message, Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "original"))
     );
@@ -478,6 +478,13 @@ fn export_by_id_uses_display_history_and_drops_incomplete_tool_tail() {
         &export.messages[2].message,
         Message::Assistant(blocks)
             if matches!(blocks.as_slice(), [ContentBlock::ToolCall(call)] if call.id == "call-1")
+    ));
+    assert!(matches!(
+        &export.messages[3].message,
+        Message::ToolResult(result)
+            if result.id == "call-1"
+                && !result.ok
+                && result.content == "tool call interrupted before completion"
     ));
 }
 

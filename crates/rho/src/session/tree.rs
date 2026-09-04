@@ -399,7 +399,7 @@ impl SessionTree {
                 node.display_messages()
                     .iter()
                     .find_map(|stored| super::persistence::user_message_text(&stored.message))
-                    .unwrap_or_else(|| "completed turn".into())
+                    .unwrap_or_else(|| "turn".into())
             });
             let compaction_facts = (kind == SessionTreeItemKind::Compaction).then(|| {
                 node.compaction_facts()

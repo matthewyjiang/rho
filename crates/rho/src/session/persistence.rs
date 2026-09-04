@@ -630,8 +630,8 @@ pub(super) fn histories_from_tree(
     };
     let state = tree.active_state().expect("active leaf has restored state");
     Ok(SessionHistories {
-        model: drop_incomplete_tool_turn_tail(state.model.clone()),
-        display: drop_incomplete_tool_turn_tail(
+        model: insert_interrupted_tool_placeholders(state.model.clone()),
+        display: insert_interrupted_tool_placeholders(
             tree.projected_display(active_leaf_id)?
                 .into_iter()
                 .map(|entry| entry.message)
@@ -764,23 +764,45 @@ fn completed_tool_call_ids(message: &Message) -> Vec<&str> {
         .collect()
 }
 
-pub(crate) fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {
-    insert_interrupted_tool_placeholders(&mut messages);
+pub(crate) fn insert_interrupted_tool_placeholders(mut messages: Vec<Message>) -> Vec<Message> {
+    insert_interrupted_placeholders_by(
+        &mut messages,
+        |message| message,
+        |_source, result| Message::ToolResult(result),
+    );
     messages
 }
 
-fn insert_interrupted_tool_placeholders(messages: &mut Vec<Message>) {
+pub(crate) fn insert_interrupted_display_placeholders(
+    mut messages: Vec<StoredDisplayMessage>,
+) -> Vec<StoredDisplayMessage> {
+    insert_interrupted_placeholders_by(
+        &mut messages,
+        |stored| &stored.message,
+        |source, result| StoredDisplayMessage {
+            timestamp: source.timestamp.clone(),
+            message: Message::ToolResult(result),
+        },
+    );
+    messages
+}
+
+fn insert_interrupted_placeholders_by<T>(
+    messages: &mut Vec<T>,
+    get_message: impl Fn(&T) -> &Message,
+    make_placeholder: impl Fn(&T, ToolResult) -> T,
+) {
     let mut index = 0usize;
     while index < messages.len() {
-        let tool_call_ids = completed_tool_call_ids(&messages[index]);
+        let tool_call_ids = completed_tool_call_ids(get_message(&messages[index]));
         if tool_call_ids.is_empty() {
             index += 1;
             continue;
         }
         let mut remaining: std::collections::BTreeSet<String> =
             tool_call_ids.iter().map(|id| (*id).to_owned()).collect();
-        for message in &messages[index + 1..] {
-            let Message::ToolResult(result) = message else {
+        for item in &messages[index + 1..] {
+            let Message::ToolResult(result) = get_message(item) else {
                 continue;
             };
             remaining.remove(&result.id);
@@ -795,11 +817,14 @@ fn insert_interrupted_tool_placeholders(messages: &mut Vec<Message>) {
         let placeholders = remaining
             .into_iter()
             .map(|id| {
-                Message::ToolResult(ToolResult {
-                    id,
-                    ok: false,
-                    content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
-                })
+                make_placeholder(
+                    &messages[index],
+                    ToolResult {
+                        id,
+                        ok: false,
+                        content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
+                    },
+                )
             })
             .collect::<Vec<_>>();
         let insert_at = index + 1;
@@ -817,7 +842,7 @@ fn insert_interrupted_tool_placeholders(messages: &mut Vec<Message>) {
 /// local copy when `crates/rho/Cargo.toml` moves off `rho-sdk = "4.0.0"`.
 /// Keep `resume_normalized_history_matches_sdk_sanitize_history` until then.
 pub(crate) fn resume_normalized_history(history: Vec<Message>) -> Vec<Message> {
-    let mut history = drop_incomplete_tool_turn_tail(history);
+    let mut history = insert_interrupted_tool_placeholders(history);
     for message in &mut history {
         if let Message::AbortedAssistant(assistant) = message {
             assistant.reasoning.clear();

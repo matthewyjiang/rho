@@ -1,7 +1,7 @@
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use super::drop_incomplete_tool_turn_tail;
+use super::insert_interrupted_tool_placeholders;
 use rho_providers::model::{ContentBlock, Message, ToolCall, ToolResult};
 
 fn call(id: &str) -> Message {
@@ -25,7 +25,7 @@ fn result(id: &str) -> Message {
 // Owner: session persistence
 #[test]
 fn uncovered_async_call_inserts_placeholder_and_keeps_later_turn() {
-    let recovered = drop_incomplete_tool_turn_tail(vec![
+    let recovered = insert_interrupted_tool_placeholders(vec![
         Message::user_text("go"),
         call("a"),
         Message::user_text("later"),
