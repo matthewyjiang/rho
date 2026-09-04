@@ -391,9 +391,9 @@ async fn descendant_case(action: &str) {
         .start(
             command,
             std::path::Path::new("."),
-            // Must outlast spawn plus the pid-file write on slow CI. macos-latest
-            // failed here when 500ms killed the shell before `echo $!`.
-            (action == "timeout").then_some(Duration::from_secs(5)),
+            // Must outlast the pid-file poll below. macos-latest failed when
+            // 500ms killed the shell before `echo $!`; equal 5s budgets race.
+            (action == "timeout").then_some(Duration::from_secs(15)),
         )
         .await
         .unwrap();
