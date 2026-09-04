@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use serde_json::Value;
 
 pub mod auth;
@@ -24,6 +26,14 @@ pub fn supports_fast_mode(provider: &str, model: &str) -> bool {
             || model
                 .strip_prefix("gpt-5.6-")
                 .is_some_and(|suffix| !suffix.is_empty()))
+}
+
+/// Returns whether a Responses model accepts `"async": true` on function tools.
+///
+/// OpenAI documents this for `gpt-6-astra` and later. Rho gates on the exact
+/// Astra id for first-party OpenAI and Codex hosts.
+pub fn supports_async_tools(provider: &str, model: &str) -> bool {
+    matches!(provider, "openai" | "openai-codex") && is_gpt6_astra(model)
 }
 
 pub(super) fn is_gpt6_astra(model: &str) -> bool {
@@ -58,6 +68,7 @@ pub struct OpenAiProvider {
     reasoning: OpenAiReasoningProfile,
     codex_ws: CodexWsTransport,
     hosted_web_search: bool,
+    async_tools: BTreeSet<String>,
 }
 
 impl OpenAiProvider {
@@ -69,6 +80,7 @@ impl OpenAiProvider {
             provider_client(),
             None,
             /*hosted_web_search*/ true,
+            BTreeSet::new(),
         )
     }
 
@@ -78,6 +90,7 @@ impl OpenAiProvider {
         client: reqwest::Client,
         api_base_override: Option<String>,
         hosted_web_search: bool,
+        async_tools: BTreeSet<String>,
     ) -> Self {
         let profile = ResponsesProfile::from_auth(&auth, model);
         Self::from_profile(
@@ -86,6 +99,7 @@ impl OpenAiProvider {
             client,
             api_base_override,
             hosted_web_search,
+            async_tools,
         )
     }
 
@@ -99,10 +113,18 @@ impl OpenAiProvider {
         client: reqwest::Client,
         api_base_override: Option<String>,
         hosted_web_search: bool,
+        async_tools: BTreeSet<String>,
         identity_provider: &'static str,
     ) -> Self {
         let profile = ResponsesProfile::from_optional_auth(auth.as_ref(), model, identity_provider);
-        Self::from_profile(profile, auth, client, api_base_override, hosted_web_search)
+        Self::from_profile(
+            profile,
+            auth,
+            client,
+            api_base_override,
+            hosted_web_search,
+            async_tools,
+        )
     }
 
     fn from_profile(
@@ -111,6 +133,7 @@ impl OpenAiProvider {
         client: reqwest::Client,
         api_base_override: Option<String>,
         hosted_web_search: bool,
+        async_tools: BTreeSet<String>,
     ) -> Self {
         let api_base = api_base_override.unwrap_or_else(|| profile.default_api_base().to_string());
         let reasoning = OpenAiReasoningProfile::from_metadata(
@@ -125,6 +148,7 @@ impl OpenAiProvider {
             reasoning,
             codex_ws,
             hosted_web_search,
+            async_tools,
         }
     }
 
@@ -161,6 +185,7 @@ impl OpenAiProvider {
             request,
             options.service_tier(),
             self.hosted_web_search,
+            &self.async_tools,
         )
     }
 

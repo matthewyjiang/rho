@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::*;
 use crate::model::Message;
 
@@ -58,6 +60,7 @@ async fn priority_service_tier_is_limited_to_codex_auth() {
         request,
         Some(ServiceTier::Priority),
         /*hosted_web_search*/ true,
+        &BTreeSet::new(),
     )
     .unwrap()
     .body;
@@ -225,6 +228,7 @@ async fn standard_create_wire_contract_is_auth_flavor_specific() {
             },
             /* service_tier */ None,
             /*hosted_web_search*/ true,
+            &BTreeSet::new(),
         )
         .unwrap()
         .body;
@@ -320,6 +324,7 @@ fn create_and_compact_body_builders_diverge_on_tools() {
         request.clone(),
         None,
         /*hosted_web_search*/ true,
+        &BTreeSet::new(),
     )
     .unwrap()
     .body;
@@ -332,4 +337,96 @@ fn create_and_compact_body_builders_diverge_on_tools() {
     assert!(compact.get("tools").is_none());
     assert!(compact.get("tool_choice").is_none());
     assert!(compact.get("parallel_tool_calls").is_none());
+}
+
+// Covers: `"async": true` is advertised only for Astra plus a declared function
+// tool; hosted web_search never gets the flag.
+// Owner: OpenAI Responses request lowering
+#[test]
+fn async_tools_are_advertised_only_when_supported_and_declared() {
+    struct Case {
+        name: &'static str,
+        model: &'static str,
+        tool_name: &'static str,
+        async_tools: BTreeSet<String>,
+        hosted_web_search: bool,
+        expect_async: bool,
+        expect_hosted: bool,
+    }
+    let function = |name: &str| ToolSpec {
+        name: name.into(),
+        description: "run".into(),
+        input_schema: json!({"type": "object"}),
+    };
+    let cases = [
+        Case {
+            name: "astra plus declared",
+            model: "gpt-6-astra",
+            tool_name: "one_agent",
+            async_tools: BTreeSet::from(["one_agent".into()]),
+            hosted_web_search: true,
+            expect_async: true,
+            expect_hosted: false,
+        },
+        Case {
+            name: "astra plus undeclared",
+            model: "gpt-6-astra",
+            tool_name: "one_agent",
+            async_tools: BTreeSet::new(),
+            hosted_web_search: true,
+            expect_async: false,
+            expect_hosted: false,
+        },
+        Case {
+            name: "gpt-5.5 plus declared",
+            model: "gpt-5.5",
+            tool_name: "one_agent",
+            async_tools: BTreeSet::from(["one_agent".into()]),
+            hosted_web_search: true,
+            expect_async: false,
+            expect_hosted: false,
+        },
+        Case {
+            name: "hosted web_search never",
+            model: "gpt-6-astra",
+            tool_name: "web_search",
+            async_tools: BTreeSet::from(["web_search".into()]),
+            hosted_web_search: true,
+            expect_async: false,
+            expect_hosted: true,
+        },
+    ];
+
+    for case in cases {
+        let profile = ResponsesProfile::from_auth(&codex_test_auth(), case.model);
+        let tools = [function(case.tool_name)];
+        let body = build_responses_create_body(
+            &profile,
+            &OpenAiReasoningProfile::unknown(),
+            ModelRequest {
+                messages: &[Message::user_text("hello")],
+                tools: &tools,
+                cancellation: Default::default(),
+                reasoning_level: Default::default(),
+                prompt_cache_key: None,
+            },
+            None,
+            case.hosted_web_search,
+            &case.async_tools,
+        )
+        .unwrap();
+        let tool = &body["tools"][0];
+        if case.expect_hosted {
+            assert_eq!(tool["type"], "web_search", "{}", case.name);
+        } else {
+            assert_eq!(tool["type"], "function", "{}", case.name);
+            assert_eq!(tool["name"], case.tool_name, "{}", case.name);
+        }
+        assert_eq!(
+            tool.get("async") == Some(&json!(true)),
+            case.expect_async,
+            "{}",
+            case.name
+        );
+    }
 }

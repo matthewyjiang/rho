@@ -1,11 +1,12 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, collections::BTreeSet};
 
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::model::{
     handoff::{prepare_assistant, PreparedAssistant},
-    ContentBlock, Message, ModelError, ModelResponse, PartialToolCall, ProviderContextBlock,
+    ContentBlock, Message, ModelError, ModelIdentity, ModelResponse, PartialToolCall,
+    ProviderContextBlock,
 };
 use rho_sdk::model::{ToolCall, ToolSpec};
 
@@ -209,11 +210,19 @@ impl ToolStrictness {
     }
 }
 
+/// Whether a Responses function tool is advertised as async.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ToolAsync {
+    Off,
+    On,
+}
+
 /// Serializes a tool for a Responses endpoint that offers hosted tools.
 pub(crate) fn to_responses_tool(
     tool: ToolSpec,
     strictness: ToolStrictness,
     hosted_web_search: bool,
+    async_mode: ToolAsync,
 ) -> serde_json::Value {
     if hosted_web_search && tool.name == "web_search" {
         return json!({
@@ -222,7 +231,11 @@ pub(crate) fn to_responses_tool(
         });
     }
 
-    to_responses_lite_tool(tool, strictness)
+    let mut value = to_responses_lite_tool(tool, strictness);
+    if async_mode == ToolAsync::On {
+        value["async"] = json!(true);
+    }
+    value
 }
 
 /// Serializes a tool for a Responses endpoint with no hosted tool types.
@@ -288,12 +301,14 @@ fn append_codex_history_message(
             append_codex_assistant(input, blocks)?;
         }
         Message::EnrichedAssistant(message) => {
-            let fallback_target = message.provenance.clone().unwrap_or_else(|| {
-                crate::model::ModelIdentity::new("foreign", "openai-responses", "foreign")
-            });
-            let prepared =
-                prepare_assistant((**message).clone(), target.unwrap_or(&fallback_target));
-            append_codex_prepared_assistant(input, prepared)?;
+            let fallback_target = message
+                .provenance
+                .clone()
+                .unwrap_or_else(|| ModelIdentity::new("foreign", "openai-responses", "foreign"));
+            let target = target.unwrap_or(&fallback_target);
+            let async_call_ids = async_call_ids_for_target(&message.provider_context, target);
+            let prepared = prepare_assistant((**message).clone(), target);
+            append_codex_prepared_assistant(input, prepared, &async_call_ids)?;
         }
         Message::AbortedAssistant(message) => {
             let mut enriched = crate::model::AssistantMessage {
@@ -305,11 +320,14 @@ fn append_codex_history_message(
             enriched
                 .content
                 .push(ContentBlock::Text("[Operation aborted]".into()));
-            let fallback_target = enriched.provenance.clone().unwrap_or_else(|| {
-                crate::model::ModelIdentity::new("foreign", "openai-responses", "foreign")
-            });
-            let prepared = prepare_assistant(enriched, target.unwrap_or(&fallback_target));
-            append_codex_prepared_assistant(input, prepared)?;
+            let fallback_target = enriched
+                .provenance
+                .clone()
+                .unwrap_or_else(|| ModelIdentity::new("foreign", "openai-responses", "foreign"));
+            let target = target.unwrap_or(&fallback_target);
+            let async_call_ids = async_call_ids_for_target(&message.provider_context, target);
+            let prepared = prepare_assistant(enriched, target);
+            append_codex_prepared_assistant(input, prepared, &async_call_ids)?;
         }
         Message::ToolResult(result) => input.push(json!({
             "type": "function_call_output",
@@ -323,6 +341,7 @@ fn append_codex_history_message(
 fn append_codex_prepared_assistant(
     input: &mut Vec<serde_json::Value>,
     mut prepared: PreparedAssistant,
+    async_call_ids: &BTreeSet<&str>,
 ) -> Result<(), ModelError> {
     restore_image_generation_results(&mut prepared.replay_context, &prepared.content);
     let content = portable_assistant_blocks(&prepared);
@@ -330,9 +349,44 @@ fn append_codex_prepared_assistant(
     // `prepare_assistant` already suppresses portable fallback when opaque
     // context can replay, so converters only append the lowered content.
     append_codex_assistant(&mut assistant_items, &content)?;
+    mark_replayed_async_function_calls(&mut assistant_items, async_call_ids);
     merge_replay_items(&mut assistant_items, prepared.replay_context);
     input.extend(assistant_items);
     Ok(())
+}
+
+fn async_call_ids_for_target<'a>(
+    blocks: &'a [ProviderContextBlock],
+    target: &ModelIdentity,
+) -> BTreeSet<&'a str> {
+    // Async-call markers are SDK metadata, so `prepare_assistant` never puts
+    // them in `replay_context`. Collect matching ids from the original
+    // assistant context instead.
+    blocks
+        .iter()
+        .filter(|block| block.identity == *target)
+        .filter_map(ProviderContextBlock::async_tool_call_id)
+        .collect()
+}
+
+/// Replaying `"async": true` on INPUT `function_call` items is our
+/// extrapolation; OpenAI docs only show the flag on output items. Keep this in
+/// one place so it is a one-line revert.
+fn mark_replayed_async_function_calls(
+    items: &mut [serde_json::Value],
+    async_call_ids: &BTreeSet<&str>,
+) {
+    for item in items {
+        if item.get("type").and_then(|value| value.as_str()) != Some("function_call") {
+            continue;
+        }
+        let Some(call_id) = item.get("call_id").and_then(|value| value.as_str()) else {
+            continue;
+        };
+        if async_call_ids.contains(call_id) {
+            item["async"] = json!(true);
+        }
+    }
 }
 
 /// Native `image_generation_call` replay already carries the image, so those

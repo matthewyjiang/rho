@@ -1,4 +1,4 @@
-use std::{fmt, sync::Arc, time::Duration};
+use std::{collections::BTreeSet, fmt, sync::Arc, time::Duration};
 
 use rho_sdk::SecretString;
 use url::Url;
@@ -41,6 +41,8 @@ pub struct ProviderBuildOptions {
     request_timeout: Option<Duration>,
     /// Prefer provider-hosted web search when the transport supports it.
     hosted_web_search: bool,
+    /// Function tool names advertised as async on Responses when the model allows it.
+    async_tools: BTreeSet<String>,
     /// Prefer xAI hosted image generation when the transport supports it.
     hosted_image_generation: bool,
 }
@@ -73,6 +75,7 @@ impl ProviderBuildOptions {
             endpoint: None,
             request_timeout: None,
             hosted_web_search: true,
+            async_tools: BTreeSet::new(),
             hosted_image_generation: true,
         })
     }
@@ -110,6 +113,12 @@ impl ProviderBuildOptions {
     /// Prefer the chat provider's hosted web search tool when supported.
     pub fn hosted_web_search(mut self, enabled: bool) -> Self {
         self.hosted_web_search = enabled;
+        self
+    }
+
+    /// Function tools to advertise as async on Responses (`gpt-6-astra` and later).
+    pub fn async_tools(mut self, names: impl IntoIterator<Item = String>) -> Self {
+        self.async_tools = names.into_iter().collect();
         self
     }
 
@@ -225,6 +234,7 @@ impl ProviderBuilder {
                     client,
                     endpoint,
                     self.options.hosted_web_search,
+                    self.options.async_tools,
                 )))
             }
             (ProviderRuntime::Anthropic, ProviderCredential::AnthropicApiKey(api_key)) => {
@@ -281,6 +291,7 @@ impl ProviderBuilder {
                         api_base,
                         client,
                         hosted_web_search: self.options.hosted_web_search,
+                        async_tools: self.options.async_tools,
                     },
                 )
             }
@@ -345,6 +356,7 @@ struct OpenAiCompatibleBuild {
     api_base: String,
     client: reqwest::Client,
     hosted_web_search: bool,
+    async_tools: BTreeSet<String>,
 }
 
 fn build_openai_compatible_provider(
@@ -384,6 +396,7 @@ fn build_openai_compatible_provider(
                 build.client,
                 Some(build.api_base),
                 hosted_web_search,
+                build.async_tools.clone(),
                 provider_name,
             )))
         }
@@ -394,6 +407,7 @@ fn build_openai_compatible_provider(
                 build.client,
                 Some(build.api_base),
                 hosted_web_search,
+                build.async_tools,
                 provider_name,
             )))
         }

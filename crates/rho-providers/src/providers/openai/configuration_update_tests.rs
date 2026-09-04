@@ -72,6 +72,7 @@ fn create_body(model: &str, messages: &[Message], level: ReasoningLevel) -> Resp
         request(messages, level),
         None,
         /*hosted_web_search*/ true,
+        &std::collections::BTreeSet::new(),
     )
     .expect("create body")
 }
@@ -356,6 +357,7 @@ fn api_key_astra_create_body_emits_configuration_update() {
         request(&messages, ReasoningLevel::Max),
         None,
         /*hosted_web_search*/ true,
+        &std::collections::BTreeSet::new(),
     )
     .unwrap();
     assert_eq!(body.body["reasoning"]["effort"], "medium");
