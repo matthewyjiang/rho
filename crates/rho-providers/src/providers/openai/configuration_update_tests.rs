@@ -288,6 +288,59 @@ fn compact_body_omits_configuration_update_even_when_create_would_emit() {
 
 // Covers: API-key Responses identity also records and freezes prefix effort
 // Owner: openai configuration_update lowering
+// Covers: a cancelled partial turn retains its in-force effort without adding
+// context to a request that produced no persistable assistant state.
+// Owner: OpenAI stream event lowering
+#[test]
+fn effort_context_precedes_first_retainable_stream_event() {
+    let mut events = Vec::new();
+    let mut collect = |event| {
+        events.push(event);
+        Ok(())
+    };
+    let mut on_event = Some(
+        &mut collect as &mut (dyn FnMut(ModelEvent) -> Result<(), crate::model::ModelError> + Send),
+    );
+    let mut emitted = false;
+
+    forward_with_reasoning_effort(
+        ModelEvent::ReasoningDelta("hidden".into()),
+        Some("high"),
+        &mut emitted,
+        &mut on_event,
+    )
+    .unwrap();
+    assert!(!emitted);
+    forward_with_reasoning_effort(
+        ModelEvent::OutputDelta("partial".into()),
+        Some("high"),
+        &mut emitted,
+        &mut on_event,
+    )
+    .unwrap();
+    forward_with_reasoning_effort(
+        ModelEvent::OutputDelta(" tail".into()),
+        Some("high"),
+        &mut emitted,
+        &mut on_event,
+    )
+    .unwrap();
+
+    assert_eq!(
+        events,
+        vec![
+            ModelEvent::ReasoningDelta("hidden".into()),
+            ModelEvent::ProviderContext {
+                kind: OPENAI_REASONING_EFFORT_KIND.into(),
+                position: None,
+                data: json!("high"),
+            },
+            ModelEvent::OutputDelta("partial".into()),
+            ModelEvent::OutputDelta(" tail".into()),
+        ]
+    );
+}
+
 #[test]
 fn api_key_astra_create_body_emits_configuration_update() {
     let profile = ResponsesProfile::from_auth(&Auth::ApiKey("key".into()), "gpt-6-astra");

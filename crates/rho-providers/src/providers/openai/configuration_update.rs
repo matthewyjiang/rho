@@ -37,6 +37,18 @@ pub(super) fn preserves_prefix_for(model: &str) -> bool {
     model == CONFIGURATION_UPDATE_MODEL
 }
 
+pub(super) fn reasoning_effort_context(
+    identity: &ModelIdentity,
+    effort: &str,
+) -> Option<ProviderContextBlock> {
+    (preserves_prefix_for(&identity.model) && !effort.is_empty()).then(|| ProviderContextBlock {
+        identity: identity.clone(),
+        kind: OPENAI_REASONING_EFFORT_KIND.into(),
+        position: None,
+        data: Value::String(effort.to_owned()),
+    })
+}
+
 /// Effort recorded on this assistant turn when it is replayable to `identity`.
 fn recorded_effort<'a>(message: &'a Message, identity: &ModelIdentity) -> Option<&'a str> {
     assistant_context(message).and_then(|blocks| {
@@ -220,6 +232,35 @@ pub(super) fn has_adjacent_configuration_updates(input: &[Value]) -> bool {
 #[cfg(test)]
 pub(super) fn is_configuration_update_item(item: &Value) -> bool {
     is_configuration_update(item)
+}
+
+fn event_is_retained(event: &ModelEvent) -> bool {
+    matches!(
+        event,
+        ModelEvent::OutputDelta(_)
+            | ModelEvent::ReasoningSummaryDelta(_)
+            | ModelEvent::ToolCallDelta { .. }
+            | ModelEvent::ProviderContext { .. }
+    )
+}
+
+/// Forwards one stream event, recording the in-force effort before the first
+/// event that can survive in completed or aborted assistant history.
+pub(super) fn forward_with_reasoning_effort(
+    event: ModelEvent,
+    effort: Option<&str>,
+    emitted: &mut bool,
+    on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+) -> Result<(), ModelError> {
+    if !*emitted && event_is_retained(&event) {
+        emit_reasoning_effort(effort, on_event)?;
+        *emitted = true;
+    }
+    if let Some(on_event) = on_event.as_mut() {
+        on_event(event)
+    } else {
+        Ok(())
+    }
 }
 
 /// Emits the in-force effort for a completed Responses turn.

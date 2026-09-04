@@ -3,7 +3,7 @@
 //! Protocol parsing stays in [`crate::protocol::openai_shared::compact`]; this
 //! module wraps a completed compact HTTP result into the SDK envelope.
 
-use crate::model::{Message, ModelError, ModelIdentity, ModelUsage};
+use crate::model::{Message, ModelError, ModelIdentity, ModelUsage, ProviderContextBlock};
 use crate::protocol::openai_responses::{parse_compact_response, CompactUserRetention};
 
 use super::responses_http::ResponsesHttpResult;
@@ -42,6 +42,7 @@ pub(crate) fn native_compact_from_response_body(
     body: &serde_json::Value,
     portable_handoff_notice: &str,
     user_retention: CompactUserRetention,
+    assistant_context: &[ProviderContextBlock],
     failed_attempts: Vec<rho_sdk::provider::NativeCompactionFailedAttempt>,
 ) -> rho_sdk::provider::NativeCompactionResponse {
     match parse_compact_response(
@@ -50,6 +51,7 @@ pub(crate) fn native_compact_from_response_body(
         body,
         portable_handoff_notice,
         user_retention,
+        assistant_context,
     ) {
         Ok((messages, usage)) => native_compact_success(messages, usage, failed_attempts),
         Err(error) => native_compact_failure(error, failed_attempts),
@@ -62,6 +64,7 @@ pub(crate) struct CompactParsePolicy<'a> {
     pub(crate) retained_system_messages: &'a [Message],
     pub(crate) portable_handoff_notice: &'a str,
     pub(crate) user_retention: CompactUserRetention,
+    pub(crate) assistant_context: &'a [ProviderContextBlock],
 }
 
 /// Finalizes a completed `POST /responses/compact` result.
@@ -104,6 +107,7 @@ pub(crate) async fn native_compact_from_http(
         &body,
         policy.portable_handoff_notice,
         policy.user_retention,
+        policy.assistant_context,
         failed_attempts,
     )
 }

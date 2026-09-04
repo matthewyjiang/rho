@@ -17,6 +17,7 @@ use super::responses_post;
 use super::auth::Auth;
 use super::codex_request::{build_responses_compact_body, ResponsesProfile};
 use super::codex_ws::CodexWsTransport;
+use super::configuration_update::reasoning_effort_context;
 use super::reasoning::OpenAiReasoningProfile;
 
 /// Portable notice shown when the encrypted compaction artifact cannot replay
@@ -37,6 +38,17 @@ pub(super) struct CompactHttp<'a> {
     pub codex_ws: &'a CodexWsTransport,
 }
 
+fn compact_assistant_context(
+    identity: &crate::model::ModelIdentity,
+    body: &serde_json::Value,
+) -> Vec<crate::model::ProviderContextBlock> {
+    body.pointer("/reasoning/effort")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|effort| reasoning_effort_context(identity, effort))
+        .into_iter()
+        .collect()
+}
+
 /// Runs native compaction through the shared Responses HTTP transport.
 pub(super) async fn compact_with_http(
     compact: CompactHttp<'_>,
@@ -52,6 +64,7 @@ pub(super) async fn compact_with_http(
             Ok(body) => body,
             Err(error) => return native_compact_failure(error, Vec::new()),
         };
+    let assistant_context = compact_assistant_context(&identity, &body);
 
     let http_result = responses_post::post(
         compact.http,
@@ -71,6 +84,7 @@ pub(super) async fn compact_with_http(
             retained_system_messages: &retained_system_messages,
             portable_handoff_notice: PORTABLE_HANDOFF_NOTICE,
             user_retention: CompactUserRetention::KeepServerUsers,
+            assistant_context: &assistant_context,
         },
     )
     .await;

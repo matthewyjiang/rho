@@ -220,6 +220,27 @@ impl OpenAiProvider {
         }
     }
 
+    fn forward_turn_event(
+        &self,
+        event: ModelEvent,
+        in_force_effort: Option<&str>,
+        reasoning_effort_emitted: &mut bool,
+        on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
+    ) -> Result<(), ModelError> {
+        if configuration_update::preserves_prefix_for(self.profile.model()) {
+            configuration_update::forward_with_reasoning_effort(
+                event,
+                in_force_effort,
+                reasoning_effort_emitted,
+                on_event,
+            )
+        } else if let Some(on_event) = on_event.as_mut() {
+            on_event(event)
+        } else {
+            Ok(())
+        }
+    }
+
     fn emit_turn_reasoning_effort(
         &self,
         in_force_effort: Option<&str>,
@@ -295,18 +316,34 @@ impl OpenAiProvider {
             in_force_effort,
         } = self.create_body(request, options)?;
         let tokens = Auth::codex_tokens_for_auth(self.auth.as_ref())?;
-        let body = match self
-            .codex_ws
-            .send_responses_turn(body, &tokens, &mut on_event)
-            .await?
-        {
+        let mut reasoning_effort_emitted = false;
+        let has_event_sink = on_event.is_some();
+        let ws_turn = {
+            let mut forward = |event| {
+                self.forward_turn_event(
+                    event,
+                    in_force_effort.as_deref(),
+                    &mut reasoning_effort_emitted,
+                    &mut on_event,
+                )
+            };
+            let mut ws_events = has_event_sink.then_some(
+                &mut forward as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+            );
+            self.codex_ws
+                .send_responses_turn(body, &tokens, &mut ws_events)
+                .await?
+        };
+        let body = match ws_turn {
             CodexWsTurn::Completed(response) => {
                 report_service_tier_fallback(
                     options.service_tier(),
                     response.service_tier.as_deref(),
                     &mut on_event,
                 )?;
-                self.emit_turn_reasoning_effort(in_force_effort.as_deref(), &mut on_event)?;
+                if !reasoning_effort_emitted {
+                    self.emit_turn_reasoning_effort(in_force_effort.as_deref(), &mut on_event)?;
+                }
                 return Ok(response.response);
             }
             CodexWsTurn::FullSseFallback {
@@ -353,6 +390,7 @@ impl OpenAiProvider {
             response,
             options.service_tier(),
             in_force_effort.as_deref(),
+            &mut reasoning_effort_emitted,
             &mut on_event,
             &body,
         )
@@ -364,17 +402,30 @@ impl OpenAiProvider {
         response: reqwest::Response,
         requested_service_tier: Option<rho_sdk::model::ServiceTier>,
         in_force_effort: Option<&str>,
+        reasoning_effort_emitted: &mut bool,
         on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
         body: &Value,
     ) -> Result<ModelResponse, ModelError> {
-        match collect_codex_sse_response(response, on_event).await {
+        let has_event_sink = on_event.is_some();
+        let collected = {
+            let mut forward = |event| {
+                self.forward_turn_event(event, in_force_effort, reasoning_effort_emitted, on_event)
+            };
+            let mut response_events = has_event_sink.then_some(
+                &mut forward as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+            );
+            collect_codex_sse_response(response, &mut response_events).await
+        };
+        match collected {
             Ok(output) => {
                 report_service_tier_fallback(
                     requested_service_tier,
                     output.service_tier.as_deref(),
                     on_event,
                 )?;
-                self.emit_turn_reasoning_effort(in_force_effort, on_event)?;
+                if !*reasoning_effort_emitted {
+                    self.emit_turn_reasoning_effort(in_force_effort, on_event)?;
+                }
                 self.codex_ws
                     .record_full_request_success(body, &output)
                     .await?;
@@ -471,8 +522,23 @@ impl OpenAiProvider {
             return Err(crate::provider_backend::http_error::from_response(response).await);
         }
         let mut on_event = Some(on_event);
-        let output = collect_codex_sse_response(response, &mut on_event).await?;
-        self.emit_turn_reasoning_effort(in_force_effort.as_deref(), &mut on_event)?;
+        let mut reasoning_effort_emitted = false;
+        let output = {
+            let mut forward = |event| {
+                self.forward_turn_event(
+                    event,
+                    in_force_effort.as_deref(),
+                    &mut reasoning_effort_emitted,
+                    &mut on_event,
+                )
+            };
+            let mut response_events =
+                Some(&mut forward as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send));
+            collect_codex_sse_response(response, &mut response_events).await?
+        };
+        if !reasoning_effort_emitted {
+            self.emit_turn_reasoning_effort(in_force_effort.as_deref(), &mut on_event)?;
+        }
         Ok(output.response)
     }
 }
