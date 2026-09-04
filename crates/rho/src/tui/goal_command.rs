@@ -110,13 +110,20 @@ impl App {
         self.insert_entry(&Entry::Notice(format!(
             "goal set: {condition}\nrho will keep working until the goal is met. use /goal clear to cancel."
         )));
+        let turn =
+            TurnPrompt::command(initial_goal_prompt(condition), format!("/goal {condition}"));
+        let Some(submission) = self.gate_send(
+            super::send_confirm::SendSubmission::initial_goal(turn, media),
+            agent,
+        ) else {
+            return Ok(());
+        };
+        let (payload, authorization, _allow_auto_compact) = submission.into_authorized();
+        let super::send_confirm::SendPayload::Turn { turn, media, .. } = payload else {
+            unreachable!("goal prompt is a turn submission");
+        };
         let outcome = self
-            .run_prompt_turn(
-                TurnPrompt::command(initial_goal_prompt(condition), format!("/goal {condition}")),
-                media,
-                terminal,
-                agent,
-            )
+            .run_prompt_turn(turn, media, authorization, terminal, agent)
             .await?;
         let outcome_kind = outcome.kind();
         let pending_retries = match outcome {
@@ -151,13 +158,19 @@ impl App {
             goal.begin_verification();
             let prompt = blocked_goal_resumption_prompt(&condition, &pending_steps, None);
             self.set_status("goal resumed; verifying the previously blocked steps");
+            let submission = super::send_confirm::SendSubmission::goal_resume(TurnPrompt::command(
+                prompt,
+                "/goal resume".into(),
+            ));
+            let Some(submission) = self.gate_send(submission, agent) else {
+                return Ok(());
+            };
+            let (payload, authorization, _allow_auto_compact) = submission.into_authorized();
+            let super::send_confirm::SendPayload::Turn { turn, media, .. } = payload else {
+                unreachable!("goal resume is a turn submission");
+            };
             let outcome = self
-                .run_prompt_turn(
-                    TurnPrompt::command(prompt, "/goal resume".into()),
-                    Vec::new(),
-                    terminal,
-                    agent,
-                )
+                .run_prompt_turn(turn, media, authorization, terminal, agent)
                 .await?;
             let outcome_kind = outcome.kind();
             self.finish_goal_resumption_turn(outcome_kind);
@@ -228,14 +241,18 @@ impl App {
             if !self.wait_for_goal_subagents(terminal, agent).await? {
                 break;
             }
-            if let Some(outcome) = self.run_subagent_completion_turn(terminal, agent).await? {
-                match outcome {
-                    TurnOutcome::Completed => continue,
-                    TurnOutcome::Failed(failed_turn) => {
-                        pending_retries.push_front(*failed_turn);
-                        continue;
+            match self.run_subagent_completion_turn(terminal, agent).await? {
+                subagent_questionnaires::SubagentCompletionTurn::NoDelivery => {}
+                subagent_questionnaires::SubagentCompletionTurn::PendingConfirmation => break,
+                subagent_questionnaires::SubagentCompletionTurn::Completed(outcome) => {
+                    match outcome {
+                        TurnOutcome::Completed => continue,
+                        TurnOutcome::Failed(failed_turn) => {
+                            pending_retries.push_front(*failed_turn);
+                            continue;
+                        }
+                        TurnOutcome::Interrupted | TurnOutcome::Cancelled => break,
                     }
-                    TurnOutcome::Interrupted | TurnOutcome::Cancelled => break,
                 }
             }
             if let Some(failed_turn) = pending_retries.pop_front() {
@@ -397,13 +414,18 @@ impl App {
                 "Continue working toward this goal:\n\n{condition}\n\nThe goal evaluator says it is not yet met: {}\n\nMake concrete progress and verify the completion condition before stopping.",
                 evaluation.reason()
             );
+            let submission = super::send_confirm::SendSubmission::goal_continuation(
+                TurnPrompt::standard(continuation, "continuing active goal".into()),
+            );
+            let Some(submission) = self.gate_send(submission, agent) else {
+                break;
+            };
+            let (payload, authorization, _allow_auto_compact) = submission.into_authorized();
+            let super::send_confirm::SendPayload::Turn { turn, media, .. } = payload else {
+                unreachable!("goal continuation is a turn submission");
+            };
             let outcome = self
-                .run_prompt_turn(
-                    TurnPrompt::standard(continuation, "continuing active goal".into()),
-                    Vec::new(),
-                    terminal,
-                    agent,
-                )
+                .run_prompt_turn(turn, media, authorization, terminal, agent)
                 .await?;
             match outcome {
                 TurnOutcome::Completed => {}
@@ -493,7 +515,17 @@ impl App {
             return Ok(None);
         }
 
-        self.retry_failed_prompt_turn(failed_turn, terminal, agent)
+        let Some(submission) = self.gate_send(
+            super::send_confirm::SendSubmission::goal_retry(failed_turn),
+            agent,
+        ) else {
+            return Ok(None);
+        };
+        let (payload, authorization, _allow_auto_compact) = submission.into_authorized();
+        let super::send_confirm::SendPayload::GoalRetry(failed_turn) = payload else {
+            unreachable!("goal retry is a retry submission");
+        };
+        self.retry_failed_prompt_turn(failed_turn, authorization, terminal, agent)
             .await
             .map(Some)
     }

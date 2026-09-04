@@ -549,12 +549,9 @@ struct App {
     /// Turns held until MCP connect settles.
     held_turns: VecDeque<idle_input::HeldTurn>,
     compact_follow_up: compact_work::CompactFollowUp,
-    /// One-shot bypass for the confirm-send gate, armed only when the user has
-    /// just approved (or compact-approved) the very send being started.
-    send_confirm_bypass: bool,
-    /// When set, start the next queued follow-up once the composer is free.
-    /// The bool is whether that start may auto-compact.
-    start_follow_ups: Option<bool>,
+    /// Work made runnable by compact settlement. A confirmed send remains a
+    /// distinct owned submission rather than being cloned into the edit queue.
+    start_follow_ups: Option<compact_work::ReadyFollowUp>,
     pending_model_selection: Option<InteractiveModelSelection>,
     /// Explicit all/pinned choice from the scope-toggle key. `None` means
     /// prefer pinned, falling back to all when no pin has auth.

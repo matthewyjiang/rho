@@ -9,6 +9,7 @@ use crate::app::interactive_runtime::CompactTaskPoll;
 use super::{
     compaction_display::CompactionUiOutcome,
     event_adapter::{compact_finished_event, compact_started_event},
+    send_confirm::SendSubmission,
     App, InteractiveModelSelection, InteractiveRuntime, ViewModelEvent,
 };
 
@@ -21,6 +22,40 @@ pub(super) enum CompactFollowUp {
         target_selection: Option<InteractiveModelSelection>,
         had_source: bool,
     },
+    /// The compact job exclusively owns this approved submission until it
+    /// settles; it is never also inserted into the editable prompt queue.
+    Send(Box<SendSubmission>),
+}
+
+pub(super) enum ReadyFollowUp {
+    Queued { allow_auto_compact: bool },
+    Send(Box<SendSubmission>),
+}
+
+enum SettledSend {
+    Ready(ReadyFollowUp),
+    Cancelled(Box<SendSubmission>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CompactSettlementIntent {
+    Poll,
+    UserCancelled,
+}
+
+fn should_start_compact_follow_ups(
+    intent: CompactSettlementIntent,
+    outcome_starts_follow_ups: bool,
+) -> bool {
+    matches!(intent, CompactSettlementIntent::Poll) && outcome_starts_follow_ups
+}
+
+fn settle_compact_send(submission: Box<SendSubmission>, starts_follow_ups: bool) -> SettledSend {
+    if starts_follow_ups {
+        SettledSend::Ready(ReadyFollowUp::Send(submission))
+    } else {
+        SettledSend::Cancelled(submission)
+    }
 }
 
 impl App {
@@ -37,6 +72,28 @@ impl App {
             return Ok(());
         }
         agent.begin_compact_task()?;
+        self.begin_started_compact(follow_up);
+        Ok(())
+    }
+
+    /// Starts compact while preserving the exact approved submission if task
+    /// startup fails before the compact job can take ownership.
+    pub(super) fn start_compact_send(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+        submission: Box<SendSubmission>,
+    ) -> Result<(), (anyhow::Error, Box<SendSubmission>)> {
+        if agent.is_compacting() {
+            return Err((anyhow::anyhow!("already compacting context"), submission));
+        }
+        if let Err(error) = agent.begin_compact_task() {
+            return Err((error, submission));
+        }
+        self.begin_started_compact(CompactFollowUp::Send(submission));
+        Ok(())
+    }
+
+    fn begin_started_compact(&mut self, follow_up: CompactFollowUp) {
         self.pending.steering_prompts_mut().clear();
         self.pending_input_changed();
         self.set_status("compacting context");
@@ -44,11 +101,10 @@ impl App {
         self.turn.start_loading();
         self.apply_compact_view_event(compact_started_event());
         self.compact_follow_up = follow_up;
-        Ok(())
     }
 
-    /// User cancel (`esc`). Leaves queued follow-ups in the pending-input list
-    /// and finishes a handoff follow-up as "not compacted".
+    /// User cancel (`esc`). A compact that already finished still applies, but
+    /// cancellation suppresses queued and send follow-ups.
     pub(super) async fn cancel_compact(
         &mut self,
         agent: &mut InteractiveRuntime,
@@ -56,7 +112,8 @@ impl App {
         let Some(poll) = agent.abort_compact_task().await else {
             return Ok(false);
         };
-        self.settle_compact_poll(poll, agent).await?;
+        self.settle_compact_poll(poll, CompactSettlementIntent::UserCancelled, agent)
+            .await?;
         Ok(true)
     }
 
@@ -85,13 +142,15 @@ impl App {
         let Some(poll) = agent.poll_compact_task().await else {
             return Ok(false);
         };
-        self.settle_compact_poll(poll, agent).await?;
+        self.settle_compact_poll(poll, CompactSettlementIntent::Poll, agent)
+            .await?;
         Ok(true)
     }
 
     async fn settle_compact_poll(
         &mut self,
         poll: CompactTaskPoll,
+        intent: CompactSettlementIntent,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let outcome = match poll {
@@ -99,15 +158,14 @@ impl App {
             CompactTaskPoll::Finished(result) => CompactionUiOutcome::from_task_result(result),
         };
         let succeeded = matches!(outcome, CompactionUiOutcome::Completed(_));
+        let starts_follow_ups =
+            should_start_compact_follow_ups(intent, outcome.starts_follow_ups());
         if let Some(context) = agent.take_context_usage() {
             self.record_agent_event(ViewModelEvent::ContextUsage(context));
         }
-        if outcome.starts_follow_ups() {
-            self.start_follow_ups = Some(false);
-        }
         self.finish_compact_ui(outcome);
         let follow_up = std::mem::take(&mut self.compact_follow_up);
-        self.apply_compact_follow_up(follow_up, succeeded, agent)
+        self.apply_compact_follow_up(follow_up, succeeded, starts_follow_ups, agent)
             .await
     }
 
@@ -115,16 +173,46 @@ impl App {
         &mut self,
         follow_up: CompactFollowUp,
         succeeded: bool,
+        starts_follow_ups: bool,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match follow_up {
-            CompactFollowUp::None => Ok(()),
+            CompactFollowUp::None => {
+                if starts_follow_ups {
+                    self.start_follow_ups = Some(ReadyFollowUp::Queued {
+                        allow_auto_compact: false,
+                    });
+                }
+                Ok(())
+            }
             CompactFollowUp::ContextHandoff {
                 target_selection,
                 had_source,
             } => {
-                self.complete_compact_handoff(succeeded, target_selection, had_source, agent)
-                    .await
+                if starts_follow_ups {
+                    self.start_follow_ups = Some(ReadyFollowUp::Queued {
+                        allow_auto_compact: false,
+                    });
+                }
+                // A compact result may have committed just before Esc won the
+                // cancellation race. Keep that result, but do not apply the
+                // model-switch continuation the user just cancelled.
+                self.complete_compact_handoff(
+                    succeeded && starts_follow_ups,
+                    target_selection,
+                    had_source,
+                    agent,
+                )
+                .await
+            }
+            CompactFollowUp::Send(submission) => {
+                match settle_compact_send(submission, starts_follow_ups) {
+                    SettledSend::Ready(ready) => self.start_follow_ups = Some(ready),
+                    SettledSend::Cancelled(submission) => {
+                        self.cancel_compact_send_submission(*submission, agent);
+                    }
+                }
+                Ok(())
             }
         }
     }
@@ -146,3 +234,7 @@ impl App {
         self.set_status(status);
     }
 }
+
+#[cfg(test)]
+#[path = "compact_work_tests.rs"]
+mod tests;

@@ -16,6 +16,16 @@ enum ParentActivity {
     Working(&'static str),
 }
 
+pub(super) enum SubagentCompletionTurn {
+    NoDelivery,
+    PendingConfirmation,
+    Completed(TurnOutcome),
+}
+
+fn subagent_completion_changed(outcome: &SubagentCompletionTurn) -> bool {
+    !matches!(outcome, SubagentCompletionTurn::NoDelivery)
+}
+
 impl App {
     /// Wakes an idle session with a turn for finished background subagents.
     /// Real prompt turns drain these notifications themselves, while active
@@ -29,11 +39,10 @@ impl App {
         if !self.should_deliver_idle_subagent_completions() {
             return Ok(false);
         }
-        // Completions and child notices share one idle delivery path.
-        Ok(self
-            .run_subagent_completion_turn(terminal, agent)
-            .await?
-            .is_some())
+        // Completions and child notices share one idle delivery path. Opening a
+        // confirmation modal is itself a visible state change and needs redraw.
+        let outcome = self.run_subagent_completion_turn(terminal, agent).await?;
+        Ok(subagent_completion_changed(&outcome))
     }
 
     /// Surfaces delegated questionnaires when the parent can take user input.
@@ -325,22 +334,28 @@ impl App {
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<Option<TurnOutcome>> {
+    ) -> anyhow::Result<SubagentCompletionTurn> {
         let Some(delivery) = self.collect_turn_boundary_prompts(agent) else {
-            return Ok(None);
+            return Ok(SubagentCompletionTurn::NoDelivery);
         };
         // The whole drained batch is one message and one model request, no
-        // matter how many runs finished while the parent was busy. Restore is
-        // owned by the provider-start lifecycle so post-start failures do not
-        // redeliver work the provider already accepted.
-        self.run_turn_boundary_prompt_turn(
+        // matter how many runs finished while the parent was busy. The send
+        // gate owns the drained batch until confirmation; provider start owns
+        // restoration after that point.
+        let submission = super::send_confirm::SendSubmission::turn_boundary(
             TurnPrompt::standard(delivery.model, delivery.display),
             delivery.batch,
-            terminal,
-            agent,
-        )
-        .await
-        .map(Some)
+        );
+        let Some(submission) = self.gate_send(submission, agent) else {
+            return Ok(SubagentCompletionTurn::PendingConfirmation);
+        };
+        let (payload, authorization, _allow_auto_compact) = submission.into_authorized();
+        let super::send_confirm::SendPayload::TurnBoundary { turn, batch } = payload else {
+            unreachable!("subagent delivery is a turn-boundary submission");
+        };
+        self.run_turn_boundary_prompt_turn(turn, batch, authorization, terminal, agent)
+            .await
+            .map(SubagentCompletionTurn::Completed)
     }
 
     pub(super) fn should_deliver_idle_subagent_completions(&self) -> bool {

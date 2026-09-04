@@ -6,9 +6,10 @@ use ratatui::DefaultTerminal;
 use super::{
     command_actions::CommandSubmission,
     command_palette::{slash_command_args, CommandPaletteKeyOutcome},
-    commands, goal_command, skill_actions, ActivityPhase, App, ChatMedia, ComposerMode, GoalState,
-    HistoryDirection, InputSubmissionMode, InteractiveRuntime, PasteSegment, QueuedPrompt,
-    TurnOutcome, TurnPrompt,
+    commands, goal_command,
+    send_confirm::{SendAuthorization, SendPayload, SendSubmission},
+    skill_actions, ActivityPhase, App, ChatMedia, ComposerMode, GoalState, HistoryDirection,
+    InputSubmissionMode, InteractiveRuntime, PasteSegment, QueuedPrompt, TurnOutcome, TurnPrompt,
 };
 
 /// A turn held until MCP connect settles.
@@ -375,7 +376,7 @@ impl App {
             prompt: turn.model,
             display_prompt: turn.display,
             paste_segments,
-            media: Vec::new(),
+            media,
         });
         if !self.held_turns.is_empty() {
             // Older holds are still waiting. Leave their status alone: writing
@@ -384,13 +385,7 @@ impl App {
             return;
         }
         self.clear_mcp_connecting_activity();
-        // Attachments cannot go back into the composer, so say so rather than
-        // let them disappear with the hold.
-        if media.is_empty() {
-            self.set_status_quiet("");
-        } else {
-            self.notify_status("prompt returned to the composer; attach the files again");
-        }
+        self.set_status_quiet("");
     }
 
     pub(super) fn clear_mcp_connecting_activity(&mut self) {
@@ -452,9 +447,9 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        let Some(allow_auto_compact) = self.start_follow_ups else {
+        if self.start_follow_ups.is_none() {
             return Ok(false);
-        };
+        }
         if agent.is_compacting() || agent.mcp_connect_pending() {
             return Ok(false);
         }
@@ -465,36 +460,59 @@ impl App {
             self.start_follow_ups = None;
             return Ok(false);
         }
-        let Some(prompt) = self.pending.pop_follow_up() else {
-            self.start_follow_ups = None;
-            return Ok(false);
-        };
-        self.start_follow_ups = None;
-        self.pending_input_changed();
-        self.select_pending_recall_target();
-        let turn = TurnPrompt::standard(prompt.prompt, prompt.display_prompt);
-        if allow_auto_compact {
-            self.run_turn_sequence(turn, prompt.media, terminal, agent)
-                .await?;
-        } else {
-            self.run_turn_sequence_without_auto_compact(turn, prompt.media, terminal, agent)
-                .await?;
+        let ready = self.start_follow_ups.take().expect("checked above");
+        match ready {
+            super::compact_work::ReadyFollowUp::Send(submission) => {
+                self.start_approved_submission(*submission, terminal, agent)
+                    .await?;
+            }
+            super::compact_work::ReadyFollowUp::Queued { allow_auto_compact } => {
+                let Some(prompt) = self.pending.pop_follow_up() else {
+                    return Ok(false);
+                };
+                self.pending_input_changed();
+                self.select_pending_recall_target();
+                let submission = SendSubmission::turn(
+                    TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
+                    prompt.media,
+                    prompt.paste_segments,
+                );
+                let Some(submission) = self.gate_send(submission, agent) else {
+                    return Ok(true);
+                };
+                let (payload, authorization, _allow_auto_compact) = submission.into_authorized();
+                let SendPayload::Turn {
+                    turn,
+                    media,
+                    paste_segments,
+                    ..
+                } = payload
+                else {
+                    unreachable!("queued prompts are turn submissions");
+                };
+                if allow_auto_compact {
+                    self.run_turn_sequence_after_send_gate(
+                        turn,
+                        media,
+                        paste_segments,
+                        authorization,
+                        terminal,
+                        agent,
+                    )
+                    .await?;
+                } else {
+                    self.run_turn_sequence_without_auto_compact(
+                        turn,
+                        media,
+                        authorization,
+                        terminal,
+                        agent,
+                    )
+                    .await?;
+                }
+            }
         }
         Ok(true)
-    }
-
-    /// Run a submitted turn plus any goal resumption or queued follow-ups it
-    /// triggers. Entered directly on submit, or later when a held turn is
-    /// released.
-    pub(super) async fn run_turn_sequence(
-        &mut self,
-        turn: TurnPrompt,
-        media: Vec<ChatMedia>,
-        terminal: &mut DefaultTerminal,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        self.run_turn_sequence_held(turn, media, Vec::new(), terminal, agent)
-            .await
     }
 
     pub(super) async fn run_turn_sequence_held(
@@ -505,11 +523,41 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let Some((turn, media, paste_segments)) =
-            self.gate_send(turn, media, paste_segments, agent)
+        let Some(submission) =
+            self.gate_send(SendSubmission::turn(turn, media, paste_segments), agent)
         else {
             return Ok(());
         };
+        let (payload, authorization, _allow_auto_compact) = submission.into_authorized();
+        let SendPayload::Turn {
+            turn,
+            media,
+            paste_segments,
+            ..
+        } = payload
+        else {
+            unreachable!("turn sequence received a turn submission");
+        };
+        self.run_turn_sequence_after_send_gate(
+            turn,
+            media,
+            paste_segments,
+            authorization,
+            terminal,
+            agent,
+        )
+        .await
+    }
+
+    pub(super) async fn run_turn_sequence_after_send_gate(
+        &mut self,
+        turn: TurnPrompt,
+        media: Vec<ChatMedia>,
+        paste_segments: Vec<PasteSegment>,
+        authorization: SendAuthorization,
+        terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         if agent.is_compacting() {
             return self.queue_prompt(turn.model, turn.display, paste_segments, media);
         }
@@ -517,19 +565,22 @@ impl App {
             self.start_compact(agent, super::compact_work::CompactFollowUp::None)?;
             return self.queue_prompt(turn.model, turn.display, paste_segments, media);
         }
-        self.run_turn_sequence_without_auto_compact(turn, media, terminal, agent)
+        self.run_turn_sequence_without_auto_compact(turn, media, authorization, terminal, agent)
             .await
     }
 
-    async fn run_turn_sequence_without_auto_compact(
+    pub(super) async fn run_turn_sequence_without_auto_compact(
         &mut self,
         turn: TurnPrompt,
         media: Vec<ChatMedia>,
+        authorization: SendAuthorization,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let turn = self.prepare_goal_resumption_turn(turn);
-        let mut outcome = self.run_prompt_turn(turn, media, terminal, agent).await?;
+        let mut outcome = self
+            .run_prompt_turn(turn, media, authorization, terminal, agent)
+            .await?;
         self.finish_goal_resumption_turn(outcome.kind());
         let mut pending_goal_retries = VecDeque::new();
         let final_outcome = loop {
@@ -558,23 +609,23 @@ impl App {
             };
             self.pending_input_changed();
             self.select_pending_recall_target();
-            let (turn, media) = match self.gate_send(
-                TurnPrompt::standard(prompt.prompt.clone(), prompt.display_prompt.clone()),
-                prompt.media.clone(),
-                prompt.paste_segments.clone(),
-                agent,
-            ) {
-                Some((turn, media, _paste_segments)) => (turn, media),
-                None => {
-                    // The confirm-send modal owns the turn; put the prompt back
-                    // so a later send (or a resumed queue) keeps its order.
-                    self.pending.push_follow_up_front(prompt);
-                    self.pending_input_changed();
-                    self.select_pending_recall_target();
-                    break outcome_kind;
-                }
+            let submission = SendSubmission::turn(
+                TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
+                prompt.media,
+                prompt.paste_segments,
+            );
+            let Some(submission) = self.gate_send(submission, agent) else {
+                // Ownership moved from the queue to the modal. Re-inserting a
+                // copy here would send the same follow-up twice after approval.
+                break outcome_kind;
             };
-            outcome = self.run_prompt_turn(turn, media, terminal, agent).await?;
+            let (payload, authorization, _allow_auto_compact) = submission.into_authorized();
+            let SendPayload::Turn { turn, media, .. } = payload else {
+                unreachable!("queued prompts are turn submissions");
+            };
+            outcome = self
+                .run_prompt_turn(turn, media, authorization, terminal, agent)
+                .await?;
         };
         if !self.input_ui.composer().blocks_auto_continue()
             && goal_command::should_resume_goal_after_turn(
