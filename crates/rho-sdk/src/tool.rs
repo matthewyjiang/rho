@@ -18,6 +18,7 @@ use crate::{
 
 mod first_capability;
 mod preparation;
+mod worker;
 
 pub(crate) use first_capability::FirstCapability;
 use preparation::call_prepared_for;
@@ -26,6 +27,23 @@ pub use preparation::{
     ToolCancellationPolicy, ToolExecutionPolicy, ToolPreparationContext, ToolPrepareFuture,
     ToolResource, ToolResourceAccess, ToolResourceKind,
 };
+pub(crate) use worker::{begin_cancellation_cleanup, ToolHostWorker, ToolWorkerServices};
+
+/// How the runtime delivers a tool's result to the model.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ToolExecutionMode {
+    /// The loop waits for this call to finish before the next model request.
+    #[default]
+    Sync,
+    /// The call may run detached: the loop keeps calling the model and delivers
+    /// the result on the original call id when the job finishes.
+    ///
+    /// Automatic compaction is skipped while any async job is still pending
+    /// (`tracing` warns with the pending count). Compacting with dangling
+    /// tool calls is not supported.
+    Async,
+}
 
 /// Future returned by [`Tool`] implementations.
 pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = Result<ToolOutput, ToolError>> + Send + 'a>>;
@@ -275,6 +293,13 @@ impl ToolProgressReceiver {
     pub(crate) fn try_recv(&mut self) -> Option<ToolProgress> {
         self.receiver.try_recv().ok()
     }
+
+    pub(crate) fn poll_recv(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<ToolProgress>> {
+        self.receiver.poll_recv(cx)
+    }
 }
 
 pub fn tool_progress_channel(capacity: NonZeroUsize) -> (ToolProgressSender, ToolProgressReceiver) {
@@ -348,6 +373,7 @@ pub struct ToolContext {
     cancellation: CancellationToken,
     progress: ToolProgressSender,
     first_capability: FirstCapability,
+    detached: bool,
 }
 
 impl ToolContext {
@@ -364,6 +390,7 @@ impl ToolContext {
             cancellation,
             progress,
             first_capability: FirstCapability::default(),
+            detached: false,
         }
     }
 
@@ -381,6 +408,7 @@ impl ToolContext {
             cancellation,
             progress,
             first_capability: FirstCapability::default(),
+            detached: false,
         }
     }
 
@@ -397,10 +425,22 @@ impl ToolContext {
         self
     }
 
+    /// Marks this context as a detached async job. Host input is unsupported.
+    pub(crate) fn detached(mut self) -> Self {
+        self.host_input = None;
+        self.detached = true;
+        self
+    }
+
     pub async fn request_host_input(
         &self,
         request: HostInputRequest,
     ) -> Result<HostInputResponse, crate::Error> {
+        if self.detached {
+            return Err(crate::Error::InvalidConfiguration {
+                message: "detached async tools cannot request host input".into(),
+            });
+        }
         let requester =
             self.host_input
                 .as_ref()
@@ -575,6 +615,14 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Async tools may be advertised as `async` to providers that support it; the
+    /// runtime keeps calling the model while the job runs and delivers the result
+    /// on the original call id. Async plans must be resource-aware with shared
+    /// access only; host input is unavailable while detached.
+    fn execution_mode(&self) -> ToolExecutionMode {
+        ToolExecutionMode::Sync
+    }
+
     /// Returns presentation metadata available before this tool starts.
     ///
     /// Implementors may derive metadata from validated or unvalidated arguments,
@@ -673,6 +721,15 @@ impl ToolRegistry {
 
     pub fn specs(&self) -> Vec<ToolSpec> {
         self.tools.values().map(|tool| tool.spec()).collect()
+    }
+
+    /// Names of registered tools that declare [`ToolExecutionMode::Async`].
+    pub fn async_tool_names(&self) -> Vec<String> {
+        self.tools
+            .iter()
+            .filter(|(_, tool)| tool.execution_mode() == ToolExecutionMode::Async)
+            .map(|(name, _)| name.clone())
+            .collect()
     }
 
     pub(crate) fn diagnostics(&self) -> Vec<(String, ToolSecurity)> {

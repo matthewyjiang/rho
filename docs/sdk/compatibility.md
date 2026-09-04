@@ -106,9 +106,20 @@ scripted downstream test support. Both extension traits are object-safe, require
 `NEXT_MAJOR(rho-sdk): collapse send_turn_stream, send_turn_stream_with_options and send_turn_stream_steerable into one method taking a request context that carries options and the steering port.`
 
 `ToolInvocation::arguments` and `into_arguments` intentionally support borrowed
-and owned argument parsing. `ToolRegistry::len` and `is_empty` intentionally
-allow hosts to inspect registry construction without relying on tool specs.
-These convenience methods are part of the planned stable public surface.
+and owned argument parsing. `ToolRegistry::len`, `is_empty`, and
+`async_tool_names` intentionally allow hosts to inspect registry construction
+without relying on tool specs. These convenience methods are part of the
+planned stable public surface.
+
+`ModelEvent` and `ToolCall` cannot grow in this major, so a provider that
+accepted an async tool call records it as SDK metadata on
+`ProviderContextBlock::async_tool_call` (kind `rho.sdk.async_tool_call.v1`)
+rather than a first-class event or field. That block is never replayed as
+provider-native context and is never counted as a handoff omission.
+`NEXT_MAJOR(rho-sdk): replace the async-call marker block with a ModelEvent::ToolCallAccepted { id, execution: ToolExecutionMode } variant and an execution field on ToolCall.`
+
+`RunEvent::ToolDetached` is a sibling of `ToolStarted` because this major cannot add fields to existing event variants.
+`NEXT_MAJOR(rho-sdk): fold ToolDetached into ToolStarted as an execution field.`
 
 ### Application compatibility shims
 

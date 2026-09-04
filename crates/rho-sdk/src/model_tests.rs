@@ -2,6 +2,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use super::{
+    handoff::{prepare_assistant, report_omissions},
     AbortedAssistant, AssistantMessage, ContentBlock, ImageContent, InclusivePromptUsage, Message,
     ModelIdentity, ModelUsage, PartialToolCall, ProviderContextBlock,
 };
@@ -114,6 +115,41 @@ fn provider_context_replays_only_to_exact_identity() {
 
     assert!(block.is_replayable_to(&ModelIdentity::new("openai", "responses", "gpt-5")));
     assert!(!block.is_replayable_to(&ModelIdentity::new("openai", "responses", "gpt-5-mini")));
+}
+
+// Covers: async-call markers round-trip the call id, never replay as provider
+// context, and never count as a handoff omission.
+// Owner: sdk model
+#[test]
+fn async_tool_call_marker_round_trips_and_is_not_a_handoff_omission() {
+    let identity = ModelIdentity::new("openai", "responses", "gpt-6-astra");
+    let foreign = ModelIdentity::new("anthropic", "anthropic-messages", "claude-test");
+    let cases = [("same identity", &identity), ("foreign identity", &foreign)];
+
+    for (name, target) in cases {
+        let block = ProviderContextBlock::async_tool_call(identity.clone(), "call-a");
+        assert_eq!(block.async_tool_call_id(), Some("call-a"), "{name}");
+        assert!(!block.is_replayable_to(target), "{name}");
+        assert!(block.is_sdk_metadata(), "{name}");
+
+        let message = AssistantMessage {
+            content: vec![ContentBlock::Text("answer".into())],
+            provenance: Some(identity.clone()),
+            reasoning_summary: Some("should stay off content".into()),
+            provider_context: vec![block],
+        };
+        let report = report_omissions(std::iter::once(&message), target);
+        assert_eq!(report.omitted_provider_context, 0, "{name}");
+        assert!(report.omitted_kinds.is_empty(), "{name}");
+
+        let prepared = prepare_assistant(message, target);
+        assert!(prepared.replay_context.is_empty(), "{name}");
+        assert_eq!(
+            prepared.content,
+            vec![ContentBlock::Text("answer".into())],
+            "{name}"
+        );
+    }
 }
 
 // Covers: image payloads are typed from magic bytes; unknown bytes stay untyped.

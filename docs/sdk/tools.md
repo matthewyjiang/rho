@@ -51,6 +51,17 @@ Filesystem tools must build resources from the same `ResolvedWorkspacePath` reta
 
 `RhoBuilder::max_parallel_tools` sets a required nonzero limit and defaults to one. The limit bounds active execution, not approval waits. Independent eligible calls can run up to the limit. Conflicting calls run in model order, and an exclusive call forms a model-order barrier. Results still enter provider and persisted history in model order.
 
+## Async execution
+
+`Tool::execution_mode` defaults to `ToolExecutionMode::Sync`. Override it to `Async` when the tool can run while the model continues. The runtime detaches a call only when **both** keys are present:
+
+1. the registered tool declares `Async`
+2. the provider marks that call id as async via `ProviderContextBlock::async_tool_call` (kind `rho.sdk.async_tool_call.v1`)
+
+Either key missing keeps today's synchronous path. An async plan must be `PreparedToolInvocation::resource_aware` with shared access only. Exclusive plans, or any exclusive resource, fail that call with a `ToolError`; the run continues. Detached jobs cannot request host input.
+
+Finished results are appended in completion order before the next model request. They may sit several messages after the original assistant call, including after later assistant text or a steered user message. Committed history never holds a dangling tool call: cancel, provider failure, and `MaxSteps` interrupt pending jobs and write the same interrupted result used for in-batch cancellation.
+
 Implementors that opt in must:
 
 1. parse hostile arguments during preparation;

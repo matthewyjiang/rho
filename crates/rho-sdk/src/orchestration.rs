@@ -16,25 +16,27 @@ use crate::{
     run::RunCommand,
     session::{HistoryMetrics, RunStart, SessionCore, SessionState},
     steering::SteeringQueue,
-    CancellationToken, Error, ModelCallProfile, ProviderError, ProviderErrorKind, Retryability,
-    RunEvent, RunId,
+    CancellationToken, Error, ModelCallProfile, ProviderError, RunEvent, RunId,
 };
 
 const PROVIDER_EVENT_CAPACITY: usize = 16;
-const INVALID_RESPONSE_ATTEMPTS: usize = 2;
+pub(super) const INVALID_RESPONSE_ATTEMPTS: usize = 2;
 /// Maximum logical provider requests for one model turn, including malformed
 /// responses and retryable failures.
-const PROVIDER_TURN_ATTEMPTS: usize = 4;
+pub(super) const PROVIDER_TURN_ATTEMPTS: usize = 4;
 /// Backoff before the first retryable-failure retry; doubles per retry.
-const RETRYABLE_REQUEST_BASE_DELAY: std::time::Duration = std::time::Duration::from_secs(1);
+pub(super) const RETRYABLE_REQUEST_BASE_DELAY: std::time::Duration =
+    std::time::Duration::from_secs(1);
 /// Upper bound when honoring provider `Retry-After` during auto-retry.
 ///
 /// Keeps interactive turns from blocking on multi-hour quota resets. The full
 /// provider wait still appears on the reset event and final error.
-const MAX_HONORED_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
+pub(super) const MAX_HONORED_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
 
+mod async_jobs;
 mod model_call_timer;
 mod provider_cancellation;
+mod provider_request;
 mod run_hooks;
 mod steering_control;
 mod stream_capture;
@@ -42,18 +44,25 @@ mod terminal;
 mod tool_batch;
 mod tool_turn;
 
+use async_jobs::{
+    await_all_jobs, await_first_job, forward_job_notice, harvest_ready_jobs, split_tool_calls,
+    AsyncJobSet, AwaitJobs,
+};
 use model_call_timer::ModelCallTimer;
 use provider_cancellation::{
     drain_cancelled_provider_events, drain_cooperative_provider_on_cancellation,
 };
+use provider_request::{request_valid_response, ProviderRequestScope, RequestFailure};
 use run_hooks::RunHooks;
-use steering_control::{
+pub(in crate::orchestration) use steering_control::{
     accept_command as accept_non_tool_command, apply_staged as apply_staged_steering,
     drain_commands, handle_outcome as handle_steering_outcome,
 };
 use stream_capture::{capture_provider_event, StreamCapture};
 use terminal::{commit_terminal, commit_terminal_history, send_terminal, TerminalKind};
-use tool_turn::{execute_staged_tool_turn, StagedToolTurn, ToolTurnStatus};
+use tool_turn::{
+    final_assistant_content, resolve_tool_turn_result, run_staged_tool_turn, StagedToolTurn,
+};
 
 /// Runs one turn loop and reports its terminal outcome to lifecycle hooks.
 ///
@@ -121,6 +130,7 @@ async fn execute_turn_loop(
 
     let mut accumulated_usage = ModelUsage::default();
     let mut steering = SteeringQueue::new();
+    let mut async_jobs = AsyncJobSet::new(runtime.max_parallel_tools);
     if let Some(call) = start.initial_tool_call {
         history.push(Message::Assistant(vec![ContentBlock::ToolCall(
             call.clone(),
@@ -132,6 +142,7 @@ async fn execute_turn_loop(
             events: &events,
             commands: &mut commands,
             steering: &mut steering,
+            async_jobs: &mut async_jobs,
         };
         let host_tool_result =
             run_staged_tool_turn(&core, &runtime, &mut tool_turn, &mut history, &mut control).await;
@@ -148,38 +159,48 @@ async fn execute_turn_loop(
     let tool_specs = runtime.tools.specs();
     for step in 1..=runtime.max_steps.get() {
         drain_commands(&mut commands, &mut steering);
+        {
+            let mut control = RunControl {
+                hooks,
+                cancellation: &cancellation,
+                events: &events,
+                commands: &mut commands,
+                steering: &mut steering,
+                async_jobs: &mut async_jobs,
+            };
+            if let Err(error) = harvest_ready_jobs(&mut control).await {
+                return terminate_run(core, history, &mut async_jobs, hooks, &events, error).await;
+            }
+        }
+        async_jobs.drain_finished(&mut history);
         let request_scope = ProviderRequestScope {
             runtime: &runtime,
             session_id: core.id(),
             run_id: &run_id,
             step_index: step,
         };
-        match maybe_compact(
-            &core,
-            request_scope,
-            &tool_specs,
-            &mut history,
-            &cancellation,
-            &events,
-        )
-        .await
-        {
-            Ok(()) => {}
-            Err(Error::Cancelled) => {
-                return commit_terminal_history(core, history, TerminalKind::Cancelled, &events)
-                    .await;
+        if !async_jobs.has_pending() {
+            match maybe_compact(
+                &core,
+                request_scope,
+                &tool_specs,
+                &mut history,
+                &cancellation,
+                &events,
+            )
+            .await
+            {
+                Ok(()) => {}
+                Err(error) => {
+                    return terminate_run(core, history, &mut async_jobs, hooks, &events, error)
+                        .await;
+                }
             }
-            Err(error @ Error::Interrupted { .. }) => return Err(error),
-            Err(error) => {
-                return commit_terminal(
-                    core,
-                    history,
-                    StreamCapture::default(),
-                    TerminalKind::Failed(error),
-                    &events,
-                )
-                .await;
-            }
+        } else if runtime.compaction_policy.is_some() {
+            tracing::warn!(
+                pending = async_jobs.pending_count(),
+                "skipping compaction while async tool jobs are pending"
+            );
         }
         drain_commands(&mut commands, &mut steering);
         // Delivered steers stay staged so a Reuse continuation still matches the
@@ -189,25 +210,9 @@ async fn execute_turn_loop(
         if !steering.has_delivered() {
             match apply_staged_steering(&mut steering, &mut history, &events, &cancellation).await {
                 Ok(()) => {}
-                Err(Error::Cancelled) => {
-                    return commit_terminal_history(
-                        core,
-                        history,
-                        TerminalKind::Cancelled,
-                        &events,
-                    )
-                    .await;
-                }
-                Err(error @ Error::Interrupted { .. }) => return Err(error),
                 Err(error) => {
-                    return commit_terminal(
-                        core,
-                        history,
-                        StreamCapture::default(),
-                        TerminalKind::Failed(error),
-                        &events,
-                    )
-                    .await;
+                    return terminate_run(core, history, &mut async_jobs, hooks, &events, error)
+                        .await;
                 }
             }
         }
@@ -227,11 +232,9 @@ async fn execute_turn_loop(
         .await
         {
             Ok(()) => {}
-            Err(Error::Cancelled) => {
-                return commit_terminal_history(core, history, TerminalKind::Cancelled, &events)
-                    .await;
+            Err(error) => {
+                return terminate_run(core, history, &mut async_jobs, hooks, &events, error).await;
             }
-            Err(error) => return Err(error),
         }
 
         let mut control = RunControl {
@@ -240,6 +243,7 @@ async fn execute_turn_loop(
             events: &events,
             commands: &mut commands,
             steering: &mut steering,
+            async_jobs: &mut async_jobs,
         };
         let (response, mut capture) = match request_valid_response(
             request_scope,
@@ -254,6 +258,10 @@ async fn execute_turn_loop(
         {
             Ok(result) => result,
             Err(error) if cancellation.is_cancelled() => {
+                control
+                    .async_jobs
+                    .interrupt(&mut history, hooks, &events)
+                    .await;
                 return commit_terminal(
                     core,
                     history,
@@ -264,6 +272,10 @@ async fn execute_turn_loop(
                 .await;
             }
             Err(error) => {
+                control
+                    .async_jobs
+                    .interrupt(&mut history, hooks, &events)
+                    .await;
                 return commit_terminal(
                     core,
                     history,
@@ -284,6 +296,7 @@ async fn execute_turn_loop(
                 ContentBlock::Text(_) | ContentBlock::Image(_) => None,
             })
             .collect::<Vec<_>>();
+        let async_ids = capture.async_call_ids();
         let (reasoning_summary, provider_context) = capture.take_assistant_context();
         let assistant = AssistantMessage {
             content,
@@ -294,35 +307,154 @@ async fn execute_turn_loop(
         history.push(Message::assistant(assistant));
         drain_commands(control.commands, control.steering);
         let was_steered = control.steering.has_staged();
-
-        if tool_calls.is_empty() && !was_steered {
-            let content = final_assistant_content(&history);
-            let revision = core.commit(history)?;
-            let outcome =
-                RunOutcome::new(content, accumulated_usage, StopReason::EndTurn, revision);
-            core.set_state(SessionState::Completed);
-            send_terminal(
-                &events,
-                RunEvent::Completed {
-                    outcome: outcome.clone(),
-                },
+        let (async_calls, sync_calls) = split_tool_calls(tool_calls, &async_ids, &runtime.tools);
+        let spawned_async = !async_calls.is_empty();
+        core.publish_in_flight_history(&history);
+        if let Err(error) = control
+            .async_jobs
+            .spawn(
+                async_calls,
+                &core,
+                &runtime,
+                control.hooks,
+                control.events,
+                control.cancellation,
             )
-            .await;
-            return Ok(outcome);
+            .await
+        {
+            return terminate_run(core, history, control.async_jobs, hooks, &events, error).await;
         }
 
-        let mut tool_turn = StagedToolTurn::model_requested(tool_calls);
-        let model_tool_result =
-            run_staged_tool_turn(&core, &runtime, &mut tool_turn, &mut history, &mut control).await;
-        history =
-            match resolve_tool_turn_result(Arc::clone(&core), history, model_tool_result, &events)
-                .await
+        // Detached jobs may keep using shared resources for their lifetime.
+        // Wait before entering the synchronous scheduler, which may run an
+        // exclusive plan and must not overlap that work.
+        if !sync_calls.is_empty() {
+            if control.async_jobs.has_pending() {
+                if let Err(error) = await_all_jobs(&mut control).await {
+                    return terminate_run(core, history, control.async_jobs, hooks, &events, error)
+                        .await;
+                }
+            }
+            control.async_jobs.drain_finished(&mut history);
+        }
+
+        if !sync_calls.is_empty() || (!spawned_async && was_steered) {
+            let mut tool_turn = StagedToolTurn::model_requested(sync_calls);
+            let model_tool_result =
+                run_staged_tool_turn(&core, &runtime, &mut tool_turn, &mut history, &mut control)
+                    .await;
+            let should_interrupt_jobs = match &model_tool_result {
+                Ok(status) => status.is_cancelled(),
+                Err(_) => true,
+            };
+            if should_interrupt_jobs {
+                control
+                    .async_jobs
+                    .interrupt(&mut history, hooks, &events)
+                    .await;
+            }
+            history = match resolve_tool_turn_result(
+                Arc::clone(&core),
+                history,
+                model_tool_result,
+                &events,
+            )
+            .await
             {
                 Ok(history) => history,
                 Err(terminal) => return *terminal,
             };
+            continue;
+        }
+        if spawned_async {
+            if let Err(error) = apply_staged_steering(
+                control.steering,
+                &mut history,
+                control.events,
+                control.cancellation,
+            )
+            .await
+            {
+                return terminate_run(core, history, control.async_jobs, hooks, &events, error)
+                    .await;
+            }
+            continue;
+        }
+
+        if let Err(error) = harvest_ready_jobs(&mut control).await {
+            return terminate_run(core, history, control.async_jobs, hooks, &events, error).await;
+        }
+        if control.async_jobs.drain_finished(&mut history) > 0 {
+            continue;
+        }
+        if control.async_jobs.has_pending() {
+            match await_first_job(&mut control).await {
+                Ok(AwaitJobs::Continue) => {
+                    if let Err(error) = harvest_ready_jobs(&mut control).await {
+                        return terminate_run(
+                            core,
+                            history,
+                            control.async_jobs,
+                            hooks,
+                            &events,
+                            error,
+                        )
+                        .await;
+                    }
+                    control.async_jobs.drain_finished(&mut history);
+                    if let Err(error) = apply_staged_steering(
+                        control.steering,
+                        &mut history,
+                        control.events,
+                        control.cancellation,
+                    )
+                    .await
+                    {
+                        return terminate_run(
+                            core,
+                            history,
+                            control.async_jobs,
+                            hooks,
+                            &events,
+                            error,
+                        )
+                        .await;
+                    }
+                    continue;
+                }
+                Ok(AwaitJobs::Cancelled) => {
+                    return terminate_run(
+                        core,
+                        history,
+                        control.async_jobs,
+                        hooks,
+                        &events,
+                        Error::Cancelled,
+                    )
+                    .await;
+                }
+                Err(error) => {
+                    return terminate_run(core, history, control.async_jobs, hooks, &events, error)
+                        .await;
+                }
+            }
+        }
+
+        let content = final_assistant_content(&history);
+        let revision = core.commit(history)?;
+        let outcome = RunOutcome::new(content, accumulated_usage, StopReason::EndTurn, revision);
+        core.set_state(SessionState::Completed);
+        send_terminal(
+            &events,
+            RunEvent::Completed {
+                outcome: outcome.clone(),
+            },
+        )
+        .await;
+        return Ok(outcome);
     }
 
+    async_jobs.interrupt(&mut history, hooks, &events).await;
     let last_content = final_assistant_content(&history);
     let revision = core.commit(history)?;
     let outcome = RunOutcome::new(
@@ -342,52 +474,26 @@ async fn execute_turn_loop(
     Ok(outcome)
 }
 
-async fn run_staged_tool_turn(
-    core: &Arc<SessionCore>,
-    runtime: &Rho,
-    tool_turn: &mut StagedToolTurn,
-    history: &mut Vec<Message>,
-    control: &mut RunControl<'_>,
-) -> Result<ToolTurnStatus, Error> {
-    let status = execute_staged_tool_turn(core, runtime, tool_turn, history, control).await?;
-    if status.is_cancelled() {
-        return Ok(status);
-    }
-    match apply_staged_steering(
-        control.steering,
-        history,
-        control.events,
-        control.cancellation,
-    )
-    .await
-    {
-        Ok(()) => Ok(ToolTurnStatus::Completed),
-        Err(Error::Cancelled) => Ok(ToolTurnStatus::Cancelled),
-        Err(error) => Err(error),
-    }
-}
-
-/// Route a staged tool-turn result through the cooperative terminal commit policy.
+/// Interrupts pending async jobs, then commits or returns the terminal error.
 ///
-/// `Ok(history)` means the turn completed and the loop should continue with that
-/// candidate history. Any `Err` is the terminal result for `execute_turn_loop`.
-async fn resolve_tool_turn_result(
+/// Event-consumer interrupts stay uncommitted. Every terminal path that would
+/// otherwise copy this match goes through here so interrupted jobs emit
+/// `ToolFinished`.
+async fn terminate_run(
     core: Arc<SessionCore>,
-    history: Vec<Message>,
-    result: Result<ToolTurnStatus, Error>,
+    mut history: Vec<Message>,
+    async_jobs: &mut AsyncJobSet,
+    hooks: &RunHooks,
     events: &mpsc::Sender<RunEvent>,
-) -> Result<Vec<Message>, Box<Result<RunOutcome, Error>>> {
-    match result {
-        Ok(status) if status.is_cancelled() => Err(Box::new(
-            commit_terminal_history(core, history, TerminalKind::Cancelled, events).await,
-        )),
-        Ok(_) => Ok(history),
-        Err(Error::Cancelled) => Err(Box::new(
-            commit_terminal_history(core, history, TerminalKind::Cancelled, events).await,
-        )),
-        // Event-consumer interrupts leave candidate history uninstalled.
-        Err(error @ Error::Interrupted { .. }) => Err(Box::new(Err(error))),
-        Err(error) => Err(Box::new(
+    error: Error,
+) -> Result<RunOutcome, Error> {
+    async_jobs.interrupt(&mut history, hooks, events).await;
+    match error {
+        Error::Cancelled => {
+            commit_terminal_history(core, history, TerminalKind::Cancelled, events).await
+        }
+        Error::Interrupted { .. } => Err(error),
+        error => {
             commit_terminal(
                 core,
                 history,
@@ -395,20 +501,9 @@ async fn resolve_tool_turn_result(
                 TerminalKind::Failed(error),
                 events,
             )
-            .await,
-        )),
+            .await
+        }
     }
-}
-
-/// Content of the newest completed assistant message, cloned once for the
-/// terminal run outcome instead of re-cloned on every step.
-fn final_assistant_content(history: &[Message]) -> Vec<ContentBlock> {
-    history
-        .iter()
-        .rev()
-        .find_map(Message::completed_assistant_content)
-        .map(<[ContentBlock]>::to_vec)
-        .unwrap_or_default()
 }
 
 async fn maybe_compact(
@@ -479,219 +574,13 @@ async fn maybe_compact(
     .await
 }
 
-struct RequestFailure {
-    error: ProviderError,
-    capture: StreamCapture,
-}
-
-impl RequestFailure {
-    fn boxed(error: ProviderError, capture: StreamCapture) -> Box<Self> {
-        Box::new(Self { error, capture })
-    }
-}
-
-struct RunControl<'a> {
+pub(super) struct RunControl<'a> {
     hooks: &'a RunHooks,
     cancellation: &'a CancellationToken,
     events: &'a mpsc::Sender<RunEvent>,
     commands: &'a mut mpsc::Receiver<RunCommand>,
     steering: &'a mut SteeringQueue,
-}
-
-#[derive(Clone, Copy)]
-struct ProviderRequestScope<'a> {
-    runtime: &'a Rho,
-    session_id: &'a crate::SessionId,
-    run_id: &'a RunId,
-    step_index: usize,
-}
-
-async fn request_valid_response(
-    scope: ProviderRequestScope<'_>,
-    history: &[Message],
-    tools: &[crate::model::ToolSpec],
-    accumulated_usage: &ModelUsage,
-    reasoning_level: crate::ReasoningLevel,
-    prompt_cache_key: Option<&str>,
-    control: &mut RunControl<'_>,
-) -> Result<(ModelResponse, StreamCapture), Box<RequestFailure>> {
-    let mut next_attempt_index = 1;
-    let mut provider_turn_attempts = 0;
-    let mut invalid_responses = 0;
-    let mut failed_requests = 0;
-    loop {
-        provider_turn_attempts += 1;
-        let result = provider_turn(
-            scope.runtime,
-            history,
-            tools,
-            accumulated_usage,
-            reasoning_level,
-            prompt_cache_key,
-            control,
-        )
-        .await;
-        let (response, capture) = match result {
-            Ok((response, mut capture)) => {
-                next_attempt_index =
-                    record_failed_provider_attempts(&scope, next_attempt_index, &mut capture).await;
-                let outcome = if response.protocol_issue().is_none() {
-                    crate::ProviderRequestOutcome::Completed
-                } else {
-                    crate::ProviderRequestOutcome::InvalidResponse
-                };
-                record_request_usage(&scope, next_attempt_index, capture.usage().clone(), outcome)
-                    .await;
-                next_attempt_index += 1;
-                (response, capture)
-            }
-            Err(mut failure) => {
-                next_attempt_index = record_failed_provider_attempts(
-                    &scope,
-                    next_attempt_index,
-                    &mut failure.capture,
-                )
-                .await;
-                let outcome = if control.cancellation.is_cancelled() {
-                    crate::ProviderRequestOutcome::Cancelled
-                } else {
-                    crate::ProviderRequestOutcome::Failed(failure.error.kind())
-                };
-                record_request_usage(
-                    &scope,
-                    next_attempt_index,
-                    failure.capture.usage().clone(),
-                    outcome,
-                )
-                .await;
-                next_attempt_index += 1;
-                failed_requests += 1;
-                if control.cancellation.is_cancelled()
-                    || !failure.error.is_retryable()
-                    || provider_turn_attempts >= PROVIDER_TURN_ATTEMPTS
-                {
-                    return Err(failure);
-                }
-                let detail = format!(
-                    "retrying after provider attempt {provider_turn_attempts} of {PROVIDER_TURN_ATTEMPTS}: {}",
-                    failure.error.message()
-                );
-                let retry_after = failure.error.retry_after();
-                let _ = emit(
-                    control.events,
-                    control.cancellation,
-                    RunEvent::ProviderStreamReset {
-                        reason: crate::ProviderStreamResetReason::RetryableFailure {
-                            kind: failure.error.kind(),
-                            retry_after: retry_after.filter(|delay| !delay.is_zero()),
-                        },
-                        detail,
-                    },
-                )
-                .await;
-                let exponential =
-                    RETRYABLE_REQUEST_BASE_DELAY * 2u32.pow(failed_requests as u32 - 1);
-                // Honor a provider wait when present. Cap so a multi-hour
-                // Retry-After cannot stall the interactive session; the final
-                // error still carries the full provider hint.
-                let delay = match retry_after {
-                    Some(wait) if !wait.is_zero() => {
-                        wait.min(MAX_HONORED_RETRY_AFTER).max(exponential)
-                    }
-                    _ => exponential,
-                };
-                tokio::select! {
-                    () = tokio::time::sleep(delay) => {}
-                    () = control.cancellation.cancelled() => {
-                        // ProviderStreamReset already abandoned this attempt.
-                        // Do not commit its discarded partials as AbortedAssistant.
-                        failure.capture = StreamCapture::default();
-                        return Err(failure);
-                    }
-                }
-                continue;
-            }
-        };
-        let Some(issue) = response.protocol_issue() else {
-            return Ok((response, capture));
-        };
-        invalid_responses += 1;
-        if invalid_responses >= INVALID_RESPONSE_ATTEMPTS
-            || provider_turn_attempts >= PROVIDER_TURN_ATTEMPTS
-        {
-            // Invalid attempts are discarded; do not install stream fragments
-            // into session history on the terminal failure path.
-            return Err(RequestFailure::boxed(
-                ProviderError::new(
-                    ProviderErrorKind::InvalidResponse,
-                    issue,
-                    Retryability::Permanent,
-                ),
-                StreamCapture::default(),
-            ));
-        }
-        let detail = format!(
-            "retrying malformed provider response after provider attempt {provider_turn_attempts} of {PROVIDER_TURN_ATTEMPTS}"
-        );
-        let _ = emit(
-            control.events,
-            control.cancellation,
-            RunEvent::ProviderStreamReset {
-                reason: crate::ProviderStreamResetReason::InvalidResponse,
-                detail,
-            },
-        )
-        .await;
-    }
-}
-
-async fn record_failed_provider_attempts(
-    scope: &ProviderRequestScope<'_>,
-    mut next_attempt_index: usize,
-    capture: &mut StreamCapture,
-) -> usize {
-    for (kind, usage) in capture.take_failed_attempts() {
-        record_request_usage(
-            scope,
-            next_attempt_index,
-            usage,
-            crate::ProviderRequestOutcome::Failed(kind),
-        )
-        .await;
-        next_attempt_index += 1;
-    }
-    next_attempt_index
-}
-
-async fn record_request_usage(
-    scope: &ProviderRequestScope<'_>,
-    attempt_index: usize,
-    usage: ModelUsage,
-    outcome: crate::ProviderRequestOutcome,
-) {
-    let mut context = crate::ProviderRequestUsageContext::new(
-        scope.runtime.provider.identity(),
-        scope.session_id.clone(),
-        scope.run_id.clone(),
-        scope.step_index,
-        attempt_index,
-        scope
-            .runtime
-            .workspace
-            .as_ref()
-            .map(|workspace| workspace.root().to_path_buf()),
-        scope.runtime.usage_purpose.clone(),
-    );
-    if let Some(parent_session_id) = &scope.runtime.usage_parent_session_id {
-        context = context.with_parent_session_id(parent_session_id.clone());
-    }
-    scope
-        .runtime
-        .usage_recording
-        .record(crate::ProviderRequestUsageEvent::observed(
-            context, usage, outcome,
-        ))
-        .await;
+    async_jobs: &'a mut AsyncJobSet,
 }
 
 async fn provider_turn(
@@ -793,6 +682,22 @@ async fn provider_turn(
                         }
                     }
                     None => outcomes_open = false,
+                }
+            }
+            notice = control.async_jobs.poll_event() => {
+                if let Err(error) = forward_job_notice(
+                    notice,
+                    control.async_jobs,
+                    control.hooks,
+                    control.events,
+                    control.cancellation,
+                ).await {
+                    drop(future);
+                    control.steering.reset_delivery();
+                    return Err(RequestFailure::boxed(
+                        ProviderError::interrupted(error.to_string()),
+                        capture,
+                    ));
                 }
             }
             () = control.cancellation.cancelled() => {
@@ -941,7 +846,7 @@ async fn handle_provider_event(
         .map_err(|error| ProviderError::interrupted(error.to_string()))
 }
 
-async fn emit(
+pub(super) async fn emit(
     events: &mpsc::Sender<RunEvent>,
     cancellation: &CancellationToken,
     event: RunEvent,
@@ -955,6 +860,9 @@ async fn emit(
     }
 }
 
+#[cfg(test)]
+#[path = "orchestration_async_tests.rs"]
+mod async_tests;
 #[cfg(test)]
 #[path = "orchestration_tests.rs"]
 mod tests;

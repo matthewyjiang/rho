@@ -46,11 +46,12 @@ sequenceDiagram
 4. A complete tool call emits `ToolProposed` before execution.
 5. An available tool emits `ToolStarted`, zero or more `ToolUpdated`, then exactly one `ToolFinished`.
 6. An unavailable tool emits `ToolFinished` with `Unavailable` and no `ToolStarted`.
-7. Calls in one model response may overlap. All `ToolProposed` events keep model order, while start, update, host-input, and finish events from different calls may interleave.
-8. Every per-call event and host-input request carries its `ToolCallId`. Within one available call, `ToolStarted` precedes all `ToolUpdated` events and one `ToolFinished` ends the call.
-9. The runtime holds completed results in model-order slots. Provider history and persisted history do not use finish order.
-10. Automatic compaction emits `CompactionStarted` before calling the compactor and `CompactionCompleted` only after committing replacement history.
-11. A run that reaches a normal cooperative terminal path emits one of `Completed`, `Cancelled`, or `Failed`.
+7. An honoured async call emits `ToolDetached` after `ToolStarted`. The loop continues; `ToolFinished` for that id may arrive after later `StepStarted` events. Hosts should keep the card alive until `ToolFinished`.
+8. Calls in one model response may overlap. All `ToolProposed` events keep model order, while start, update, host-input, detach, and finish events from different calls may interleave.
+9. Every per-call event and host-input request carries its `ToolCallId`. Within one available call, `ToolStarted` precedes all `ToolUpdated` events and one `ToolFinished` ends the call.
+10. Sync calls in one model response still enter provider and persisted history in model order. Async results enter history in completion order and may be non-adjacent to the original call.
+11. Automatic compaction emits `CompactionStarted` before calling the compactor and `CompactionCompleted` only after committing replacement history. Compaction is skipped while async jobs are pending.
+12. A run that reaches a normal cooperative terminal path emits one of `Completed`, `Cancelled`, or `Failed`.
 
 ### Terminal authority
 
@@ -135,7 +136,7 @@ Event-consumer interrupts still leave uncommitted candidate history uninstalled;
 
 Cancellation can race with event delivery or other failing work; see [known limitations](#known-limitations). In those cases, `Run::outcome` can still report cancellation or interruption without a cancellation commit or terminal event.
 
-Cancellation is not rollback. A tool or remote provider may have completed an external side effect before observing cancellation. During a tool batch, cancellation preserves already completed result slots and writes a deterministic interrupted result for every unresolved call, including calls cancelled during preparation. Design tools for idempotency and record enough operation identity for reconciliation.
+Cancellation is not rollback. A tool or remote provider may have completed an external side effect before observing cancellation. During a tool batch, cancellation preserves already completed result slots and writes a deterministic interrupted result for every unresolved call, including calls cancelled during preparation. Pending async jobs are cancelled the same way before every cooperative terminal commit (`Cancelled`, `Failed`, and `MaxSteps`). Design tools for idempotency and record enough operation identity for reconciliation.
 
 ## Drop contract
 

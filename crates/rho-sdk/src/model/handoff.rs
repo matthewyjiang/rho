@@ -29,21 +29,28 @@ pub struct PreparedAssistant {
 pub fn prepare_assistant(message: AssistantMessage, target: &ModelIdentity) -> PreparedAssistant {
     let portable_fallback = message.portable_fallback().map(str::to_owned);
     let mut content = message.content;
+    let only_sdk_metadata = !message.provider_context.is_empty()
+        && message
+            .provider_context
+            .iter()
+            .all(ProviderContextBlock::is_sdk_metadata);
     let replay_context = message
         .provider_context
         .into_iter()
-        .filter(|block| !block.is_portable_fallback() && block.is_replayable_to(target))
+        .filter(|block| block.is_replayable_to(target))
         .collect::<Vec<_>>();
     if replay_context.is_empty() {
         if let Some(fallback) = portable_fallback.filter(|text| !text.trim().is_empty()) {
             content.push(ContentBlock::Text(fallback));
-        } else if let Some(summary) = message
-            .reasoning_summary
-            .filter(|summary| !summary.trim().is_empty())
-        {
-            content.push(ContentBlock::Text(format!(
-                "{REASONING_SUMMARY_OPEN}\n{summary}\n{REASONING_SUMMARY_CLOSE}"
-            )));
+        } else if !only_sdk_metadata {
+            if let Some(summary) = message
+                .reasoning_summary
+                .filter(|summary| !summary.trim().is_empty())
+            {
+                content.push(ContentBlock::Text(format!(
+                    "{REASONING_SUMMARY_OPEN}\n{summary}\n{REASONING_SUMMARY_CLOSE}"
+                )));
+            }
         }
     }
     PreparedAssistant {
@@ -92,7 +99,7 @@ fn collect_omissions(
     report: &mut HandoffReport,
 ) {
     for block in blocks {
-        if block.is_portable_fallback() {
+        if block.is_sdk_metadata() {
             continue;
         }
         if !block.is_replayable_to(target) {

@@ -198,9 +198,17 @@ impl PtyHarness {
         self.inject_key(&Key::Enter)
     }
 
-    /// Wait long enough for paste-burst detection and enter-suppression to settle.
+    /// Wait for an explicit paste event to flush.
+    /// Plain-key input that may suppress Enter must use `settle_plain_text_input`.
     pub fn settle_input(&mut self) {
         self.settle_for(Duration::from_millis(50));
+    }
+
+    /// Outlast the composer's 120 ms plain-key paste Enter suppression window.
+    pub fn settle_plain_text_input(&mut self) {
+        // The 30 ms margin keeps the test beyond the product deadline even when
+        // the final key and harness clock reads straddle a scheduler tick.
+        self.settle_for(Duration::from_millis(150));
     }
 
     fn settle_for(&mut self, duration: Duration) {
