@@ -114,6 +114,16 @@ fn warm_plan(plan: SyntaxWarmupPlan) {
 fn planned_warmups(plan: &SyntaxWarmupPlan) -> Vec<(&'static str, BlockHighlighter)> {
     let mut budget = WarmBudget::default();
     let mut planned = Vec::new();
+    // Shell headers can appear in every session, so compile both card dialects
+    // before the first command reaches the UI thread.
+    for token in ["bash", "powershell"] {
+        let Some(name) = budget.claim(syntax_name_for_language(token)) else {
+            continue;
+        };
+        if let Some(highlighter) = BlockHighlighter::for_language(token) {
+            planned.push((name, highlighter));
+        }
+    }
     for token in &plan.tokens {
         let Some(name) = budget.claim(syntax_name_for_language(token)) else {
             continue;

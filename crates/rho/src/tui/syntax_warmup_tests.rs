@@ -65,6 +65,8 @@ fn warmup_plan_uses_tool_call_path_not_result_body() {
 fn warmup_names_dedup_skip_markdown_and_cap() {
     warm_syntax_set();
     let rust = syntax_name_for_language("rust").expect("bundled rust syntax");
+    let bash = syntax_name_for_language("bash").expect("bundled bash syntax");
+    let powershell = syntax_name_for_language("powershell").expect("bundled PowerShell syntax");
     assert_eq!(syntax_name_for_path("src/lib.rs"), Some(rust));
 
     let candidates = [
@@ -94,6 +96,8 @@ fn warmup_names_dedup_skip_markdown_and_cap() {
     .collect();
 
     assert_eq!(names.iter().filter(|name| **name == rust).count(), 1);
+    assert!(names.contains(&bash), "{names:?}");
+    assert!(names.contains(&powershell), "{names:?}");
     assert!(
         names
             .iter()

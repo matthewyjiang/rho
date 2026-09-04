@@ -542,6 +542,55 @@ fn grep_body_highlights_language_and_match() {
     );
 }
 
+// Covers: Bash and PowerShell tool commands use their shell grammar in the card header.
+// Owner: pure TUI (styled header rendering cannot be observed through PTY screen text)
+#[test]
+fn shell_headers_highlight_commands_by_prompt_dialect() {
+    crate::tui::syntax::warm_syntax_set();
+    let _guard = crate::tui::theme::theme_test_lock();
+    Theme::apply_committed("terminal");
+
+    for (prompt, command, token, role) in [
+        (
+            "$",
+            "if true; then echo \"hello\"; fi # note",
+            "if",
+            SyntaxRole::Keyword,
+        ),
+        (
+            "PS",
+            "Write-Output \"hello\" # note",
+            "Write-Output",
+            SyntaxRole::Function,
+        ),
+    ] {
+        let card = ToolCard::new(
+            ToolStatus::Ok,
+            ToolFamily::FileCommand,
+            ToolHeader::shell(prompt, Some(command.into())),
+        );
+        let mut lines = Vec::new();
+        push_tool_card(
+            &mut lines, &card, /*width*/ 100, /*max_tool_output_lines*/ 32,
+            /*expanded*/ true, /*live_elapsed*/ None,
+        );
+        let header = &lines[0];
+
+        assert_eq!(line_text(header), format!("✓ {prompt} {command}"));
+        assert!(
+            header.spans.iter().any(|span| {
+                span.content.as_ref() == token && span.style == Theme::syntax(role)
+            }),
+            "expected {prompt} token highlight: {:?}",
+            header
+                .spans
+                .iter()
+                .map(|span| (span.content.as_ref(), span.style))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
 // Covers: running shell cards fold the live elapsed clock into the timeout fact
 // Owner: pure unit (tool card elapsed rewrite)
 #[test]

@@ -152,6 +152,7 @@ pub(crate) async fn run(
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         anyhow::bail!("rho attach requires an interactive terminal");
     }
+    let syntax_warmup = tokio::task::spawn_blocking(crate::tui::syntax::warm_syntax_set);
     let mut terminal = ratatui::init();
     let _restore_terminal = RestoreTerminal {
         mouse_capture: mouse_capture::Guard::acquire(),
@@ -168,6 +169,7 @@ pub(crate) async fn run(
     let lookup_id = id.clone();
     let directory =
         tokio::task::spawn_blocking(move || subagent::resolve_run_directory(&lookup_id)).await??;
+    syntax_warmup.await?;
     let message = format!("attached to agent run {id}");
     herdr
         .report_state(HerdrState::Working, Some(&message), Some(&id))

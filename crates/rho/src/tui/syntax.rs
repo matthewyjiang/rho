@@ -1,4 +1,4 @@
-//! Syntect-backed syntax highlighting for code fences and diff bodies.
+//! Syntect-backed syntax highlighting for code fences, diffs, and shell cards.
 //!
 //! Parses scopes only; no syntect theme is involved. Each scope region maps
 //! onto a [`SyntaxRole`] (or plain). Callers resolve roles against the active
@@ -6,7 +6,8 @@
 //! and so diff add/remove colors can supply their own plain style.
 //!
 //! Language grammars come from [`two_face`]'s bat-derived dump (defaults plus
-//! extras such as TypeScript and TOML), not syntect's smaller default set.
+//! extras such as TypeScript and TOML), with a small bundled PowerShell grammar
+//! because two-face excludes PowerShell when using the fancy-regex backend.
 //! Interactive startup loads that dump off the UI thread; lookups stay `None`
 //! until it is ready so the first resume frame does not hitch.
 
@@ -18,37 +19,51 @@ use std::{
 
 use ratatui::{style::Style, text::Span};
 use regex::{Regex, RegexBuilder};
-use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
+use syntect::parsing::{
+    ParseState, Scope, ScopeStack, SyntaxDefinition, SyntaxReference, SyntaxSet,
+};
 
 use super::theme::{SyntaxRole, Theme};
 
 static SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
+static POWERSHELL_SYNTAX_SET: OnceLock<SyntaxSet> = OnceLock::new();
 
 /// Ready set, or `None` until [`warm_syntax_set`] finishes.
 fn syntax_set() -> Option<&'static SyntaxSet> {
     SYNTAX_SET.get()
 }
 
-fn ready_syntax_set() -> &'static SyntaxSet {
-    SYNTAX_SET
-        .get()
-        .expect("BlockHighlighter is only built after the syntax set is ready")
+fn powershell_syntax_set() -> Option<&'static SyntaxSet> {
+    POWERSHELL_SYNTAX_SET.get()
+}
+
+/// Whether syntax-backed render caches may retain their current paint.
+pub(in crate::tui) fn syntax_set_ready() -> bool {
+    syntax_set().is_some() && powershell_syntax_set().is_some()
 }
 
 /// Inflate the bat dump and role selectors. Safe to call more than once.
 pub(crate) fn warm_syntax_set() {
     let _ = SYNTAX_SET.get_or_init(two_face::syntax::extra_newlines);
+    let _ = POWERSHELL_SYNTAX_SET.get_or_init(load_powershell_syntax_set);
     LazyLock::force(&ROLE_SELECTORS);
+}
+
+fn load_powershell_syntax_set() -> SyntaxSet {
+    let mut builder = SyntaxSet::new().into_builder();
+    let powershell = SyntaxDefinition::load_from_str(
+        include_str!("powershell.sublime-syntax"),
+        /*lines_include_newline*/ true,
+        None,
+    )
+    .expect("bundled PowerShell syntax must be valid");
+    builder.add(powershell);
+    builder.build()
 }
 
 /// Dump-native syntax name for a fence token, when the set is ready and known.
 pub(in crate::tui) fn syntax_name_for_language(token: &str) -> Option<&'static str> {
-    Some(
-        syntax_set()?
-            .find_syntax_by_token(canonical_language_token(token))?
-            .name
-            .as_str(),
-    )
+    Some(syntax_for_language(token)?.name.as_str())
 }
 
 /// Dump-native syntax name for a display path, when the set is ready and known.
@@ -56,13 +71,12 @@ pub(in crate::tui) fn syntax_name_for_path(path: &str) -> Option<&'static str> {
     Some(syntax_for_path(path)?.name.as_str())
 }
 
-/// Soft cap on language-aware lines painted in one tool-card body pass. Beyond
-/// this, remaining rows keep solid row colors so huge write/edit cards stay
-/// interactive.
+/// Soft cap on language-aware lines painted in one tool-card source pass.
+/// Beyond this, content stays plain so huge cards remain interactive.
 pub(in crate::tui) const MAX_TOOL_SYNTAX_LINES: usize = 2_500;
 
 /// Soft cap on bytes per line for language-aware tool-card paint. Longer rows
-/// keep solid add/remove/context colors.
+/// keep their caller-provided plain style.
 ///
 /// Syntect's Markdown grammar is pathological on dense inline-code spans: a
 /// single ~800-byte docs prose line with many `` `backticks` `` can take tens
@@ -117,6 +131,7 @@ impl HighlightSegment {
 pub(in crate::tui) struct BlockHighlighter {
     parse: ParseState,
     stack: ScopeStack,
+    syntax_set: &'static SyntaxSet,
 }
 
 impl BlockHighlighter {
@@ -124,9 +139,9 @@ impl BlockHighlighter {
     /// `None` when no bundled syntax matches (callers fall back to plain
     /// styling).
     pub(in crate::tui) fn for_language(token: &str) -> Option<Self> {
-        Some(Self::from_syntax(
-            syntax_set()?.find_syntax_by_token(canonical_language_token(token))?,
-        ))
+        let token = canonical_language_token(token);
+        let set = syntax_set_for_language(token)?;
+        Some(Self::from_syntax(set.find_syntax_by_token(token)?, set))
     }
 
     /// Highlighter from a file path (`src/lib.rs`, `Makefile`, …), or `None`
@@ -136,13 +151,15 @@ impl BlockHighlighter {
     /// display paths work offline. Callers should strip diff chrome (`a/`,
     /// `b/`, rename arrows) before calling.
     pub(in crate::tui) fn for_path(path: &str) -> Option<Self> {
-        Some(Self::from_syntax(syntax_for_path(path)?))
+        let (syntax, set) = syntax_for_path_with_set(path)?;
+        Some(Self::from_syntax(syntax, set))
     }
 
-    fn from_syntax(syntax: &SyntaxReference) -> Self {
+    fn from_syntax(syntax: &SyntaxReference, syntax_set: &'static SyntaxSet) -> Self {
         Self {
             parse: ParseState::new(syntax),
             stack: ScopeStack::new(),
+            syntax_set,
         }
     }
 
@@ -153,7 +170,7 @@ impl BlockHighlighter {
         let mut text = String::with_capacity(line.len() + 1);
         text.push_str(line);
         text.push('\n');
-        let Ok(ops) = self.parse.parse_line(&text, ready_syntax_set()) else {
+        let Ok(ops) = self.parse.parse_line(&text, self.syntax_set) else {
             return vec![HighlightSegment {
                 text: line.to_string(),
                 role: None,
@@ -190,7 +207,7 @@ impl BlockHighlighter {
         let mut text = String::with_capacity(line.len() + 1);
         text.push_str(line);
         text.push('\n');
-        let Ok(ops) = self.parse.parse_line(&text, ready_syntax_set()) else {
+        let Ok(ops) = self.parse.parse_line(&text, self.syntax_set) else {
             return;
         };
         for (_, op) in ops {
@@ -231,9 +248,23 @@ fn push_merged(segments: &mut Vec<HighlightSegment>, text: &str, role: Option<Sy
 fn canonical_language_token(token: &str) -> &str {
     match token {
         "jsx" => "javascript",
+        "ps1" => "powershell",
         "shell" | "console" => "bash",
         other => other,
     }
+}
+
+fn syntax_set_for_language(token: &str) -> Option<&'static SyntaxSet> {
+    if token == "powershell" {
+        powershell_syntax_set()
+    } else {
+        syntax_set()
+    }
+}
+
+fn syntax_for_language(token: &str) -> Option<&'static SyntaxReference> {
+    let token = canonical_language_token(token);
+    syntax_set_for_language(token)?.find_syntax_by_token(token)
 }
 
 /// Resolve a bundled syntax from a display path without opening the file.
@@ -241,18 +272,28 @@ fn canonical_language_token(token: &str) -> &str {
 /// Mirrors syntect's path/extension probe: try the full file name first so
 /// names like `Makefile` and `CMakeLists.txt` win, then the extension.
 fn syntax_for_path(path: &str) -> Option<&'static SyntaxReference> {
+    Some(syntax_for_path_with_set(path)?.0)
+}
+
+fn syntax_for_path_with_set(path: &str) -> Option<(&'static SyntaxReference, &'static SyntaxSet)> {
     let path = path.trim();
     if path.is_empty() || path == "/dev/null" {
         return None;
     }
     let path = Path::new(path);
     let file_name = path.file_name()?.to_str()?;
-    let set = syntax_set()?;
-    set.find_syntax_by_extension(file_name).or_else(|| {
+    let extension = path.extension().and_then(|ext| ext.to_str());
+    let set = if extension.is_some_and(|ext| matches!(ext, "ps1" | "psm1" | "psd1")) {
+        powershell_syntax_set()?
+    } else {
+        syntax_set()?
+    };
+    let syntax = set.find_syntax_by_extension(file_name).or_else(|| {
         path.extension()
             .and_then(|ext| ext.to_str())
             .and_then(|ext| set.find_syntax_by_extension(ext))
-    })
+    })?;
+    Some((syntax, set))
 }
 
 /// Match pattern and the same semantics the grep tool used when searching.
