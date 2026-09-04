@@ -725,10 +725,18 @@ impl App {
         &mut self,
         provider: &str,
         agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let config = self.info.services.config_repository.load()?;
+    ) {
+        let config = match self.info.services.config_repository.load() {
+            Ok(config) => config,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "model switched, but auto edit tool could not follow the provider: {error}"
+                )));
+                return;
+            }
+        };
         if config.edit_tool != crate::config::EditTool::Auto {
-            return Ok(());
+            return;
         }
         let resolved = config.resolved_edit_tool_for_provider(provider);
         match self
@@ -750,7 +758,6 @@ impl App {
             Ok(None) => {}
             Err(()) => {}
         }
-        Ok(())
     }
 
     /// Applies a concrete edit format on the live runtime.

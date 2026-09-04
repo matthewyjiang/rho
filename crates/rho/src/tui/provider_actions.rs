@@ -66,7 +66,7 @@ impl App {
             Err(error) => ProviderActivationOutcome::ConfigSaveFailed(error),
         };
         self.apply_auto_edit_tool_for_provider(&provider, agent)
-            .await?;
+            .await;
         Ok(outcome)
     }
 
