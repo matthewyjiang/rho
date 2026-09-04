@@ -211,7 +211,7 @@ impl CodexWsTransport {
         match pending_match {
             Some(SteerMatch::Reuse) => {
                 let output = state
-                    .read_open_socket(self.idle_timeout, on_event, steering)
+                    .read_open_socket(self.idle_timeout, on_event, steering, &candidate)
                     .await;
                 return finish_ws_turn(&mut state, candidate, body, output, /*reuse*/ true);
             }
@@ -335,6 +335,7 @@ impl CodexWsState {
         idle_timeout: std::time::Duration,
         on_event: &mut Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
         steering: &mut Option<ProviderSteeringReceiver>,
+        candidate: &CodexContinuationCandidate,
     ) -> Result<CodexWsCompleted, CodexWsFailure> {
         let socket = self
             .connection
@@ -342,7 +343,7 @@ impl CodexWsState {
             .ok_or(CodexWsFailure::BeforeRequest {
                 _message: "steered continuation reused a closed websocket".into(),
             })?;
-        collect_codex_ws_response(socket, idle_timeout, on_event, steering, None).await
+        collect_codex_ws_response(socket, idle_timeout, on_event, steering, Some(candidate)).await
     }
 
     async fn send_frame_silent(
@@ -467,6 +468,7 @@ async fn collect_codex_ws_response(
                 if let Some(event_type) = steer_event_type(&payload) {
                     session.handle_ack(event_type, &payload);
                     idle_deadline.record_activity();
+                    session.flush_held(socket, idle_timeout, &state).await?;
                     continue;
                 }
                 collect_server_output_item(&payload, &mut server_output_items);
@@ -688,10 +690,13 @@ fn finish_ws_turn(
                     .continuation
                     .record_success(&candidate, continuation_response);
             }
-            state.pending_steer = pending_steer.or(state.pending_steer.take());
-            if reuse {
-                state.pending_steer = None;
-            }
+            state.pending_steer = if reuse {
+                // The matched continuation consumed the old pending steer. Keep
+                // a new steer accepted while reading that continuation.
+                pending_steer
+            } else {
+                pending_steer.or(state.pending_steer.take())
+            };
             state.turn_open = false;
             Ok(CodexWsTurn::Completed(response))
         }
@@ -881,6 +886,12 @@ fn codex_ws_url(api_base: &str) -> String {
     format!("{websocket_base}/responses")
 }
 
+#[cfg(test)]
+#[path = "codex_ws_test_support.rs"]
+mod codex_ws_test_support;
+#[cfg(test)]
+#[path = "codex_ws_steering_tests.rs"]
+mod steering_tests;
 #[cfg(test)]
 #[path = "codex_ws_tests.rs"]
 mod tests;
