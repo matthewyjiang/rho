@@ -751,16 +751,6 @@ fn summarize_session_file_with_tree(
 
 const INTERRUPTED_TOOL_RESULT_CONTENT: &str = "tool call interrupted before completion";
 
-pub(crate) fn complete_turn_tail_len<T, F>(items: &[T], _get_message: F) -> usize
-where
-    F: Fn(&T) -> &Message,
-{
-    // Uncovered tool calls get interrupted placeholders on resume instead of
-    // truncating later completed turns, so the persisted tail is the full list.
-    let _ = _get_message;
-    items.len()
-}
-
 fn completed_tool_call_ids(message: &Message) -> Vec<&str> {
     let Some(blocks) = message.completed_assistant_content() else {
         return Vec::new();
@@ -772,10 +762,6 @@ fn completed_tool_call_ids(message: &Message) -> Vec<&str> {
             ContentBlock::Text(_) | ContentBlock::Image(_) => None,
         })
         .collect()
-}
-
-pub(crate) fn complete_message_len(messages: &[Message]) -> usize {
-    complete_turn_tail_len(messages, |m| m)
 }
 
 pub(crate) fn drop_incomplete_tool_turn_tail(mut messages: Vec<Message>) -> Vec<Message> {

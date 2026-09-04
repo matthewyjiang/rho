@@ -108,7 +108,6 @@ pub(crate) struct SessionNode {
 pub(crate) struct NodeFacts {
     pub(crate) revision: Revision,
     pub(crate) model_len: usize,
-    pub(crate) continuable: bool,
     pub(crate) has_snapshot: bool,
     pub(crate) compaction: CompactionState,
 }
@@ -118,7 +117,6 @@ impl NodeFacts {
         Self {
             revision: state.revision,
             model_len: state.model.len(),
-            continuable: continuation_is_valid(&state.model),
             has_snapshot: state.snapshot.is_some(),
             compaction: state.compaction.clone(),
         }
@@ -393,51 +391,49 @@ impl SessionTree {
             let node = self
                 .node(&id)
                 .ok_or_else(|| anyhow::anyhow!("session tree is missing node '{id}'"))?;
-            if node.facts().continuable {
-                let kind = match node.kind() {
-                    SessionNodeKind::Commit => SessionTreeItemKind::Turn,
-                    SessionNodeKind::Compaction => SessionTreeItemKind::Compaction,
-                };
-                let first_user_text = (kind == SessionTreeItemKind::Turn).then(|| {
-                    node.display_messages()
-                        .iter()
-                        .find_map(|stored| super::persistence::user_message_text(&stored.message))
-                        .unwrap_or_else(|| "completed turn".into())
-                });
-                let compaction_facts = (kind == SessionTreeItemKind::Compaction).then(|| {
-                    node.compaction_facts()
-                        .cloned()
-                        .unwrap_or_else(|| StoredCompactionFacts {
-                            previous_messages: node
-                                .parent_id()
-                                .and_then(|id| self.node(id))
-                                .map_or(0, |parent| parent.facts().model_len),
-                            current_messages: node.facts().model_len,
-                            previous_tokens: node
-                                .facts()
-                                .compaction
-                                .last_previous_tokens()
-                                .unwrap_or_default(),
-                            current_tokens: node
-                                .facts()
-                                .compaction
-                                .last_current_tokens()
-                                .unwrap_or_default(),
-                            cost_usd_micros: None,
-                        })
-                });
-                traversal.push(SessionTreeItem {
-                    id: node.id().clone(),
-                    depth,
-                    kind,
-                    first_user_text,
-                    compaction_facts,
-                    active: self.active_leaf_id() == Some(node.id()),
-                    on_active_path: active_path.contains(node.id()),
-                    ancestor_has_next_sibling: ancestor_has_next_sibling.clone(),
-                    is_last_sibling,
-                });
-            }
+            let kind = match node.kind() {
+                SessionNodeKind::Commit => SessionTreeItemKind::Turn,
+                SessionNodeKind::Compaction => SessionTreeItemKind::Compaction,
+            };
+            let first_user_text = (kind == SessionTreeItemKind::Turn).then(|| {
+                node.display_messages()
+                    .iter()
+                    .find_map(|stored| super::persistence::user_message_text(&stored.message))
+                    .unwrap_or_else(|| "completed turn".into())
+            });
+            let compaction_facts = (kind == SessionTreeItemKind::Compaction).then(|| {
+                node.compaction_facts()
+                    .cloned()
+                    .unwrap_or_else(|| StoredCompactionFacts {
+                        previous_messages: node
+                            .parent_id()
+                            .and_then(|id| self.node(id))
+                            .map_or(0, |parent| parent.facts().model_len),
+                        current_messages: node.facts().model_len,
+                        previous_tokens: node
+                            .facts()
+                            .compaction
+                            .last_previous_tokens()
+                            .unwrap_or_default(),
+                        current_tokens: node
+                            .facts()
+                            .compaction
+                            .last_current_tokens()
+                            .unwrap_or_default(),
+                        cost_usd_micros: None,
+                    })
+            });
+            traversal.push(SessionTreeItem {
+                id: node.id().clone(),
+                depth,
+                kind,
+                first_user_text,
+                compaction_facts,
+                active: self.active_leaf_id() == Some(node.id()),
+                on_active_path: active_path.contains(node.id()),
+                ancestor_has_next_sibling: ancestor_has_next_sibling.clone(),
+                is_last_sibling,
+            });
             let children = self.children.get(&id).map_or(&[][..], Vec::as_slice);
             for (index, child_id) in children.iter().enumerate().rev() {
                 let mut child_ancestors = ancestor_has_next_sibling.clone();
@@ -532,23 +528,21 @@ impl SessionTree {
             created_at = updated_at;
         }
 
-        let (message_count, first_user_message, last_user_message) = if let Some(state) =
-            self.active_state()
-        {
-            let valid_len =
-                super::persistence::complete_turn_tail_len(&state.display, |entry| &entry.message);
-            let valid_display = &state.display[..valid_len];
-            let first = valid_display
-                .iter()
-                .find_map(|entry| super::persistence::user_message_text(&entry.message));
-            let last = valid_display
-                .iter()
-                .rev()
-                .find_map(|entry| super::persistence::user_message_text(&entry.message));
-            (valid_display.len() as u64, first, last)
-        } else {
-            (0, None, None)
-        };
+        let (message_count, first_user_message, last_user_message) =
+            if let Some(state) = self.active_state() {
+                let first = state
+                    .display
+                    .iter()
+                    .find_map(|entry| super::persistence::user_message_text(&entry.message));
+                let last = state
+                    .display
+                    .iter()
+                    .rev()
+                    .find_map(|entry| super::persistence::user_message_text(&entry.message));
+                (state.display.len() as u64, first, last)
+            } else {
+                (0, None, None)
+            };
 
         let facts = self.facts();
         Ok(SessionIndexRecord {
@@ -880,10 +874,6 @@ impl SessionTree {
             (None, Some(_)) => anyhow::bail!("materialized state exists without an active leaf"),
         }
     }
-}
-
-fn continuation_is_valid(messages: &[rho_providers::model::Message]) -> bool {
-    super::persistence::complete_message_len(messages) == messages.len()
 }
 
 fn refresh_snapshot_state(state: &mut PersistedSessionState) {

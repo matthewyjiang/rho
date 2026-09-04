@@ -290,12 +290,10 @@ impl Session {
                     .and_then(|summary| summary.title)
             });
 
-        let mut messages = match tree.active_leaf_id() {
+        let messages = match tree.active_leaf_id() {
             Some(active_leaf_id) => tree.projected_display(active_leaf_id)?,
             None => Vec::new(),
         };
-        let complete_len = persistence::complete_turn_tail_len(&messages, |entry| &entry.message);
-        messages.truncate(complete_len);
         Ok(SessionExport {
             id: record.summary.id,
             cwd: record.summary.cwd,
