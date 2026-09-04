@@ -414,7 +414,8 @@ fn async_tools_are_advertised_only_when_supported_and_declared() {
             case.hosted_web_search,
             &case.async_tools,
         )
-        .unwrap();
+        .unwrap()
+        .body;
         let tool = &body["tools"][0];
         if case.expect_hosted {
             assert_eq!(tool["type"], "web_search", "{}", case.name);
