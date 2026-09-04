@@ -629,13 +629,14 @@ fn pending_from_collect(
     response: &crate::model::ModelResponse,
 ) -> Option<PendingSteer> {
     let candidate = candidate?;
-    let previous_response_id = response_id?;
+    if response_id.is_none() {
+        return None;
+    }
     if steer_items.is_empty() {
         return None;
     }
     if required_input {
         return Some(PendingSteer {
-            previous_response_id,
             request_properties: candidate.request_properties.clone(),
             request_input: candidate.input.clone(),
             steer_items,
@@ -647,7 +648,6 @@ fn pending_from_collect(
     }
     let _ = response;
     Some(PendingSteer {
-        previous_response_id,
         request_properties: candidate.request_properties.clone(),
         request_input: candidate.input.clone(),
         steer_items,
@@ -669,9 +669,6 @@ fn finish_ws_turn(
                 server_output_items,
                 pending_steer,
             } = output;
-            if reuse {
-                state.pending_steer = None;
-            }
             if pending_steer
                 .as_ref()
                 .is_some_and(|pending| pending.mode == SteerMode::RequiredInput)

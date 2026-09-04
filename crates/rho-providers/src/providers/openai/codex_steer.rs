@@ -19,8 +19,6 @@ pub(super) enum SteerMatch {
 
 #[derive(Debug)]
 pub(super) struct PendingSteer {
-    #[allow(dead_code)]
-    pub(super) previous_response_id: String,
     pub(super) request_properties: Value,
     pub(super) request_input: Vec<Value>,
     pub(super) steer_items: Vec<Value>,

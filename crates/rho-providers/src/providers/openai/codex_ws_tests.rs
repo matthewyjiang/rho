@@ -1028,7 +1028,7 @@ async fn steer_is_released_when_unforwardable_or_failed() {
     assert!(
         matches!(
             outcome,
-            Some((_, rho_sdk::provider::ProviderSteeringOutcome::Released)) | None
+            Some((_, rho_sdk::provider::ProviderSteeringOutcome::Released))
         ),
         "{outcome:?}"
     );

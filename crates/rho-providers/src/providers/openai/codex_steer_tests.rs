@@ -6,7 +6,6 @@ use super::{PendingSteer, SteerMatch, SteerMode};
 
 fn pending(steer_items: Vec<serde_json::Value>) -> PendingSteer {
     PendingSteer {
-        previous_response_id: "resp_1".into(),
         request_properties: json!({"model": "gpt-6-astra", "stream": true}),
         request_input: vec![json!({"role": "user", "content": "one"})],
         steer_items,
