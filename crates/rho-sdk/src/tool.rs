@@ -27,7 +27,7 @@ pub use preparation::{
     ToolCancellationPolicy, ToolExecutionPolicy, ToolPreparationContext, ToolPrepareFuture,
     ToolResource, ToolResourceAccess, ToolResourceKind,
 };
-pub(crate) use worker::{ToolHostWorker, ToolWorkerServices};
+pub(crate) use worker::{begin_cancellation_cleanup, ToolHostWorker, ToolWorkerServices};
 
 /// How the runtime delivers a tool's result to the model.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -289,6 +289,13 @@ impl ToolProgressReceiver {
     pub(crate) fn try_recv(&mut self) -> Option<ToolProgress> {
         self.receiver.try_recv().ok()
     }
+
+    pub(crate) fn poll_recv(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<ToolProgress>> {
+        self.receiver.poll_recv(cx)
+    }
 }
 
 pub fn tool_progress_channel(capacity: NonZeroUsize) -> (ToolProgressSender, ToolProgressReceiver) {
@@ -362,6 +369,7 @@ pub struct ToolContext {
     cancellation: CancellationToken,
     progress: ToolProgressSender,
     first_capability: FirstCapability,
+    detached: bool,
 }
 
 impl ToolContext {
@@ -378,6 +386,7 @@ impl ToolContext {
             cancellation,
             progress,
             first_capability: FirstCapability::default(),
+            detached: false,
         }
     }
 
@@ -395,6 +404,7 @@ impl ToolContext {
             cancellation,
             progress,
             first_capability: FirstCapability::default(),
+            detached: false,
         }
     }
 
@@ -411,10 +421,22 @@ impl ToolContext {
         self
     }
 
+    /// Marks this context as a detached async job. Host input is unsupported.
+    pub(crate) fn detached(mut self) -> Self {
+        self.host_input = None;
+        self.detached = true;
+        self
+    }
+
     pub async fn request_host_input(
         &self,
         request: HostInputRequest,
     ) -> Result<HostInputResponse, crate::Error> {
+        if self.detached {
+            return Err(crate::Error::InvalidConfiguration {
+                message: "detached async tools cannot request host input".into(),
+            });
+        }
         let requester =
             self.host_input
                 .as_ref()

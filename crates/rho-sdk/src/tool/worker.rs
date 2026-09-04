@@ -193,7 +193,7 @@ impl ToolHostWorker {
     }
 }
 
-fn begin_cancellation_cleanup(
+pub(crate) fn begin_cancellation_cleanup(
     timeout: Option<std::time::Duration>,
     deadline: &mut Option<Pin<Box<tokio::time::Sleep>>>,
     deferred: &mut bool,

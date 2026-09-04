@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     model::{
@@ -42,6 +42,14 @@ impl StreamCapture {
         let attempt_usage = self.usage.saturating_add(&usage);
         self.usage = ModelUsage::default();
         self.failed_attempts.push((kind, attempt_usage));
+    }
+
+    pub(super) fn take_async_call_ids(&self) -> BTreeSet<String> {
+        self.provider_context
+            .iter()
+            .filter_map(ProviderContextBlock::async_tool_call_id)
+            .map(str::to_owned)
+            .collect()
     }
 
     pub(super) fn take_assistant_context(&mut self) -> (Option<String>, Vec<ProviderContextBlock>) {

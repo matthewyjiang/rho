@@ -324,6 +324,11 @@ pub enum RunEvent {
     SteeringDelivered {
         id: SteeringId,
     },
+    /// The call runs detached: the loop continues and `ToolFinished` for this id
+    /// arrives after later `StepStarted` events. Hosts keep the card alive.
+    ToolDetached {
+        call_id: ToolCallId,
+    },
 }
 
 #[cfg(test)]
