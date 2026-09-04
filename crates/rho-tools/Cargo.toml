@@ -15,7 +15,7 @@ document-pdf = ["dep:flate2", "dep:lopdf", "dep:pdf-inspector"]
 document-spreadsheets = ["dep:calamine", "dep:zip"]
 
 [dependencies]
-rho-sdk = { version = "5.1.2", path = "../rho-sdk" }
+rho-sdk = { version = "5.2.0", path = "../rho-sdk" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

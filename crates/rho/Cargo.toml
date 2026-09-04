@@ -22,7 +22,7 @@ name = "rho"
 path = "src/main.rs"
 
 [dependencies]
-rho-sdk = { version = "5.1.2", path = "../rho-sdk" }
+rho-sdk = { version = "5.2.0", path = "../rho-sdk" }
 rho-providers = { version = "2.2.0", path = "../rho-providers", default-features = false }
 rho-tools = { version = "1.0.4", path = "../rho-tools", package = "rho-agent-tools" }
 tokio = { version = "1", features = ["full"] }
