@@ -8,6 +8,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const PORTABLE_FALLBACK_CONTEXT_KIND: &str = "rho.sdk.portable_fallback.v1";
+/// Kind string providers emit on [`ModelEvent::ProviderContext`] when a tool
+/// call was accepted as async.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): replace the async-call marker block with a
+/// `ModelEvent::ToolCallAccepted { id, execution: ToolExecutionMode }` variant
+/// and an `execution` field on `ToolCall`.
+pub const ASYNC_TOOL_CALL_CONTEXT_KIND: &str = "rho.sdk.async_tool_call.v1";
 
 use crate::CancellationToken;
 
@@ -106,13 +115,48 @@ pub struct ProviderContextBlock {
 
 impl ProviderContextBlock {
     pub fn is_replayable_to(&self, target: &ModelIdentity) -> bool {
-        !self.is_portable_fallback() && self.identity == *target
+        !self.is_sdk_metadata() && self.identity == *target
+    }
+
+    /// Marks a tool call the provider accepted as async.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): replace the async-call marker block with a
+    /// `ModelEvent::ToolCallAccepted { id, execution: ToolExecutionMode }` variant
+    /// and an `execution` field on `ToolCall`.
+    ///
+    /// Providers emit this via [`crate::model::ModelEvent::ProviderContext`] because
+    /// `ModelEvent` and [`ToolCall`] cannot grow in a minor. SDK metadata: never
+    /// replayed as provider-native context, never counted as a handoff omission.
+    pub fn async_tool_call(identity: ModelIdentity, call_id: impl Into<String>) -> Self {
+        Self {
+            identity,
+            kind: ASYNC_TOOL_CALL_CONTEXT_KIND.into(),
+            position: None,
+            data: Value::String(call_id.into()),
+        }
+    }
+
+    /// Returns the call id when this block is a well-formed async-call marker.
+    pub fn async_tool_call_id(&self) -> Option<&str> {
+        (self.kind == ASYNC_TOOL_CALL_CONTEXT_KIND
+            && self.position.is_none()
+            && self.data.is_string())
+        .then(|| self.data.as_str())
+        .flatten()
     }
 
     pub(crate) fn is_portable_fallback(&self) -> bool {
         self.kind == PORTABLE_FALLBACK_CONTEXT_KIND
             && self.position.is_none()
             && self.data.is_string()
+    }
+
+    /// Portable fallback or async-call marker: never replayed as provider-native
+    /// context, never counted as a handoff omission.
+    pub(crate) fn is_sdk_metadata(&self) -> bool {
+        self.is_portable_fallback() || self.async_tool_call_id().is_some()
     }
 }
 

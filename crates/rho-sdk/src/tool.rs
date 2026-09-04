@@ -27,6 +27,18 @@ pub use preparation::{
     ToolResource, ToolResourceAccess, ToolResourceKind,
 };
 
+/// How the runtime delivers a tool's result to the model.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ToolExecutionMode {
+    /// The loop waits for this call to finish before the next model request.
+    #[default]
+    Sync,
+    /// The call may run detached: the loop keeps calling the model and delivers
+    /// the result on the original call id when the job finishes.
+    Async,
+}
+
 /// Future returned by [`Tool`] implementations.
 pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = Result<ToolOutput, ToolError>> + Send + 'a>>;
 
@@ -575,6 +587,14 @@ pub trait Tool: Send + Sync {
         false
     }
 
+    /// Async tools may be advertised as `async` to providers that support it; the
+    /// runtime keeps calling the model while the job runs and delivers the result
+    /// on the original call id. Async plans must be resource-aware with shared
+    /// access only; host input is unavailable while detached.
+    fn execution_mode(&self) -> ToolExecutionMode {
+        ToolExecutionMode::Sync
+    }
+
     /// Returns presentation metadata available before this tool starts.
     ///
     /// Implementors may derive metadata from validated or unvalidated arguments,
@@ -673,6 +693,15 @@ impl ToolRegistry {
 
     pub fn specs(&self) -> Vec<ToolSpec> {
         self.tools.values().map(|tool| tool.spec()).collect()
+    }
+
+    /// Names of registered tools that declare [`ToolExecutionMode::Async`].
+    pub fn async_tool_names(&self) -> Vec<String> {
+        self.tools
+            .iter()
+            .filter(|(_, tool)| tool.execution_mode() == ToolExecutionMode::Async)
+            .map(|(name, _)| name.clone())
+            .collect()
     }
 
     pub(crate) fn diagnostics(&self) -> Vec<(String, ToolSecurity)> {
