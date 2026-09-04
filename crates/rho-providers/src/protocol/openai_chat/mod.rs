@@ -2,8 +2,8 @@ mod types;
 
 pub(crate) use super::openai_shared::{
     convert::{
-        convert_openai_response, response_without_stream_context, to_openai_message_for_target,
-        to_openai_messages_for_target, to_openai_tool,
+        convert_openai_response, response_without_stream_context, to_openai_messages_for_target,
+        to_openai_tool,
     },
     stream::{line_decode_error, ChatStreamAccumulator},
     tool_calls::ChatToolCallPolicy,
