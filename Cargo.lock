@@ -4427,14 +4427,12 @@ dependencies = [
  "katex-rs",
  "keyring",
  "libc",
- "logos 0.16.1",
  "mermaid-rs-renderer",
  "portable-pty",
  "pretty_assertions",
  "pulldown-cmark",
  "rand 0.8.6",
  "ratatui",
- "ratatui-core",
  "ratatui-image",
  "regex",
  "reqwest",
@@ -4463,6 +4461,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "two-face",
+ "txm",
  "unicode-segmentation",
  "unicode-width 0.2.2",
  "url",
@@ -6121,6 +6120,18 @@ dependencies = [
  "serde",
  "serde_derive",
  "syntect",
+]
+
+[[package]]
+name = "txm"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8d2c36517c0b35a2b748f1b1b7b9077a72d255f9a354ba045bdf4ffc0f4d00a"
+dependencies = [
+ "logos 0.16.1",
+ "ratatui-core",
+ "thiserror 2.0.18",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]

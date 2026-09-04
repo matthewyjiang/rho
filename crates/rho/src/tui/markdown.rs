@@ -11,7 +11,6 @@ mod mermaid;
 mod panel;
 mod stream;
 mod table;
-mod txm;
 
 #[cfg(test)]
 pub(crate) use mermaid::PHASE_CHAIN_FLOWCHART;
