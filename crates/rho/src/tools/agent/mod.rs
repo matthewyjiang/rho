@@ -363,14 +363,11 @@ impl AgentsTool {
                     .message(id, &message)
                     .await
                     .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-                match self.manager.status(id) {
-                    Some(snapshot) => message_receipt::MessageReceipt {
-                        run_id: snapshot.id,
-                        agent_id: snapshot.agent_id,
-                        task: self
-                            .manager
-                            .task_label(id)
-                            .unwrap_or_else(|| "Delegated task".into()),
+                match self.manager.task_identity(id) {
+                    Some(identity) => message_receipt::MessageReceipt {
+                        run_id: identity.run_id,
+                        agent_id: identity.agent_id,
+                        task: identity.task,
                     }
                     .content(),
                     None => format!("queued parent message for delegated run '{id}'"),

@@ -90,7 +90,9 @@ impl ToolCallBatch {
         self.live_entries()
             .cloned()
             .map(|mut entry| {
-                entry.card.status = ToolStatus::Interrupted;
+                if let crate::presentation::Presentation::Card(card) = &mut entry.presentation {
+                    card.status = ToolStatus::Interrupted;
+                }
                 // The clock stops with the call; interrupted rows are retained
                 // in the feed and must not keep counting on every repaint.
                 entry.started_at = None;

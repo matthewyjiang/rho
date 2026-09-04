@@ -149,10 +149,12 @@ pub(super) fn transcript_entries_from_messages(
                         arguments: serde_json::Value::Object(Default::default()),
                     });
                 let presented = presenter.historical(&call, result.ok, &result.content);
-                entries.push(Entry::Tool(
-                    ToolEntry::new(presented.card, false, None, None)
-                        .with_message(presented.message),
-                ));
+                entries.push(Entry::Tool(ToolEntry::new(
+                    presented.presentation,
+                    false,
+                    None,
+                    None,
+                )));
             }
         }
     }

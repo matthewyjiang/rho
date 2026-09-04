@@ -40,6 +40,14 @@ pub struct SubagentSnapshot {
     pub done: bool,
 }
 
+/// Stable run identity and its best available task label for host presentation.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct SubagentTaskIdentity {
+    pub run_id: String,
+    pub agent_id: String,
+    pub task: String,
+}
+
 struct AgentEntry {
     agent_id: String,
     task_fallback: Option<String>,
@@ -303,16 +311,22 @@ impl SubagentManager {
     }
 
     /// Display identity without marking a run's result as observed.
-    pub(crate) fn task_label(&self, id: &str) -> Option<String> {
+    pub(crate) fn task_identity(&self, id: &str) -> Option<SubagentTaskIdentity> {
         let id = crate::subagent::normalize_id(id).ok()?;
         let entries = self.inner.lock().expect("delegated registry lock");
         let entry = entries.get(&id)?;
-        entry
+        let task = entry
             .handle
             .status()
             .title
             .filter(|title| !title.trim().is_empty())
             .or_else(|| entry.task_fallback.clone())
+            .unwrap_or_else(|| "Delegated task".into());
+        Some(SubagentTaskIdentity {
+            run_id: id,
+            agent_id: entry.agent_id.clone(),
+            task,
+        })
     }
 
     /// Live runs plus terminals with a recent `finished_at` stamp.
@@ -488,3 +502,7 @@ impl SubagentManager {
         let _ = tokio::time::timeout(SHUTDOWN_TIMEOUT, futures_util::future::join_all(waits)).await;
     }
 }
+
+#[cfg(test)]
+#[path = "subagent_manager_tests.rs"]
+mod tests;

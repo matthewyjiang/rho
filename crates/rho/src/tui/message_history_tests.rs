@@ -41,7 +41,10 @@ fn tool_names(entries: &[Entry]) -> Vec<String> {
     entries
         .iter()
         .filter_map(|entry| match entry {
-            Entry::Tool(tool) => match &tool.card.header {
+            Entry::Tool(super::ToolEntry {
+                presentation: crate::presentation::Presentation::Card(card),
+                ..
+            }) => match &card.header {
                 ToolHeader::Call { verb, .. } => Some(verb.clone()),
                 ToolHeader::StatusFirst { identity, .. } => Some(identity.clone()),
                 ToolHeader::Shell { command, .. } => command.clone(),
@@ -95,11 +98,11 @@ fn transcript_pairs_tool_results_by_id() {
 #[test]
 fn transcript_restores_message_receipts() {
     use crate::{
-        app::message_card::{MessageCard, MessageDelivery},
+        presentation::{MessageCard, MessageDelivery, Presentation},
         tools::agent::message_receipt::MessageReceipt,
     };
 
-    let body = "Check routing first.\nKeep the full message.";
+    let body = " \nCheck routing first.\nKeep the full message.\t\n ";
     let receipt = MessageReceipt {
         run_id: "abc123".into(),
         agent_id: "reviewer".into(),
@@ -130,13 +133,13 @@ fn transcript_restores_message_receipts() {
             panic!("expected one historical tool entry");
         };
         assert_eq!(
-            tool.message,
-            Some(Box::new(MessageCard {
+            tool.presentation,
+            Presentation::Message(Box::new(MessageCard {
                 title: title.into(),
                 sender: "parent".into(),
                 recipient: recipient.into(),
                 delivery: MessageDelivery::Queued,
-                body: body.into(),
+                body: body.trim().into(),
                 details: vec!["run: abc123".into(), "attach: rho attach abc123".into()],
             }))
         );

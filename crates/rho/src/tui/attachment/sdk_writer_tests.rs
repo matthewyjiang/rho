@@ -30,25 +30,19 @@ fn attachment_stream_round_trips_view_events() {
         .unwrap();
     // Message metadata must survive view projection and the on-disk journal,
     // not just the in-memory tool card.
-    let message = Box::new(crate::app::message_card::MessageCard {
+    let message = Box::new(crate::presentation::MessageCard {
         title: "Inspect routing".into(),
         sender: "parent".into(),
         recipient: "reviewer".into(),
-        delivery: crate::app::message_card::MessageDelivery::Queued,
+        delivery: crate::presentation::MessageDelivery::Queued,
         body: "Check the queued route.\nKeep the full body.".into(),
         details: vec!["run: abc123".into()],
     });
-    let card = rho_tools::tool_card::ToolCard::new(
-        rho_tools::tool_card::ToolStatus::Ok,
-        rho_tools::tool_card::ToolFamily::Agent,
-        rho_tools::tool_card::ToolHeader::call("agents", None),
-    );
     let finished = attachment_update(
         &mut writer.adapter,
         ViewModelEvent::ToolFinished {
             call_id: rho_sdk::ToolCallId::from_string("message-call").unwrap(),
-            card: card.clone(),
-            message: Some(message.clone()),
+            presentation: crate::presentation::Presentation::Message(message.clone()),
             image_asset: None,
         },
     )
@@ -66,8 +60,7 @@ fn attachment_stream_round_trips_view_events() {
             AttachmentEvent::AssistantTextDelta("found it".into()),
             AttachmentEvent::ToolFinished {
                 key: Some("message-call".into()),
-                card,
-                message: Some(message),
+                presentation: crate::presentation::Presentation::Message(message),
             },
         ]
     );
@@ -116,15 +109,13 @@ fn compaction_run_events_project_to_tool_attachment_blocks() {
             &mut adapter,
             ViewModelEvent::ToolFinished {
                 call_id: compaction_call_id(),
-                card: card.clone(),
+                presentation: card.clone().into(),
                 image_asset: None,
-                message: None,
             }
         ),
         Some(AttachmentEvent::ToolFinished {
             key,
-            card,
-            message: None
+            presentation: card.into(),
         })
     );
 }
@@ -157,8 +148,7 @@ fn open_compaction_failure_emits_tool_finish_then_failed() {
         events[0],
         AttachmentEvent::ToolFinished {
             key: Some(compaction_call_id().to_string()),
-            card: failed,
-            message: None,
+            presentation: failed.into(),
         }
     );
     assert_eq!(
@@ -204,9 +194,8 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
         &mut adapter,
         ViewModelEvent::ToolFinished {
             call_id,
-            card: with_id.clone(),
+            presentation: with_id.clone().into(),
             image_asset: None,
-            message: None,
         },
     );
 
@@ -228,8 +217,7 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
         finished,
         Some(AttachmentEvent::ToolFinished {
             key: Some("preview:0".into()),
-            card: with_id,
-            message: None,
+            presentation: with_id.into(),
         })
     );
 }

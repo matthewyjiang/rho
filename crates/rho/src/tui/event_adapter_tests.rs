@@ -111,10 +111,12 @@ fn physical_provider_retry_maps_to_typed_view_model_event() {
 fn provider_native_web_search_maps_to_tool_finished_view() {
     let mut adapter = SdkEventAdapter::default();
 
-    let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
-        only_event(adapter.translate(RunEvent::WebSearch {
-            detail: "rho docs".into(),
-        }))
+    let ViewEvent::Update(ViewModelEvent::ToolFinished {
+        presentation: crate::presentation::Presentation::Card(card),
+        ..
+    }) = only_event(adapter.translate(RunEvent::WebSearch {
+        detail: "rho docs".into(),
+    }))
     else {
         panic!("expected web search tool finished");
     };
@@ -138,11 +140,13 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
 fn provider_native_hosted_tool_activity_maps_to_tool_finished_view() {
     let mut adapter = SdkEventAdapter::default();
 
-    let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
-        only_event(adapter.translate(RunEvent::HostedToolActivity {
-            name: "x_search".into(),
-            detail: "xAI".into(),
-        }))
+    let ViewEvent::Update(ViewModelEvent::ToolFinished {
+        presentation: crate::presentation::Presentation::Card(card),
+        ..
+    }) = only_event(adapter.translate(RunEvent::HostedToolActivity {
+        name: "x_search".into(),
+        detail: "xAI".into(),
+    }))
     else {
         panic!("expected hosted tool activity finished");
     };
@@ -164,11 +168,13 @@ fn provider_native_hosted_tool_activity_maps_to_tool_finished_view() {
 fn unknown_hosted_tool_activity_uses_default_family() {
     let mut adapter = SdkEventAdapter::default();
 
-    let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
-        only_event(adapter.translate(RunEvent::HostedToolActivity {
-            name: "code_interpreter".into(),
-            detail: "ran analysis".into(),
-        }))
+    let ViewEvent::Update(ViewModelEvent::ToolFinished {
+        presentation: crate::presentation::Presentation::Card(card),
+        ..
+    }) = only_event(adapter.translate(RunEvent::HostedToolActivity {
+        name: "code_interpreter".into(),
+        detail: "ran analysis".into(),
+    }))
     else {
         panic!("expected hosted tool activity finished");
     };
@@ -191,11 +197,13 @@ fn unknown_hosted_tool_activity_uses_default_family() {
 fn hosted_tool_activity_without_detail_uses_only_finished_fact() {
     let mut adapter = SdkEventAdapter::default();
 
-    let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
-        only_event(adapter.translate(RunEvent::HostedToolActivity {
-            name: "x_search".into(),
-            detail: String::new(),
-        }))
+    let ViewEvent::Update(ViewModelEvent::ToolFinished {
+        presentation: crate::presentation::Presentation::Card(card),
+        ..
+    }) = only_event(adapter.translate(RunEvent::HostedToolActivity {
+        name: "x_search".into(),
+        detail: String::new(),
+    }))
     else {
         panic!("expected hosted tool activity finished");
     };
@@ -356,7 +364,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
 
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: translated_call_id,
-        card,
+        presentation: crate::presentation::Presentation::Card(card),
         ..
     }) = only_event(adapter.translate(RunEvent::ToolFinished {
         call_id: call_id.clone(),
@@ -492,11 +500,13 @@ fn write_does_not_label_a_mixed_omitted_diff_as_no_changes() {
             .diff("No changes.\n\nDiff omitted: test reason."),
     );
 
-    let ViewEvent::Update(ViewModelEvent::ToolFinished { card, .. }) =
-        only_event(adapter.translate(RunEvent::ToolFinished {
-            call_id,
-            result: ToolCompletion::Success(output),
-        }))
+    let ViewEvent::Update(ViewModelEvent::ToolFinished {
+        presentation: crate::presentation::Presentation::Card(card),
+        ..
+    }) = only_event(adapter.translate(RunEvent::ToolFinished {
+        call_id,
+        result: ToolCompletion::Success(output),
+    }))
     else {
         panic!("expected translated tool completion");
     };
@@ -533,7 +543,7 @@ fn forwards_image_asset_on_tool_completion() {
     let ViewEvent::Update(ViewModelEvent::ToolFinished {
         call_id: translated_call_id,
         image_asset,
-        card,
+        presentation: crate::presentation::Presentation::Card(card),
         ..
     }) = only_event(adapter.translate(RunEvent::ToolFinished {
         call_id: call_id.clone(),
@@ -585,7 +595,7 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
         &events[0],
         ViewEvent::Update(ViewModelEvent::ToolFinished {
             call_id,
-            card,
+            presentation: crate::presentation::Presentation::Card(card),
             ..
         }) if call_id == &crate::tui::compaction_display::compaction_call_id()
             && card.status == ToolStatus::Error
@@ -615,7 +625,7 @@ fn compaction_cancel_closes_open_tool_block_before_run_cancelled() {
         &events[0],
         ViewEvent::Update(ViewModelEvent::ToolFinished {
             call_id,
-            card,
+            presentation: crate::presentation::Presentation::Card(card),
             ..
         }) if call_id == &crate::tui::compaction_display::compaction_call_id()
             && card.status == ToolStatus::Interrupted

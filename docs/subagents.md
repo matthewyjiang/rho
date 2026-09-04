@@ -99,6 +99,8 @@ This keeps different tasks using the same agent role distinguishable.
 
 The excerpt uses your `display.max_tool_output_lines` setting. Press `Ctrl+O` or click
 the card to see the complete message, full task title, run ID, and attach command.
+Surrounding whitespace is trimmed to match the text accepted for delivery. The
+durable receipt remains plain text for ACP clients and exported transcripts.
 Short messages can also expand to show those details. Queued means the message was
 accepted for delivery, not that the child has acted on it or completed its task.
 Child-to-parent `message_parent` notices keep their existing notification display.

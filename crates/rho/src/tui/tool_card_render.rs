@@ -103,10 +103,13 @@ pub(super) fn tool_entry_lines(
 /// Render paths fold this into the painted fact instead of cloning the card
 /// with a rewritten clock, so a running shell costs no per-frame body copy.
 pub(super) fn live_shell_elapsed(tool: &ToolEntry) -> Option<Duration> {
-    if !matches!(tool.card.header, ToolHeader::Shell { .. }) {
+    let crate::presentation::Presentation::Card(card) = &tool.presentation else {
+        return None;
+    };
+    if !matches!(card.header, ToolHeader::Shell { .. }) {
         return None;
     }
-    match tool.card.status {
+    match card.status {
         ToolStatus::Running => tool.started_at.map(|started_at| started_at.elapsed()),
         ToolStatus::Interrupted | ToolStatus::Ok | ToolStatus::Error => None,
     }
@@ -125,32 +128,44 @@ fn timeout_text(seconds: Option<u64>) -> String {
     }
 }
 
-/// Select the host presentation before painting, shared by history and attach.
+/// Paint the selected presentation, shared by live cache, history, and attach.
+pub(super) fn paint_entry_sections(
+    tool: &ToolEntry,
+    width: usize,
+    max_tool_output_lines: usize,
+) -> CardSections {
+    match &tool.presentation {
+        crate::presentation::Presentation::Message(message) => {
+            super::message_card_render::message_card_sections(
+                message,
+                width,
+                max_tool_output_lines,
+                tool.expanded,
+            )
+        }
+        crate::presentation::Presentation::Card(card) => paint_card_sections(
+            card,
+            width,
+            max_tool_output_lines,
+            tool.expanded,
+            live_shell_elapsed(tool),
+        ),
+    }
+}
+
 pub(super) fn push_tool_entry(
     lines: &mut Vec<Line<'static>>,
     tool: &ToolEntry,
     width: usize,
     max_tool_output_lines: usize,
 ) {
-    if let Some(message) = &tool.message {
-        lines.extend(super::message_card_render::message_card_lines(
-            message,
-            width,
-            max_tool_output_lines,
-            tool.expanded,
-        ));
-    } else {
-        push_tool_card(
-            lines,
-            &tool.card,
-            width,
-            max_tool_output_lines,
-            tool.expanded,
-            live_shell_elapsed(tool),
-        );
-    }
+    let sections = paint_entry_sections(tool, width, max_tool_output_lines);
+    lines.extend(sections.header);
+    lines.extend(sections.facts);
+    lines.extend(sections.body);
 }
 
+#[cfg(test)]
 pub(super) fn push_tool_card(
     lines: &mut Vec<Line<'static>>,
     card: &ToolCard,

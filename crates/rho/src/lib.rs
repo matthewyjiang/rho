@@ -32,6 +32,7 @@ mod permission;
 mod permission_classifier;
 mod permission_classifier_handler;
 mod plugins;
+mod presentation;
 mod prompt;
 mod prompt_history;
 mod prompt_templates;

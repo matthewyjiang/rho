@@ -61,7 +61,9 @@ pub(super) async fn intercept(
         (
             FIRST_MESSAGE,
             FIRST_CALL,
-            "Keep cache changes isolated from routing.".to_string(),
+            // Delivery trims surrounding whitespace; it must not consume the
+            // transcript preview budget or hide the actual message.
+            "\n\n  Keep cache changes isolated from routing.  \n".to_string(),
         ),
         (
             SECOND_MESSAGE,

@@ -15,7 +15,7 @@ use super::super::{
     theme::Theme,
     LiveCardRenderCache, ToolEntry,
 };
-use super::{live_elapsed_label, live_shell_elapsed, paint_card_sections, paint_live_prefix};
+use super::{live_elapsed_label, live_shell_elapsed, paint_entry_sections, paint_live_prefix};
 
 impl ToolEntry {
     /// Cached live-card paint. Rebuilds when layout, theme, or expand state
@@ -59,27 +59,7 @@ impl ToolEntry {
         }
 
         let inner_width = padded_content_width(width);
-        let sections = if let Some(message) = &self.message {
-            super::CardSections {
-                header: super::super::message_card_render::message_card_lines(
-                    message,
-                    inner_width,
-                    max_tool_output_lines,
-                    self.expanded,
-                ),
-                facts: Vec::new(),
-                body: Vec::new(),
-                last_fact_is_end: false,
-            }
-        } else {
-            paint_card_sections(
-                &self.card,
-                inner_width,
-                max_tool_output_lines,
-                self.expanded,
-                live_shell_elapsed(self),
-            )
-        };
+        let sections = paint_entry_sections(self, inner_width, max_tool_output_lines);
         let last_fact_is_end = sections.last_fact_is_end;
         let header = sections.header;
         let mut prefix = header.clone();
@@ -123,12 +103,15 @@ impl ToolEntry {
         max_image_height: u16,
         elapsed_label: Option<&str>,
     ) -> bool {
+        let crate::presentation::Presentation::Card(card) = &self.presentation else {
+            return false;
+        };
         let Some(cache) = self.render_cache.as_ref() else {
             return false;
         };
         let inner_width = padded_content_width(width);
         let prefix = paint_live_prefix(
-            &self.card,
+            card,
             inner_width,
             live_shell_elapsed(self),
             cache.last_fact_is_end,

@@ -33,7 +33,7 @@ fn mixed_partial_and_complete_envelopes_emit_presentation_once() {
         count_attachments(&effects, |event| {
             matches!(
                 event,
-                AttachmentEvent::ToolFinished { card, .. } if card.status == rho_tools::tool_card::ToolStatus::Ok
+                AttachmentEvent::ToolFinished { presentation: crate::presentation::Presentation::Card(card), .. } if card.status == rho_tools::tool_card::ToolStatus::Ok
             )
         }),
         1,
@@ -88,7 +88,7 @@ fn partial_tool_only_plus_complete_only_text_and_reasoning() {
         count_attachments(&effects, |event| {
             matches!(
                 event,
-                AttachmentEvent::ToolFinished { card, .. } if card.status == rho_tools::tool_card::ToolStatus::Ok
+                AttachmentEvent::ToolFinished { presentation: crate::presentation::Presentation::Card(card), .. } if card.status == rho_tools::tool_card::ToolStatus::Ok
             )
         }),
         1
@@ -160,7 +160,7 @@ fn indexless_partials_do_not_duplicate_on_complete_envelope() {
         count_attachments(&effects, |event| {
             matches!(
                 event,
-                AttachmentEvent::ToolFinished { card, .. } if card.status == rho_tools::tool_card::ToolStatus::Ok
+                AttachmentEvent::ToolFinished { presentation: crate::presentation::Presentation::Card(card), .. } if card.status == rho_tools::tool_card::ToolStatus::Ok
             )
         }),
         1
@@ -375,7 +375,7 @@ fn some_blocks_streamed_others_complete_only_within_one_message() {
         count_attachments(&effects, |event| {
             matches!(
                 event,
-                AttachmentEvent::ToolFinished { card, .. } if card.status == rho_tools::tool_card::ToolStatus::Ok
+                AttachmentEvent::ToolFinished { presentation: crate::presentation::Presentation::Card(card), .. } if card.status == rho_tools::tool_card::ToolStatus::Ok
             )
         }),
         1
@@ -411,7 +411,7 @@ fn maps_live_tool_roundtrip_capture() {
         count_attachments(&effects, |event| {
             matches!(
                 event,
-                AttachmentEvent::ToolFinished { card, .. }
+                AttachmentEvent::ToolFinished { presentation: crate::presentation::Presentation::Card(card), .. }
                     if card.status == rho_tools::tool_card::ToolStatus::Ok
                         && card.header_text().contains("Read")
                         && card.header_text().contains("note.txt")

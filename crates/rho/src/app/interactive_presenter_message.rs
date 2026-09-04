@@ -2,7 +2,7 @@
 
 use super::{ToolKind, ToolView};
 use crate::{
-    app::message_card::{MessageCard, MessageDelivery},
+    presentation::{MessageCard, MessageDelivery},
     tools::agent::message_receipt::MessageReceipt,
 };
 
@@ -26,7 +26,7 @@ pub(super) fn finished_message(
         sender: "parent".into(),
         recipient,
         delivery: MessageDelivery::Queued,
-        body: view.arguments.get("message")?.as_str()?.into(),
+        body: view.arguments.get("message")?.as_str()?.trim().into(),
         details: vec![
             format!("run: {run_id}"),
             format!("attach: rho attach {run_id}"),

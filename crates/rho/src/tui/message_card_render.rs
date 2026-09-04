@@ -2,19 +2,20 @@
 
 use ratatui::text::{Line, Span};
 
-use crate::app::message_card::{MessageCard, MessageDelivery};
+use crate::presentation::{MessageCard, MessageDelivery};
 
 use super::{
     render::{push_wrapped_text, truncate_one_line, LineFill},
     theme::Theme,
+    tool_card_render::CardSections,
 };
 
-pub(super) fn message_card_lines(
+pub(super) fn message_card_sections(
     message: &MessageCard,
     width: usize,
     preview_lines: usize,
     expanded: bool,
-) -> Vec<Line<'static>> {
+) -> CardSections {
     let content_width = width.saturating_sub(2).max(1);
     let mut lines = vec![Line::from(vec![
         Span::styled("↳ ", Theme::dim()),
@@ -36,16 +37,15 @@ pub(super) fn message_card_lines(
     if !expanded {
         body.truncate(budget);
     }
-    lines.extend(body);
     if expanded {
         push_indented(
-            &mut lines,
+            &mut body,
             &format!("task: {}", message.title),
             content_width,
             Theme::dim(),
         );
         for detail in &message.details {
-            push_indented(&mut lines, detail, content_width, Theme::dim());
+            push_indented(&mut body, detail, content_width, Theme::dim());
         }
     }
     let hint = if expanded {
@@ -55,8 +55,13 @@ pub(super) fn message_card_lines(
     } else {
         "Ctrl+O details".to_string()
     };
-    push_indented(&mut lines, &hint, content_width, Theme::dim());
-    lines
+    push_indented(&mut body, &hint, content_width, Theme::dim());
+    CardSections {
+        header: lines,
+        facts: Vec::new(),
+        body,
+        last_fact_is_end: false,
+    }
 }
 
 fn push_indented(
