@@ -294,7 +294,7 @@ async fn execute_turn_loop(
             Err(error) if cancellation.is_cancelled() => {
                 control
                     .async_jobs
-                    .interrupt(&mut history, hooks, &events, &cancellation)
+                    .interrupt(&mut history, hooks, &events)
                     .await;
                 return commit_terminal(
                     core,
@@ -308,7 +308,7 @@ async fn execute_turn_loop(
             Err(error) => {
                 control
                     .async_jobs
-                    .interrupt(&mut history, hooks, &events, &cancellation)
+                    .interrupt(&mut history, hooks, &events)
                     .await;
                 return commit_terminal(
                     core,
@@ -371,18 +371,20 @@ async fn execute_turn_loop(
         // Detached jobs may keep using shared resources for their lifetime.
         // Wait before entering the synchronous scheduler, which may run an
         // exclusive plan and must not overlap that work.
-        if !sync_calls.is_empty() && control.async_jobs.has_pending() {
-            if let Err(error) = await_all_jobs(&mut control).await {
-                return terminate_run(
-                    core,
-                    history,
-                    control.async_jobs,
-                    hooks,
-                    &events,
-                    &cancellation,
-                    error,
-                )
-                .await;
+        if !sync_calls.is_empty() {
+            if control.async_jobs.has_pending() {
+                if let Err(error) = await_all_jobs(&mut control).await {
+                    return terminate_run(
+                        core,
+                        history,
+                        control.async_jobs,
+                        hooks,
+                        &events,
+                        &cancellation,
+                        error,
+                    )
+                    .await;
+                }
             }
             control.async_jobs.drain_finished(&mut history);
         }
@@ -399,7 +401,7 @@ async fn execute_turn_loop(
             if should_interrupt_jobs {
                 control
                     .async_jobs
-                    .interrupt(&mut history, hooks, &events, &cancellation)
+                    .interrupt(&mut history, hooks, &events)
                     .await;
             }
             history = match resolve_tool_turn_result(
@@ -531,9 +533,7 @@ async fn execute_turn_loop(
         return Ok(outcome);
     }
 
-    async_jobs
-        .interrupt(&mut history, hooks, &events, &cancellation)
-        .await;
+    async_jobs.interrupt(&mut history, hooks, &events).await;
     let last_content = final_assistant_content(&history);
     let revision = core.commit(history)?;
     let outcome = RunOutcome::new(
@@ -567,9 +567,7 @@ async fn terminate_run(
     cancellation: &CancellationToken,
     error: Error,
 ) -> Result<RunOutcome, Error> {
-    async_jobs
-        .interrupt(&mut history, hooks, events, cancellation)
-        .await;
+    async_jobs.interrupt(&mut history, hooks, events).await;
     match error {
         Error::Cancelled => {
             commit_terminal_history(core, history, TerminalKind::Cancelled, events).await
