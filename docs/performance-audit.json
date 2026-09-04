@@ -1,0 +1,3681 @@
+{
+  "date": "2026-09-04",
+  "baseline_commit": "06d1ff283a44eb7faa0dae19f9b1aa4817402d84",
+  "candidate_commit": "79443daee12d91a7432477fcc2b55ab844c63db9",
+  "machine": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           48 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  12\nOn-line CPU(s) list:                     0-11\nVendor ID:                               AuthenticAMD\nModel name:                              AMD Ryzen 5 5600X 6-Core Processor\nCPU family:                              25\nModel:                                   33\nThread(s) per core:                      2\nCore(s) per socket:                      6\nSocket(s):                               1\nStepping:                                0\nFrequency boost:                         enabled\nCPU(s) scaling MHz:                      83%\nCPU max MHz:                             4651.0000\nCPU min MHz:                             550.0000\nrustc 1.92.0 (ded5c06cf 2025-12-08)\n06d1ff283a44eb7faa0dae19f9b1aa4817402d84\nLinux 6.12.96+deb13-amd64\n",
+  "settings": {
+    "cpu_affinity": [
+      0
+    ],
+    "rounds": 3,
+    "order": [
+      "baseline,candidate",
+      "candidate,baseline",
+      "baseline,candidate"
+    ],
+    "profile": {
+      "test_opt_level": 3,
+      "test_debug": 0,
+      "build_jobs": 4
+    },
+    "RHO_BENCH_SAMPLES": 7,
+    "executables": {
+      "baseline": {
+        "rho_sdk": {
+          "sha256": "347f814d95d45980fae3b738fb5c5f0a9d34aa0ceff11db2314c2009a6e48617",
+          "fresh": false
+        },
+        "rho_providers": {
+          "sha256": "21ae0c11e931e5d3a04402bbc3f1321ff95acd3ada003ea5a796efb2ec5d75bb",
+          "fresh": false
+        },
+        "rho": {
+          "sha256": "363f61ca84c74f3835ab16564410e24d39e583a2bfd7a4ac96fecbd2f3607872",
+          "fresh": false
+        }
+      },
+      "candidate": {
+        "rho_sdk": {
+          "sha256": "495d85e13db61b41fab8f6f5d3504c25c73540bbffa7f43db369e83698cc512e",
+          "fresh": false
+        },
+        "rho_providers": {
+          "sha256": "889021bd7cd83cfffa854df5e0446ccf035dec94a42a7300d2199fa470295be1",
+          "fresh": false
+        },
+        "rho": {
+          "sha256": "fafb9d5a82bfd235fea114a0c42937c82519d156ddc6fb11af42ec5a1328af80",
+          "fresh": false
+        }
+      }
+    }
+  },
+  "summary_units": "nanoseconds per call for iterations_per_sample batches, otherwise per complete workload",
+  "summary": [
+    {
+      "workload": {
+        "scenario": "reasoning_capture",
+        "delta_bytes": 64,
+        "chunks": 16384,
+        "iterations_per_sample": 20
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 474212.65,
+        "p95_ns": 507627.35
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 410241.35,
+        "p95_ns": 588252.45
+      },
+      "speedup": 1.1559357680545856
+    },
+    {
+      "workload": {
+        "scenario": "context_estimation_reuse",
+        "compaction_enabled": false,
+        "messages": 256,
+        "replay_bytes_per_message": 8192,
+        "iterations_per_sample": 10
+      },
+      "baseline": {
+        "samples": 15,
+        "median_ns": 1931319.2,
+        "p95_ns": 2114615.2
+      },
+      "candidate": {
+        "samples": 15,
+        "median_ns": 2079793.6,
+        "p95_ns": 5208280.0
+      },
+      "speedup": 0.9286109929369913
+    },
+    {
+      "workload": {
+        "scenario": "context_estimation_reuse",
+        "compaction_enabled": true,
+        "messages": 256,
+        "replay_bytes_per_message": 8192,
+        "iterations_per_sample": 10
+      },
+      "baseline": {
+        "samples": 15,
+        "median_ns": 3570557.8,
+        "p95_ns": 3696136.3
+      },
+      "candidate": {
+        "samples": 15,
+        "median_ns": 1919934.2,
+        "p95_ns": 4491469.6
+      },
+      "speedup": 1.859729255304687
+    },
+    {
+      "workload": {
+        "scenario": "session_summarize_growing",
+        "nodes": 1000,
+        "history_messages": 2000
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 500394143.0,
+        "p95_ns": 516293346.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 8198527.0,
+        "p95_ns": 17613029.0
+      },
+      "speedup": 61.03463988104205
+    },
+    {
+      "workload": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 1000,
+        "history_messages": 2000
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 498651127.0,
+        "p95_ns": 571184324.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 8223479.0,
+        "p95_ns": 17258251.0
+      },
+      "speedup": 60.63749016687463
+    },
+    {
+      "workload": {
+        "scenario": "session_summarize_growing",
+        "nodes": 250,
+        "history_messages": 500
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 31230956.0,
+        "p95_ns": 49784664.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 2086642.0,
+        "p95_ns": 3984801.0
+      },
+      "speedup": 14.967088748333447
+    },
+    {
+      "workload": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 250,
+        "history_messages": 500
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 30822918.0,
+        "p95_ns": 50762533.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 2095323.0,
+        "p95_ns": 4009102.0
+      },
+      "speedup": 14.710342033185338
+    },
+    {
+      "workload": {
+        "scenario": "session_summarize_growing",
+        "nodes": 4000,
+        "history_messages": 8000
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 10315106303.0,
+        "p95_ns": 13241249794.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 38295100.0,
+        "p95_ns": 60984802.0
+      },
+      "speedup": 269.3583853547843
+    },
+    {
+      "workload": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 4000,
+        "history_messages": 8000
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 10368656096.0,
+        "p95_ns": 15419861924.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 38475105.0,
+        "p95_ns": 60750628.0
+      },
+      "speedup": 269.49000128784576
+    },
+    {
+      "workload": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 1000,
+        "history_messages_first_sample": 2004,
+        "history_messages_last_sample": 2016
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 1315517.0,
+        "p95_ns": 1375439.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 388578.0,
+        "p95_ns": 790926.0
+      },
+      "speedup": 3.385464436998492
+    },
+    {
+      "workload": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 250,
+        "history_messages_first_sample": 504,
+        "history_messages_last_sample": 516
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 447329.0,
+        "p95_ns": 487870.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 200124.0,
+        "p95_ns": 330467.0
+      },
+      "speedup": 2.235259139333613
+    },
+    {
+      "workload": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 4000,
+        "history_messages_first_sample": 8004,
+        "history_messages_last_sample": 8016
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 7188646.0,
+        "p95_ns": 11560196.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 1642104.0,
+        "p95_ns": 6836389.0
+      },
+      "speedup": 4.377704457208557
+    },
+    {
+      "workload": {
+        "scenario": "codex_candidate_bookkeeping",
+        "input_items": 1024,
+        "output_bytes_per_item": 2048,
+        "iterations_per_sample": 20
+      },
+      "baseline": {
+        "samples": 15,
+        "median_ns": 1661665.85,
+        "p95_ns": 1821854.1
+      },
+      "candidate": {
+        "samples": 15,
+        "median_ns": 394912.5,
+        "p95_ns": 942721.75
+      },
+      "speedup": 4.207681068591143
+    },
+    {
+      "workload": {
+        "scenario": "codex_candidate_bookkeeping",
+        "input_items": 64,
+        "output_bytes_per_item": 2048,
+        "iterations_per_sample": 20
+      },
+      "baseline": {
+        "samples": 15,
+        "median_ns": 77662.1,
+        "p95_ns": 104461.15
+      },
+      "candidate": {
+        "samples": 15,
+        "median_ns": 27039.55,
+        "p95_ns": 82108.65
+      },
+      "speedup": 2.8721668814754686
+    },
+    {
+      "workload": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 1048576,
+        "iterations_per_sample": 100
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 20333.11,
+        "p95_ns": 22191.35
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 100.0,
+        "p95_ns": 182.0
+      },
+      "speedup": 203.3311
+    },
+    {
+      "workload": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 262144,
+        "iterations_per_sample": 100
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 4552.59,
+        "p95_ns": 4718.9
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 127.6,
+        "p95_ns": 184.6
+      },
+      "speedup": 35.67860501567398
+    },
+    {
+      "workload": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 8388608,
+        "iterations_per_sample": 100
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 160772.57,
+        "p95_ns": 163123.32
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 104.6,
+        "p95_ns": 195.1
+      },
+      "speedup": 1537.022657743786
+    },
+    {
+      "workload": {
+        "scenario": "styled_wraps",
+        "size": 1024,
+        "operations": 1
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 208505.0,
+        "p95_ns": 209614.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 80612.0,
+        "p95_ns": 105752.0
+      },
+      "speedup": 2.5865255793182156
+    },
+    {
+      "workload": {
+        "scenario": "styled_wraps",
+        "size": 256,
+        "operations": 1
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 25641.0,
+        "p95_ns": 26600.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 17921.0,
+        "p95_ns": 32410.0
+      },
+      "speedup": 1.4307795323921657
+    },
+    {
+      "workload": {
+        "scenario": "styled_wraps",
+        "size": 4096,
+        "operations": 1
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 2324647.0,
+        "p95_ns": 2342508.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 319987.0,
+        "p95_ns": 533431.0
+      },
+      "speedup": 7.264817008190958
+    },
+    {
+      "workload": {
+        "scenario": "fence_stream_commits",
+        "size": 1024,
+        "operations": 1024
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 21417365.0,
+        "p95_ns": 21760133.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 1617753.0,
+        "p95_ns": 2655764.0
+      },
+      "speedup": 13.238958604929183
+    },
+    {
+      "workload": {
+        "scenario": "tail_updates_by_history_size",
+        "size": 1024,
+        "operations": 128
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 510211.0,
+        "p95_ns": 519531.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 85152.0,
+        "p95_ns": 103932.0
+      },
+      "speedup": 5.991767662532882
+    },
+    {
+      "workload": {
+        "scenario": "tail_updates_by_history_size",
+        "size": 256,
+        "operations": 128
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 427059.0,
+        "p95_ns": 438799.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 85091.0,
+        "p95_ns": 87812.0
+      },
+      "speedup": 5.0188504072111035
+    },
+    {
+      "workload": {
+        "scenario": "tail_updates_by_history_size",
+        "size": 4096,
+        "operations": 128
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 931559.0,
+        "p95_ns": 966189.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 85602.0,
+        "p95_ns": 104872.0
+      },
+      "speedup": 10.882444335412725
+    },
+    {
+      "workload": {
+        "scenario": "fence_stream_commits",
+        "size": 256,
+        "operations": 256
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 1696964.0,
+        "p95_ns": 1735915.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 413448.0,
+        "p95_ns": 855967.0
+      },
+      "speedup": 4.104419419128887
+    },
+    {
+      "workload": {
+        "scenario": "fence_stream_commits",
+        "size": 4096,
+        "operations": 4096
+      },
+      "baseline": {
+        "samples": 21,
+        "median_ns": 321520910.0,
+        "p95_ns": 329873558.0
+      },
+      "candidate": {
+        "samples": 21,
+        "median_ns": 6439692.0,
+        "p95_ns": 11438973.0
+      },
+      "speedup": 49.927995003487744
+    }
+  ],
+  "reasoning_memory": {
+    "workload": {
+      "reasoning_bytes": 67108864,
+      "chunks": 1048576,
+      "delta_bytes": 64,
+      "iterations": 1
+    },
+    "measurement": "Linux whole-child peak RSS via resource.getrusage(RUSAGE_CHILDREN).ru_maxrss, KiB; one child per wrapper, including startup/launcher overhead",
+    "baseline": {
+      "peak_rss_kib_samples": [
+        70428,
+        70400,
+        70548
+      ],
+      "median_peak_rss_kib": 70428
+    },
+    "candidate": {
+      "peak_rss_kib_samples": [
+        11364,
+        11380,
+        11368
+      ],
+      "median_peak_rss_kib": 11368
+    }
+  },
+  "raw_measurements": [
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 250,
+        "history_messages": 500,
+        "bytes": 709916,
+        "samples_ns": [
+          31009351,
+          31027833,
+          30964971,
+          30627774,
+          30706535,
+          30822918,
+          30731286
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 250,
+        "history_messages": 500,
+        "bytes": 709916,
+        "samples_ns": [
+          31230956,
+          30684856,
+          32792907,
+          32043563,
+          31932981,
+          30884649,
+          31011511
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 250,
+        "history_messages_first_sample": 504,
+        "history_messages_last_sample": 516,
+        "samples_ns": [
+          447329,
+          447070,
+          434549,
+          437449,
+          438909,
+          431859,
+          431519
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 1000,
+        "history_messages": 2000,
+        "bytes": 2841417,
+        "samples_ns": [
+          496196358,
+          488938920,
+          496875353,
+          498389583,
+          496313200,
+          495379772,
+          503867105
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 1000,
+        "history_messages": 2000,
+        "bytes": 2841417,
+        "samples_ns": [
+          492637865,
+          497157969,
+          500394143,
+          495866982,
+          491878950,
+          492201747,
+          495253429
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 1000,
+        "history_messages_first_sample": 2004,
+        "history_messages_last_sample": 2016,
+        "samples_ns": [
+          1367657,
+          1335288,
+          1248126,
+          1294006,
+          1253066,
+          1257856,
+          1246835
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 4000,
+        "history_messages": 8000,
+        "bytes": 11385416,
+        "samples_ns": [
+          10183071211,
+          10460790628,
+          10553408594,
+          10206725100,
+          10441298269,
+          10351425296,
+          10368656096
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 4000,
+        "history_messages": 8000,
+        "bytes": 11385416,
+        "samples_ns": [
+          10398247959,
+          10386694061,
+          10315106303,
+          10043960659,
+          10718221492,
+          19031268770,
+          13241249794
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 4000,
+        "history_messages_first_sample": 8004,
+        "history_messages_last_sample": 8016,
+        "samples_ns": [
+          8355040,
+          8234957,
+          8154636,
+          8529233,
+          9290569,
+          12075636,
+          11560196
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 262144,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          501891,
+          470569,
+          471890,
+          467360,
+          455159,
+          456129,
+          455980
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 1048576,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          2308256,
+          2084613,
+          2121693,
+          2136614,
+          2106442,
+          2079093,
+          2032141
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 8388608,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          16194610,
+          16028176,
+          16527108,
+          16312332,
+          16198750,
+          16183740,
+          16066137
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 256,
+        "operations": 256,
+        "samples_ns": [
+          1696964,
+          1697044,
+          1697475,
+          1698025,
+          1700695,
+          1703364,
+          1722015
+        ],
+        "median_ns": 1698025
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 1024,
+        "operations": 1024,
+        "samples_ns": [
+          21609351,
+          21618471,
+          21646551,
+          21647862,
+          21697112,
+          21760133,
+          21769423
+        ],
+        "median_ns": 21647862
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 4096,
+        "operations": 4096,
+        "samples_ns": [
+          323044601,
+          324651514,
+          324738915,
+          325160004,
+          325545511,
+          326124203,
+          442638916
+        ],
+        "median_ns": 325160004
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 256,
+        "operations": 1,
+        "samples_ns": [
+          25491,
+          25500,
+          25580,
+          25621,
+          25640,
+          25821,
+          26600
+        ],
+        "median_ns": 25621
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 1024,
+        "operations": 1,
+        "samples_ns": [
+          208704,
+          209094,
+          209194,
+          209235,
+          209404,
+          209564,
+          210144
+        ],
+        "median_ns": 209235
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 4096,
+        "operations": 1,
+        "samples_ns": [
+          2333128,
+          2333177,
+          2334097,
+          2334498,
+          2337827,
+          2338058,
+          2367898
+        ],
+        "median_ns": 2334498
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 256,
+        "operations": 128,
+        "samples_ns": [
+          431919,
+          432209,
+          433799,
+          434319,
+          435109,
+          436029,
+          438799
+        ],
+        "median_ns": 434319
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 1024,
+        "operations": 128,
+        "samples_ns": [
+          512160,
+          512370,
+          513531,
+          515061,
+          516460,
+          518790,
+          519531
+        ],
+        "median_ns": 515061
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 4096,
+        "operations": 128,
+        "samples_ns": [
+          955470,
+          955850,
+          956470,
+          961530,
+          964600,
+          966189,
+          982960
+        ],
+        "median_ns": 961530
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "context_estimation_reuse",
+        "compaction_enabled": false,
+        "messages": 256,
+        "replay_bytes_per_message": 8192,
+        "iterations_per_sample": 10,
+        "samples_ns": [
+          20696751,
+          19313192,
+          19509877,
+          19785394,
+          19514418
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "context_estimation_reuse",
+        "compaction_enabled": true,
+        "messages": 256,
+        "replay_bytes_per_message": 8192,
+        "iterations_per_sample": 10,
+        "samples_ns": [
+          35918512,
+          36188228,
+          35996405,
+          35666647,
+          36533086
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "reasoning_capture",
+        "delta_bytes": 64,
+        "chunks": 16384,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          10204477,
+          9486323,
+          9504374,
+          9503094,
+          9484253,
+          9517794,
+          9574505
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho_providers",
+      "measurement": {
+        "scenario": "codex_candidate_bookkeeping",
+        "input_items": 64,
+        "output_bytes_per_item": 2048,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          1816547,
+          1553242,
+          1565072,
+          1553882,
+          1548231
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 1,
+      "binary": "rho_providers",
+      "measurement": {
+        "scenario": "codex_candidate_bookkeeping",
+        "input_items": 1024,
+        "output_bytes_per_item": 2048,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          35878561,
+          33233317,
+          33394800,
+          33206517,
+          33347168
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 250,
+        "history_messages": 500,
+        "bytes": 709916,
+        "samples_ns": [
+          2094063,
+          2025341,
+          2090662,
+          2019902,
+          2118303,
+          2076882,
+          2030911
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 250,
+        "history_messages": 500,
+        "bytes": 709916,
+        "samples_ns": [
+          2084873,
+          2102133,
+          2023190,
+          2107233,
+          2052213,
+          2086642,
+          2051411
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 250,
+        "history_messages_first_sample": 504,
+        "history_messages_last_sample": 516,
+        "samples_ns": [
+          207354,
+          200124,
+          196854,
+          198154,
+          194714,
+          198934,
+          195844
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 1000,
+        "history_messages": 2000,
+        "bytes": 2841417,
+        "samples_ns": [
+          8338289,
+          8113955,
+          8223479,
+          8049564,
+          8082445,
+          8118495,
+          8143946
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 1000,
+        "history_messages": 2000,
+        "bytes": 2841417,
+        "samples_ns": [
+          8126216,
+          8102595,
+          8162666,
+          8159506,
+          8151196,
+          8198527,
+          8114905
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 1000,
+        "history_messages_first_sample": 2004,
+        "history_messages_last_sample": 2016,
+        "samples_ns": [
+          385438,
+          387778,
+          376797,
+          398078,
+          365707,
+          389788,
+          372647
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 4000,
+        "history_messages": 8000,
+        "bytes": 11385416,
+        "samples_ns": [
+          38172688,
+          37924012,
+          37900873,
+          38548354,
+          38475105,
+          38767770,
+          38661657
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 4000,
+        "history_messages": 8000,
+        "bytes": 11385416,
+        "samples_ns": [
+          38248309,
+          38735349,
+          38295100,
+          39058026,
+          40586977,
+          38000374,
+          37968563
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 4000,
+        "history_messages_first_sample": 8004,
+        "history_messages_last_sample": 8016,
+        "samples_ns": [
+          1728665,
+          1827857,
+          1331127,
+          1520811,
+          1290606,
+          1511920,
+          1347867
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 262144,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          10261,
+          9830,
+          9800,
+          9820,
+          9870,
+          9831,
+          9770
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 1048576,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          10000,
+          9880,
+          9800,
+          9821,
+          9800,
+          9820,
+          9850
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 8388608,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          10420,
+          9901,
+          9800,
+          9800,
+          9800,
+          9870,
+          9771
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 256,
+        "operations": 256,
+        "samples_ns": [
+          400228,
+          400698,
+          401459,
+          402238,
+          402758,
+          413448,
+          433099
+        ],
+        "median_ns": 402238
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 1024,
+        "operations": 1024,
+        "samples_ns": [
+          1586152,
+          1589742,
+          1597373,
+          1606803,
+          1614603,
+          1617183,
+          1618513
+        ],
+        "median_ns": 1606803
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 4096,
+        "operations": 4096,
+        "samples_ns": [
+          6353750,
+          6384390,
+          6400841,
+          6419711,
+          6439101,
+          6498972,
+          6513224
+        ],
+        "median_ns": 6419711
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 256,
+        "operations": 1,
+        "samples_ns": [
+          16800,
+          16820,
+          16830,
+          16911,
+          17081,
+          17921,
+          22020
+        ],
+        "median_ns": 16911
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 1024,
+        "operations": 1,
+        "samples_ns": [
+          79872,
+          79921,
+          80432,
+          80532,
+          80612,
+          80641,
+          82311
+        ],
+        "median_ns": 80532
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 4096,
+        "operations": 1,
+        "samples_ns": [
+          312546,
+          318636,
+          319156,
+          319667,
+          319987,
+          326367,
+          332737
+        ],
+        "median_ns": 319667
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 256,
+        "operations": 128,
+        "samples_ns": [
+          84282,
+          84392,
+          84462,
+          84901,
+          85091,
+          85281,
+          87361
+        ],
+        "median_ns": 84901
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 1024,
+        "operations": 128,
+        "samples_ns": [
+          84472,
+          84582,
+          84832,
+          85092,
+          85152,
+          85492,
+          86122
+        ],
+        "median_ns": 85092
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 4096,
+        "operations": 128,
+        "samples_ns": [
+          84571,
+          84591,
+          85411,
+          85521,
+          85602,
+          85922,
+          86091
+        ],
+        "median_ns": 85521
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "context_estimation_reuse",
+        "compaction_enabled": false,
+        "messages": 256,
+        "replay_bytes_per_message": 8192,
+        "iterations_per_sample": 10,
+        "samples_ns": [
+          20919186,
+          20797936,
+          19291233,
+          19067568,
+          18737134
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "context_estimation_reuse",
+        "compaction_enabled": true,
+        "messages": 256,
+        "replay_bytes_per_message": 8192,
+        "iterations_per_sample": 10,
+        "samples_ns": [
+          18794864,
+          19175760,
+          19334516,
+          18697811,
+          18883716
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "reasoning_capture",
+        "delta_bytes": 64,
+        "chunks": 16384,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          8166706,
+          8469423,
+          8203047,
+          8204827,
+          8214277,
+          8207637,
+          8147277
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho_providers",
+      "measurement": {
+        "scenario": "codex_candidate_bookkeeping",
+        "input_items": 64,
+        "output_bytes_per_item": 2048,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          686154,
+          540791,
+          537921,
+          538372,
+          527200
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 1,
+      "binary": "rho_providers",
+      "measurement": {
+        "scenario": "codex_candidate_bookkeeping",
+        "input_items": 1024,
+        "output_bytes_per_item": 2048,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          9462853,
+          7737667,
+          7696777,
+          7898250,
+          7835360
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 250,
+        "history_messages": 500,
+        "bytes": 709916,
+        "samples_ns": [
+          47956107,
+          50805996,
+          44353223,
+          34350709,
+          47647711,
+          49905867,
+          50762533
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 250,
+        "history_messages": 500,
+        "bytes": 709916,
+        "samples_ns": [
+          49784664,
+          50804215,
+          45390385,
+          31623834,
+          43109427,
+          33060534,
+          32534182
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 250,
+        "history_messages_first_sample": 504,
+        "history_messages_last_sample": 516,
+        "samples_ns": [
+          516420,
+          482850,
+          474940,
+          463959,
+          469879,
+          481580,
+          469060
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 1000,
+        "history_messages": 2000,
+        "bytes": 2841417,
+        "samples_ns": [
+          772503856,
+          571184324,
+          520577883,
+          529103867,
+          523540614,
+          518537012,
+          512757076
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 1000,
+        "history_messages": 2000,
+        "bytes": 2841417,
+        "samples_ns": [
+          505971386,
+          512982168,
+          508217933,
+          518732566,
+          512721514,
+          516293346,
+          514181062
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 1000,
+        "history_messages_first_sample": 2004,
+        "history_messages_last_sample": 2016,
+        "samples_ns": [
+          1452190,
+          1375439,
+          1350678,
+          1333287,
+          1360918,
+          1360638,
+          1313427
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 4000,
+        "history_messages": 8000,
+        "bytes": 11385416,
+        "samples_ns": [
+          15419861924,
+          12149488799,
+          15196048962,
+          12515161147,
+          16506692707,
+          12230989146,
+          13742533794
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 4000,
+        "history_messages": 8000,
+        "bytes": 11385416,
+        "samples_ns": [
+          10386429845,
+          10325747776,
+          10668251805,
+          10466953143,
+          10384612095,
+          10194566335,
+          10126627431
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 4000,
+        "history_messages_first_sample": 8004,
+        "history_messages_last_sample": 8016,
+        "samples_ns": [
+          6878681,
+          7029683,
+          6924481,
+          7178096,
+          7108205,
+          8326769,
+          7558054
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 262144,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          455259,
+          450869,
+          451059,
+          450939,
+          458090,
+          470139,
+          459310
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 1048576,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          2219135,
+          1975050,
+          2033311,
+          2065333,
+          2072302,
+          2006180,
+          1984771
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 8388608,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          16038938,
+          15792331,
+          15766361,
+          15751851,
+          15698459,
+          16226351,
+          15844672
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 256,
+        "operations": 256,
+        "samples_ns": [
+          1680425,
+          1681853,
+          1682224,
+          1684374,
+          1724165,
+          1735915,
+          1972560
+        ],
+        "median_ns": 1684374
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 1024,
+        "operations": 1024,
+        "samples_ns": [
+          21392236,
+          21397085,
+          21404036,
+          21404896,
+          21419146,
+          21420926,
+          21427707
+        ],
+        "median_ns": 21404896
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 4096,
+        "operations": 4096,
+        "samples_ns": [
+          321023168,
+          321155201,
+          321257953,
+          321314825,
+          321399246,
+          321520910,
+          322491138
+        ],
+        "median_ns": 321314825
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 256,
+        "operations": 1,
+        "samples_ns": [
+          25641,
+          25730,
+          25801,
+          25840,
+          25881,
+          25900,
+          26501
+        ],
+        "median_ns": 25840
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 1024,
+        "operations": 1,
+        "samples_ns": [
+          207854,
+          208254,
+          208384,
+          208395,
+          208505,
+          208564,
+          209614
+        ],
+        "median_ns": 208395
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 4096,
+        "operations": 1,
+        "samples_ns": [
+          2315047,
+          2317177,
+          2319067,
+          2321768,
+          2322347,
+          2324647,
+          2342508
+        ],
+        "median_ns": 2321768
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 256,
+        "operations": 128,
+        "samples_ns": [
+          424019,
+          424098,
+          424128,
+          424638,
+          427329,
+          428799,
+          440899
+        ],
+        "median_ns": 424638
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 1024,
+        "operations": 128,
+        "samples_ns": [
+          504201,
+          507440,
+          509650,
+          510170,
+          510211,
+          510980,
+          529971
+        ],
+        "median_ns": 510170
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 4096,
+        "operations": 128,
+        "samples_ns": [
+          915629,
+          917428,
+          926059,
+          927199,
+          931559,
+          933589,
+          933949
+        ],
+        "median_ns": 927199
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "context_estimation_reuse",
+        "compaction_enabled": false,
+        "messages": 256,
+        "replay_bytes_per_message": 8192,
+        "iterations_per_sample": 10,
+        "samples_ns": [
+          21146152,
+          18915135,
+          19013316,
+          19006647,
+          18880785
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "context_estimation_reuse",
+        "compaction_enabled": true,
+        "messages": 256,
+        "replay_bytes_per_message": 8192,
+        "iterations_per_sample": 10,
+        "samples_ns": [
+          35203257,
+          35734279,
+          35450022,
+          35098675,
+          35219729
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "reasoning_capture",
+        "delta_bytes": 64,
+        "chunks": 16384,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          10152547,
+          9427802,
+          9433962,
+          9441462,
+          9445832,
+          9495154,
+          9517704
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho_providers",
+      "measurement": {
+        "scenario": "codex_candidate_bookkeeping",
+        "input_items": 64,
+        "output_bytes_per_item": 2048,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          2089223,
+          1541381,
+          1536651,
+          1533251,
+          1532291
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 2,
+      "binary": "rho_providers",
+      "measurement": {
+        "scenario": "codex_candidate_bookkeeping",
+        "input_items": 1024,
+        "output_bytes_per_item": 2048,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          35641446,
+          32904680,
+          32790739,
+          32818858,
+          32923330
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 250,
+        "history_messages": 500,
+        "bytes": 709916,
+        "samples_ns": [
+          3834288,
+          3817908,
+          3815717,
+          3718476,
+          4049492,
+          4009102,
+          3971771
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 250,
+        "history_messages": 500,
+        "bytes": 709916,
+        "samples_ns": [
+          3984801,
+          4001352,
+          3784427,
+          3760437,
+          3792157,
+          3689705,
+          3908070
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 250,
+        "history_messages_first_sample": 504,
+        "history_messages_last_sample": 516,
+        "samples_ns": [
+          330236,
+          330467,
+          319267,
+          328356,
+          323717,
+          330557,
+          300566
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 1000,
+        "history_messages": 2000,
+        "bytes": 2841417,
+        "samples_ns": [
+          17618629,
+          17137219,
+          17258251,
+          17234212,
+          17204100,
+          16545687,
+          16823513
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 1000,
+        "history_messages": 2000,
+        "bytes": 2841417,
+        "samples_ns": [
+          16889264,
+          17497887,
+          17848673,
+          16932675,
+          16051027,
+          17613029,
+          16955035
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 1000,
+        "history_messages_first_sample": 2004,
+        "history_messages_last_sample": 2016,
+        "samples_ns": [
+          790926,
+          855938,
+          732555,
+          741215,
+          606033,
+          637334,
+          580802
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 4000,
+        "history_messages": 8000,
+        "bytes": 11385416,
+        "samples_ns": [
+          67073896,
+          60750628,
+          51367126,
+          54450570,
+          52675283,
+          52996619,
+          59351409
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 4000,
+        "history_messages": 8000,
+        "bytes": 11385416,
+        "samples_ns": [
+          60984802,
+          53026780,
+          60835199,
+          54108513,
+          59334398,
+          58920670,
+          69543887
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 4000,
+        "history_messages_first_sample": 8004,
+        "history_messages_last_sample": 8016,
+        "samples_ns": [
+          4871390,
+          5678015,
+          5090213,
+          8144445,
+          5441462,
+          6836389,
+          5689647
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 262144,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          18460,
+          122713,
+          17540,
+          14640,
+          17541,
+          17630,
+          15570
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 1048576,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          16500,
+          16531,
+          16380,
+          16110,
+          17081,
+          18200,
+          27411
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 8388608,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          19651,
+          19510,
+          19121,
+          18690,
+          19060,
+          18811,
+          18680
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 256,
+        "operations": 256,
+        "samples_ns": [
+          480550,
+          589392,
+          683755,
+          687144,
+          699364,
+          715284,
+          1037651
+        ],
+        "median_ns": 687144
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 1024,
+        "operations": 1024,
+        "samples_ns": [
+          1676995,
+          1686754,
+          1795066,
+          2400268,
+          2514771,
+          2655764,
+          2758125
+        ],
+        "median_ns": 2400268
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 4096,
+        "operations": 4096,
+        "samples_ns": [
+          8552064,
+          10078955,
+          10444393,
+          10612627,
+          11285670,
+          11438973,
+          11580527
+        ],
+        "median_ns": 10612627
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 256,
+        "operations": 1,
+        "samples_ns": [
+          18600,
+          22661,
+          30720,
+          30771,
+          31261,
+          32410,
+          33471
+        ],
+        "median_ns": 30771
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 1024,
+        "operations": 1,
+        "samples_ns": [
+          82422,
+          82592,
+          83191,
+          83332,
+          83922,
+          105752,
+          119132
+        ],
+        "median_ns": 83332
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 4096,
+        "operations": 1,
+        "samples_ns": [
+          339947,
+          342476,
+          343197,
+          351598,
+          356718,
+          533431,
+          582061
+        ],
+        "median_ns": 351598
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 256,
+        "operations": 128,
+        "samples_ns": [
+          87061,
+          87182,
+          87351,
+          87591,
+          87761,
+          87812,
+          92352
+        ],
+        "median_ns": 87591
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 1024,
+        "operations": 128,
+        "samples_ns": [
+          86502,
+          88501,
+          88612,
+          92342,
+          100182,
+          103932,
+          118742
+        ],
+        "median_ns": 92342
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 4096,
+        "operations": 128,
+        "samples_ns": [
+          91212,
+          91352,
+          92072,
+          92852,
+          93842,
+          97882,
+          104872
+        ],
+        "median_ns": 92852
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "context_estimation_reuse",
+        "compaction_enabled": false,
+        "messages": 256,
+        "replay_bytes_per_message": 8192,
+        "iterations_per_sample": 10,
+        "samples_ns": [
+          41134115,
+          37359120,
+          37956984,
+          37698038,
+          52082800
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "context_estimation_reuse",
+        "compaction_enabled": true,
+        "messages": 256,
+        "replay_bytes_per_message": 8192,
+        "iterations_per_sample": 10,
+        "samples_ns": [
+          44914696,
+          39027005,
+          37410842,
+          37009065,
+          38214410
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "reasoning_capture",
+        "delta_bytes": 64,
+        "chunks": 16384,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          11691709,
+          11765049,
+          12215709,
+          11284449,
+          11513814,
+          11515335,
+          11449213
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho_providers",
+      "measurement": {
+        "scenario": "codex_candidate_bookkeeping",
+        "input_items": 64,
+        "output_bytes_per_item": 2048,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          1642173,
+          888208,
+          900808,
+          905748,
+          896229
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 2,
+      "binary": "rho_providers",
+      "measurement": {
+        "scenario": "codex_candidate_bookkeeping",
+        "input_items": 1024,
+        "output_bytes_per_item": 2048,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          18854435,
+          13521726,
+          13630097,
+          13464444,
+          13442004
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 250,
+        "history_messages": 500,
+        "bytes": 709916,
+        "samples_ns": [
+          30490851,
+          30255306,
+          30440510,
+          30476321,
+          30549282,
+          30513161,
+          30442380
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 250,
+        "history_messages": 500,
+        "bytes": 709916,
+        "samples_ns": [
+          30381419,
+          30400339,
+          30899649,
+          30466941,
+          30583072,
+          30610324,
+          30620633
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 250,
+        "history_messages_first_sample": 504,
+        "history_messages_last_sample": 516,
+        "samples_ns": [
+          487870,
+          466379,
+          447829,
+          435229,
+          438189,
+          439849,
+          437559
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 1000,
+        "history_messages": 2000,
+        "bytes": 2841417,
+        "samples_ns": [
+          496251697,
+          498651127,
+          547334977,
+          493399141,
+          491364308,
+          492169894,
+          503962815
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 1000,
+        "history_messages": 2000,
+        "bytes": 2841417,
+        "samples_ns": [
+          497138346,
+          490765766,
+          489134022,
+          503619099,
+          494908289,
+          505241641,
+          509022548
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 1000,
+        "history_messages_first_sample": 2004,
+        "history_messages_last_sample": 2016,
+        "samples_ns": [
+          1332237,
+          1291236,
+          1231284,
+          1248926,
+          1315517,
+          1248395,
+          1337357
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 4000,
+        "history_messages": 8000,
+        "bytes": 11385416,
+        "samples_ns": [
+          10257170666,
+          10320893236,
+          10084117851,
+          10115511461,
+          10123686647,
+          10118066651,
+          10237497345
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 4000,
+        "history_messages": 8000,
+        "bytes": 11385416,
+        "samples_ns": [
+          10227307417,
+          10182310949,
+          10178819769,
+          10152750647,
+          10254213763,
+          10017863940,
+          10124578612
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 4000,
+        "history_messages_first_sample": 8004,
+        "history_messages_last_sample": 8016,
+        "samples_ns": [
+          6992082,
+          7176806,
+          7060804,
+          6992302,
+          7192116,
+          7179677,
+          7188646
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 262144,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          454539,
+          452340,
+          452259,
+          452089,
+          452009,
+          448720,
+          459989
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 1048576,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          2143893,
+          1907809,
+          1907269,
+          1892829,
+          1858197,
+          1843918,
+          1836348
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 8388608,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          16068717,
+          16223461,
+          16077257,
+          16140049,
+          16201809,
+          16141630,
+          16065077
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 256,
+        "operations": 256,
+        "samples_ns": [
+          1680725,
+          1681264,
+          1684224,
+          1685944,
+          1688495,
+          1692415,
+          1706344
+        ],
+        "median_ns": 1685944
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 1024,
+        "operations": 1024,
+        "samples_ns": [
+          21280113,
+          21312754,
+          21332985,
+          21350694,
+          21365606,
+          21392345,
+          21417365
+        ],
+        "median_ns": 21350694
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 4096,
+        "operations": 4096,
+        "samples_ns": [
+          320140601,
+          320358395,
+          320616960,
+          321174972,
+          321456148,
+          321791494,
+          329873558
+        ],
+        "median_ns": 321174972
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 256,
+        "operations": 1,
+        "samples_ns": [
+          25070,
+          25130,
+          25181,
+          25221,
+          25351,
+          26580,
+          30441
+        ],
+        "median_ns": 25221
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 1024,
+        "operations": 1,
+        "samples_ns": [
+          206184,
+          206524,
+          206774,
+          206955,
+          207284,
+          207744,
+          209254
+        ],
+        "median_ns": 206955
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 4096,
+        "operations": 1,
+        "samples_ns": [
+          2315118,
+          2315847,
+          2317148,
+          2318757,
+          2320077,
+          2325346,
+          2330808
+        ],
+        "median_ns": 2318757
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 256,
+        "operations": 128,
+        "samples_ns": [
+          422318,
+          423059,
+          423229,
+          423229,
+          424098,
+          424629,
+          427059
+        ],
+        "median_ns": 423229
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 1024,
+        "operations": 128,
+        "samples_ns": [
+          503381,
+          503910,
+          504630,
+          504690,
+          504960,
+          505750,
+          516981
+        ],
+        "median_ns": 504690
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 4096,
+        "operations": 128,
+        "samples_ns": [
+          915678,
+          916978,
+          919909,
+          920389,
+          922319,
+          926169,
+          931589
+        ],
+        "median_ns": 920389
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "context_estimation_reuse",
+        "compaction_enabled": false,
+        "messages": 256,
+        "replay_bytes_per_message": 8192,
+        "iterations_per_sample": 10,
+        "samples_ns": [
+          20287323,
+          19240262,
+          18784544,
+          19300983,
+          19475697
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "context_estimation_reuse",
+        "compaction_enabled": true,
+        "messages": 256,
+        "replay_bytes_per_message": 8192,
+        "iterations_per_sample": 10,
+        "samples_ns": [
+          35616933,
+          36961363,
+          35705578,
+          35557962,
+          35896472
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "reasoning_capture",
+        "delta_bytes": 64,
+        "chunks": 16384,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          10144256,
+          9424061,
+          9430812,
+          9432414,
+          9443231,
+          9476744,
+          9447142
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho_providers",
+      "measurement": {
+        "scenario": "codex_candidate_bookkeeping",
+        "input_items": 64,
+        "output_bytes_per_item": 2048,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          1816687,
+          1540081,
+          1559462,
+          1568552,
+          1547152
+        ]
+      }
+    },
+    {
+      "variant": "baseline",
+      "round": 3,
+      "binary": "rho_providers",
+      "measurement": {
+        "scenario": "codex_candidate_bookkeeping",
+        "input_items": 1024,
+        "output_bytes_per_item": 2048,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          36437082,
+          33372380,
+          33212527,
+          33078203,
+          33373451
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 250,
+        "history_messages": 500,
+        "bytes": 709916,
+        "samples_ns": [
+          2033941,
+          2095323,
+          2027022,
+          2125923,
+          2195574,
+          2046302,
+          2041422
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 250,
+        "history_messages": 500,
+        "bytes": 709916,
+        "samples_ns": [
+          2040151,
+          2078952,
+          2129954,
+          2060902,
+          2048441,
+          2063132,
+          2049312
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 250,
+        "history_messages_first_sample": 504,
+        "history_messages_last_sample": 516,
+        "samples_ns": [
+          203615,
+          200634,
+          194004,
+          194234,
+          194324,
+          196044,
+          189433
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 1000,
+        "history_messages": 2000,
+        "bytes": 2841417,
+        "samples_ns": [
+          8311199,
+          8117205,
+          8100505,
+          8125946,
+          8092344,
+          8073155,
+          8719247
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 1000,
+        "history_messages": 2000,
+        "bytes": 2841417,
+        "samples_ns": [
+          8097586,
+          8199317,
+          8132885,
+          8061424,
+          8212987,
+          8135706,
+          8201677
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 1000,
+        "history_messages_first_sample": 2004,
+        "history_messages_last_sample": 2016,
+        "samples_ns": [
+          379698,
+          386698,
+          381828,
+          391978,
+          366757,
+          388578,
+          371648
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_tree_load_growing",
+        "nodes": 4000,
+        "history_messages": 8000,
+        "bytes": 11385416,
+        "samples_ns": [
+          36208258,
+          36665927,
+          35919762,
+          35912521,
+          37296100,
+          35968182,
+          36620796
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_summarize_growing",
+        "nodes": 4000,
+        "history_messages": 8000,
+        "bytes": 11385416,
+        "samples_ns": [
+          37604406,
+          36350290,
+          36767768,
+          35980054,
+          36371251,
+          36327189,
+          36520994
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "session_save_growing",
+        "nodes_before_warmup": 4000,
+        "history_messages_first_sample": 8004,
+        "history_messages_last_sample": 8016,
+        "samples_ns": [
+          1829627,
+          1642104,
+          1319117,
+          1394148,
+          1291286,
+          1405609,
+          1273465
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 262144,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          13501,
+          12820,
+          12760,
+          12730,
+          12751,
+          12730,
+          12780
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 1048576,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          10181,
+          10020,
+          9890,
+          9890,
+          9910,
+          9941,
+          10010
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "scenario": "web_content_selection",
+        "sibling_bytes": 8388608,
+        "iterations_per_sample": 100,
+        "samples_ns": [
+          11011,
+          10440,
+          10410,
+          10410,
+          10500,
+          10471,
+          10460
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 256,
+        "operations": 256,
+        "samples_ns": [
+          408129,
+          408698,
+          408919,
+          409058,
+          410349,
+          418988,
+          855967
+        ],
+        "median_ns": 409058
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 1024,
+        "operations": 1024,
+        "samples_ns": [
+          1600573,
+          1604813,
+          1604913,
+          1617473,
+          1617753,
+          1621123,
+          1630823
+        ],
+        "median_ns": 1617473
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "fence_stream_commits",
+        "size": 4096,
+        "operations": 4096,
+        "samples_ns": [
+          6378089,
+          6407540,
+          6411571,
+          6417081,
+          6434531,
+          6439692,
+          6453081
+        ],
+        "median_ns": 6417081
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 256,
+        "operations": 1,
+        "samples_ns": [
+          16570,
+          16611,
+          16640,
+          16700,
+          16930,
+          18670,
+          22661
+        ],
+        "median_ns": 16700
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 1024,
+        "operations": 1,
+        "samples_ns": [
+          79012,
+          79022,
+          79111,
+          79132,
+          79172,
+          79771,
+          80632
+        ],
+        "median_ns": 79132
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "styled_wraps",
+        "size": 4096,
+        "operations": 1,
+        "samples_ns": [
+          309456,
+          313007,
+          313356,
+          314766,
+          315287,
+          316507,
+          324406
+        ],
+        "median_ns": 314766
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 256,
+        "operations": 128,
+        "samples_ns": [
+          83511,
+          83672,
+          83672,
+          83922,
+          83942,
+          84171,
+          86212
+        ],
+        "median_ns": 83922
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 1024,
+        "operations": 128,
+        "samples_ns": [
+          83441,
+          83801,
+          83821,
+          84002,
+          84172,
+          84291,
+          85272
+        ],
+        "median_ns": 84002
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho",
+      "measurement": {
+        "suite": "tui_perf_audit",
+        "scenario": "tail_updates_by_history_size",
+        "size": 4096,
+        "operations": 128,
+        "samples_ns": [
+          83231,
+          83622,
+          83722,
+          83792,
+          83891,
+          84601,
+          156024
+        ],
+        "median_ns": 83792
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "context_estimation_reuse",
+        "compaction_enabled": false,
+        "messages": 256,
+        "replay_bytes_per_message": 8192,
+        "iterations_per_sample": 10,
+        "samples_ns": [
+          21112950,
+          18753523,
+          18547656,
+          19123261,
+          18662332
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "context_estimation_reuse",
+        "compaction_enabled": true,
+        "messages": 256,
+        "replay_bytes_per_message": 8192,
+        "iterations_per_sample": 10,
+        "samples_ns": [
+          19087398,
+          18823651,
+          19456296,
+          19199342,
+          18786593
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho_sdk",
+      "measurement": {
+        "scenario": "reasoning_capture",
+        "delta_bytes": 64,
+        "chunks": 16384,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          8102715,
+          8070544,
+          8098995,
+          8105577,
+          8121075,
+          8085835,
+          8120495
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho_providers",
+      "measurement": {
+        "scenario": "codex_candidate_bookkeeping",
+        "input_items": 64,
+        "output_bytes_per_item": 2048,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          665733,
+          526781,
+          540251,
+          528341,
+          522541
+        ]
+      }
+    },
+    {
+      "variant": "candidate",
+      "round": 3,
+      "binary": "rho_providers",
+      "measurement": {
+        "scenario": "codex_candidate_bookkeeping",
+        "input_items": 1024,
+        "output_bytes_per_item": 2048,
+        "iterations_per_sample": 20,
+        "samples_ns": [
+          9371840,
+          7485153,
+          7464863,
+          7516482,
+          7495663
+        ]
+      }
+    }
+  ]
+}
