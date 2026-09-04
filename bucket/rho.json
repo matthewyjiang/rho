@@ -1,12 +1,12 @@
 {
-  "version": "2.5.0",
+  "version": "2.6.0",
   "description": "A fast Rust agent harness with a small footprint and opinionated defaults.",
   "homepage": "https://github.com/matthewyjiang/rho",
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/matthewyjiang/rho/releases/download/rho-coding-agent-v2.5.0/rho-x86_64-pc-windows-msvc.zip",
-      "hash": "43c557d03555ac895095dcf2800f8cc651f8660943caa8be5364d3d15ce6410e"
+      "url": "https://github.com/matthewyjiang/rho/releases/download/rho-coding-agent-v2.6.0/rho-x86_64-pc-windows-msvc.zip",
+      "hash": "3121b5d2e60b02b84fed0b479ffb97dffa5d3454666179bd207198642ebad121"
     }
   },
   "bin": "rho.exe",
