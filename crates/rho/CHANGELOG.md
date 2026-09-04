@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.6.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.5.0...rho-coding-agent-v2.6.0) (2026-09-03)
+
+
+### Features
+
+* **subagents:** delegate to Cursor Agent with runtime: cursor ([#1144](https://github.com/matthewyjiang/rho/issues/1144)) ([0a1c586](https://github.com/matthewyjiang/rho/commit/0a1c58631f3bf97902dbfae48e8415c3fad4d6f7))
+* **subagents:** raise concurrent agent default to 10 and resize live ([#1137](https://github.com/matthewyjiang/rho/issues/1137)) ([a7073bd](https://github.com/matthewyjiang/rho/commit/a7073bd2c9ea598cedc174da19bc83000d47cc40))
+* **tui:** add /refresh-models shortcut for provider lists and models.dev catalog ([#1130](https://github.com/matthewyjiang/rho/issues/1130)) ([43779bf](https://github.com/matthewyjiang/rho/commit/43779bfbe3a0c2225c1cbd6495fbab39e98ad7a1))
+* **tui:** pick agent tools from a multi-select instead of typing a list ([#1145](https://github.com/matthewyjiang/rho/issues/1145)) ([86499f6](https://github.com/matthewyjiang/rho/commit/86499f638286775361545dd4e5dde2c24e8cab87))
+
+
+### Bug Fixes
+
+* **compaction:** /compact always shrinks context on large-window models ([#1132](https://github.com/matthewyjiang/rho/issues/1132)) ([d7522b6](https://github.com/matthewyjiang/rho/commit/d7522b68b9c224e11092ad16d95717156b6b7452))
+* **tools:** bash tool keeps mise/nix/direnv PATH entries from the launching shell ([#1148](https://github.com/matthewyjiang/rho/issues/1148)) ([589b890](https://github.com/matthewyjiang/rho/commit/589b8905b1c4f6cc45376cdce1bf805c10bef4fc))
+* **tui:** stop clipping agent titles on the activity rail ([#1136](https://github.com/matthewyjiang/rho/issues/1136)) ([5381cc3](https://github.com/matthewyjiang/rho/commit/5381cc3deb18d3694dca9a84011958299a7fab5c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.2.0 to 5.1.2
+    * rho-providers bumped from 2.1.2 to 2.2.0
+
 ## [2.5.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.4.0...rho-coding-agent-v2.5.0) (2026-09-02)
 
 

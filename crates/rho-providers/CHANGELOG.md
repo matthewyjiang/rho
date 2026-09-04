@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.2.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.1.2...rho-providers-v2.2.0) (2026-09-03)
+
+
+### Features
+
+* **subagents:** delegate to Cursor Agent with runtime: cursor ([#1144](https://github.com/matthewyjiang/rho/issues/1144)) ([0a1c586](https://github.com/matthewyjiang/rho/commit/0a1c58631f3bf97902dbfae48e8415c3fad4d6f7))
+
+
+### Bug Fixes
+
+* **compaction:** /compact always shrinks context on large-window models ([#1132](https://github.com/matthewyjiang/rho/issues/1132)) ([d7522b6](https://github.com/matthewyjiang/rho/commit/d7522b68b9c224e11092ad16d95717156b6b7452))
+
+
+### Performance Improvements
+
+* **providers:** keep Anthropic prompt cache when reasoning changes mid-session ([#1129](https://github.com/matthewyjiang/rho/issues/1129)) ([b84a9dc](https://github.com/matthewyjiang/rho/commit/b84a9dc5524c9224c908bcda140f7ed6466b77da))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.2.0 to 5.1.2
+
 ## [2.1.2](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.1.1...rho-providers-v2.1.2) (2026-08-31)
 
 
