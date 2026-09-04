@@ -28,6 +28,10 @@ impl App {
                         self.resolve_context_handoff(Some(&value), *pending, terminal, agent)
                             .await?;
                     }
+                    InlineChoicePending::ConfirmSend(pending) => {
+                        self.resolve_send_confirm(Some(&value), *pending, terminal, agent)
+                            .await?;
+                    }
                     InlineChoicePending::ClaudeCodeLogin => {
                         self.submit_claude_code_login_choice(modal.choice, terminal)
                             .await?;
@@ -84,6 +88,10 @@ impl App {
                     }
                     InlineChoicePending::ContextHandoff(pending) => {
                         self.resolve_context_handoff(None, *pending, terminal, agent)
+                            .await?;
+                    }
+                    InlineChoicePending::ConfirmSend(pending) => {
+                        self.resolve_send_confirm(None, *pending, terminal, agent)
                             .await?;
                     }
                     InlineChoicePending::DeleteSession { .. }

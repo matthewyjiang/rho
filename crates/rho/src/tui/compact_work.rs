@@ -4,13 +4,10 @@
 //! stays inside the SDK turn and applies the same card events from
 //! `compaction_display` / `event_adapter`.
 
-use ratatui::DefaultTerminal;
-
 use crate::app::interactive_runtime::CompactTaskPoll;
 
 use super::{
     compaction_display::CompactionUiOutcome,
-    context_handoff::AfterHandoff,
     event_adapter::{compact_finished_event, compact_started_event},
     App, InteractiveModelSelection, InteractiveRuntime, ViewModelEvent,
 };
@@ -23,7 +20,6 @@ pub(super) enum CompactFollowUp {
     ContextHandoff {
         target_selection: Option<InteractiveModelSelection>,
         had_source: bool,
-        after: AfterHandoff,
     },
 }
 
@@ -55,13 +51,12 @@ impl App {
     /// and finishes a handoff follow-up as "not compacted".
     pub(super) async fn cancel_compact(
         &mut self,
-        terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         let Some(poll) = agent.abort_compact_task().await else {
             return Ok(false);
         };
-        self.settle_compact_poll(poll, terminal, agent).await?;
+        self.settle_compact_poll(poll, agent).await?;
         Ok(true)
     }
 
@@ -85,20 +80,18 @@ impl App {
 
     pub(super) async fn poll_compact(
         &mut self,
-        terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
         let Some(poll) = agent.poll_compact_task().await else {
             return Ok(false);
         };
-        self.settle_compact_poll(poll, terminal, agent).await?;
+        self.settle_compact_poll(poll, agent).await?;
         Ok(true)
     }
 
     async fn settle_compact_poll(
         &mut self,
         poll: CompactTaskPoll,
-        terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let outcome = match poll {
@@ -114,7 +107,7 @@ impl App {
         }
         self.finish_compact_ui(outcome);
         let follow_up = std::mem::take(&mut self.compact_follow_up);
-        self.apply_compact_follow_up(follow_up, succeeded, terminal, agent)
+        self.apply_compact_follow_up(follow_up, succeeded, agent)
             .await
     }
 
@@ -122,7 +115,6 @@ impl App {
         &mut self,
         follow_up: CompactFollowUp,
         succeeded: bool,
-        terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match follow_up {
@@ -130,17 +122,9 @@ impl App {
             CompactFollowUp::ContextHandoff {
                 target_selection,
                 had_source,
-                after,
             } => {
-                self.complete_compact_handoff(
-                    succeeded,
-                    target_selection,
-                    had_source,
-                    after,
-                    terminal,
-                    agent,
-                )
-                .await
+                self.complete_compact_handoff(succeeded, target_selection, had_source, agent)
+                    .await
             }
         }
     }

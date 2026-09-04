@@ -142,6 +142,7 @@ mod rendered_entry;
 mod run_lifecycle;
 mod screen_layout;
 mod scrollbar;
+mod send_confirm;
 mod session_actions;
 mod session_picker;
 mod session_title;
@@ -548,6 +549,9 @@ struct App {
     /// Turns held until MCP connect settles.
     held_turns: VecDeque<idle_input::HeldTurn>,
     compact_follow_up: compact_work::CompactFollowUp,
+    /// One-shot bypass for the confirm-send gate, armed only when the user has
+    /// just approved (or compact-approved) the very send being started.
+    send_confirm_bypass: bool,
     /// When set, start the next queued follow-up once the composer is free.
     /// The bool is whether that start may auto-compact.
     start_follow_ups: Option<bool>,

@@ -132,6 +132,7 @@ impl App {
             pending_github_pr: None,
             held_turns: std::collections::VecDeque::new(),
             compact_follow_up: super::compact_work::CompactFollowUp::None,
+            send_confirm_bypass: false,
             start_follow_ups: None,
             pending_model_selection: None,
             model_picker_scope_override: None,

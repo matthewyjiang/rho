@@ -6,12 +6,7 @@ use super::{
     ACTION_COMPACT, ACTION_CONTINUE, ACTION_USE_SOURCE,
 };
 
-fn impact(
-    omissions: usize,
-    can_compact: bool,
-    offer_use_source: bool,
-    cache_warm: bool,
-) -> ContextHandoffImpact {
+fn impact(omissions: usize, can_compact: bool, offer_use_source: bool) -> ContextHandoffImpact {
     ContextHandoffImpact {
         source_label: "openai-codex/gpt-5.6-sol".into(),
         target_label: "xai/grok-4".into(),
@@ -25,29 +20,12 @@ fn impact(
         },
         can_compact,
         offer_use_source,
-        cache_warm,
     }
 }
 
 #[test]
-fn model_switch_omission_options_are_honest_about_native_blocks() {
-    let choice = impact(115, true, false, true)
-        .choice(ContextHandoffKind::ModelSwitch)
-        .unwrap();
-
-    assert_eq!(
-        choice
-            .options
-            .iter()
-            .map(|option| option.value.as_str())
-            .collect::<Vec<_>>(),
-        vec![ACTION_COMPACT, ACTION_CONTINUE]
-    );
-}
-
-#[test]
 fn resume_offers_source_model_when_available() {
-    let choice = impact(3, true, true, false)
+    let choice = impact(3, true, true)
         .choice(ContextHandoffKind::Resume)
         .unwrap();
 

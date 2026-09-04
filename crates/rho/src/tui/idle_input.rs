@@ -137,7 +137,7 @@ impl App {
                 }
             }
             (_, KeyCode::Esc) => {
-                let cancelled_compact = self.cancel_compact(terminal, agent).await?;
+                let cancelled_compact = self.cancel_compact(agent).await?;
                 if cancelled_compact || (!self.cancel_inline_shells() && !self.exit_shell_mode()) {
                     self.take_back_held_turn();
                 }
@@ -497,7 +497,7 @@ impl App {
             .await
     }
 
-    async fn run_turn_sequence_held(
+    pub(super) async fn run_turn_sequence_held(
         &mut self,
         turn: TurnPrompt,
         media: Vec<ChatMedia>,
@@ -505,6 +505,11 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        let Some((turn, media, paste_segments)) =
+            self.gate_send(turn, media, paste_segments, agent)
+        else {
+            return Ok(());
+        };
         if agent.is_compacting() {
             return self.queue_prompt(turn.model, turn.display, paste_segments, media);
         }
@@ -553,14 +558,23 @@ impl App {
             };
             self.pending_input_changed();
             self.select_pending_recall_target();
-            outcome = self
-                .run_prompt_turn(
-                    TurnPrompt::standard(prompt.prompt, prompt.display_prompt),
-                    prompt.media,
-                    terminal,
-                    agent,
-                )
-                .await?;
+            let (turn, media) = match self.gate_send(
+                TurnPrompt::standard(prompt.prompt.clone(), prompt.display_prompt.clone()),
+                prompt.media.clone(),
+                prompt.paste_segments.clone(),
+                agent,
+            ) {
+                Some((turn, media, _paste_segments)) => (turn, media),
+                None => {
+                    // The confirm-send modal owns the turn; put the prompt back
+                    // so a later send (or a resumed queue) keeps its order.
+                    self.pending.push_follow_up_front(prompt);
+                    self.pending_input_changed();
+                    self.select_pending_recall_target();
+                    break outcome_kind;
+                }
+            };
+            outcome = self.run_prompt_turn(turn, media, terminal, agent).await?;
         };
         if !self.input_ui.composer().blocks_auto_continue()
             && goal_command::should_resume_goal_after_turn(

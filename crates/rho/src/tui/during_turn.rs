@@ -367,17 +367,11 @@ impl App {
     pub(super) async fn apply_pending_model_selection(
         &mut self,
         agent: &mut InteractiveRuntime,
-        after_successful_turn: bool,
     ) -> anyhow::Result<()> {
         let Some(pending) = self.pending_model_selection.take() else {
             return Ok(());
         };
-        if after_successful_turn {
-            self.request_model_selection_after_turn(pending, agent)
-                .await
-        } else {
-            self.select_model_with_omission_notice(pending, agent).await
-        }
+        self.select_model_with_omission_notice(pending, agent).await
     }
 
     pub(super) async fn execute_command_during_turn(
