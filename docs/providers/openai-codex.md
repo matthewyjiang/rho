@@ -88,3 +88,9 @@ Supported GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 Astra Codex models can use OpenAI
 On `gpt-6-astra` over the Codex websocket, steering entered during a model turn is forwarded as `response.steer`. The original response ends `incomplete` with reason `steered` (or completes if it finished first). The server then continues automatically with the steer prepended; Rho reuses that continuation instead of sending another `response.create`. Already-streamed text is not rewritten. If the original turn ended waiting for a client tool result, Rho replays a full next request so the server does not prepend an orphaned steer.
 
 Steering is queued in the TUI as today. When the backend accepts it mid-turn, the pending-input row shows `delivered` until the steer is applied at the turn boundary. Disconnecting the websocket drops any unacked steer; Rho then applies it locally on the next step.
+
+## Async tool calling (`gpt-6-astra`)
+
+On `gpt-6-astra` (OpenAI API and Codex), Rho advertises `"async": true` on function tools that declare async execution. The model may keep working after issuing that call; Rho delivers `function_call_output` later on the original `call_id`. Hosted built-in tools never get the flag. v1 only marks the `agent` tool.
+
+OpenAI documents `"async": true` on output `function_call` items. When Rho replays that call in a later `input` array (storeless full history, not a `previous_response_id` delta), it also stamps `"async": true` on the input item so the server still treats the call as async. That input-side flag is an extrapolation from the output shape.
