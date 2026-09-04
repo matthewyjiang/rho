@@ -73,6 +73,7 @@ fn assert_doctor_overlay_is_single_pane(harness: &mut PtyHarness) -> Result<()> 
 }
 
 fn assert_doctor_overlay_dismissed(harness: &mut PtyHarness) -> Result<()> {
+    harness.wait_for_visible_cursor(SETTLE)?;
     let screen = harness.screen().contents();
     if screen.contains("Doctor") {
         anyhow::bail!("doctor overlay still visible after Esc:\n{screen}");

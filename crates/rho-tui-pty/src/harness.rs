@@ -364,6 +364,32 @@ impl PtyHarness {
         }
     }
 
+    /// Wait until DECTCEM is on after a modal surface returns to the composer.
+    pub fn wait_for_visible_cursor(&mut self, timeout: WaitTimeout) -> Result<()> {
+        self.set_phase("wait_for_visible_cursor");
+        let deadline = Instant::now() + timeout.duration;
+        loop {
+            self.poll(Duration::from_millis(25));
+            if !self.screen.hide_cursor() {
+                self.log("observed visible cursor");
+                return Ok(());
+            }
+            if !self.pty.is_running() {
+                return self.fail_unit(format!(
+                    "child exited before the caret appeared during {}",
+                    timeout.label
+                ));
+            }
+            if Instant::now() >= deadline {
+                return self.fail_unit(format!(
+                    "timeout waiting for visible caret ({}); cursor at {:?}",
+                    timeout.label,
+                    self.screen.cursor()
+                ));
+            }
+        }
+    }
+
     /// Wait until `needle` is off the screen. The counterpart to
     /// [`Self::wait_for_text`], for steps that must know something is gone
     /// before acting, such as a composer clearing on submit.

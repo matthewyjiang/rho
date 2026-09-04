@@ -71,6 +71,7 @@ fn assert_limits_overlay_is_single_pane(harness: &mut PtyHarness) -> Result<()> 
 }
 
 fn assert_limits_overlay_dismissed(harness: &mut PtyHarness) -> Result<()> {
+    harness.wait_for_visible_cursor(SETTLE)?;
     let screen = harness.screen().contents();
     if screen.contains("Usage limits") {
         anyhow::bail!("limits overlay still visible after Esc:\n{screen}");
