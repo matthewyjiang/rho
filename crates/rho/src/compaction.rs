@@ -192,19 +192,21 @@ fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize>
         return None;
     }
 
-    let results_start = index + 1;
-    let results_end = results_start + tool_call_ids.len();
-    if results_end > messages.len() {
-        return Some(messages.len());
+    let mut remaining: std::collections::BTreeSet<&str> = tool_call_ids.iter().copied().collect();
+    let mut last_result = None;
+    for (offset, message) in messages[index + 1..].iter().enumerate() {
+        let Message::ToolResult(result) = message else {
+            continue;
+        };
+        if remaining.remove(result.id.as_str()) {
+            last_result = Some(index + 1 + offset);
+        }
+        if remaining.is_empty() {
+            break;
+        }
     }
-    let complete = tool_call_ids.iter().enumerate().all(|(offset, id)| {
-        matches!(
-            &messages[results_start + offset],
-            Message::ToolResult(result) if result.id == *id
-        )
-    });
-    Some(if complete {
-        results_end
+    Some(if remaining.is_empty() {
+        last_result.expect("covered ids have a last result") + 1
     } else {
         messages.len()
     })
@@ -509,3 +511,7 @@ mod tests {
         assert!(matches!(replacement[2], Message::User(_)));
     }
 }
+
+#[cfg(test)]
+#[path = "compaction_group_tests.rs"]
+mod group_tests;

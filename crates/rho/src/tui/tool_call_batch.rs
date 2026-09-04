@@ -21,6 +21,8 @@ pub(super) struct ToolCallBatch {
     pub(super) running: BTreeMap<ToolCallId, ToolEntry>,
     model_order: BTreeMap<usize, LiveToolKey>,
     unindexed_running_order: Vec<ToolCallId>,
+    detached: BTreeMap<ToolCallId, ToolEntry>,
+    detached_order: Vec<ToolCallId>,
 }
 
 impl ToolCallBatch {
@@ -33,7 +35,7 @@ impl ToolCallBatch {
     }
 
     pub(super) fn is_running(&self) -> bool {
-        !self.running.is_empty()
+        !self.running.is_empty() || !self.detached.is_empty()
     }
 
     /// Live cards in paint order: `model_order` (previews and running interleaved),
@@ -53,6 +55,11 @@ impl ToolCallBatch {
                     .get(call_id)
                     .map(|entry| (LiveToolKey::Running(call_id.clone()), entry))
             }))
+            .chain(self.detached_order.iter().filter_map(|call_id| {
+                self.detached
+                    .get(call_id)
+                    .map(|entry| (LiveToolKey::Running(call_id.clone()), entry))
+            }))
     }
 
     pub(super) fn live_entries(&self) -> impl Iterator<Item = &ToolEntry> {
@@ -62,7 +69,10 @@ impl ToolCallBatch {
     pub(super) fn get_mut(&mut self, key: &LiveToolKey) -> Option<&mut ToolEntry> {
         match key {
             LiveToolKey::Preview(index) => self.previews.get_mut(index),
-            LiveToolKey::Running(call_id) => self.running.get_mut(call_id),
+            LiveToolKey::Running(call_id) => self
+                .running
+                .get_mut(call_id)
+                .or_else(|| self.detached.get_mut(call_id)),
         }
     }
 
@@ -121,7 +131,28 @@ impl ToolCallBatch {
             .insert(call_id, running_entry(card, /*expanded*/ false, started_at));
     }
 
+    pub(super) fn detach(&mut self, call_id: ToolCallId) {
+        let Some(entry) = self.running.remove(&call_id) else {
+            return;
+        };
+        self.model_order
+            .retain(|_, key| !matches!(key, LiveToolKey::Running(id) if id == &call_id));
+        self.unindexed_running_order
+            .retain(|running_id| running_id != &call_id);
+        if !self.detached.contains_key(&call_id) {
+            self.detached_order.push(call_id.clone());
+        }
+        self.detached.insert(call_id, entry);
+    }
+
     pub(super) fn updated(&mut self, call_id: ToolCallId, card: ToolCard) {
+        if let Some(previous) = self.detached.get(&call_id) {
+            let expanded = previous.expanded;
+            let started_at = previous.started_at;
+            self.detached
+                .insert(call_id, running_entry(card, expanded, started_at));
+            return;
+        }
         let previous = self.running.get(&call_id);
         let expanded = previous.is_some_and(|entry| entry.expanded);
         let started_at = live_started_at(previous, ToolStatus::Running);
@@ -187,11 +218,16 @@ impl ToolCallBatch {
         let expanded = self
             .running
             .remove(call_id)
-            .is_some_and(|entry| entry.expanded);
+            .is_some_and(|entry| entry.expanded)
+            || self
+                .detached
+                .remove(call_id)
+                .is_some_and(|entry| entry.expanded);
         self.model_order
             .retain(|_, key| !matches!(key, LiveToolKey::Running(id) if id == call_id));
         self.unindexed_running_order
             .retain(|running_id| running_id != call_id);
+        self.detached_order.retain(|id| id != call_id);
         if let Some(index) = self.preview_call_ids.remove(call_id) {
             self.previews.remove(&index);
             self.model_order.remove(&index);

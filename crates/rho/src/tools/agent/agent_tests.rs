@@ -174,6 +174,7 @@ async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String 
         manager.clone(),
         root,
         BackgroundSubagents::Enabled,
+        AgentAsyncCalls::Off,
         /*catalog*/ None,
     );
     let output = call_agent(
@@ -365,6 +366,7 @@ async fn agent_and_agents_prepare_subagent_manager_resources() {
         manager.clone(),
         root.path(),
         BackgroundSubagents::Enabled,
+        AgentAsyncCalls::Off,
         /*catalog*/ None,
     );
     let agents = AgentsTool::new(manager);
@@ -446,6 +448,7 @@ async fn concurrent_background_launches_register_together() {
         manager.clone(),
         root.path(),
         BackgroundSubagents::Enabled,
+        AgentAsyncCalls::Off,
         /*catalog*/ None,
     );
     let first = call_agent(
@@ -488,6 +491,7 @@ fn agent_list_never_names_an_agent_model() {
         manager.clone(),
         root.path(),
         BackgroundSubagents::Enabled,
+        AgentAsyncCalls::Off,
         /*catalog*/ None,
     );
     let baseline = tool.spec().description;

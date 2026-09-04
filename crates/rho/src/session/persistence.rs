@@ -756,41 +756,47 @@ where
     let mut index = 0usize;
     while index < items.len() {
         let message = get_message(&items[index]);
-        let Some(blocks) = message.completed_assistant_content() else {
-            index += 1;
-            continue;
-        };
-        let tool_call_ids = blocks
-            .iter()
-            .filter_map(|block| match block {
-                rho_providers::model::ContentBlock::ToolCall(call) => Some(call.id.as_str()),
-                rho_providers::model::ContentBlock::Text(_)
-                | rho_providers::model::ContentBlock::Image(_) => None,
-            })
-            .collect::<Vec<_>>();
+        let tool_call_ids = completed_tool_call_ids(message);
         if tool_call_ids.is_empty() {
             index += 1;
             continue;
         }
-
-        let results_start = index + 1;
-        let results_end = results_start + tool_call_ids.len();
-        if results_end > items.len() {
+        if !tool_results_cover_later(items, index + 1, &tool_call_ids, &get_message) {
             return index;
         }
-
-        let complete = tool_call_ids.iter().enumerate().all(|(offset, id)| {
-            matches!(
-                get_message(&items[results_start + offset]),
-                Message::ToolResult(result) if result.id == *id
-            )
-        });
-        if !complete {
-            return index;
-        }
-        index = results_end;
+        index += 1;
     }
     items.len()
+}
+
+fn completed_tool_call_ids(message: &Message) -> Vec<&str> {
+    let Some(blocks) = message.completed_assistant_content() else {
+        return Vec::new();
+    };
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::ToolCall(call) => Some(call.id.as_str()),
+            ContentBlock::Text(_) | ContentBlock::Image(_) => None,
+        })
+        .collect()
+}
+
+fn tool_results_cover_later<T, F>(items: &[T], start: usize, ids: &[&str], get_message: F) -> bool
+where
+    F: Fn(&T) -> &Message,
+{
+    let mut remaining: std::collections::BTreeSet<&str> = ids.iter().copied().collect();
+    for item in &items[start..] {
+        let Message::ToolResult(result) = get_message(item) else {
+            continue;
+        };
+        remaining.remove(result.id.as_str());
+        if remaining.is_empty() {
+            return true;
+        }
+    }
+    remaining.is_empty()
 }
 
 pub(crate) fn complete_message_len(messages: &[Message]) -> usize {
@@ -906,3 +912,7 @@ fn system_time_secs(time: SystemTime) -> i64 {
         .map(|duration| clamp_u64_to_i64(duration.as_secs()))
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+#[path = "persistence_complete_turn_tests.rs"]
+mod complete_turn_tests;

@@ -23,6 +23,7 @@ fn passes_configured_ollama_base_to_provider_build_options() {
     let expected = ProviderBuildOptions::new("ollama", "local-model", config.reasoning)
         .unwrap()
         .hosted_web_search(/*enabled*/ false)
+        .async_tools(crate::tools::async_tool_names(&config))
         .endpoint(
             config
                 .providers

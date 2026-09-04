@@ -112,6 +112,7 @@ fn attachment_update(
                 card,
             })
         }
+        ViewModelEvent::ToolDetached { .. } => None,
         ViewModelEvent::RunStarted => None,
         ViewModelEvent::StepStarted(_) => Some(AttachmentEvent::StepStarted),
         // This acknowledgement reconciles the interactive TUI's pending-input

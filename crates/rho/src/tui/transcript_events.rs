@@ -43,7 +43,8 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
         | ViewModelEvent::ToolCallUpdated { .. }
         | ViewModelEvent::ToolCallProposed { .. }
         | ViewModelEvent::ToolStarted { .. }
-        | ViewModelEvent::ToolFinished { .. } => true,
+        | ViewModelEvent::ToolFinished { .. }
+        | ViewModelEvent::ToolDetached { .. } => true,
         ViewModelEvent::RunStarted
         | ViewModelEvent::SteeringApplied(_)
         | ViewModelEvent::SteeringDelivered(_)
@@ -265,6 +266,10 @@ impl App {
             }
             ViewModelEvent::ToolStarted { call_id, card } => {
                 self.turn.tool_started(call_id, card);
+                None
+            }
+            ViewModelEvent::ToolDetached { call_id } => {
+                self.turn.tool_detached(call_id);
                 None
             }
             ViewModelEvent::ToolUpdated { call_id, card } => {
