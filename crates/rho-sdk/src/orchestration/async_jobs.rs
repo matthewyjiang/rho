@@ -28,16 +28,18 @@ use super::{
 pub(super) enum JobNotice {
     Progress {
         call_id: ToolCallId,
-        progress: ToolProgress,
+        progress: Box<ToolProgress>,
     },
-    Finished {
-        call_id: ToolCallId,
-        name: String,
-        completion: ToolCompletion,
-        result: ToolResult,
-        duration: Option<std::time::Duration>,
-        capability: Option<crate::CapabilityRequest>,
-    },
+    Finished(Box<FinishedJob>),
+}
+
+pub(super) struct FinishedJob {
+    call_id: ToolCallId,
+    name: String,
+    completion: ToolCompletion,
+    result: ToolResult,
+    duration: Option<std::time::Duration>,
+    capability: Option<crate::CapabilityRequest>,
 }
 
 pub(super) enum AwaitJobs {
@@ -125,7 +127,7 @@ impl AsyncJobSet {
                 if let Poll::Ready(Some(progress)) = job.progress.poll_recv(cx) {
                     return Poll::Ready(JobNotice::Progress {
                         call_id: id,
-                        progress,
+                        progress: Box::new(progress),
                     });
                 }
             }
@@ -364,7 +366,7 @@ fn finished_notice(job: AsyncJob, result: Result<ToolOutput, ToolError>) -> JobN
             },
         ),
     };
-    JobNotice::Finished {
+    JobNotice::Finished(Box::new(FinishedJob {
         call_id: ToolCallId::from_string(job.call.id.clone())
             .expect("validated provider tool call ID is nonempty"),
         name: job.name,
@@ -372,7 +374,7 @@ fn finished_notice(job: AsyncJob, result: Result<ToolOutput, ToolError>) -> JobN
         result: tool_result,
         duration,
         capability,
-    }
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -566,18 +568,22 @@ pub(super) async fn forward_job_notice(
             emit(
                 events,
                 cancellation,
-                RunEvent::ToolUpdated { call_id, progress },
+                RunEvent::ToolUpdated {
+                    call_id,
+                    progress: *progress,
+                },
             )
             .await
         }
-        JobNotice::Finished {
-            call_id,
-            name,
-            completion,
-            result,
-            duration,
-            capability,
-        } => {
+        JobNotice::Finished(finished) => {
+            let FinishedJob {
+                call_id,
+                name,
+                completion,
+                result,
+                duration,
+                capability,
+            } = *finished;
             hooks.after_tool_use(&name, &call_id, &completion, duration, capability.as_ref());
             emit(
                 events,
@@ -614,7 +620,7 @@ pub(super) async fn await_first_job(control: &mut RunControl<'_>) -> Result<Awai
     loop {
         tokio::select! {
             notice = control.async_jobs.poll_event() => {
-                let finished = matches!(notice, JobNotice::Finished { .. });
+                let finished = matches!(notice, JobNotice::Finished(_));
                 forward_job_notice(
                     notice,
                     control.async_jobs,

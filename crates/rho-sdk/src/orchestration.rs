@@ -16,8 +16,7 @@ use crate::{
     run::RunCommand,
     session::{HistoryMetrics, RunStart, SessionCore, SessionState},
     steering::SteeringQueue,
-    CancellationToken, Error, ModelCallProfile, ProviderError, ProviderErrorKind, Retryability,
-    RunEvent, RunId,
+    CancellationToken, Error, ModelCallProfile, ProviderError, RunEvent, RunId,
 };
 
 const PROVIDER_EVENT_CAPACITY: usize = 16;
@@ -622,15 +621,15 @@ async fn maybe_compact(
 }
 
 pub(super) struct RunControl<'a> {
-    pub(super) hooks: &'a RunHooks,
-    pub(super) cancellation: &'a CancellationToken,
-    pub(super) events: &'a mpsc::Sender<RunEvent>,
-    pub(super) commands: &'a mut mpsc::Receiver<RunCommand>,
-    pub(super) steering: &'a mut SteeringQueue,
-    pub(super) async_jobs: &'a mut AsyncJobSet,
+    hooks: &'a RunHooks,
+    cancellation: &'a CancellationToken,
+    events: &'a mpsc::Sender<RunEvent>,
+    commands: &'a mut mpsc::Receiver<RunCommand>,
+    steering: &'a mut SteeringQueue,
+    async_jobs: &'a mut AsyncJobSet,
 }
 
-pub(super) async fn provider_turn(
+async fn provider_turn(
     runtime: &Rho,
     history: &[Message],
     tools: &[crate::model::ToolSpec],
