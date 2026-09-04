@@ -7,6 +7,7 @@
 pub(crate) mod anthropic_messages;
 mod cost;
 pub(crate) mod gemini_generate_content;
+mod late_tool_results;
 pub(crate) mod openai_chat;
 pub(crate) mod openai_responses;
 mod openai_shared;

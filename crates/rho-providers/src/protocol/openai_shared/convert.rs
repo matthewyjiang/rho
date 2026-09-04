@@ -522,6 +522,16 @@ fn openai_prepared_assistant(
     })
 }
 
+pub(crate) fn to_openai_messages_for_target(
+    messages: &[Message],
+    target: Option<&crate::model::ModelIdentity>,
+) -> Result<Vec<OpenAiMessage>, ModelError> {
+    crate::protocol::late_tool_results::normalize_late_tool_results(messages)
+        .iter()
+        .map(|message| to_openai_message_for_target(message, target))
+        .collect()
+}
+
 pub(crate) fn to_openai_message_for_target(
     message: &Message,
     target: Option<&crate::model::ModelIdentity>,

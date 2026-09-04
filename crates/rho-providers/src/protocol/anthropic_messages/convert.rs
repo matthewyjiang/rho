@@ -42,9 +42,10 @@ pub(crate) fn split_system_and_messages(
     target: &crate::model::ModelIdentity,
     provider_context_replay: ProviderContextReplay,
 ) -> Result<(Option<String>, Vec<AnthropicMessage>), ModelError> {
+    let messages = crate::protocol::late_tool_results::normalize_late_tool_results(messages);
     let mut system = Vec::new();
     let mut converted = Vec::new();
-    for message in messages {
+    for message in messages.as_ref() {
         match message {
             Message::System(content) => system.push(content.as_str()),
             Message::User(blocks) => push_message(
