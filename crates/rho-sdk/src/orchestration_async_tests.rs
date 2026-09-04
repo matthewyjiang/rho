@@ -1,4 +1,12 @@
-use std::{num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{
+    future::pending,
+    num::NonZeroUsize,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
+};
 
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -6,10 +14,10 @@ use tokio::sync::Notify;
 
 use crate::{
     model::{
-        ContentBlock, Message, ModelEvent, ModelIdentity, ModelResponse, ProviderContextBlock,
-        ToolCall, ToolResult, ToolSpec,
+        ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse,
+        ProviderContextBlock, ToolCall, ToolResult, ToolSpec,
     },
-    provider::{ScriptedProvider, ScriptedTurn},
+    provider::{ModelProvider, ProviderFuture, ScriptedProvider, ScriptedTurn},
     tool::{
         PreparedToolInvocation, Tool, ToolContext, ToolError, ToolExecutionMode, ToolFuture,
         ToolInvocation, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
@@ -189,22 +197,72 @@ fn async_call_turn(id: &str, name: &str) -> ScriptedTurn {
     )
 }
 
-// Covers: an honoured async call lets the loop take another model step before
-// the result is appended; the following request ends with ToolResult.
+#[derive(Debug)]
+struct GatedSecondTurnProvider {
+    calls: AtomicUsize,
+    second_release: Notify,
+    requests: Mutex<Vec<Vec<Message>>>,
+}
+
+impl ModelProvider for GatedSecondTurnProvider {
+    fn identity(&self) -> ModelIdentity {
+        identity()
+    }
+
+    fn send_turn<'a>(&'a self, _request: ModelRequest<'a>) -> ProviderFuture<'a> {
+        Box::pin(async {
+            Err(crate::ProviderError::new(
+                crate::ProviderErrorKind::Other,
+                "streaming path required",
+                crate::Retryability::Permanent,
+            ))
+        })
+    }
+
+    fn send_turn_stream<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        events: crate::provider::ProviderEventSender,
+    ) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            self.requests
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(request.messages.to_vec());
+            match self.calls.fetch_add(1, Ordering::AcqRel) {
+                0 => {
+                    events.send(async_marker("call-a")).await?;
+                    Ok(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                        tool_call("call-a", "slow"),
+                    )]))
+                }
+                1 => {
+                    self.second_release.notified().await;
+                    Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                        "working".into(),
+                    )]))
+                }
+                _ => Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
+                    "done".into(),
+                )])),
+            }
+        })
+    }
+}
+
+// Covers: a job that finishes during the text-only turn is drained into the
+// next request instead of ending the run with an unseen ToolResult.
 // Owner: sdk orchestration
 #[tokio::test]
 async fn pending_job_then_end_turn_continues_with_result() {
     let gate = Arc::new(Notify::new());
-    let provider = ScriptedProvider::new(
-        identity(),
-        [
-            async_call_turn("call-a", "slow"),
-            text_turn("working"),
-            text_turn("done"),
-        ],
-    );
+    let provider = Arc::new(GatedSecondTurnProvider {
+        calls: AtomicUsize::new(0),
+        second_release: Notify::new(),
+        requests: Mutex::new(Vec::new()),
+    });
     let session = Rho::builder()
-        .provider(provider.clone())
+        .provider_shared(provider.clone())
         .tool(GatedAsyncTool {
             name: "slow",
             gate: Arc::clone(&gate),
@@ -236,6 +294,7 @@ async fn pending_job_then_end_turn_continues_with_result() {
             RunEvent::ToolFinished { ref call_id, .. } if call_id.as_str() == "call-a" => {
                 assert!(saw_step_2);
                 saw_finished_after_step_2 = true;
+                provider.second_release.notify_one();
             }
             RunEvent::Completed { .. } => break,
             RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
@@ -246,20 +305,20 @@ async fn pending_job_then_end_turn_continues_with_result() {
     assert!(saw_finished_after_step_2);
     let outcome = run.outcome().await.unwrap();
     assert_eq!(outcome.stop_reason(), StopReason::EndTurn);
-    let requests = provider.recorded_requests();
+    let requests = provider
+        .requests
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     assert_eq!(requests.len(), 3);
     assert_eq!(
-        tool_results_in(&requests[2].messages),
-        vec![ToolResult {
+        requests[2].last(),
+        Some(&Message::ToolResult(ToolResult {
             id: "call-a".into(),
             ok: true,
             content: "slow done".into(),
-        }]
+        }))
     );
-    assert!(matches!(
-        requests[2].messages.last(),
-        Some(Message::ToolResult(result)) if result.id == "call-a"
-    ));
 }
 
 // Covers: finished async results enter history in completion order, both before
@@ -371,6 +430,95 @@ async fn cancel_while_awaiting_interrupts_jobs() {
         }
     }
     run.cancel();
+    let mut finished = 0usize;
+    loop {
+        match tokio::time::timeout(TEST_TIMEOUT, run.next_event()).await {
+            Ok(Some(RunEvent::ToolFinished { ref call_id, .. }))
+                if call_id.as_str() == "call-a" =>
+            {
+                finished += 1;
+            }
+            Ok(Some(RunEvent::Completed { .. }))
+            | Ok(Some(RunEvent::Failed { .. }))
+            | Ok(None)
+            | Err(_) => break,
+            Ok(Some(_)) => {}
+        }
+    }
+    let outcome = tokio::time::timeout(TEST_TIMEOUT, run.outcome())
+        .await
+        .expect("cancelled run timed out");
+    assert!(matches!(outcome, Err(Error::Cancelled)), "{outcome:?}");
+    assert_eq!(finished, 1);
+    assert_eq!(
+        session
+            .history()
+            .into_iter()
+            .filter_map(|message| match message {
+                Message::ToolResult(result) => Some(result),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        vec![ToolResult {
+            id: "call-a".into(),
+            ok: false,
+            content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
+        }]
+    );
+}
+
+struct PendingPrepareAsyncTool;
+
+impl Tool for PendingPrepareAsyncTool {
+    fn spec(&self) -> ToolSpec {
+        tool_spec("slow")
+    }
+
+    fn execution_mode(&self) -> ToolExecutionMode {
+        ToolExecutionMode::Async
+    }
+
+    fn prepare<'a>(
+        &'a self,
+        _invocation: ToolInvocation,
+        _context: ToolPreparationContext,
+    ) -> ToolPrepareFuture<'a> {
+        Box::pin(async { pending().await })
+    }
+
+    fn call<'a>(&'a self, _invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
+        Box::pin(async {
+            Err(ToolError::new(
+                crate::tool::ToolErrorKind::Execution,
+                "use prepare",
+            ))
+        })
+    }
+}
+
+// Covers: cancelling a run while an async tool is still in prepare/authorize
+// (the ready_rx wait, including a never-answered approval) does not hang.
+// Owner: sdk orchestration
+#[tokio::test]
+async fn cancel_while_async_tool_awaits_approval_does_not_hang() {
+    let provider = ScriptedProvider::new(identity(), [async_call_turn("call-a", "slow")]);
+    let session = Rho::builder()
+        .provider(provider)
+        .tool(PendingPrepareAsyncTool)
+        .build()
+        .unwrap()
+        .session(SessionOptions::default())
+        .await
+        .unwrap();
+    let mut run = session.start(UserInput::text("start")).await.unwrap();
+    loop {
+        match next_event(&mut run).await {
+            RunEvent::ToolProposed { .. } => break,
+            RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
+            _ => {}
+        }
+    }
+    run.cancel();
     let outcome = tokio::time::timeout(TEST_TIMEOUT, run.outcome())
         .await
         .expect("cancelled run timed out");
@@ -412,11 +560,21 @@ async fn max_steps_with_pending_job_interrupts_before_commit() {
         .session(SessionOptions::default())
         .await
         .unwrap();
-    let outcome = tokio::time::timeout(TEST_TIMEOUT, session.complete("start"))
-        .await
-        .expect("run timed out")
-        .unwrap();
+    let mut run = session.start(UserInput::text("start")).await.unwrap();
+    let mut finished = 0usize;
+    loop {
+        match next_event(&mut run).await {
+            RunEvent::ToolFinished { ref call_id, .. } if call_id.as_str() == "call-a" => {
+                finished += 1;
+            }
+            RunEvent::Completed { .. } => break,
+            RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
+            _ => {}
+        }
+    }
+    let outcome = run.outcome().await.unwrap();
     assert_eq!(outcome.stop_reason(), StopReason::MaxSteps);
+    assert_eq!(finished, 1);
     assert_eq!(
         session
             .history()

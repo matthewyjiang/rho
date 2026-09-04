@@ -326,6 +326,14 @@ pub enum RunEvent {
     },
     /// The call runs detached: the loop continues and `ToolFinished` for this id
     /// arrives after later `StepStarted` events. Hosts keep the card alive.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): fold ToolDetached into ToolStarted as an execution field.
+    ///
+    /// This minor cannot add fields to [`RunEvent::ToolStarted`], so detached
+    /// execution is a sibling event. Prefer matching through host helpers until
+    /// major.
     ToolDetached {
         call_id: ToolCallId,
     },

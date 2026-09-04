@@ -43,8 +43,7 @@ pub(super) struct FinishedJob {
 }
 
 pub(super) enum AwaitJobs {
-    Finished,
-    Steered,
+    Continue,
     Cancelled,
 }
 
@@ -64,6 +63,10 @@ struct JobCompletion {
     result: Result<ToolOutput, ToolError>,
 }
 
+/// Detached tool jobs for one run.
+///
+/// Completions are parked onto `finished` by [`forward_job_notice`];
+/// [`Self::drain_finished`] appends those results to history.
 pub(super) struct AsyncJobSet {
     jobs: BTreeMap<ToolCallId, AsyncJob>,
     finished: VecDeque<ToolResult>,
@@ -86,13 +89,17 @@ impl AsyncJobSet {
         !self.jobs.is_empty()
     }
 
+    pub(super) fn pending_count(&self) -> usize {
+        self.jobs.len()
+    }
+
     pub(super) fn drain_finished(&mut self, history: &mut Vec<Message>) -> usize {
         let count = self.finished.len();
         history.extend(self.finished.drain(..).map(Message::ToolResult));
         count
     }
 
-    /// Parks every job whose worker is already finished without waiting.
+    /// Collects every job whose worker is already finished without waiting.
     pub(super) fn harvest_ready(&mut self) -> Vec<JobNotice> {
         let mut notices = Vec::new();
         while let Ok(completion) = self.completions.try_recv() {
@@ -113,11 +120,15 @@ impl AsyncJobSet {
     }
 
     pub(super) async fn poll_event(&mut self) -> JobNotice {
-        std::future::poll_fn(|cx| {
-            if let Poll::Ready(Some(completion)) = self.completions.poll_recv(cx) {
-                if let Some(notice) = self.take_completion(completion) {
-                    return Poll::Ready(notice);
+        std::future::poll_fn(|cx| loop {
+            match self.completions.poll_recv(cx) {
+                Poll::Ready(Some(completion)) => {
+                    if let Some(notice) = self.take_completion(completion) {
+                        return Poll::Ready(notice);
+                    }
+                    continue;
                 }
+                Poll::Ready(None) | Poll::Pending => {}
             }
             let ids = self.jobs.keys().cloned().collect::<Vec<_>>();
             for id in ids {
@@ -131,7 +142,7 @@ impl AsyncJobSet {
                     });
                 }
             }
-            Poll::Pending
+            return Poll::Pending;
         })
         .await
     }
@@ -230,7 +241,32 @@ impl AsyncJobSet {
                 });
                 result
             });
-            match ready_rx.await {
+            let ready = tokio::select! {
+                result = ready_rx => result,
+                () = cancellation.cancelled() => {
+                    job_cancellation.cancel();
+                    worker.abort();
+                    let _ = worker.await;
+                    fail_call(
+                        hooks,
+                        events,
+                        cancellation,
+                        &id,
+                        &call,
+                        ToolCompletion::Failure(ToolFailure::new(
+                            ToolErrorKind::Cancelled,
+                            INTERRUPTED_TOOL_RESULT_CONTENT.to_owned(),
+                        )),
+                        interrupted_result(&call),
+                        None,
+                        first_capability.get().cloned(),
+                        &mut self.finished,
+                    )
+                    .await?;
+                    return Err(Error::Cancelled);
+                }
+            };
+            match ready {
                 Ok(Ok((metadata, cancellation_policy))) => {
                     emit(
                         events,
@@ -323,14 +359,41 @@ impl AsyncJobSet {
         Ok(())
     }
 
-    pub(super) async fn interrupt(&mut self, history: &mut Vec<Message>) {
+    pub(super) async fn interrupt(
+        &mut self,
+        history: &mut Vec<Message>,
+        hooks: &RunHooks,
+        events: &mpsc::Sender<RunEvent>,
+        cancellation: &CancellationToken,
+    ) {
         self.drain_finished(history);
         let jobs = std::mem::take(&mut self.jobs);
         for job in jobs.values() {
             job.cancellation.cancel();
         }
         for (id, job) in jobs {
-            let result = settle_job(id, job).await;
+            let name = job.name.clone();
+            let duration = Some(job.started.elapsed());
+            let capability = job.first_capability.get().cloned();
+            let result = settle_job(id.clone(), job).await;
+            let completion = if result.ok {
+                ToolCompletion::Success(crate::tool::ToolOutput::text(result.content.clone()))
+            } else {
+                ToolCompletion::Failure(ToolFailure::new(
+                    ToolErrorKind::Cancelled,
+                    result.content.clone(),
+                ))
+            };
+            hooks.after_tool_use(&name, &id, &completion, duration, capability.as_ref());
+            let _ = emit(
+                events,
+                cancellation,
+                RunEvent::ToolFinished {
+                    call_id: id,
+                    result: completion,
+                },
+            )
+            .await;
             history.push(Message::ToolResult(result));
         }
     }
@@ -630,7 +693,7 @@ pub(super) async fn await_first_job(control: &mut RunControl<'_>) -> Result<Awai
                 )
                 .await?;
                 if finished {
-                    return Ok(AwaitJobs::Finished);
+                    return Ok(AwaitJobs::Continue);
                 }
             }
             command = control.commands.recv(), if commands_open => {
@@ -638,7 +701,7 @@ pub(super) async fn await_first_job(control: &mut RunControl<'_>) -> Result<Awai
                     Some(command) => {
                         super::accept_non_tool_command(command, control.steering);
                         if control.steering.has_staged() {
-                            return Ok(AwaitJobs::Steered);
+                            return Ok(AwaitJobs::Continue);
                         }
                     }
                     None => commands_open = false,

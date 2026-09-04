@@ -118,6 +118,9 @@ rather than a first-class event or field. That block is never replayed as
 provider-native context and is never counted as a handoff omission.
 `NEXT_MAJOR(rho-sdk): replace the async-call marker block with a ModelEvent::ToolCallAccepted { id, execution: ToolExecutionMode } variant and an execution field on ToolCall.`
 
+`RunEvent::ToolDetached` is a sibling of `ToolStarted` because this major cannot add fields to existing event variants.
+`NEXT_MAJOR(rho-sdk): fold ToolDetached into ToolStarted as an execution field.`
+
 ### Application compatibility shims
 
 Private provider construction shims remain tracked for removal by issue #256.

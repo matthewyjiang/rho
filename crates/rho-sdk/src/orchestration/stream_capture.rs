@@ -44,7 +44,7 @@ impl StreamCapture {
         self.failed_attempts.push((kind, attempt_usage));
     }
 
-    pub(super) fn take_async_call_ids(&self) -> BTreeSet<String> {
+    pub(super) fn async_call_ids(&self) -> BTreeSet<String> {
         self.provider_context
             .iter()
             .filter_map(ProviderContextBlock::async_tool_call_id)

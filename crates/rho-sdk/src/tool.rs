@@ -38,6 +38,10 @@ pub enum ToolExecutionMode {
     Sync,
     /// The call may run detached: the loop keeps calling the model and delivers
     /// the result on the original call id when the job finishes.
+    ///
+    /// Automatic compaction is skipped while any async job is still pending
+    /// (`tracing` warns with the pending count). Compacting with dangling
+    /// tool calls is not supported.
     Async,
 }
 
