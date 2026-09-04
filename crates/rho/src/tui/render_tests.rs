@@ -18,6 +18,51 @@ fn display_width_ignores_control_characters_filtered_by_ratatui() {
     assert_eq!(display_width("left\u{1b}right"), 9);
 }
 
+// Covers: advancing styled-wrap cursors must not drop UTF-8, empty spans, or
+// style boundaries. Pure layout logic; PTY text cannot observe span identity.
+#[test]
+fn styled_hard_wrap_preserves_byte_slices_and_styles() {
+    let style = Style::default().add_modifier(Modifier::BOLD);
+    for parts in [
+        vec!["", ""],
+        vec!["ab", "", "cdef", "gh"],
+        vec!["界", "λ🙂", "e\u{301}", "\tend"],
+    ] {
+        let spans: Vec<_> = parts
+            .iter()
+            .enumerate()
+            .map(|(index, text)| {
+                Span::styled(
+                    text.to_string(),
+                    if index % 2 == 0 {
+                        style
+                    } else {
+                        Style::default()
+                    },
+                )
+            })
+            .collect();
+        let text = parts.concat();
+        for width in [0, 1, 2, 3, 8, 80] {
+            let expected: Vec<_> = hard_wrap_ranges(&text, width)
+                .into_iter()
+                .map(|range| {
+                    let row = slice_spans_by_bytes(&spans, range.start, range.end);
+                    if row.is_empty() {
+                        vec![Span::styled(String::new(), style)]
+                    } else {
+                        row
+                    }
+                })
+                .collect();
+            assert_eq!(
+                hard_wrap_styled_spans(&text, &spans, width, style),
+                expected
+            );
+        }
+    }
+}
+
 // Covers: end truncation must keep its display-width and one-line output contract.
 // Owner: pure TUI layout policy.
 #[test]

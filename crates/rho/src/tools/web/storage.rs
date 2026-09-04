@@ -13,9 +13,9 @@ use rho_tools::tool::ToolError;
 
 /// In-memory copies of sidecar blobs. Disk remains the source of truth.
 ///
-/// 32 recent responses or 16 MiB, whichever binds first. A single blob larger
-/// than the byte budget stays on disk only so one huge fetch cannot flush the
-/// rest of the cache.
+/// 32 recent responses or 16 MiB of text and serialized metadata, whichever
+/// binds first. This payload budget excludes allocator/container overhead.
+/// A single oversized blob stays on disk without flushing the other entries.
 const MEMORY_ENTRY_LIMIT: usize = 32;
 const MEMORY_BYTE_LIMIT: usize = 16 * 1024 * 1024;
 
@@ -46,9 +46,23 @@ pub struct WebAccessStore {
 #[derive(Debug, Default)]
 struct WebAccessStoreState {
     session_root: Option<PathBuf>,
+    /// Identity, not a wrapping counter: in-flight I/O keeps its old binding alive.
+    binding: Arc<()>,
     memory: MemoryCache,
     #[cfg(test)]
     override_root: Option<PathBuf>,
+}
+
+impl WebAccessStoreState {
+    fn root(&self) -> PathBuf {
+        #[cfg(test)]
+        if let Some(path) = self.override_root.clone() {
+            return path;
+        }
+        self.session_root
+            .clone()
+            .unwrap_or_else(default_web_access_cache_root)
+    }
 }
 
 /// Session-scoped LRU of stored web bodies. Eviction never deletes sidecar files.
@@ -64,7 +78,7 @@ struct MemoryCache {
 
 #[derive(Clone, Debug)]
 struct CachedContent {
-    content: StoredContent,
+    content: Arc<StoredContent>,
     bytes: usize,
 }
 
@@ -85,13 +99,13 @@ impl MemoryCache {
         }
     }
 
-    fn get(&mut self, response_id: &str) -> Option<StoredContent> {
-        let content = self.entries.get(response_id)?.content.clone();
+    fn get(&mut self, response_id: &str) -> Option<Arc<StoredContent>> {
+        let content = Arc::clone(&self.entries.get(response_id)?.content);
         self.touch(response_id);
         Some(content)
     }
 
-    fn insert(&mut self, response_id: String, content: StoredContent) {
+    fn insert(&mut self, response_id: String, content: Arc<StoredContent>) {
         let bytes = memory_bytes(&content);
         self.remove(&response_id);
         if bytes > self.byte_limit {
@@ -154,8 +168,27 @@ fn memory_bytes(content: &StoredContent) -> usize {
                     + item.url.as_deref().map_or(0, str::len)
                     + item.query.as_deref().map_or(0, str::len)
                     + item.title.as_deref().map_or(0, str::len)
+                    + metadata_bytes(&item.metadata)
             })
             .sum::<usize>()
+}
+
+/// Count JSON without allocating a second copy of large metadata values.
+fn metadata_bytes(value: &Value) -> usize {
+    #[derive(Default)]
+    struct Counter(usize);
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(bytes.len());
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter::default();
+    serde_json::to_writer(&mut counter, value).expect("Value serialization into a counting sink");
+    counter.0
 }
 
 impl WebAccessStore {
@@ -167,6 +200,7 @@ impl WebAccessStore {
     pub fn bind_session(&self, root: Option<PathBuf>) {
         let mut state = self.state.lock().expect("web access store lock poisoned");
         state.session_root = root;
+        state.binding = Arc::new(());
         state.memory = MemoryCache::default();
     }
 
@@ -178,15 +212,10 @@ impl WebAccessStore {
     /// 3. process data-dir fallback
     /// 4. temp dir when no Rho home is available
     pub fn root(&self) -> PathBuf {
-        let state = self.state.lock().expect("web access store lock poisoned");
-        #[cfg(test)]
-        if let Some(path) = state.override_root.clone() {
-            return path;
-        }
-        if let Some(path) = state.session_root.clone() {
-            return path;
-        }
-        default_web_access_cache_root()
+        self.state
+            .lock()
+            .expect("web access store lock poisoned")
+            .root()
     }
 
     pub(super) fn store(
@@ -194,30 +223,57 @@ impl WebAccessStore {
         response_id: String,
         content: StoredContent,
     ) -> Result<(), ToolError> {
-        write_at(&self.root(), &response_id, &content)?;
-        self.state
-            .lock()
-            .expect("web access store lock poisoned")
-            .memory
-            .insert(response_id, content);
+        self.store_with_writer(response_id, content, write_at)
+    }
+
+    fn store_with_writer(
+        &self,
+        response_id: String,
+        content: StoredContent,
+        write: impl FnOnce(&Path, &str, &StoredContent) -> Result<(), ToolError>,
+    ) -> Result<(), ToolError> {
+        let (root, binding) = {
+            let state = self.state.lock().expect("web access store lock poisoned");
+            (state.root(), Arc::clone(&state.binding))
+        };
+        write(&root, &response_id, &content)?;
+        self.cache_if_current(&binding, response_id, Arc::new(content));
         Ok(())
     }
 
-    pub(super) fn load(&self, response_id: &str) -> Result<StoredContent, ToolError> {
+    /// Shares immutable bodies so selecting one item never copies its siblings.
+    pub(super) fn load(&self, response_id: &str) -> Result<Arc<StoredContent>, ToolError> {
+        self.load_with_reader(response_id, read_at)
+    }
+
+    fn load_with_reader(
+        &self,
+        response_id: &str,
+        read: impl FnOnce(&Path, &str) -> Result<StoredContent, ToolError>,
+    ) -> Result<Arc<StoredContent>, ToolError> {
         validate_response_id(response_id)?;
-        {
+        let (root, binding) = {
             let mut state = self.state.lock().expect("web access store lock poisoned");
             if let Some(content) = state.memory.get(response_id) {
                 return Ok(content);
             }
-        }
-        let content = read_at(&self.root(), response_id)?;
-        self.state
-            .lock()
-            .expect("web access store lock poisoned")
-            .memory
-            .insert(response_id.to_owned(), content.clone());
+            (state.root(), Arc::clone(&state.binding))
+        };
+        let content = Arc::new(read(&root, response_id)?);
+        self.cache_if_current(&binding, response_id.to_owned(), Arc::clone(&content));
         Ok(content)
+    }
+
+    fn cache_if_current(
+        &self,
+        binding: &Arc<()>,
+        response_id: String,
+        content: Arc<StoredContent>,
+    ) {
+        let mut state = self.state.lock().expect("web access store lock poisoned");
+        if Arc::ptr_eq(binding, &state.binding) {
+            state.memory.insert(response_id, content);
+        }
     }
 
     pub(super) fn create_private_dir_all(&self, path: &Path) -> Result<(), ToolError> {

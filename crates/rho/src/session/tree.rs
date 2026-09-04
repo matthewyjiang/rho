@@ -211,6 +211,8 @@ pub(crate) struct SessionTree {
     branch_count: usize,
     /// Full state for `active_leaf_id` only. Other nodes reconstruct on demand.
     active_state: Option<PersistedSessionState>,
+    /// Sequential delta replay defers full snapshot materialization until needed.
+    active_replay: Option<restore::ReplayState>,
 }
 
 impl SessionTree {
@@ -468,7 +470,8 @@ impl SessionTree {
         if let Some(ts) = parse_timestamp(&node.timestamp) {
             self.observe_timestamp(ts);
         }
-        self.insert_explicit_node(node)
+        self.insert_explicit_node(node)?;
+        self.ensure_active_state()
     }
 
     pub(crate) fn apply_set_leaf(
@@ -792,7 +795,7 @@ impl SessionTree {
 
     fn state_from_snapshot(
         &self,
-        snapshot: &SessionSnapshot,
+        snapshot: SessionSnapshot,
         display_messages: &[StoredDisplayMessage],
     ) -> anyhow::Result<PersistedSessionState> {
         let session_id = self
@@ -809,9 +812,9 @@ impl SessionTree {
         Ok(PersistedSessionState {
             model: snapshot.history().to_vec(),
             display: display_messages.to_vec(),
-            snapshot: Some(snapshot.clone()),
             revision: snapshot.revision(),
             compaction: snapshot.compaction().clone(),
+            snapshot: Some(snapshot),
         })
     }
 
@@ -820,6 +823,13 @@ impl SessionTree {
         node: SessionNode,
         state: PersistedSessionState,
     ) -> anyhow::Result<()> {
+        self.insert_node(node, NodeFacts::from_state(&state))?;
+        self.active_state = Some(state);
+        self.active_replay = None;
+        Ok(())
+    }
+
+    fn insert_node(&mut self, node: SessionNode, facts: NodeFacts) -> anyhow::Result<()> {
         if self.nodes.contains_key(&node.id) {
             anyhow::bail!("duplicate session node id '{}'", node.id);
         }
@@ -836,15 +846,8 @@ impl SessionTree {
         }
         let id = node.id.clone();
         self.order.push(id.clone());
-        self.nodes.insert(
-            id.clone(),
-            RestoredNode {
-                node,
-                facts: NodeFacts::from_state(&state),
-            },
-        );
+        self.nodes.insert(id.clone(), RestoredNode { node, facts });
         self.active_leaf_id = Some(id);
-        self.active_state = Some(state);
         Ok(())
     }
 
@@ -855,6 +858,7 @@ impl SessionTree {
         if self.active_leaf_id.as_ref() != Some(&target_id) {
             self.active_leaf_id = Some(target_id);
             self.active_state = None;
+            self.active_replay = None;
         }
         Ok(())
     }

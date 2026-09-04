@@ -877,10 +877,28 @@ pub(super) fn hard_wrap_styled_spans(
     empty_style: Style,
 ) -> Vec<Vec<Span<'static>>> {
     let width = width.max(1);
+    let mut span_index = 0;
+    let mut span_start = 0;
     hard_wrap_ranges(text, width)
         .into_iter()
         .map(|range| {
-            let chunk = slice_spans_by_bytes(spans, range.start, range.end);
+            let mut chunk = Vec::new();
+            while let Some(span) = spans.get(span_index) {
+                if span_start >= range.end {
+                    break;
+                }
+                let span_end = span_start + span.content.len();
+                let from = range.start.saturating_sub(span_start);
+                let to = (range.end - span_start).min(span.content.len());
+                if from < to {
+                    chunk.push(Span::styled(span.content[from..to].to_owned(), span.style));
+                }
+                if span_end > range.end {
+                    break;
+                }
+                span_start = span_end;
+                span_index += 1;
+            }
             if chunk.is_empty() {
                 vec![Span::styled(String::new(), empty_style)]
             } else {

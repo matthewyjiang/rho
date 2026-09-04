@@ -44,12 +44,16 @@ impl CodexContinuationCandidate {
             .and_then(Value::as_array)
             .ok_or_else(|| ModelError::InvalidResponse("Codex body missing input".into()))?
             .clone();
-        let mut request_properties = body.clone();
-        let properties = request_properties.as_object_mut().ok_or_else(|| {
+        let properties = body.as_object().ok_or_else(|| {
             ModelError::InvalidResponse("Codex body must be a JSON object".into())
         })?;
-        properties.remove("input");
-        properties.remove("previous_response_id");
+        let request_properties = Value::Object(
+            properties
+                .iter()
+                .filter(|(key, _)| !matches!(key.as_str(), "input" | "previous_response_id"))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        );
 
         Ok(Self {
             request_properties,
@@ -219,7 +223,7 @@ impl CodexContinuationState {
 
     pub(super) fn record_success(
         &mut self,
-        candidate: &CodexContinuationCandidate,
+        candidate: CodexContinuationCandidate,
         response: CodexContinuationResponse,
     ) {
         let Some(response_id) = response.response_id.filter(|id| !id.is_empty()) else {
@@ -228,8 +232,8 @@ impl CodexContinuationState {
         };
         self.snapshot = Some(CodexContinuationSnapshot {
             response_id,
-            request_properties: candidate.request_properties.clone(),
-            request_input: candidate.input.clone(),
+            request_properties: candidate.request_properties,
+            request_input: candidate.input,
             server_output_items: response.server_output_items,
             local_output_items: response.local_output_items,
         });
@@ -243,3 +247,7 @@ impl CodexContinuationState {
 #[cfg(test)]
 #[path = "codex_continuation_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "codex_continuation_perf_tests.rs"]
+mod perf_tests;

@@ -28,6 +28,9 @@ use super::snapshot_delta::{SnapshotDeltaBase, StoredSnapshotDelta};
 use super::tree::{NodeId, SessionNode, SessionNodeKind, StoredStateTransition};
 use super::Session;
 
+#[path = "performance_growth.rs"]
+mod growth;
+
 /// Practical fixed workspace size for list / index sync measurements.
 const LIST_SESSION_COUNT: usize = 750;
 /// Geometric transcript sizes expose non-linear summarize regressions.

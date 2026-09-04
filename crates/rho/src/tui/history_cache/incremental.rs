@@ -31,6 +31,27 @@ pub(in crate::tui) struct IncrementalEntryCache {
     tail: IncrementalTail,
 }
 
+impl IncrementalEntryCache {
+    /// A known open fence cannot introduce inline images. Recheck only the
+    /// uncommitted line and appended lines, including partial closing fences.
+    pub(super) fn remains_inside_fence(&self, text: &str) -> bool {
+        match &self.tail {
+            IncrementalTail::Fence(tail) => tail.remains_open(text),
+            IncrementalTail::None | IncrementalTail::Table(_) => false,
+        }
+    }
+
+    /// Materialize COPY only when hit testing asks for metadata, not per token.
+    pub(super) fn fence_copy_source<'a>(&self, text: &'a str, line: usize) -> Option<&'a str> {
+        let IncrementalTail::Fence(tail) = &self.tail else {
+            return None;
+        };
+        (line == tail.header_line)
+            .then(|| fence_body_source(text, tail.source_start, tail.fence))
+            .flatten()
+    }
+}
+
 impl std::fmt::Debug for IncrementalEntryCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("IncrementalEntryCache")
@@ -57,6 +78,20 @@ struct OpenFenceTail {
     fence: CodeFence,
     language: Option<String>,
     highlighter: Option<BlockHighlighter>,
+}
+
+impl OpenFenceTail {
+    fn remains_open(&self, text: &str) -> bool {
+        let Some(suffix) = text.get(self.committed_end..) else {
+            return false;
+        };
+        // Before the opening line's newline arrives, it is not a closing line.
+        let skip = usize::from(self.committed_end == self.source_start);
+        !suffix
+            .lines()
+            .skip(skip)
+            .any(|line| is_closing_fence(line, self.fence))
+    }
 }
 
 #[derive(Clone)]
@@ -328,13 +363,13 @@ fn extend_open_fence(
     if parse_opening_fence(first) != Some(tail.fence) {
         return None;
     }
-    if fence_closed(text, tail.source_start, tail.fence) {
+    if !tail.remains_open(text) {
         return None;
     }
     if tail.committed_end > text.len() {
         return None;
     }
-    let new_complete = last_complete_end(text, tail.source_start);
+    let new_complete = last_complete_end(text, tail.committed_end);
     if new_complete < tail.committed_end {
         return None;
     }
@@ -376,7 +411,7 @@ fn extend_open_fence(
         append_fence_preview(entry, &text[tail.committed_end..], width, &tail, reasoning);
     }
 
-    refresh_fence_copy(entry, text, &tail, width);
+    ensure_fence_copy_target(entry, text, &tail, width);
     if let Some(blank) = trailing_blank {
         entry.lines.push(blank);
     }
@@ -398,7 +433,7 @@ fn extend_open_mermaid(
         // Incomplete last-line tokens: live art ignores them. Sticky source
         // waits for a newline so this path never re-parses mermaid per token.
         // COPY still follows the current partial body, like ordinary fences.
-        refresh_fence_copy(entry, text, &tail, width);
+        ensure_fence_copy_target(entry, text, &tail, width);
         return Some(tail);
     }
     tail.committed_end = new_complete;
@@ -478,17 +513,21 @@ fn append_fence_preview(
     entry.lines.extend(lines.into_iter().map(pad_display_line));
 }
 
-fn refresh_fence_copy(entry: &mut CachedEntry, text: &str, tail: &OpenFenceTail, width: usize) {
-    let Some(body) = fence_body_source(text, tail.source_start, tail.fence) else {
+fn ensure_fence_copy_target(
+    entry: &mut CachedEntry,
+    text: &str,
+    tail: &OpenFenceTail,
+    width: usize,
+) {
+    if !text[tail.source_start..].contains('\n') {
         return;
-    };
+    }
     let inner = padded_content_width(width);
-    if let Some(block) = entry
+    if entry
         .code_blocks
-        .iter_mut()
-        .find(|block| block.line == tail.header_line)
+        .iter()
+        .any(|block| block.line == tail.header_line)
     {
-        block.text = Arc::from(body);
         return;
     }
     let Some(copy_columns) = code_block_copy_columns(inner) else {
@@ -497,11 +536,12 @@ fn refresh_fence_copy(entry: &mut CachedEntry, text: &str, tail: &OpenFenceTail,
     entry.code_blocks.push(CachedCodeBlock {
         line: tail.header_line,
         copy_columns: copy_columns.start.saturating_add(1)..copy_columns.end.saturating_add(1),
-        text: Arc::from(body),
+        // The projection resolves this open fence against the current source.
+        text: Arc::from(""),
     });
 }
 
-fn fence_body_source(text: &str, source_start: usize, fence: CodeFence) -> Option<String> {
+fn fence_body_source(text: &str, source_start: usize, fence: CodeFence) -> Option<&str> {
     let rest = &text[source_start..];
     let first_nl = rest.find('\n')?;
     let mut body = &rest[first_nl + 1..];
@@ -520,7 +560,7 @@ fn fence_body_source(text: &str, source_start: usize, fence: CodeFence) -> Optio
     } else if is_closing_fence(body, fence) {
         body = "";
     }
-    Some(body.to_string())
+    Some(body)
 }
 
 fn extend_open_table(

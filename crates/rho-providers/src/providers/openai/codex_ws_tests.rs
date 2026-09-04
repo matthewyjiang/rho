@@ -514,7 +514,7 @@ async fn continuation_error_before_output_returns_immediate_full_sse_fallback() 
         .lock()
         .await
         .continuation
-        .record_success(&candidate, continuation_response);
+        .record_success(candidate, continuation_response);
     let mut on_event = None;
 
     let outcome = immediate(transport.send_responses_turn(
