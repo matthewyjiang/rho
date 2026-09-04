@@ -56,6 +56,11 @@ fn completed_tool_group_end_is_id_set_based() {
             expected: Some(3),
         },
         Case {
+            name: "interleaved assistant calls stay paired",
+            messages: vec![call("a"), call("b"), result("a"), result("b")],
+            expected: Some(4),
+        },
+        Case {
             name: "missing result ends at the assistant",
             messages: vec![call("a"), Message::user_text("next")],
             expected: Some(1),

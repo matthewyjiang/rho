@@ -195,11 +195,17 @@ fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize>
     let mut remaining: std::collections::BTreeSet<&str> = tool_call_ids.iter().copied().collect();
     let mut last_result = None;
     for (offset, message) in messages[index + 1..].iter().enumerate() {
-        let Message::ToolResult(result) = message else {
-            continue;
-        };
-        if remaining.remove(result.id.as_str()) {
-            last_result = Some(index + 1 + offset);
+        if let Some(blocks) = message.completed_assistant_content() {
+            remaining.extend(blocks.iter().filter_map(|block| match block {
+                ContentBlock::ToolCall(call) => Some(call.id.as_str()),
+                ContentBlock::Text(_) | ContentBlock::Image(_) => None,
+            }));
+        }
+        match message {
+            Message::ToolResult(result) if remaining.remove(result.id.as_str()) => {
+                last_result = Some(index + 1 + offset);
+            }
+            _ => {}
         }
         if remaining.is_empty() {
             break;
