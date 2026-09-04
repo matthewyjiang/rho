@@ -42,6 +42,7 @@ pub struct SubagentSnapshot {
 
 struct AgentEntry {
     agent_id: String,
+    task_fallback: Option<String>,
     background: bool,
     started: Instant,
     handle: AgentRunHandle,
@@ -203,6 +204,11 @@ impl SubagentManager {
             id.clone(),
             AgentEntry {
                 agent_id: definition.id.to_string(),
+                task_fallback: prompt
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+                    .map(str::to_owned),
                 background,
                 started: Instant::now(),
                 handle,
@@ -266,6 +272,7 @@ impl SubagentManager {
             id.to_string(),
             AgentEntry {
                 agent_id: "fixture".into(),
+                task_fallback: None,
                 background: true,
                 started: Instant::now(),
                 handle: AgentRunHandle::completed_for_test(status),
@@ -293,6 +300,19 @@ impl SubagentManager {
             .collect::<Vec<_>>();
         snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.elapsed));
         snapshots
+    }
+
+    /// Display identity without marking a run's result as observed.
+    pub(crate) fn task_label(&self, id: &str) -> Option<String> {
+        let id = crate::subagent::normalize_id(id).ok()?;
+        let entries = self.inner.lock().expect("delegated registry lock");
+        let entry = entries.get(&id)?;
+        entry
+            .handle
+            .status()
+            .title
+            .filter(|title| !title.trim().is_empty())
+            .or_else(|| entry.task_fallback.clone())
     }
 
     /// Live runs plus terminals with a recent `finished_at` stamp.

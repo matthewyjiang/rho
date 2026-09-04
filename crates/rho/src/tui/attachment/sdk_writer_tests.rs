@@ -28,6 +28,32 @@ fn attachment_stream_round_trips_view_events() {
             text: "found it".into(),
         })
         .unwrap();
+    // Message metadata must survive view projection and the on-disk journal,
+    // not just the in-memory tool card.
+    let message = Box::new(crate::app::message_card::MessageCard {
+        title: "Inspect routing".into(),
+        sender: "parent".into(),
+        recipient: "reviewer".into(),
+        delivery: crate::app::message_card::MessageDelivery::Queued,
+        body: "Check the queued route.\nKeep the full body.".into(),
+        details: vec!["run: abc123".into()],
+    });
+    let card = rho_tools::tool_card::ToolCard::new(
+        rho_tools::tool_card::ToolStatus::Ok,
+        rho_tools::tool_card::ToolFamily::Agent,
+        rho_tools::tool_card::ToolHeader::call("agents", None),
+    );
+    let finished = attachment_update(
+        &mut writer.adapter,
+        ViewModelEvent::ToolFinished {
+            call_id: rho_sdk::ToolCallId::from_string("message-call").unwrap(),
+            card: card.clone(),
+            message: Some(message.clone()),
+            image_asset: None,
+        },
+    )
+    .unwrap();
+    writer.writer.write_event(&finished).unwrap();
     drop(writer);
 
     let mut reader = AttachmentReader::new(directory.path().join(subagent::ATTACHMENT_FILE_NAME));
@@ -38,6 +64,11 @@ fn attachment_stream_round_trips_view_events() {
         vec![
             AttachmentEvent::Prompt("inspect the code".into()),
             AttachmentEvent::AssistantTextDelta("found it".into()),
+            AttachmentEvent::ToolFinished {
+                key: Some("message-call".into()),
+                card,
+                message: Some(message),
+            },
         ]
     );
     assert!(reader.read_new().unwrap().is_empty());
@@ -87,9 +118,14 @@ fn compaction_run_events_project_to_tool_attachment_blocks() {
                 call_id: compaction_call_id(),
                 card: card.clone(),
                 image_asset: None,
+                message: None,
             }
         ),
-        Some(AttachmentEvent::ToolFinished { key, card })
+        Some(AttachmentEvent::ToolFinished {
+            key,
+            card,
+            message: None
+        })
     );
 }
 
@@ -121,7 +157,8 @@ fn open_compaction_failure_emits_tool_finish_then_failed() {
         events[0],
         AttachmentEvent::ToolFinished {
             key: Some(compaction_call_id().to_string()),
-            card: failed
+            card: failed,
+            message: None,
         }
     );
     assert_eq!(
@@ -169,6 +206,7 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
             call_id,
             card: with_id.clone(),
             image_asset: None,
+            message: None,
         },
     );
 
@@ -191,6 +229,7 @@ fn call_id_less_preview_and_later_update_reuse_the_same_key() {
         Some(AttachmentEvent::ToolFinished {
             key: Some("preview:0".into()),
             card: with_id,
+            message: None,
         })
     );
 }

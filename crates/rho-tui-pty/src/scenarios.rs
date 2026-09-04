@@ -2,6 +2,7 @@
 
 mod activity_anchor;
 mod advisor;
+mod agent_messages;
 mod assert_helpers;
 mod attach_picker;
 mod attach_view;
@@ -824,6 +825,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     ),
     SUBAGENT_RAIL_MOUSE_SCENARIO,
+    agent_messages::AGENT_MESSAGES_SCENARIO,
     ATTACH_PICKER_SCENARIO,
     ATTACH_PICKER_EMPTY_SCENARIO,
     ATTACH_CLI_EMPTY_SCENARIO,

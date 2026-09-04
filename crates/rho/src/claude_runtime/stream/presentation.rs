@@ -470,6 +470,7 @@ pub(super) fn tool_finished_effects(
         StreamEffect::Attachment(AttachmentEvent::ToolFinished {
             key: non_empty_key(tool_use_id),
             card,
+            message: None,
         }),
         StreamEffect::Status(StatusPatch {
             last_activity: Some(format!("tool result: {name}")),

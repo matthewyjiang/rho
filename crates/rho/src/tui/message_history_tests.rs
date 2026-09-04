@@ -88,3 +88,57 @@ fn transcript_pairs_tool_results_by_id() {
         assert_eq!(tool_names(&entries), case.expected_verbs, "{}", case.name);
     }
 }
+
+// Covers: reopening a session retains message identity and the full body,
+// including legacy receipts that predate task metadata.
+// Owner: transcript replay, not live rendering.
+#[test]
+fn transcript_restores_message_receipts() {
+    use crate::{
+        app::message_card::{MessageCard, MessageDelivery},
+        tools::agent::message_receipt::MessageReceipt,
+    };
+
+    let body = "Check routing first.\nKeep the full message.";
+    let receipt = MessageReceipt {
+        run_id: "abc123".into(),
+        agent_id: "reviewer".into(),
+        task: "Review routing".into(),
+    };
+    for (content, title, recipient) in [
+        (receipt.content(), "Review routing", "reviewer"),
+        (
+            "queued parent message for delegated run 'abc123'".into(),
+            "Delegated task",
+            "child",
+        ),
+    ] {
+        let messages = vec![
+            Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+                id: "message-call".into(),
+                name: "agents".into(),
+                arguments: json!({"action": "message", "id": "abc123", "message": body}),
+            })]),
+            Message::ToolResult(ToolResult {
+                id: "message-call".into(),
+                ok: true,
+                content,
+            }),
+        ];
+        let entries = transcript_entries_from_messages(&messages, std::path::Path::new("."));
+        let [Entry::Tool(tool)] = entries.as_slice() else {
+            panic!("expected one historical tool entry");
+        };
+        assert_eq!(
+            tool.message,
+            Some(Box::new(MessageCard {
+                title: title.into(),
+                sender: "parent".into(),
+                recipient: recipient.into(),
+                delivery: MessageDelivery::Queued,
+                body: body.into(),
+                details: vec!["run: abc123".into(), "attach: rho attach abc123".into()],
+            }))
+        );
+    }
+}

@@ -63,6 +63,7 @@ pub(super) enum ViewModelEvent {
     ToolFinished {
         call_id: rho_sdk::ToolCallId,
         card: ToolCard,
+        message: Option<Box<crate::app::message_card::MessageCard>>,
         image_asset: Option<rho_sdk::tool::ToolAsset>,
     },
     ToolDetached {
@@ -309,6 +310,7 @@ impl SdkEventAdapter {
                     call_id,
                     card: presented.card,
                     image_asset: presented.image_asset,
+                    message: presented.message,
                 })]
             }
             RunEvent::ToolDetached { call_id } => {
@@ -443,6 +445,7 @@ fn provider_native_activity_finished(name: &str, detail: String, family: ToolFam
         call_id: rho_sdk::ToolCallId::new(),
         card,
         image_asset: None,
+        message: None,
     })
 }
 
@@ -452,6 +455,7 @@ pub(super) fn compact_finished_event(outcome: CompactionUiOutcome) -> ViewModelE
         call_id: compaction_call_id(),
         card: outcome.card(),
         image_asset: None,
+        message: None,
     }
 }
 

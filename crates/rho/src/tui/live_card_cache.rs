@@ -59,13 +59,27 @@ impl ToolEntry {
         }
 
         let inner_width = padded_content_width(width);
-        let sections = paint_card_sections(
-            &self.card,
-            inner_width,
-            max_tool_output_lines,
-            self.expanded,
-            live_shell_elapsed(self),
-        );
+        let sections = if let Some(message) = &self.message {
+            super::CardSections {
+                header: super::super::message_card_render::message_card_lines(
+                    message,
+                    inner_width,
+                    max_tool_output_lines,
+                    self.expanded,
+                ),
+                facts: Vec::new(),
+                body: Vec::new(),
+                last_fact_is_end: false,
+            }
+        } else {
+            paint_card_sections(
+                &self.card,
+                inner_width,
+                max_tool_output_lines,
+                self.expanded,
+                live_shell_elapsed(self),
+            )
+        };
         let last_fact_is_end = sections.last_fact_is_end;
         let header = sections.header;
         let mut prefix = header.clone();

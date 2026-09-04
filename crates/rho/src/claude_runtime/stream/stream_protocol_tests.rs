@@ -570,7 +570,7 @@ fn finished_cards(lines: &[&str]) -> Vec<(Option<String>, rho_tools::tool_card::
         .iter()
         .flat_map(|line| mapper.push_line(line))
         .filter_map(|effect| match effect {
-            StreamEffect::Attachment(AttachmentEvent::ToolFinished { key, card }) => {
+            StreamEffect::Attachment(AttachmentEvent::ToolFinished { key, card, .. }) => {
                 Some((key, card))
             }
             _ => None,

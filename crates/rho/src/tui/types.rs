@@ -417,10 +417,11 @@ impl std::fmt::Debug for LiveCardRenderCache {
 
 #[derive(Debug)]
 pub(super) struct ToolEntry {
-    /// Structured Call + Children card. Sole render input for tool rows.
+    /// Structured Call + Children card, used unless a message presentation is present.
     /// In-place body edits must clear [`Self::render_cache`]; replacement
     /// through [`Self::new`] drops it automatically.
     pub(in crate::tui) card: rho_tools::tool_card::ToolCard,
+    pub(in crate::tui) message: Option<Box<crate::app::message_card::MessageCard>>,
     pub(in crate::tui) expanded: bool,
     pub(in crate::tui) image: Option<FeedImage>,
     /// Wall clock for live shell elapsed (`timeout … · 1.2s`) while a shell
@@ -435,6 +436,7 @@ impl Clone for ToolEntry {
     fn clone(&self) -> Self {
         Self {
             card: self.card.clone(),
+            message: self.message.clone(),
             expanded: self.expanded,
             image: self.image.clone(),
             started_at: self.started_at,
@@ -452,11 +454,21 @@ impl ToolEntry {
     ) -> Self {
         Self {
             card,
+            message: None,
             expanded,
             image,
             started_at,
             render_cache: None,
         }
+    }
+
+    pub(in crate::tui) fn with_message(
+        mut self,
+        message: Option<Box<crate::app::message_card::MessageCard>>,
+    ) -> Self {
+        self.message = message;
+        self.render_cache = None;
+        self
     }
 }
 

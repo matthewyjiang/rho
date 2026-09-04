@@ -108,6 +108,7 @@ mod mcp_picker;
 mod mcp_prompt;
 mod mcp_resource;
 mod media_attach;
+mod message_card_render;
 mod message_history;
 mod message_render;
 mod model_actions;

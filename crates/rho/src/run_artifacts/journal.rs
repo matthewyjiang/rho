@@ -30,6 +30,8 @@ pub(crate) enum AttachmentEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
         card: ToolCard,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<Box<crate::app::message_card::MessageCard>>,
     },
     Notice(String),
     ContextUsage(ContextUsage),

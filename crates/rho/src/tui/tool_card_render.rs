@@ -83,14 +83,7 @@ pub(super) fn tool_entry_lines(
 ) -> Vec<Line<'static>> {
     let inner_width = padded_content_width(width);
     let mut lines = Vec::new();
-    push_tool_card(
-        &mut lines,
-        &tool.card,
-        inner_width,
-        max_tool_output_lines,
-        tool.expanded,
-        live_shell_elapsed(tool),
-    );
+    push_tool_entry(&mut lines, tool, inner_width, max_tool_output_lines);
     reserve_optional_image_rows(
         &mut lines,
         tool.image.as_ref(),
@@ -129,6 +122,32 @@ fn timeout_text(seconds: Option<u64>) -> String {
     match seconds {
         Some(seconds) => format!("timeout {seconds}s"),
         None => "timeout none".into(),
+    }
+}
+
+/// Select the host presentation before painting, shared by history and attach.
+pub(super) fn push_tool_entry(
+    lines: &mut Vec<Line<'static>>,
+    tool: &ToolEntry,
+    width: usize,
+    max_tool_output_lines: usize,
+) {
+    if let Some(message) = &tool.message {
+        lines.extend(super::message_card_render::message_card_lines(
+            message,
+            width,
+            max_tool_output_lines,
+            tool.expanded,
+        ));
+    } else {
+        push_tool_card(
+            lines,
+            &tool.card,
+            width,
+            max_tool_output_lines,
+            tool.expanded,
+            live_shell_elapsed(tool),
+        );
     }
 }
 

@@ -25,6 +25,9 @@ pub(super) fn tool_output_toggleable(
     width: usize,
 ) -> bool {
     let width = width.max(1);
+    if tool.message.is_some() {
+        return true;
+    }
     card_is_toggleable(&tool.card, width, max_tool_output_lines, tool.expanded)
 }
 

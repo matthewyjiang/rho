@@ -77,6 +77,13 @@ fn smoke_startup_stream_exit() {
     assert_pass("startup_stream_exit");
 }
 
+// Covers: messages for same-role agents retain their task identity and expandable body.
+// Owner: interactive TUI
+#[test]
+fn agent_messages_keep_task_identity_and_expand_details() {
+    assert_pass("agent_messages");
+}
+
 // Covers: --prompt must start the first turn without typing Enter.
 // Owner: interactive TUI
 #[test]

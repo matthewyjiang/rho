@@ -358,6 +358,7 @@ impl App {
                 call_id,
                 mut card,
                 image_asset,
+                message,
             } => {
                 let command = match &card.header {
                     rho_tools::tool_card::ToolHeader::Shell { command, .. } => command.as_deref(),
@@ -383,7 +384,9 @@ impl App {
                                 None
                             }
                         });
-                Some(Entry::Tool(ToolEntry::new(card, expanded, image, None)))
+                Some(Entry::Tool(
+                    ToolEntry::new(card, expanded, image, None).with_message(message),
+                ))
             }
         }
     }

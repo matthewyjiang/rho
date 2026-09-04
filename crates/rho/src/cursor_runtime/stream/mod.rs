@@ -194,6 +194,7 @@ impl CursorStreamMapper {
                     StreamEffect::Attachment(AttachmentEvent::ToolFinished {
                         key: Some(call_id),
                         card,
+                        message: None,
                     }),
                     StreamEffect::Status(StatusPatch {
                         last_activity: Some(format!("tool result: {}", tool.verb())),

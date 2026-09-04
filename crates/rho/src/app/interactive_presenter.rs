@@ -12,11 +12,14 @@ use rho_tools::tool_card::ToolCard;
 mod agent_format;
 #[path = "interactive_presenter_format.rs"]
 mod format;
+#[path = "interactive_presenter_message.rs"]
+mod message_format;
 use format::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ToolPresentation {
     pub(crate) card: ToolCard,
+    pub(crate) message: Option<Box<super::message_card::MessageCard>>,
     pub(crate) image_asset: Option<ToolAsset>,
 }
 
@@ -240,6 +243,7 @@ impl InteractiveToolPresenter {
         // argument parse just to assemble ToolPresentation.
         Some(ToolPresentation {
             card,
+            message: None,
             image_asset: None,
         })
     }
@@ -268,7 +272,9 @@ impl InteractiveToolPresenter {
             arguments: call.arguments.clone(),
             metadata: ToolMetadata::default(),
         };
-        presentation(&view, finished_card(&view, content, ok, &self.cwd))
+        let mut presented = presentation(&view, finished_card(&view, content, ok, &self.cwd));
+        presented.message = message_format::finished_message(&view, content, ok);
+        presented
     }
 
     pub(crate) fn proposed(&mut self, call: ToolCall) -> ToolPresentation {
@@ -353,7 +359,9 @@ impl InteractiveToolPresenter {
             _ => (false, "unknown tool result".into()),
         };
         let card = finished_card(&view, &content, ok, &self.cwd);
-        (ok, presentation(&view, card))
+        let mut presented = presentation(&view, card);
+        presented.message = message_format::finished_message(&view, &content, ok);
+        (ok, presented)
     }
 }
 

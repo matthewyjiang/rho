@@ -28,6 +28,7 @@ pub(super) fn presentation(view: &ToolView, mut card: ToolCard) -> ToolPresentat
     card.family = family_for_kind(view.kind, Some(&view.metadata));
     ToolPresentation {
         card,
+        message: None,
         image_asset: view
             .metadata
             .assets()
