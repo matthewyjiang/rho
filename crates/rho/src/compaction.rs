@@ -181,45 +181,39 @@ fn message_groups(messages: &[Message], start: usize) -> Vec<MessageGroup> {
 
 fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize> {
     let blocks = messages[index].completed_assistant_content()?;
-    let tool_call_ids = blocks
+    if !blocks
         .iter()
-        .filter_map(|block| match block {
-            ContentBlock::ToolCall(call) => Some(call.id.as_str()),
-            ContentBlock::Text(_) | ContentBlock::Image(_) => None,
-        })
-        .collect::<Vec<_>>();
-    if tool_call_ids.is_empty() {
+        .any(|block| matches!(block, ContentBlock::ToolCall(_)))
+    {
         return None;
     }
 
-    let mut remaining: std::collections::BTreeSet<&str> = tool_call_ids.iter().copied().collect();
-    let mut last_result = None;
-    let mut last_initial_result = None;
-    for (offset, message) in messages[index + 1..].iter().enumerate() {
-        if let Some(blocks) = message.completed_assistant_content() {
-            remaining.extend(blocks.iter().filter_map(|block| match block {
+    let mut end = index + 1;
+    loop {
+        let call_ids = messages[index..end]
+            .iter()
+            .filter_map(Message::completed_assistant_content)
+            .flatten()
+            .filter_map(|block| match block {
                 ContentBlock::ToolCall(call) => Some(call.id.as_str()),
                 ContentBlock::Text(_) | ContentBlock::Image(_) => None,
-            }));
-        }
-        if let Message::ToolResult(result) = message {
-            let result_index = index + 1 + offset;
-            if tool_call_ids.contains(&result.id.as_str()) {
-                last_initial_result = Some(result_index);
-            }
-            if remaining.remove(result.id.as_str()) {
-                last_result = Some(result_index);
-            }
-        }
-        if remaining.is_empty() {
-            break;
-        }
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        let Some(last_result_offset) = messages[end..]
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, message)| match message {
+                Message::ToolResult(result) if call_ids.contains(result.id.as_str()) => {
+                    Some(offset)
+                }
+                _ => None,
+            })
+            .next_back()
+        else {
+            return Some(end);
+        };
+        end += last_result_offset + 1;
     }
-    Some(if remaining.is_empty() {
-        last_result.expect("covered ids have a last result") + 1
-    } else {
-        last_initial_result.map_or(index + 1, |last| last + 1)
-    })
 }
 
 fn summary_reserve_tokens(target_tokens: u64) -> u64 {

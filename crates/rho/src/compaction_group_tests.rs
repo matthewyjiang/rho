@@ -71,6 +71,11 @@ fn completed_tool_group_end_is_id_set_based() {
             expected: Some(3),
         },
         Case {
+            name: "nested call keeps its own result inside the group",
+            messages: vec![calls(&["a", "b"]), call("c"), result("a"), result("c")],
+            expected: Some(4),
+        },
+        Case {
             name: "missing result ends at the assistant",
             messages: vec![call("a"), Message::user_text("next")],
             expected: Some(1),
