@@ -771,7 +771,7 @@ impl App {
             auth: target.auth.clone(),
             replacement: new_provider,
         };
-        match self.activate_provider(activation, agent)? {
+        match self.activate_provider(activation, agent).await? {
             ProviderActivationOutcome::Saved => self.set_status("login saved"),
             ProviderActivationOutcome::ConfigSaveFailed(err) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -848,7 +848,7 @@ impl App {
             auth: target.auth.clone(),
             replacement: new_provider,
         };
-        match self.activate_provider(activation, agent)? {
+        match self.activate_provider(activation, agent).await? {
             ProviderActivationOutcome::Saved => {
                 self.set_status(format!(
                     "model: {}",

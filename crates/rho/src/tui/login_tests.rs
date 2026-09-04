@@ -98,6 +98,60 @@ fn custom_onboarding_persists_selected_responses_api() {
     rho_providers::provider::reset_custom_openai_compatible_providers_for_tests();
 }
 
+// Covers: a login-driven cross-provider activation must reconcile the live
+// edit tool when the saved preference is Auto.
+// Owner: provider activation
+#[tokio::test]
+async fn cross_provider_activation_reconciles_auto_edit_tool() {
+    use std::sync::Arc;
+
+    use rho_sdk::{
+        model::ModelIdentity,
+        provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
+    };
+
+    use crate::{
+        app::interactive_runtime::test_edit_tool_runtime,
+        config::EditTool,
+        tui::{
+            provider_actions::ProviderActivation,
+            reasoning_metadata::ModelSwitchReasoningResolution,
+        },
+    };
+
+    let mut app = test_app();
+    app.info
+        .services
+        .config_repository
+        .update(|config| config.edit_tool = EditTool::Auto)
+        .unwrap();
+    let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
+    assert!(agent.has_tool("edit"));
+
+    let replacement: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("anthropic", "test", "claude-fable-5"),
+        Vec::<ScriptedTurn>::new(),
+    ));
+    app.activate_provider(
+        ProviderActivation {
+            provider: "anthropic".into(),
+            model: "claude-fable-5".into(),
+            reasoning: ModelSwitchReasoningResolution {
+                effective: ReasoningLevel::Medium,
+                source: ReasoningRequestSource::PersistedOrDefault,
+            },
+            auth: "api-key".into(),
+            replacement,
+        },
+        &mut agent,
+    )
+    .await
+    .unwrap();
+
+    assert!(agent.has_tool("str_replace"));
+    assert!(!agent.has_tool("edit"));
+}
+
 // Covers: /login on an active custom host must persist `{name}-api-key`
 // Owner: login
 #[test]

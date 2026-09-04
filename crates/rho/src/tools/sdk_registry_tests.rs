@@ -93,7 +93,7 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
         // Advisor mode is off by default; the registry still owns the name.
         tools.set_advisor_registered(true);
         let names = tools.unfiltered_names().collect::<Vec<_>>();
-        let selected = edit_tool.resolve(&config.provider).tool_name();
+        let selected = config.resolved_edit_tool().tool_name();
         for name in ["edit", "apply_patch", "str_replace"] {
             assert_eq!(
                 names.iter().any(|candidate| candidate == name),

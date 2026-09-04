@@ -22,6 +22,54 @@ pub(crate) struct ProviderEndpointConfig {
     pub(crate) catalog_lookup: rho_providers::provider::CatalogLookupMode,
     /// Wire API this host speaks. Ollama is always Chat Completions.
     pub(crate) api: rho_providers::provider::OpenAiCompatibleApi,
+    /// Edit format selected when the global preference is `auto`.
+    pub(crate) edit_tool: Option<rho_tools::EditFormat>,
+}
+
+impl ProviderEndpointConfig {
+    fn from_custom_partial(
+        provider: &str,
+        endpoint: PartialEndpointConfig,
+    ) -> anyhow::Result<Self> {
+        rho_providers::provider::validate_custom_provider_name(provider)?;
+        let base_url_field = format!("providers.custom.{provider}.base_url");
+        let Some(base_url) = endpoint.base_url else {
+            anyhow::bail!("providers.custom.{provider} requires base_url");
+        };
+        let base_url = parse_provider_base_url(&base_url_field, &base_url)?;
+
+        let catalog_field = format!("providers.custom.{provider}.catalog");
+        let catalog = endpoint
+            .catalog
+            .map(|catalog| parse_provider_catalog(&catalog_field, &catalog))
+            .transpose()?;
+        let catalog_mode_field = format!("providers.custom.{provider}.catalog_mode");
+        let catalog_lookup = endpoint
+            .catalog_mode
+            .map(|mode| parse_provider_catalog_mode(&catalog_mode_field, &mode))
+            .transpose()?
+            .unwrap_or_default();
+        if catalog.is_some()
+            && catalog_lookup == rho_providers::provider::CatalogLookupMode::ModelId
+        {
+            anyhow::bail!("{catalog_mode_field} cannot be combined with catalog");
+        }
+
+        let api_field = format!("providers.custom.{provider}.api");
+        let api = endpoint
+            .api
+            .map(|api| parse_provider_api(&api_field, &api))
+            .transpose()?
+            .unwrap_or_default();
+
+        Ok(Self {
+            base_url,
+            catalog,
+            catalog_lookup,
+            api,
+            edit_tool: endpoint.edit_tool,
+        })
+    }
 }
 
 impl ProviderConfigs {
@@ -32,104 +80,55 @@ impl ProviderConfigs {
         }
     }
 
-    /// Validates and stores a provider base URL. This is the one write path
-    /// shared by config loading.
+    /// Validates and stores a provider base URL. Updating a custom provider
+    /// leaves all of its other options untouched.
     pub(crate) fn set_endpoint(&mut self, provider: &str, base_url: &str) -> anyhow::Result<()> {
-        let field = if provider == "ollama" {
-            format!("providers.{provider}.base_url")
-        } else {
-            format!("providers.custom.{provider}.base_url")
-        };
-        let parsed = parse_provider_base_url(&field, base_url)?;
         if provider == "ollama" {
+            let parsed = parse_provider_base_url("providers.ollama.base_url", base_url)?;
             self.ollama = Some(ProviderEndpointConfig {
                 base_url: parsed,
                 catalog: None,
                 catalog_lookup: rho_providers::provider::CatalogLookupMode::Slug,
                 api: rho_providers::provider::OpenAiCompatibleApi::ChatCompletions,
+                edit_tool: None,
             });
             return Ok(());
         }
-        rho_providers::provider::validate_custom_provider_name(provider)?;
-        let existing = self.custom.get(provider);
-        let catalog = existing.and_then(|endpoint| endpoint.catalog.clone());
-        let catalog_lookup = existing
-            .map(|endpoint| endpoint.catalog_lookup)
+        let api = self
+            .custom
+            .get(provider)
+            .map(|endpoint| endpoint.api)
             .unwrap_or_default();
-        let api = existing.map(|endpoint| endpoint.api).unwrap_or_default();
-        self.custom.insert(
-            provider.to_string(),
-            ProviderEndpointConfig {
-                base_url: parsed,
-                catalog,
-                catalog_lookup,
-                api,
-            },
-        );
-        Ok(())
+        self.set_custom_endpoint(provider, base_url, api)
     }
 
-    fn set_catalog(&mut self, provider: &str, catalog: Option<String>) -> anyhow::Result<()> {
-        let field = format!("providers.custom.{provider}.catalog");
-        let catalog = match catalog {
-            Some(value) => Some(parse_provider_catalog(&field, &value)?),
-            None => None,
-        };
-        let Some(endpoint) = self.custom.get_mut(provider) else {
-            anyhow::bail!("{field} requires a configured base_url");
-        };
-        if catalog.is_some()
-            && endpoint.catalog_lookup == rho_providers::provider::CatalogLookupMode::ModelId
-        {
-            anyhow::bail!("{field} cannot be combined with catalog_mode = \"model-id\"");
-        }
-        endpoint.catalog = catalog;
-        Ok(())
-    }
-
-    fn set_catalog_mode(
+    /// Validates and stores the complete endpoint selection made by custom
+    /// provider onboarding. Existing metadata and edit preferences survive.
+    pub(crate) fn set_custom_endpoint(
         &mut self,
         provider: &str,
-        catalog_mode: Option<String>,
-    ) -> anyhow::Result<()> {
-        let field = format!("providers.custom.{provider}.catalog_mode");
-        let catalog_lookup = match catalog_mode {
-            Some(value) => parse_provider_catalog_mode(&field, &value)?,
-            None => rho_providers::provider::CatalogLookupMode::Slug,
-        };
-        let Some(endpoint) = self.custom.get_mut(provider) else {
-            anyhow::bail!("{field} requires a configured base_url");
-        };
-        if catalog_lookup == rho_providers::provider::CatalogLookupMode::ModelId
-            && endpoint.catalog.is_some()
-        {
-            anyhow::bail!("{field} cannot be combined with catalog");
-        }
-        endpoint.catalog_lookup = catalog_lookup;
-        Ok(())
-    }
-
-    fn set_api(&mut self, provider: &str, api: Option<String>) -> anyhow::Result<()> {
-        let field = format!("providers.custom.{provider}.api");
-        let api = match api {
-            Some(value) => parse_provider_api(&field, &value)?,
-            None => rho_providers::provider::OpenAiCompatibleApi::ChatCompletions,
-        };
-        self.set_openai_compatible_api(provider, api)
-    }
-
-    /// Writes the wire API after [`Self::set_endpoint`]. `/login` uses this so
-    /// a new host is not stuck on Chat Completions when Responses was chosen.
-    pub(crate) fn set_openai_compatible_api(
-        &mut self,
-        provider: &str,
+        base_url: &str,
         api: rho_providers::provider::OpenAiCompatibleApi,
     ) -> anyhow::Result<()> {
-        let field = format!("providers.custom.{provider}.api");
-        let Some(endpoint) = self.custom.get_mut(provider) else {
-            anyhow::bail!("{field} requires a configured base_url");
+        let field = format!("providers.custom.{provider}.base_url");
+        let base_url = parse_provider_base_url(&field, base_url)?;
+        rho_providers::provider::validate_custom_provider_name(provider)?;
+        match self.custom.entry(provider.to_string()) {
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                let endpoint = entry.get_mut();
+                endpoint.base_url = base_url;
+                endpoint.api = api;
+            }
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(ProviderEndpointConfig {
+                    base_url,
+                    catalog: None,
+                    catalog_lookup: rho_providers::provider::CatalogLookupMode::default(),
+                    api,
+                    edit_tool: None,
+                });
+            }
         };
-        endpoint.api = api;
         Ok(())
     }
 
@@ -144,21 +143,21 @@ impl ProviderConfigs {
             if endpoint.api.is_some() {
                 anyhow::bail!("providers.ollama does not accept api");
             }
+            if endpoint.edit_tool.is_some() {
+                anyhow::bail!("providers.ollama does not accept edit_tool");
+            }
             if let Some(base_url) = endpoint.base_url {
                 self.set_endpoint("ollama", &base_url)?;
             }
         }
         if let Some(custom) = partial.custom {
-            self.custom.clear();
-            for (name, endpoint) in custom {
-                let Some(base_url) = endpoint.base_url else {
-                    anyhow::bail!("providers.custom.{name} requires base_url");
-                };
-                self.set_endpoint(&name, &base_url)?;
-                self.set_catalog(&name, endpoint.catalog)?;
-                self.set_catalog_mode(&name, endpoint.catalog_mode)?;
-                self.set_api(&name, endpoint.api)?;
-            }
+            self.custom = custom
+                .into_iter()
+                .map(|(name, endpoint)| {
+                    let endpoint = ProviderEndpointConfig::from_custom_partial(&name, endpoint)?;
+                    Ok((name, endpoint))
+                })
+                .collect::<anyhow::Result<_>>()?;
         }
         Ok(())
     }
@@ -189,6 +188,12 @@ impl ProviderConfigs {
         Ok(rho_providers::provider::CustomProviderThreadScope::enter(
             self.intern_names()?,
         ))
+    }
+
+    pub(crate) fn auto_edit_format(&self, provider: &str) -> Option<rho_tools::EditFormat> {
+        self.custom
+            .get(provider)
+            .and_then(|endpoint| endpoint.edit_tool)
     }
 }
 
@@ -375,6 +380,8 @@ struct PersistedEndpointConfig<'a> {
     catalog_mode: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     api: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    edit_tool: Option<rho_tools::EditFormat>,
 }
 
 impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
@@ -388,6 +395,7 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
                     catalog: None,
                     catalog_mode: None,
                     api: None,
+                    edit_tool: None,
                 }),
             custom: config
                 .custom
@@ -400,6 +408,7 @@ impl<'a> From<&'a ProviderConfigs> for PersistedProviderConfigs<'a> {
                             catalog: endpoint.catalog.as_deref(),
                             catalog_mode: persisted_catalog_mode(endpoint.catalog_lookup),
                             api: endpoint.api.persisted_custom_host_value(),
+                            edit_tool: endpoint.edit_tool,
                         },
                     )
                 })
@@ -431,6 +440,7 @@ pub(super) struct PartialEndpointConfig {
     pub(super) catalog: Option<String>,
     pub(super) catalog_mode: Option<String>,
     pub(super) api: Option<String>,
+    pub(super) edit_tool: Option<rho_tools::EditFormat>,
 }
 
 #[cfg(test)]

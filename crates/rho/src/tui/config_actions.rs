@@ -650,9 +650,11 @@ impl App {
         edit_tool: crate::config::EditTool,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let config = self.info.services.config_repository.load()?;
+        let mut config = self.info.services.config_repository.load()?;
         let provider = self.info.runtime.provider.clone();
-        let resolved = edit_tool.resolve(&provider);
+        config.edit_tool = edit_tool;
+        config.provider.clone_from(&provider);
+        let resolved = config.resolved_edit_tool();
         let change = match self
             .apply_resolved_edit_tool(agent, resolved, config.max_output_bytes, |error| {
                 format!("could not apply edit tool: {error}")
@@ -712,26 +714,34 @@ impl App {
                 .update_tools(&agent.tool_specs());
             self.insert_entry(&Entry::Notice(change.display.clone()));
         }
-        self.set_status(format!("edit tool: {}", edit_tool.display_label(&provider)));
+        self.set_status(format!("edit tool: {}", config.edit_tool_display_label()));
         Ok(())
     }
 
     /// When edit preference is Auto, advertise the preferred format for
-    /// `provider`. Failures are reported as notices and do not undo a model
+    /// `provider`. Failures are reported as notices and do not undo the live
     /// switch.
     pub(super) async fn apply_auto_edit_tool_for_provider(
         &mut self,
         provider: &str,
         agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        let config = self.info.services.config_repository.load()?;
+    ) {
+        let config = match self.info.services.config_repository.load() {
+            Ok(config) => config,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not follow auto edit tool: {error}"
+                )));
+                return;
+            }
+        };
         if config.edit_tool != crate::config::EditTool::Auto {
-            return Ok(());
+            return;
         }
-        let resolved = config.edit_tool.resolve(provider);
+        let resolved = config.resolved_edit_tool_for_provider(provider);
         match self
             .apply_resolved_edit_tool(agent, resolved, config.max_output_bytes, |error| {
-                format!("model switched, but auto edit tool could not follow the provider: {error}")
+                format!("could not follow auto edit tool: {error}")
             })
             .await
         {
@@ -748,7 +758,6 @@ impl App {
             Ok(None) => {}
             Err(()) => {}
         }
-        Ok(())
     }
 
     /// Applies a concrete edit format on the live runtime.

@@ -224,13 +224,13 @@ impl App {
         base_url: &str,
         api: OpenAiCompatibleApi,
     ) -> anyhow::Result<()> {
-        self.info.services.config_repository.update(|config| {
-            config.providers.set_endpoint(name, base_url)?;
-            config.providers.set_openai_compatible_api(name, api)?;
-            // Nothing overlays the process-wide set, so installing is enough
-            // to make the host visible here and in every spawned task.
-            config.providers.activate()
-        })?
+        let providers = self.info.services.config_repository.update(|config| {
+            config.providers.set_custom_endpoint(name, base_url, api)?;
+            Ok::<_, anyhow::Error>(config.providers.clone())
+        })??;
+        // Nothing overlays the process-wide set, so installing is enough to
+        // make the durably saved host visible here and in every spawned task.
+        providers.activate()
     }
 
     fn persist_builtin_endpoint(&mut self, name: &str, base_url: &str) -> anyhow::Result<()> {

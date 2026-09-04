@@ -351,7 +351,7 @@ impl App {
         // Auto edit preference follows the new provider while the session is
         // idle (model switches never land mid-run).
         self.apply_auto_edit_tool_for_provider(&provider, agent)
-            .await?;
+            .await;
         self.finish_setup_screen();
         self.reconcile_auto_classifier_gate(agent).await?;
         Ok(Some(handoff))
