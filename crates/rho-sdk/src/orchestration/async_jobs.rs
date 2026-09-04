@@ -73,6 +73,8 @@ struct JobCompletion {
 /// [`Self::drain_finished`] appends those results to history.
 pub(super) struct AsyncJobSet {
     jobs: BTreeMap<ToolCallId, AsyncJob>,
+    /// Proposed calls not yet represented by either a live job or a parked result.
+    unstarted: BTreeMap<ToolCallId, ToolCall>,
     finished: VecDeque<ToolResult>,
     completions: mpsc::UnboundedReceiver<JobCompletion>,
     completions_tx: mpsc::UnboundedSender<JobCompletion>,
@@ -84,6 +86,7 @@ impl AsyncJobSet {
         let (completions_tx, completions) = mpsc::unbounded_channel();
         Self {
             jobs: BTreeMap::new(),
+            unstarted: BTreeMap::new(),
             finished: VecDeque::new(),
             completions,
             completions_tx,
@@ -177,6 +180,11 @@ impl AsyncJobSet {
                 return Err(error);
             }
         }
+        self.unstarted.extend(calls.iter().cloned().map(|call| {
+            let id = ToolCallId::from_string(call.id.clone())
+                .expect("validated provider tool call ID is nonempty");
+            (id, call)
+        }));
         let authorization = Arc::new(crate::workspace::AuthorizationServices::new(
             Arc::clone(&runtime.workspace_policy),
             Arc::clone(&runtime.approval_handler),
@@ -200,6 +208,7 @@ impl AsyncJobSet {
             let id = ToolCallId::from_string(call.id.clone())
                 .expect("validated provider tool call ID is nonempty");
             let Some(tool) = runtime.tools.get(&call.name) else {
+                self.unstarted.remove(&id);
                 fail_call(
                     hooks,
                     events,
@@ -268,6 +277,7 @@ impl AsyncJobSet {
                     first_capability: first_capability.clone(),
                 },
             );
+            self.unstarted.remove(&id);
             let mut ready_rx = ready_rx;
             let ready = loop {
                 tokio::select! {
@@ -372,8 +382,13 @@ impl AsyncJobSet {
         history: &mut Vec<Message>,
         hooks: &RunHooks,
         events: &mpsc::Sender<RunEvent>,
-        cancellation: &CancellationToken,
+        _cancellation: &CancellationToken,
     ) {
+        history.extend(
+            std::mem::take(&mut self.unstarted)
+                .into_values()
+                .map(|call| Message::ToolResult(interrupted_result(&call))),
+        );
         self.drain_finished(history);
         let jobs = std::mem::take(&mut self.jobs);
         for job in jobs.values() {
@@ -392,16 +407,9 @@ impl AsyncJobSet {
                     result.content.clone(),
                 ))
             };
+            let published = send_tool_finished(events, id.clone(), completion.clone()).await;
             hooks.after_tool_use(&name, &id, &completion, duration, capability.as_ref());
-            let _ = emit(
-                events,
-                cancellation,
-                RunEvent::ToolFinished {
-                    call_id: id,
-                    result: completion,
-                },
-            )
-            .await;
+            let _ = published;
             history.push(Message::ToolResult(result));
         }
     }
@@ -476,17 +484,27 @@ async fn fail_call(
         )
         .await?;
     }
+    let published = send_tool_finished(events, id.clone(), completion.clone()).await;
     hooks.after_tool_use(&call.name, id, &completion, duration, capability.as_ref());
-    emit(
-        events,
-        cancellation,
-        RunEvent::ToolFinished {
-            call_id: id.clone(),
-            result: completion,
-        },
-    )
-    .await?;
+    published?;
+    if cancellation.is_cancelled() {
+        return Err(Error::Cancelled);
+    }
     Ok(())
+}
+
+/// Publishes the terminal half of a started call even after run cancellation.
+async fn send_tool_finished(
+    events: &mpsc::Sender<RunEvent>,
+    call_id: ToolCallId,
+    result: ToolCompletion,
+) -> Result<(), Error> {
+    events
+        .send(RunEvent::ToolFinished { call_id, result })
+        .await
+        .map_err(|_| Error::Interrupted {
+            message: "run event consumer was dropped".into(),
+        })
 }
 
 async fn run_detached_job(
@@ -587,12 +605,16 @@ async fn run_detached_job(
     }
 }
 
-async fn settle_job(_id: ToolCallId, job: AsyncJob) -> ToolResult {
+async fn settle_job(_id: ToolCallId, mut job: AsyncJob) -> ToolResult {
     let result = match job.cancellation_policy {
         ToolCancellationPolicy::Complete { timeout } => {
-            match tokio::time::timeout(timeout, job.worker).await {
+            match tokio::time::timeout(timeout, &mut job.worker).await {
                 Ok(result) => result,
-                Err(_) => return interrupted_result(&job.call),
+                Err(_) => {
+                    job.worker.abort();
+                    let _ = (&mut job.worker).await;
+                    return interrupted_result(&job.call);
+                }
             }
         }
         ToolCancellationPolicy::Abort => {
@@ -675,16 +697,12 @@ pub(super) async fn forward_job_notice(
             // The completion was removed from `jobs`; park its history result
             // before publishing anything that can be cancelled.
             jobs.park_finished(result);
+            let published = send_tool_finished(events, call_id.clone(), completion.clone()).await;
             hooks.after_tool_use(&name, &call_id, &completion, duration, capability.as_ref());
-            emit(
-                events,
-                cancellation,
-                RunEvent::ToolFinished {
-                    call_id,
-                    result: completion,
-                },
-            )
-            .await?;
+            published?;
+            if cancellation.is_cancelled() {
+                return Err(Error::Cancelled);
+            }
             Ok(())
         }
     }
@@ -748,3 +766,7 @@ pub(super) async fn await_first_job(control: &mut RunControl<'_>) -> Result<Awai
         }
     }
 }
+
+#[cfg(test)]
+#[path = "async_jobs_tests.rs"]
+mod tests;

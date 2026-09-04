@@ -713,14 +713,31 @@ impl Tool for PendingPrepareAsyncTool {
     }
 }
 
-// Covers: cancelling a run while an async tool is still in prepare/authorize
-// (the ready_rx wait, including a never-answered approval) does not hang.
+// Covers: cancelling while one async call is preparing pairs every proposed call,
+// including calls that the spawn loop has not reached yet.
 // Owner: sdk orchestration
 #[tokio::test]
-async fn cancel_while_async_tool_awaits_approval_does_not_hang() {
-    let provider = ScriptedProvider::new(identity(), [async_call_turn("call-a", "slow")]);
+async fn cancel_while_async_tool_awaits_approval_pairs_the_batch() {
+    let gate = Arc::new(Notify::new());
+    let calls = [
+        tool_call("call-a", "running"),
+        tool_call("call-b", "slow"),
+        tool_call("call-c", "slow"),
+    ];
+    let provider = ScriptedProvider::new(
+        identity(),
+        [ScriptedTurn::streaming(
+            calls.iter().map(|call| async_marker(&call.id)).collect(),
+            ModelResponse::Assistant(calls.iter().cloned().map(ContentBlock::ToolCall).collect()),
+        )],
+    );
     let session = Rho::builder()
         .provider(provider)
+        .tool(GatedAsyncTool {
+            name: "running",
+            gate,
+            exclusive: false,
+        })
         .tool(PendingPrepareAsyncTool)
         .build()
         .unwrap()
@@ -730,7 +747,7 @@ async fn cancel_while_async_tool_awaits_approval_does_not_hang() {
     let mut run = session.start(UserInput::text("start")).await.unwrap();
     loop {
         match next_event(&mut run).await {
-            RunEvent::ToolProposed { .. } => break,
+            RunEvent::ToolDetached { ref call_id } if call_id.as_str() == "call-a" => break,
             RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
             _ => {}
         }
@@ -740,20 +757,25 @@ async fn cancel_while_async_tool_awaits_approval_does_not_hang() {
         .await
         .expect("cancelled run timed out");
     assert!(matches!(outcome, Err(Error::Cancelled)), "{outcome:?}");
+    let mut results = session
+        .history()
+        .into_iter()
+        .filter_map(|message| match message {
+            Message::ToolResult(result) => Some(result),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    results.sort_by(|left, right| left.id.cmp(&right.id));
     assert_eq!(
-        session
-            .history()
-            .into_iter()
-            .filter_map(|message| match message {
-                Message::ToolResult(result) => Some(result),
-                _ => None,
+        results,
+        calls
+            .iter()
+            .map(|call| ToolResult {
+                id: call.id.clone(),
+                ok: false,
+                content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
             })
-            .collect::<Vec<_>>(),
-        vec![ToolResult {
-            id: "call-a".into(),
-            ok: false,
-            content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
-        }]
+            .collect::<Vec<_>>()
     );
 }
 
