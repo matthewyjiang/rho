@@ -15,7 +15,7 @@ use super::codex_request::codex_routing_hint;
 
 pub(crate) const DEFAULT_CODEX_REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
 
-/// Codex Responses headers: bearer, `codex-cli` UA, originator, beta, account.
+/// Codex Responses headers: bearer, `codex-cli` UA, originator, beta, account, routing hint.
 pub(crate) fn codex_http_auth(tokens: &CodexTokens, routing_hint: &str) -> ResponsesHttpAuth {
     let mut auth = ResponsesHttpAuth::bearer(&tokens.access_token, "codex-cli")
         .with_header("originator", "codex_cli_rs")
