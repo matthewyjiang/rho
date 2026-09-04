@@ -61,6 +61,11 @@ fn completed_tool_group_end_is_id_set_based() {
             expected: Some(4),
         },
         Case {
+            name: "covered initial call stays paired when nested call is unresolved",
+            messages: vec![call("a"), call("b"), result("a")],
+            expected: Some(3),
+        },
+        Case {
             name: "missing result ends at the assistant",
             messages: vec![call("a"), Message::user_text("next")],
             expected: Some(1),

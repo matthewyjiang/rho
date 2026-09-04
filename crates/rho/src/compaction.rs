@@ -193,7 +193,9 @@ fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize>
     }
 
     let mut remaining: std::collections::BTreeSet<&str> = tool_call_ids.iter().copied().collect();
+    let mut initial_remaining = remaining.clone();
     let mut last_result = None;
+    let mut last_initial_result = None;
     for (offset, message) in messages[index + 1..].iter().enumerate() {
         if let Some(blocks) = message.completed_assistant_content() {
             remaining.extend(blocks.iter().filter_map(|block| match block {
@@ -201,11 +203,14 @@ fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize>
                 ContentBlock::Text(_) | ContentBlock::Image(_) => None,
             }));
         }
-        match message {
-            Message::ToolResult(result) if remaining.remove(result.id.as_str()) => {
-                last_result = Some(index + 1 + offset);
+        if let Message::ToolResult(result) = message {
+            let result_index = index + 1 + offset;
+            if initial_remaining.remove(result.id.as_str()) {
+                last_initial_result = Some(result_index);
             }
-            _ => {}
+            if remaining.remove(result.id.as_str()) {
+                last_result = Some(result_index);
+            }
         }
         if remaining.is_empty() {
             break;
@@ -213,6 +218,8 @@ fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize>
     }
     Some(if remaining.is_empty() {
         last_result.expect("covered ids have a last result") + 1
+    } else if initial_remaining.is_empty() {
+        last_initial_result.expect("covered initial ids have a last result") + 1
     } else {
         index + 1
     })
