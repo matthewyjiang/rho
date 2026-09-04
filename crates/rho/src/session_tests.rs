@@ -299,8 +299,11 @@ fn drops_incomplete_tool_call_tail_on_load() {
 
         let (_, messages) = Session::open_by_id_in_root(&root, &cwd, session.id()).unwrap();
 
-        assert_eq!(messages.len(), 1);
+        assert_eq!(messages.len(), 3);
         assert!(matches!(&messages[0], Message::User(_)));
+        assert!(
+            matches!(&messages[2], Message::ToolResult(result) if result.id == "call-1" && !result.ok)
+        );
     }
 }
 
@@ -463,7 +466,7 @@ fn export_by_id_uses_display_history_and_drops_incomplete_tool_tail() {
 
     let export = Session::export_by_id_in_root(&root, &cwd, session.id()).unwrap();
 
-    assert_eq!(export.messages.len(), 2);
+    assert_eq!(export.messages.len(), 3);
     assert!(
         matches!(&export.messages[0].message, Message::User(blocks) if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text == "original"))
     );
@@ -471,6 +474,11 @@ fn export_by_id_uses_display_history_and_drops_incomplete_tool_tail() {
         matches!(&export.messages[1].message, Message::Assistant(blocks)
             if matches!(blocks.as_slice(), [ContentBlock::Text(text)] if text.contains("Compacted context")))
     );
+    assert!(matches!(
+        &export.messages[2].message,
+        Message::Assistant(blocks)
+            if matches!(blocks.as_slice(), [ContentBlock::ToolCall(call)] if call.id == "call-1")
+    ));
 }
 
 fn temp_session_root() -> TestDir {
