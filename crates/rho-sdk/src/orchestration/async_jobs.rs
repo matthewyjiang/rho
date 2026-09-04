@@ -1,12 +1,16 @@
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
+    num::NonZeroUsize,
     pin::Pin,
     sync::{Arc, Mutex},
     task::Poll,
     time::Instant,
 };
 
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{
+    sync::{mpsc, Semaphore},
+    task::JoinHandle,
+};
 
 use crate::{
     event::{ToolCompletion, ToolFailure},
@@ -72,16 +76,18 @@ pub(super) struct AsyncJobSet {
     finished: VecDeque<ToolResult>,
     completions: mpsc::UnboundedReceiver<JobCompletion>,
     completions_tx: mpsc::UnboundedSender<JobCompletion>,
+    execution_slots: Arc<Semaphore>,
 }
 
 impl AsyncJobSet {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(max_parallel_tools: NonZeroUsize) -> Self {
         let (completions_tx, completions) = mpsc::unbounded_channel();
         Self {
             jobs: BTreeMap::new(),
             finished: VecDeque::new(),
             completions,
             completions_tx,
+            execution_slots: Arc::new(Semaphore::new(max_parallel_tools.get())),
         }
     }
 
@@ -159,6 +165,18 @@ impl AsyncJobSet {
         if calls.is_empty() {
             return Ok(());
         }
+        for call in &calls {
+            if let Err(error) = emit(
+                events,
+                cancellation,
+                RunEvent::ToolProposed { call: call.clone() },
+            )
+            .await
+            {
+                self.finished.extend(calls.iter().map(interrupted_result));
+                return Err(error);
+            }
+        }
         let authorization = Arc::new(crate::workspace::AuthorizationServices::new(
             Arc::clone(&runtime.workspace_policy),
             Arc::clone(&runtime.approval_handler),
@@ -179,12 +197,6 @@ impl AsyncJobSet {
             },
         ));
         for call in calls {
-            emit(
-                events,
-                cancellation,
-                RunEvent::ToolProposed { call: call.clone() },
-            )
-            .await?;
             let id = ToolCallId::from_string(call.id.clone())
                 .expect("validated provider tool call ID is nonempty");
             let Some(tool) = runtime.tools.get(&call.name) else {
@@ -225,6 +237,7 @@ impl AsyncJobSet {
             let worker_cancellation = job_cancellation.clone();
             let completions_tx = self.completions_tx.clone();
             let completion_id = id.clone();
+            let execution_slots = Arc::clone(&self.execution_slots);
             let worker = tokio::spawn(async move {
                 let result = run_detached_job(
                     worker_tool,
@@ -232,6 +245,7 @@ impl AsyncJobSet {
                     worker_id,
                     context,
                     worker_cancellation,
+                    execution_slots,
                     ready_tx,
                 )
                 .await;
@@ -241,33 +255,32 @@ impl AsyncJobSet {
                 });
                 result
             });
+            self.jobs.insert(
+                id.clone(),
+                AsyncJob {
+                    call: call.clone(),
+                    name: tool.spec().name,
+                    cancellation: job_cancellation.clone(),
+                    cancellation_policy: ToolCancellationPolicy::Abort,
+                    progress: progress_receiver,
+                    worker,
+                    started: Instant::now(),
+                    first_capability: first_capability.clone(),
+                },
+            );
             let ready = tokio::select! {
                 result = ready_rx => result,
                 () = cancellation.cancelled() => {
                     job_cancellation.cancel();
-                    worker.abort();
-                    let _ = worker.await;
-                    fail_call(
-                        hooks,
-                        events,
-                        cancellation,
-                        &id,
-                        &call,
-                        ToolCompletion::Failure(ToolFailure::new(
-                            ToolErrorKind::Cancelled,
-                            INTERRUPTED_TOOL_RESULT_CONTENT.to_owned(),
-                        )),
-                        interrupted_result(&call),
-                        None,
-                        first_capability.get().cloned(),
-                        &mut self.finished,
-                    )
-                    .await?;
                     return Err(Error::Cancelled);
                 }
             };
             match ready {
                 Ok(Ok((metadata, cancellation_policy))) => {
+                    self.jobs
+                        .get_mut(&id)
+                        .expect("new async job remains owned while starting")
+                        .cancellation_policy = cancellation_policy;
                     emit(
                         events,
                         cancellation,
@@ -278,30 +291,14 @@ impl AsyncJobSet {
                         },
                     )
                     .await?;
-                    emit(
-                        events,
-                        cancellation,
-                        RunEvent::ToolDetached {
-                            call_id: id.clone(),
-                        },
-                    )
-                    .await?;
-                    self.jobs.insert(
-                        id,
-                        AsyncJob {
-                            call,
-                            name: tool.spec().name,
-                            cancellation: job_cancellation,
-                            cancellation_policy,
-                            progress: progress_receiver,
-                            worker,
-                            started: Instant::now(),
-                            first_capability,
-                        },
-                    );
+                    emit(events, cancellation, RunEvent::ToolDetached { call_id: id }).await?;
                 }
                 Ok(Err(error)) => {
-                    let _ = worker.await;
+                    let job = self
+                        .jobs
+                        .remove(&id)
+                        .expect("failed async job remains owned while starting");
+                    let _ = job.worker.await;
                     let completion = ToolCompletion::Failure(ToolFailure::new(
                         error.kind(),
                         error.message().to_owned(),
@@ -326,7 +323,11 @@ impl AsyncJobSet {
                     .await?;
                 }
                 Err(_) => {
-                    let _ = worker.await;
+                    let job = self
+                        .jobs
+                        .remove(&id)
+                        .expect("closed async job remains owned while starting");
+                    let _ = job.worker.await;
                     let error = ToolError::new(
                         ToolErrorKind::Execution,
                         format!("async tool '{}' failed before detaching", call.name),
@@ -453,6 +454,9 @@ async fn fail_call(
     capability: Option<crate::CapabilityRequest>,
     finished: &mut VecDeque<ToolResult>,
 ) -> Result<(), Error> {
+    // Own the history result before any cancellable event publication. If a
+    // host closes the event channel, terminal cleanup can still pair the call.
+    finished.push_back(result);
     if !matches!(completion, ToolCompletion::Unavailable) {
         emit(
             events,
@@ -475,7 +479,6 @@ async fn fail_call(
         },
     )
     .await?;
-    finished.push_back(result);
     Ok(())
 }
 
@@ -485,6 +488,7 @@ async fn run_detached_job(
     id: ToolCallId,
     context: ToolContext,
     cancellation: CancellationToken,
+    execution_slots: Arc<Semaphore>,
     ready_tx: tokio::sync::oneshot::Sender<
         Result<(crate::tool::ToolMetadata, ToolCancellationPolicy), ToolError>,
     >,
@@ -526,11 +530,22 @@ async fn run_detached_job(
             return Err(error);
         }
     }
+    let slot = tokio::select! {
+        permit = execution_slots.acquire_owned() => {
+            permit.expect("async execution semaphore is never closed")
+        }
+        () = cancellation.cancelled() => {
+            let error = ToolError::cancelled();
+            let _ = ready_tx.send(Err(error.clone()));
+            return Err(error);
+        }
+    };
     let metadata = prepared.start_metadata().clone();
     let policy = prepared.cancellation_policy();
     if ready_tx.send(Ok((metadata, policy))).is_err() {
         return Err(ToolError::cancelled());
     }
+    let _slot = slot;
     let cancellation_cleanup_timeout = Arc::new(Mutex::new(match policy {
         ToolCancellationPolicy::Abort => None,
         ToolCancellationPolicy::Complete { timeout } => Some(timeout),
@@ -573,7 +588,10 @@ async fn settle_job(_id: ToolCallId, job: AsyncJob) -> ToolResult {
                 Err(_) => return interrupted_result(&job.call),
             }
         }
-        ToolCancellationPolicy::Abort => job.worker.await,
+        ToolCancellationPolicy::Abort => {
+            job.worker.abort();
+            job.worker.await
+        }
     };
     match result {
         Ok(Ok(output)) => ToolResult {
@@ -647,6 +665,9 @@ pub(super) async fn forward_job_notice(
                 duration,
                 capability,
             } = *finished;
+            // The completion was removed from `jobs`; park its history result
+            // before publishing anything that can be cancelled.
+            jobs.park_finished(result);
             hooks.after_tool_use(&name, &call_id, &completion, duration, capability.as_ref());
             emit(
                 events,
@@ -657,7 +678,6 @@ pub(super) async fn forward_job_notice(
                 },
             )
             .await?;
-            jobs.park_finished(result);
             Ok(())
         }
     }
@@ -674,6 +694,16 @@ pub(super) async fn harvest_ready_jobs(control: &mut RunControl<'_>) -> Result<(
             control.cancellation,
         )
         .await?;
+    }
+    Ok(())
+}
+
+pub(super) async fn await_all_jobs(control: &mut RunControl<'_>) -> Result<(), Error> {
+    while control.async_jobs.has_pending() {
+        match await_first_job(control).await? {
+            AwaitJobs::Continue => harvest_ready_jobs(control).await?,
+            AwaitJobs::Cancelled => return Err(Error::Cancelled),
+        }
     }
     Ok(())
 }

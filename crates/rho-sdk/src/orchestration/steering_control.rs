@@ -7,7 +7,7 @@ use crate::{
 
 use super::emit;
 
-pub(super) async fn handle_outcome(
+pub(in crate::orchestration) async fn handle_outcome(
     (id, outcome): (crate::SteeringId, ProviderSteeringOutcome),
     steering: &mut SteeringQueue,
     events: &mpsc::Sender<RunEvent>,
@@ -25,7 +25,7 @@ pub(super) async fn handle_outcome(
     }
 }
 
-pub(super) async fn apply_staged(
+pub(in crate::orchestration) async fn apply_staged(
     steering: &mut SteeringQueue,
     history: &mut Vec<crate::model::Message>,
     events: &mpsc::Sender<RunEvent>,
@@ -42,7 +42,7 @@ pub(super) async fn apply_staged(
     Ok(())
 }
 
-pub(super) fn accept_command(command: RunCommand, steering: &mut SteeringQueue) {
+pub(in crate::orchestration) fn accept_command(command: RunCommand, steering: &mut SteeringQueue) {
     match command {
         RunCommand::Steer { input, accepted } => {
             let id = steering.accept(input);
@@ -57,7 +57,7 @@ pub(super) fn accept_command(command: RunCommand, steering: &mut SteeringQueue) 
     }
 }
 
-pub(super) fn drain_commands(
+pub(in crate::orchestration) fn drain_commands(
     commands: &mut mpsc::Receiver<RunCommand>,
     steering: &mut SteeringQueue,
 ) {

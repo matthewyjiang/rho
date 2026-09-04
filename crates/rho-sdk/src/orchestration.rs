@@ -45,8 +45,8 @@ mod tool_batch;
 mod tool_turn;
 
 use async_jobs::{
-    await_first_job, forward_job_notice, harvest_ready_jobs, split_tool_calls, AsyncJobSet,
-    AwaitJobs,
+    await_all_jobs, await_first_job, forward_job_notice, harvest_ready_jobs, split_tool_calls,
+    AsyncJobSet, AwaitJobs,
 };
 use model_call_timer::ModelCallTimer;
 use provider_cancellation::{
@@ -54,7 +54,7 @@ use provider_cancellation::{
 };
 use provider_request::{request_valid_response, ProviderRequestScope, RequestFailure};
 use run_hooks::RunHooks;
-pub(super) use steering_control::{
+pub(in crate::orchestration) use steering_control::{
     accept_command as accept_non_tool_command, apply_staged as apply_staged_steering,
     drain_commands, handle_outcome as handle_steering_outcome,
 };
@@ -130,7 +130,7 @@ async fn execute_turn_loop(
 
     let mut accumulated_usage = ModelUsage::default();
     let mut steering = SteeringQueue::new();
-    let mut async_jobs = AsyncJobSet::new();
+    let mut async_jobs = AsyncJobSet::new(runtime.max_parallel_tools);
     if let Some(call) = start.initial_tool_call {
         history.push(Message::Assistant(vec![ContentBlock::ToolCall(
             call.clone(),
@@ -366,6 +366,25 @@ async fn execute_turn_loop(
                 error,
             )
             .await;
+        }
+
+        // Detached jobs may keep using shared resources for their lifetime.
+        // Wait before entering the synchronous scheduler, which may run an
+        // exclusive plan and must not overlap that work.
+        if !sync_calls.is_empty() && control.async_jobs.has_pending() {
+            if let Err(error) = await_all_jobs(&mut control).await {
+                return terminate_run(
+                    core,
+                    history,
+                    control.async_jobs,
+                    hooks,
+                    &events,
+                    &cancellation,
+                    error,
+                )
+                .await;
+            }
+            control.async_jobs.drain_finished(&mut history);
         }
 
         if !sync_calls.is_empty() || (!spawned_async && was_steered) {

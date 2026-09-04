@@ -344,6 +344,7 @@ async fn results_deliver_in_completion_order_before_next_request() {
     );
     let session = Rho::builder()
         .provider(provider.clone())
+        .max_parallel_tools(NonZeroUsize::new(2).unwrap())
         .tool(GatedAsyncTool {
             name: "alpha",
             gate: Arc::clone(&gate_a),
@@ -390,6 +391,133 @@ async fn results_deliver_in_completion_order_before_next_request() {
             },
         ]
     );
+}
+
+// Covers: detached calls cannot exceed the run-wide tool concurrency limit.
+// Owner: sdk orchestration
+#[tokio::test(start_paused = true)]
+async fn detached_jobs_respect_max_parallel_tools() {
+    let gate_a = Arc::new(Notify::new());
+    let gate_b = Arc::new(Notify::new());
+    let provider = ScriptedProvider::new(
+        identity(),
+        [
+            ScriptedTurn::streaming(
+                vec![async_marker("call-a"), async_marker("call-b")],
+                ModelResponse::Assistant(vec![
+                    ContentBlock::ToolCall(tool_call("call-a", "alpha")),
+                    ContentBlock::ToolCall(tool_call("call-b", "beta")),
+                ]),
+            ),
+            text_turn("waiting"),
+            text_turn("done"),
+        ],
+    );
+    let session = Rho::builder()
+        .provider(provider)
+        .max_parallel_tools(NonZeroUsize::new(1).unwrap())
+        .tool(GatedAsyncTool {
+            name: "alpha",
+            gate: Arc::clone(&gate_a),
+            exclusive: false,
+        })
+        .tool(GatedAsyncTool {
+            name: "beta",
+            gate: Arc::clone(&gate_b),
+            exclusive: false,
+        })
+        .build()
+        .unwrap()
+        .session(SessionOptions::default())
+        .await
+        .unwrap();
+    let mut run = session.start(UserInput::text("start")).await.unwrap();
+
+    loop {
+        if matches!(
+            next_event(&mut run).await,
+            RunEvent::ToolDetached { ref call_id } if call_id.as_str() == "call-a"
+        ) {
+            break;
+        }
+    }
+    assert!(
+        tokio::time::timeout(TEST_TIMEOUT, run.next_event())
+            .await
+            .is_err(),
+        "second detached job started while the only execution slot was occupied"
+    );
+
+    gate_a.notify_one();
+    loop {
+        if matches!(
+            next_event(&mut run).await,
+            RunEvent::ToolDetached { ref call_id } if call_id.as_str() == "call-b"
+        ) {
+            break;
+        }
+    }
+    gate_b.notify_one();
+    tokio::time::timeout(TEST_TIMEOUT, run.outcome())
+        .await
+        .expect("run timed out")
+        .unwrap();
+}
+
+// Covers: the synchronous scheduler cannot overlap a detached job whose
+// shared resource plan may conflict with a later exclusive plan.
+// Owner: sdk orchestration
+#[tokio::test(start_paused = true)]
+async fn sync_batch_waits_for_detached_jobs() {
+    let gate = Arc::new(Notify::new());
+    let provider = ScriptedProvider::new(
+        identity(),
+        [
+            ScriptedTurn::streaming(
+                vec![async_marker("call-async")],
+                ModelResponse::Assistant(vec![
+                    ContentBlock::ToolCall(tool_call("call-async", "async_tool")),
+                    ContentBlock::ToolCall(tool_call("call-sync", "sync_tool")),
+                ]),
+            ),
+            text_turn("done"),
+        ],
+    );
+    let session = Rho::builder()
+        .provider(provider)
+        .tool(GatedAsyncTool {
+            name: "async_tool",
+            gate: Arc::clone(&gate),
+            exclusive: false,
+        })
+        .tool(ImmediateSyncTool { name: "sync_tool" })
+        .build()
+        .unwrap()
+        .session(SessionOptions::default())
+        .await
+        .unwrap();
+    let mut run = session.start(UserInput::text("start")).await.unwrap();
+
+    loop {
+        if matches!(
+            next_event(&mut run).await,
+            RunEvent::ToolDetached { ref call_id } if call_id.as_str() == "call-async"
+        ) {
+            break;
+        }
+    }
+    assert!(
+        tokio::time::timeout(TEST_TIMEOUT, run.next_event())
+            .await
+            .is_err(),
+        "synchronous tool started before the detached job released its resources"
+    );
+
+    gate.notify_one();
+    tokio::time::timeout(TEST_TIMEOUT, run.outcome())
+        .await
+        .expect("run timed out")
+        .unwrap();
 }
 
 // Covers: cancel while awaiting a detached job writes the interrupted result
