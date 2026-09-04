@@ -49,7 +49,7 @@ impl BackgroundSubagents {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AgentAsyncCalls {
+pub(super) enum AgentAsyncCalls {
     Off,
     On,
 }
