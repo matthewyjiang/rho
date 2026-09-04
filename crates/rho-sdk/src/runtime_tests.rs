@@ -25,7 +25,8 @@ use crate::{
         ScriptedTool, ScriptedToolOutcome, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
         ToolInvocation, ToolOutput,
     },
-    Error, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, ProviderError,
+    CompactionFuture, CompactionOutput, CompactionPolicy, CompactionRequest, Compactor, Error,
+    HostChoice, HostInputRequest, HostInputResponse, HostQuestion, ProviderError,
     ProviderErrorKind, Retryability, Rho, RunEvent, SelectionMode, SessionOptions,
     SteeringRetraction, SystemPrompt, UserInput,
 };
@@ -906,15 +907,19 @@ async fn steering_handle_stages_input_after_run_moves_into_pump() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     assert_eq!(requests.len(), 2);
-    assert!(requests[1].iter().any(|message| {
-        matches!(
-            message,
-            Message::User(blocks)
-                if blocks.iter().any(|block| {
-                    matches!(block, ContentBlock::Text(text) if text == "via handle")
-                })
-        )
-    }));
+    assert_eq!(
+        requests[1],
+        [
+            Message::user_text("initial"),
+            Message::assistant(crate::model::AssistantMessage {
+                content: vec![ContentBlock::Text("draft".into())],
+                provenance: Some(identity()),
+                reasoning_summary: None,
+                provider_context: Vec::new(),
+            }),
+            Message::user_text("via handle"),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -1083,6 +1088,79 @@ async fn steering_retraction_during_blocked_tool_is_atomic_and_reports_too_late(
 }
 
 #[derive(Debug)]
+struct WaitingCompactor {
+    release: Arc<Notify>,
+}
+
+impl Compactor for WaitingCompactor {
+    fn compact<'a>(&'a self, request: CompactionRequest) -> CompactionFuture<'a> {
+        Box::pin(async move {
+            self.release.notified().await;
+            CompactionOutput::new(request.messages().to_vec())
+        })
+    }
+}
+
+// Covers: a steer accepted between steps (here during compact) is in the next
+// request; default providers must not spend an extra model call to release it
+// Owner: sdk orchestration
+#[tokio::test]
+async fn between_step_steer_is_applied_before_next_request() {
+    let provider = ScriptedProvider::new(
+        identity(),
+        [
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                ToolCall {
+                    id: "call-1".into(),
+                    name: "read".into(),
+                    arguments: json!({}),
+                },
+            )])),
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "done".into(),
+            )])),
+        ],
+    );
+    let release = Arc::new(Notify::new());
+    let runtime = Rho::builder()
+        .provider(provider.clone())
+        .tool(ScriptedTool::new(
+            ToolSpec {
+                name: "read".into(),
+                description: "read".into(),
+                input_schema: json!({"type": "object"}),
+            },
+            ScriptedToolOutcome::Success(ToolOutput::text("ok")),
+        ))
+        .compactor(WaitingCompactor {
+            release: Arc::clone(&release),
+        })
+        .compaction_policy(CompactionPolicy::after_messages(
+            NonZeroUsize::new(3).unwrap(),
+        ))
+        .max_steps(NonZeroUsize::new(4).unwrap())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("initial")).await.unwrap();
+    while let Some(event) = run.next_event().await {
+        if matches!(event, RunEvent::CompactionStarted { .. }) {
+            let _receipt = run
+                .request_steer_retractable(UserInput::text("between steps"))
+                .unwrap();
+            release.notify_one();
+        }
+    }
+    assert_eq!(run.outcome().await.unwrap().text(), "done");
+    let requests = provider.recorded_requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[1].messages.last(),
+        Some(&Message::user_text("between steps"))
+    );
+}
+
+#[derive(Debug)]
 struct MidTurnSteeringProvider {
     calls: AtomicUsize,
     requests: Mutex<Vec<Vec<Message>>>,
@@ -1187,8 +1265,8 @@ impl ModelProvider for MidTurnSteeringProvider {
     }
 }
 
-// Covers: a provider-delivered steer is applied alone, then late undelivered
-// steers stay staged for the continuation
+// Covers: a provider-delivered steer is applied alone; leftover undelivered
+// steers are applied before the next request instead of spending an extra turn
 // Owner: sdk orchestration
 #[tokio::test]
 async fn delivered_steer_applies_alone_before_late_undelivered() {
@@ -1244,13 +1322,13 @@ async fn delivered_steer_applies_alone_before_late_undelivered() {
     assert!(!events
         .iter()
         .any(|event| { matches!(event, RunEvent::SteeringDelivered { id } if id == &late_id) }));
-    assert_eq!(run.outcome().await.unwrap().text(), "done");
+    assert_eq!(run.outcome().await.unwrap().text(), "continuation");
 
     let requests = provider
         .requests
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 2);
     assert_eq!(
         requests[1],
         [
@@ -1262,12 +1340,9 @@ async fn delivered_steer_applies_alone_before_late_undelivered() {
                 provider_context: Vec::new(),
             }),
             Message::user_text("S1"),
+            Message::user_text("S2"),
         ]
     );
-    assert_eq!(requests[2].last(), Some(&Message::user_text("S2")));
-    assert!(requests[2]
-        .iter()
-        .any(|message| message == &Message::user_text("S1")));
 }
 
 // Covers: dropping the steering port applies staged input at the boundary

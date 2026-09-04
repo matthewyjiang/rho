@@ -105,7 +105,7 @@ impl SteeringQueue {
             .collect()
     }
 
-    fn has_delivered(&self) -> bool {
+    pub(crate) fn has_delivered(&self) -> bool {
         self.staged
             .iter()
             .any(|entry| matches!(entry.delivery, Delivery::Delivered))

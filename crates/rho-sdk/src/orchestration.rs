@@ -143,10 +143,6 @@ async fn execute_turn_loop(
     let tool_specs = runtime.tools.specs();
     for step in 1..=runtime.max_steps.get() {
         drain_commands(&mut commands, &mut steering);
-        // Steering is applied after a provider or tool boundary, not here.
-        // Leftover undelivered steers stay staged so the next provider turn can
-        // offer them mid-stream; applying them first would rewrite the
-        // continuation suffix the server already prepended.
         let request_scope = ProviderRequestScope {
             runtime: &runtime,
             session_id: core.id(),
@@ -178,6 +174,36 @@ async fn execute_turn_loop(
                     &events,
                 )
                 .await;
+            }
+        }
+        drain_commands(&mut commands, &mut steering);
+        // Delivered steers stay staged so a Reuse continuation still matches the
+        // suffix the server already prepended. Undelivered steers accepted
+        // between steps (including during compact) are applied before the next
+        // request so default providers do not spend a turn just to release them.
+        if !steering.has_delivered() {
+            match apply_staged_steering(&mut steering, &mut history, &events, &cancellation).await {
+                Ok(()) => {}
+                Err(Error::Cancelled) => {
+                    return commit_terminal_history(
+                        core,
+                        history,
+                        TerminalKind::Cancelled,
+                        &events,
+                    )
+                    .await;
+                }
+                Err(error @ Error::Interrupted { .. }) => return Err(error),
+                Err(error) => {
+                    return commit_terminal(
+                        core,
+                        history,
+                        StreamCapture::default(),
+                        TerminalKind::Failed(error),
+                        &events,
+                    )
+                    .await;
+                }
             }
         }
         // Emit before the provider call so quiet hosts still show context fill
