@@ -16,6 +16,7 @@ use rho_sdk::provider::ProviderSteeringReceiver;
 use super::codex_continuation::{
     CodexContinuationCandidate, CodexContinuationResponse, CodexContinuationState,
 };
+use super::codex_request::codex_routing_hint;
 use super::codex_steer::{
     is_steer_pending_required_input, steer_event_type, steer_frame, steer_items, PendingSteer,
     SteerMatch, SteerMode,
@@ -41,7 +42,7 @@ pub(super) struct CodexWsTransport {
 
 struct CodexWsState {
     continuation: CodexContinuationState,
-    connection: Option<CodexSocket>,
+    connection: Option<CodexConnection>,
     pending_steer: Option<PendingSteer>,
     /// Set while a turn is in flight, cleared when that turn records a result.
     ///
@@ -71,6 +72,11 @@ impl CodexWsState {
 }
 
 type CodexSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+struct CodexConnection {
+    socket: CodexSocket,
+    routing_hint: String,
+}
 
 #[derive(Debug, PartialEq)]
 pub(super) enum CodexWsTurn {
@@ -311,10 +317,41 @@ impl CodexWsState {
         steering: &mut Option<ProviderSteeringReceiver>,
         candidate: Option<&CodexContinuationCandidate>,
     ) -> Result<CodexWsCompleted, CodexWsFailure> {
-        if self.connection.is_none() {
-            self.connection = Some(connect_codex_ws(ws_url, tokens, idle_timeout).await?);
+        let socket = self
+            .send_on_routed_socket(ws_url, tokens, frame, idle_timeout)
+            .await?;
+        collect_codex_ws_response(socket, idle_timeout, on_event, steering, candidate).await
+    }
+
+    async fn send_on_routed_socket(
+        &mut self,
+        ws_url: &str,
+        tokens: &CodexTokens,
+        frame: &Value,
+        idle_timeout: std::time::Duration,
+    ) -> Result<&mut CodexSocket, CodexWsFailure> {
+        let routing_hint = codex_routing_hint(frame).map_err(CodexWsFailure::Model)?;
+        // Conservatively refresh handshake routing when request properties change;
+        // do not assume a later frame can reroute an established connection.
+        if self
+            .connection
+            .as_ref()
+            .is_none_or(|connection| connection.routing_hint != routing_hint)
+        {
+            // Release the old connection before opening its replacement so a
+            // routing change does not temporarily consume two connection slots.
+            self.connection = None;
+            let socket = connect_codex_ws(ws_url, tokens, &routing_hint, idle_timeout).await?;
+            self.connection = Some(CodexConnection {
+                socket,
+                routing_hint,
+            });
         }
-        let socket = self.connection.as_mut().expect("connection was just set");
+        let socket = &mut self
+            .connection
+            .as_mut()
+            .expect("connection was just set")
+            .socket;
         wait_for_stream_activity_for(
             socket.send(Message::Text(frame.to_string().into())),
             idle_timeout,
@@ -327,7 +364,7 @@ impl CodexWsState {
             _message: format!("websocket send failed: {err}"),
         })?;
 
-        collect_codex_ws_response(socket, idle_timeout, on_event, steering, candidate).await
+        Ok(socket)
     }
 
     async fn read_open_socket(
@@ -337,12 +374,13 @@ impl CodexWsState {
         steering: &mut Option<ProviderSteeringReceiver>,
         candidate: &CodexContinuationCandidate,
     ) -> Result<CodexWsCompleted, CodexWsFailure> {
-        let socket = self
+        let socket = &mut self
             .connection
             .as_mut()
             .ok_or(CodexWsFailure::BeforeRequest {
                 _message: "steered continuation reused a closed websocket".into(),
-            })?;
+            })?
+            .socket;
         collect_codex_ws_response(socket, idle_timeout, on_event, steering, Some(candidate)).await
     }
 
@@ -353,22 +391,9 @@ impl CodexWsState {
         frame: &Value,
         idle_timeout: std::time::Duration,
     ) -> Result<CodexWsCompleted, CodexWsFailure> {
-        if self.connection.is_none() {
-            self.connection = Some(connect_codex_ws(ws_url, tokens, idle_timeout).await?);
-        }
-        let socket = self.connection.as_mut().expect("connection was just set");
-        wait_for_stream_activity_for(
-            socket.send(Message::Text(frame.to_string().into())),
-            idle_timeout,
-        )
-        .await
-        .map_err(|err| CodexWsFailure::BeforeRequest {
-            _message: err.to_string(),
-        })?
-        .map_err(|err| CodexWsFailure::BeforeRequest {
-            _message: format!("websocket send failed: {err}"),
-        })?;
-
+        let socket = self
+            .send_on_routed_socket(ws_url, tokens, frame, idle_timeout)
+            .await?;
         collect_codex_ws_response_silent(socket, idle_timeout).await
     }
 }
@@ -376,6 +401,7 @@ impl CodexWsState {
 async fn connect_codex_ws(
     ws_url: &str,
     tokens: &CodexTokens,
+    routing_hint: &str,
     idle_timeout: std::time::Duration,
 ) -> Result<CodexSocket, CodexWsFailure> {
     let mut request =
@@ -391,6 +417,11 @@ async fn connect_codex_ws(
         "OpenAI-Beta",
         HeaderValue::from_static("responses_websockets=2026-02-06"),
     );
+    let routing_hint =
+        HeaderValue::from_str(routing_hint).map_err(|err| CodexWsFailure::BeforeRequest {
+            _message: format!("invalid Codex routing hint header: {err}"),
+        })?;
+    headers.insert("x-codex-routing-hint", routing_hint);
     let authorization =
         HeaderValue::from_str(&format!("Bearer {}", tokens.access_token)).map_err(|err| {
             CodexWsFailure::BeforeRequest {

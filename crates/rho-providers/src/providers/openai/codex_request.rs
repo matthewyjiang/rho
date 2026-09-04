@@ -264,6 +264,17 @@ pub(super) fn build_responses_create_body(
     })
 }
 
+pub(super) fn codex_routing_hint(body: &Value) -> Result<String, ModelError> {
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ModelError::InvalidResponse("Codex body missing model".into()))?;
+    Ok(match body.get("service_tier").and_then(Value::as_str) {
+        Some(tier) => format!("model={model};tier={tier}"),
+        None => format!("model={model}"),
+    })
+}
+
 /// Builds a unary `/responses/compact` body.
 ///
 /// Compact never advertises tools and never streams.

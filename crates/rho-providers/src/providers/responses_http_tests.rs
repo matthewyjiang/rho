@@ -18,7 +18,7 @@ use super::super::openai::auth::{Auth, CodexAuthSource};
 use super::{
     ResponsesEndpoint, ResponsesFailedAttemptKind, ResponsesHttpAuth, ResponsesHttpTransport,
 };
-use crate::providers::openai::responses_post::{self, codex_http_auth};
+use crate::providers::openai::responses_post;
 use crate::{
     credentials::{CodexTokens, MemoryCredentialStore},
     model::ModelError,
@@ -234,26 +234,41 @@ async fn codex_create_and_compact_send_expected_headers_and_paths() {
         account_id: Some("acct_1".into()),
     });
     let http = transport(&client, &base);
-    let body = json!({"model":"gpt-5.4","store":false});
+    let refresh_url = format!("{base}/oauth/token");
+    let create_body = json!({"model":"gpt-5.4","store":false,"service_tier":"priority"});
+    let compact_body = json!({"model":"gpt-5.4","store":false});
 
-    let tokens = auth.codex_tokens_for_request().unwrap();
-    let request_auth = codex_http_auth(&tokens);
-    let create = http
-        .post_json(&request_auth, ResponsesEndpoint::Create, &body, None)
-        .await;
+    let create = responses_post::post(
+        &http,
+        &client,
+        Some(&auth),
+        &refresh_url,
+        ResponsesEndpoint::Create,
+        &create_body,
+        None,
+    )
+    .await;
     assert!(create.failed_attempts.is_empty());
     assert!(create.response.is_ok());
 
-    let compact = http
-        .post_json(&request_auth, ResponsesEndpoint::Compact, &body, None)
-        .await;
+    let compact = responses_post::post(
+        &http,
+        &client,
+        Some(&auth),
+        &refresh_url,
+        ResponsesEndpoint::Compact,
+        &compact_body,
+        None,
+    )
+    .await;
     assert!(compact.failed_attempts.is_empty());
     assert!(compact.response.is_ok());
 
     let requests = captured.lock().await.clone();
     assert_eq!(requests.len(), 2);
-    for (request, expected_path) in requests.iter().zip(["/responses", "/responses/compact"]) {
-        assert_eq!(request.path, expected_path);
+    assert_eq!(requests[0].path, "/responses");
+    assert_eq!(requests[1].path, "/responses/compact");
+    for request in &requests {
         let headers = request.headers.to_ascii_lowercase();
         assert!(headers.contains("authorization: bearer access"));
         assert!(headers.contains("user-agent: codex-cli"));
@@ -261,6 +276,13 @@ async fn codex_create_and_compact_send_expected_headers_and_paths() {
         assert!(headers.contains("chatgpt-account-id: acct_1"));
         assert!(headers.contains("openai-beta: responses=experimental"));
     }
+    assert!(requests[0]
+        .headers
+        .to_ascii_lowercase()
+        .contains("x-codex-routing-hint: model=gpt-5.4;tier=priority"));
+    let compact_headers = requests[1].headers.to_ascii_lowercase();
+    assert!(compact_headers.contains("x-codex-routing-hint: model=gpt-5.4"));
+    assert!(!compact_headers.contains("tier=priority"));
 }
 
 #[tokio::test]
@@ -344,19 +366,21 @@ async fn codex_compact_401_refresh_reports_auth_failed_attempt_and_retries() {
     assert!(requests
         .iter()
         .any(|request| request.path.contains("oauth/token")));
-    let retry = requests
+    let compact_requests: Vec<_> = requests
         .iter()
         .filter(|request| request.path == "/responses/compact")
-        .nth(1)
-        .expect("retried compact request");
-    assert!(retry
+        .collect();
+    assert_eq!(compact_requests.len(), 2);
+    for request in &compact_requests {
+        let headers = request.headers.to_ascii_lowercase();
+        assert!(headers.contains("x-codex-routing-hint: model=gpt-5.4"));
+        assert!(!headers.contains("tier=priority"));
+        assert!(headers.contains("openai-beta: responses=experimental"));
+    }
+    assert!(compact_requests[1]
         .headers
         .to_ascii_lowercase()
         .contains("authorization: bearer access-2"));
-    assert!(retry
-        .headers
-        .to_ascii_lowercase()
-        .contains("openai-beta: responses=experimental"));
 }
 
 #[tokio::test]

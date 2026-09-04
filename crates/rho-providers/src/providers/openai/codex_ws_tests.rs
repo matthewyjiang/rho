@@ -1,13 +1,81 @@
 use super::*;
 use crate::model::{ContentBlock, ModelResponse, ProviderReportedErrorKind};
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::net::TcpListener;
 use tokio_tungstenite::accept_async;
+use tokio_tungstenite::accept_hdr_async;
+use tokio_tungstenite::tungstenite::handshake::server::{
+    Callback, ErrorResponse, Request, Response,
+};
 
 use super::codex_ws_test_support::{
     body, immediate, read_request_frame, send_completion, tokens, ws_server, ws_server_connections,
 };
+
+struct RecordRoutingHint(Arc<StdMutex<Vec<String>>>);
+
+impl Callback for RecordRoutingHint {
+    // tungstenite's Callback must return ErrorResponse by value.
+    #[allow(clippy::result_large_err)]
+    fn on_request(self, request: &Request, response: Response) -> Result<Response, ErrorResponse> {
+        let hint = request
+            .headers()
+            .get("x-codex-routing-hint")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        self.0.lock().unwrap().push(hint);
+        Ok(response)
+    }
+}
+
+/// Accepts `expected_connections` sockets and keeps each one live so a reused
+/// hint can send another frame on the same handshake.
+async fn ws_server_live_routing_hints(
+    expected_connections: usize,
+) -> (
+    String,
+    Arc<StdMutex<Vec<String>>>,
+    tokio::task::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let hints = Arc::new(StdMutex::new(Vec::new()));
+    let server_hints = Arc::clone(&hints);
+    let response_index = Arc::new(AtomicUsize::new(0));
+    let server = tokio::spawn(async move {
+        let mut handlers = Vec::with_capacity(expected_connections);
+        for _ in 0..expected_connections {
+            let (stream, _) = listener.accept().await.unwrap();
+            let connection_hints = Arc::clone(&server_hints);
+            let response_index = Arc::clone(&response_index);
+            handlers.push(tokio::spawn(async move {
+                let mut socket = accept_hdr_async(stream, RecordRoutingHint(connection_hints))
+                    .await
+                    .unwrap();
+                loop {
+                    let Some(message) = socket.next().await else {
+                        break;
+                    };
+                    let Ok(message) = message else {
+                        break;
+                    };
+                    if message.into_text().is_err() {
+                        break;
+                    }
+                    let index = response_index.fetch_add(1, Ordering::SeqCst) + 1;
+                    send_completion(&mut socket, index).await;
+                }
+            }));
+        }
+        for handler in handlers {
+            handler.await.unwrap();
+        }
+    });
+    (format!("ws://{addr}/responses"), hints, server)
+}
 
 /// Answers one turn, stalls on the next, then answers again on a reconnect.
 ///
@@ -739,4 +807,65 @@ fn derives_websocket_url_from_codex_api_base() {
         codex_ws_url("http://127.0.0.1:1234/codex/"),
         "ws://127.0.0.1:1234/codex/responses"
     );
+}
+
+// Covers: same routing hint must reuse the live socket; model or tier change
+// must open a new handshake, including both tier directions.
+// Owner: OpenAI Codex WebSocket transport.
+#[tokio::test]
+async fn websocket_routes_connections_by_model_and_service_tier() {
+    let (url, hints, server) = ws_server_live_routing_hints(4).await;
+    let transport = CodexWsTransport::new_with_url(url);
+    let standard = body(vec![json!({"role":"user","content":"standard"})]);
+
+    immediate(transport.send_responses_turn_silent(standard.clone(), &tokens()))
+        .await
+        .unwrap();
+    immediate(transport.send_responses_turn_silent(standard.clone(), &tokens()))
+        .await
+        .unwrap();
+    assert_eq!(*hints.lock().unwrap(), ["model=gpt-5-codex"]);
+
+    let mut priority = body(vec![json!({"role":"user","content":"priority"})]);
+    priority["service_tier"] = json!("priority");
+    immediate(transport.send_responses_turn_silent(priority, &tokens()))
+        .await
+        .unwrap();
+    assert_eq!(
+        *hints.lock().unwrap(),
+        ["model=gpt-5-codex", "model=gpt-5-codex;tier=priority"]
+    );
+
+    immediate(transport.send_responses_turn_silent(standard.clone(), &tokens()))
+        .await
+        .unwrap();
+    assert_eq!(
+        *hints.lock().unwrap(),
+        [
+            "model=gpt-5-codex",
+            "model=gpt-5-codex;tier=priority",
+            "model=gpt-5-codex"
+        ]
+    );
+
+    let mut other_model = body(vec![json!({"role":"user","content":"other-model"})]);
+    other_model["model"] = json!("gpt-5.4");
+    immediate(transport.send_responses_turn_silent(other_model, &tokens()))
+        .await
+        .unwrap();
+    assert_eq!(
+        *hints.lock().unwrap(),
+        [
+            "model=gpt-5-codex",
+            "model=gpt-5-codex;tier=priority",
+            "model=gpt-5-codex",
+            "model=gpt-5.4"
+        ]
+    );
+
+    drop(transport);
+    tokio::time::timeout(std::time::Duration::from_secs(1), server)
+        .await
+        .expect("server tasks should finish after the client drops")
+        .unwrap();
 }

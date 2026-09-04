@@ -11,14 +11,16 @@ use crate::{
 };
 
 use super::auth::{refresh_codex_token_at, Auth};
+use super::codex_request::codex_routing_hint;
 
 pub(crate) const DEFAULT_CODEX_REFRESH_URL: &str = "https://auth.openai.com/oauth/token";
 
-/// Codex Responses headers: bearer, `codex-cli` UA, originator, beta, account.
-pub(crate) fn codex_http_auth(tokens: &CodexTokens) -> ResponsesHttpAuth {
+/// Codex Responses headers: bearer, `codex-cli` UA, originator, beta, account, routing hint.
+pub(crate) fn codex_http_auth(tokens: &CodexTokens, routing_hint: &str) -> ResponsesHttpAuth {
     let mut auth = ResponsesHttpAuth::bearer(&tokens.access_token, "codex-cli")
         .with_header("originator", "codex_cli_rs")
-        .with_header("OpenAI-Beta", "responses=experimental");
+        .with_header("OpenAI-Beta", "responses=experimental")
+        .with_header("x-codex-routing-hint", routing_hint);
     if let Some(account_id) = tokens.account_id.as_deref() {
         auth = auth.with_header("ChatGPT-Account-ID", account_id);
     }
@@ -90,7 +92,11 @@ async fn post_codex(
         Ok(tokens) => tokens,
         Err(error) => return ResponsesHttpResult::err(error),
     };
-    let request_auth = codex_http_auth(&tokens);
+    let routing_hint = match codex_routing_hint(body) {
+        Ok(routing_hint) => routing_hint,
+        Err(error) => return ResponsesHttpResult::err(error),
+    };
+    let request_auth = codex_http_auth(&tokens, &routing_hint);
     let Some(refresh_token) = tokens.refresh_token.clone() else {
         return http
             .post_json(&request_auth, endpoint, body, cancellation)
@@ -102,6 +108,7 @@ async fn post_codex(
     let previous = tokens;
     let refresh_url = refresh_url.to_string();
     let client = client.clone();
+    let refreshed_routing_hint = routing_hint.clone();
     http.post_json_refreshing(
         &request_auth,
         move || {
@@ -117,7 +124,7 @@ async fn post_codex(
                 )
                 .await?;
                 auth.remember_refreshed_codex_tokens(refreshed.clone());
-                Ok(Some(codex_http_auth(&refreshed)))
+                Ok(Some(codex_http_auth(&refreshed, &refreshed_routing_hint)))
             }
         },
         || Ok(()),
