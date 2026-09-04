@@ -191,3 +191,68 @@ fn response_failed_after_text_delta_still_fails() {
         "provider reported server_error: generation failed"
     );
 }
+
+// Covers: `response.incomplete` with reason `steered` is a completion, and
+// `response.created` captures the id the steer frame needs.
+// Owner: providers stream parse
+#[test]
+fn steered_incomplete_completes_with_created_response_id() {
+    let cases = [
+        (
+            "created then steered incomplete",
+            [
+                r#"data: {"type":"response.created","response":{"id":"resp_1","status":"in_progress"}}"#,
+                r#"data: {"type":"response.output_text.delta","delta":"partial"}"#,
+                r#"data: {"type":"response.incomplete","response":{"id":"resp_ignored","status":"incomplete","incomplete_details":{"reason":"steered"},"output_text":"partial"}}"#,
+            ]
+            .as_slice(),
+            Some("resp_1"),
+            true,
+        ),
+        (
+            "completed still captures id from the completed envelope",
+            [
+                r#"data: {"type":"response.created","response":{"id":"resp_created"}}"#,
+                r#"data: {"type":"response.output_text.delta","delta":"done"}"#,
+                r#"data: {"type":"response.completed","response":{"id":"resp_completed","output_text":"done"}}"#,
+            ]
+            .as_slice(),
+            Some("resp_completed"),
+            false,
+        ),
+        (
+            "other incomplete reasons stay terminal failures",
+            [
+                r#"data: {"type":"response.incomplete","response":{"id":"resp_max","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}"#,
+            ]
+            .as_slice(),
+            None,
+            false,
+        ),
+    ];
+
+    for (name, lines, expected_id, expected_steered) in cases {
+        let mut state = CodexSseState::default();
+        let mut failed = None;
+        for line in lines {
+            match handle_codex_sse_line(line, &mut state, &mut None) {
+                Ok(_) => {}
+                Err(error) => {
+                    failed = Some(error);
+                    break;
+                }
+            }
+        }
+        if expected_id.is_none() {
+            assert!(
+                failed.is_some(),
+                "{name}: expected a terminal incomplete failure"
+            );
+            continue;
+        }
+        assert!(failed.is_none(), "{name}: {failed:?}");
+        let response = state.into_response().unwrap();
+        assert_eq!(response.response_id.as_deref(), expected_id, "{name}");
+        assert_eq!(response.steered, expected_steered, "{name}");
+    }
+}

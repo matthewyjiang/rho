@@ -18,7 +18,6 @@ use crate::protocol::openai_responses::lower_codex_history_message;
 /// Provider-context kind for the effort that was in force for an assistant turn.
 pub(super) const OPENAI_REASONING_EFFORT_KIND: &str = "openai_reasoning_effort";
 
-const CONFIGURATION_UPDATE_MODEL: &str = "gpt-6-astra";
 const CONFIGURATION_UPDATE_TYPE: &str = "configuration_update";
 
 /// How create/compact bodies treat mid-conversation effort changes.
@@ -29,12 +28,12 @@ pub(super) enum ReasoningUpdatePolicy {
     /// Compact uses this because `POST /responses/compact` rejects those items.
     CurrentLevel,
     /// Freeze request-level effort at the cached-prefix baseline on
-    /// [`CONFIGURATION_UPDATE_MODEL`] and emit updates in `input`.
+    /// `gpt-6-astra` and emit updates in `input`.
     PreservePrefix,
 }
 
 pub(super) fn preserves_prefix_for(model: &str) -> bool {
-    model == CONFIGURATION_UPDATE_MODEL
+    super::is_gpt6_astra(model)
 }
 
 pub(super) fn reasoning_effort_context(

@@ -408,18 +408,21 @@ where
 #[macro_export]
 macro_rules! impl_sdk_model_provider {
     ($provider:ty) => {
-        $crate::impl_sdk_model_provider!(@impl $provider, [], []);
+        $crate::impl_sdk_model_provider!(@impl $provider, [], [], []);
     };
     ($provider:ty, native_compact) => {
-        $crate::impl_sdk_model_provider!(@impl $provider, [@native_compact], []);
+        $crate::impl_sdk_model_provider!(@impl $provider, [@native_compact], [], []);
     };
     ($provider:ty, request_options) => {
-        $crate::impl_sdk_model_provider!(@impl $provider, [], [@request_options]);
+        $crate::impl_sdk_model_provider!(@impl $provider, [], [@request_options], []);
     };
     ($provider:ty, native_compact, request_options) => {
-        $crate::impl_sdk_model_provider!(@impl $provider, [@native_compact], [@request_options]);
+        $crate::impl_sdk_model_provider!(@impl $provider, [@native_compact], [@request_options], []);
     };
-    (@impl $provider:ty, [$($native:tt)*], [$($options:tt)*]) => {
+    ($provider:ty, native_compact, request_options, steerable) => {
+        $crate::impl_sdk_model_provider!(@impl $provider, [@native_compact], [@request_options], [@steerable]);
+    };
+    (@impl $provider:ty, [$($native:tt)*], [$($options:tt)*], [$($steer:tt)*]) => {
         impl ::rho_sdk::provider::ModelProvider for $provider {
             fn cancellation_mode(&self) -> ::rho_sdk::provider::ProviderCancellationMode {
                 ::rho_sdk::provider::ProviderCancellationMode::Cooperative
@@ -445,6 +448,8 @@ macro_rules! impl_sdk_model_provider {
 
             $crate::impl_sdk_model_provider!(@request_options_methods $($options)*);
 
+            $crate::impl_sdk_model_provider!(@steerable_methods $($steer)*);
+
             $crate::impl_sdk_model_provider!(@native_compact_method $($native)*);
 
             fn send_turn_stream<'a>(
@@ -460,6 +465,50 @@ macro_rules! impl_sdk_model_provider {
                     []
                 )
             }
+        }
+    };
+    (@steerable_methods) => {};
+    (@steerable_methods @steerable) => {
+        fn send_turn_stream_steerable<'a>(
+            &'a self,
+            request: ::rho_sdk::model::ModelRequest<'a>,
+            options: ::rho_sdk::provider::ModelRequestOptions,
+            events: ::rho_sdk::provider::ProviderEventSender,
+            steering: ::rho_sdk::provider::ProviderSteeringReceiver,
+        ) -> ::rho_sdk::provider::ProviderFuture<'a> {
+            ::std::boxed::Box::pin(async move {
+                let cancellation = request.cancellation.clone();
+                let pending = ::std::sync::Arc::new(::std::sync::Mutex::new(
+                    ::std::collections::VecDeque::new(),
+                ));
+                let notify = ::std::sync::Arc::new(::tokio::sync::Notify::new());
+                let mut on_event = $crate::providers::sdk_contract::callback_event_sink(
+                    cancellation.clone(),
+                    ::std::sync::Arc::clone(&pending),
+                    ::std::sync::Arc::clone(&notify),
+                );
+                let mut on_request_event =
+                    $crate::providers::sdk_contract::callback_request_event_sink(
+                        cancellation.clone(),
+                        ::std::sync::Arc::clone(&pending),
+                        ::std::sync::Arc::clone(&notify),
+                    );
+                let provider = self.stream_turn_steerable(
+                    request,
+                    options,
+                    steering,
+                    &mut on_event,
+                    &mut on_request_event,
+                );
+                $crate::providers::sdk_contract::drive_callback_stream(
+                    cancellation,
+                    events,
+                    pending,
+                    notify,
+                    provider,
+                )
+                .await
+            })
         }
     };
     (@request_options_methods) => {};

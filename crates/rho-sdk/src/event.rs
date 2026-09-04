@@ -317,6 +317,13 @@ pub enum RunEvent {
         requested: crate::model::ServiceTier,
         used: String,
     },
+    /// The backend acknowledged a steer inside the current model turn.
+    ///
+    /// [`RunEvent::SteeringApplied`] still fires when that input crosses into
+    /// conversation history at the turn boundary.
+    SteeringDelivered {
+        id: SteeringId,
+    },
 }
 
 #[cfg(test)]

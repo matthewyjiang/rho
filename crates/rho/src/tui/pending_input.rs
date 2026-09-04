@@ -8,6 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 pub(super) struct AcceptedSteering {
     pub(super) id: rho_sdk::SteeringId,
     pub(super) prompt: QueuedPrompt,
+    pub(super) delivered: bool,
 }
 
 pub(super) enum PendingInputRequest {
@@ -184,7 +185,11 @@ impl App {
             ) => {
                 self.pending
                     .accepted_steering_mut()
-                    .push_back(AcceptedSteering { id, prompt });
+                    .push_back(AcceptedSteering {
+                        id,
+                        prompt,
+                        delivered: false,
+                    });
                 self.select_pending_recall_target();
                 None
             }
@@ -229,8 +234,9 @@ impl App {
                 }
             }
             Ok(rho_sdk::SteeringRetraction::AlreadyApplied) => {
-                self.record_applied_steering(std::slice::from_ref(&id));
-                self.notify_status("steer was already applied and can no longer be changed");
+                // Claimed or delivered steering still remains staged until the SDK emits
+                // SteeringApplied. That event is the authority for transcript insertion.
+                self.notify_status("steer can no longer be changed");
             }
             Ok(rho_sdk::SteeringRetraction::NotFound) => {
                 let _ = self.take_accepted_steering(std::slice::from_ref(&id));
@@ -241,6 +247,17 @@ impl App {
                     "could not confirm steer retraction; it remains pending: {error}"
                 ));
             }
+        }
+    }
+
+    pub(super) fn record_delivered_steering(&mut self, id: &rho_sdk::SteeringId) {
+        if let Some(entry) = self
+            .pending
+            .accepted_steering_mut()
+            .iter_mut()
+            .find(|entry| &entry.id == id)
+        {
+            entry.delivered = true;
         }
     }
 

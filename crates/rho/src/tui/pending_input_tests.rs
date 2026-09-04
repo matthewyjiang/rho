@@ -59,6 +59,7 @@ fn alt_up_requests_retraction_for_accepted_steer() {
         .push_back(AcceptedSteering {
             id: id.clone(),
             prompt: prompt("retract me"),
+            delivered: false,
         });
 
     app.handle_pending_input_key(key(KeyCode::Up, KeyModifiers::ALT));
@@ -103,12 +104,14 @@ fn applied_event_preserves_selection_of_a_later_pending_item() {
         .push_back(AcceptedSteering {
             id: applied.clone(),
             prompt: prompt("first steer"),
+            delivered: false,
         });
     app.pending
         .accepted_steering_mut()
         .push_back(AcceptedSteering {
             id: rho_sdk::SteeringId::new(),
             prompt: prompt("second steer"),
+            delivered: false,
         });
     app.pending.push_follow_up(prompt("future turn"));
     app.pending.input_panel_mut().selected = 2;
@@ -174,12 +177,14 @@ fn applied_event_removes_only_matching_steering() {
         .push_back(AcceptedSteering {
             id: applied.clone(),
             prompt: prompt("applied"),
+            delivered: false,
         });
     app.pending
         .accepted_steering_mut()
         .push_back(AcceptedSteering {
             id: pending.clone(),
             prompt: prompt("pending"),
+            delivered: false,
         });
 
     app.record_applied_steering(&[applied]);
@@ -192,10 +197,10 @@ fn applied_event_removes_only_matching_steering() {
     ));
 }
 
-// Covers: AlreadyApplied must still show the steer after flushing any held stream
+// Covers: a rejected retraction must wait for SteeringApplied before changing the transcript.
 // Owner: interactive TUI pending-input
 #[test]
-fn already_applied_retraction_inserts_the_user_message() {
+fn already_applied_retraction_keeps_the_live_stream_intact() {
     let mut app = test_app();
     let id = rho_sdk::SteeringId::new();
     app.pending
@@ -203,6 +208,7 @@ fn already_applied_retraction_inserts_the_user_message() {
         .push_back(AcceptedSteering {
             id: id.clone(),
             prompt: prompt("keep me"),
+            delivered: false,
         });
     app.streams.current_stream_kind = Some(StreamKind::Assistant);
     app.streams
@@ -217,17 +223,10 @@ fn already_applied_retraction_inserts_the_user_message() {
     let failure = app.finish_pending_input_request(request, completion);
 
     assert_eq!(failure, None);
-    assert!(app.pending.accepted_steering().is_empty());
-    assert!(app.streams.assistant_stream.pending_text().is_empty());
-    assert!(matches!(
-        app.history.entries(),
-        [Entry::Assistant(assistant), Entry::User(text)]
-            if assistant.text == "held assistant tail" && text == "keep me"
-    ));
-    assert_eq!(
-        app.status(),
-        "steer was already applied and can no longer be changed"
-    );
+    assert_eq!(app.pending.accepted_steering().len(), 1);
+    assert!(app.history.entries().is_empty());
+    assert!(!app.streams.hold.is_empty());
+    assert_eq!(app.streams.current_stream_kind, Some(StreamKind::Assistant));
 }
 
 // Covers: a late or empty SteeringApplied must not cut a live post-steer stream

@@ -42,6 +42,14 @@ pub(super) const RETRACT_STEERING_DURING_TOOL_SCENARIO: Scenario = Scenario::new
     true,
 );
 
+pub(super) const STEER_DELIVERED_MARKER_SCENARIO: Scenario = Scenario::new(
+    "steer_delivered_marker",
+    "Delivered steering shows a delivered marker in pending input",
+    DEFAULT_SIZE,
+    STEER_DELIVERED_MARKER_STEPS,
+    false,
+);
+
 pub(super) const QUEUE_FOLLOW_UP_DURING_TURN_SCENARIO: Scenario = Scenario::new(
     "queue_follow_up_during_turn",
     "Alt+Enter and Ctrl+Enter queue follow-ups during a turn, not steers",
@@ -82,6 +90,36 @@ const STEER_APPEARS_IN_TRANSCRIPT_STEPS: &[Step] = &[
         timeout: STREAM,
     },
     Step::Custom(assert_applied_steer_is_user_line),
+    Step::ExitCommand,
+];
+
+const STEER_DELIVERED_MARKER_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("start_turn"),
+    Step::SubmitText("fixture mid-turn steer"),
+    Step::WaitText {
+        text: "waiting for mid-turn steer",
+        timeout: STREAM,
+    },
+    Step::Phase("steer"),
+    Step::SubmitText("fixture delivered detail"),
+    Step::WaitText {
+        text: "pending input",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "delivered",
+        timeout: STREAM,
+    },
+    Step::Phase("applied"),
+    Step::WaitTextGone {
+        text: "STEER",
+        timeout: STREAM,
+    },
     Step::ExitCommand,
 ];
 

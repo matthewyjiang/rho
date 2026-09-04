@@ -105,6 +105,7 @@ impl EventMapper {
             | RunEvent::CompactionStarted { .. }
             | RunEvent::CompactionCompleted { .. }
             | RunEvent::SteeringApplied { .. }
+            | RunEvent::SteeringDelivered { .. }
             | RunEvent::ProviderDiagnostic { .. }
             | RunEvent::ToolHostInputRequested { .. }
             | RunEvent::WebSearch { .. }

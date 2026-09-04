@@ -20,6 +20,7 @@ pub(super) enum ViewModelEvent {
     RunStarted,
     StepStarted(usize),
     SteeringApplied(Vec<rho_sdk::SteeringId>),
+    SteeringDelivered(rho_sdk::SteeringId),
     ToolStarted {
         call_id: rho_sdk::ToolCallId,
         card: ToolCard,
@@ -224,6 +225,9 @@ impl SdkEventAdapter {
             }
             RunEvent::SteeringApplied { ids } => {
                 vec![ViewEvent::Update(ViewModelEvent::SteeringApplied(ids))]
+            }
+            RunEvent::SteeringDelivered { id } => {
+                vec![ViewEvent::Update(ViewModelEvent::SteeringDelivered(id))]
             }
             RunEvent::AssistantTextDelta { text } => {
                 vec![ViewEvent::Update(ViewModelEvent::OutputDelta(text))]

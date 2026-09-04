@@ -4502,7 +4502,7 @@ dependencies = [
 
 [[package]]
 name = "rho-sdk"
-version = "5.1.2"
+version = "5.2.0"
 dependencies = [
  "pretty_assertions",
  "proptest",

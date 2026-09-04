@@ -4,6 +4,7 @@ pub mod auth;
 pub mod cache;
 mod codex_continuation;
 mod codex_request;
+mod codex_steer;
 mod codex_ws;
 mod configuration_update;
 mod reasoning;
@@ -18,10 +19,15 @@ pub use cache::prompt_cache_key_from_session_id;
 /// `service_tier`, so Rho omits it for them.
 pub fn supports_fast_mode(provider: &str, model: &str) -> bool {
     provider == "openai-codex"
-        && (matches!(model, "gpt-5.4" | "gpt-5.5" | "gpt-5.6" | "gpt-6-astra")
+        && (matches!(model, "gpt-5.4" | "gpt-5.5" | "gpt-5.6")
+            || is_gpt6_astra(model)
             || model
                 .strip_prefix("gpt-5.6-")
                 .is_some_and(|suffix| !suffix.is_empty()))
+}
+
+pub(super) fn is_gpt6_astra(model: &str) -> bool {
+    model == "gpt-6-astra"
 }
 
 use crate::protocol::openai_responses::collect_codex_sse_response;
@@ -35,7 +41,7 @@ use codex_request::{build_responses_create_body, ResponsesCreateBody, ResponsesP
 use codex_ws::{CodexWsTransport, CodexWsTurn};
 use reasoning::OpenAiReasoningProfile;
 
-use rho_sdk::provider::ModelRequestOptions;
+use rho_sdk::provider::{ModelRequestOptions, ProviderSteeringReceiver};
 
 use crate::model::{
     ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage,
@@ -241,6 +247,31 @@ impl OpenAiProvider {
         }
     }
 
+    pub(crate) async fn stream_turn_steerable(
+        &self,
+        request: ModelRequest<'_>,
+        options: ModelRequestOptions,
+        steering: ProviderSteeringReceiver,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        if self.profile.contract().uses_codex_websocket() && is_gpt6_astra(self.profile.model()) {
+            self.send_codex_responses_inner(
+                request,
+                options,
+                Some(on_event),
+                on_request_event,
+                Some(steering),
+            )
+            .await
+        } else {
+            drop(steering);
+            self.stream_turn_with_options(request, options, on_event, on_request_event)
+                .await
+        }
+    }
+
     fn emit_turn_reasoning_effort(
         &self,
         in_force_effort: Option<&str>,
@@ -253,7 +284,7 @@ impl OpenAiProvider {
     }
 }
 
-crate::impl_sdk_model_provider!(OpenAiProvider, native_compact, request_options);
+crate::impl_sdk_model_provider!(OpenAiProvider, native_compact, request_options, steerable);
 
 impl OpenAiProvider {
     async fn send_codex_responses_complete(
@@ -299,7 +330,7 @@ impl OpenAiProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        self.send_codex_responses_inner(request, options, Some(on_event), on_request_event)
+        self.send_codex_responses_inner(request, options, Some(on_event), on_request_event, None)
             .await
     }
 
@@ -310,6 +341,7 @@ impl OpenAiProvider {
         mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
+        mut steering: Option<ProviderSteeringReceiver>,
     ) -> Result<ModelResponse, ModelError> {
         let ResponsesCreateBody {
             body,
@@ -331,7 +363,7 @@ impl OpenAiProvider {
                 &mut forward as &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
             );
             self.codex_ws
-                .send_responses_turn(body, &tokens, &mut ws_events)
+                .send_responses_turn_steerable(body, &tokens, &mut ws_events, &mut steering)
                 .await?
         };
         let body = match ws_turn {
