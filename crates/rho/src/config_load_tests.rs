@@ -565,13 +565,13 @@ fn conversation_triple(config: &super::Config, id: &str) -> (String, String, Str
 // Owner: config EditTool preference
 #[test]
 fn auto_edit_tool_resolves_preferred_format_for_provider() {
-    assert_eq!(
-        super::super::preferred_edit_format_for_provider("openai-codex"),
-        rho_tools::EditFormat::ApplyPatch
-    );
     let config = super::Config {
         provider: "anthropic".into(),
         ..super::Config::default()
     };
+    assert_eq!(
+        config.resolved_edit_tool_for_provider("openai-codex"),
+        rho_tools::EditFormat::ApplyPatch
+    );
     assert_eq!(config.edit_tool_display_label(), "auto (str_replace)");
 }

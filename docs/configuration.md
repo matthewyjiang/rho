@@ -232,6 +232,8 @@ base_url = "http://127.0.0.1:8000/v1"
 edit_tool = "apply_patch"
 ```
 
+Built-in providers have no per-provider override. They always use the table below unless you pin a global `behavior.edit_tool`.
+
 Many models learn to edit files inside a first-party harness that only offers one edit tool. Codex trains with `apply_patch`. Claude Code and several other agent stacks train with exact string replacement. Auto picks that familiar surface so the model uses the format it was trained on. Providers without a clear first-party match fall back to Rho's `hashline` `edit` tool.
 
 | Provider | Preferred format | Why |

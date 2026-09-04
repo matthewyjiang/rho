@@ -290,8 +290,9 @@ impl<'de> Deserialize<'de> for SearchProvider {
 
 /// Configured file-edit preference.
 ///
-/// [`Self::Auto`] picks a built-in preferred format for the active chat
-/// provider. [`Self::Pinned`] freezes one [`rho_tools::EditFormat`] across
+/// [`Self::Auto`] picks the preferred format for the active chat provider: a
+/// custom provider's `edit_tool` override if set, otherwise the built-in
+/// table. [`Self::Pinned`] freezes one [`rho_tools::EditFormat`] across
 /// provider changes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
