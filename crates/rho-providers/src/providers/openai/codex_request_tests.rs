@@ -3,21 +3,23 @@ use crate::model::Message;
 
 #[tokio::test]
 async fn priority_service_tier_is_sent_as_fast_mode() {
-    let body = build_codex_responses_body_with_tier(
-        "gpt-5.5",
-        ModelRequest {
-            messages: &[Message::user_text("hello")],
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: Default::default(),
-            prompt_cache_key: None,
-        },
-        Some(ServiceTier::Priority),
-        /*hosted_web_search*/ true,
-    )
-    .unwrap();
+    for model in ["gpt-5.5", "gpt-6-astra"] {
+        let body = build_codex_responses_body_with_tier(
+            model,
+            ModelRequest {
+                messages: &[Message::user_text("hello")],
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: Default::default(),
+                prompt_cache_key: None,
+            },
+            Some(ServiceTier::Priority),
+            /*hosted_web_search*/ true,
+        )
+        .unwrap();
 
-    assert_eq!(body["service_tier"], "priority");
+        assert_eq!(body["service_tier"], "priority", "{model}");
+    }
 }
 
 #[tokio::test]

@@ -51,6 +51,7 @@ Environment variables are CI/development escape hatches and override stored cred
 
 Codex OAuth uses this static model allowlist rather than a refreshable API list:
 
+- `gpt-6-astra` (default; reasoning effort `low` through `max`)
 - `gpt-5.6-sol`
 - `gpt-5.6-terra`
 - `gpt-5.6-luna`
@@ -73,7 +74,7 @@ rho --provider openai-codex --auth codex --model gpt-5.6-sol run "hello"
 
 Run `rho login openai-codex` first or provide `CODEX_ACCESS_TOKEN` in the automation environment.
 
-Supported GPT-5.4, GPT-5.5, and GPT-5.6 Codex models can use OpenAI's faster priority tier at a higher credit rate. In the TUI, use `/fast on` or `/fast off`. Running `/fast` with no argument toggles the mode. Rho saves the choice as `model.fast_mode`, shows `(fast)` after the active model name, and sends `service_tier: "priority"` on later supported Codex turns.
+Supported GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 Astra Codex models can use OpenAI's faster priority tier at a higher credit rate. In the TUI, use `/fast on` or `/fast off`. Running `/fast` with no argument toggles the mode. Rho saves the choice as `model.fast_mode`, shows `(fast)` after the active model name, and sends `service_tier: "priority"` on later supported Codex turns.
 
 ## Notes
 
