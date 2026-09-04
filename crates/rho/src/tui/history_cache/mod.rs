@@ -781,16 +781,12 @@ impl HistoryLineCache {
             content_end,
             reasoning,
         ) {
-            if cache_index + 1 == self.entries.len()
-                && self.entry_ranges.len() == self.entries.len()
-            {
-                self.entry_ranges[cache_index].end = range
-                    .start
-                    .saturating_add(self.entries[cache_index].lines.len());
-                self.projected_code_blocks = None;
-            } else {
-                self.recompute_ranges();
-            }
+            debug_assert_eq!(cache_index + 1, self.entries.len());
+            debug_assert_eq!(self.entry_ranges.len(), self.entries.len());
+            self.entry_ranges[cache_index].end = range
+                .start
+                .saturating_add(self.entries[cache_index].lines.len());
+            self.projected_code_blocks = None;
             return true;
         }
         false

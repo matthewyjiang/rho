@@ -1,3 +1,6 @@
+//! Baseline-copy instructions in docs/performance-audit.md apply only to the
+//! recorded audit revisions.
+
 use std::{hint::black_box, time::Instant};
 
 use super::{CodexContinuationCandidate, CodexContinuationResponse, CodexContinuationState};
@@ -6,7 +9,6 @@ use serde_json::json;
 
 // Manual optimized benchmark, not a CI timing gate. Fixtures cover short and long
 // transcripts with 2 KiB tool outputs. Construction is outside the timed region.
-// On baseline 06d1ff28, only record_success(candidate, ...) needs &candidate.
 #[test]
 #[ignore = "manual performance measurement; run with --release --ignored --nocapture"]
 fn perf_audit_codex_candidate_bookkeeping() {

@@ -1,3 +1,6 @@
+//! Baseline-copy instructions in docs/performance-audit.md apply only to the
+//! recorded audit revisions.
+
 use std::{hint::black_box, num::NonZeroU64, time::Duration, time::Instant};
 
 use crate::{

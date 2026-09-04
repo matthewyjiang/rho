@@ -1,5 +1,5 @@
-//! Baseline-compatible growth instrumentation. Copy this file and its module
-//! declaration in performance_benchmarks.rs unchanged to 06d1ff28.
+//! Session growth measurements. Baseline-copy instructions in
+//! docs/performance-audit.md apply only to the recorded audit revisions.
 
 use std::{fs, hint::black_box, time::Instant};
 

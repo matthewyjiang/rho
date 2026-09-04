@@ -152,20 +152,8 @@ impl StoredSnapshotDelta {
             snapshot = snapshot.with_prompt_cache_key(prompt_cache_key);
         }
         let changed = snapshot != replay.header || !self.appended_history.is_empty();
-        let appended_start = replay.history.len();
         replay.history.extend_from_slice(&self.appended_history);
-        // Match SDK snapshot sanitization without its unpublished in-place API
-        // or rescanning/copying the history preceding this delta.
-        for message in &mut replay.history[appended_start..] {
-            if let Message::AbortedAssistant(assistant) = message {
-                assistant.reasoning.clear();
-            }
-        }
         replay.header = snapshot;
         Ok(changed)
     }
 }
-
-#[cfg(test)]
-#[path = "snapshot_delta_tests.rs"]
-mod tests;

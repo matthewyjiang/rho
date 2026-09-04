@@ -1,5 +1,5 @@
-//! Same instrumentation runs on baseline and candidate. Hook from
-//! performance_benchmarks.rs with `#[path = "scaling_benchmarks.rs"] mod scaling;`.
+//! TUI scaling measurements. Baseline-copy instructions in
+//! docs/performance-audit.md apply only to the recorded audit revisions.
 //! Fixtures and incoming fragments are prepared before each timed sample.
 //! Advisory measurements only: no machine-dependent timing assertions.
 

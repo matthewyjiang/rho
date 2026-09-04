@@ -94,10 +94,15 @@ This isolates the SDK's duplicate retention; a real TUI or host may retain the
 forwarded text for display. It is not a claim about total interactive-session RSS;
 the reported process peak also includes startup and launcher overhead.
 
-## Reproducing
+## Reproducing this audit
 
-The ignored measurements use the `perf_audit` filter. Baseline-compatible
-instrumentation lives in:
+The procedure below applies only to the baseline and candidate revisions listed
+under Method. Take the instrumentation from that candidate revision, not from the
+current branch. Future versions of these modules may require different APIs and
+are not promised to compile against this audit's baseline.
+
+The ignored measurements use the `perf_audit` filter. At the recorded candidate
+revision, the instrumentation lives in:
 
 - `crates/rho/src/session/performance_growth.rs`, declared by
   `session/performance_benchmarks.rs`.

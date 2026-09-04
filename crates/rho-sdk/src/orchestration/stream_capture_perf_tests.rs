@@ -1,3 +1,6 @@
+//! Baseline-copy instructions in docs/performance-audit.md apply only to the
+//! recorded audit revisions.
+
 use std::{hint::black_box, time::Instant};
 
 use super::{capture_provider_event, StreamCapture};
@@ -5,7 +8,6 @@ use crate::model::{ModelEvent, ModelIdentity, ModelUsage};
 
 // Measures the real capture/forwarding path including event String ownership.
 // 64-byte deltas model a fragmented 1 MiB reasoning stream. No timing assertions.
-// This file and its module declaration work unchanged on baseline 06d1ff28.
 #[test]
 #[ignore = "manual performance measurement; run with --release --ignored --nocapture"]
 fn perf_audit_reasoning_capture() {

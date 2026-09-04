@@ -1,5 +1,6 @@
 //! Opt-in measurements through the actual get_search_content selection path.
-//! Copy this module and its declaration unchanged to the baseline for comparison.
+//! Baseline-copy instructions in docs/performance-audit.md apply only to the
+//! recorded audit revisions.
 
 use std::{hint::black_box, time::Instant};
 
