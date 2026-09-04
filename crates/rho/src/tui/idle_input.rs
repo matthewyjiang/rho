@@ -457,7 +457,11 @@ impl App {
             return Ok(false);
         }
         if self.is_ui_busy() {
-            self.start_follow_ups = None;
+            if !super::compact_work::keep_armed_follow_up_while_busy(
+                self.start_follow_ups.as_ref().expect("checked above"),
+            ) {
+                self.start_follow_ups = None;
+            }
             return Ok(false);
         }
         let ready = self.start_follow_ups.take().expect("checked above");

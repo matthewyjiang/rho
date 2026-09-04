@@ -1,6 +1,6 @@
 use super::{
-    settle_compact_send, should_start_compact_follow_ups, CompactSettlementIntent, ReadyFollowUp,
-    SettledSend,
+    keep_armed_follow_up_while_busy, settle_compact_send, should_start_compact_follow_ups,
+    CompactSettlementIntent, ReadyFollowUp, SettledSend,
 };
 use crate::tui::{send_confirm::SendSubmission, TurnPrompt};
 
@@ -33,6 +33,19 @@ fn compact_send_settlement_has_exactly_one_owner() {
         }
         SettledSend::Ready(_) => panic!("user cancellation must not release the send"),
     }
+}
+
+// Covers: a busy UI must not drop the exclusive compact-send slot; queued
+// arming can be cleared because those prompts still live in pending.
+// Owner: compact follow-up ownership
+#[test]
+fn busy_ui_keeps_compact_send_and_drops_queued_arm() {
+    assert!(keep_armed_follow_up_while_busy(&ReadyFollowUp::Send(
+        Box::new(submission("keep"))
+    )));
+    assert!(!keep_armed_follow_up_while_busy(&ReadyFollowUp::Queued {
+        allow_auto_compact: false,
+    }));
 }
 
 // Covers: Esc intent wins when abort races with a compact task that already

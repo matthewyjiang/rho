@@ -58,6 +58,12 @@ fn settle_compact_send(submission: Box<SendSubmission>, starts_follow_ups: bool)
     }
 }
 
+/// Compact-send lives only in `start_follow_ups`. Queued follow-ups still live
+/// in `pending`, so a busy UI can drop that arming flag without losing them.
+pub(super) fn keep_armed_follow_up_while_busy(ready: &ReadyFollowUp) -> bool {
+    matches!(ready, ReadyFollowUp::Send(_))
+}
+
 impl App {
     pub(super) fn start_compact(
         &mut self,
