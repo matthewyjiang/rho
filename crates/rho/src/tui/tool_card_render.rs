@@ -617,7 +617,7 @@ fn push_header_line(
             match command.as_ref().filter(|command| !command.is_empty()) {
                 Some(command) => {
                     prefix.push(Span::raw(" "));
-                    let wrappable = shell_command_spans(&card.header, command);
+                    let wrappable = shell_command_spans(prompt, command);
                     push_wrapped_prefixed(
                         lines,
                         prefix,
@@ -652,9 +652,11 @@ fn push_header_line(
 }
 
 /// Highlight a shell header while preserving its exact text for styled wrapping.
-fn shell_command_spans(header: &ToolHeader, command: &str) -> Vec<Span<'static>> {
-    let Some(language) = header.shell_syntax_token() else {
-        return vec![Span::styled(command.to_string(), Theme::tool_primary())];
+fn shell_command_spans(prompt: &str, command: &str) -> Vec<Span<'static>> {
+    let language = if prompt.eq_ignore_ascii_case("PS") {
+        "powershell"
+    } else {
+        "bash"
     };
     highlight_source_spans(language, command, Theme::tool_primary())
 }

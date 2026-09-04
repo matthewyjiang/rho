@@ -82,15 +82,6 @@ impl ToolHeader {
         }
     }
 
-    /// Fence token for shell-header highlighting (`$` → bash, `PS` → powershell).
-    pub fn shell_syntax_token(&self) -> Option<&'static str> {
-        match self {
-            Self::Shell { prompt, .. } if prompt.eq_ignore_ascii_case("PS") => Some("powershell"),
-            Self::Shell { .. } => Some("bash"),
-            Self::Call { .. } | Self::StatusFirst { .. } => None,
-        }
-    }
-
     pub fn status_first(identity: impl Into<String>, detail: impl Into<String>) -> Self {
         Self::StatusFirst {
             identity: identity.into(),
