@@ -215,7 +215,7 @@ credential_store = "file"
     }
 
     let (session_id, session_path) = find_latest_session(&home)?;
-    inject_non_replayable_provider_context(&session_path)?;
+    inject_non_replayable_provider_context(&session_path, StoredProviderRewrite::ToAnthropic)?;
     setup_auto_without_classifier(&home)?;
 
     let resume_plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
@@ -327,7 +327,19 @@ pub(super) fn find_latest_session(
     Ok((id, path))
 }
 
-fn inject_non_replayable_provider_context(path: &std::path::Path) -> anyhow::Result<()> {
+/// Whether session JSON should also rewrite stored provider identity to
+/// anthropic. Send-confirm keeps the stored openai provider so resume stays on
+/// the original runtime while assistant history still carries native blocks.
+#[derive(Clone, Copy)]
+pub(super) enum StoredProviderRewrite {
+    Keep,
+    ToAnthropic,
+}
+
+pub(super) fn inject_non_replayable_provider_context(
+    path: &std::path::Path,
+    stored_provider: StoredProviderRewrite,
+) -> anyhow::Result<()> {
     use std::fs;
 
     let raw = fs::read_to_string(path)?;
@@ -335,12 +347,12 @@ fn inject_non_replayable_provider_context(path: &std::path::Path) -> anyhow::Res
     let mut rewritten = 0usize;
     for line in raw.lines() {
         let mut value: serde_json::Value = serde_json::from_str(line)?;
-        rewritten += rewrite_history_tree(&mut value);
+        rewritten += rewrite_history_tree(&mut value, stored_provider);
         out.push(serde_json::to_string(&value)?);
     }
     if rewritten == 0 {
         anyhow::bail!(
-            "could not rewrite any assistant messages in {} for handoff omissions",
+            "could not rewrite any assistant messages in {} for native-context omissions",
             path.display()
         );
     }
@@ -348,7 +360,10 @@ fn inject_non_replayable_provider_context(path: &std::path::Path) -> anyhow::Res
     Ok(())
 }
 
-fn rewrite_history_tree(value: &mut serde_json::Value) -> usize {
+fn rewrite_history_tree(
+    value: &mut serde_json::Value,
+    stored_provider: StoredProviderRewrite,
+) -> usize {
     let mut count = 0;
     match value {
         serde_json::Value::Object(map) => {
@@ -359,15 +374,17 @@ fn rewrite_history_tree(value: &mut serde_json::Value) -> usize {
                     }
                 }
             }
-            if let Some(provider) = map.get_mut("provider") {
-                if provider.get("provider").and_then(|v| v.as_str()) == Some("openai")
-                    || provider.get("api").and_then(|v| v.as_str()) == Some("tui-test-fixture")
-                {
-                    *provider = serde_json::json!({
-                        "provider": "anthropic",
-                        "api": "messages",
-                        "model": "claude-fable-5"
-                    });
+            if matches!(stored_provider, StoredProviderRewrite::ToAnthropic) {
+                if let Some(provider) = map.get_mut("provider") {
+                    if provider.get("provider").and_then(|v| v.as_str()) == Some("openai")
+                        || provider.get("api").and_then(|v| v.as_str()) == Some("tui-test-fixture")
+                    {
+                        *provider = serde_json::json!({
+                            "provider": "anthropic",
+                            "api": "messages",
+                            "model": "claude-fable-5"
+                        });
+                    }
                 }
             }
             if let Some(display) = map
@@ -383,12 +400,12 @@ fn rewrite_history_tree(value: &mut serde_json::Value) -> usize {
                 }
             }
             for child in map.values_mut() {
-                count += rewrite_history_tree(child);
+                count += rewrite_history_tree(child, stored_provider);
             }
         }
         serde_json::Value::Array(items) => {
             for item in items.iter_mut() {
-                count += rewrite_history_tree(item);
+                count += rewrite_history_tree(item, stored_provider);
             }
         }
         _ => {}

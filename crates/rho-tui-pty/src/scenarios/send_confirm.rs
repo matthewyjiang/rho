@@ -12,94 +12,6 @@ pub(crate) fn is_send_confirm_scenario(name: &str) -> bool {
 
 const SEED_PROMPT: &str = "hello there";
 
-/// Rewrite assistant history to hold anthropic-native context while the stored
-/// provider stays `openai`, so resuming on openai/gpt-5.5 leaves native blocks
-/// the runtime cannot replay.
-fn inject_non_replayable_provider_context(path: &std::path::Path) -> anyhow::Result<()> {
-    use std::fs;
-
-    let raw = fs::read_to_string(path)?;
-    let mut out = Vec::new();
-    let mut rewritten = 0usize;
-    for line in raw.lines() {
-        let mut value: serde_json::Value = serde_json::from_str(line)?;
-        rewritten += rewrite_history_tree(&mut value);
-        out.push(serde_json::to_string(&value)?);
-    }
-    if rewritten == 0 {
-        anyhow::bail!(
-            "could not rewrite any assistant messages in {} for send-confirm omissions",
-            path.display()
-        );
-    }
-    fs::write(path, out.join("\n") + "\n")?;
-    Ok(())
-}
-
-fn rewrite_history_tree(value: &mut serde_json::Value) -> usize {
-    let mut count = 0;
-    match value {
-        serde_json::Value::Object(map) => {
-            if let Some(history) = map.get_mut("history").and_then(|h| h.as_array_mut()) {
-                for item in history.iter_mut() {
-                    if rewrite_message_value(item) {
-                        count += 1;
-                    }
-                }
-            }
-            if let Some(display) = map
-                .get_mut("display_messages")
-                .and_then(|h| h.as_array_mut())
-            {
-                for item in display.iter_mut() {
-                    if let Some(message) = item.get_mut("message") {
-                        if rewrite_message_value(message) {
-                            count += 1;
-                        }
-                    }
-                }
-            }
-            for child in map.values_mut() {
-                count += rewrite_history_tree(child);
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for item in items.iter_mut() {
-                count += rewrite_history_tree(item);
-            }
-        }
-        _ => {}
-    }
-    count
-}
-
-fn rewrite_message_value(value: &mut serde_json::Value) -> bool {
-    let is_assistant = value.get("Assistant").is_some() || value.get("EnrichedAssistant").is_some();
-    if !is_assistant {
-        return false;
-    }
-    *value = serde_json::json!({
-        "EnrichedAssistant": {
-            "content": [{"Text": "prior answer"}],
-            "provenance": {
-                "provider": "anthropic",
-                "api": "messages",
-                "model": "claude-fable-5"
-            },
-            "provider_context": [{
-                "identity": {
-                    "provider": "anthropic",
-                    "api": "messages",
-                    "model": "claude-fable-5"
-                },
-                "kind": "anthropic_message",
-                "data": {"opaque": true}
-            }]
-        }
-    });
-    true
-}
-
 pub(super) fn run_send_confirm_handoff(
     runner: &crate::scenario::ScenarioRunner,
 ) -> anyhow::Result<crate::scenario::ScenarioOutcome> {
@@ -148,7 +60,12 @@ pub(super) fn run_send_confirm_handoff(
     }
 
     let (session_id, session_path) = config::find_latest_session(&home)?;
-    inject_non_replayable_provider_context(&session_path)?;
+    // Keep stored provider openai so resume stays on gpt-5.5 while assistant
+    // history carries anthropic-native blocks the runtime cannot replay.
+    config::inject_non_replayable_provider_context(
+        &session_path,
+        config::StoredProviderRewrite::Keep,
+    )?;
 
     let resume_plan = RhoLaunchPlan::matrix(&runner.binary, &home, SIZE)
         .with_env("OPENAI_API_KEY", "sk-test-matrix")

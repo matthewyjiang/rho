@@ -196,27 +196,30 @@ fn confirm_send_choice(
 ) -> anyhow::Result<InlineChoice> {
     let blocks = omissions.omitted_provider_context;
     let kinds = omissions.omitted_kinds.join(", ");
+    let mut shortcut = '1';
     let mut options = vec![InlineChoiceOption::available(
         ACTION_SEND,
-        '1',
+        shortcut,
         "Send anyway",
         format!(
             "{blocks} native block(s) will not be sent to {target_label}. Transcript and tool history remain."
         ),
     )];
+    shortcut = next_shortcut(shortcut);
     if can_compact {
         options.push(InlineChoiceOption::available(
             ACTION_COMPACT_SEND,
-            '2',
+            shortcut,
             "Compact, then send",
             format!(
                 "Summarize the conversation with {target_label}, then send. {blocks} native block(s) still will not be sent."
             ),
         ));
+        shortcut = next_shortcut(shortcut);
     }
     options.push(InlineChoiceOption::available(
         ACTION_DONT_SEND,
-        '3',
+        shortcut,
         "Don't send",
         "Return the prompt to the composer.",
     ));
@@ -503,6 +506,10 @@ impl App {
         }
         self.set_status("send cancelled");
     }
+}
+
+fn next_shortcut(current: char) -> char {
+    char::from_u32(u32::from(current) + 1).unwrap_or(current)
 }
 
 #[cfg(test)]
