@@ -15,19 +15,51 @@ pub(super) fn matrix_enabled() -> bool {
 #[cfg(debug_assertions)]
 pub(super) fn quiet_notice_boundary(queued: usize) {
     #[cfg(unix)]
-    if matrix_enabled() && queued > 0 {
-        let path = std::path::Path::new(".quiet-parent-pty.sock");
-        if path.exists() {
-            let socket =
-                std::os::unix::net::UnixDatagram::unbound().expect("quiet fixture boundary socket");
-            socket
-                .send_to(format!("boundary:{queued}").as_bytes(), path)
-                .expect("quiet fixture boundary acknowledgment");
+    if matrix_enabled() {
+        thread_local! {
+            static LAST_ACKNOWLEDGED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
         }
+        LAST_ACKNOWLEDGED.with(|last| {
+            acknowledge_notice_boundary(
+                queued,
+                last,
+                std::path::Path::new(".quiet-parent-pty.sock"),
+            );
+        });
     }
     #[cfg(not(unix))]
     let _ = queued;
 }
+
+#[cfg(all(debug_assertions, unix))]
+fn acknowledge_notice_boundary(
+    queued: usize,
+    last: &std::cell::Cell<usize>,
+    path: &std::path::Path,
+) {
+    if queued == last.get() {
+        return;
+    }
+    if queued == 0 {
+        last.set(0);
+        return;
+    }
+    let send = || -> std::io::Result<()> {
+        let socket = std::os::unix::net::UnixDatagram::unbound()?;
+        socket.set_nonblocking(true)?;
+        socket.send_to(format!("boundary:{queued}").as_bytes(), path)?;
+        Ok(())
+    };
+    // A full or retired observer must never stall or crash the TUI. Retry an
+    // unsent state at the next boundary; suppress duplicates only after success.
+    if send().is_ok() {
+        last.set(queued);
+    }
+}
+
+#[cfg(all(test, debug_assertions, unix))]
+#[path = "smoke_injection_boundary_tests.rs"]
+mod boundary_tests;
 
 /// Version shown in TUI chrome (session header, setup welcome).
 ///

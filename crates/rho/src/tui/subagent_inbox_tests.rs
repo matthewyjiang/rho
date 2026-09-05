@@ -182,3 +182,45 @@ fn notice(run_id: &str, parent_session_id: &SessionId) -> SubagentNotice {
         delivery: crate::app::subagent_messaging::NoticeDelivery::NextTurn,
     }
 }
+
+// Covers: ordinary notices parked until the next turn cannot prevent a child
+// from requesting the parent turn that would deliver them.
+// Owner: inbox admission and end-to-end delivery budget
+#[test]
+fn ordinary_backlog_leaves_room_for_parent_action() {
+    for drain_before_action in [false, true] {
+        let bridge = SubagentNoticeBridge::new();
+        let mut inbox = SubagentInbox::default();
+        inbox.bind_notices_for_test(&bridge);
+        let session = SessionId::from_string("session-1").unwrap();
+        let mut expected = Vec::new();
+        for index in 0..NOTICE_QUEUE_CAPACITY {
+            let notice = notice(&format!("n{index}"), &session);
+            bridge.post(notice.clone()).unwrap();
+            expected.push(notice);
+        }
+        if drain_before_action {
+            inbox.drain();
+        }
+        let mut action = notice("action", &session);
+        action.delivery = crate::app::subagent_messaging::NoticeDelivery::ParentActionRequired;
+        bridge
+            .post(action.clone())
+            .expect("action has reserved capacity");
+        expected.push(action.clone());
+        assert_eq!(
+            bridge.post(action),
+            Err(NoticePostError::QueueFull {
+                capacity: NOTICE_QUEUE_CAPACITY + 1
+            })
+        );
+        inbox.drain();
+        assert!(inbox.has_parent_action_requests());
+        let taken = inbox.take_notices(&session);
+        assert_eq!(taken, expected);
+        inbox.return_notices(taken);
+        assert_eq!(inbox.take_notices(&session), expected);
+        inbox.commit_delivered_notices(expected.len());
+        bridge.post(notice("after-delivery", &session)).unwrap();
+    }
+}

@@ -18,13 +18,18 @@ use tokio::sync::mpsc;
 pub(crate) const CHILD_COMMUNICATION_CONTRACT: &str =
     include_str!("../builtin_agents/child_contract.md");
 
-/// Queue depth for child->parent notices waiting on the parent session.
+/// Shared outstanding-notice threshold for admitting ordinary child notices.
 ///
 /// Enough for a burst of parallel children; fail loud when a child floods the
 /// parent instead of growing without bound. The budget is end-to-end: accepted
 /// notices still count after the TUI drains them out of the transport channel
-/// until the parent delivers or discards them.
+/// until the parent delivers or discards them. Action requests can use the
+/// additional [`ACTION_NOTICE_RESERVE`] to wake a parent with a full backlog.
 pub(crate) const NOTICE_QUEUE_CAPACITY: usize = 32;
+
+/// One action request can start a parent turn that drains the entire backlog.
+/// Reserve that admission even when ordinary notices fill their allowance.
+const ACTION_NOTICE_RESERVE: usize = 1;
 
 /// Soft cap on one plain-text message body, in either direction.
 ///
@@ -226,7 +231,7 @@ impl SubagentNoticeBridge {
         // target it after we install the replacement.
         drop(old_receiver);
 
-        let (sender, receiver) = mpsc::channel(self.capacity);
+        let (sender, receiver) = mpsc::channel(self.capacity + ACTION_NOTICE_RESERVE);
         let permits = NoticePermits::new();
         *guard = Some(NoticeBinding {
             sender,
@@ -270,7 +275,12 @@ impl SubagentNoticeBridge {
         notice: SubagentNotice,
         gap: &dyn Fn(),
     ) -> Result<(), NoticePostError> {
-        let capacity = self.capacity;
+        // Both classes share the same generation counter. Ordinary notices
+        // cannot consume the final slot, including before the inbox drains.
+        let capacity = match notice.delivery {
+            NoticeDelivery::NextTurn => self.capacity,
+            NoticeDelivery::ParentActionRequired => self.capacity + ACTION_NOTICE_RESERVE,
+        };
         let guard = self.binding_slot();
         let binding = guard.as_ref().ok_or(NoticePostError::Unbound)?;
         if !binding.permits.try_reserve(capacity) {

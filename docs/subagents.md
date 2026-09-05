@@ -107,7 +107,7 @@ Background Rho agents with an interactive parent have two non-blocking messaging
 
 Pending notices share a batch with action requests and completion notifications. Multiple notices already waiting at a boundary become one parent turn, not one turn per message. While the parent is working, notices wait rather than interrupt it. A parent pursuing a goal can also handle action requests while waiting for children to finish. Delivery still respects input and confirmation gates.
 
-Neither tool waits for a reply. Use `questionnaire` when a human must answer before the child can proceed; use `agents` action `message` to steer a child in response to an action request. Both child messaging tools and `agents` action `message` reject bodies over 8 KiB after trimming. Queued notices retain their existing end-to-end queue budget until delivery or discard, so an undelivered flood fails explicitly rather than growing without bound.
+Neither tool waits for a reply. Use `questionnaire` when a human must answer before the child can proceed; use `agents` action `message` to steer a child in response to an action request. Both child messaging tools and `agents` action `message` reject bodies over 8 KiB after trimming. Queued notices retain their end-to-end queue budget until delivery or discard. Ordinary notices are admitted while fewer than 32 notices are outstanding; action requests can use one additional reserved slot, so an ordinary backlog cannot prevent the request that wakes the parent to deliver it. Both tools fail explicitly when their allowance is full.
 
 ### Parent-to-child messages in the transcript
 
