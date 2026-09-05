@@ -7,6 +7,7 @@ mod assert_helpers;
 mod attach_picker;
 mod attach_view;
 mod background_agents;
+mod boundary_notifications;
 mod changelog;
 mod command_palette;
 mod config;
@@ -832,6 +833,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     quiet_subagent::GOAL_ACTION_RETRY_SCENARIO,
     agent_messages::AGENT_MESSAGES_SCENARIO,
+    boundary_notifications::SCENARIO,
     ATTACH_PICKER_SCENARIO,
     ATTACH_PICKER_EMPTY_SCENARIO,
     ATTACH_CLI_EMPTY_SCENARIO,

@@ -86,6 +86,32 @@ fn a_catalog_write_reaches_a_lookup_that_already_missed() {
     }
 }
 
+// Covers: parallel catalog fixtures must not share cached names or misses.
+// Owner: display-name cache namespace; no scheduling race is needed to reproduce it.
+#[test]
+fn fixture_catalogs_do_not_share_cached_names() {
+    let _names = ModelDisplayNameCacheGuard::new();
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    for (directory, name) in [(&first, "First catalog"), (&second, "Second catalog")] {
+        with_models_dev_cache_dir_for_tests(directory.path().to_path_buf(), || {
+            write_cached_model_metadata_for_tests(
+                "anthropic",
+                "fixture-isolated-model",
+                &named_metadata(name),
+            );
+        });
+    }
+    for (directory, name) in [(&first, "First catalog"), (&second, "Second catalog")] {
+        with_models_dev_cache_dir_for_tests(directory.path().to_path_buf(), || {
+            assert_eq!(
+                model_display_name("anthropic", "fixture-isolated-model").as_deref(),
+                Some(name),
+            );
+        });
+    }
+}
+
 #[test]
 fn prefers_the_catalog_name_then_the_provider_name_then_nothing() {
     struct Case {

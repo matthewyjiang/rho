@@ -28,7 +28,7 @@ flowchart TD
     root --> bg[Background agent tool]
     fg --> result[Final result in same turn]
     bg --> id[Run id immediately]
-    id --> done[Completion at next turn boundary]
+    id --> done[Completion at next safe runtime boundary]
 ```
 
 ## Definition files
@@ -105,9 +105,28 @@ Background Rho agents with an interactive parent have two non-blocking messaging
 | `message_parent` | A useful, nonurgent finding that cannot wait for the final result | Queued for an otherwise-scheduled parent turn; never wakes an idle parent on its own |
 | `request_parent_action` | A blocking decision or immediate coordination need, such as conflicting edits | Wakes an idle parent at a safe turn boundary; the message must state what action is needed |
 
-Pending notices share a batch with action requests and completion notifications. Multiple notices already waiting at a boundary become one parent turn, not one turn per message. While the parent is working, notices wait rather than interrupt it. A parent pursuing a goal can also handle action requests while waiting for children to finish. Delivery still respects input and confirmation gates.
+Pending notices share a batch with action requests and completion notifications. Multiple notices already waiting at a boundary become one parent turn, not one turn per message. While the parent is working, notices wait for a safe provider boundary rather than interrupt streaming or tool work. A parent pursuing a goal can also handle action requests while waiting for children to finish. Idle delivery still respects input and confirmation gates.
 
 Neither tool waits for a reply. Use `questionnaire` when a human must answer before the child can proceed; use `agents` action `message` to steer a child in response to an action request. Both child messaging tools and `agents` action `message` reject bodies over 8 KiB after trimming. Queued notices retain their end-to-end queue budget until delivery or discard. Ordinary notices are admitted while fewer than 32 notices are outstanding; action requests can use one additional reserved slot, so an ordinary backlog cannot prevent the request that wakes the parent to deliver it. Both tools fail explicitly when their allowance is full.
+
+### Background delivery during a turn
+
+The interactive parent collects child notices, agent completions, workflow results,
+and process exits at safe provider boundaries after tool work, not only between
+human messages. It also checks pending notifications before committing its final
+response. Streaming stays live, so text may already be visible when a notification
+arrives. Notifications found at the final checkpoint cause another provider step.
+Completions arriving after the finalization handoff remain queued and wake an idle
+parent as before.
+
+Child messages retain their send order and run identity. When a terminal result is
+in the same batch, earlier planning and progress are marked as historical context.
+Rho does not guess which free-text findings are safe to delete. Reading a terminal
+result through `agents status` or `agents stop` includes pending child notices as
+earlier context and acknowledges their exact receipts, so they do not later wake
+the parent as a fresh task. Polling a terminal process or workflow similarly
+acknowledges its completion. A failed delivery attempt cannot undo a later explicit
+acknowledgement.
 
 ### Parent-to-child messages in the transcript
 

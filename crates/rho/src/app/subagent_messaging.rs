@@ -4,19 +4,17 @@
 //! ordinary notices wait for the parent's next turn; explicit action requests
 //! may wake the parent. Questionnaires block the child until the parent answers.
 //! Parent to child: the parent stages text into the child's steering queue
-//! through [`SteeringSlot`],
-//! applied at the child's next provider turn.
+//! through [`SteeringSlot`], applied at the child's next provider turn.
 
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 
 use rho_sdk::SessionId;
 use tokio::sync::mpsc;
 
-pub(crate) const CHILD_COMMUNICATION_CONTRACT: &str =
-    include_str!("../builtin_agents/child_contract.md");
+pub(crate) const CHILD_COMMUNICATION_CONTRACT: &str = include_str!("child_contract.md");
 
 /// Shared outstanding-notice threshold for admitting ordinary child notices.
 ///
@@ -87,14 +85,52 @@ pub(crate) enum NoticeDelivery {
     ParentActionRequired,
 }
 
+impl NoticeDelivery {
+    pub(crate) fn requires_parent_action(self) -> bool {
+        match self {
+            Self::NextTurn => false,
+            Self::ParentActionRequired => true,
+        }
+    }
+}
+
 /// One plain-text notice raised by a delegated run for its parent.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub(crate) struct SubagentNotice {
     pub(crate) run_id: String,
     pub(crate) agent_id: String,
     pub(crate) parent_session_id: SessionId,
     pub(crate) message: String,
     pub(crate) delivery: NoticeDelivery,
+    pub(crate) acknowledged: Arc<AtomicBool>,
+}
+
+impl PartialEq for SubagentNotice {
+    fn eq(&self, other: &Self) -> bool {
+        (
+            &self.run_id,
+            &self.agent_id,
+            &self.parent_session_id,
+            &self.message,
+            self.delivery,
+        ) == (
+            &other.run_id,
+            &other.agent_id,
+            &other.parent_session_id,
+            &other.message,
+            other.delivery,
+        )
+    }
+}
+impl Eq for SubagentNotice {}
+
+impl SubagentNotice {
+    pub(crate) fn acknowledge(&self) {
+        self.acknowledged.store(true, Ordering::Release);
+    }
+    pub(crate) fn is_acknowledged(&self) -> bool {
+        self.acknowledged.load(Ordering::Acquire)
+    }
 }
 
 /// End-to-end budget for accepted but undelivered notices in one parent binding.
@@ -106,12 +142,14 @@ pub(crate) struct SubagentNotice {
 #[derive(Clone)]
 pub(crate) struct NoticePermits {
     outstanding: Arc<AtomicUsize>,
+    pending: Arc<Mutex<Vec<SubagentNotice>>>,
 }
 
 impl NoticePermits {
     fn new() -> Self {
         Self {
             outstanding: Arc::new(AtomicUsize::new(0)),
+            pending: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -128,6 +166,19 @@ impl NoticePermits {
                 current.checked_sub(count)
             })
             .expect("notice permit release exceeds outstanding reservations");
+    }
+
+    /// Releases the receipt as well as its capacity slot. The shared receipts
+    /// let explicit terminal status include notices already queued by the UI.
+    pub(crate) fn release_notice(&self, notice: &SubagentNotice) {
+        let mut pending = self.pending.lock().expect("pending notice receipts");
+        if let Some(index) = pending
+            .iter()
+            .position(|entry| Arc::ptr_eq(&entry.acknowledged, &notice.acknowledged))
+        {
+            pending.remove(index);
+        }
+        self.release(1);
     }
 
     fn try_reserve(&self, capacity: usize) -> bool {
@@ -168,6 +219,7 @@ struct NoticeBinding {
 #[derive(Clone)]
 pub(crate) struct SubagentNoticeBridge {
     binding: Arc<Mutex<Option<NoticeBinding>>>,
+    pending: Arc<Mutex<Vec<SubagentNotice>>>,
     capacity: usize,
 }
 
@@ -193,6 +245,7 @@ impl SubagentNoticeBridge {
     pub(crate) fn new() -> Self {
         Self {
             binding: Arc::new(Mutex::new(None)),
+            pending: Arc::new(Mutex::new(Vec::new())),
             capacity: NOTICE_QUEUE_CAPACITY,
         }
     }
@@ -232,7 +285,8 @@ impl SubagentNoticeBridge {
         drop(old_receiver);
 
         let (sender, receiver) = mpsc::channel(self.capacity + ACTION_NOTICE_RESERVE);
-        let permits = NoticePermits::new();
+        let mut permits = NoticePermits::new();
+        permits.pending = Arc::clone(&self.pending);
         *guard = Some(NoticeBinding {
             sender,
             permits: permits.clone(),
@@ -281,6 +335,7 @@ impl SubagentNoticeBridge {
             NoticeDelivery::NextTurn => self.capacity,
             NoticeDelivery::ParentActionRequired => self.capacity + ACTION_NOTICE_RESERVE,
         };
+        let _delivery = super::notification_delivery::lock();
         let guard = self.binding_slot();
         let binding = guard.as_ref().ok_or(NoticePostError::Unbound)?;
         if !binding.permits.try_reserve(capacity) {
@@ -291,13 +346,30 @@ impl SubagentNoticeBridge {
         // the old receiver is still live; try_send then returns Ok for a notice
         // receiver replacement is about to discard.
         gap();
-        binding.sender.try_send(notice).map_err(|error| {
-            binding.permits.release(1);
+        self.pending
+            .lock()
+            .expect("pending notice receipts")
+            .push(notice.clone());
+        binding.sender.try_send(notice.clone()).map_err(|error| {
+            binding.permits.release_notice(&notice);
             match error {
                 mpsc::error::TrySendError::Full(_) => NoticePostError::QueueFull { capacity },
                 mpsc::error::TrySendError::Closed(_) => NoticePostError::Unbound,
             }
-        })
+        })?;
+        Ok(())
+    }
+
+    pub(crate) fn pending_for_run(&self, run_id: &str) -> Vec<SubagentNotice> {
+        // Posting and the terminal snapshot cannot see a half-enqueued receipt.
+        let _binding = self.binding_slot();
+        self.pending
+            .lock()
+            .expect("pending notice receipts")
+            .iter()
+            .filter(|notice| notice.run_id == run_id)
+            .cloned()
+            .collect()
     }
 
     fn binding_slot(&self) -> std::sync::MutexGuard<'_, Option<NoticeBinding>> {
@@ -324,7 +396,7 @@ pub(crate) enum NoticePostError {
     #[error("delegated agent notices require an interactive parent session listening for them")]
     Unbound,
     #[error(
-        "parent notice queue is full ({capacity} waiting); deliver pending notices before sending more"
+        "parent notice admission limit reached ({capacity} outstanding allowed for this class); deliver pending notices before sending more"
     )]
     QueueFull { capacity: usize },
 }

@@ -94,6 +94,7 @@ pub(super) async fn supervise(
             }
         }
     }
+    let _delivery = crate::app::notification_delivery::lock();
     let mut r = rec.lock().unwrap();
     r.stop = None;
     r.tree = None;

@@ -322,14 +322,28 @@ async fn pending_job_then_end_turn_continues_with_result() {
         .session(SessionOptions::default())
         .await
         .unwrap();
+    let (source, mut checkpoints) = crate::boundary_input_channel();
+    session.set_boundary_inputs(Some(source)).unwrap();
     let mut run = session.start(UserInput::text("start")).await.unwrap();
 
     let mut saw_started = false;
     let mut saw_detached = false;
     let mut saw_step_2 = false;
     let mut saw_finished_after_step_2 = false;
+    let mut boundaries = Vec::new();
     loop {
-        match next_event(&mut run).await {
+        let event = tokio::select! {
+            Some(checkpoint) = checkpoints.recv() => {
+                // Host input must not interrupt an unresolved async call's
+                // continuation, but must resume collecting after it settles.
+                assert!(!saw_detached || saw_finished_after_step_2);
+                boundaries.push(checkpoint.boundary());
+                assert!(checkpoint.respond(None).await);
+                continue;
+            }
+            event = next_event(&mut run) => event,
+        };
+        match event {
             RunEvent::ToolStarted { .. } => saw_started = true,
             RunEvent::ToolDetached { .. } => {
                 assert!(saw_started);
@@ -352,6 +366,14 @@ async fn pending_job_then_end_turn_continues_with_result() {
     }
 
     assert!(saw_finished_after_step_2);
+    assert_eq!(
+        boundaries,
+        vec![
+            crate::InputBoundary::BeforeProvider,
+            crate::InputBoundary::BeforeProvider,
+            crate::InputBoundary::BeforeCompletion
+        ]
+    );
     let outcome = run.outcome().await.unwrap();
     assert_eq!(outcome.stop_reason(), StopReason::EndTurn);
     let requests = provider

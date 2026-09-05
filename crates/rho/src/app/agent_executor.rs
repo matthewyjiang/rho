@@ -532,6 +532,7 @@ impl AgentExecutor {
             if let Some(slot) = steering_slot {
                 slot.clear();
             }
+            let _delivery = super::notification_delivery::lock();
             completion_tx.send_replace(true);
         });
 
@@ -661,7 +662,9 @@ fn apply_frozen(overrides: &mut crate::cli_runtime::CliSessionOverrides, frozen:
 fn append_child_communication_contract(prompt: &mut crate::agent::PromptPolicy) {
     let (crate::agent::PromptPolicy::Extend(text) | crate::agent::PromptPolicy::Replace(text)) =
         prompt;
-    text.push_str("\n\n");
+    if !text.is_empty() {
+        text.push_str("\n\n");
+    }
     text.push_str(super::subagent_messaging::CHILD_COMMUNICATION_CONTRACT);
 }
 
@@ -798,6 +801,7 @@ impl NoticePoster for DelegatedNoticePoster {
         delivery: super::subagent_messaging::NoticeDelivery,
     ) -> Result<(), NoticePostError> {
         self.notices.post(SubagentNotice {
+            acknowledged: Default::default(),
             run_id: self.run_id.clone(),
             agent_id: self.agent_id.clone(),
             parent_session_id: self.parent_session_id.clone(),

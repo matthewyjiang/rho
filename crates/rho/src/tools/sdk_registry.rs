@@ -247,7 +247,7 @@ impl AppToolSet {
         }
         #[cfg(debug_assertions)]
         if capabilities.contains(&ToolCapability::Extension(super::tui_fixture::NAME.into())) {
-            if let Some(bundle) = super::tui_fixture::sdk_bundle() {
+            if let Some(bundle) = super::tui_fixture::sdk_bundle(tool_set.processes.clone()) {
                 tool_set.add_bundle(bundle);
             }
         }

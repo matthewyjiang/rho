@@ -263,6 +263,7 @@ fn steering_slot_is_closed_outside_the_live_window() {
 
 fn sample_notice(run_id: &str) -> SubagentNotice {
     SubagentNotice {
+        acknowledged: Default::default(),
         run_id: run_id.into(),
         agent_id: "worker".into(),
         parent_session_id: SessionId::from_string("session-1").unwrap(),

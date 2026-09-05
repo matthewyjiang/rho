@@ -30,9 +30,9 @@ pub(super) struct SubagentInbox {
     queued_questionnaires: VecDeque<SubagentHostInputRequest>,
     queued_notices: VecDeque<QueuedNotice>,
     /// Permit handles for notices taken for turn-boundary delivery, in the same
-    /// order as the returned `Vec`. Committed on successful provider start or
+    /// order as the returned `Vec`. Committed on accepted start/checkpoint or
     /// re-attached by [`Self::return_notices`].
-    pending_delivery_permits: Vec<Option<NoticePermits>>,
+    pending_delivery_permits: Vec<(SubagentNotice, Option<NoticePermits>)>,
 }
 
 /// One accepted notice plus the generation that owns its end-to-end budget slot.
@@ -145,7 +145,7 @@ impl SubagentInbox {
             if &queued.notice.parent_session_id == session_id {
                 kept.push_back(queued);
             } else {
-                release_one(queued.permits);
+                release_one(&queued.notice, queued.permits);
                 changed = true;
             }
         }
@@ -168,10 +168,11 @@ impl SubagentInbox {
         let mut kept = Vec::new();
         for queued in self.queued_notices.drain(..) {
             if &queued.notice.parent_session_id == session_id {
-                self.pending_delivery_permits.push(queued.permits);
+                self.pending_delivery_permits
+                    .push((queued.notice.clone(), queued.permits));
                 kept.push(queued.notice);
             } else {
-                release_one(queued.permits);
+                release_one(&queued.notice, queued.permits);
             }
         }
         kept
@@ -181,7 +182,10 @@ impl SubagentInbox {
     /// setup preserves arrival order ahead of any newer arrivals.
     pub(super) fn return_notices(&mut self, notices: impl IntoIterator<Item = SubagentNotice>) {
         let notices = notices.into_iter().collect::<Vec<_>>();
-        let mut permits = std::mem::take(&mut self.pending_delivery_permits);
+        let mut permits = std::mem::take(&mut self.pending_delivery_permits)
+            .into_iter()
+            .map(|(_, permits)| permits)
+            .collect::<Vec<_>>();
         // Test helpers may return notices that never went through take_notices.
         if permits.len() != notices.len() {
             permits.resize_with(notices.len(), || None);
@@ -201,8 +205,8 @@ impl SubagentInbox {
             "commit count must match the last take_notices batch"
         );
         let _ = count;
-        for permits in self.pending_delivery_permits.drain(..) {
-            release_one(permits);
+        for (notice, permits) in self.pending_delivery_permits.drain(..) {
+            release_one(&notice, permits);
         }
     }
 
@@ -238,10 +242,20 @@ impl SubagentInbox {
     pub(super) fn has_parent_action_requests(&self) -> bool {
         self.queued_notices
             .iter()
-            .any(|queued| match queued.notice.delivery {
-                crate::app::subagent_messaging::NoticeDelivery::NextTurn => false,
-                crate::app::subagent_messaging::NoticeDelivery::ParentActionRequired => true,
-            })
+            .any(|queued| queued.notice.delivery.requires_parent_action())
+    }
+
+    /// Terminal status already included these receipts in its tool result.
+    /// Do not wake an idle parent to replay them as fresh actionable notices.
+    pub(super) fn reconcile_observed(&mut self) {
+        self.queued_notices.retain(|queued| {
+            if queued.notice.is_acknowledged() {
+                release_one(&queued.notice, queued.permits.clone());
+                false
+            } else {
+                true
+            }
+        });
     }
 
     #[cfg(test)]
@@ -286,9 +300,9 @@ impl SubagentInbox {
     }
 }
 
-fn release_one(permits: Option<NoticePermits>) {
+fn release_one(notice: &SubagentNotice, permits: Option<NoticePermits>) {
     if let Some(permits) = permits {
-        permits.release(1);
+        permits.release_notice(notice);
     }
 }
 

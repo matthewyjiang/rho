@@ -84,6 +84,9 @@ fn restored_notifications_can_drain_again() {
     let again = tracker.take_notifications("session-1");
     assert_eq!(again.len(), 1);
     assert_eq!(again[0].run_id, "run-a");
+    tracker.observe("run-a");
+    tracker.restore_notifications(&again);
+    assert!(tracker.take_notifications("session-1").is_empty());
 }
 
 #[test]

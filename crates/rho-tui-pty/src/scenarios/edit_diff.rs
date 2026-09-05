@@ -45,6 +45,12 @@ const EDIT_DIFF_STEPS: &[Step] = &[
         text: "model interrupted",
         timeout: STREAM,
     },
+    // The status notice paints above the card. A PTY read can end after the
+    // notice but before the retained diff body, so wait for that body too.
+    Step::WaitText {
+        text: "cancelled edit line",
+        timeout: STREAM,
+    },
     Step::Custom(assert_two_edit_cards),
     Step::SubmitText("fixture questionnaire"),
     Step::WaitText {

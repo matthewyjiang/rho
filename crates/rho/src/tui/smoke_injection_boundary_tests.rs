@@ -33,7 +33,13 @@ fn boundary_observation_deduplicates_and_survives_backpressure_and_shutdown() {
         filler.set_nonblocking(true).unwrap();
         match filler.send_to(b"fill", &path) {
             Ok(_) => {}
-            Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+            // BSD and macOS can report a full AF_UNIX queue as ENOBUFS.
+            Err(error)
+                if error.kind() == ErrorKind::WouldBlock
+                    || error.raw_os_error() == Some(libc::ENOBUFS) =>
+            {
+                break;
+            }
             Err(error) => panic!("fill observer queue: {error}"),
         }
     }
