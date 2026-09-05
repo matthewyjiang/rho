@@ -37,27 +37,35 @@ impl App {
         if request.session_id() != agent.session_id() {
             return;
         }
-        let (delivery, receipt) = {
+        let captured = {
             let _snapshot = crate::app::notification_delivery::lock();
-            let delivery = self.collect_turn_boundary_prompts_locked(agent);
-            let input = delivery.as_ref().map(|delivery| rho_sdk::UserInput::text(format!(
+            let batch = self.take_turn_boundary_batch_locked(agent);
+            if batch.is_empty() {
+                // Send synchronously while publishers are excluded so later
+                // arrivals belong to idle delivery. Await ack outside the gate.
+                Err(request.respond(None))
+            } else {
+                Ok((batch, request))
+            }
+        };
+        let (batch, request) = match captured {
+            Ok(captured) => captured,
+            Err(receipt) => {
+                receipt.await;
+                return;
+            }
+        };
+        let delivery = batch.render();
+        let input = rho_sdk::UserInput::text(format!(
                 "[runtime notifications for session {} run {}]\nThis is internal background context, not a human message or a new task. Incorporate unseen findings into the ongoing work.\n\n{}",
                 request.session_id(), request.run_id(), delivery.model,
-            )));
-            // respond sends synchronously: all publishers are still excluded at
-            // the empty-reply handoff. Never hold the gate while awaiting ack.
-            let receipt = request.respond(input);
-            (delivery, receipt)
-        };
-        let accepted = receipt.await;
-        if let Some(delivery) = delivery {
-            if accepted {
-                self.subagent_inbox
-                    .commit_delivered_notices(delivery.batch.notice_count());
-                self.insert_entry(&Entry::Notice(delivery.display));
-            } else {
-                self.restore_turn_boundary_batch(agent, delivery.batch);
-            }
+            ));
+        if request.respond(Some(input)).await {
+            self.subagent_inbox
+                .commit_delivered_notices(delivery.batch.notice_count());
+            self.insert_entry(&Entry::Notice(delivery.display));
+        } else {
+            self.restore_turn_boundary_batch(agent, delivery.batch);
         }
     }
 
@@ -143,62 +151,31 @@ impl App {
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> Option<TurnBoundaryDelivery> {
-        let _snapshot = crate::app::notification_delivery::lock();
-        self.collect_turn_boundary_prompts_locked(agent)
+        let batch = {
+            let _snapshot = crate::app::notification_delivery::lock();
+            self.take_turn_boundary_batch_locked(agent)
+        };
+        (!batch.is_empty()).then(|| batch.render())
     }
 
-    fn collect_turn_boundary_prompts_locked(
+    fn take_turn_boundary_batch_locked(
         &mut self,
         agent: &mut InteractiveRuntime,
-    ) -> Option<TurnBoundaryDelivery> {
-        let mut model_parts = Vec::new();
-        let mut display_parts = Vec::new();
-        let mut push = |(model, display): (String, String)| {
-            model_parts.push(model);
-            display_parts.push(display);
-        };
+    ) -> TurnBoundaryBatch {
         let mut batch = TurnBoundaryBatch::default();
         self.subagent_inbox.drain();
         self.subagent_inbox.reconcile_observed();
         batch.notices = self.subagent_inbox.take_notices(agent.session_id());
-        if !batch.notices.is_empty() {
-            let (mut model, display) =
-                crate::app::subagent_messaging::notice_prompts(&batch.notices);
-            model.insert_str(0, "Earlier child messages in send order. Any terminal result below supersedes that child's planning and progress; preserve substantive findings.\n\n");
-            push((model, display));
-        }
         if let Some(manager) = agent.subagents().cloned() {
             batch.subagent_notifications = manager.take_notifications(agent.session_id().as_str());
-            if !batch.subagent_notifications.is_empty() {
-                push(crate::tools::agent::notification_prompts(
-                    &batch.subagent_notifications,
-                ));
-            }
         }
         batch.workflow_notifications = agent
             .workflow_tracker()
             .take_notifications(agent.session_id().as_str());
-        if !batch.workflow_notifications.is_empty() {
-            push(crate::tools::workflow_tracker::notification_prompts(
-                &batch.workflow_notifications,
-            ));
-        }
         if let Some(processes) = agent.processes() {
             batch.process_notifications = processes.take_notifications();
-            if !batch.process_notifications.is_empty() {
-                push(crate::tools::process::notification_prompts(
-                    &batch.process_notifications,
-                ));
-            }
         }
-        if model_parts.is_empty() {
-            return None;
-        }
-        Some(TurnBoundaryDelivery {
-            model: model_parts.join("\n\n"),
-            display: display_parts.join("\n"),
-            batch,
-        })
+        batch
     }
 
     /// Puts a drained turn-boundary batch back when provider start never began.
@@ -426,6 +403,49 @@ pub(super) struct TurnBoundaryBatch {
 }
 
 impl TurnBoundaryBatch {
+    fn is_empty(&self) -> bool {
+        self.notices.is_empty()
+            && self.subagent_notifications.is_empty()
+            && self.workflow_notifications.is_empty()
+            && self.process_notifications.is_empty()
+    }
+
+    /// Formats captured notifications after releasing the delivery gate.
+    fn render(self) -> TurnBoundaryDelivery {
+        let mut model_parts = Vec::new();
+        let mut display_parts = Vec::new();
+        let mut push = |(model, display): (String, String)| {
+            model_parts.push(model);
+            display_parts.push(display);
+        };
+        if !self.notices.is_empty() {
+            let (mut model, display) =
+                crate::app::subagent_messaging::notice_prompts(&self.notices);
+            model.insert_str(0, "Earlier child messages in send order. Any terminal result below supersedes that child's planning and progress; preserve substantive findings.\n\n");
+            push((model, display));
+        }
+        if !self.subagent_notifications.is_empty() {
+            push(crate::tools::agent::notification_prompts(
+                &self.subagent_notifications,
+            ));
+        }
+        if !self.workflow_notifications.is_empty() {
+            push(crate::tools::workflow_tracker::notification_prompts(
+                &self.workflow_notifications,
+            ));
+        }
+        if !self.process_notifications.is_empty() {
+            push(crate::tools::process::notification_prompts(
+                &self.process_notifications,
+            ));
+        }
+        TurnBoundaryDelivery {
+            model: model_parts.join("\n\n"),
+            display: display_parts.join("\n"),
+            batch: self,
+        }
+    }
+
     pub(super) fn notice_count(&self) -> usize {
         self.notices.len()
     }

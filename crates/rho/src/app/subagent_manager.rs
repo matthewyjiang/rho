@@ -390,12 +390,14 @@ impl SubagentManager {
         let mut notifications = entries
             .iter_mut()
             .filter_map(|(id, entry)| {
+                if !entry.background
+                    || entry.observed
+                    || entry.session_id.as_deref() != Some(session_id)
+                {
+                    return None;
+                }
                 let snapshot = entry.snapshot(id);
-                (entry.background
-                    && snapshot.done
-                    && !entry.observed
-                    && entry.session_id.as_deref() == Some(session_id))
-                .then(|| {
+                snapshot.done.then(|| {
                     entry.observed = true;
                     (entry.started, SubagentNotification { snapshot })
                 })
