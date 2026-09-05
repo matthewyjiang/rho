@@ -368,12 +368,16 @@ fn provider_has_env_override_from(
 }
 
 pub fn auth_has_env_override(auth: &str) -> bool {
+    auth_has_env_override_from(auth, |env_var| std::env::var(env_var).ok())
+}
+
+fn auth_has_env_override_from(auth: &str, env_value: impl Fn(&str) -> Option<String>) -> bool {
     let Some((_, mode)) = provider::resolve_auth_mode(auth) else {
         return false;
     };
     mode.auth_kind
         .env_var()
-        .is_some_and(|env_var| std::env::var(env_var).is_ok_and(|value| !value.trim().is_empty()))
+        .is_some_and(|env_var| env_value(env_var).is_some_and(|value| !value.trim().is_empty()))
 }
 
 pub fn provider_has_stored_credentials(

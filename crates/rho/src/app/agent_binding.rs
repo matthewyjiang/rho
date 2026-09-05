@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use rho_providers::credentials::CredentialStore;
+
 use crate::{
     agent::{
         AgentCapabilities, AgentDefinition, AgentFingerprint, AgentId, AgentRuntimeSpec,
@@ -267,6 +269,20 @@ impl AgentBinder {
         invocation: AgentInvocation,
         host_config: &Config,
     ) -> anyhow::Result<BoundAgent> {
+        Self::bind_with_credentials(
+            definition,
+            invocation,
+            host_config,
+            &crate::credential_store::AppCredentialStore,
+        )
+    }
+
+    fn bind_with_credentials(
+        definition: Arc<AgentDefinition>,
+        invocation: AgentInvocation,
+        host_config: &Config,
+        store: &dyn CredentialStore,
+    ) -> anyhow::Result<BoundAgent> {
         let fingerprint = definition.fingerprint();
         let runtime = match &definition.runtime {
             AgentRuntimeSpec::Rho {
@@ -279,6 +295,7 @@ impl AgentBinder {
                     model,
                     *reasoning,
                     host_config,
+                    store,
                 )?);
                 let available_tools =
                     available_tools_for_bound_config(&invocation.available_tools, config.as_ref());
@@ -566,9 +583,10 @@ fn bind_rho_config(
     model: &ModelPolicy,
     reasoning: Option<rho_providers::reasoning::ReasoningLevel>,
     host_config: &Config,
+    store: &dyn CredentialStore,
 ) -> anyhow::Result<Config> {
     let mut config = host_config.clone();
-    apply_rho_model_policy(agent_id, model, &mut config)?;
+    apply_rho_model_policy(agent_id, model, &mut config, store)?;
     if let Some(reasoning) = reasoning {
         config.reasoning = reasoning;
     }
@@ -576,13 +594,11 @@ fn bind_rho_config(
 }
 
 /// Applies an agent's Rho model policy onto a host config clone.
-///
-/// Shared by bind and by pre-launch prompt/prefetch prediction so both paths
-/// settle on the same provider and model, including auth-driven provider pins.
 fn apply_rho_model_policy(
     agent_id: &str,
     model: &ModelPolicy,
     config: &mut Config,
+    store: &dyn CredentialStore,
 ) -> anyhow::Result<()> {
     match model {
         ModelPolicy::Inherit => Ok(()),
@@ -611,40 +627,10 @@ fn apply_rho_model_policy(
                 config,
                 provider.as_deref(),
                 selection.auth.as_deref(),
+                store,
             )?;
             config.model = resolved.model;
             Ok(())
-        }
-    }
-}
-
-/// The model an agent definition will run on under `host`, before any launch.
-///
-/// Uses the same policy application as bind so prefetch names the target launch
-/// will actually settle on. Returns `None` when the policy cannot bind (bad
-/// alias, auth pin, …): nothing is invented for a launch that will not happen.
-#[cfg(test)]
-fn prompt_model_for_definition(
-    definition: &AgentDefinition,
-    host: &Config,
-) -> Option<crate::model_identity::PromptModel> {
-    use crate::model_identity::PromptModel;
-
-    match &definition.runtime {
-        AgentRuntimeSpec::ClaudeCli(claude) => Some(PromptModel::ExternalCli {
-            runtime: crate::agent::AgentRuntime::ClaudeCli,
-            requested: claude.model.clone(),
-            resolved: None,
-        }),
-        AgentRuntimeSpec::Cursor(cursor) => Some(PromptModel::ExternalCli {
-            runtime: crate::agent::AgentRuntime::Cursor,
-            requested: cursor.model.clone(),
-            resolved: None,
-        }),
-        AgentRuntimeSpec::Rho { model, .. } => {
-            let mut config = host.clone();
-            apply_rho_model_policy(definition.id.as_str(), model, &mut config).ok()?;
-            Some(PromptModel::from_config(&config))
         }
     }
 }
@@ -653,18 +639,20 @@ fn prompt_model_for_definition(
 ///
 /// - Explicit `auth` wins and must resolve to a known profile. When `provider` is
 ///   also set, it must accept that auth.
-/// - Provider without `auth` keeps the host auth when it is valid for that
-///   provider; otherwise it uses the provider default. This avoids forcing
-///   `xai` onto `xai-api-key` when the host is already on `xai-oauth`.
+/// - Provider without `auth` keeps compatible host auth; otherwise it selects
+///   an available target-provider login using the catalog's preference order,
+///   falling back to the provider default when none is available.
 /// - Auth without `provider` sets both from the auth profile.
 fn apply_bound_provider_auth(
     agent_id: &str,
     config: &mut Config,
     provider: Option<&str>,
     auth: Option<&str>,
+    store: &dyn CredentialStore,
 ) -> anyhow::Result<()> {
     use rho_providers::provider::{
-        resolve_auth_mode, resolve_profile_exact, resolve_provider_reference,
+        legacy_provider_alias, resolve_auth_mode, resolve_profile_exact,
+        resolve_provider_reference_with_credentials,
     };
 
     match (provider, auth) {
@@ -678,15 +666,18 @@ fn apply_bound_provider_auth(
             Ok(())
         }
         (Some(provider), None) => {
-            // Keep host auth when it is a valid mode for this provider.
-            if let Some((_, host_mode)) = resolve_auth_mode(&config.auth) {
+            // Only canonical references can inherit host auth. Legacy aliases
+            // keep their fixed auth through the credential-aware resolver below.
+            if let Some((_, host_mode)) = resolve_auth_mode(&config.auth)
+                .filter(|_| legacy_provider_alias(provider).is_none())
+            {
                 if let Ok(profile) = resolve_profile_exact(provider, host_mode.id) {
                     config.provider = profile.provider_name().to_string();
                     config.auth = profile.auth_id().to_string();
                     return Ok(());
                 }
             }
-            let profile = resolve_provider_reference(provider)
+            let profile = resolve_provider_reference_with_credentials(provider, store)
                 .map_err(|error| bind_profile_error(agent_id, provider, None, error))?;
             config.provider = profile.provider_name().to_string();
             config.auth = profile.auth_id().to_string();
