@@ -594,8 +594,8 @@ fn bind_rho_config(
 
 /// Applies an agent's Rho model policy onto a host config clone.
 ///
-/// Shared by bind and by pre-launch prompt/prefetch prediction so both paths
-/// settle on the same provider and model, including auth-driven provider pins.
+/// Shared by binding and its test-only model prediction helper, including
+/// auth-driven provider pins.
 fn apply_rho_model_policy(
     agent_id: &str,
     model: &ModelPolicy,
@@ -637,15 +637,16 @@ fn apply_rho_model_policy(
     }
 }
 
-/// The model an agent definition will run on under `host`, before any launch.
+/// Test-only prediction of the model selected under an explicit auth context.
 ///
-/// Uses the same policy application as bind so prefetch names the target launch
-/// will actually settle on. Returns `None` when the policy cannot bind (bad
-/// alias, auth pin, …): nothing is invented for a launch that will not happen.
+/// Agreement tests must supply the same credential availability to this helper
+/// and binding. Returns `None` when the policy cannot bind (bad alias, auth pin,
+/// …). This is not a production pre-launch or prefetch path.
 #[cfg(test)]
 fn prompt_model_for_definition(
     definition: &AgentDefinition,
     host: &Config,
+    auth_available: &dyn Fn(&str) -> bool,
 ) -> Option<crate::model_identity::PromptModel> {
     use crate::model_identity::PromptModel;
 
@@ -662,7 +663,8 @@ fn prompt_model_for_definition(
         }),
         AgentRuntimeSpec::Rho { model, .. } => {
             let mut config = host.clone();
-            apply_rho_model_policy(definition.id.as_str(), model, &mut config, &|_| false).ok()?;
+            apply_rho_model_policy(definition.id.as_str(), model, &mut config, auth_available)
+                .ok()?;
             Some(PromptModel::from_config(&config))
         }
     }

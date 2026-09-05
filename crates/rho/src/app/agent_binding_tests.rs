@@ -789,10 +789,8 @@ fn provider_switch_without_auth_uses_available_host_credentials() {
 // Covers: the model prediction matches the model binding actually picks.
 // Owner: agent binding.
 //
-// `prompt_model_for_definition` answers "which model would this agent launch on"
-// before any launch, so startup can prefetch that model's catalog name. Binding
-// answers the same question at launch through the shared policy applicator.
-// Drift means prefetching one model's name and running another.
+// The test-only prediction helper and binding must agree when given the same
+// credential availability; neither side should consult the machine's logins.
 #[test]
 fn predicted_agent_model_matches_the_model_binding_picks() {
     use crate::model_identity::PromptModel;
@@ -851,15 +849,17 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
 
     for (name, policy) in policies {
         let definition = definition_with_model(policy);
-        let predicted = prompt_model_for_definition(&definition, &host)
+        let auth_available = |auth: &str| auth == "xai-oauth";
+        let predicted = prompt_model_for_definition(&definition, &host, &auth_available)
             .expect("bindable policy should predict a model");
-        let bound = AgentBinder::bind(
+        let bound = AgentBinder::bind_with_auth_availability(
             Arc::clone(&definition),
             AgentInvocation {
                 role: AgentRole::Delegated,
                 available_tools: capabilities(),
             },
             &host,
+            &auth_available,
         )
         .unwrap();
 
@@ -877,7 +877,7 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
     }
 }
 
-// Covers: a policy that cannot bind is not inventing a prefetch key.
+// Covers: a policy that cannot bind has no predicted model.
 // Owner: agent binding.
 #[test]
 fn unbindable_agent_policy_predicts_no_model() {
@@ -893,7 +893,10 @@ fn unbindable_agent_policy_predicts_no_model() {
         auth: None,
     }));
 
-    assert_eq!(prompt_model_for_definition(&definition, &host), None);
+    assert_eq!(
+        prompt_model_for_definition(&definition, &host, &|_| false),
+        None
+    );
     assert!(AgentBinder::bind(
         Arc::clone(&definition),
         AgentInvocation {
@@ -922,7 +925,7 @@ fn predicted_claude_agent_model_is_the_pass_through_value() {
             ..definition(ToolPolicy::All).as_ref().clone()
         });
 
-        let predicted = prompt_model_for_definition(&definition, &Config::default())
+        let predicted = prompt_model_for_definition(&definition, &Config::default(), &|_| false)
             .expect("claude-cli agents always predict");
         let bound = AgentBinder::bind(
             Arc::clone(&definition),
