@@ -30,6 +30,7 @@ pub(super) async fn intercept(
             Some(completed("assistant stream part one part two"))
         }
         "fixture stream" => Some(stream_reasoning(request, events).await),
+        "fixture interleaved reasoning" => Some(stream_interleaved_reasoning(events).await),
         "fixture markdown headings" => Some(stream_markdown_headings(request, events).await),
         // Stable prose must stay drawn while later emphasis markers complete.
         "fixture markdown emphasis stream" => Some(stream_markdown_emphasis(request, events).await),
@@ -180,6 +181,20 @@ async fn stream_reasoning(
         .send(ModelEvent::OutputDelta("part two".into()))
         .await?;
     completed("assistant stream part one part two")
+}
+
+async fn stream_interleaved_reasoning(
+    events: &ProviderEventSender,
+) -> Result<ModelResponse, ProviderError> {
+    for event in [
+        ModelEvent::OutputDelta("assistant before reasoning\n".into()),
+        ModelEvent::ReasoningDelta("deterministic reasoning phase one\n".into()),
+        ModelEvent::ReasoningDelta("deterministic reasoning phase two\n".into()),
+        ModelEvent::OutputDelta("assistant after reasoning".into()),
+    ] {
+        events.send(event).await?;
+    }
+    completed("assistant before reasoning\nassistant after reasoning")
 }
 
 async fn stream_markdown_headings(

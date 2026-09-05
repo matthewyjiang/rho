@@ -88,10 +88,21 @@ pub(crate) struct HistoryRenderSettings {
 
 impl HistoryRenderSettings {
     /// Hidden entries keep their indices without contributing transcript lines.
+    /// Zen hides tool cards and reasoning. Hiding reasoning output alone drops
+    /// only reasoning that has no duration receipt left to show.
     pub(super) fn hides_entry(self, entry: &Entry) -> bool {
-        self.zen_mode && matches!(entry, Entry::Tool(_) | Entry::Reasoning(_))
-            || matches!(entry, Entry::Reasoning(reasoning)
-                if !self.show_reasoning_output && reasoning.thought_for.is_none())
+        match entry {
+            Entry::Tool(_) => self.zen_mode,
+            Entry::Reasoning(reasoning) => {
+                self.zen_mode || (!self.show_reasoning_output && reasoning.thought_for.is_none())
+            }
+            Entry::User(_)
+            | Entry::Assistant(_)
+            | Entry::Notice(_)
+            | Entry::RuntimeInfo(_)
+            | Entry::Changelog(_)
+            | Entry::Error(_) => false,
+        }
     }
 
     /// Width or theme changes reflow or restyle every cached line.
@@ -868,17 +879,14 @@ fn prepare_cache_entry_render(
         return None;
     }
     // Keep the duration receipt when text is hidden, without changing stored reasoning.
-    let summary;
-    let entry = match entry {
-        Entry::Reasoning(reasoning) if !settings.show_reasoning_output => {
-            summary = Entry::Reasoning(super::ReasoningEntry {
-                text: String::new(),
-                thought_for: reasoning.thought_for,
-            });
-            &summary
-        }
-        _ => entry,
+    // `hides_entry` already dropped hidden reasoning that has no receipt.
+    let summary = match entry {
+        Entry::Reasoning(reasoning) if !settings.show_reasoning_output => reasoning
+            .thought_for
+            .map(|duration| Entry::Reasoning(super::ReasoningEntry::summary_only(duration))),
+        _ => None,
     };
+    let entry = summary.as_ref().unwrap_or(entry);
     let trailing_blank = if open_stream_tail && entry_index + 1 == entries_len {
         TrailingBlank::Omit
     } else {

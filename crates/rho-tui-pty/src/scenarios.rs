@@ -455,8 +455,8 @@ const CONCURRENT_PROGRESS_STEPS: &[Step] = &[
 const ALL_SCENARIOS: &[Scenario] = &[
     STARTUP_FIRST_FRAME_SCENARIO,
     STARTUP_STREAM_EXIT_SCENARIO,
-    REASONING_OUTPUT_RETROACTIVE_SCENARIO,
     STARTUP_PROMPT_STREAM_EXIT_SCENARIO,
+    REASONING_OUTPUT_RETROACTIVE_SCENARIO,
     Scenario::new(
         "cancel_and_resubmit",
         "Cancel a long fixture stream and submit another prompt",

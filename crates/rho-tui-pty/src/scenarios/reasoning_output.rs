@@ -2,7 +2,7 @@
 
 use std::{fs::OpenOptions, io::Write, time::Duration};
 
-use anyhow::Result;
+use anyhow::{ensure, Result};
 
 use crate::{
     env::IsolatedHome,
@@ -14,8 +14,9 @@ use crate::{
 use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 
 // Covers: hidden streamed reasoning is retained and can be repeatedly revealed;
-// zen overrides visibility without discarding the completed reasoning.
-// Owner: interactive TUI. Existing config coverage only opens the setting.
+// zen overrides visibility without discarding the completed reasoning. Interleaved
+// reasoning preserves answer order and a mid-answer receipt when hidden.
+// Owner: interactive TUI. The ordinary stream fixture has no interleaving.
 pub(super) const REASONING_OUTPUT_RETROACTIVE_SCENARIO: Scenario = Scenario::new(
     "reasoning_output_retroactive",
     "Reveal and hide completed reasoning through Appearance, including zen mode",
@@ -26,9 +27,9 @@ pub(super) const REASONING_OUTPUT_RETROACTIVE_SCENARIO: Scenario = Scenario::new
             timeout: STARTUP,
         },
         Step::Phase("complete_turn_with_reasoning_hidden"),
-        Step::SubmitText("fixture stream"),
+        Step::SubmitText("fixture interleaved reasoning"),
         Step::WaitText {
-            text: "assistant stream part one part two",
+            text: "assistant after reasoning",
             timeout: STREAM,
         },
         Step::WaitQuiet {
@@ -55,12 +56,21 @@ fn setup_hidden_reasoning(home: &IsolatedHome) -> Result<()> {
 }
 
 fn toggle_completed_reasoning(harness: &mut PtyHarness) -> Result<()> {
+    assert_interleaved_order(harness, /*receipt_visible*/ true)?;
     for (phase, setting, visible) in [
-        ("reveal_past_reasoning", "reasoning", true),
-        ("hide_past_reasoning", "reasoning", false),
-        ("reveal_past_reasoning_again", "reasoning", true),
-        ("zen_hides_past_reasoning", "Zen", false),
-        ("leaving_zen_restores_past_reasoning", "Zen", true),
+        ("reveal_past_reasoning", AppearanceSetting::Reasoning, true),
+        ("hide_past_reasoning", AppearanceSetting::Reasoning, false),
+        (
+            "reveal_past_reasoning_again",
+            AppearanceSetting::Reasoning,
+            true,
+        ),
+        ("zen_hides_past_reasoning", AppearanceSetting::Zen, false),
+        (
+            "leaving_zen_restores_past_reasoning",
+            AppearanceSetting::Zen,
+            true,
+        ),
     ] {
         harness.set_phase(phase);
         harness.submit_text("/config")?;
@@ -70,16 +80,19 @@ fn toggle_completed_reasoning(harness: &mut PtyHarness) -> Result<()> {
         harness.wait_for_text("Config / Appearance", SETTLE)?;
         // Appearance rows use direct shortcuts, not a text filter.
         harness.inject_key(&Key::Down)?;
-        if setting == "reasoning" {
-            harness.inject_key(&Key::Down)?;
-            harness.inject_key(&Key::Down)?;
+        match setting {
+            AppearanceSetting::Reasoning => {
+                harness.inject_key(&Key::Down)?;
+                harness.inject_key(&Key::Down)?;
+            }
+            AppearanceSetting::Zen => {}
         }
         harness.inject_key(&Key::Char(' '))?;
         harness.inject_key(&Key::Esc)?;
         harness.wait_for_text("Config · saves automatically", SETTLE)?;
         harness.inject_key(&Key::Esc)?;
         harness.wait_for_text_gone("Config · saves automatically", SETTLE)?;
-        harness.wait_for_text("assistant stream part one part two", SETTLE)?;
+        harness.wait_for_text("assistant after reasoning", SETTLE)?;
         for reasoning in [
             "deterministic reasoning phase one",
             "deterministic reasoning phase two",
@@ -90,6 +103,40 @@ fn toggle_completed_reasoning(harness: &mut PtyHarness) -> Result<()> {
                 harness.wait_for_text_gone(reasoning, SETTLE)?;
             }
         }
+        let receipt_visible = match setting {
+            AppearanceSetting::Reasoning => true,
+            AppearanceSetting::Zen => visible,
+        };
+        assert_interleaved_order(harness, receipt_visible)?;
+    }
+    Ok(())
+}
+
+enum AppearanceSetting {
+    Reasoning,
+    Zen,
+}
+
+fn assert_interleaved_order(harness: &mut PtyHarness, receipt_visible: bool) -> Result<()> {
+    if receipt_visible {
+        harness.wait_for_text("Thought for", SETTLE)?;
+    } else {
+        harness.wait_for_text_gone("Thought for", SETTLE)?;
+    }
+    let screen = harness.screen().contents();
+    let before = screen.find("assistant before reasoning");
+    let after = screen.find("assistant after reasoning");
+    ensure!(
+        matches!((before, after), (Some(before), Some(after)) if before < after),
+        "interleaved answer segments must remain in order: {screen}"
+    );
+    if receipt_visible {
+        let receipt = screen.find("Thought for");
+        ensure!(
+            matches!((before, receipt, after), (Some(before), Some(receipt), Some(after))
+                if before < receipt && receipt < after),
+            "reasoning receipt must stay between answer segments: {screen}"
+        );
     }
     Ok(())
 }
