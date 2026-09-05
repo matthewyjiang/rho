@@ -77,6 +77,13 @@ fn smoke_startup_stream_exit() {
     assert_pass("startup_stream_exit");
 }
 
+// Covers: /new must not strand new child results behind the previous session ID.
+// Owner: interactive TUI session lifecycle and automatic completion delivery.
+#[test]
+fn subagent_completion_after_new() {
+    assert_pass("subagent_completion_after_new");
+}
+
 // Covers: messages for same-role agents retain their task identity and expandable body.
 // Owner: interactive TUI
 #[test]

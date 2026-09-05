@@ -110,6 +110,47 @@ fn running_notices(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
+// Covers: /new must attribute new children to the replacement session, so an
+// idle parent receives their final result without another user prompt.
+fn completion_after_new(harness: &mut PtyHarness) -> Result<()> {
+    let cwd = harness
+        .working_directory()
+        .context("scenario working directory")?
+        .to_path_buf();
+    let socket = UnixDatagram::bind(cwd.join(".quiet-parent-pty.sock"))?;
+    socket.set_nonblocking(true)?;
+    harness.submit_text("fixture initial session")?;
+    harness.wait_for_text("fixture response: fixture initial session", STREAM)?;
+    harness.submit_text("/new")?;
+    harness.wait_for_text("new session", STREAM)?;
+    // This first prompt attaches storage for the new session before spawning.
+    harness.submit_text("fixture quiet completion subagent")?;
+    harness.wait_for_text("quiet completion child dispatched", STREAM)?;
+    // The completion footer proves the parent turn ended before child release.
+    harness.wait_for_text("Worked for", STREAM)?;
+    wait_signal(harness, &socket, &mut HashSet::new(), "completion")?;
+    socket.send_to(b"!", cwd.join(".quiet-child-completion.sock"))?;
+    harness.wait_for_text("quiet final delivery requests=1 occurrences=1", STREAM)?;
+    harness.submit_text("fixture quiet completion count")?;
+    harness.wait_for_text("quiet completion requests=1 carried finals=0", STREAM)?;
+    Ok(())
+}
+
+pub(super) const COMPLETION_AFTER_NEW_SCENARIO: Scenario = Scenario::new(
+    "subagent_completion_after_new",
+    "Deliver a new session's child completion automatically and exactly once after /new",
+    DEFAULT_SIZE,
+    &[
+        Step::WaitText {
+            text: "gpt-5.5",
+            timeout: STARTUP,
+        },
+        Step::Custom(completion_after_new),
+        Step::ExitCommand,
+    ],
+    /*smoke*/ true,
+);
+
 pub(super) const RUNNING_NOTICES_SCENARIO: Scenario = Scenario::new(
     "quiet_subagent_running_notices",
     "Do not buy another provider request for a notice at the completion checkpoint",
