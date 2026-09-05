@@ -90,6 +90,41 @@ fn goal_action_retry(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
+fn running_notices(harness: &mut PtyHarness) -> Result<()> {
+    let cwd = harness
+        .working_directory()
+        .context("scenario working directory")?
+        .to_path_buf();
+    let socket = UnixDatagram::bind(cwd.join(".quiet-parent-pty.sock"))?;
+    socket.set_nonblocking(true)?;
+    let mut received = HashSet::new();
+    harness.submit_text("fixture quiet running subagent")?;
+    wait_signal(harness, &socket, &mut received, "parent")?;
+    wait_signal(harness, &socket, &mut received, "first")?;
+    socket.send_to(b"!", cwd.join(".quiet-child-first.sock"))?;
+    wait_signal(harness, &socket, &mut received, "posted")?;
+    socket.send_to(b"!", cwd.join(".quiet-child-parent.sock"))?;
+    harness.wait_for_text("quiet running parent completed", STREAM)?;
+    harness.submit_text("fixture quiet request count")?;
+    harness.wait_for_text("quiet extra requests=0 carried notices=1", STREAM)?;
+    Ok(())
+}
+
+pub(super) const RUNNING_NOTICES_SCENARIO: Scenario = Scenario::new(
+    "quiet_subagent_running_notices",
+    "Do not buy another provider request for a notice at the completion checkpoint",
+    DEFAULT_SIZE,
+    &[
+        Step::WaitText {
+            text: "gpt-5.5",
+            timeout: STARTUP,
+        },
+        Step::Custom(running_notices),
+        Step::ExitCommand,
+    ],
+    /*smoke*/ true,
+);
+
 pub(super) const QUIET_SUBAGENT_SCENARIO: Scenario = Scenario::new(
     "quiet_subagent_notices",
     "Keep ordinary child notices queued and coalesce them into the requested parent turn",

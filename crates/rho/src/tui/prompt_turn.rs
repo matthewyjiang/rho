@@ -34,8 +34,10 @@ impl FailedTurn {
         })
     }
 
-    pub(super) fn retry_needs_parent_action(&self) -> bool {
-        self.parent_action_required
+    /// Newer failed deliveries can precede an action retry. Keep the queue
+    /// runnable until every action retry has been consumed.
+    pub(super) fn retries_need_parent_action(retries: &VecDeque<Self>) -> bool {
+        retries.iter().any(|retry| retry.parent_action_required)
     }
 
     fn session_title_user_message(&self) -> String {

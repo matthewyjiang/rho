@@ -22,8 +22,8 @@ pub(super) enum SubagentCompletionTurn {
     Completed(TurnOutcome),
 }
 
-/// Scheduled turns and running checkpoints may carry informational notices;
-/// notices alone must not wake an idle parent without an explicit action request.
+/// Already-scheduled provider requests may carry informational notices; notices
+/// alone must not start another request, including at a completion checkpoint.
 #[derive(Clone, Copy)]
 enum BoundaryTrigger {
     ScheduledTurn,
@@ -46,9 +46,15 @@ impl App {
             request.respond(None).await;
             return;
         }
+        let trigger = match request.boundary() {
+            rho_sdk::InputBoundary::BeforeProvider => BoundaryTrigger::ScheduledTurn,
+            rho_sdk::InputBoundary::BeforeCompletion => BoundaryTrigger::Notification,
+            // Unknown checkpoints must not let routine notices buy inference.
+            _ => BoundaryTrigger::Notification,
+        };
         let captured = {
             let _snapshot = crate::app::notification_delivery::lock();
-            let batch = self.take_turn_boundary_batch_locked(agent, BoundaryTrigger::ScheduledTurn);
+            let batch = self.take_turn_boundary_batch_locked(agent, trigger);
             if batch.is_empty() {
                 self.restore_turn_boundary_batch(agent, batch);
                 // Send synchronously while publishers are excluded so later

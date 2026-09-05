@@ -22,6 +22,29 @@ fn failed_turn() -> FailedTurn {
     }
 }
 
+// Covers: newer failed deliveries must not hide an older action retry from the
+// goal's child-wait decision. Owner: failed-turn scheduling policy.
+#[test]
+fn action_retry_keeps_queue_runnable_until_consumed() {
+    let mut action = failed_turn();
+    action.parent_action_required = true;
+    let mut retries = VecDeque::from([action.clone()]);
+    assert!(FailedTurn::retries_need_parent_action(&retries));
+
+    // A later completion/workflow delivery fails and is retried first.
+    retries.push_front(failed_turn());
+    assert!(FailedTurn::retries_need_parent_action(&retries));
+    retries.push_front(failed_turn());
+    assert!(FailedTurn::retries_need_parent_action(&retries));
+    retries.pop_front();
+    retries.pop_front();
+    pretty_assertions::assert_eq!(retries.pop_front(), Some(action));
+    assert!(!FailedTurn::retries_need_parent_action(&retries));
+
+    retries.push_back(failed_turn());
+    assert!(!FailedTurn::retries_need_parent_action(&retries));
+}
+
 #[test]
 fn approval_and_questionnaire_share_one_interaction_slot() {
     assert!(interaction_slot_available(false, false));

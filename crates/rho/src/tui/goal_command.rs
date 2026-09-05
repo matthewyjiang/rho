@@ -240,9 +240,7 @@ impl App {
         {
             // A failed parent-action turn already consumed its notice. Retry
             // before waiting for the child that still needs that action.
-            if !pending_retries
-                .front()
-                .is_some_and(FailedTurn::retry_needs_parent_action)
+            if !FailedTurn::retries_need_parent_action(&pending_retries)
                 && !self.wait_for_goal_subagents(terminal, agent).await?
             {
                 break;

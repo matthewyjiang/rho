@@ -12,6 +12,7 @@ use super::{completed, completed_tool_call, tool_result};
 const SPAWN: &str = "quiet-parent-spawn";
 const CHILD: &str = "fixture quiet notice child";
 const GOAL_CHILD: &str = "fixture quiet goal child";
+const RUNNING_CHILD: &str = "fixture quiet running child";
 const FIRST: &str = "quiet-cache-inspected";
 const SECOND: &str = "quiet-routing-inspected";
 const ACTION: &str = "quiet-decision-required";
@@ -22,12 +23,21 @@ pub(super) async fn intercept(
     prompt: &str,
     request: &ModelRequest<'_>,
 ) -> Option<Result<ModelResponse, ProviderError>> {
-    if prompt == CHILD || prompt == GOAL_CHILD {
+    if prompt == CHILD || prompt == GOAL_CHILD || prompt == RUNNING_CHILD {
         for (stage, tool, message) in [
             ("first", "message_parent", FIRST),
             ("second", "message_parent", SECOND),
             ("action", "request_parent_action", ACTION),
         ] {
+            if prompt == RUNNING_CHILD && stage != "first" {
+                // The first tool result proves the notice was posted while
+                // the parent provider request is still held at its barrier.
+                if let Err(error) = barrier("posted", request).await {
+                    return Some(Err(error));
+                }
+                request.cancellation.cancelled().await;
+                return Some(Err(ProviderError::interrupted("quiet child stopped")));
+            }
             if prompt == GOAL_CHILD && tool == "message_parent" {
                 continue;
             }
@@ -47,7 +57,8 @@ pub(super) async fn intercept(
         return Some(Err(ProviderError::interrupted("quiet child stopped")));
     }
     let goal_retry = prompt.contains("Goal:\nfixture quiet action retry\n");
-    if prompt == "fixture quiet subagent" || goal_retry {
+    let running = prompt == "fixture quiet running subagent";
+    if prompt == "fixture quiet subagent" || goal_retry || running {
         if tool_result(request, SPAWN).is_none() {
             PARENT_REQUESTS.store(0, Ordering::SeqCst);
             GOAL_RETRY.store(goal_retry, Ordering::SeqCst);
@@ -56,12 +67,25 @@ pub(super) async fn intercept(
                 "agent",
                 serde_json::json!({
                     "agent_id": "worker",
-                    "prompt": if goal_retry { GOAL_CHILD } else { CHILD },
+                    "prompt": if goal_retry { GOAL_CHILD } else if running { RUNNING_CHILD } else { CHILD },
                     "background": true,
                 }),
             ));
         }
+        if running {
+            if let Err(error) = barrier("parent", request).await {
+                return Some(Err(error));
+            }
+            return Some(completed("quiet running parent completed"));
+        }
         return Some(completed("quiet child dispatched"));
+    }
+    if prompt.ends_with("fixture quiet request count") {
+        return Some(completed(format!(
+            "quiet extra requests={} carried notices={}",
+            PARENT_REQUESTS.load(Ordering::SeqCst),
+            prompt.matches(FIRST).count(),
+        )));
     }
     if prompt.contains(FIRST) || prompt.contains(SECOND) || prompt.contains(ACTION) {
         let requests = PARENT_REQUESTS.fetch_add(1, Ordering::SeqCst) + 1;
