@@ -59,6 +59,7 @@ fn statusline_rows_use_display_width_for_alignment() {
 
 #[test]
 fn context_usage_style_escalates_with_fill() {
+    let _guard = crate::tui::theme::theme_test_lock();
     // Covers: high context fill must leave ambient dim chrome
     // Owner: statusline severity policy
     assert_eq!(context_usage_style(0.0), Theme::dim());
@@ -71,6 +72,7 @@ fn context_usage_style_escalates_with_fill() {
 
 #[test]
 fn permission_style_marks_bypass_as_warning() {
+    let _guard = crate::tui::theme::theme_test_lock();
     // Covers: Bypass (no checks) must not render like checked permission modes
     // Owner: statusline severity policy
     assert_eq!(permission_style(PermissionMode::Bypass), Theme::warning());
@@ -81,6 +83,7 @@ fn permission_style_marks_bypass_as_warning() {
 
 #[test]
 fn bypass_permission_and_high_context_use_warning_styles() {
+    let _guard = crate::tui::theme::theme_test_lock();
     // Covers: painted spans carry severity, not only plain text
     // Owner: statusline render
     let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
@@ -107,6 +110,7 @@ fn bypass_permission_and_high_context_use_warning_styles() {
 
 #[test]
 fn context_without_known_window_still_shows_tokens() {
+    let _guard = crate::tui::theme::theme_test_lock();
     // Covers: models with no reported limit must still show consumption
     // Owner: statusline render
     let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
@@ -327,6 +331,7 @@ fn signed_out_keeps_not_signed_in_over_permission() {
 
 #[test]
 fn permission_mode_update_invalidates_cache() {
+    let _guard = crate::tui::theme::theme_test_lock();
     let mut info = test_info(PathBuf::from("/tmp/project"));
     let mut statusline = StatusLine::new(&info);
     statusline.lines(18, None);
@@ -341,6 +346,8 @@ fn permission_mode_update_invalidates_cache() {
 
 #[test]
 fn unchanged_statusline_reuses_rendered_lines() {
+    // Theme changes invalidate the cache even when the statusline state is unchanged.
+    let _guard = crate::tui::theme::theme_test_lock();
     let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
     statusline.lines(80, None);
     statusline.lines(80, None);
@@ -374,6 +381,7 @@ fn fit_cwd_row_drops_extra_before_branch() {
 fn git_branch_is_cached_until_explicit_refresh() {
     use std::fs;
 
+    let _guard = crate::tui::theme::theme_test_lock();
     let temp = tempfile::tempdir().unwrap();
     let git_dir = temp.path().join(".git");
     fs::create_dir(&git_dir).unwrap();
