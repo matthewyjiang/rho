@@ -15,6 +15,7 @@ use crate::{
 
 fn snapshot(id: &str, agent_id: &str, state: RunState, elapsed_seconds: u64) -> SubagentSnapshot {
     SubagentSnapshot {
+        prior_notices: Vec::new(),
         id: id.to_owned(),
         agent_id: agent_id.to_owned(),
         title: None,

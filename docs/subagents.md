@@ -28,7 +28,7 @@ flowchart TD
     root --> bg[Background agent tool]
     fg --> result[Final result in same turn]
     bg --> id[Run id immediately]
-    id --> done[Completion at next turn boundary]
+    id --> done[Completion at next safe runtime boundary]
 ```
 
 ## Definition files
@@ -89,6 +89,25 @@ Delegation has two modes:
 Both modes use the same `AgentExecutor`. Rho-runtime agents stay in-process. `runtime: claude-cli` agents spawn the external `claude` binary and still report through the same status and attachment files. The `agents` tool lists, inspects, cancels, or messages handles tracked by `SubagentManager`. Parent shutdown cancels active handles and waits for bounded cleanup. Delegated agents run without their own TUI. Questionnaires raised by delegated Rho agents surface in the parent session (foreground waits and background runs); approvals still cannot. Background Rho agents can also send non-blocking plain-text notices through `message_parent`; those deliver at the parent's next turn boundary with completion notifications. Both `message_parent` and `agents` action `message` reject bodies over 8 KiB (after trim) as invalid arguments before send. Parents can steer a running Rho-runtime child with `agents` action `message` (plain text, applied at the child's next provider turn). The same `agents message` action works for Claude-cli children: Rho keeps the child's stdin open with `--input-format stream-json` and writes each parent body as a queued user turn (applied when the current Claude turn ends). Claude children still have no `message_parent` tool in this release. In Supervised mode, Rho-runtime-delegated Write and Process operations fail closed. Claude-cli agents refuse to spawn under Supervised mode because `claude -p` cannot prompt for approval. Auto and Allow edits spawn with Claude `dontAsk` only when `tools:` are bare names and `inherit_claude_config` is false. Claude `dontAsk` also auto-approves read-only Bash and PreToolUse hooks, so a specifier such as `Bash(git *)` (which exposes the Bash base tool) or inherited Claude settings would run actions outside the bound set and is refused. Those bound `dontAsk` runs pass an empty `--setting-sources` list so project hooks cannot widen the child. Interactive permission-mode changes apply to delegated agents launched after the change. An already-running delegated agent keeps the launch-time mode because it cannot be retroactively sandboxed; future launches receive the changed mode.
 
 Pass `--no-subagents` to remove delegation capabilities from a root invocation.
+
+### Background delivery during a turn
+
+The interactive parent collects child notices, agent completions, workflow results,
+and process exits at safe provider boundaries after tool work, not only between
+human messages. It also checks pending notifications before committing its final
+response. Streaming stays live, so text may already be visible when a notification
+arrives. Notifications found at the final checkpoint cause another provider step.
+Completions arriving after the finalization handoff remain queued and wake an idle
+parent as before.
+
+Child messages retain their send order and run identity. When a terminal result is
+in the same batch, earlier planning and progress are marked as historical context.
+Rho does not guess which free-text findings are safe to delete. Reading a terminal
+result through `agents status` or `agents stop` includes pending child notices as
+earlier context and acknowledges their exact receipts, so they do not later wake
+the parent as a fresh task. Polling a terminal process or workflow similarly
+acknowledges its completion. A failed delivery attempt cannot undo a later explicit
+acknowledgement.
 
 ### Parent-to-child messages in the transcript
 

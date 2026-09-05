@@ -530,6 +530,7 @@ impl AgentExecutor {
             if let Some(slot) = steering_slot {
                 slot.clear();
             }
+            let _delivery = super::notification_delivery::lock();
             completion_tx.send_replace(true);
         });
 
@@ -783,6 +784,7 @@ struct DelegatedNoticePoster {
 impl NoticePoster for DelegatedNoticePoster {
     fn post(&self, message: ValidatedMessage) -> Result<(), NoticePostError> {
         self.notices.post(SubagentNotice {
+            acknowledged: Default::default(),
             run_id: self.run_id.clone(),
             agent_id: self.agent_id.clone(),
             parent_session_id: self.parent_session_id.clone(),

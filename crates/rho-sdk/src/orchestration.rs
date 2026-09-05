@@ -34,6 +34,7 @@ pub(super) const RETRYABLE_REQUEST_BASE_DELAY: std::time::Duration =
 pub(super) const MAX_HONORED_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
 
 mod async_jobs;
+mod boundary_input;
 mod model_call_timer;
 mod provider_cancellation;
 mod provider_request;
@@ -173,6 +174,21 @@ async fn execute_turn_loop(
             }
         }
         async_jobs.drain_finished(&mut history);
+        if !async_jobs.has_pending() {
+            if let Err(error) = boundary_input::collect(
+                &runtime,
+                &core,
+                &run_id,
+                crate::InputBoundary::BeforeProvider,
+                &mut history,
+                &cancellation,
+                &events,
+            )
+            .await
+            {
+                return terminate_run(core, history, &mut async_jobs, hooks, &events, error).await;
+            }
+        }
         let request_scope = ProviderRequestScope {
             runtime: &runtime,
             session_id: core.id(),
@@ -447,6 +463,24 @@ async fn execute_turn_loop(
             }
         }
 
+        match boundary_input::collect(
+            &runtime,
+            &core,
+            &run_id,
+            crate::InputBoundary::BeforeCompletion,
+            &mut history,
+            &cancellation,
+            &events,
+        )
+        .await
+        {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(error) => {
+                return terminate_run(core, history, control.async_jobs, hooks, &events, error)
+                    .await
+            }
+        }
         let content = final_assistant_content(&history);
         let revision = core.commit(history)?;
         let outcome = RunOutcome::new(content, accumulated_usage, StopReason::EndTurn, revision);

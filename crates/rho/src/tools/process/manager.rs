@@ -17,6 +17,9 @@ use tokio::sync::{mpsc, Notify};
 use uuid::Uuid;
 
 pub(super) type SharedRecord = Arc<Mutex<Record>>;
+#[cfg(test)]
+#[path = "manager_tests.rs"]
+mod tests;
 pub(super) struct RetainedChunk {
     pub(super) chunk: Chunk,
     pub(super) byte_cost: usize,
@@ -37,6 +40,7 @@ pub(super) struct Record {
     pub(super) tree: Option<Arc<ProcessTree>>,
     pub(super) notify: Arc<Notify>,
     pub(super) observed: bool,
+    pub(super) explicitly_observed: bool,
 }
 
 impl Record {
@@ -148,6 +152,7 @@ impl ProcessManager {
             tree: None,
             notify,
             observed: false,
+            explicitly_observed: false,
         }));
         {
             let mut inner = self.inner.lock().unwrap();
@@ -236,12 +241,22 @@ impl ProcessManager {
             let s = snapshot_bounded(&rec, cursor, max_output_bytes);
             if !s.chunks.is_empty() || terminal(s.state) || wait.is_zero() {
                 if terminal(s.state) {
-                    rec.lock().unwrap().observed = true;
+                    let _delivery = crate::app::notification_delivery::lock();
+                    let mut record = rec.lock().unwrap();
+                    record.observed = true;
+                    record.explicitly_observed = true;
                 }
                 return Ok(s);
             }
             if tokio::time::timeout_at(deadline, notified).await.is_err() {
-                return Ok(snapshot_bounded(&rec, cursor, max_output_bytes));
+                let snapshot = snapshot_bounded(&rec, cursor, max_output_bytes);
+                if terminal(snapshot.state) {
+                    let _delivery = crate::app::notification_delivery::lock();
+                    let mut record = rec.lock().unwrap();
+                    record.observed = true;
+                    record.explicitly_observed = true;
+                }
+                return Ok(snapshot);
             }
         }
     }
@@ -324,7 +339,7 @@ impl ProcessManager {
                 continue;
             };
             let mut record = record.lock().unwrap();
-            if terminal(record.state) && record.observed {
+            if terminal(record.state) && record.observed && !record.explicitly_observed {
                 record.observed = false;
             }
         }
@@ -498,6 +513,7 @@ fn command_from_execution(execution: &ProcessExecution) -> Result<tokio::process
 }
 
 fn mark_terminal(rec: &SharedRecord, state: State, detail: Option<String>, exited: &Notify) {
+    let _delivery = crate::app::notification_delivery::lock();
     let mut record = rec.lock().unwrap();
     record.state = state;
     record.detail = detail;

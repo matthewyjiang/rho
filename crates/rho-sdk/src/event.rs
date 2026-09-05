@@ -201,6 +201,12 @@ impl ModelCallMetrics {
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum RunEvent {
+    /// Internal host input accepted at a runtime checkpoint, not human steering.
+    BoundaryInputApplied {
+        session_id: crate::SessionId,
+        run_id: RunId,
+        input: crate::UserInput,
+    },
     Started {
         run_id: RunId,
         revision: Revision,

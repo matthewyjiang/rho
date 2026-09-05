@@ -14,6 +14,7 @@ use crate::{
 #[test]
 fn cursor_session_line_uses_cursor_agent_resume() {
     let snapshot = SubagentSnapshot {
+        prior_notices: Vec::new(),
         id: "abc123".into(),
         agent_id: "cursor-test".into(),
         title: None,

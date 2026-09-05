@@ -65,6 +65,7 @@ The crate [README](https://github.com/matthewyjiang/rho/blob/main/crates/rho-sdk
 - [Hooks](/sdk/hooks)
 - [Sessions, compaction, and persistence](/sdk/sessions-and-persistence)
 - [Events, retries, cancellation, drop, and shutdown](/sdk/events-and-cancellation)
+- [Runtime boundary inputs](/sdk/boundary-inputs)
 
 ### Security
 

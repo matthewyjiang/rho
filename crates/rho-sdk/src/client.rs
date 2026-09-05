@@ -449,6 +449,7 @@ impl RhoBuilder {
             .with_host_labels(self.hook_host_labels),
             publish_live_history,
             lifecycle: Arc::new(RuntimeLifecycle::default()),
+            boundary_inputs: None,
         })
     }
 }
@@ -456,6 +457,7 @@ impl RhoBuilder {
 /// Headless runtime configuration shared by SDK sessions.
 #[derive(Clone)]
 pub struct Rho {
+    pub(crate) boundary_inputs: Option<crate::BoundaryInputSource>,
     pub(crate) provider: Arc<dyn ModelProvider>,
     pub(crate) tools: ToolRegistry,
     pub(crate) system_prompt: SystemPrompt,

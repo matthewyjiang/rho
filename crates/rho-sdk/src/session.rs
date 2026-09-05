@@ -528,6 +528,22 @@ impl Session {
         self.start_run(RunStart::user(input)).await
     }
 
+    /// Installs an opt-in host checkpoint channel while the session is idle.
+    /// Service its receiver alongside run events, and use a fresh channel for
+    /// each run. See [`crate::boundary_input_channel`].
+    pub fn set_boundary_inputs(
+        &self,
+        source: Option<crate::BoundaryInputSource>,
+    ) -> Result<(), Error> {
+        let _inactive = self.core.lock_inactive()?;
+        self.core
+            .runtime
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .boundary_inputs = source;
+        Ok(())
+    }
+
     /// Starts a run by executing a host-requested tool call after the user input
     /// and before the first model request.
     pub async fn start_with_tool_call(

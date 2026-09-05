@@ -175,9 +175,34 @@ fn rebind_retains_notices_without_crossing_permit_generations() {
 
 fn notice(run_id: &str, parent_session_id: &SessionId) -> SubagentNotice {
     SubagentNotice {
+        acknowledged: Default::default(),
         run_id: run_id.into(),
         agent_id: "worker".into(),
         parent_session_id: parent_session_id.clone(),
         message: "blocked on schema".into(),
     }
+}
+
+// Covers: restoring a reserved batch after explicit status must not revive old
+// notices or release the capacity of genuinely later, identical-body notices.
+// Owner: inbox receipt reconciliation, not presentation.
+#[test]
+fn restored_acknowledged_notices_do_not_wake_the_parent() {
+    let session = SessionId::from_string("session").unwrap();
+    let bridge = SubagentNoticeBridge::new();
+    let mut inbox = SubagentInbox::default();
+    inbox.bind_notices_for_test(&bridge);
+    let earlier = notice("abc123", &session);
+    bridge.post(earlier.clone()).unwrap();
+    inbox.drain();
+    let reserved = inbox.take_notices(&session);
+    earlier.acknowledge();
+    let later = notice("abc123", &session);
+    bridge.post(later.clone()).unwrap();
+    inbox.drain();
+    inbox.return_notices(reserved);
+    inbox.reconcile_observed();
+    assert_eq!(inbox.take_notices(&session), vec![later]);
+    inbox.commit_delivered_notices(1);
+    assert!(bridge.pending_for_run("abc123").is_empty());
 }

@@ -27,6 +27,8 @@ mod mcp;
 mod provider;
 #[path = "interactive_runtime_hooks.rs"]
 mod session_hooks;
+#[path = "interactive_runtime_start.rs"]
+mod start;
 #[path = "interactive_runtime_startup.rs"]
 pub(super) mod startup;
 #[path = "interactive_runtime_workspace_rewind.rs"]
@@ -117,11 +119,6 @@ pub(crate) struct InteractiveRuntime {
     tool_list_changed: bool,
     /// Runs that reached a terminal outcome, reported at the session boundary.
     completed_runs: u64,
-}
-
-enum TurnPrelude {
-    None,
-    ToolCall(ToolCall),
 }
 
 #[derive(Clone, Copy)]
@@ -337,81 +334,6 @@ impl InteractiveRuntime {
     pub(crate) fn attach_storage(&mut self, storage: StoredSession) {
         bind_subagent_parent(&self.tools, self.sessions.session().id(), Some(&storage));
         self.sessions.attach_storage(storage);
-    }
-
-    pub(crate) async fn start(
-        &mut self,
-        input: UserInput,
-        display_user: Option<Message>,
-    ) -> Result<(), Error> {
-        self.start_run(input, display_user, TurnPrelude::None).await
-    }
-
-    pub(crate) async fn start_with_tool_call(
-        &mut self,
-        input: UserInput,
-        display_user: Option<Message>,
-        tool_call: ToolCall,
-    ) -> Result<(), Error> {
-        self.start_run(input, display_user, TurnPrelude::ToolCall(tool_call))
-            .await
-    }
-
-    async fn start_run(
-        &mut self,
-        input: UserInput,
-        display_user: Option<Message>,
-        prelude: TurnPrelude,
-    ) -> Result<(), Error> {
-        if self.runs.state() != InteractiveState::Idle || self.is_compacting() {
-            return Err(Error::SessionBusy);
-        }
-        if let Some(source) = self.sessions.pending_replacement() {
-            self.rebuild_session(
-                source,
-                ReplacementLifecycle::Started,
-                SessionWriteRetention::Keep,
-            )
-            .await
-            .map_err(|error| Error::Persistence {
-                message: error.to_string(),
-            })?;
-        }
-        let model_user = Message::User(input.blocks().to_vec());
-        let mut request_history = self.sessions.history();
-        let pending_turn = PendingTurn::new(model_user, display_user, request_history.len());
-        request_history.push(Message::User(input.blocks().to_vec()));
-        let context_usage = rho_sdk::model::ContextUsage::estimated(
-            rho_sdk::model::context::estimate_context_tokens(&request_history, &self.tools.specs()),
-            self.context_window,
-        );
-        self.tools
-            .checkpoint_tracker()
-            .begin_turn(self.sessions.storage())
-            .map_err(|error| Error::Persistence {
-                message: error.to_string(),
-            })?;
-        let run_result = match prelude {
-            TurnPrelude::None => self.sessions.session().start(input).await,
-            TurnPrelude::ToolCall(call) => {
-                self.sessions
-                    .session()
-                    .start_with_tool_call(input, call)
-                    .await
-            }
-        };
-        let run = match run_result {
-            Ok(run) => run,
-            Err(error) => {
-                self.tools.checkpoint_tracker().discard_turn();
-                return Err(error);
-            }
-        };
-        if let Err(error) = self.runs.begin(run, pending_turn, context_usage) {
-            self.tools.checkpoint_tracker().discard_turn();
-            return Err(error);
-        }
-        Ok(())
     }
 
     pub(crate) async fn next_event(&mut self) -> Option<RunEvent> {

@@ -128,6 +128,7 @@
 
 #![forbid(unsafe_code)]
 
+mod boundary_input;
 mod cancellation;
 mod client;
 mod compaction;
@@ -153,6 +154,9 @@ mod tool_host;
 mod usage;
 mod workspace;
 
+pub use boundary_input::{
+    boundary_input_channel, BoundaryInputRequest, BoundaryInputSource, InputBoundary,
+};
 pub use cancellation::CancellationToken;
 pub use client::{Rho, RhoBuilder, SessionOptions, ShutdownOutcome, SystemPrompt};
 pub use compaction::{

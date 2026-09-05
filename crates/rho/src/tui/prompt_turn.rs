@@ -301,22 +301,20 @@ impl App {
         }
 
         self.turn.clear_tool_calls();
-        let start_result = match failed_turn.initial_tool_call.clone() {
-            Some(call) => {
-                agent
-                    .start_with_tool_call(model_input, failed_turn.display_user.clone(), call)
-                    .await
-            }
-            None => {
-                agent
-                    .start(model_input, failed_turn.display_user.clone())
-                    .await
+        let mut boundary_requests = match agent
+            .start_with_boundary_inputs(
+                model_input,
+                failed_turn.display_user.clone(),
+                failed_turn.initial_tool_call.clone(),
+            )
+            .await
+        {
+            Ok(receiver) => receiver,
+            Err(error) => {
+                self.abandon_provider_turn_start(agent, &mut pending_boundary);
+                return Err(error.into());
             }
         };
-        if let Err(error) = start_result {
-            self.abandon_provider_turn_start(agent, &mut pending_boundary);
-            return Err(error.into());
-        }
         // Provider start accepted the input; commit drained boundary delivery.
         // Folded deliveries surface a notice; standalone idle completions already
         // used the batch as the user entry, so committing is just dropping it.
@@ -446,6 +444,9 @@ impl App {
                 }
                 () = self.subagent_inbox.recv() => {
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
+                }
+                Some(request) = boundary_requests.recv() => {
+                    self.deliver_running_boundary(request, agent).await;
                 }
                 _ = tokio::time::sleep_until(frame_deadline) => {
                     self.drain_stream_tick(terminal)?;

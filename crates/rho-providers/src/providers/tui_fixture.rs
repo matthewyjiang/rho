@@ -3,6 +3,7 @@ use std::{sync::Arc, time::Duration};
 mod advisor;
 mod agent_message;
 mod attach;
+mod boundary_notifications;
 mod compact;
 mod docs_demo;
 mod edit;
@@ -111,6 +112,9 @@ async fn fixture_stream(
     events: ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
     let prompt = last_user_text(&request).unwrap_or_default();
+    if let Some(response) = boundary_notifications::intercept(&request) {
+        return response;
+    }
     if is_subagent_title_request(&request) {
         if agent_message::is_untitled_task(&prompt) {
             return completed("");
