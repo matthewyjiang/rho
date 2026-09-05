@@ -414,6 +414,9 @@ fn incrementally_keeps_prose_after_a_closed_fence() {
 #[path = "history_cache_copy_tests.rs"]
 mod copy;
 
+#[path = "history_cache_reasoning_tests.rs"]
+mod reasoning;
+
 // Covers: new table rows paint against frozen widths without a full reflow.
 // Owner: history line cache (incremental append)
 #[test]
