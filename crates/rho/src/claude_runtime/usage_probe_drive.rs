@@ -1,5 +1,9 @@
 //! Unix PTY drive for the Claude `/usage` probe.
 
+#[cfg(test)]
+#[path = "usage_probe_drive_tests.rs"]
+mod tests;
+
 use std::{
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
@@ -27,11 +31,17 @@ const PROMPT_WAIT: Duration = Duration::from_secs(60);
 /// which is exactly startup + the old 15s budget. Warm runs never wait
 /// this long; it only bounds a hung refresh.
 const PANEL_WAIT: Duration = Duration::from_secs(30);
-/// Anthropic's usage endpoint can sit on "Refreshing" after the panel
-/// appears. Eight seconds covers a slow network without rivaling
-/// [`PANEL_WAIT`] on a hung refresh.
-const REFRESH_SETTLE: Duration = Duration::from_secs(8);
 const PANEL_MARKERS: &[&str] = &["Current session", "% used", "%used"];
+// Claude can keep percentages visible after a failed refresh, and hides the
+// spinner when showing these notices. None of those windows are live results.
+const REFRESH_FAILURE_MARKERS: &[&str] = &[
+    "failed to load usage",
+    "showing last-known usage",
+    "could not refresh usage",
+    "partial usage data",
+    "per-model breakdown unavailable",
+    "usage endpoint is rate limited",
+];
 /// Trust dialog defaults to "No, exit". Down and Enter must be separate
 /// writes; one burst of Down+Enter confirms No and Claude exits.
 const TRUST_DOWN: &[u8] = b"\x1b[B";
@@ -43,11 +53,6 @@ const PROMPT_SETTLE: Duration = Duration::from_millis(50);
 const ENTER_SETTLE: Duration = Duration::from_millis(80);
 const POLL_SLICE: Duration = Duration::from_millis(25);
 const SETTLE_DRAIN: Duration = Duration::from_millis(80);
-
-enum CollectPhase {
-    Grow,
-    Settle,
-}
 
 pub(super) fn read_usage_from_binary(
     binary: &Path,
@@ -68,8 +73,9 @@ pub(super) fn read_usage_from_binary(
     session
         .inject_bytes(b"\r")
         .map_err(UsageProbeError::Spawn)?;
-    wait_for_usage_panel(&mut session, abort)?;
-    collect_usage(&mut session, abort, grow)
+    let deadline = Instant::now() + PANEL_WAIT;
+    wait_for_usage_panel(&mut session, abort, deadline)?;
+    collect_usage(&mut session, abort, grow, deadline)
 }
 
 fn kill_if_aborted(session: &mut PtySession, abort: &AtomicBool) -> Result<(), UsageProbeError> {
@@ -132,102 +138,144 @@ fn wait_for_prompt(session: &mut PtySession, abort: &AtomicBool) -> Result<(), U
 fn wait_for_usage_panel(
     session: &mut PtySession,
     abort: &AtomicBool,
+    deadline: Instant,
 ) -> Result<(), UsageProbeError> {
-    let deadline = Instant::now() + PANEL_WAIT;
-    let mut retried = false;
     loop {
         kill_if_aborted(session, abort)?;
         session.poll(POLL_SLICE);
         let screen = session.contents();
+        check_refresh_failure(&screen)?;
         if PANEL_MARKERS.iter().any(|needle| screen.contains(needle)) {
             return Ok(());
-        }
-        if !retried && screen.to_ascii_lowercase().contains("failed to load usage") {
-            session.inject_bytes(b"r").map_err(UsageProbeError::Spawn)?;
-            retried = true;
-            continue;
         }
         if !session.is_running() {
             session.poll(Duration::from_millis(50));
             let screen = session.contents();
+            check_refresh_failure(&screen)?;
             if PANEL_MARKERS.iter().any(|needle| screen.contains(needle)) {
                 return Ok(());
             }
             session.kill();
             return Err(UsageProbeError::TimeoutScreen {
                 what: "the /usage panel",
-                screen: screen.chars().take(800).collect(),
+                screen,
             });
         }
         if Instant::now() >= deadline {
             session.kill();
             return Err(UsageProbeError::TimeoutScreen {
                 what: "the /usage panel",
-                screen: session.contents().chars().take(800).collect(),
+                screen: session.contents(),
             });
         }
     }
 }
 
-fn consider_parse(best: &mut Option<RateLimitState>, screen: &str) {
-    if let Some(state) = parse_usage_screen(screen, rate_limit::now_unix()) {
-        if best.as_ref().map_or(0, |ready| ready.windows.len()) < state.windows.len() {
-            *best = Some(state);
-        }
+fn check_refresh_failure(screen: &str) -> Result<(), UsageProbeError> {
+    let lower = screen.to_ascii_lowercase();
+    if REFRESH_FAILURE_MARKERS
+        .iter()
+        .any(|marker| lower.contains(marker))
+    {
+        // Keep the whole bounded terminal viewport, including the status footer.
+        return Err(UsageProbeError::RefreshFailed {
+            screen: screen.into(),
+        });
     }
-}
-
-fn finish_with_best(
-    session: &mut PtySession,
-    best: Option<RateLimitState>,
-    screen: &str,
-) -> Result<RateLimitState, UsageProbeError> {
-    session.kill();
-    best.or_else(|| parse_usage_screen(screen, rate_limit::now_unix()))
-        .ok_or(UsageProbeError::Unparseable)
+    Ok(())
 }
 
 fn collect_usage(
     session: &mut PtySession,
     abort: &AtomicBool,
     grow: Duration,
+    deadline: Instant,
 ) -> Result<RateLimitState, UsageProbeError> {
-    let mut phase = CollectPhase::Grow;
-    let mut deadline = Instant::now() + grow;
-    let mut best: Option<RateLimitState> = None;
+    let mut collection = UsageCollection::new(grow, deadline);
     loop {
         kill_if_aborted(session, abort)?;
         session.poll(POLL_SLICE);
         let screen = session.contents();
-        let running = session.is_running();
-        consider_parse(&mut best, &screen);
-        if !waiting_on_named_windows(&screen, best.as_ref()) {
-            if let Some(state) = best.take() {
+        match collection.observe(&screen, session.is_running(), Instant::now())? {
+            CollectStep::Poll => {}
+            CollectStep::Drain => {
+                // A PTY read can end before the frame's status footer.
+                poll_until(session, abort, Instant::now() + SETTLE_DRAIN)?;
+            }
+            CollectStep::Ready(state) => {
                 session.kill();
                 return Ok(state);
             }
         }
-        let timed_out = Instant::now() >= deadline;
-        match phase {
-            CollectPhase::Grow if timed_out || !running => {
-                if let Some(state) = best.take() {
-                    session.kill();
-                    return Ok(state);
-                }
-                phase = CollectPhase::Settle;
-                deadline = Instant::now() + REFRESH_SETTLE;
-            }
-            CollectPhase::Settle => {
-                let refreshing = screen.to_ascii_lowercase().contains("refreshing");
-                if !refreshing || !running || timed_out {
-                    session.poll(SETTLE_DRAIN);
-                    let screen = session.contents();
-                    consider_parse(&mut best, &screen);
-                    return finish_with_best(session, best, &screen);
-                }
-            }
-            CollectPhase::Grow => {}
+    }
+}
+
+enum CollectStep {
+    Poll,
+    Drain,
+    Ready(RateLimitState),
+}
+
+/// Collection decisions consume the current viewport, never an earlier parse.
+struct UsageCollection {
+    grow: Duration,
+    deadline: Instant,
+    grow_deadline: Option<Instant>,
+    drained: bool,
+}
+
+impl UsageCollection {
+    fn new(grow: Duration, deadline: Instant) -> Self {
+        Self {
+            grow,
+            deadline,
+            grow_deadline: None,
+            drained: false,
         }
+    }
+
+    fn observe(
+        &mut self,
+        screen: &str,
+        running: bool,
+        now: Instant,
+    ) -> Result<CollectStep, UsageProbeError> {
+        check_refresh_failure(screen)?;
+        if now >= self.deadline {
+            return Err(UsageProbeError::TimeoutScreen {
+                what: "the /usage refresh",
+                screen: screen.into(),
+            });
+        }
+        let refreshing = screen.to_ascii_lowercase().contains("refreshing");
+        if refreshing {
+            self.grow_deadline = None;
+            self.drained = false;
+        } else {
+            // Never retain a pre-refresh parse: equal-count refreshes replace
+            // percentages and may remove windows as well as add them.
+            let state = parse_usage_screen(screen, rate_limit::now_unix());
+            if !waiting_on_named_windows(screen, state.as_ref()) {
+                if let Some(state) = state {
+                    if !self.drained {
+                        self.drained = true;
+                        return Ok(CollectStep::Drain);
+                    }
+                    return Ok(CollectStep::Ready(state));
+                }
+            }
+            self.drained = false;
+            if now >= *self.grow_deadline.get_or_insert(now + self.grow) {
+                return Err(UsageProbeError::Unparseable);
+            }
+        }
+        if !running {
+            return Err(UsageProbeError::TimeoutScreen {
+                what: "the /usage refresh",
+                screen: screen.into(),
+            });
+        }
+        Ok(CollectStep::Poll)
     }
 }
 

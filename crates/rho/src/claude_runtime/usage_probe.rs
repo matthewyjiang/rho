@@ -54,6 +54,8 @@ pub(crate) enum UsageProbeError {
     Timeout(&'static str),
     #[error("claude code: timed out waiting for {what}: {screen}")]
     TimeoutScreen { what: &'static str, screen: String },
+    #[error("claude code: /usage refresh failed: {screen}")]
+    RefreshFailed { screen: String },
     #[error("claude code: /usage panel was not readable")]
     Unparseable,
     #[error("claude code: auth preflight failed: {0}")]
@@ -132,7 +134,7 @@ fn probe_usage_blocking(abort: &AtomicBool) -> Result<RateLimitState, UsageProbe
         other => UsageProbeError::Auth(other),
     })?;
     let cwd = probe_cwd()?;
-    let env = claude_probe_env();
+    let env = claude_probe_env(std::env::vars());
     read_usage_from_binary(
         executable.path(),
         &[
@@ -161,7 +163,7 @@ fn probe_cwd() -> Result<PathBuf, UsageProbeError> {
     std::env::current_dir().map_err(|error| UsageProbeError::Spawn(error.to_string()))
 }
 
-/// Drive `binary` until a `/usage` panel parses. Tests inject a fake child.
+/// Drive `binary` until a completed `/usage` refresh parses. Tests inject a fake child.
 pub(crate) fn read_usage_from_binary(
     binary: &Path,
     args: &[&str],
@@ -271,11 +273,11 @@ const STRIP_ENV: &[&str] = &[
     "HERDR_PANE_ID",
 ];
 
-fn claude_probe_env() -> Vec<(String, String)> {
+fn claude_probe_env(inherited: impl Iterator<Item = (String, String)>) -> Vec<(String, String)> {
     // Inherit the host environment so keyring, TLS, and proxy settings reach
     // Claude's usage endpoint. A tight allowlist drops those and the panel
     // shows "Failed to load usage data".
-    let mut env: Vec<(String, String)> = std::env::vars()
+    let mut env: Vec<(String, String)> = inherited
         .filter(|(key, _)| {
             !STRIP_ENV
                 .iter()
@@ -287,6 +289,11 @@ fn claude_probe_env() -> Vec<(String, String)> {
     upsert_env(&mut env, "DISABLE_AUTOUPDATER", "1");
     upsert_env(&mut env, "CLAUDE_CODE_AUTO_CONNECT_IDE", "false");
     upsert_env(&mut env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1");
+    // Pin this disposable PTY to classic rendering, independent of the user's
+    // fullscreen preference or Claude's automatic renderer fallback. These
+    // child-only overrides do not change the user's persistent settings.
+    upsert_env(&mut env, "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN", "1");
+    upsert_env(&mut env, "CLAUDE_CODE_NO_FLICKER", "0");
     env
 }
 

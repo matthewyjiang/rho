@@ -1,5 +1,49 @@
 use super::{classify_idle_screen, trust_yes_selected, waiting_on_named_windows, IdleScreen};
 
+// Covers: host renderer overrides must not change the probe's mode, while
+// endpoint environment survives and host terminal markers are removed.
+// Owner: environment policy
+#[test]
+fn probe_environment_isolates_renderer_preferences() {
+    use std::collections::BTreeMap;
+
+    use pretty_assertions::assert_eq;
+
+    let expected = BTreeMap::from([
+        ("HTTPS_PROXY".into(), "http://proxy.invalid".into()),
+        ("TERM".into(), "xterm-256color".into()),
+        ("COLORTERM".into(), "truecolor".into()),
+        ("DISABLE_AUTOUPDATER".into(), "1".into()),
+        ("CLAUDE_CODE_AUTO_CONNECT_IDE".into(), "false".into()),
+        ("CLAUDE_CODE_DISABLE_AUTO_MEMORY".into(), "1".into()),
+        ("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN".into(), "1".into()),
+        ("CLAUDE_CODE_NO_FLICKER".into(), "0".into()),
+    ]);
+    for renderer in [None, Some(("0", "1")), Some(("1", "0"))] {
+        let mut inherited = vec![
+            ("HTTPS_PROXY".into(), "http://proxy.invalid".into()),
+            ("TERM".into(), "dumb".into()),
+            ("TERM_PROGRAM".into(), "host-terminal".into()),
+            ("HERDR_ENV".into(), "1".into()),
+        ];
+        if let Some((disable, fullscreen)) = renderer {
+            inherited.extend([
+                (
+                    "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN".into(),
+                    disable.into(),
+                ),
+                ("CLAUDE_CODE_NO_FLICKER".into(), fullscreen.into()),
+            ]);
+        }
+        assert_eq!(
+            super::claude_probe_env(inherited.into_iter())
+                .into_iter()
+                .collect::<BTreeMap<_, _>>(),
+            expected
+        );
+    }
+}
+
 // Covers: the trust dialog's ❯ must not be treated as the idle prompt.
 // Owner: pure unit
 #[test]
