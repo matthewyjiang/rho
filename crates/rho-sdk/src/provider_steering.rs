@@ -123,15 +123,6 @@ impl ProviderSteeringReceiver {
     }
 }
 
-impl Drop for ProviderSteeringReceiver {
-    fn drop(&mut self) {
-        self.rx.close();
-        while let Ok(request) = self.rx.try_recv() {
-            drop(request);
-        }
-    }
-}
-
 /// Outcome reported after a provider claims or declines a steering request.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]

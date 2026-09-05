@@ -1,8 +1,9 @@
 use pretty_assertions::assert_eq;
 
-use super::{ProviderSteeringOutcome, ProviderSteeringRequest};
+use super::{try_retract_claim, ProviderSteeringOutcome, ProviderSteeringRequest};
 
 // Covers: explicit settlement followed by Drop must not emit a second outcome.
+// Retracted input must report Released even when the provider calls accept.
 // Owner: SDK provider steering request lifecycle.
 #[test]
 fn settlement_emits_exactly_one_outcome() {
@@ -16,6 +17,13 @@ fn settlement_emits_exactly_one_outcome() {
             ProviderSteeringOutcome::Released,
         ),
         (drop, ProviderSteeringOutcome::Released),
+        (
+            |request| {
+                assert!(try_retract_claim(&request.claim));
+                request.accept();
+            },
+            ProviderSteeringOutcome::Released,
+        ),
     ];
     for (settle, expected) in cases {
         let (request, mut outcomes) = ProviderSteeringRequest::test_unclaimed(Vec::new());
