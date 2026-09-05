@@ -9,6 +9,7 @@ mod docs_demo;
 mod edit;
 mod goal;
 mod quiet_subagent;
+mod release;
 mod response_scenarios;
 mod stream_scenarios;
 

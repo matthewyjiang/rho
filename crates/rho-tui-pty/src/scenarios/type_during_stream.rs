@@ -1,5 +1,3 @@
-use anyhow::Context;
-
 use super::STREAM;
 
 use crate::{harness::PtyHarness, scenario::Step};
@@ -26,20 +24,9 @@ fn highest_visible_flood_event(screen: String) -> u16 {
         .unwrap_or(10)
 }
 
-#[cfg(unix)]
 fn release_input_flood(harness: &mut PtyHarness) -> anyhow::Result<()> {
-    let cwd = harness
-        .working_directory()
-        .context("scenario working directory")?;
-    std::os::unix::net::UnixDatagram::unbound()?
-        .send_to(b"!", cwd.join(".input-flood.sock"))
-        .context("release input flood checkpoint")?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn release_input_flood(_harness: &mut PtyHarness) -> anyhow::Result<()> {
-    anyhow::bail!("checkpointed input flood requires Unix")
+    // Must match the marker in tui_fixture/stream_scenarios.rs.
+    super::release_fixture(harness, ".rho-fixture-release-input-flood")
 }
 
 // The fixture holds each batch's final line until we release the next batch.

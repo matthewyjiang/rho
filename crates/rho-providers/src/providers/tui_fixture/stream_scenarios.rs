@@ -151,7 +151,6 @@ pub(super) async fn intercept(
         "fixture steering" => Some(stream_steering(request, events).await),
         "fixture delay" => Some(stream_delay(request, events).await),
         "fixture input flood" => Some(stream_input_flood(request, events).await),
-        #[cfg(unix)]
         "fixture checkpointed input flood" => {
             Some(stream_checkpointed_input_flood(request, events).await)
         }
@@ -503,16 +502,15 @@ async fn stream_input_flood(
     completed(response)
 }
 
-#[cfg(unix)]
 async fn stream_checkpointed_input_flood(
     request: &ModelRequest<'_>,
     events: &ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
-    // Bind before publishing the first checkpoint so visible output also
-    // acknowledges that the PTY can release the next batch. Datagram delivery
-    // remains queued if the release arrives before recv starts.
-    let socket = tokio::net::UnixDatagram::bind(".input-flood.sock")
-        .map_err(|error| ProviderError::interrupted(format!("input flood bind: {error}")))?;
+    // Mirrored in rho-tui-pty/src/scenarios/type_during_stream.rs.
+    const RELEASE_MARKER: &str = ".rho-fixture-release-input-flood";
+    // Clear a cancelled run's release before any output acknowledges readiness.
+    // Never clear at a checkpoint: the harness may already have released it.
+    super::release::consume_release(RELEASE_MARKER)?;
     // Preserve the original 400-delta workload; split it at startup and halfway
     // so overlay input and draft input each get a separately released flood.
     for batch in [1..=10, 11..=200, 201..=400] {
@@ -527,17 +525,8 @@ async fn stream_checkpointed_input_flood(
             fixture_sleep(&request.cancellation, Duration::from_millis(5)).await?;
         }
         if last != 400 {
-            // The release command is exactly one byte.
-            let mut command = [0_u8; 1];
-            tokio::select! {
-                biased;
-                () = request.cancellation.cancelled() => {
-                    return Err(ProviderError::interrupted("input flood stopped"));
-                }
-                result = socket.recv(&mut command) => {
-                    result.map_err(|error| ProviderError::interrupted(format!("input flood receive: {error}")))?;
-                }
-            }
+            super::release::wait_for_release_or_cancel(RELEASE_MARKER, &request.cancellation)
+                .await?;
         }
     }
     // Only the scenario's empty-composer Esc can finish this turn.
