@@ -711,7 +711,7 @@ thread_local! {
     static TEST_CACHE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 
-fn test_cache_dir() -> Option<PathBuf> {
+pub(super) fn test_cache_dir() -> Option<PathBuf> {
     TEST_CACHE_DIR.with(|path| path.borrow().clone())
 }
 
