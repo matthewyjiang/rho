@@ -24,6 +24,12 @@ async fn completion_checkpoint_incorporates_input_before_committing() {
     );
     let runtime = Rho::builder()
         .provider(provider.clone())
+        // History exceeds this threshold after the candidate response, but
+        // fresh completion input must reach the next request before compaction.
+        .compactor(crate::ScriptedCompactor::new([]))
+        .compaction_policy(crate::CompactionPolicy::after_messages(
+            NonZeroUsize::new(2).unwrap(),
+        ))
         .event_capacity(NonZeroUsize::new(1).unwrap())
         .build()
         .unwrap();
@@ -77,6 +83,44 @@ async fn completion_checkpoint_incorporates_input_before_committing() {
     );
     // Empty final acknowledgement closes the checkpoint stream for this run.
     assert!(requests.try_recv().is_err());
+}
+
+// Covers: the final step must leave completion notices queued with the host.
+// Owner: SDK orchestration step budget.
+#[tokio::test]
+async fn last_step_does_not_accept_completion_input() {
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("scripted", "test", "model"),
+        [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+            ContentBlock::Text("done".into()),
+        ]))],
+    );
+    let runtime = Rho::builder()
+        .provider(provider.clone())
+        .max_steps(NonZeroUsize::new(1).unwrap())
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let (source, mut requests) = boundary_input_channel();
+    session.set_boundary_inputs(Some(source)).unwrap();
+    let mut run = session.start(UserInput::text("work")).await.unwrap();
+    let mut boundaries = Vec::new();
+    loop {
+        tokio::select! {
+            Some(request) = requests.recv() => {
+                boundaries.push(request.boundary());
+                let input = (request.boundary() == InputBoundary::BeforeCompletion)
+                    .then(|| UserInput::text("must stay queued"));
+                request.respond(input).await;
+            }
+            event = run.next_event() => if event.is_none() { break; },
+        }
+    }
+    assert_eq!(boundaries, vec![InputBoundary::BeforeProvider]);
+    let outcome = run.outcome().await.unwrap();
+    assert_eq!(outcome.text(), "done");
+    assert_eq!(outcome.stop_reason(), crate::StopReason::EndTurn);
+    assert_eq!(provider.recorded_requests().len(), 1);
 }
 
 // Covers: cancellation/host disappearance cannot leave the SDK parked forever,

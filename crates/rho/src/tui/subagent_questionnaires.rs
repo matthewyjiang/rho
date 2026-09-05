@@ -35,12 +35,14 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) {
         if request.session_id() != agent.session_id() {
+            request.respond(None).await;
             return;
         }
         let captured = {
             let _snapshot = crate::app::notification_delivery::lock();
             let batch = self.take_turn_boundary_batch_locked(agent);
             if batch.is_empty() {
+                self.restore_turn_boundary_batch(agent, batch);
                 // Send synchronously while publishers are excluded so later
                 // arrivals belong to idle delivery. Await ack outside the gate.
                 Err(request.respond(None))
@@ -155,7 +157,12 @@ impl App {
             let _snapshot = crate::app::notification_delivery::lock();
             self.take_turn_boundary_batch_locked(agent)
         };
-        (!batch.is_empty()).then(|| batch.render())
+        if batch.is_empty() {
+            self.restore_turn_boundary_batch(agent, batch);
+            None
+        } else {
+            Some(batch.render())
+        }
     }
 
     fn take_turn_boundary_batch_locked(

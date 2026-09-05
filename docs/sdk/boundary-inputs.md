@@ -12,8 +12,13 @@ is deferred. This keeps internal input out of unresolved tool-call continuations
 The final checkpoint runs after those jobs have settled.
 It waits for the host's reply. Returning input at the completion checkpoint makes
 the runtime request another provider step instead of committing that response.
+The completion checkpoint is skipped on the last allowed step, leaving notices
+with the host for the next turn rather than accepting input the model cannot read.
 This avoids the race inherent in watching `ToolFinished` and then steering a run
 that may already have completed.
+
+Pre-provider input is collected after compaction. Input accepted at completion
+skips compaction on the next step so fresh notifications reach the model verbatim.
 
 Streaming continues normally. Text can reach the screen before a notification
 arrives. The guarantee concerns committed end-turn completion, not the first

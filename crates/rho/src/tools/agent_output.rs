@@ -91,7 +91,10 @@ pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotForma
     }
     if !snapshot.prior_notices.is_empty() {
         lines.push("Earlier child notices, in send order. This terminal result supersedes their progress and planning; retain any substantive findings:".into());
-        lines.extend(snapshot.prior_notices.iter().cloned());
+        lines.push(truncate(
+            snapshot.prior_notices.join("\n"),
+            RESULT_EXCERPT_BYTES,
+        ));
     }
     lines.join("\n")
 }

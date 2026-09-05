@@ -158,6 +158,7 @@ async fn execute_turn_loop(
     // The tool set is immutable for the duration of a run, so build the specs
     // (which deep-clone every tool's JSON schema) once instead of per step.
     let tool_specs = runtime.tools.specs();
+    let mut fresh_boundary_input = false;
     for step in 1..=runtime.max_steps.get() {
         drain_commands(&mut commands, &mut steering);
         {
@@ -174,21 +175,6 @@ async fn execute_turn_loop(
             }
         }
         async_jobs.drain_finished(&mut history);
-        if !async_jobs.has_pending() {
-            if let Err(error) = boundary_input::collect(
-                &runtime,
-                &core,
-                &run_id,
-                crate::InputBoundary::BeforeProvider,
-                &mut history,
-                &cancellation,
-                &events,
-            )
-            .await
-            {
-                return terminate_run(core, history, &mut async_jobs, hooks, &events, error).await;
-            }
-        }
         let request_scope = ProviderRequestScope {
             runtime: &runtime,
             session_id: core.id(),
@@ -196,7 +182,8 @@ async fn execute_turn_loop(
             step_index: step,
         };
         let mut compaction_estimate = None;
-        if !async_jobs.has_pending() {
+        // Completion-checkpoint input must reach one provider request verbatim.
+        if !async_jobs.has_pending() && !fresh_boundary_input {
             match maybe_compact(
                 &core,
                 request_scope,
@@ -213,11 +200,32 @@ async fn execute_turn_loop(
                         .await;
                 }
             }
-        } else if runtime.compaction_policy.is_some() {
+        } else if async_jobs.has_pending() && runtime.compaction_policy.is_some() {
             tracing::warn!(
                 pending = async_jobs.pending_count(),
                 "skipping compaction while async tool jobs are pending"
             );
+        }
+        fresh_boundary_input = false;
+        if !async_jobs.has_pending() {
+            match boundary_input::collect(
+                &runtime,
+                &core,
+                &run_id,
+                crate::InputBoundary::BeforeProvider,
+                &mut history,
+                &cancellation,
+                &events,
+            )
+            .await
+            {
+                Ok(true) => compaction_estimate = None,
+                Ok(false) => {}
+                Err(error) => {
+                    return terminate_run(core, history, &mut async_jobs, hooks, &events, error)
+                        .await;
+                }
+            }
         }
         drain_commands(&mut commands, &mut steering);
         // Delivered steers stay staged so a Reuse continuation still matches the
@@ -225,7 +233,7 @@ async fn execute_turn_loop(
         // between steps (including during compact) are applied before the next
         // request so default providers do not spend a turn just to release them.
         if !steering.has_delivered() {
-            // This is the only history mutation between compaction and StepStarted.
+            // Boundary input above and staged steering invalidate the estimate.
             // Tools are immutable for this run; jobs were drained before compaction.
             if steering.has_staged() {
                 compaction_estimate = None;
@@ -463,22 +471,28 @@ async fn execute_turn_loop(
             }
         }
 
-        match boundary_input::collect(
-            &runtime,
-            &core,
-            &run_id,
-            crate::InputBoundary::BeforeCompletion,
-            &mut history,
-            &cancellation,
-            &events,
-        )
-        .await
-        {
-            Ok(true) => continue,
-            Ok(false) => {}
-            Err(error) => {
-                return terminate_run(core, history, control.async_jobs, hooks, &events, error)
-                    .await
+        // Leave notices with the host if there is no provider step to consume them.
+        if step < runtime.max_steps.get() {
+            match boundary_input::collect(
+                &runtime,
+                &core,
+                &run_id,
+                crate::InputBoundary::BeforeCompletion,
+                &mut history,
+                &cancellation,
+                &events,
+            )
+            .await
+            {
+                Ok(true) => {
+                    fresh_boundary_input = true;
+                    continue;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    return terminate_run(core, history, control.async_jobs, hooks, &events, error)
+                        .await
+                }
             }
         }
         let content = final_assistant_content(&history);
