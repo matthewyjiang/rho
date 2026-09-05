@@ -668,7 +668,7 @@ fn provider_without_auth_keeps_compatible_host_auth() {
         auth: "xai-oauth".into(),
         ..Config::default()
     };
-    let bound = AgentBinder::bind(
+    let bound = AgentBinder::bind_with_auth_availability(
         definition_with_model(ModelPolicy::Prefer(ModelSelection {
             provider: Some("xai".into()),
             model: "grok-4.5".into(),
@@ -679,6 +679,7 @@ fn provider_without_auth_keeps_compatible_host_auth() {
             available_tools: capabilities(),
         },
         &host,
+        &|_| panic!("compatible parent auth must not consult other credentials"),
     )
     .unwrap();
     let config = bound.rho_config().unwrap();
@@ -697,7 +698,7 @@ fn explicit_auth_pin_overrides_host_auth() {
         auth: "xai-oauth".into(),
         ..Config::default()
     };
-    let bound = AgentBinder::bind(
+    let bound = AgentBinder::bind_with_auth_availability(
         definition_with_model(ModelPolicy::Select(ModelSelection {
             provider: Some("xai".into()),
             model: "grok-4.5".into(),
@@ -708,6 +709,7 @@ fn explicit_auth_pin_overrides_host_auth() {
             available_tools: capabilities(),
         },
         &host,
+        &|_| panic!("explicit auth must not consult other credentials"),
     )
     .unwrap();
     let config = bound.rho_config().unwrap();
@@ -715,32 +717,73 @@ fn explicit_auth_pin_overrides_host_auth() {
     assert_eq!(config.auth, "xai-api-key");
 }
 
-// Covers: switching provider without auth falls back to that provider default
+// Covers: cross-provider delegated launches use the target provider's host login.
 // Owner: agent binding
 #[test]
-fn provider_switch_without_auth_uses_provider_default() {
+fn provider_switch_without_auth_uses_available_host_credentials() {
     let host = Config {
-        provider: "openai".into(),
+        provider: "openai-codex".into(),
         model: "gpt-5.5".into(),
-        auth: "api-key".into(),
+        auth: "codex".into(),
+        model_aliases: aliases(&[("grok", "xai/grok-4.5")]),
         ..Config::default()
     };
-    let bound = AgentBinder::bind(
-        definition_with_model(ModelPolicy::Select(ModelSelection {
-            provider: Some("xai".into()),
-            model: "grok-4.5".into(),
-            auth: None,
-        })),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: capabilities(),
-        },
-        &host,
-    )
-    .unwrap();
-    let config = bound.rho_config().unwrap();
-    assert_eq!(config.provider, "xai");
-    assert_eq!(config.auth, "xai-api-key");
+    let cases: &[(&str, &[&str], &str)] = &[
+        (
+            "provider: xai\nmodel: grok-4.5",
+            &["xai-oauth"],
+            "xai-oauth",
+        ),
+        (
+            "provider: xai\nmodel: grok-4.5",
+            &["xai-api-key"],
+            "xai-api-key",
+        ),
+        (
+            "provider: xai\nmodel: grok-4.5",
+            &["xai-oauth", "xai-api-key"],
+            "xai-api-key",
+        ),
+        ("provider: xai\nmodel: grok-4.5", &[], "xai-api-key"),
+        ("provider: xai\nmodel: grok-4.5", &["codex"], "xai-api-key"),
+        ("model: '@grok'", &["xai-oauth"], "xai-oauth"),
+        (
+            "provider: xai-oauth\nmodel: grok-4.5",
+            &["xai-api-key"],
+            "xai-oauth",
+        ),
+    ];
+    for (selection, available, expected_auth) in cases {
+        let definition = crate::agent::parse_definition(
+            std::path::Path::new("grok.md"),
+            "grok",
+            &format!("---\ndescription: Code reviewer\n{selection}\n---\nReview the code."),
+        )
+        .unwrap();
+        let bound = AgentBinder::bind_with_auth_availability(
+            Arc::new(definition),
+            AgentInvocation {
+                role: AgentRole::Delegated,
+                available_tools: capabilities(),
+            },
+            &host,
+            &|auth| {
+                assert!(matches!(auth, "xai-api-key" | "xai-oauth"));
+                available.contains(&auth)
+            },
+        )
+        .unwrap();
+        let config = bound.rho_config().unwrap();
+        pretty_assertions::assert_eq!(
+            (
+                config.provider.as_str(),
+                config.auth.as_str(),
+                config.model.as_str()
+            ),
+            ("xai", *expected_auth, "grok-4.5"),
+            "selection={selection}, available={available:?}",
+        );
+    }
 }
 
 // Covers: the model prediction matches the model binding actually picks.

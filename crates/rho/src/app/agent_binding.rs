@@ -267,6 +267,21 @@ impl AgentBinder {
         invocation: AgentInvocation,
         host_config: &Config,
     ) -> anyhow::Result<BoundAgent> {
+        Self::bind_with_auth_availability(definition, invocation, host_config, &|auth| {
+            rho_providers::credentials::auth_has_credentials(
+                &crate::credential_store::AppCredentialStore,
+                auth,
+            )
+            .unwrap_or(false)
+        })
+    }
+
+    fn bind_with_auth_availability(
+        definition: Arc<AgentDefinition>,
+        invocation: AgentInvocation,
+        host_config: &Config,
+        auth_available: &dyn Fn(&str) -> bool,
+    ) -> anyhow::Result<BoundAgent> {
         let fingerprint = definition.fingerprint();
         let runtime = match &definition.runtime {
             AgentRuntimeSpec::Rho {
@@ -279,6 +294,7 @@ impl AgentBinder {
                     model,
                     *reasoning,
                     host_config,
+                    auth_available,
                 )?);
                 let available_tools =
                     available_tools_for_bound_config(&invocation.available_tools, config.as_ref());
@@ -566,9 +582,10 @@ fn bind_rho_config(
     model: &ModelPolicy,
     reasoning: Option<rho_providers::reasoning::ReasoningLevel>,
     host_config: &Config,
+    auth_available: &dyn Fn(&str) -> bool,
 ) -> anyhow::Result<Config> {
     let mut config = host_config.clone();
-    apply_rho_model_policy(agent_id, model, &mut config)?;
+    apply_rho_model_policy(agent_id, model, &mut config, auth_available)?;
     if let Some(reasoning) = reasoning {
         config.reasoning = reasoning;
     }
@@ -583,6 +600,7 @@ fn apply_rho_model_policy(
     agent_id: &str,
     model: &ModelPolicy,
     config: &mut Config,
+    auth_available: &dyn Fn(&str) -> bool,
 ) -> anyhow::Result<()> {
     match model {
         ModelPolicy::Inherit => Ok(()),
@@ -611,6 +629,7 @@ fn apply_rho_model_policy(
                 config,
                 provider.as_deref(),
                 selection.auth.as_deref(),
+                auth_available,
             )?;
             config.model = resolved.model;
             Ok(())
@@ -643,7 +662,7 @@ fn prompt_model_for_definition(
         }),
         AgentRuntimeSpec::Rho { model, .. } => {
             let mut config = host.clone();
-            apply_rho_model_policy(definition.id.as_str(), model, &mut config).ok()?;
+            apply_rho_model_policy(definition.id.as_str(), model, &mut config, &|_| false).ok()?;
             Some(PromptModel::from_config(&config))
         }
     }
@@ -653,15 +672,16 @@ fn prompt_model_for_definition(
 ///
 /// - Explicit `auth` wins and must resolve to a known profile. When `provider` is
 ///   also set, it must accept that auth.
-/// - Provider without `auth` keeps the host auth when it is valid for that
-///   provider; otherwise it uses the provider default. This avoids forcing
-///   `xai` onto `xai-api-key` when the host is already on `xai-oauth`.
+/// - Provider without `auth` keeps compatible host auth; otherwise it selects
+///   an available target-provider login using the catalog's preference order,
+///   falling back to the provider default when none is available.
 /// - Auth without `provider` sets both from the auth profile.
 fn apply_bound_provider_auth(
     agent_id: &str,
     config: &mut Config,
     provider: Option<&str>,
     auth: Option<&str>,
+    auth_available: &dyn Fn(&str) -> bool,
 ) -> anyhow::Result<()> {
     use rho_providers::provider::{
         resolve_auth_mode, resolve_profile_exact, resolve_provider_reference,
@@ -687,6 +707,25 @@ fn apply_bound_provider_auth(
                 }
             }
             let profile = resolve_provider_reference(provider)
+                .map_err(|error| bind_profile_error(agent_id, provider, None, error))?;
+            let auth_modes: Vec<String> = profile
+                .provider
+                .auth_modes()
+                .map(|mode| mode.id.to_string())
+                .collect();
+            let available = auth_modes
+                .iter()
+                .filter(|mode| auth_available(mode))
+                .cloned()
+                .collect::<Vec<_>>();
+            let auth = rho_providers::model::catalog::SelectionAuthContext {
+                current: None,
+                available: &available,
+            }
+            .select(&auth_modes);
+            // Resolve against the original reference so legacy provider aliases
+            // retain their implicit auth pin, too.
+            let profile = resolve_profile_exact(provider, &auth)
                 .map_err(|error| bind_profile_error(agent_id, provider, None, error))?;
             config.provider = profile.provider_name().to_string();
             config.auth = profile.auth_id().to_string();

@@ -61,7 +61,9 @@ Model selection depends on `runtime`. Rho can inherit or pin host models. Claude
 | omitted, no `model` | omitted | omitted | omitted | `inherit` |
 | omitted, with `model` | required | optional | optional | treated as `select` |
 | `inherit` | must omit | must omit | must omit | keep parent provider/model/auth |
-| `prefer` \| `require` \| `select` | required | optional | optional | pin that selection; `@alias` allowed. Unset `auth` keeps a host login that fits the provider; otherwise the provider default auth is used |
+| `prefer` \| `require` \| `select` | required | optional | optional | pin that selection; `@alias` allowed. Unset `auth` keeps a compatible parent auth mode, otherwise selects an available host login for the target provider, falling back to the provider default when none is available |
+
+The editor's `host` auth choice leaves `auth` unset. For example, an xAI agent can use your signed-in `xai-oauth` login even when its parent runs on Codex. When switching providers, available credentials follow the model picker's preference order. An explicit `auth` pin always wins, even if another login is available.
 
 **`runtime: claude-cli`**
 
