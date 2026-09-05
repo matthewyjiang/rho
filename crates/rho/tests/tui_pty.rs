@@ -1373,6 +1373,8 @@ fn fake_claude_background_cost_appears_in_info() {
     harness
         .submit_text("fixture background claude agent")
         .unwrap();
+    // The fake emits its terminal result before marking spawn. Its dispatch
+    // echo can already be superseded, so assert durable delivery and cost below.
     claude_e2e::wait_for_spawn(&fake, Duration::from_secs(15));
     let run_dir = claude_e2e::wait_for_single_run_dir(&home.home, Duration::from_secs(10));
     let status = claude_e2e::wait_for_terminal_result(&run_dir, Duration::from_secs(10));

@@ -200,7 +200,7 @@ async fn execute_turn_loop(
                         .await;
                 }
             }
-        } else if async_jobs.has_pending() && runtime.compaction_policy.is_some() {
+        } else if runtime.compaction_policy.is_some() {
             tracing::warn!(
                 pending = async_jobs.pending_count(),
                 "skipping compaction while async tool jobs are pending"
