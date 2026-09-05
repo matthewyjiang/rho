@@ -372,6 +372,7 @@ impl RuntimeModelView {
             width,
             max_tool_output_lines: self.max_tool_output_lines,
             zen_mode: self.zen_mode,
+            show_reasoning_output: self.show_reasoning_output,
             theme_generation: theme::Theme::generation(),
             max_image_height,
         }
