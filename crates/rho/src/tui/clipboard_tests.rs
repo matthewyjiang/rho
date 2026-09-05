@@ -1,4 +1,10 @@
-use std::io;
+use std::{
+    io,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 use crossterm::event::{MouseButton, MouseEventKind};
 use pretty_assertions::assert_eq;
@@ -15,6 +21,7 @@ use super::{
 struct FakeClipboard {
     text: String,
     paste_error: Option<String>,
+    paste_calls: Arc<AtomicUsize>,
 }
 
 impl Clipboard for FakeClipboard {
@@ -24,6 +31,7 @@ impl Clipboard for FakeClipboard {
     }
 
     fn paste(&mut self) -> io::Result<String> {
+        self.paste_calls.fetch_add(1, Ordering::Relaxed);
         match self.paste_error.as_ref() {
             Some(message) => Err(io::Error::other(message.clone())),
             None => Ok(self.text.clone()),
@@ -39,34 +47,38 @@ async fn insert_external_paste_and_finish(app: &mut super::App, text: &str) {
     }
 }
 
-// Covers: right-click inserts host clipboard text once (release does not paste again).
-// Owner: tui clipboard
+// Covers: main and side composers read host clipboard text once on right-click,
+// never on release. The injected clipboard avoids a native desktop dependency.
+// Owner: tui clipboard routing
 #[test]
 fn right_click_pastes_clipboard_text_into_composer() {
-    let mut app = test_app();
-    app.clipboard = Box::new(FakeClipboard {
-        text: "hello from clip".into(),
-        paste_error: None,
-    });
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    for composer in [super::ComposerMode::Input, super::ComposerMode::Side] {
+        let mut app = test_app();
+        if matches!(composer, super::ComposerMode::Side) {
+            app.open_side_chat();
+        }
+        let paste_calls = Arc::new(AtomicUsize::new(0));
+        app.clipboard = Box::new(FakeClipboard {
+            text: "hello from clip".into(),
+            paste_error: None,
+            paste_calls: paste_calls.clone(),
+        });
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
 
-    app.handle_mouse_event(
-        MouseEventKind::Down(MouseButton::Right),
-        10,
-        10,
-        &mut terminal,
-    )
-    .unwrap();
-    assert_eq!(app.input_ui.text(), "hello from clip");
-
-    app.handle_mouse_event(
-        MouseEventKind::Up(MouseButton::Right),
-        10,
-        10,
-        &mut terminal,
-    )
-    .unwrap();
-    assert_eq!(app.input_ui.text(), "hello from clip");
+        for kind in [
+            MouseEventKind::Down(MouseButton::Right),
+            MouseEventKind::Up(MouseButton::Right),
+        ] {
+            app.handle_mouse_event(kind, 10, 10, &mut terminal).unwrap();
+            assert_eq!(paste_calls.load(Ordering::Relaxed), 1, "{composer:?}");
+            let expected_parent = if matches!(composer, super::ComposerMode::Side) {
+                ""
+            } else {
+                "hello from clip"
+            };
+            assert_eq!(app.input_ui.text(), expected_parent, "{composer:?}");
+        }
+    }
 }
 
 // Covers: empty clipboard is a no-op; a paste backend failure surfaces as a toast.
@@ -77,6 +89,7 @@ fn clipboard_text_paste_empty_and_error() {
     app.clipboard = Box::new(FakeClipboard {
         text: String::new(),
         paste_error: None,
+        paste_calls: Arc::default(),
     });
     app.paste_clipboard_text();
     assert_eq!(app.input_ui.text(), "");
@@ -85,6 +98,7 @@ fn clipboard_text_paste_empty_and_error() {
     app.clipboard = Box::new(FakeClipboard {
         text: String::new(),
         paste_error: Some("no display".into()),
+        paste_calls: Arc::default(),
     });
     app.paste_clipboard_text();
     assert_eq!(app.input_ui.text(), "");

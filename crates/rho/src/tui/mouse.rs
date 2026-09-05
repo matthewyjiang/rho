@@ -96,6 +96,7 @@ impl App {
                         }
                     }
                 }
+                MouseEventKind::Down(MouseButton::Right) => self.paste_clipboard_text(),
                 _ => {}
             }
             return Ok(());
