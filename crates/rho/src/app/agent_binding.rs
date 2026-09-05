@@ -594,9 +594,6 @@ fn bind_rho_config(
 }
 
 /// Applies an agent's Rho model policy onto a host config clone.
-///
-/// Shared by binding and its test-only model prediction helper, including
-/// auth-driven provider pins.
 fn apply_rho_model_policy(
     agent_id: &str,
     model: &ModelPolicy,
@@ -634,38 +631,6 @@ fn apply_rho_model_policy(
             )?;
             config.model = resolved.model;
             Ok(())
-        }
-    }
-}
-
-/// Test-only prediction of the model selected under an explicit auth context.
-///
-/// Agreement tests must supply the same credential store and environment to
-/// this helper and binding. Returns `None` when the policy cannot bind (bad alias, auth pin,
-/// …). This is not a production pre-launch or prefetch path.
-#[cfg(test)]
-fn prompt_model_for_definition(
-    definition: &AgentDefinition,
-    host: &Config,
-    store: &dyn CredentialStore,
-) -> Option<crate::model_identity::PromptModel> {
-    use crate::model_identity::PromptModel;
-
-    match &definition.runtime {
-        AgentRuntimeSpec::ClaudeCli(claude) => Some(PromptModel::ExternalCli {
-            runtime: crate::agent::AgentRuntime::ClaudeCli,
-            requested: claude.model.clone(),
-            resolved: None,
-        }),
-        AgentRuntimeSpec::Cursor(cursor) => Some(PromptModel::ExternalCli {
-            runtime: crate::agent::AgentRuntime::Cursor,
-            requested: cursor.model.clone(),
-            resolved: None,
-        }),
-        AgentRuntimeSpec::Rho { model, .. } => {
-            let mut config = host.clone();
-            apply_rho_model_policy(definition.id.as_str(), model, &mut config, store).ok()?;
-            Some(PromptModel::from_config(&config))
         }
     }
 }

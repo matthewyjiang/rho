@@ -864,13 +864,10 @@ fn provider_switch_without_auth_uses_available_host_credentials() {
     }
 }
 
-// Covers: the model prediction matches the model binding actually picks.
+// Covers: bound prompt identity reflects inherited, selected, aliased, and auth-pinned models.
 // Owner: agent binding.
-//
-// The test-only prediction helper and binding must agree when given the same
-// credential store and isolated environment, not the machine's logins.
 #[test]
-fn predicted_agent_model_matches_the_model_binding_picks() {
+fn bound_agent_prompt_model_reflects_model_policy() {
     use crate::model_identity::PromptModel;
 
     if !in_isolated_credential_process() {
@@ -886,7 +883,14 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
     };
 
     let policies = [
-        ("inherit", ModelPolicy::Inherit),
+        (
+            "inherit",
+            ModelPolicy::Inherit,
+            PromptModel::Rho {
+                provider: "openai".into(),
+                model: "gpt-5.5".into(),
+            },
+        ),
         (
             "model only",
             ModelPolicy::Select(ModelSelection {
@@ -894,6 +898,10 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
                 model: "gpt-5.6-sol".into(),
                 auth: None,
             }),
+            PromptModel::Rho {
+                provider: "openai".into(),
+                model: "gpt-5.6-sol".into(),
+            },
         ),
         (
             "provider and model",
@@ -902,6 +910,10 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
                 model: "grok-4.5".into(),
                 auth: None,
             }),
+            PromptModel::Rho {
+                provider: "xai".into(),
+                model: "grok-4.5".into(),
+            },
         ),
         (
             "alias that carries a provider",
@@ -910,6 +922,10 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
                 model: "@fast".into(),
                 auth: None,
             }),
+            PromptModel::Rho {
+                provider: "xai".into(),
+                model: "grok-4.5".into(),
+            },
         ),
         (
             "alias that keeps the host provider",
@@ -918,6 +934,10 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
                 model: "@bare".into(),
                 auth: None,
             }),
+            PromptModel::Rho {
+                provider: "openai".into(),
+                model: "gpt-5.6-sol".into(),
+            },
         ),
         (
             "auth pin without provider",
@@ -926,14 +946,16 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
                 model: "claude-fable-5".into(),
                 auth: Some("anthropic-api-key".into()),
             }),
+            PromptModel::Rho {
+                provider: "anthropic".into(),
+                model: "claude-fable-5".into(),
+            },
         ),
     ];
 
-    for (name, policy) in policies {
+    for (name, policy, expected) in policies {
         let definition = definition_with_model(policy);
         let store = credentials(&["xai-oauth"]);
-        let predicted = prompt_model_for_definition(&definition, &host, &store)
-            .expect("bindable policy should predict a model");
         let bound = AgentBinder::bind_with_credentials(
             Arc::clone(&definition),
             AgentInvocation {
@@ -945,55 +967,14 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
         )
         .unwrap();
 
-        assert_eq!(predicted, bound.prompt_model(), "{name}");
-        if name == "auth pin without provider" {
-            assert_eq!(
-                predicted,
-                PromptModel::Rho {
-                    provider: "anthropic".into(),
-                    model: "claude-fable-5".into(),
-                },
-                "{name}"
-            );
-        }
+        pretty_assertions::assert_eq!(bound.prompt_model(), expected, "{name}");
     }
-}
-
-// Covers: a policy that cannot bind has no predicted model.
-// Owner: agent binding.
-#[test]
-fn unbindable_agent_policy_predicts_no_model() {
-    let host = Config {
-        provider: "openai".into(),
-        model: "gpt-5.5".into(),
-        auth: "api-key".into(),
-        ..Config::default()
-    };
-    let definition = definition_with_model(ModelPolicy::Select(ModelSelection {
-        provider: None,
-        model: "@missing-alias".into(),
-        auth: None,
-    }));
-
-    assert_eq!(
-        prompt_model_for_definition(&definition, &host, &MemoryCredentialStore::default()),
-        None
-    );
-    assert!(AgentBinder::bind(
-        Arc::clone(&definition),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: capabilities(),
-        },
-        &host,
-    )
-    .is_err());
 }
 
 // Covers: a claude-cli agent reports its pass-through `--model`, not a Rho one.
 // Owner: agent binding.
 #[test]
-fn predicted_claude_agent_model_is_the_pass_through_value() {
+fn bound_claude_agent_prompt_model_is_the_pass_through_value() {
     use crate::model_identity::PromptModel;
 
     for model in [Some("opus".to_string()), None] {
@@ -1007,12 +988,6 @@ fn predicted_claude_agent_model_is_the_pass_through_value() {
             ..definition(ToolPolicy::All).as_ref().clone()
         });
 
-        let predicted = prompt_model_for_definition(
-            &definition,
-            &Config::default(),
-            &MemoryCredentialStore::default(),
-        )
-        .expect("claude-cli agents always predict");
         let bound = AgentBinder::bind(
             Arc::clone(&definition),
             AgentInvocation {
@@ -1023,15 +998,14 @@ fn predicted_claude_agent_model_is_the_pass_through_value() {
         )
         .unwrap();
 
-        assert_eq!(
-            predicted,
+        pretty_assertions::assert_eq!(
+            bound.prompt_model(),
             PromptModel::ExternalCli {
                 runtime: crate::agent::AgentRuntime::ClaudeCli,
                 requested: model,
                 resolved: None,
             }
         );
-        assert_eq!(predicted, bound.prompt_model());
     }
 }
 
