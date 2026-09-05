@@ -72,6 +72,7 @@ fn right_click_pastes_clipboard_text_into_composer() {
             app.handle_mouse_event(kind, 10, 10, &mut terminal).unwrap();
             assert_eq!(paste_calls.load(Ordering::Relaxed), 1, "{composer:?}");
             let expected_parent = if matches!(composer, super::ComposerMode::Side) {
+                assert!(!app.side_composer_is_empty());
                 ""
             } else {
                 "hello from clip"
