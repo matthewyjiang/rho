@@ -1,3 +1,5 @@
+use anyhow::Context;
+
 use super::STREAM;
 
 use crate::{harness::PtyHarness, scenario::Step};
@@ -24,6 +26,24 @@ fn highest_visible_flood_event(screen: String) -> u16 {
         .unwrap_or(10)
 }
 
+#[cfg(unix)]
+fn release_input_flood(harness: &mut PtyHarness) -> anyhow::Result<()> {
+    let cwd = harness
+        .working_directory()
+        .context("scenario working directory")?;
+    std::os::unix::net::UnixDatagram::unbound()?
+        .send_to(b"!", cwd.join(".input-flood.sock"))
+        .context("release input flood checkpoint")?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn release_input_flood(_harness: &mut PtyHarness) -> anyhow::Result<()> {
+    anyhow::bail!("checkpointed input flood requires Unix")
+}
+
+// The fixture holds each batch's final line until we release the next batch.
+// This keeps waits durable even when CI coalesces frames or delays input.
 pub(super) const TYPE_DURING_STREAM_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -31,12 +51,13 @@ pub(super) const TYPE_DURING_STREAM_STEPS: &[Step] = &[
         timeout: super::STARTUP,
     },
     Step::Phase("start_flood"),
-    Step::SubmitText("fixture input flood"),
+    Step::SubmitText("fixture checkpointed input flood"),
     Step::WaitText {
         text: "input flood event 010",
         timeout: STREAM,
     },
     Step::Phase("query_limits"),
+    Step::Custom(release_input_flood),
     Step::SubmitText("/limits"),
     Step::WaitText {
         text: "Usage limits",
@@ -48,7 +69,12 @@ pub(super) const TYPE_DURING_STREAM_STEPS: &[Step] = &[
         text: "Usage limits",
         timeout: super::SETTLE,
     },
-    Step::Custom(wait_for_later_flood_event),
+    Step::WaitText {
+        text: "input flood event 200",
+        timeout: STREAM,
+    },
+    // Output from the last batch must be produced after Esc closed the overlay.
+    Step::Custom(release_input_flood),
     Step::WaitTextGone {
         text: "model interrupted",
         timeout: super::SETTLE,
@@ -58,6 +84,14 @@ pub(super) const TYPE_DURING_STREAM_STEPS: &[Step] = &[
     Step::WaitText {
         text: "draft while streaming",
         timeout: crate::harness::WaitTimeout::secs(2, "composer input during stream"),
+    },
+    Step::WaitText {
+        text: "input flood event 400",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "draft while streaming",
+        timeout: super::SETTLE,
     },
     Step::Phase("abort_empty_composer"),
     Step::Key(crate::keys::Key::Ctrl('c')),

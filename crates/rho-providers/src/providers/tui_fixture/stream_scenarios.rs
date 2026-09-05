@@ -151,6 +151,10 @@ pub(super) async fn intercept(
         "fixture steering" => Some(stream_steering(request, events).await),
         "fixture delay" => Some(stream_delay(request, events).await),
         "fixture input flood" => Some(stream_input_flood(request, events).await),
+        #[cfg(unix)]
+        "fixture checkpointed input flood" => {
+            Some(stream_checkpointed_input_flood(request, events).await)
+        }
         "fixture scroll checkpoint" => Some(stream_scroll_checkpoint(request, events).await),
         "fixture stream failure" => Some(stream_failure(request, events).await),
         "fixture bulk one" | "fixture bulk two" => Some(stream_bulk(prompt, events).await),
@@ -494,10 +498,51 @@ async fn stream_input_flood(
         response.push_str(&chunk);
         fixture_sleep(&request.cancellation, Duration::from_millis(5)).await?;
     }
-    // The 400 deltas finish in ~2s. type_during_stream still needs a
-    // live turn after typing and clearing a draft so Esc can interrupt.
+    // Keep the turn live for scenarios using the ungated flood.
     fixture_sleep(&request.cancellation, Duration::from_secs(30)).await?;
     completed(response)
+}
+
+#[cfg(unix)]
+async fn stream_checkpointed_input_flood(
+    request: &ModelRequest<'_>,
+    events: &ProviderEventSender,
+) -> Result<ModelResponse, ProviderError> {
+    // Bind before publishing the first checkpoint so visible output also
+    // acknowledges that the PTY can release the next batch. Datagram delivery
+    // remains queued if the release arrives before recv starts.
+    let socket = tokio::net::UnixDatagram::bind(".input-flood.sock")
+        .map_err(|error| ProviderError::interrupted(format!("input flood bind: {error}")))?;
+    // Preserve the original 400-delta workload; split it at startup and halfway
+    // so overlay input and draft input each get a separately released flood.
+    for batch in [1..=10, 11..=200, 201..=400] {
+        let last = *batch.end();
+        for index in batch {
+            events
+                .send(ModelEvent::OutputDelta(format!(
+                    "input flood event {index:03}\n"
+                )))
+                .await?;
+            // Stream pacing only. Checkpoint receipts, not this delay, sync input.
+            fixture_sleep(&request.cancellation, Duration::from_millis(5)).await?;
+        }
+        if last != 400 {
+            // The release command is exactly one byte.
+            let mut command = [0_u8; 1];
+            tokio::select! {
+                biased;
+                () = request.cancellation.cancelled() => {
+                    return Err(ProviderError::interrupted("input flood stopped"));
+                }
+                result = socket.recv(&mut command) => {
+                    result.map_err(|error| ProviderError::interrupted(format!("input flood receive: {error}")))?;
+                }
+            }
+        }
+    }
+    // Only the scenario's empty-composer Esc can finish this turn.
+    request.cancellation.cancelled().await;
+    Err(ProviderError::interrupted("input flood stopped"))
 }
 
 async fn stream_scroll_checkpoint(
