@@ -646,7 +646,7 @@ fn models_dev_sqlite_path() -> PathBuf {
 }
 
 fn cache_dir() -> PathBuf {
-    if let Some(path) = TEST_CACHE_DIR.with(|path| path.borrow().clone()) {
+    if let Some(path) = test_cache_dir() {
         return path;
     }
     if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
@@ -676,6 +676,10 @@ thread_local! {
 
 pub(super) fn test_cache_dir_override_is_set() -> bool {
     TEST_CACHE_DIR.with(|cache_dir| cache_dir.borrow().is_some())
+}
+
+pub(super) fn test_cache_dir() -> Option<PathBuf> {
+    TEST_CACHE_DIR.with(|cache_dir| cache_dir.borrow().clone())
 }
 
 #[doc(hidden)]

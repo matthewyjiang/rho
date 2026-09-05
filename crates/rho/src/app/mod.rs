@@ -18,6 +18,7 @@ mod interactive_session_controller;
 mod interactive_state;
 mod login;
 mod mcp_cli;
+pub(crate) mod notification_delivery;
 mod parent_bridge;
 mod plugins_cli;
 mod policy;

@@ -14,6 +14,11 @@ Hosts must match `RunEvent` with a wildcard because it is non-exhaustive. Delta 
 
 ## Lifecycle sequence
 
+Hosts with background input can opt into [runtime boundary inputs](/sdk/boundary-inputs).
+The runtime waits for their collector before provider steps and before committing
+an end-turn response. `BoundaryInputApplied` is internal context, not human steering.
+This does not delay or retract text already streamed to the screen.
+
 A cooperative run emits ordered facts, then one terminal event when delivery
 succeeds. Always treat `Run::outcome` as authoritative.
 

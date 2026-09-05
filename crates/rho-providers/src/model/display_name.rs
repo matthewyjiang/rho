@@ -8,6 +8,7 @@
 
 use std::{
     collections::HashMap,
+    path::PathBuf,
     sync::{OnceLock, RwLock},
 };
 
@@ -25,11 +26,20 @@ use crate::model::{models_dev, provider_models};
 /// the catalog underneath it does.
 #[derive(Default)]
 struct NameCache {
-    names: HashMap<(String, String), Option<String>>,
+    names: HashMap<NameKey, Option<String>>,
     /// Bumped by every catalog write. A lookup reads it before touching sqlite
     /// and caches its answer only if it still holds, so a write that lands
     /// while a lookup is in flight cannot be overwritten by the older answer.
     generation: u64,
+}
+
+#[derive(Hash, PartialEq, Eq)]
+struct NameKey {
+    provider: String,
+    model: String,
+    // Parallel fixtures use thread-local databases, not the process defaults.
+    catalog_fixture: Option<PathBuf>,
+    provider_fixture: Option<PathBuf>,
 }
 
 fn cache() -> &'static RwLock<NameCache> {
@@ -47,7 +57,12 @@ fn cache() -> &'static RwLock<NameCache> {
 ///
 /// Resolved once per process; see [`NameCache`].
 pub fn model_display_name(provider: &str, model: &str) -> Option<String> {
-    let key = (provider.to_string(), model.to_string());
+    let key = NameKey {
+        provider: provider.to_string(),
+        model: model.to_string(),
+        catalog_fixture: models_dev::test_cache_dir(),
+        provider_fixture: provider_models::test_cache_dir(),
+    };
     let generation = {
         let cache = cache().read().expect("model name cache");
         if let Some(name) = cache.names.get(&key) {
@@ -82,9 +97,7 @@ fn read_model_display_name(provider: &str, model: &str) -> Option<String> {
 /// a download can finish, so the names would first appear on the next launch.
 pub(crate) fn forget_provider_display_names(provider: &str) {
     let mut cache = cache().write().expect("model name cache");
-    cache
-        .names
-        .retain(|(cached_provider, _), _| cached_provider != provider);
+    cache.names.retain(|key, _| key.provider != provider);
     cache.generation += 1;
 }
 

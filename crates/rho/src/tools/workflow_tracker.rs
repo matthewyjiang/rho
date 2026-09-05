@@ -51,6 +51,7 @@ struct WorkflowEntry {
     started: Instant,
     finished: Option<WorkflowFinishedSnapshot>,
     observed: bool,
+    explicitly_observed: bool,
 }
 
 #[derive(Default)]
@@ -106,12 +107,14 @@ impl WorkflowRunTracker {
                 started: Instant::now(),
                 finished: None,
                 observed: false,
+                explicitly_observed: false,
             },
         );
     }
 
     /// Stores the terminal snapshot. No-op when the run was never registered.
     pub fn mark_finished(&self, run_id: &str, finished: WorkflowFinishedSnapshot) {
+        let _delivery = crate::app::notification_delivery::lock();
         let mut inner = self.inner.lock().expect("workflow tracker lock");
         let Some(entry) = inner.runs.get_mut(run_id) else {
             return;
@@ -138,12 +141,14 @@ impl WorkflowRunTracker {
 
     /// Marks a terminal run observed so automatic delivery does not repeat it.
     pub fn observe(&self, run_id: &str) {
+        let _delivery = crate::app::notification_delivery::lock();
         let mut inner = self.inner.lock().expect("workflow tracker lock");
         let Some(entry) = inner.runs.get_mut(run_id) else {
             return;
         };
         if entry.finished.is_some() {
             entry.observed = true;
+            entry.explicitly_observed = true;
         }
     }
 
@@ -207,7 +212,7 @@ impl WorkflowRunTracker {
             let Some(entry) = inner.runs.get_mut(&notification.run_id) else {
                 continue;
             };
-            if entry.finished.is_some() && entry.observed {
+            if entry.finished.is_some() && entry.observed && !entry.explicitly_observed {
                 entry.observed = false;
             }
         }

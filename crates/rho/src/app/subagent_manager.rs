@@ -38,6 +38,7 @@ pub struct SubagentSnapshot {
     pub elapsed: Duration,
     pub status: RunStatus,
     pub done: bool,
+    pub prior_notices: Vec<String>,
 }
 
 /// Stable run identity and its best available task label for host presentation.
@@ -56,6 +57,7 @@ struct AgentEntry {
     handle: AgentRunHandle,
     session_id: Option<String>,
     observed: bool,
+    explicitly_observed: bool,
     /// Whether this run's terminal cost has already been folded into a parent
     /// session total. Independent of [`Self::observed`] so cost still counts
     /// when a run is delivered through `status`/`stop` instead of notification.
@@ -73,8 +75,9 @@ impl AgentEntry {
             agent_id: self.agent_id.clone(),
             title: status.title.clone(),
             elapsed,
-            done: status.state.is_terminal(),
+            done: self.handle.is_complete() && status.state.is_terminal(),
             status,
+            prior_notices: Vec::new(),
         }
     }
 }
@@ -222,6 +225,7 @@ impl SubagentManager {
                 handle,
                 session_id,
                 observed: false,
+                explicitly_observed: false,
                 cost_accounted: false,
             },
         );
@@ -276,6 +280,7 @@ impl SubagentManager {
         session_id: &str,
         status: crate::subagent::RunStatus,
     ) {
+        let _delivery = super::notification_delivery::lock();
         self.inner.lock().expect("delegated registry lock").insert(
             id.to_string(),
             AgentEntry {
@@ -286,6 +291,7 @@ impl SubagentManager {
                 handle: AgentRunHandle::completed_for_test(status),
                 session_id: Some(session_id.into()),
                 observed: false,
+                explicitly_observed: false,
                 cost_accounted: false,
             },
         );
@@ -384,12 +390,14 @@ impl SubagentManager {
         let mut notifications = entries
             .iter_mut()
             .filter_map(|(id, entry)| {
+                if !entry.background
+                    || entry.observed
+                    || entry.session_id.as_deref() != Some(session_id)
+                {
+                    return None;
+                }
                 let snapshot = entry.snapshot(id);
-                (entry.background
-                    && snapshot.done
-                    && !entry.observed
-                    && entry.session_id.as_deref() == Some(session_id))
-                .then(|| {
+                snapshot.done.then(|| {
                     entry.observed = true;
                     (entry.started, SubagentNotification { snapshot })
                 })
@@ -418,7 +426,7 @@ impl SubagentManager {
                 continue;
             };
             let snapshot = entry.snapshot(&notification.snapshot.id);
-            if entry.background && snapshot.done && entry.observed {
+            if entry.background && snapshot.done && entry.observed && !entry.explicitly_observed {
                 entry.observed = false;
             }
         }
@@ -429,11 +437,23 @@ impl SubagentManager {
     /// read through `status` or `stop`.
     pub fn observe(&self, id: &str) -> Option<SubagentSnapshot> {
         let id = crate::subagent::normalize_id(id).ok()?;
+        let _delivery = super::notification_delivery::lock();
         let mut entries = self.inner.lock().expect("delegated registry lock");
         let entry = entries.get_mut(&id)?;
-        let snapshot = entry.snapshot(&id);
+        let mut snapshot = entry.snapshot(&id);
         if snapshot.done {
+            snapshot.prior_notices = self
+                .executor
+                .notices()
+                .pending_for_run(&id)
+                .into_iter()
+                .map(|notice| {
+                    notice.acknowledge();
+                    notice.message
+                })
+                .collect();
             entry.observed = true;
+            entry.explicitly_observed = true;
         }
         Some(snapshot)
     }

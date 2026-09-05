@@ -337,6 +337,12 @@ pub enum RunEvent {
     ToolDetached {
         call_id: ToolCallId,
     },
+    /// Internal host input accepted at a runtime checkpoint, not human steering.
+    BoundaryInputApplied {
+        session_id: crate::SessionId,
+        run_id: RunId,
+        input: crate::UserInput,
+    },
 }
 
 #[cfg(test)]

@@ -7,12 +7,21 @@ use rho_sdk::tool::{
 
 pub(crate) const NAME: &str = "tui_fixture_progress";
 
-pub(super) fn sdk_bundle() -> Option<super::sdk_registry::StaticToolBundle> {
-    (std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix")))
-        .then(|| super::sdk_registry::StaticToolBundle::new(vec![Arc::new(TuiFixtureProgressTool)]))
+pub(super) fn sdk_bundle(
+    processes: Option<super::process::ProcessManager>,
+) -> Option<super::sdk_registry::StaticToolBundle> {
+    (std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix"))).then(
+        || {
+            super::sdk_registry::StaticToolBundle::new(vec![Arc::new(TuiFixtureProgressTool {
+                processes,
+            })])
+        },
+    )
 }
 
-struct TuiFixtureProgressTool;
+struct TuiFixtureProgressTool {
+    processes: Option<super::process::ProcessManager>,
+}
 
 impl Tool for TuiFixtureProgressTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
@@ -40,6 +49,12 @@ impl Tool for TuiFixtureProgressTool {
         _context: ToolPreparationContext,
     ) -> ToolPrepareFuture<'a> {
         let fixture = FixtureRun::from_invocation(&invocation);
+        let processes = self.processes.clone();
+        let notification = invocation
+            .arguments()
+            .get("label")
+            .and_then(serde_json::Value::as_str)
+            == Some("boundary notification");
         Box::pin(async move {
             Ok(PreparedToolInvocation::resource_aware(
                 [],
@@ -47,6 +62,31 @@ impl Tool for TuiFixtureProgressTool {
                 ToolMetadata::new().operation(OperationKind::Other("tui_fixture".into())),
                 move |context| {
                     Box::pin(async move {
+                        if notification {
+                            let processes =
+                                processes.expect("process capability in boundary fixture");
+                            let started = processes
+                                .start(
+                                    "exit 7".into(),
+                                    std::path::Path::new("."),
+                                    /*timeout*/ None,
+                                )
+                                .await
+                                .map_err(|error| {
+                                    ToolError::new(rho_sdk::tool::ToolErrorKind::Execution, error)
+                                })?;
+                            loop {
+                                let notified = processes.notified_owned();
+                                if processes.has_pending_notification() {
+                                    break;
+                                }
+                                notified.await;
+                            }
+                            return Ok(ToolOutput::text(format!(
+                                "background fixture ready: {}",
+                                started.process_id
+                            )));
+                        }
                         send_authorized_progress(&context, &fixture.first_progress, 1).await?;
                         authorized_fixture_sleep(&context, fixture.delay).await?;
                         send_authorized_progress(&context, &fixture.second_progress, 2).await?;

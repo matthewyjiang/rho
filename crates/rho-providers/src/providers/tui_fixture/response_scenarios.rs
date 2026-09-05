@@ -121,7 +121,7 @@ pub(super) fn intercept(
         return Some(completion);
     }
     let prompt = last_user_text(request).unwrap_or_default();
-    if prompt.starts_with("[agent notification]") {
+    if is_agent_notification(&prompt) {
         return Some(completed(describe_agent_notification(request, &prompt)));
     }
     if prompt.starts_with("Continue working toward this goal:") {
@@ -169,10 +169,14 @@ fn questionnaire_completion(
     ))
 }
 
-/// Validates the automatic completion notification's real payload - agent
-/// identity, terminal state, and delegated result - and reports how many
-/// notification turns the conversation has seen so scenarios can assert
-/// exactly-once delivery from screen text.
+fn is_agent_notification(text: &str) -> bool {
+    text.starts_with("[agent notification]")
+        || (text.starts_with("[runtime notifications for session ")
+            && text.contains("[agent notification]"))
+}
+
+/// Validates notification identity, terminal state, and delegated result, then
+/// reports delivery count for exactly-once assertions in PTY scenarios.
 fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> String {
     let deliveries = request
         .messages
@@ -182,7 +186,7 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
                 message,
                 Message::User(content) if content.iter().any(|block| matches!(
                     block,
-                    ContentBlock::Text(text) if text.starts_with("[agent notification]")
+                    ContentBlock::Text(text) if is_agent_notification(text)
                 ))
             )
         })
@@ -199,9 +203,7 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
             )
         }
     } else if prompt.contains("(claude-planner): ok") && prompt.contains("rho-claude-e2e-ok") {
-        format!(
-            "background claude agent completion received with delegated result (delivery {deliveries})"
-        )
+        format!("\n\nclaude-background-delivery-{deliveries}: delegated result received")
     } else {
         format!("unexpected agent notification payload: {prompt}")
     }

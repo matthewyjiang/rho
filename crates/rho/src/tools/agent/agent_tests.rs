@@ -111,6 +111,7 @@ async fn stopping_unknown_run_is_actionable() {
 fn notification(id: &str, agent_id: &str, state: RunState) -> SubagentNotification {
     SubagentNotification {
         snapshot: SubagentSnapshot {
+            prior_notices: Vec::new(),
             id: id.into(),
             agent_id: agent_id.into(),
             title: None,

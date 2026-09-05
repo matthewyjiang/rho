@@ -34,6 +34,7 @@ pub(super) const RETRYABLE_REQUEST_BASE_DELAY: std::time::Duration =
 pub(super) const MAX_HONORED_RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(60);
 
 mod async_jobs;
+mod boundary_input;
 mod model_call_timer;
 mod provider_cancellation;
 mod provider_request;
@@ -157,6 +158,7 @@ async fn execute_turn_loop(
     // The tool set is immutable for the duration of a run, so build the specs
     // (which deep-clone every tool's JSON schema) once instead of per step.
     let tool_specs = runtime.tools.specs();
+    let mut preserve_from = None;
     for step in 1..=runtime.max_steps.get() {
         drain_commands(&mut commands, &mut steering);
         {
@@ -186,6 +188,7 @@ async fn execute_turn_loop(
                 request_scope,
                 &tool_specs,
                 &mut history,
+                preserve_from.take(),
                 &cancellation,
                 &events,
             )
@@ -203,13 +206,33 @@ async fn execute_turn_loop(
                 "skipping compaction while async tool jobs are pending"
             );
         }
+        if !async_jobs.has_pending() {
+            match boundary_input::collect(
+                &runtime,
+                &core,
+                &run_id,
+                crate::InputBoundary::BeforeProvider,
+                &mut history,
+                &cancellation,
+                &events,
+            )
+            .await
+            {
+                Ok(true) => compaction_estimate = None,
+                Ok(false) => {}
+                Err(error) => {
+                    return terminate_run(core, history, &mut async_jobs, hooks, &events, error)
+                        .await;
+                }
+            }
+        }
         drain_commands(&mut commands, &mut steering);
         // Delivered steers stay staged so a Reuse continuation still matches the
         // suffix the server already prepended. Undelivered steers accepted
         // between steps (including during compact) are applied before the next
         // request so default providers do not spend a turn just to release them.
         if !steering.has_delivered() {
-            // This is the only history mutation between compaction and StepStarted.
+            // Boundary input above and staged steering invalidate the estimate.
             // Tools are immutable for this run; jobs were drained before compaction.
             if steering.has_staged() {
                 compaction_estimate = None;
@@ -447,6 +470,31 @@ async fn execute_turn_loop(
             }
         }
 
+        // Leave notices with the host if there is no provider step to consume them.
+        if step < runtime.max_steps.get() {
+            let input_start = history.len();
+            match boundary_input::collect(
+                &runtime,
+                &core,
+                &run_id,
+                crate::InputBoundary::BeforeCompletion,
+                &mut history,
+                &cancellation,
+                &events,
+            )
+            .await
+            {
+                Ok(true) => {
+                    preserve_from = Some(input_start);
+                    continue;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    return terminate_run(core, history, control.async_jobs, hooks, &events, error)
+                        .await
+                }
+            }
+        }
         let content = final_assistant_content(&history);
         let revision = core.commit(history)?;
         let outcome = RunOutcome::new(content, accumulated_usage, StopReason::EndTurn, revision);
@@ -518,6 +566,7 @@ async fn maybe_compact(
     scope: ProviderRequestScope<'_>,
     tool_specs: &[crate::model::ToolSpec],
     history: &mut Vec<Message>,
+    preserve_from: Option<usize>,
     cancellation: &CancellationToken,
     events: &mpsc::Sender<RunEvent>,
 ) -> Result<Option<u64>, Error> {
@@ -543,19 +592,24 @@ async fn maybe_compact(
     )
     .await?;
     let previous = HistoryMetrics::from_history(history);
-    let request = crate::CompactionRequest::new(history.clone(), cancellation.clone())
-        .with_trigger(crate::CompactionTrigger::Automatic)
-        .with_request_context(
-            scope.session_id.clone(),
-            scope.runtime.usage_parent_session_id.clone(),
-            scope.run_id.clone(),
-            Some(scope.step_index),
-            scope
-                .runtime
-                .workspace
-                .as_ref()
-                .map(|workspace| workspace.root().to_path_buf()),
-        );
+    // Fresh completion input must reach one provider request verbatim. Compact
+    // only the older prefix, but evaluate the policy against the full history
+    // above so consecutive injections cannot indefinitely defer compaction.
+    let compact_end = preserve_from.unwrap_or(history.len());
+    let request =
+        crate::CompactionRequest::new(history[..compact_end].to_vec(), cancellation.clone())
+            .with_trigger(crate::CompactionTrigger::Automatic)
+            .with_request_context(
+                scope.session_id.clone(),
+                scope.runtime.usage_parent_session_id.clone(),
+                scope.run_id.clone(),
+                Some(scope.step_index),
+                scope
+                    .runtime
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.root().to_path_buf()),
+            );
     let output = match compactor.cancellation_mode() {
         crate::CompactorCancellationMode::Cooperative => compactor.compact(request).await?,
         crate::CompactorCancellationMode::External => {
@@ -565,7 +619,10 @@ async fn maybe_compact(
             }
         }
     };
-    let (replacement, usage) = output.into_parts();
+    let (mut replacement, usage) = output.into_parts();
+    // Restore the suffix before checkpointing or emitting the committed snapshot.
+    // Keep history intact until success so cancellation cannot lose accepted input.
+    replacement.extend_from_slice(&history[compact_end..]);
     let outcome = core
         .commit_compaction(previous, replacement.clone(), usage)?
         .with_committed_snapshot(core.persistence_snapshot());

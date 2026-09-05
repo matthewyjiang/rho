@@ -27,6 +27,50 @@ fn subagent_completion_changed(outcome: &SubagentCompletionTurn) -> bool {
 }
 
 impl App {
+    /// The runtime waits here, rather than racing a ToolFinished-driven steer.
+    /// An empty final reply hands later arrivals back to idle delivery.
+    pub(super) async fn deliver_running_boundary(
+        &mut self,
+        request: rho_sdk::BoundaryInputRequest,
+        agent: &mut InteractiveRuntime,
+    ) {
+        if request.session_id() != agent.session_id() {
+            request.respond(None).await;
+            return;
+        }
+        let captured = {
+            let _snapshot = crate::app::notification_delivery::lock();
+            let batch = self.take_turn_boundary_batch_locked(agent);
+            if batch.is_empty() {
+                self.restore_turn_boundary_batch(agent, batch);
+                // Send synchronously while publishers are excluded so later
+                // arrivals belong to idle delivery. Await ack outside the gate.
+                Err(request.respond(None))
+            } else {
+                Ok((batch, request))
+            }
+        };
+        let (batch, request) = match captured {
+            Ok(captured) => captured,
+            Err(receipt) => {
+                receipt.await;
+                return;
+            }
+        };
+        let delivery = batch.render();
+        let input = rho_sdk::UserInput::text(format!(
+                "[runtime notifications for session {} run {}]\nThis is internal background context, not a human message or a new task. Incorporate unseen findings into the ongoing work.\n\n{}",
+                request.session_id(), request.run_id(), delivery.model,
+            ));
+        if request.respond(Some(input)).await {
+            self.subagent_inbox
+                .commit_delivered_notices(delivery.batch.notice_count());
+            self.insert_entry(&Entry::Notice(delivery.display));
+        } else {
+            self.restore_turn_boundary_batch(agent, delivery.batch);
+        }
+    }
+
     /// Wakes an idle session with a turn for finished background subagents.
     /// Real prompt turns drain these notifications themselves, while active
     /// goals deliver them before evaluating the goal again.
@@ -103,58 +147,42 @@ impl App {
     /// Returns the joined model prompt, display summary, and the drained batch
     /// so callers can restore on setup failure, or `None` when nothing is
     /// pending. Real prompt turns fold this into the outgoing message; an idle
-    /// parent sends it as a turn of its own. Removal is committed only after
-    /// the provider turn starts successfully.
+    /// parent sends it as a turn of its own. Active turns reply to an SDK
+    /// checkpoint instead. Removal is committed only after accepted delivery.
     pub(super) fn collect_turn_boundary_prompts(
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> Option<TurnBoundaryDelivery> {
-        let mut model_parts = Vec::new();
-        let mut display_parts = Vec::new();
-        let mut push = |(model, display): (String, String)| {
-            model_parts.push(model);
-            display_parts.push(display);
+        let batch = {
+            let _snapshot = crate::app::notification_delivery::lock();
+            self.take_turn_boundary_batch_locked(agent)
         };
+        if batch.is_empty() {
+            self.restore_turn_boundary_batch(agent, batch);
+            None
+        } else {
+            Some(batch.render())
+        }
+    }
+
+    fn take_turn_boundary_batch_locked(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+    ) -> TurnBoundaryBatch {
         let mut batch = TurnBoundaryBatch::default();
+        self.subagent_inbox.drain();
+        self.subagent_inbox.reconcile_observed();
+        batch.notices = self.subagent_inbox.take_notices(agent.session_id());
         if let Some(manager) = agent.subagents().cloned() {
             batch.subagent_notifications = manager.take_notifications(agent.session_id().as_str());
-            if !batch.subagent_notifications.is_empty() {
-                push(crate::tools::agent::notification_prompts(
-                    &batch.subagent_notifications,
-                ));
-            }
-        }
-        self.subagent_inbox.drain();
-        batch.notices = self.subagent_inbox.take_notices(agent.session_id());
-        if !batch.notices.is_empty() {
-            push(crate::app::subagent_messaging::notice_prompts(
-                &batch.notices,
-            ));
         }
         batch.workflow_notifications = agent
             .workflow_tracker()
             .take_notifications(agent.session_id().as_str());
-        if !batch.workflow_notifications.is_empty() {
-            push(crate::tools::workflow_tracker::notification_prompts(
-                &batch.workflow_notifications,
-            ));
-        }
         if let Some(processes) = agent.processes() {
             batch.process_notifications = processes.take_notifications();
-            if !batch.process_notifications.is_empty() {
-                push(crate::tools::process::notification_prompts(
-                    &batch.process_notifications,
-                ));
-            }
         }
-        if model_parts.is_empty() {
-            return None;
-        }
-        Some(TurnBoundaryDelivery {
-            model: model_parts.join("\n\n"),
-            display: display_parts.join("\n"),
-            batch,
-        })
+        batch
     }
 
     /// Puts a drained turn-boundary batch back when provider start never began.
@@ -372,7 +400,7 @@ impl App {
 #[path = "subagent_questionnaires_tests.rs"]
 mod tests;
 
-/// Drained turn-boundary work held until provider start commits delivery.
+/// Drained work held until an accepted provider start or runtime checkpoint.
 #[derive(Default)]
 pub(super) struct TurnBoundaryBatch {
     subagent_notifications: Vec<crate::tools::agent::SubagentNotification>,
@@ -382,6 +410,49 @@ pub(super) struct TurnBoundaryBatch {
 }
 
 impl TurnBoundaryBatch {
+    fn is_empty(&self) -> bool {
+        self.notices.is_empty()
+            && self.subagent_notifications.is_empty()
+            && self.workflow_notifications.is_empty()
+            && self.process_notifications.is_empty()
+    }
+
+    /// Formats captured notifications after releasing the delivery gate.
+    fn render(self) -> TurnBoundaryDelivery {
+        let mut model_parts = Vec::new();
+        let mut display_parts = Vec::new();
+        let mut push = |(model, display): (String, String)| {
+            model_parts.push(model);
+            display_parts.push(display);
+        };
+        if !self.notices.is_empty() {
+            let (mut model, display) =
+                crate::app::subagent_messaging::notice_prompts(&self.notices);
+            model.insert_str(0, "Earlier child messages in send order. Any terminal result below supersedes that child's planning and progress; preserve substantive findings.\n\n");
+            push((model, display));
+        }
+        if !self.subagent_notifications.is_empty() {
+            push(crate::tools::agent::notification_prompts(
+                &self.subagent_notifications,
+            ));
+        }
+        if !self.workflow_notifications.is_empty() {
+            push(crate::tools::workflow_tracker::notification_prompts(
+                &self.workflow_notifications,
+            ));
+        }
+        if !self.process_notifications.is_empty() {
+            push(crate::tools::process::notification_prompts(
+                &self.process_notifications,
+            ));
+        }
+        TurnBoundaryDelivery {
+            model: model_parts.join("\n\n"),
+            display: display_parts.join("\n"),
+            batch: self,
+        }
+    }
+
     pub(super) fn notice_count(&self) -> usize {
         self.notices.len()
     }

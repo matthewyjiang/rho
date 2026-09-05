@@ -290,6 +290,7 @@ fn pending_input_renders_below_subagent_and_process_rails() {
     let now = Instant::now();
     app.subagent_panel.ingest(
         vec![crate::tools::agent::SubagentSnapshot {
+            prior_notices: Vec::new(),
             id: "run-1".into(),
             agent_id: "explorer".into(),
             title: None,

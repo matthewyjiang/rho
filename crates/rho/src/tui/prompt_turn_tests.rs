@@ -243,6 +243,7 @@ async fn committed_idle_boundary_batch_is_not_restored_after_post_start_failure(
     let session_id = agent.session_id().clone();
     app.subagent_inbox
         .push_notice_for_test(crate::app::subagent_messaging::SubagentNotice {
+            acknowledged: Default::default(),
             run_id: "abc123".into(),
             agent_id: "worker".into(),
             parent_session_id: session_id.clone(),
