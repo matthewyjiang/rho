@@ -196,7 +196,11 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
             || prompt.contains(BACKGROUND_QUESTIONNAIRE_COMPLETION))
     {
         if prompt.contains(BACKGROUND_QUESTIONNAIRE_COMPLETION) {
-            format!("background agent questionnaire completion received (delivery {deliveries})")
+            // Completion can continue the parent's assistant stream. Start a
+            // paragraph so the marker cannot wrap against the spawn receipt.
+            format!(
+                "\n\nbackground agent questionnaire completion received (delivery {deliveries})"
+            )
         } else {
             format!(
                 "background agent completion received with delegated result (delivery {deliveries})"
