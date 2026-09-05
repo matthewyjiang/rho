@@ -24,6 +24,14 @@ fn settlement_emits_exactly_one_outcome() {
             },
             ProviderSteeringOutcome::Released,
         ),
+        (
+            |request| {
+                let (sender, receiver) = super::provider_steering_channel();
+                assert!(sender.send(request).is_ok());
+                drop(receiver);
+            },
+            ProviderSteeringOutcome::Released,
+        ),
     ];
     for (settle, expected) in cases {
         let (request, mut outcomes) = ProviderSteeringRequest::test_unclaimed(Vec::new());
