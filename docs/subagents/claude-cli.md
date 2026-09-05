@@ -160,6 +160,10 @@ Per-run usage (turns, tokens, cost) comes from Claude's terminal result and is s
 
 `/limits` probes the signed-in `claude` TUI `/usage` panel over a PTY and shows remaining percentages when the panel includes them. Rho never reads Claude's credential files. If the probe fails, `/limits` keeps last-observed windows from a prior claude-cli run.
 
+The probe forces classic rendering in its child environment so inherited fullscreen preferences or Claude's automatic renderer fallback do not change the panel layout. Your normal Claude renderer settings are unchanged.
+
+Percentages shown while Claude is still refreshing are not treated as live usage. The probe waits for refresh completion and reads the completed panel. A refresh timeout, load error, or last-known/partial-data fallback leaves the previous observations unchanged rather than stamping cached percentages as newly fetched. The probe does not retry a failed refresh automatically.
+
 When a run finishes, `result.json` may include `claude_session_id`. Attach and the parent completion entry show it so you can reopen the full Claude transcript with:
 
 ```bash

@@ -1,5 +1,9 @@
 //! Unix PTY drive for the Claude `/usage` probe.
 
+#[cfg(test)]
+#[path = "usage_probe_drive_tests.rs"]
+mod tests;
+
 use std::{
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
@@ -7,10 +11,10 @@ use std::{
 };
 
 use super::{
-    classify_idle_screen, trust_yes_selected, waiting_on_named_windows, IdleScreen, RateLimitState,
-    UsageProbeError,
+    classify_idle_screen, classify_usage_screen, trust_yes_selected, IdleScreen, ProbeBudget,
+    RateLimitState, UsageProbeError, UsageScreen,
 };
-use crate::claude_runtime::{rate_limit, usage_parse::parse_usage_screen, usage_pty::PtySession};
+use crate::claude_runtime::{rate_limit, usage_pty::PtySession};
 
 /// Interactive TUI + keychain + first-run trust dialog + remote-control
 /// connect. A warm start reaches the idle prompt in under 1s, but a cold
@@ -21,17 +25,6 @@ use crate::claude_runtime::{rate_limit, usage_parse::parse_usage_screen, usage_p
 /// as defense-in-depth in case a Claude update stops honoring the flag.
 /// Warm runs never touch this; it only bounds a hung child.
 const PROMPT_WAIT: Duration = Duration::from_secs(60);
-/// `/usage` then Anthropic's usage endpoint. Warm captures paint "% used"
-/// in under 1s, but a cold start stacks startup latency with a slow usage
-/// refresh; a user-visible probe failure landed 20-30s after `/limits`,
-/// which is exactly startup + the old 15s budget. Warm runs never wait
-/// this long; it only bounds a hung refresh.
-const PANEL_WAIT: Duration = Duration::from_secs(30);
-/// Anthropic's usage endpoint can sit on "Refreshing" after the panel
-/// appears. Eight seconds covers a slow network without rivaling
-/// [`PANEL_WAIT`] on a hung refresh.
-const REFRESH_SETTLE: Duration = Duration::from_secs(8);
-const PANEL_MARKERS: &[&str] = &["Current session", "% used", "%used"];
 /// Trust dialog defaults to "No, exit". Down and Enter must be separate
 /// writes; one burst of Down+Enter confirms No and Claude exits.
 const TRUST_DOWN: &[u8] = b"\x1b[B";
@@ -42,20 +35,18 @@ const PTY_COLS: u16 = 140;
 const PROMPT_SETTLE: Duration = Duration::from_millis(50);
 const ENTER_SETTLE: Duration = Duration::from_millis(80);
 const POLL_SLICE: Duration = Duration::from_millis(25);
+/// A PTY read can end before the frame's status footer. A ready panel must
+/// hold this long so a trailing "Refreshing" or failure notice is not missed.
 const SETTLE_DRAIN: Duration = Duration::from_millis(80);
 
-enum CollectPhase {
-    Grow,
-    Settle,
-}
-
+/// The child is killed on drop; error paths do not need to kill explicitly.
 pub(super) fn read_usage_from_binary(
     binary: &Path,
     args: &[&str],
     env: &[(String, String)],
     cwd: &Path,
     abort: &AtomicBool,
-    grow: Duration,
+    budget: ProbeBudget,
 ) -> Result<RateLimitState, UsageProbeError> {
     let mut session = PtySession::spawn(binary, args, env, cwd, PTY_ROWS, PTY_COLS)
         .map_err(UsageProbeError::Spawn)?;
@@ -68,13 +59,11 @@ pub(super) fn read_usage_from_binary(
     session
         .inject_bytes(b"\r")
         .map_err(UsageProbeError::Spawn)?;
-    wait_for_usage_panel(&mut session, abort)?;
-    collect_usage(&mut session, abort, grow)
+    wait_for_usage(&mut session, abort, budget)
 }
 
-fn kill_if_aborted(session: &mut PtySession, abort: &AtomicBool) -> Result<(), UsageProbeError> {
+fn check_abort(abort: &AtomicBool) -> Result<(), UsageProbeError> {
     if abort.load(Ordering::Relaxed) {
-        session.kill();
         return Err(UsageProbeError::Cancelled);
     }
     Ok(())
@@ -86,147 +75,93 @@ fn poll_until(
     until: Instant,
 ) -> Result<(), UsageProbeError> {
     while Instant::now() < until {
-        kill_if_aborted(session, abort)?;
+        check_abort(abort)?;
         session.poll(POLL_SLICE);
     }
-    kill_if_aborted(session, abort)
+    check_abort(abort)
 }
 
 fn wait_for_prompt(session: &mut PtySession, abort: &AtomicBool) -> Result<(), UsageProbeError> {
     let mut trust = TrustDrive::NeedDown;
     let deadline = Instant::now() + PROMPT_WAIT;
     loop {
-        kill_if_aborted(session, abort)?;
+        check_abort(abort)?;
         session.poll(POLL_SLICE);
         let screen = session.contents();
         match classify_idle_screen(&screen) {
             IdleScreen::Prompt => return Ok(()),
-            IdleScreen::Login => {
-                session.kill();
-                return Err(UsageProbeError::NotSignedIn);
-            }
-            kind => {
-                if kind == IdleScreen::Trust {
-                    trust = step_trust(session, trust, &screen)?;
-                }
-                if !session.is_running() {
-                    session.kill();
-                    return Err(UsageProbeError::Timeout("the claude prompt"));
-                }
-                if Instant::now() >= deadline {
-                    tracing::debug!(
-                        screen = %session.contents(),
-                        "claude usage probe timed out waiting for the idle prompt"
-                    );
-                    session.kill();
-                    return Err(UsageProbeError::TimeoutScreen {
-                        what: "the claude prompt",
-                        screen: session.contents().chars().take(800).collect(),
-                    });
-                }
-            }
-        }
-    }
-}
-
-fn wait_for_usage_panel(
-    session: &mut PtySession,
-    abort: &AtomicBool,
-) -> Result<(), UsageProbeError> {
-    let deadline = Instant::now() + PANEL_WAIT;
-    let mut retried = false;
-    loop {
-        kill_if_aborted(session, abort)?;
-        session.poll(POLL_SLICE);
-        let screen = session.contents();
-        if PANEL_MARKERS.iter().any(|needle| screen.contains(needle)) {
-            return Ok(());
-        }
-        if !retried && screen.to_ascii_lowercase().contains("failed to load usage") {
-            session.inject_bytes(b"r").map_err(UsageProbeError::Spawn)?;
-            retried = true;
-            continue;
+            IdleScreen::Login => return Err(UsageProbeError::NotSignedIn),
+            IdleScreen::Trust => trust = step_trust(session, trust, &screen)?,
+            IdleScreen::Other => {}
         }
         if !session.is_running() {
-            session.poll(Duration::from_millis(50));
-            let screen = session.contents();
-            if PANEL_MARKERS.iter().any(|needle| screen.contains(needle)) {
-                return Ok(());
-            }
-            session.kill();
-            return Err(UsageProbeError::TimeoutScreen {
-                what: "the /usage panel",
-                screen: screen.chars().take(800).collect(),
+            return Err(UsageProbeError::Exited {
+                what: "the claude prompt",
+                screen,
             });
         }
         if Instant::now() >= deadline {
-            session.kill();
+            tracing::debug!(
+                screen = %screen,
+                "claude usage probe timed out waiting for the idle prompt"
+            );
             return Err(UsageProbeError::TimeoutScreen {
-                what: "the /usage panel",
-                screen: session.contents().chars().take(800).collect(),
+                what: "the claude prompt",
+                screen,
             });
         }
     }
 }
 
-fn consider_parse(best: &mut Option<RateLimitState>, screen: &str) {
-    if let Some(state) = parse_usage_screen(screen, rate_limit::now_unix()) {
-        if best.as_ref().map_or(0, |ready| ready.windows.len()) < state.windows.len() {
-            *best = Some(state);
-        }
-    }
-}
-
-fn finish_with_best(
-    session: &mut PtySession,
-    best: Option<RateLimitState>,
-    screen: &str,
-) -> Result<RateLimitState, UsageProbeError> {
-    session.kill();
-    best.or_else(|| parse_usage_screen(screen, rate_limit::now_unix()))
-        .ok_or(UsageProbeError::Unparseable)
-}
-
-fn collect_usage(
+/// Poll until a completed refresh has held for [`SETTLE_DRAIN`], or the child
+/// exited on one. Decisions consume the current viewport only, never an
+/// earlier parse.
+fn wait_for_usage(
     session: &mut PtySession,
     abort: &AtomicBool,
-    grow: Duration,
+    budget: ProbeBudget,
 ) -> Result<RateLimitState, UsageProbeError> {
-    let mut phase = CollectPhase::Grow;
-    let mut deadline = Instant::now() + grow;
-    let mut best: Option<RateLimitState> = None;
+    let deadline = Instant::now() + budget.panel_wait;
+    let mut grow_until: Option<Instant> = None;
+    let mut ready_since: Option<Instant> = None;
     loop {
-        kill_if_aborted(session, abort)?;
+        check_abort(abort)?;
+        // Liveness before the drain: an exited child's last frame still gets
+        // read and classified on this pass.
+        let running = session.is_running();
         session.poll(POLL_SLICE);
         let screen = session.contents();
-        let running = session.is_running();
-        consider_parse(&mut best, &screen);
-        if !waiting_on_named_windows(&screen, best.as_ref()) {
-            if let Some(state) = best.take() {
-                session.kill();
-                return Ok(state);
-            }
-        }
-        let timed_out = Instant::now() >= deadline;
-        match phase {
-            CollectPhase::Grow if timed_out || !running => {
-                if let Some(state) = best.take() {
-                    session.kill();
+        let now = Instant::now();
+        match classify_usage_screen(&screen, rate_limit::now_unix()) {
+            UsageScreen::Failed => return Err(UsageProbeError::RefreshFailed { screen }),
+            UsageScreen::Ready(state) => {
+                grow_until = None;
+                if !running || now >= *ready_since.get_or_insert(now) + SETTLE_DRAIN {
                     return Ok(state);
                 }
-                phase = CollectPhase::Settle;
-                deadline = Instant::now() + REFRESH_SETTLE;
             }
-            CollectPhase::Settle => {
-                let refreshing = screen.to_ascii_lowercase().contains("refreshing");
-                if !refreshing || !running || timed_out {
-                    session.poll(SETTLE_DRAIN);
-                    let screen = session.contents();
-                    consider_parse(&mut best, &screen);
-                    return finish_with_best(session, best, &screen);
+            UsageScreen::Incomplete => {
+                ready_since = None;
+                if now >= *grow_until.get_or_insert(now + budget.grow) {
+                    return Err(UsageProbeError::Unparseable);
                 }
             }
-            CollectPhase::Grow => {}
+            UsageScreen::NoPanel | UsageScreen::Refreshing => {
+                grow_until = None;
+                ready_since = None;
+            }
+        }
+        if !running {
+            return Err(UsageProbeError::Exited {
+                what: "the /usage refresh",
+                screen,
+            });
+        }
+        if now >= deadline {
+            return Err(UsageProbeError::TimeoutScreen {
+                what: "the /usage refresh",
+                screen,
+            });
         }
     }
 }

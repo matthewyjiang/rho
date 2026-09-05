@@ -6,6 +6,7 @@ use vt100::Parser;
 
 use crate::pty::{PtyController, PtySize};
 
+/// Killed on drop via the inner controller.
 pub(super) struct PtySession {
     inner: PtyController,
     parser: Parser,
@@ -47,9 +48,5 @@ impl PtySession {
 
     pub(super) fn is_running(&mut self) -> bool {
         self.inner.is_running()
-    }
-
-    pub(super) fn kill(&mut self) {
-        let _ = self.inner.kill();
     }
 }
