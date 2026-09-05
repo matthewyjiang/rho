@@ -50,16 +50,18 @@ pub(super) fn read_usage_from_binary(
 ) -> Result<RateLimitState, UsageProbeError> {
     let mut session = PtySession::spawn(binary, args, env, cwd, PTY_ROWS, PTY_COLS)
         .map_err(UsageProbeError::Spawn)?;
-    wait_for_prompt(&mut session, abort)?;
-    poll_until(&mut session, abort, Instant::now() + PROMPT_SETTLE)?;
+    send_usage_command(&mut session, abort)?;
+    wait_for_usage(&mut session, abort, budget)
+}
+
+fn send_usage_command(session: &mut PtySession, abort: &AtomicBool) -> Result<(), UsageProbeError> {
+    wait_for_prompt(session, abort)?;
+    poll_until(session, abort, Instant::now() + PROMPT_SETTLE)?;
     session
         .inject_bytes(b"/usage")
         .map_err(UsageProbeError::Spawn)?;
-    poll_until(&mut session, abort, Instant::now() + ENTER_SETTLE)?;
-    session
-        .inject_bytes(b"\r")
-        .map_err(UsageProbeError::Spawn)?;
-    wait_for_usage(&mut session, abort, budget)
+    poll_until(session, abort, Instant::now() + ENTER_SETTLE)?;
+    session.inject_bytes(b"\r").map_err(UsageProbeError::Spawn)
 }
 
 fn check_abort(abort: &AtomicBool) -> Result<(), UsageProbeError> {

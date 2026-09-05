@@ -16,19 +16,11 @@ const TEST_BUDGET: ProbeBudget = ProbeBudget {
 
 fn run_child(binary: &str, args: &[&str]) -> Result<RateLimitState, UsageProbeError> {
     let cwd = tempfile::TempDir::new().unwrap();
-    run_child_in(binary, args, cwd.path())
-}
-
-fn run_child_in(
-    binary: &str,
-    args: &[&str],
-    cwd: &Path,
-) -> Result<RateLimitState, UsageProbeError> {
     read_usage_from_binary(
         Path::new(binary),
         args,
         &[("TERM".into(), "xterm-256color".into())],
-        cwd,
+        cwd.path(),
         &AtomicBool::new(false),
         TEST_BUDGET,
     )
@@ -42,7 +34,7 @@ fn run_child_in(
 fn run_two_paint_child(
     first: &str,
     second: &str,
-    first_kind: &str,
+    first_kind: impl Fn(&UsageScreen) -> bool,
 ) -> Result<RateLimitState, UsageProbeError> {
     let cwd = tempfile::TempDir::new().unwrap();
     let script = format!(
@@ -65,33 +57,17 @@ exec cat >/dev/null
     )
     .expect("fake child");
     let abort = AtomicBool::new(false);
-    wait_for_prompt(&mut session, &abort)?;
-    poll_until(&mut session, &abort, Instant::now() + PROMPT_SETTLE)?;
-    session
-        .inject_bytes(b"/usage")
-        .map_err(UsageProbeError::Spawn)?;
-    poll_until(&mut session, &abort, Instant::now() + ENTER_SETTLE)?;
-    session
-        .inject_bytes(b"\r")
-        .map_err(UsageProbeError::Spawn)?;
+    send_usage_command(&mut session, &abort)?;
     let started = Instant::now();
     loop {
         session.poll(POLL_SLICE);
         let screen = session.contents();
-        let kind = match classify_usage_screen(&screen, 0) {
-            UsageScreen::NoPanel => "NoPanel",
-            UsageScreen::Failed => "Failed",
-            UsageScreen::Refreshing => "Refreshing",
-            UsageScreen::Incomplete => "Incomplete",
-            UsageScreen::Ready(_) => "Ready",
-        };
-        if kind != "NoPanel" {
-            assert_eq!(kind, first_kind, "{screen}");
+        if first_kind(&classify_usage_screen(&screen, /*now_unix*/ 0)) {
             break;
         }
         assert!(
             started.elapsed() < Duration::from_secs(5),
-            "child never painted the first frame: {screen}"
+            "child never painted the expected first frame: {screen}"
         );
     }
     session
@@ -187,7 +163,7 @@ fn fake_child_grow_picks_up_late_fable() {
     let state = run_two_paint_child(
         r"\033[2J\033[HCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n",
         r"\033[2J\033[HCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n33%% used\nResets in 2d\n",
-        "Incomplete",
+        |screen| matches!(screen, UsageScreen::Incomplete),
     )
     .expect("fake /usage");
     assert_eq!(
@@ -210,7 +186,7 @@ fn fake_child_completed_refresh_returns_current_percentages() {
     let state = run_two_paint_child(
         r"\033[2J\033[HCurrent session\n0%% used\nCurrent week (all models)\n0%% used\nCurrent week (Fable)\n0%% used\nRefreshing…\n",
         r"\033[2J\033[HCurrent session\n14%% used\nCurrent week (all models)\n27%% used\nCurrent week (Fable)\n38%% used\nEsc to cancel\n",
-        "Refreshing",
+        |screen| matches!(screen, UsageScreen::Refreshing),
     )
     .expect("fake /usage");
     assert_eq!(

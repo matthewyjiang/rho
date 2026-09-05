@@ -158,17 +158,11 @@ fn usage_screen_classification() {
     let observed: Vec<(&str, &str)> = cases
         .iter()
         .map(|(name, screen, _)| {
-            let kind = match classify_usage_screen(screen, 0) {
-                UsageScreen::NoPanel => "NoPanel",
-                UsageScreen::Failed => "Failed",
-                UsageScreen::Refreshing => "Refreshing",
-                UsageScreen::Incomplete => "Incomplete",
-                UsageScreen::Ready(state) => {
-                    assert_eq!(state.windows.len(), 2, "{name}");
-                    "Ready"
-                }
-            };
-            (*name, kind)
+            let classified = classify_usage_screen(screen, /*now_unix*/ 0);
+            if let UsageScreen::Ready(state) = &classified {
+                assert_eq!(state.windows.len(), 2, "{name}");
+            }
+            (*name, super::usage_screen_kind(&classified))
         })
         .collect();
     let expected: Vec<(&str, &str)> = cases.iter().map(|(name, _, kind)| (*name, *kind)).collect();

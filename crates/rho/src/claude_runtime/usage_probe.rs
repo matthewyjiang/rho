@@ -251,6 +251,17 @@ enum UsageScreen {
     Ready(RateLimitState),
 }
 
+#[cfg(test)]
+fn usage_screen_kind(screen: &UsageScreen) -> &'static str {
+    match screen {
+        UsageScreen::NoPanel => "NoPanel",
+        UsageScreen::Failed => "Failed",
+        UsageScreen::Refreshing => "Refreshing",
+        UsageScreen::Incomplete => "Incomplete",
+        UsageScreen::Ready(_) => "Ready",
+    }
+}
+
 fn classify_usage_screen(screen: &str, now_unix: i64) -> UsageScreen {
     let lower = screen.to_ascii_lowercase();
     if contains_any(&lower, REFRESH_FAILURE_MARKERS) {
