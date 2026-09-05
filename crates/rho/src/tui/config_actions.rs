@@ -563,7 +563,6 @@ impl App {
             },
             |app, show_reasoning_output| {
                 app.info.runtime.show_reasoning_output = show_reasoning_output;
-                app.apply_reasoning_output_visibility();
             },
         )
     }
@@ -581,7 +580,6 @@ impl App {
                 app.info.runtime.zen_mode = zen_mode;
                 // Zen is pure display policy over existing history; rebuild layout.
                 app.history.invalidate_from(0);
-                app.apply_reasoning_output_visibility();
             },
         )
     }

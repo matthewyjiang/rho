@@ -7,6 +7,7 @@ pub(super) struct SoftSettingsDelta {
     pub(super) image_height: bool,
     pub(super) tool_output: bool,
     pub(super) zen: bool,
+    pub(super) reasoning_output: bool,
 }
 
 impl SoftSettingsDelta {
@@ -21,11 +22,12 @@ impl SoftSettingsDelta {
             image_height: previous.max_image_height != next.max_image_height,
             tool_output: previous.max_tool_output_lines != next.max_tool_output_lines,
             zen: previous.zen_mode != next.zen_mode,
+            reasoning_output: previous.show_reasoning_output != next.show_reasoning_output,
         })
     }
 
     pub(super) fn image_only(self) -> bool {
-        self.image_height && !self.tool_output && !self.zen
+        self.image_height && !self.tool_output && !self.zen && !self.reasoning_output
     }
 
     /// Whether this history entry's rendered height depends on the soft knobs
@@ -33,7 +35,7 @@ impl SoftSettingsDelta {
     pub(super) fn needs_entry(self, entry: &Entry) -> bool {
         match entry {
             Entry::Tool(_) => self.tool_output || self.zen,
-            Entry::Reasoning(_) => self.zen,
+            Entry::Reasoning(_) => self.zen || self.reasoning_output,
             Entry::User(_)
             | Entry::Assistant(_)
             | Entry::Notice(_)

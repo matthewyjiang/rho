@@ -165,12 +165,6 @@ impl StreamUi {
         self.pacer.reset();
     }
 
-    /// Drops held text without showing it.
-    pub(super) fn discard_hold(&mut self) {
-        self.hold.clear();
-        self.pacer.reset();
-    }
-
     pub(super) fn schedule_tick(&mut self, kind: StreamKind, now: Instant) {
         let pending_chars = self.stream(kind).pending_text().chars().count();
         let needs_tick = !self.hold.is_empty() || pending_chars >= STREAM_PREVIEW_MIN_CHARS;

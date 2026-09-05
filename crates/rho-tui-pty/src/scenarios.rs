@@ -29,6 +29,7 @@ mod pickers;
 mod process_rail;
 #[cfg(unix)]
 mod quiet_subagent;
+mod reasoning_output;
 mod resume_delete;
 mod resume_scrollback;
 mod runtime_info;
@@ -101,6 +102,7 @@ use pickers::{
 use process_rail::{
     PENDING_INPUT_BELOW_ACTIVITY_SCENARIO, PROCESS_RAIL_PEEK_SCENARIO, PROCESS_RAIL_SCENARIO,
 };
+use reasoning_output::REASONING_OUTPUT_RETROACTIVE_SCENARIO;
 use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use resume_scrollback::RESUME_SCROLLBACK_ID;
 use runtime_info::RUNTIME_INFO_STEPS;
@@ -456,6 +458,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     STARTUP_FIRST_FRAME_SCENARIO,
     STARTUP_STREAM_EXIT_SCENARIO,
     STARTUP_PROMPT_STREAM_EXIT_SCENARIO,
+    REASONING_OUTPUT_RETROACTIVE_SCENARIO,
     Scenario::new(
         "cancel_and_resubmit",
         "Cancel a long fixture stream and submit another prompt",
@@ -832,6 +835,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     quiet_subagent::QUIET_SUBAGENT_SCENARIO,
     #[cfg(unix)]
     quiet_subagent::GOAL_ACTION_RETRY_SCENARIO,
+    #[cfg(unix)]
     quiet_subagent::RUNNING_NOTICES_SCENARIO,
     agent_messages::AGENT_MESSAGES_SCENARIO,
     boundary_notifications::SCENARIO,

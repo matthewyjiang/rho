@@ -79,6 +79,7 @@ pub(crate) struct HistoryRenderSettings {
     pub width: usize,
     pub max_tool_output_lines: usize,
     pub zen_mode: bool,
+    pub show_reasoning_output: bool,
     /// Active theme generation so palette switches rebuild styled lines.
     pub theme_generation: u64,
     /// Max rows one feed image may reserve inside this layout.
@@ -86,10 +87,22 @@ pub(crate) struct HistoryRenderSettings {
 }
 
 impl HistoryRenderSettings {
-    /// Zen mode keeps entry indices stable but contributes no transcript lines for
-    /// tool cards or reasoning blocks.
+    /// Hidden entries keep their indices without contributing transcript lines.
+    /// Zen hides tool cards and reasoning. Hiding reasoning output alone drops
+    /// only reasoning that has no duration receipt left to show.
     pub(super) fn hides_entry(self, entry: &Entry) -> bool {
-        self.zen_mode && matches!(entry, Entry::Tool(_) | Entry::Reasoning(_))
+        match entry {
+            Entry::Tool(_) => self.zen_mode,
+            Entry::Reasoning(reasoning) => {
+                self.zen_mode || (!self.show_reasoning_output && reasoning.thought_for.is_none())
+            }
+            Entry::User(_)
+            | Entry::Assistant(_)
+            | Entry::Notice(_)
+            | Entry::RuntimeInfo(_)
+            | Entry::Changelog(_)
+            | Entry::Error(_) => false,
+        }
     }
 
     /// Width or theme changes reflow or restyle every cached line.
@@ -554,7 +567,7 @@ impl HistoryLineCache {
                 return indices;
             }
         }
-        if delta.tool_output || delta.zen {
+        if delta.tool_output || delta.zen || delta.reasoning_output {
             for (index, entry) in entries.iter().enumerate().skip(self.measured_from) {
                 if delta.needs_entry(entry) {
                     indices.push(index);
@@ -577,7 +590,7 @@ impl HistoryLineCache {
                 .settings
                 .and_then(|previous| SoftSettingsDelta::between(previous, settings));
             if let Some(delta) = soft {
-                // Soft knobs (image budget, tool collapse height, zen) only
+                // Soft knobs (image budget, tool height, reasoning, zen) only
                 // touch discrete entries. Keep the warm suffix so long
                 // transcripts do not re-markdown on every composer resize.
                 self.settings = Some(settings);
@@ -865,6 +878,15 @@ fn prepare_cache_entry_render(
     if settings.hides_entry(entry) {
         return None;
     }
+    // Keep the duration receipt when text is hidden, without changing stored reasoning.
+    // `hides_entry` already dropped hidden reasoning that has no receipt.
+    let summary = match entry {
+        Entry::Reasoning(reasoning) if !settings.show_reasoning_output => reasoning
+            .thought_for
+            .map(|duration| Entry::Reasoning(super::ReasoningEntry::summary_only(duration))),
+        _ => None,
+    };
+    let entry = summary.as_ref().unwrap_or(entry);
     let trailing_blank = if open_stream_tail && entry_index + 1 == entries_len {
         TrailingBlank::Omit
     } else {
