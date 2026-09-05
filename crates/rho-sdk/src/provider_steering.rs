@@ -17,7 +17,7 @@ pub struct ProviderSteeringRequest {
     content: Vec<ContentBlock>,
     claim: Arc<Mutex<ClaimState>>,
     outcomes: mpsc::UnboundedSender<(SteeringId, ProviderSteeringOutcome)>,
-    settled: bool,
+    outcome: ProviderSteeringOutcome,
 }
 
 impl ProviderSteeringRequest {
@@ -32,7 +32,7 @@ impl ProviderSteeringRequest {
             content,
             claim,
             outcomes,
-            settled: false,
+            outcome: ProviderSteeringOutcome::Released,
         }
     }
 
@@ -96,30 +96,19 @@ impl ProviderSteeringRequest {
     /// Backend acknowledged it will apply the input inside this turn.
     pub fn accept(mut self) {
         if self.ensure_claimed() {
-            self.settle(ProviderSteeringOutcome::Accepted);
-        } else {
-            self.settle(ProviderSteeringOutcome::Released);
+            self.outcome = ProviderSteeringOutcome::Accepted;
         }
     }
 
     /// Provider will not deliver it; the SDK applies it at the turn boundary.
     ///
     /// [`Drop`] does the same.
-    pub fn release(mut self) {
-        self.settle(ProviderSteeringOutcome::Released);
-    }
-
-    fn settle(&mut self, outcome: ProviderSteeringOutcome) {
-        if std::mem::replace(&mut self.settled, true) {
-            return;
-        }
-        let _ = self.outcomes.send((self.id.clone(), outcome));
-    }
+    pub fn release(self) {}
 }
 
 impl Drop for ProviderSteeringRequest {
     fn drop(&mut self) {
-        self.settle(ProviderSteeringOutcome::Released);
+        let _ = self.outcomes.send((self.id.clone(), self.outcome));
     }
 }
 
@@ -138,7 +127,7 @@ impl Drop for ProviderSteeringReceiver {
     fn drop(&mut self) {
         self.rx.close();
         while let Ok(request) = self.rx.try_recv() {
-            request.release();
+            drop(request);
         }
     }
 }
