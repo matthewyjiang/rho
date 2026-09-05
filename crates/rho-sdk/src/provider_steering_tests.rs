@@ -1,0 +1,58 @@
+use pretty_assertions::assert_eq;
+
+use super::{try_retract_claim, ProviderSteeringOutcome, ProviderSteeringRequest};
+
+// Covers: explicit settlement followed by Drop must not emit a second outcome.
+// Retracted input must report Released even when the provider calls accept.
+// Owner: SDK provider steering request lifecycle.
+#[test]
+fn settlement_emits_exactly_one_outcome() {
+    let cases = [
+        (
+            ProviderSteeringRequest::accept as fn(ProviderSteeringRequest),
+            ProviderSteeringOutcome::Accepted,
+        ),
+        (
+            ProviderSteeringRequest::release,
+            ProviderSteeringOutcome::Released,
+        ),
+        (drop, ProviderSteeringOutcome::Released),
+        (
+            |request| {
+                assert!(try_retract_claim(&request.claim));
+                request.accept();
+            },
+            ProviderSteeringOutcome::Released,
+        ),
+    ];
+    for (settle, expected) in cases {
+        let (request, mut outcomes) = ProviderSteeringRequest::test_unclaimed(Vec::new());
+        let id = request.id().clone();
+        settle(request);
+        assert_eq!(outcomes.try_recv(), Ok((id, expected)));
+        assert_eq!(
+            outcomes.try_recv(),
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+        );
+    }
+}
+
+// Covers: receiver shutdown releases queued input while the SDK still owns a sender.
+// Owner: SDK provider steering channel lifecycle.
+#[test]
+fn dropping_receiver_releases_queued_request() {
+    let (request, mut outcomes) = ProviderSteeringRequest::test_unclaimed(Vec::new());
+    let id = request.id().clone();
+    let (sender, receiver) = super::provider_steering_channel();
+    assert!(sender.send(request).is_ok());
+    drop(receiver);
+    assert_eq!(
+        outcomes.try_recv(),
+        Ok((id, ProviderSteeringOutcome::Released))
+    );
+    assert_eq!(
+        outcomes.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+    );
+    drop(sender);
+}

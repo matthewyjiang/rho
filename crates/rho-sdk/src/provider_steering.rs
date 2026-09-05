@@ -1,7 +1,4 @@
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
-};
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 
@@ -20,7 +17,7 @@ pub struct ProviderSteeringRequest {
     content: Vec<ContentBlock>,
     claim: Arc<Mutex<ClaimState>>,
     outcomes: mpsc::UnboundedSender<(SteeringId, ProviderSteeringOutcome)>,
-    settled: AtomicBool,
+    outcome: ProviderSteeringOutcome,
 }
 
 impl ProviderSteeringRequest {
@@ -35,7 +32,7 @@ impl ProviderSteeringRequest {
             content,
             claim,
             outcomes,
-            settled: AtomicBool::new(false),
+            outcome: ProviderSteeringOutcome::Released,
         }
     }
 
@@ -97,32 +94,21 @@ impl ProviderSteeringRequest {
     }
 
     /// Backend acknowledged it will apply the input inside this turn.
-    pub fn accept(self) {
+    pub fn accept(mut self) {
         if self.ensure_claimed() {
-            self.settle(ProviderSteeringOutcome::Accepted);
-        } else {
-            self.settle(ProviderSteeringOutcome::Released);
+            self.outcome = ProviderSteeringOutcome::Accepted;
         }
     }
 
     /// Provider will not deliver it; the SDK applies it at the turn boundary.
     ///
     /// [`Drop`] does the same.
-    pub fn release(self) {
-        self.settle(ProviderSteeringOutcome::Released);
-    }
-
-    fn settle(&self, outcome: ProviderSteeringOutcome) {
-        if self.settled.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        let _ = self.outcomes.send((self.id.clone(), outcome));
-    }
+    pub fn release(self) {}
 }
 
 impl Drop for ProviderSteeringRequest {
     fn drop(&mut self) {
-        self.settle(ProviderSteeringOutcome::Released);
+        let _ = self.outcomes.send((self.id.clone(), self.outcome));
     }
 }
 
@@ -134,15 +120,6 @@ pub struct ProviderSteeringReceiver {
 impl ProviderSteeringReceiver {
     pub async fn recv(&mut self) -> Option<ProviderSteeringRequest> {
         self.rx.recv().await
-    }
-}
-
-impl Drop for ProviderSteeringReceiver {
-    fn drop(&mut self) {
-        self.rx.close();
-        while let Ok(request) = self.rx.try_recv() {
-            request.settle(ProviderSteeringOutcome::Released);
-        }
     }
 }
 
@@ -181,3 +158,7 @@ pub(crate) fn try_retract_claim(claim: &Arc<Mutex<ClaimState>>) -> bool {
         false
     }
 }
+
+#[cfg(test)]
+#[path = "provider_steering_tests.rs"]
+mod tests;
