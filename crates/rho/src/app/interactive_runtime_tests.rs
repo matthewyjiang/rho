@@ -352,7 +352,9 @@ async fn permission_mode_runtime() -> InteractiveRuntime {
             std::env::current_dir().unwrap(),
             std::path::PathBuf::new(),
             BackgroundSubagents::Disabled,
-            /*catalog*/ None,
+            Some(Arc::new(
+                crate::agent::AgentCatalog::from_authorized_sources(Default::default()).unwrap(),
+            )),
         )),
     );
     interactive.cached_tool_specs = interactive.tools.specs();

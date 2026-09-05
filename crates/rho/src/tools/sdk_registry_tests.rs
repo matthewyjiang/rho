@@ -86,7 +86,10 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
                 root.path().to_owned(),
                 root.path().join("config.toml"),
                 BackgroundSubagents::Enabled,
-                /*catalog*/ None,
+                Some(Arc::new(
+                    crate::agent::AgentCatalog::from_authorized_sources(Default::default())
+                        .unwrap(),
+                )),
             ))
             .workflow(Arc::new(RegistryWorkflowService));
         let mut tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options);
