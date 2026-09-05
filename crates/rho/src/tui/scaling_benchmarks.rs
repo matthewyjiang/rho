@@ -74,6 +74,7 @@ fn perf_audit_tail_updates_by_history_size() {
         width: 120,
         max_tool_output_lines: 10,
         zen_mode: false,
+        show_reasoning_output: true,
         theme_generation: 0,
         max_image_height: crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
     };

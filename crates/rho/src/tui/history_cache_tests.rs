@@ -16,6 +16,7 @@ fn settings(width: usize) -> HistoryRenderSettings {
         width,
         max_tool_output_lines: 10,
         zen_mode: false,
+        show_reasoning_output: true,
         theme_generation: 0,
         max_image_height: crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
     }
@@ -30,6 +31,7 @@ fn settings_with(
         width,
         max_tool_output_lines,
         zen_mode,
+        show_reasoning_output: true,
         theme_generation: 0,
         max_image_height: crate::tui::feed_image::DEFAULT_IMAGE_HEIGHT,
     }
@@ -411,6 +413,9 @@ fn incrementally_keeps_prose_after_a_closed_fence() {
 
 #[path = "history_cache_copy_tests.rs"]
 mod copy;
+
+#[path = "history_cache_reasoning_tests.rs"]
+mod reasoning;
 
 // Covers: new table rows paint against frozen widths without a full reflow.
 // Owner: history line cache (incremental append)

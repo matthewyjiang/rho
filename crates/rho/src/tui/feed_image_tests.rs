@@ -273,6 +273,7 @@ fn content_capped_budget_keeps_tall_image_paintable_in_shrunken_viewport() {
         width,
         max_tool_output_lines: 20,
         zen_mode: false,
+        show_reasoning_output: true,
         theme_generation: 0,
         max_image_height: budget,
     };
@@ -394,6 +395,7 @@ fn tool_entry_history_cache_tracks_partial_image_placements_at_both_boundaries()
         width,
         max_tool_output_lines: 20,
         zen_mode: false,
+        show_reasoning_output: true,
         theme_generation: 0,
         max_image_height: budget,
     };

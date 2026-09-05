@@ -86,9 +86,7 @@ impl App {
             ViewModelEvent::ReasoningDelta(text) => {
                 self.usage.live_stream.add_output_text(&text);
                 self.turn.reasoning_phase_mut().on_reasoning_delta();
-                if !self.info.runtime.displays_reasoning_output() {
-                    return Ok(true);
-                }
+                // Retain hidden reasoning too; visibility is applied when rendering.
                 let switched = self.switch_stream_kind(StreamKind::Reasoning);
                 let drained = self.receive_stream_delta(terminal, StreamKind::Reasoning, &text)?;
                 Ok(switched || drained)
@@ -663,44 +661,6 @@ impl App {
 
     pub(super) fn record_inserted_entry(&mut self, entry: Entry) {
         self.push_transcript_entry(entry);
-    }
-
-    /// Apply the live transcript chrome settings to in-flight turn UI.
-    ///
-    /// `Thinking...` visibility is decided at render from
-    /// [`crate::tui::ReasoningChrome`] + whether the reasoning stretch is open.
-    /// This only drops an in-flight reasoning text preview when policy no longer
-    /// wants full text.
-    pub(super) fn apply_reasoning_output_visibility(&mut self) {
-        if !self.info.runtime.displays_reasoning_output() {
-            self.discard_live_reasoning_output();
-        }
-    }
-
-    pub(super) fn discard_live_reasoning_output(&mut self) {
-        let clearing_reasoning = matches!(
-            self.streams.current_stream_kind,
-            Some(StreamKind::Reasoning)
-        ) || self
-            .streams
-            .live_stream_preview
-            .as_ref()
-            .is_some_and(|preview| preview.kind == StreamKind::Reasoning);
-        if !clearing_reasoning {
-            return;
-        }
-        if matches!(
-            self.streams.current_stream_kind,
-            Some(StreamKind::Reasoning)
-        ) {
-            self.streams.discard_hold();
-            self.streams.reasoning_stream.reset();
-            self.streams.reasoning_stream_code_fence = Default::default();
-            self.streams.invalidate_preview_cache();
-            self.streams.current_stream_kind = None;
-        }
-        self.streams.clear_tick_deadline();
-        self.streams.set_live_preview(None);
     }
 
     fn reset_attempt_accounting(&mut self) {
