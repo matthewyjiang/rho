@@ -62,36 +62,6 @@ fn credentials(available: &[&str]) -> MemoryCredentialStore {
     store
 }
 
-/// Re-executes credential-sensitive tests with absent, blank, and usable overrides.
-/// Only child command environments change; parallel tests keep their environment.
-fn in_isolated_credential_process() -> bool {
-    let thread = std::thread::current();
-    let test_name = thread.name().expect("named test thread");
-    const CHILD_TEST: &str = "RHO_AGENT_BINDING_CREDENTIAL_TEST";
-    if std::env::var(CHILD_TEST).as_deref() == Ok(test_name) {
-        return true;
-    }
-    for override_value in [None, Some(" "), Some("test-env-key")] {
-        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
-        command.args(["--exact", test_name, "--nocapture"]);
-        for name in rho_providers::credential_env_vars() {
-            command.env_remove(name);
-        }
-        command.env(CHILD_TEST, test_name);
-        if let Some(value) = override_value {
-            command.env("XAI_API_KEY", value);
-        }
-        let output = command.output().expect("run isolated credential test");
-        assert!(
-            output.status.success(),
-            "override={override_value:?}\n{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
-    }
-    false
-}
-
 #[test]
 fn delegated_role_keeps_questionnaire_when_host_offers_it() {
     let bound = AgentBinder::bind(
@@ -784,7 +754,28 @@ fn explicit_auth_pin_overrides_host_auth() {
 // Owner: agent binding
 #[test]
 fn provider_switch_without_auth_uses_available_host_credentials() {
-    if !in_isolated_credential_process() {
+    // MemoryCredentialStore isolates storage, not discovery_auth's environment lookup.
+    // One sanitized child keeps local API keys from changing the table's auth choices
+    // without mutating parallel tests' environment. Override rules live in rho-providers.
+    let thread = std::thread::current();
+    let test_name = thread.name().expect("named test thread");
+    const CHILD_TEST: &str = "RHO_AGENT_BINDING_CREDENTIAL_TEST";
+    if std::env::var(CHILD_TEST).as_deref() != Ok(test_name) {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command.args(["--exact", test_name, "--nocapture"]);
+        for name in rho_providers::credential_env_vars() {
+            command.env_remove(name);
+        }
+        let output = command
+            .env(CHILD_TEST, test_name)
+            .output()
+            .expect("run isolated credential test");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
         return;
     }
     let host = Config {
@@ -794,42 +785,29 @@ fn provider_switch_without_auth_uses_available_host_credentials() {
         model_aliases: aliases(&[("grok", "xai/grok-4.5")]),
         ..Config::default()
     };
-    // Expected auth without a usable override, then with XAI_API_KEY set.
-    let cases: &[(&str, &[&str], [&str; 2])] = &[
+    let cases: &[(&str, &[&str], &str)] = &[
         (
             "provider: xai\nmodel: grok-4.5",
             &["xai-oauth"],
-            ["xai-oauth", "xai-api-key"],
+            "xai-oauth",
         ),
         (
             "provider: xai\nmodel: grok-4.5",
             &["xai-api-key"],
-            ["xai-api-key", "xai-api-key"],
+            "xai-api-key",
         ),
         (
             "provider: xai\nmodel: grok-4.5",
             &["xai-oauth", "xai-api-key"],
-            ["xai-api-key", "xai-api-key"],
+            "xai-api-key",
         ),
-        (
-            "provider: xai\nmodel: grok-4.5",
-            &[],
-            ["xai-api-key", "xai-api-key"],
-        ),
-        (
-            "provider: xai\nmodel: grok-4.5",
-            &["codex"],
-            ["xai-api-key", "xai-api-key"],
-        ),
-        (
-            "model: '@grok'",
-            &["xai-oauth"],
-            ["xai-oauth", "xai-api-key"],
-        ),
+        ("provider: xai\nmodel: grok-4.5", &[], "xai-api-key"),
+        ("provider: xai\nmodel: grok-4.5", &["codex"], "xai-api-key"),
+        ("model: '@grok'", &["xai-oauth"], "xai-oauth"),
         (
             "provider: xai-oauth\nmodel: grok-4.5",
             &["xai-api-key"],
-            ["xai-oauth", "xai-oauth"],
+            "xai-oauth",
         ),
     ];
     for (selection, available, expected_auth) in cases {
@@ -851,14 +829,13 @@ fn provider_switch_without_auth_uses_available_host_credentials() {
         )
         .unwrap();
         let config = bound.rho_config().unwrap();
-        let has_env_key = std::env::var("XAI_API_KEY").as_deref() == Ok("test-env-key");
         pretty_assertions::assert_eq!(
             (
                 config.provider.as_str(),
                 config.auth.as_str(),
                 config.model.as_str()
             ),
-            ("xai", expected_auth[usize::from(has_env_key)], "grok-4.5"),
+            ("xai", *expected_auth, "grok-4.5"),
             "selection={selection}, available={available:?}",
         );
     }
@@ -869,10 +846,6 @@ fn provider_switch_without_auth_uses_available_host_credentials() {
 #[test]
 fn bound_agent_prompt_model_reflects_model_policy() {
     use crate::model_identity::PromptModel;
-
-    if !in_isolated_credential_process() {
-        return;
-    }
 
     let host = Config {
         provider: "openai".into(),

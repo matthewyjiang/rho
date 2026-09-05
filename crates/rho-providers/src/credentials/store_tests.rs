@@ -214,3 +214,25 @@ fn empty_github_copilot_env_override_is_not_active() {
         }
     ));
 }
+
+#[test]
+fn auth_env_override_requires_a_nonblank_value_for_that_mode() {
+    for (auth, expected_env) in [
+        ("xai-api-key", "XAI_API_KEY"),
+        ("xai-oauth", "XAI_ACCESS_TOKEN"),
+    ] {
+        for (value, expected) in [(None, false), (Some(" \t\n "), false), (Some("key"), true)] {
+            pretty_assertions::assert_eq!(
+                auth_has_env_override_from(auth, |env_var| {
+                    assert_eq!(env_var, expected_env);
+                    value.map(str::to_owned)
+                }),
+                expected,
+                "auth={auth}, value={value:?}",
+            );
+        }
+    }
+    assert!(!auth_has_env_override_from("unknown-auth", |_| {
+        panic!("unknown auth must not look up an environment credential")
+    }));
+}
