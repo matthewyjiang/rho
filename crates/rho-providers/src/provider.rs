@@ -867,6 +867,25 @@ pub fn resolve_provider_reference(
     })
 }
 
+/// Resolves a provider reference, preferring an auth mode with credentials.
+///
+/// Retired provider names retain their implicit auth pin. Canonical names use
+/// [`ProviderDescriptor::discovery_auth`], including environment overrides.
+pub fn resolve_provider_reference_with_credentials(
+    provider_name: &str,
+    store: &dyn crate::credentials::CredentialStore,
+) -> Result<ResolvedProviderProfile, ProfileResolutionError> {
+    if let Some(profile) = legacy_provider_profile(provider_name) {
+        return Ok(profile);
+    }
+    let provider = provider_descriptor(provider_name)
+        .ok_or_else(|| ProfileResolutionError::UnknownProvider(provider_name.into()))?;
+    Ok(ResolvedProviderProfile {
+        provider,
+        auth: provider.discovery_auth(store),
+    })
+}
+
 /// Resolves a provider/auth pair to one registered provider identity and auth mode.
 ///
 /// Soft resolution: when the requested auth belongs to a different provider

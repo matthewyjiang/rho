@@ -2,6 +2,10 @@ use super::*;
 use crate::agent::{
     AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy, ToolCapability, ToolPolicy,
 };
+use rho_providers::credentials::{
+    save_codex_tokens, save_provider_api_key, save_xai_tokens, CodexTokens, MemoryCredentialStore,
+    XaiTokens,
+};
 
 fn capability_set(names: &[&str]) -> AgentCapabilities {
     AgentCapabilities::new(
@@ -27,6 +31,65 @@ fn definition(tools: ToolPolicy) -> Arc<AgentDefinition> {
 
 fn capabilities() -> AgentCapabilities {
     capability_set(&["read_file", "write", "agent", "agents", "questionnaire"])
+}
+
+fn credentials(available: &[&str]) -> MemoryCredentialStore {
+    let store = MemoryCredentialStore::default();
+    for auth in available {
+        match *auth {
+            "xai-oauth" => save_xai_tokens(
+                &store,
+                &XaiTokens {
+                    access_token: "test-access-token".into(),
+                    refresh_token: None,
+                    expires_at_unix: None,
+                    id_token: None,
+                },
+            ),
+            "codex" => save_codex_tokens(
+                &store,
+                &CodexTokens {
+                    access_token: "test-access-token".into(),
+                    refresh_token: None,
+                    id_token: None,
+                    account_id: None,
+                },
+            ),
+            auth => save_provider_api_key(&store, auth, "test-api-key"),
+        }
+        .unwrap();
+    }
+    store
+}
+
+/// Re-executes credential-sensitive tests with absent, blank, and usable overrides.
+/// Only child command environments change; parallel tests keep their environment.
+fn in_isolated_credential_process() -> bool {
+    let thread = std::thread::current();
+    let test_name = thread.name().expect("named test thread");
+    const CHILD_TEST: &str = "RHO_AGENT_BINDING_CREDENTIAL_TEST";
+    if std::env::var(CHILD_TEST).as_deref() == Ok(test_name) {
+        return true;
+    }
+    for override_value in [None, Some(" "), Some("test-env-key")] {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command.args(["--exact", test_name, "--nocapture"]);
+        for name in rho_providers::credential_env_vars() {
+            command.env_remove(name);
+        }
+        command.env(CHILD_TEST, test_name);
+        if let Some(value) = override_value {
+            command.env("XAI_API_KEY", value);
+        }
+        let output = command.output().expect("run isolated credential test");
+        assert!(
+            output.status.success(),
+            "override={override_value:?}\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+    false
 }
 
 #[test]
@@ -668,7 +731,7 @@ fn provider_without_auth_keeps_compatible_host_auth() {
         auth: "xai-oauth".into(),
         ..Config::default()
     };
-    let bound = AgentBinder::bind_with_auth_availability(
+    let bound = AgentBinder::bind_with_credentials(
         definition_with_model(ModelPolicy::Prefer(ModelSelection {
             provider: Some("xai".into()),
             model: "grok-4.5".into(),
@@ -679,7 +742,7 @@ fn provider_without_auth_keeps_compatible_host_auth() {
             available_tools: capabilities(),
         },
         &host,
-        &|_| panic!("compatible parent auth must not consult other credentials"),
+        &credentials(&["xai-api-key"]),
     )
     .unwrap();
     let config = bound.rho_config().unwrap();
@@ -698,7 +761,7 @@ fn explicit_auth_pin_overrides_host_auth() {
         auth: "xai-oauth".into(),
         ..Config::default()
     };
-    let bound = AgentBinder::bind_with_auth_availability(
+    let bound = AgentBinder::bind_with_credentials(
         definition_with_model(ModelPolicy::Select(ModelSelection {
             provider: Some("xai".into()),
             model: "grok-4.5".into(),
@@ -709,7 +772,7 @@ fn explicit_auth_pin_overrides_host_auth() {
             available_tools: capabilities(),
         },
         &host,
-        &|_| panic!("explicit auth must not consult other credentials"),
+        &credentials(&["xai-oauth"]),
     )
     .unwrap();
     let config = bound.rho_config().unwrap();
@@ -721,6 +784,9 @@ fn explicit_auth_pin_overrides_host_auth() {
 // Owner: agent binding
 #[test]
 fn provider_switch_without_auth_uses_available_host_credentials() {
+    if !in_isolated_credential_process() {
+        return;
+    }
     let host = Config {
         provider: "openai-codex".into(),
         model: "gpt-5.5".into(),
@@ -728,29 +794,42 @@ fn provider_switch_without_auth_uses_available_host_credentials() {
         model_aliases: aliases(&[("grok", "xai/grok-4.5")]),
         ..Config::default()
     };
-    let cases: &[(&str, &[&str], &str)] = &[
+    // Expected auth without a usable override, then with XAI_API_KEY set.
+    let cases: &[(&str, &[&str], [&str; 2])] = &[
         (
             "provider: xai\nmodel: grok-4.5",
             &["xai-oauth"],
-            "xai-oauth",
+            ["xai-oauth", "xai-api-key"],
         ),
         (
             "provider: xai\nmodel: grok-4.5",
             &["xai-api-key"],
-            "xai-api-key",
+            ["xai-api-key", "xai-api-key"],
         ),
         (
             "provider: xai\nmodel: grok-4.5",
             &["xai-oauth", "xai-api-key"],
-            "xai-api-key",
+            ["xai-api-key", "xai-api-key"],
         ),
-        ("provider: xai\nmodel: grok-4.5", &[], "xai-api-key"),
-        ("provider: xai\nmodel: grok-4.5", &["codex"], "xai-api-key"),
-        ("model: '@grok'", &["xai-oauth"], "xai-oauth"),
+        (
+            "provider: xai\nmodel: grok-4.5",
+            &[],
+            ["xai-api-key", "xai-api-key"],
+        ),
+        (
+            "provider: xai\nmodel: grok-4.5",
+            &["codex"],
+            ["xai-api-key", "xai-api-key"],
+        ),
+        (
+            "model: '@grok'",
+            &["xai-oauth"],
+            ["xai-oauth", "xai-api-key"],
+        ),
         (
             "provider: xai-oauth\nmodel: grok-4.5",
             &["xai-api-key"],
-            "xai-oauth",
+            ["xai-oauth", "xai-oauth"],
         ),
     ];
     for (selection, available, expected_auth) in cases {
@@ -760,27 +839,26 @@ fn provider_switch_without_auth_uses_available_host_credentials() {
             &format!("---\ndescription: Code reviewer\n{selection}\n---\nReview the code."),
         )
         .unwrap();
-        let bound = AgentBinder::bind_with_auth_availability(
+        let store = credentials(available);
+        let bound = AgentBinder::bind_with_credentials(
             Arc::new(definition),
             AgentInvocation {
                 role: AgentRole::Delegated,
                 available_tools: capabilities(),
             },
             &host,
-            &|auth| {
-                assert!(matches!(auth, "xai-api-key" | "xai-oauth"));
-                available.contains(&auth)
-            },
+            &store,
         )
         .unwrap();
         let config = bound.rho_config().unwrap();
+        let has_env_key = std::env::var("XAI_API_KEY").as_deref() == Ok("test-env-key");
         pretty_assertions::assert_eq!(
             (
                 config.provider.as_str(),
                 config.auth.as_str(),
                 config.model.as_str()
             ),
-            ("xai", *expected_auth, "grok-4.5"),
+            ("xai", expected_auth[usize::from(has_env_key)], "grok-4.5"),
             "selection={selection}, available={available:?}",
         );
     }
@@ -790,10 +868,14 @@ fn provider_switch_without_auth_uses_available_host_credentials() {
 // Owner: agent binding.
 //
 // The test-only prediction helper and binding must agree when given the same
-// credential availability; neither side should consult the machine's logins.
+// credential store and isolated environment, not the machine's logins.
 #[test]
 fn predicted_agent_model_matches_the_model_binding_picks() {
     use crate::model_identity::PromptModel;
+
+    if !in_isolated_credential_process() {
+        return;
+    }
 
     let host = Config {
         provider: "openai".into(),
@@ -849,17 +931,17 @@ fn predicted_agent_model_matches_the_model_binding_picks() {
 
     for (name, policy) in policies {
         let definition = definition_with_model(policy);
-        let auth_available = |auth: &str| auth == "xai-oauth";
-        let predicted = prompt_model_for_definition(&definition, &host, &auth_available)
+        let store = credentials(&["xai-oauth"]);
+        let predicted = prompt_model_for_definition(&definition, &host, &store)
             .expect("bindable policy should predict a model");
-        let bound = AgentBinder::bind_with_auth_availability(
+        let bound = AgentBinder::bind_with_credentials(
             Arc::clone(&definition),
             AgentInvocation {
                 role: AgentRole::Delegated,
                 available_tools: capabilities(),
             },
             &host,
-            &auth_available,
+            &store,
         )
         .unwrap();
 
@@ -894,7 +976,7 @@ fn unbindable_agent_policy_predicts_no_model() {
     }));
 
     assert_eq!(
-        prompt_model_for_definition(&definition, &host, &|_| false),
+        prompt_model_for_definition(&definition, &host, &MemoryCredentialStore::default()),
         None
     );
     assert!(AgentBinder::bind(
@@ -925,8 +1007,12 @@ fn predicted_claude_agent_model_is_the_pass_through_value() {
             ..definition(ToolPolicy::All).as_ref().clone()
         });
 
-        let predicted = prompt_model_for_definition(&definition, &Config::default(), &|_| false)
-            .expect("claude-cli agents always predict");
+        let predicted = prompt_model_for_definition(
+            &definition,
+            &Config::default(),
+            &MemoryCredentialStore::default(),
+        )
+        .expect("claude-cli agents always predict");
         let bound = AgentBinder::bind(
             Arc::clone(&definition),
             AgentInvocation {
