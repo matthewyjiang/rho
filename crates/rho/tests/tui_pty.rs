@@ -1380,7 +1380,7 @@ fn fake_claude_background_cost_appears_in_info() {
 
     harness
         .wait_for_text(
-            "background claude agent completion received with delegated result (delivery 1)",
+            "claude-background-delivery-1:",
             WaitTimeout::secs(20, "completion delivery"),
         )
         .unwrap();

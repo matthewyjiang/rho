@@ -203,9 +203,7 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
             )
         }
     } else if prompt.contains("(claude-planner): ok") && prompt.contains("rho-claude-e2e-ok") {
-        format!(
-            "background claude agent completion received with delegated result (delivery {deliveries})"
-        )
+        format!("\n\nclaude-background-delivery-{deliveries}: delegated result received")
     } else {
         format!("unexpected agent notification payload: {prompt}")
     }
