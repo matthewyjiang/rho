@@ -111,6 +111,10 @@ const SIDE_BTW_STEPS: &[Step] = &[
         text: "fixture response: hello from aside and code",
         timeout: STARTUP,
     },
+    Step::WaitText {
+        text: "Enter send   Esc close",
+        timeout: SETTLE,
+    },
     Step::Custom(assert_side_transcript_rendered),
     Step::Phase("copy_side_code"),
     Step::SubmitText("fixture code block"),
@@ -137,7 +141,9 @@ pub(super) const SIDE_BTW_SCENARIO: Scenario = Scenario::new(
     SIZE,
     SIDE_BTW_STEPS,
     /* smoke */ false,
-);
+)
+// Exercise OSC52 on every host instead of using the runner's native clipboard.
+.with_env(&[("SSH_TTY", "rho-pty-clipboard")]);
 
 // Covers: opening /side during a parent turn must not abort that turn when
 // Esc closes the overlay.
@@ -194,6 +200,8 @@ fn assert_side_overlay_open(harness: &mut PtyHarness) -> Result<()> {
 }
 
 fn copy_visible_code(harness: &mut PtyHarness) -> Result<()> {
+    // A completed reply has its final spacer and stable copy-button geometry.
+    harness.wait_for_text("Enter send   Esc close", SETTLE)?;
     harness.wait_for_text("COPY", SETTLE)?;
     let screen = harness.screen().contents();
     let (row, col) = screen
