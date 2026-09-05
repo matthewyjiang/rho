@@ -18,7 +18,7 @@ use super::{
     auth::{self, ClaudeAuthError},
     executable,
     rate_limit::{self, RateLimitState},
-    usage_parse::named_window_keys,
+    usage_parse::{named_window_keys, parse_usage_screen},
 };
 
 #[cfg(unix)]
@@ -31,12 +31,39 @@ mod drive;
 /// Claude processes.
 pub(crate) const LIVE_TTL: Duration = Duration::from_secs(5 * 60);
 
-/// Wait this long only while the screen names a window we have not parsed.
-const PANEL_GROW: Duration = Duration::from_secs(2);
+/// Time budgets for one `/usage` read after the idle prompt. Tests shrink
+/// these so hung-child cases do not wait out the production values.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ProbeBudget {
+    /// `/usage` then Anthropic's usage endpoint. Warm captures paint "% used"
+    /// in under 1s, but a cold start stacks startup latency with a slow usage
+    /// refresh; a user-visible probe failure landed 20-30s after `/limits`,
+    /// which is exactly startup + the old 15s budget. Warm runs never wait
+    /// this long; it only bounds a hung refresh.
+    pub(crate) panel_wait: Duration,
+    /// Wait this long only while the screen names a window we have not parsed.
+    pub(crate) grow: Duration,
+}
+
+const PROBE_BUDGET: ProbeBudget = ProbeBudget {
+    panel_wait: Duration::from_secs(30),
+    grow: Duration::from_secs(2),
+};
 
 const PROMPT_MARKERS: &[&str] = &["? for shortcuts", "try \"", "shift+tab to cycle"];
 const TRUST_MARKERS: &[&str] = &["trust this folder", "do you trust"];
 const LOGIN_MARKERS: &[&str] = &["log in", "sign in to"];
+const PANEL_MARKERS: &[&str] = &["Current session", "% used", "%used"];
+/// Claude can keep percentages visible after a failed refresh, and hides the
+/// spinner when showing these notices. None of those windows are live results.
+const REFRESH_FAILURE_MARKERS: &[&str] = &[
+    "failed to load usage",
+    "showing last-known usage",
+    "could not refresh usage",
+    "partial usage data",
+    "per-model breakdown unavailable",
+    "usage endpoint is rate limited",
+];
 
 #[derive(Debug, Error)]
 pub(crate) enum UsageProbeError {
@@ -50,10 +77,10 @@ pub(crate) enum UsageProbeError {
     Spawn(String),
     #[error("claude code: usage probe cancelled")]
     Cancelled,
-    #[error("claude code: timed out waiting for {0}")]
-    Timeout(&'static str),
     #[error("claude code: timed out waiting for {what}: {screen}")]
     TimeoutScreen { what: &'static str, screen: String },
+    #[error("claude code: claude exited before {what}: {screen}")]
+    Exited { what: &'static str, screen: String },
     #[error("claude code: /usage refresh failed: {screen}")]
     RefreshFailed { screen: String },
     #[error("claude code: /usage panel was not readable")]
@@ -153,7 +180,7 @@ fn probe_usage_blocking(abort: &AtomicBool) -> Result<RateLimitState, UsageProbe
         &env,
         &cwd,
         abort,
-        PANEL_GROW,
+        PROBE_BUDGET,
     )
 }
 
@@ -170,16 +197,16 @@ pub(crate) fn read_usage_from_binary(
     env: &[(String, String)],
     cwd: &Path,
     abort: &AtomicBool,
-    grow: Duration,
+    budget: ProbeBudget,
 ) -> Result<RateLimitState, UsageProbeError> {
     #[cfg(not(unix))]
     {
-        let _ = (binary, args, env, cwd, abort, grow);
+        let _ = (binary, args, env, cwd, abort, budget);
         return Err(UsageProbeError::Unsupported);
     }
     #[cfg(unix)]
     {
-        drive::read_usage_from_binary(binary, args, env, cwd, abort, grow)
+        drive::read_usage_from_binary(binary, args, env, cwd, abort, budget)
     }
 }
 
@@ -207,6 +234,40 @@ fn classify_idle_screen(screen: &str) -> IdleScreen {
 
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
+}
+
+/// What one `/usage` viewport means. Only `Ready` carries live percentages;
+/// every other frame may show placeholder or last-known values.
+#[derive(Debug)]
+enum UsageScreen {
+    /// The panel has not painted yet.
+    NoPanel,
+    /// Claude reported a failed or degraded refresh.
+    Failed,
+    /// The spinner is visible; nothing on screen is a live result.
+    Refreshing,
+    /// The panel names a window that has no percentage yet.
+    Incomplete,
+    Ready(RateLimitState),
+}
+
+fn classify_usage_screen(screen: &str, now_unix: i64) -> UsageScreen {
+    let lower = screen.to_ascii_lowercase();
+    if contains_any(&lower, REFRESH_FAILURE_MARKERS) {
+        return UsageScreen::Failed;
+    }
+    if !contains_any(screen, PANEL_MARKERS) {
+        return UsageScreen::NoPanel;
+    }
+    if lower.contains("refreshing") {
+        return UsageScreen::Refreshing;
+    }
+    // Never retain an earlier parse: equal-count refreshes replace
+    // percentages and may remove windows as well as add them.
+    match parse_usage_screen(screen, now_unix) {
+        Some(state) if !waiting_on_named_windows(screen, Some(&state)) => UsageScreen::Ready(state),
+        _ => UsageScreen::Incomplete,
+    }
 }
 
 fn waiting_on_named_windows(screen: &str, parsed: Option<&RateLimitState>) -> bool {

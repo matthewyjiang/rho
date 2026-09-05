@@ -1,136 +1,183 @@
-use std::{path::Path, sync::atomic::AtomicBool};
+use std::{
+    path::Path,
+    sync::atomic::{AtomicBool, Ordering},
+    time::{Duration, Instant},
+};
 
 use pretty_assertions::assert_eq;
 
 use super::*;
 
-// Covers: cached percentages on failed refreshes must not become live, including
-// Claude's seeded fallback that hides Refreshing instead of showing a load error.
-// Owner: OS/process. Existing parser tests do not drive refresh status handling.
-#[test]
-fn fake_child_refresh_failure_rejects_cached_windows() {
-    for status in [
-        "Failed to load usage data: response error",
-        "Showing last-known usage as of 2 minutes ago (could not refresh)",
-        "Showing last-known usage (rate limited — try again in a moment)",
-        "Partial usage data (rate limited — try again in a moment)",
-        "Per-model breakdown unavailable (rate limited — try again in a moment)",
-        "Could not refresh usage data",
-        "Usage endpoint is rate limited. Please try again in a moment.",
-    ] {
-        let script = format!(
-            r#"
-printf '? for shortcuts\n'
-IFS= read -r command
-printf '\033[2J\033[HCurrent session\n10%% used\nCurrent week (all models)\n20%% used\nCurrent week (Fable)\n30%% used\n{status}\n'
-exec cat >/dev/null
-"#
-        );
-        let result = run_child(&script);
-        let Err(UsageProbeError::RefreshFailed { screen }) = result else {
-            panic!("{status}: {result:?}");
-        };
-        // The diagnostic must retain the footer, not truncate it after windows.
-        assert_eq!(screen.lines().last(), Some(status));
-    }
+/// Short budgets so hung-child cases fail fast instead of waiting out production values.
+const TEST_BUDGET: ProbeBudget = ProbeBudget {
+    panel_wait: Duration::from_millis(400),
+    grow: Duration::from_millis(400),
+};
+
+fn run_child(binary: &str, args: &[&str]) -> Result<RateLimitState, UsageProbeError> {
+    let cwd = tempfile::TempDir::new().unwrap();
+    run_child_in(binary, args, cwd.path())
 }
 
-fn run_child(script: &str) -> Result<RateLimitState, UsageProbeError> {
-    let cwd = tempfile::TempDir::new().unwrap();
+fn run_child_in(
+    binary: &str,
+    args: &[&str],
+    cwd: &Path,
+) -> Result<RateLimitState, UsageProbeError> {
     read_usage_from_binary(
-        Path::new("/bin/bash"),
-        &["-c", script],
+        Path::new(binary),
+        args,
         &[("TERM".into(), "xterm-256color".into())],
-        cwd.path(),
+        cwd,
         &AtomicBool::new(false),
-        super::super::PANEL_GROW,
+        TEST_BUDGET,
     )
 }
 
-// Covers: ending or exhausting the refresh budget cannot promote placeholder
-// percentages. One hung child exercises the real deadline without sleep-sync.
-// Owner: OS/process.
-#[test]
-fn fake_child_unfinished_refresh_never_returns_live() {
-    for ending in ["exit 0", "exec cat >/dev/null"] {
-        let script = format!(
-            r#"
+/// Run a bash child that paints `first` after `/usage`, signals via a `ready`
+/// file, waits for a `go` file, then paints `second`. The handoff makes the
+/// two paints separate PTY reads instead of relying on a wall-clock delay.
+fn run_two_paint_child(first: &str, second: &str) -> Result<RateLimitState, UsageProbeError> {
+    let cwd = tempfile::TempDir::new().unwrap();
+    let ready = cwd.path().join("ready");
+    let go = cwd.path().join("go");
+    let script = format!(
+        r#"
 printf '? for shortcuts\n'
 IFS= read -r command
-printf '\033[2J\033[HCurrent session\n0%% used\nCurrent week (all models)\n0%% used\nCurrent week (Fable)\n0%% used\nRefreshing…\n'
-{ending}
-"#
+printf '{first}'
+touch {ready}
+while [ ! -f {go} ]; do sleep 0.01; done
+printf '{second}'
+exec cat >/dev/null
+"#,
+        ready = ready.display(),
+        go = go.display()
+    );
+    let cwd_path = cwd.path().to_path_buf();
+    let worker = std::thread::spawn(move || run_child_in("/bin/bash", &["-c", &script], &cwd_path));
+    let started = Instant::now();
+    while !ready.exists() {
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "child never painted the first frame"
         );
-        let result = run_child(&script);
-        let Err(UsageProbeError::TimeoutScreen { what, screen }) = result else {
-            panic!("{ending}: {result:?}");
-        };
-        assert_eq!(what, "the /usage refresh");
-        assert_eq!(screen.lines().last(), Some("Refreshing…"));
+        std::thread::sleep(Duration::from_millis(10));
     }
+    std::fs::write(&go, b"").unwrap();
+    worker.join().expect("probe thread")
 }
 
-// Covers: the completed terminal snapshot replaces all placeholder values,
-// including when the number of windows stays the same. Child input is the
-// synchronization signal between paints, not a wall-clock delay.
-// Owner: OS/process.
+fn window_percents(state: &RateLimitState) -> Vec<(&str, Option<f64>)> {
+    state
+        .sorted_windows()
+        .into_iter()
+        .map(|window| (window.info.window_key(), window.info.utilization))
+        .collect()
+}
+
+// Covers: the /usage drive sequence must parse a panel from a fake child.
+// Owner: OS or process
 #[test]
-fn fake_child_completed_refresh_returns_current_percentages() {
+fn fake_child_usage_panel_parses() {
     let script = r#"
-import os, tty
-tty.setraw(0)
-def paint(text):
-    os.write(1, text.encode())
-paint('\033[2J\033[HCurrent session\r\n0% used\r\nCurrent week (all models)\r\n0% used\r\nCurrent week (Fable)\r\n0% used\r\nRefreshing…\r\n')
-while os.read(0, 1) != b'\r':
-    pass
-paint('\033[2J\033[HCurrent session\r\n14% used\r\nCurrent week (all models)\r\n27% used\r\nCurrent week (Fable)\r\n38% used\r\nEsc to cancel\r\n')
-while os.read(0, 1):
+printf '? for shortcuts\n❯ '
+buf=
+while IFS= read -r -n1 c; do
+  buf="${buf}${c}"
+  case "$buf" in
+    */usage*) break ;;
+  esac
+done
+printf '\nCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\n'
+exec cat >/dev/null
+"#;
+    let state = run_child("/bin/bash", &["-c", script]).expect("fake /usage");
+    assert_eq!(
+        window_percents(&state),
+        vec![("five_hour", Some(0.10)), ("seven_day", Some(0.20))]
+    );
+}
+
+// Covers: Down+Enter in one write confirms No and Claude exits.
+// Owner: OS or process
+#[test]
+fn fake_child_trust_dialog_needs_split_down_and_enter() {
+    let script = r#"
+import os, select, sys, tty
+
+def burst(wait):
+    fd = sys.stdin.fileno()
+    if not select.select([fd], [], [], wait)[0]:
+        return b""
+    data = os.read(fd, 256)
+    while select.select([fd], [], [], 0)[0]:
+        chunk = os.read(fd, 256)
+        if not chunk:
+            break
+        data += chunk
+    return data
+
+def write(text):
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+tty.setraw(sys.stdin.fileno())
+write("Accessing workspace:\nYes, I trust this folder\n❯ No, exit\nDo you trust this folder?\n")
+if burst(5.0) != b"\x1b[B":
+    sys.exit(1)
+write("\033[2J\033[HAccessing workspace:\n❯ Yes, I trust this folder\nNo, exit\nDo you trust this folder?\n")
+if burst(5.0) != b"\r":
+    sys.exit(1)
+write("\033[2J\033[H? for shortcuts\n❯ Try \"hi\"\nauto mode on (shift+tab to cycle)\n")
+buf = b""
+while b"/usage" not in buf:
+    chunk = burst(5.0)
+    if not chunk:
+        sys.exit(1)
+    buf += chunk
+write("\nCurrent session\n10% used\nResets in 1h\nCurrent week (all models)\n20% used\nResets in 2d\n")
+while os.read(sys.stdin.fileno(), 1024):
     pass
 "#;
-    let cwd = tempfile::TempDir::new().unwrap();
-    let mut session = PtySession::spawn(
-        Path::new("/usr/bin/python3"),
-        &["-c", script],
-        &[("TERM".into(), "xterm-256color".into())],
-        cwd.path(),
-        PTY_ROWS,
-        PTY_COLS,
-    )
-    .expect("fake child");
-    let deadline = Instant::now() + PANEL_WAIT;
-    let mut collection = UsageCollection::new(super::super::PANEL_GROW, deadline);
-    wait_for_footer(&mut session, "Refreshing…", deadline);
-    assert!(matches!(
-        collection.observe(&session.contents(), session.is_running(), Instant::now()),
-        Ok(CollectStep::Poll)
-    ));
-
-    // The child cannot paint fresh values until the collector has actually
-    // observed and rejected the complete three-window placeholder frame.
-    session.inject_bytes(b"\r").unwrap();
-    wait_for_footer(&mut session, "Esc to cancel", deadline);
-    assert!(matches!(
-        collection.observe(&session.contents(), session.is_running(), Instant::now()),
-        Ok(CollectStep::Drain)
-    ));
-    poll_until(
-        &mut session,
-        &AtomicBool::new(false),
-        Instant::now() + SETTLE_DRAIN,
-    )
-    .unwrap();
-    let Ok(CollectStep::Ready(state)) =
-        collection.observe(&session.contents(), session.is_running(), Instant::now())
-    else {
-        panic!("completed refresh was not ready");
-    };
+    let state = run_child("/usr/bin/python3", &["-c", script]).expect("fake /usage");
     assert_eq!(
-        state
-            .sorted_windows()
-            .into_iter()
-            .map(|window| (window.info.window_key(), window.info.utilization))
-            .collect::<Vec<_>>(),
+        window_percents(&state),
+        vec![("five_hour", Some(0.10)), ("seven_day", Some(0.20))]
+    );
+}
+
+// Covers: grow must wait for a named window that paints after the first parse.
+// Owner: OS or process
+#[test]
+fn fake_child_grow_picks_up_late_fable() {
+    let state = run_two_paint_child(
+        r"\033[2J\033[HCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n",
+        r"\033[2J\033[HCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n33%% used\nResets in 2d\n",
+    )
+    .expect("fake /usage");
+    assert_eq!(
+        window_percents(&state),
+        vec![
+            ("five_hour", Some(0.10)),
+            ("seven_day", Some(0.20)),
+            ("seven_day_fable", Some(0.33))
+        ]
+    );
+}
+
+// Covers: a completed refresh replaces every placeholder percentage, even when
+// the window count stays the same.
+// Owner: OS or process
+#[test]
+fn fake_child_completed_refresh_returns_current_percentages() {
+    let state = run_two_paint_child(
+        r"\033[2J\033[HCurrent session\n0%% used\nCurrent week (all models)\n0%% used\nCurrent week (Fable)\n0%% used\nRefreshing…\n",
+        r"\033[2J\033[HCurrent session\n14%% used\nCurrent week (all models)\n27%% used\nCurrent week (Fable)\n38%% used\nEsc to cancel\n",
+    )
+    .expect("fake /usage");
+    assert_eq!(
+        window_percents(&state),
         vec![
             ("five_hour", Some(0.14)),
             ("seven_day", Some(0.27)),
@@ -139,9 +186,77 @@ while os.read(0, 1):
     );
 }
 
-fn wait_for_footer(session: &mut PtySession, footer: &str, deadline: Instant) {
-    while session.contents().lines().last() != Some(footer) {
-        assert!(Instant::now() < deadline, "child never painted {footer}");
-        session.poll(POLL_SLICE);
+// Covers: a failure footer under visible percentages is reported, not cached,
+// and the diagnostic keeps the footer.
+// Owner: OS or process
+#[test]
+fn fake_child_refresh_failure_rejects_cached_windows() {
+    let script = r#"
+printf '? for shortcuts\n'
+IFS= read -r command
+printf '\033[2J\033[HCurrent session\n10%% used\nCurrent week (all models)\n20%% used\nFailed to load usage data: response error\n'
+exec cat >/dev/null
+"#;
+    let result = run_child("/bin/bash", &["-c", script]);
+    let Err(UsageProbeError::RefreshFailed { screen }) = result else {
+        panic!("{result:?}");
+    };
+    assert_eq!(
+        screen.lines().last(),
+        Some("Failed to load usage data: response error")
+    );
+}
+
+// Covers: a child that exits or hangs on the spinner never promotes
+// placeholder percentages.
+// Owner: OS or process
+#[test]
+fn fake_child_unfinished_refresh_never_returns_live() {
+    for (ending, expect_exit) in [("exit 0", true), ("exec cat >/dev/null", false)] {
+        let script = format!(
+            r#"
+printf '? for shortcuts\n'
+IFS= read -r command
+printf '\033[2J\033[HCurrent session\n0%% used\nCurrent week (all models)\n0%% used\nRefreshing…\n'
+{ending}
+"#
+        );
+        let (what, screen) = match run_child("/bin/bash", &["-c", &script]) {
+            Err(UsageProbeError::Exited { what, screen }) if expect_exit => (what, screen),
+            Err(UsageProbeError::TimeoutScreen { what, screen }) if !expect_exit => (what, screen),
+            other => panic!("{ending}: {other:?}"),
+        };
+        assert_eq!(what, "the /usage refresh");
+        assert_eq!(screen.lines().last(), Some("Refreshing…"));
     }
+}
+
+// Covers: dropping /limits must stop the blocking PTY child.
+// Owner: OS or process
+#[test]
+fn abort_flag_stops_a_hung_child() {
+    let abort = std::sync::Arc::new(AtomicBool::new(false));
+    let abort_for_thread = abort.clone();
+    let started = Instant::now();
+    let worker = std::thread::spawn(move || {
+        let env = vec![("TERM".into(), "xterm-256color".into())];
+        let cwd = tempfile::TempDir::new().unwrap();
+        read_usage_from_binary(
+            Path::new("/bin/sleep"),
+            &["30"],
+            &env,
+            cwd.path(),
+            abort_for_thread.as_ref(),
+            TEST_BUDGET,
+        )
+    });
+    std::thread::sleep(Duration::from_millis(80));
+    abort.store(true, Ordering::Relaxed);
+    let result = worker.join().expect("probe thread");
+    let elapsed = started.elapsed();
+    assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
+    assert!(
+        matches!(result, Err(UsageProbeError::Cancelled)),
+        "{result:?}"
+    );
 }
