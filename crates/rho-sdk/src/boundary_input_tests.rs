@@ -11,24 +11,35 @@ use crate::{
 
 // Covers: input pending at the final checkpoint must cause another provider step,
 // with identity distinct from human steering, even under event backpressure.
+// Consecutive injections must not suppress compaction or lose verbatim input.
 // Owner: SDK orchestration. PTY covers CLI collection after a real process exits.
 #[tokio::test]
 async fn completion_checkpoint_incorporates_input_before_committing() {
     let provider = ScriptedProvider::new(
         ModelIdentity::new("scripted", "test", "model"),
-        ["candidate", "incorporated"].map(|text| {
+        ["candidate", "candidate", "incorporated"].map(|text| {
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 text.into(),
             )]))
         }),
     );
+    let summary = Message::user_text("summary");
+    // The prefix alone is below the threshold; fresh input must still count
+    // toward the live request size when deciding whether to compact.
+    let threshold = crate::model::context::estimate_context_tokens(
+        &[
+            Message::user_text("work"),
+            Message::assistant_text("candidate"),
+        ],
+        &[],
+    ) + 1;
     let runtime = Rho::builder()
         .provider(provider.clone())
-        // History exceeds this threshold after the candidate response, but
-        // fresh completion input must reach the next request before compaction.
-        .compactor(crate::ScriptedCompactor::new([]))
-        .compaction_policy(crate::CompactionPolicy::after_messages(
-            NonZeroUsize::new(2).unwrap(),
+        .compactor(crate::ScriptedCompactor::new((0..2).map(|_| {
+            crate::CompactionOutput::new(vec![summary.clone()]).unwrap()
+        })))
+        .compaction_policy(crate::CompactionPolicy::at_context_tokens(
+            std::num::NonZeroU64::new(threshold).unwrap(),
         ))
         .event_capacity(NonZeroUsize::new(1).unwrap())
         .build()
@@ -37,22 +48,27 @@ async fn completion_checkpoint_incorporates_input_before_committing() {
     let (source, mut requests) = boundary_input_channel();
     session.set_boundary_inputs(Some(source)).unwrap();
     let mut run = session.start(UserInput::text("work")).await.unwrap();
-    let mut pending = Some(UserInput::text("internal failure"));
+    let inputs = ["internal failure", "another internal failure"];
+    let mut pending = inputs.into_iter().map(UserInput::text);
     let mut boundaries = Vec::new();
     let mut applied = Vec::new();
     let mut completed = Vec::new();
+    let mut compacted = Vec::new();
     loop {
         tokio::select! {
             Some(request) = requests.recv() => {
                 assert_eq!((request.session_id(), request.run_id()), (session.id(), run.id()));
                 let boundary = request.boundary();
                 boundaries.push(boundary);
-                let input = if boundary == InputBoundary::BeforeCompletion { pending.take() } else { None };
+                let input = if boundary == InputBoundary::BeforeCompletion { pending.next() } else { None };
                 assert!(request.respond(input).await);
             }
             event = run.next_event() => match event {
                 Some(RunEvent::BoundaryInputApplied { session_id, run_id, input }) => applied.push((session_id, run_id, input)),
                 Some(RunEvent::Completed { outcome }) => completed.push(outcome.text().to_owned()),
+                Some(RunEvent::CompactionCompleted { outcome, .. }) => {
+                    compacted.push(outcome.committed_snapshot().unwrap().history().to_vec());
+                }
                 Some(_) => {}
                 None => break,
             }
@@ -64,23 +80,29 @@ async fn completion_checkpoint_incorporates_input_before_committing() {
             InputBoundary::BeforeProvider,
             InputBoundary::BeforeCompletion,
             InputBoundary::BeforeProvider,
+            InputBoundary::BeforeCompletion,
+            InputBoundary::BeforeProvider,
             InputBoundary::BeforeCompletion
         ]
     );
     assert_eq!(
         applied,
-        vec![(
-            session.id().clone(),
-            run.id().clone(),
-            UserInput::text("internal failure")
-        )]
+        inputs
+            .map(|text| (
+                session.id().clone(),
+                run.id().clone(),
+                UserInput::text(text)
+            ))
+            .to_vec()
     );
     assert_eq!(completed, vec!["incorporated"]);
     assert_eq!(run.outcome().await.unwrap().text(), "incorporated");
-    assert_eq!(
-        provider.recorded_requests()[1].messages.last(),
-        Some(&Message::user_text("internal failure"))
-    );
+    let expected = inputs.map(|text| vec![summary.clone(), Message::user_text(text)]);
+    assert_eq!(compacted, expected);
+    let requests_seen = provider.recorded_requests();
+    assert_eq!(requests_seen.len(), 3);
+    assert_eq!(requests_seen[1].messages, expected[0]);
+    assert_eq!(requests_seen[2].messages, expected[1]);
     // Empty final acknowledgement closes the checkpoint stream for this run.
     assert!(requests.try_recv().is_err());
 }

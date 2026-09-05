@@ -18,7 +18,10 @@ This avoids the race inherent in watching `ToolFinished` and then steering a run
 that may already have completed.
 
 Pre-provider input is collected after compaction. Input accepted at completion
-skips compaction on the next step so fresh notifications reach the model verbatim.
+reaches the next provider step verbatim. Automatic compaction
+still evaluates the full context size, but summarizes only the older history and
+appends the fresh input unchanged before checkpointing. Consecutive notifications
+therefore do not defer compaction indefinitely.
 
 Streaming continues normally. Text can reach the screen before a notification
 arrives. The guarantee concerns committed end-turn completion, not the first

@@ -158,7 +158,7 @@ async fn execute_turn_loop(
     // The tool set is immutable for the duration of a run, so build the specs
     // (which deep-clone every tool's JSON schema) once instead of per step.
     let tool_specs = runtime.tools.specs();
-    let mut fresh_boundary_input = false;
+    let mut preserve_from = None;
     for step in 1..=runtime.max_steps.get() {
         drain_commands(&mut commands, &mut steering);
         {
@@ -182,13 +182,13 @@ async fn execute_turn_loop(
             step_index: step,
         };
         let mut compaction_estimate = None;
-        // Completion-checkpoint input must reach one provider request verbatim.
-        if !async_jobs.has_pending() && !fresh_boundary_input {
+        if !async_jobs.has_pending() {
             match maybe_compact(
                 &core,
                 request_scope,
                 &tool_specs,
                 &mut history,
+                preserve_from.take(),
                 &cancellation,
                 &events,
             )
@@ -206,7 +206,6 @@ async fn execute_turn_loop(
                 "skipping compaction while async tool jobs are pending"
             );
         }
-        fresh_boundary_input = false;
         if !async_jobs.has_pending() {
             match boundary_input::collect(
                 &runtime,
@@ -473,6 +472,7 @@ async fn execute_turn_loop(
 
         // Leave notices with the host if there is no provider step to consume them.
         if step < runtime.max_steps.get() {
+            let input_start = history.len();
             match boundary_input::collect(
                 &runtime,
                 &core,
@@ -485,7 +485,7 @@ async fn execute_turn_loop(
             .await
             {
                 Ok(true) => {
-                    fresh_boundary_input = true;
+                    preserve_from = Some(input_start);
                     continue;
                 }
                 Ok(false) => {}
@@ -566,6 +566,7 @@ async fn maybe_compact(
     scope: ProviderRequestScope<'_>,
     tool_specs: &[crate::model::ToolSpec],
     history: &mut Vec<Message>,
+    preserve_from: Option<usize>,
     cancellation: &CancellationToken,
     events: &mpsc::Sender<RunEvent>,
 ) -> Result<Option<u64>, Error> {
@@ -591,19 +592,24 @@ async fn maybe_compact(
     )
     .await?;
     let previous = HistoryMetrics::from_history(history);
-    let request = crate::CompactionRequest::new(history.clone(), cancellation.clone())
-        .with_trigger(crate::CompactionTrigger::Automatic)
-        .with_request_context(
-            scope.session_id.clone(),
-            scope.runtime.usage_parent_session_id.clone(),
-            scope.run_id.clone(),
-            Some(scope.step_index),
-            scope
-                .runtime
-                .workspace
-                .as_ref()
-                .map(|workspace| workspace.root().to_path_buf()),
-        );
+    // Fresh completion input must reach one provider request verbatim. Compact
+    // only the older prefix, but evaluate the policy against the full history
+    // above so consecutive injections cannot indefinitely defer compaction.
+    let compact_end = preserve_from.unwrap_or(history.len());
+    let request =
+        crate::CompactionRequest::new(history[..compact_end].to_vec(), cancellation.clone())
+            .with_trigger(crate::CompactionTrigger::Automatic)
+            .with_request_context(
+                scope.session_id.clone(),
+                scope.runtime.usage_parent_session_id.clone(),
+                scope.run_id.clone(),
+                Some(scope.step_index),
+                scope
+                    .runtime
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.root().to_path_buf()),
+            );
     let output = match compactor.cancellation_mode() {
         crate::CompactorCancellationMode::Cooperative => compactor.compact(request).await?,
         crate::CompactorCancellationMode::External => {
@@ -613,7 +619,10 @@ async fn maybe_compact(
             }
         }
     };
-    let (replacement, usage) = output.into_parts();
+    let (mut replacement, usage) = output.into_parts();
+    // Restore the suffix before checkpointing or emitting the committed snapshot.
+    // Keep history intact until success so cancellation cannot lose accepted input.
+    replacement.extend_from_slice(&history[compact_end..]);
     let outcome = core
         .commit_compaction(previous, replacement.clone(), usage)?
         .with_committed_snapshot(core.persistence_snapshot());
