@@ -122,7 +122,12 @@ pub(super) fn intercept(
     }
     let prompt = last_user_text(request).unwrap_or_default();
     if is_agent_notification(&prompt) {
-        return Some(completed(describe_agent_notification(request, &prompt)));
+        // Notifications can continue the parent's assistant stream. Start a
+        // paragraph so every marker stays separate from the spawn receipt.
+        return Some(completed(format!(
+            "\n\n{}",
+            describe_agent_notification(request, &prompt)
+        )));
     }
     if prompt.starts_with("Continue working toward this goal:") {
         return Some(completed("goal continued before delegated agent finished"));
@@ -196,18 +201,14 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
             || prompt.contains(BACKGROUND_QUESTIONNAIRE_COMPLETION))
     {
         if prompt.contains(BACKGROUND_QUESTIONNAIRE_COMPLETION) {
-            // Completion can continue the parent's assistant stream. Start a
-            // paragraph so the marker cannot wrap against the spawn receipt.
-            format!(
-                "\n\nbackground agent questionnaire completion received (delivery {deliveries})"
-            )
+            format!("background agent questionnaire completion received (delivery {deliveries})")
         } else {
             format!(
                 "background agent completion received with delegated result (delivery {deliveries})"
             )
         }
     } else if prompt.contains("(claude-planner): ok") && prompt.contains("rho-claude-e2e-ok") {
-        format!("\n\nclaude-background-delivery-{deliveries}: delegated result received")
+        format!("claude-background-delivery-{deliveries}: delegated result received")
     } else {
         format!("unexpected agent notification payload: {prompt}")
     }
