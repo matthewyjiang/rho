@@ -57,8 +57,8 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub usage_purpose: &'static str,
     pub usage_parent_session_id: Option<rho_sdk::SessionId>,
     pub hook_host_labels: rho_sdk::hooks::HookHostLabels,
-    /// Adds caller-owned tools to the shared tool set.
-    pub extend_tools: ExtendTools,
+    /// Adds caller-owned tools and instructions after shared prompt assembly.
+    pub extend_tools_and_prompt: ExtendTools,
     /// Builds the approval wiring for this caller's permission story.
     pub approval: Approval,
     /// Chooses the session options once the provider is known.
@@ -126,7 +126,7 @@ pub(super) async fn assemble_session<ExtendTools, Approval, Options>(
     options: SessionAssemblyOptions<'_, ExtendTools, Approval, Options>,
 ) -> anyhow::Result<SessionAssembly>
 where
-    ExtendTools: FnOnce(AppToolSet) -> AppToolSet,
+    ExtendTools: FnOnce(AppToolSet, &mut rho_sdk::SystemPrompt) -> AppToolSet,
     Approval: FnOnce(ApprovalInputs) -> anyhow::Result<SessionApproval>,
     Options: FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
 {
@@ -148,7 +148,7 @@ where
         usage_purpose,
         usage_parent_session_id,
         hook_host_labels,
-        extend_tools,
+        extend_tools_and_prompt,
         approval,
         session_options,
     } = options;
@@ -166,7 +166,7 @@ where
     let workspace = sdk_options.workspace.build_workspace()?;
     let ToolsAndPrompt {
         tools: tool_set,
-        system_prompt,
+        mut system_prompt,
         ..
     } = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config,
@@ -189,7 +189,7 @@ where
         agent,
     })
     .await?;
-    let tool_set = extend_tools(tool_set);
+    let tool_set = extend_tools_and_prompt(tool_set, &mut system_prompt);
 
     let context_window = configured_context_window(config);
     let compaction = sdk_options.runtime.compaction.clone();

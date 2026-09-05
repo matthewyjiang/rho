@@ -179,5 +179,6 @@ fn notice(run_id: &str, parent_session_id: &SessionId) -> SubagentNotice {
         agent_id: "worker".into(),
         parent_session_id: parent_session_id.clone(),
         message: "blocked on schema".into(),
+        delivery: crate::app::subagent_messaging::NoticeDelivery::NextTurn,
     }
 }

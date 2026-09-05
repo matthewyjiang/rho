@@ -350,6 +350,7 @@ async fn run_automation_startup(startup: AutomationStartup<'_>) -> anyhow::Resul
             config_path: absolute_config_path(startup.config_repository)?,
             cwd: startup.cwd,
             no_system_prompt: startup.cli.no_system_prompt,
+            system_prompt_suffix: None,
             no_tools: startup.cli.no_tools,
             no_subagents: startup.cli.no_subagents,
             usage_purpose: "agent",

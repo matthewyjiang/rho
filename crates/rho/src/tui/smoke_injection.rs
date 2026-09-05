@@ -10,6 +10,25 @@ pub(super) fn matrix_enabled() -> bool {
         && std::env::var_os("RHO_TUI_TEST_MODE").as_deref() == Some(std::ffi::OsStr::new("matrix"))
 }
 
+/// Acknowledge a notification boundary, not merely the child's enqueue. The PTY
+/// releases the next notice only after the parent has checked the previous one.
+#[cfg(debug_assertions)]
+pub(super) fn quiet_notice_boundary(queued: usize) {
+    #[cfg(unix)]
+    if matrix_enabled() && queued > 0 {
+        let path = std::path::Path::new(".quiet-parent-pty.sock");
+        if path.exists() {
+            let socket =
+                std::os::unix::net::UnixDatagram::unbound().expect("quiet fixture boundary socket");
+            socket
+                .send_to(format!("boundary:{queued}").as_bytes(), path)
+                .expect("quiet fixture boundary acknowledgment");
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = queued;
+}
+
 /// Version shown in TUI chrome (session header, setup welcome).
 ///
 /// Production always uses the package version. Debug matrix runs may override

@@ -267,5 +267,6 @@ fn sample_notice(run_id: &str) -> SubagentNotice {
         agent_id: "worker".into(),
         parent_session_id: SessionId::from_string("session-1").unwrap(),
         message: "blocked on schema".into(),
+        delivery: super::NoticeDelivery::NextTurn,
     }
 }

@@ -2,6 +2,8 @@
 
 use std::{path::Path, sync::Arc};
 
+use crate::app::subagent_messaging::NoticeDelivery;
+
 use rho_sdk::{
     tool::{
         OperationKind, PreparedToolInvocation, Tool as SdkTool, ToolContext as SdkToolContext,
@@ -28,7 +30,16 @@ pub(super) fn questionnaire_bundle() -> super::sdk_registry::StaticToolBundle {
 pub(crate) fn message_parent_bundle(
     poster: Arc<dyn crate::app::subagent_messaging::NoticePoster>,
 ) -> super::sdk_registry::StaticToolBundle {
-    super::sdk_registry::StaticToolBundle::new(vec![Arc::new(MessageParentTool { poster })])
+    super::sdk_registry::StaticToolBundle::new(vec![
+        Arc::new(MessageParentTool {
+            poster: Arc::clone(&poster),
+            delivery: NoticeDelivery::NextTurn,
+        }),
+        Arc::new(MessageParentTool {
+            poster,
+            delivery: NoticeDelivery::ParentActionRequired,
+        }),
+    ])
 }
 
 impl SdkSkillTool {
@@ -269,19 +280,39 @@ impl SdkTool for QuestionnaireTool {
 /// Non-blocking plain-text notice from a delegated child to its parent.
 struct MessageParentTool {
     poster: Arc<dyn crate::app::subagent_messaging::NoticePoster>,
+    delivery: NoticeDelivery,
+}
+
+impl MessageParentTool {
+    fn name(&self) -> &'static str {
+        match self.delivery {
+            NoticeDelivery::NextTurn => "message_parent",
+            NoticeDelivery::ParentActionRequired => "request_parent_action",
+        }
+    }
 }
 
 impl SdkTool for MessageParentTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
+        let (description, message_description) = match self.delivery {
+            NoticeDelivery::NextTurn => (
+                "Queue a short plain-text finding for the parent's next turn without waking it or waiting for a reply. Prefer saving findings for your final result. Do not send acknowledgments, progress updates, or completion previews. Keep the message under 8 KiB.",
+                "Useful finding that can wait until the parent's next turn",
+            ),
+            NoticeDelivery::ParentActionRequired => (
+                "Request parent action for a blocking decision or immediate coordination that cannot wait for your final result. This may wake the parent; it does not wait for a reply. State the specific action needed. Do not use for ordinary findings, status, acknowledgments, or completion previews. Keep the message under 8 KiB.",
+                "Specific parent action needed now and why it cannot wait",
+            ),
+        };
         rho_sdk::model::ToolSpec {
-            name: "message_parent".into(),
-            description: "Send a short plain-text notice to the parent session without waiting for a reply. Use for blockers, findings, or status the parent should see at its next turn boundary. Do not use this for questions that need an answer - use questionnaire for those. Keep the message under 8 KiB.".into(),
+            name: self.name().into(),
+            description: description.into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "message": {
                         "type": "string",
-                        "description": "Plain-text notice for the parent session"
+                        "description": message_description
                     }
                 },
                 "required": ["message"],
@@ -305,13 +336,10 @@ impl SdkTool for MessageParentTool {
                     SdkToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
                 })?;
             self.poster
-                .post(message)
+                .post(message, self.delivery)
                 .map_err(|error| SdkToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-            Ok(
-                ToolOutput::text("notice queued for the parent session").metadata(
-                    ToolMetadata::new().operation(OperationKind::Other("message_parent".into())),
-                ),
-            )
+            Ok(ToolOutput::text("notice queued for the parent session")
+                .metadata(ToolMetadata::new().operation(OperationKind::Other(self.name().into()))))
         })
     }
 }
@@ -371,3 +399,7 @@ fn map_sdk_error(error: rho_sdk::Error) -> SdkToolError {
         error => SdkToolError::new(ToolErrorKind::Execution, error.to_string()),
     }
 }
+
+#[cfg(test)]
+#[path = "sdk_features_tests.rs"]
+mod tests;

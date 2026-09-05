@@ -26,6 +26,8 @@ mod mermaid;
 mod paste;
 mod pickers;
 mod process_rail;
+#[cfg(unix)]
+mod quiet_subagent;
 mod resume_delete;
 mod resume_scrollback;
 mod runtime_info;
@@ -825,6 +827,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     ),
     SUBAGENT_RAIL_MOUSE_SCENARIO,
+    #[cfg(unix)]
+    quiet_subagent::QUIET_SUBAGENT_SCENARIO,
+    #[cfg(unix)]
+    quiet_subagent::GOAL_ACTION_RETRY_SCENARIO,
     agent_messages::AGENT_MESSAGES_SCENARIO,
     ATTACH_PICKER_SCENARIO,
     ATTACH_PICKER_EMPTY_SCENARIO,

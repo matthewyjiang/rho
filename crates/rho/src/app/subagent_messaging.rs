@@ -1,10 +1,10 @@
 //! Plain-text messaging between a parent session and its delegated agents.
 //!
 //! Both directions are non-blocking and share one body budget. Child to parent:
-//! notices carry a short finding or blocker and deliver at the parent's next
-//! turn boundary, the same way background completions do (questionnaires, by
-//! contrast, block the child until the parent answers). Parent to child: the
-//! parent stages text into the child's steering queue through [`SteeringSlot`],
+//! ordinary notices wait for the parent's next turn; explicit action requests
+//! may wake the parent. Questionnaires block the child until the parent answers.
+//! Parent to child: the parent stages text into the child's steering queue
+//! through [`SteeringSlot`],
 //! applied at the child's next provider turn.
 
 use std::sync::{
@@ -14,6 +14,9 @@ use std::sync::{
 
 use rho_sdk::SessionId;
 use tokio::sync::mpsc;
+
+pub(crate) const CHILD_COMMUNICATION_CONTRACT: &str =
+    include_str!("../builtin_agents/child_contract.md");
 
 /// Queue depth for child->parent notices waiting on the parent session.
 ///
@@ -72,6 +75,13 @@ pub(crate) enum MessageValidationError {
     TooLarge { bytes: usize, max_bytes: usize },
 }
 
+/// Whether a child notice waits for a parent turn or requests parent action.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NoticeDelivery {
+    NextTurn,
+    ParentActionRequired,
+}
+
 /// One plain-text notice raised by a delegated run for its parent.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SubagentNotice {
@@ -79,6 +89,7 @@ pub(crate) struct SubagentNotice {
     pub(crate) agent_id: String,
     pub(crate) parent_session_id: SessionId,
     pub(crate) message: String,
+    pub(crate) delivery: NoticeDelivery,
 }
 
 /// End-to-end budget for accepted but undelivered notices in one parent binding.
@@ -310,11 +321,15 @@ pub(crate) enum NoticePostError {
 
 /// Posts a short plain-text notice from a delegated child to its parent.
 ///
-/// `message_parent` relies on this to stay non-blocking: implementors must not
+/// Both child notice tools rely on this to stay non-blocking: implementors must not
 /// wait on the parent session, and must return [`NoticePostError`] whenever the
 /// notice cannot be accepted (unbound parent, full queue, or equivalent).
 pub(crate) trait NoticePoster: Send + Sync {
-    fn post(&self, message: ValidatedMessage) -> Result<(), NoticePostError>;
+    fn post(
+        &self,
+        message: ValidatedMessage,
+        delivery: NoticeDelivery,
+    ) -> Result<(), NoticePostError>;
 }
 
 /// Publishes a delegated Rho run's steering port for the whole live window.
@@ -366,8 +381,12 @@ pub(crate) fn notice_prompts(notices: &[SubagentNotice]) -> (String, String) {
     let model = notices
         .iter()
         .map(|notice| {
+            let label = match notice.delivery {
+                NoticeDelivery::NextTurn => "Message from delegated agent",
+                NoticeDelivery::ParentActionRequired => "Parent action required by delegated agent",
+            };
             format!(
-                "Message from delegated agent {} ({}):\n{}",
+                "{label} {} ({}):\n{}",
                 notice.run_id, notice.agent_id, notice.message
             )
         })

@@ -22,6 +22,14 @@ pub(super) enum SubagentCompletionTurn {
     Completed(TurnOutcome),
 }
 
+/// A scheduled turn may carry informational notices; notices alone must not
+/// create a provider turn unless a child explicitly needs parent action.
+#[derive(Clone, Copy)]
+enum BoundaryTrigger {
+    ScheduledTurn,
+    Notification,
+}
+
 fn subagent_completion_changed(outcome: &SubagentCompletionTurn) -> bool {
     !matches!(outcome, SubagentCompletionTurn::NoDelivery)
 }
@@ -103,11 +111,21 @@ impl App {
     /// Returns the joined model prompt, display summary, and the drained batch
     /// so callers can restore on setup failure, or `None` when nothing is
     /// pending. Real prompt turns fold this into the outgoing message; an idle
-    /// parent sends it as a turn of its own. Removal is committed only after
-    /// the provider turn starts successfully.
+    /// parent sends completions and action requests as a turn of its own,
+    /// carrying any queued informational notices with them. Informational
+    /// notices alone never create a turn. Removal is committed only after the
+    /// provider turn starts successfully.
     pub(super) fn collect_turn_boundary_prompts(
         &mut self,
         agent: &mut InteractiveRuntime,
+    ) -> Option<TurnBoundaryDelivery> {
+        self.collect_boundary_prompts(agent, BoundaryTrigger::ScheduledTurn)
+    }
+
+    fn collect_boundary_prompts(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+        trigger: BoundaryTrigger,
     ) -> Option<TurnBoundaryDelivery> {
         let mut model_parts = Vec::new();
         let mut display_parts = Vec::new();
@@ -124,13 +142,6 @@ impl App {
                 ));
             }
         }
-        self.subagent_inbox.drain();
-        batch.notices = self.subagent_inbox.take_notices(agent.session_id());
-        if !batch.notices.is_empty() {
-            push(crate::app::subagent_messaging::notice_prompts(
-                &batch.notices,
-            ));
-        }
         batch.workflow_notifications = agent
             .workflow_tracker()
             .take_notifications(agent.session_id().as_str());
@@ -144,6 +155,31 @@ impl App {
             if !batch.process_notifications.is_empty() {
                 push(crate::tools::process::notification_prompts(
                     &batch.process_notifications,
+                ));
+            }
+        }
+        self.subagent_inbox.drain();
+        self.subagent_inbox.discard_stale(agent.session_id());
+        #[cfg(debug_assertions)]
+        if matches!(trigger, BoundaryTrigger::Notification) {
+            super::smoke_injection::quiet_notice_boundary(
+                self.subagent_inbox.queued_notice_count(),
+            );
+        }
+        let deliver_notices = match trigger {
+            BoundaryTrigger::ScheduledTurn => true,
+            BoundaryTrigger::Notification => {
+                !batch.subagent_notifications.is_empty()
+                    || !batch.workflow_notifications.is_empty()
+                    || !batch.process_notifications.is_empty()
+                    || self.subagent_inbox.has_parent_action_requests()
+            }
+        };
+        if deliver_notices {
+            batch.notices = self.subagent_inbox.take_notices(agent.session_id());
+            if !batch.notices.is_empty() {
+                push(crate::app::subagent_messaging::notice_prompts(
+                    &batch.notices,
                 ));
             }
         }
@@ -335,7 +371,8 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<SubagentCompletionTurn> {
-        let Some(delivery) = self.collect_turn_boundary_prompts(agent) else {
+        let Some(delivery) = self.collect_boundary_prompts(agent, BoundaryTrigger::Notification)
+        else {
             return Ok(SubagentCompletionTurn::NoDelivery);
         };
         // The whole drained batch is one message and one model request, no
@@ -382,6 +419,13 @@ pub(super) struct TurnBoundaryBatch {
 }
 
 impl TurnBoundaryBatch {
+    pub(super) fn requires_parent_action(&self) -> bool {
+        self.notices.iter().any(|notice| match notice.delivery {
+            crate::app::subagent_messaging::NoticeDelivery::NextTurn => false,
+            crate::app::subagent_messaging::NoticeDelivery::ParentActionRequired => true,
+        })
+    }
+
     pub(super) fn notice_count(&self) -> usize {
         self.notices.len()
     }

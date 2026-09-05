@@ -7,6 +7,8 @@ pub(super) struct FailedTurn {
     notification_context: Option<String>,
     initial_tool_call: Option<rho_sdk::model::ToolCall>,
     generate_session_title_after_completion: bool,
+    /// Keep action-request retries runnable even after delivery consumed the notice.
+    parent_action_required: bool,
 }
 
 impl FailedTurn {
@@ -28,7 +30,12 @@ impl FailedTurn {
             notification_context: None,
             initial_tool_call: prompt.initial_tool_call,
             generate_session_title_after_completion: false,
+            parent_action_required: false,
         })
+    }
+
+    pub(super) fn retry_needs_parent_action(&self) -> bool {
+        self.parent_action_required
     }
 
     fn session_title_user_message(&self) -> String {
@@ -105,9 +112,13 @@ impl RestorableTurnBoundary {
     }
 
     fn notice_count(&self) -> usize {
+        self.batch().notice_count()
+    }
+
+    fn batch(&self) -> &super::subagent_questionnaires::TurnBoundaryBatch {
         match self {
-            Self::Folded(delivery) => delivery.batch.notice_count(),
-            Self::Standalone(batch) => batch.notice_count(),
+            Self::Folded(delivery) => &delivery.batch,
+            Self::Standalone(batch) => batch,
         }
     }
 }
@@ -265,6 +276,9 @@ impl App {
                 .collect_turn_boundary_prompts(agent)
                 .map(RestorableTurnBoundary::Folded),
         };
+        failed_turn.parent_action_required |= pending_boundary
+            .as_ref()
+            .is_some_and(|boundary| boundary.batch().requires_parent_action());
         if let Some(model) = pending_boundary
             .as_ref()
             .and_then(RestorableTurnBoundary::folded_model)
