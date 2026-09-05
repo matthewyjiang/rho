@@ -16,6 +16,8 @@ const RUNNING_CHILD: &str = "fixture quiet running child";
 const FIRST: &str = "quiet-cache-inspected";
 const SECOND: &str = "quiet-routing-inspected";
 const ACTION: &str = "quiet-decision-required";
+const COMPLETION_CHILD: &str = "fixture quiet completion child";
+const COMPLETION: &str = "quiet-child-final-result";
 static PARENT_REQUESTS: AtomicUsize = AtomicUsize::new(0);
 static GOAL_RETRY: AtomicBool = AtomicBool::new(false);
 
@@ -23,6 +25,41 @@ pub(super) async fn intercept(
     prompt: &str,
     request: &ModelRequest<'_>,
 ) -> Option<Result<ModelResponse, ProviderError>> {
+    if prompt == COMPLETION_CHILD {
+        return Some(match barrier("completion", request).await {
+            Ok(()) => completed(COMPLETION),
+            Err(error) => Err(error),
+        });
+    }
+    if prompt == "fixture quiet completion subagent" {
+        if tool_result(request, SPAWN).is_none() {
+            PARENT_REQUESTS.store(0, Ordering::SeqCst);
+            return Some(completed_tool_call(
+                SPAWN,
+                "agent",
+                serde_json::json!({
+                    "agent_id": "worker",
+                    "prompt": COMPLETION_CHILD,
+                    "background": true,
+                }),
+            ));
+        }
+        return Some(completed("quiet completion child dispatched"));
+    }
+    if prompt.ends_with("fixture quiet completion count") {
+        return Some(completed(format!(
+            "quiet completion requests={} carried finals={}",
+            PARENT_REQUESTS.load(Ordering::SeqCst),
+            prompt.matches(COMPLETION).count(),
+        )));
+    }
+    if prompt.contains(COMPLETION) {
+        let requests = PARENT_REQUESTS.fetch_add(1, Ordering::SeqCst) + 1;
+        return Some(completed(format!(
+            "quiet final delivery requests={requests} occurrences={}",
+            prompt.matches(COMPLETION).count(),
+        )));
+    }
     if prompt == CHILD || prompt == GOAL_CHILD || prompt == RUNNING_CHILD {
         for (stage, tool, message) in [
             ("first", "message_parent", FIRST),

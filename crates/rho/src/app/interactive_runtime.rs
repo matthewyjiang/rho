@@ -332,7 +332,9 @@ impl InteractiveRuntime {
     }
 
     pub(crate) fn attach_storage(&mut self, storage: StoredSession) {
-        bind_subagent_parent(&self.tools, self.sessions.session().id(), Some(&storage));
+        // After /new, the controller owns the new ID before the next run
+        // replaces the SDK session. Do not route new children to the old ID.
+        bind_subagent_parent(&self.tools, self.sessions.id(), Some(&storage));
         self.sessions.attach_storage(storage);
     }
 

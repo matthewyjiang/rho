@@ -837,6 +837,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     quiet_subagent::GOAL_ACTION_RETRY_SCENARIO,
     #[cfg(unix)]
     quiet_subagent::RUNNING_NOTICES_SCENARIO,
+    #[cfg(unix)]
+    quiet_subagent::COMPLETION_AFTER_NEW_SCENARIO,
     agent_messages::AGENT_MESSAGES_SCENARIO,
     boundary_notifications::SCENARIO,
     ATTACH_PICKER_SCENARIO,
