@@ -24,14 +24,6 @@ fn settlement_emits_exactly_one_outcome() {
             },
             ProviderSteeringOutcome::Released,
         ),
-        (
-            |request| {
-                let (sender, receiver) = super::provider_steering_channel();
-                assert!(sender.send(request).is_ok());
-                drop(receiver);
-            },
-            ProviderSteeringOutcome::Released,
-        ),
     ];
     for (settle, expected) in cases {
         let (request, mut outcomes) = ProviderSteeringRequest::test_unclaimed(Vec::new());
@@ -43,4 +35,24 @@ fn settlement_emits_exactly_one_outcome() {
             Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
         );
     }
+}
+
+// Covers: receiver shutdown releases queued input while the SDK still owns a sender.
+// Owner: SDK provider steering channel lifecycle.
+#[test]
+fn dropping_receiver_releases_queued_request() {
+    let (request, mut outcomes) = ProviderSteeringRequest::test_unclaimed(Vec::new());
+    let id = request.id().clone();
+    let (sender, receiver) = super::provider_steering_channel();
+    assert!(sender.send(request).is_ok());
+    drop(receiver);
+    assert_eq!(
+        outcomes.try_recv(),
+        Ok((id, ProviderSteeringOutcome::Released))
+    );
+    assert_eq!(
+        outcomes.try_recv(),
+        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected)
+    );
+    drop(sender);
 }
