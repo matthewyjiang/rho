@@ -34,38 +34,70 @@ fn run_child_in(
     )
 }
 
-/// Run a bash child that paints `first` after `/usage`, signals via a `ready`
-/// file, waits for a `go` file, then paints `second`. The handoff makes the
-/// two paints separate PTY reads instead of relying on a wall-clock delay.
-fn run_two_paint_child(first: &str, second: &str) -> Result<RateLimitState, UsageProbeError> {
+/// After `/usage`, paint `first`, wait until that viewport is in the parser
+/// and matches `first_kind`, then paint `second` via a stdin handshake. That
+/// orders the child paints without a wall-clock delay. `wait_for_usage` may
+/// still coalesce them on its first poll; spinner vs ready is covered by
+/// `usage_screen_classification`.
+fn run_two_paint_child(
+    first: &str,
+    second: &str,
+    first_kind: &str,
+) -> Result<RateLimitState, UsageProbeError> {
     let cwd = tempfile::TempDir::new().unwrap();
-    let ready = cwd.path().join("ready");
-    let go = cwd.path().join("go");
     let script = format!(
         r#"
 printf '? for shortcuts\n'
 IFS= read -r command
 printf '{first}'
-touch {ready}
-while [ ! -f {go} ]; do sleep 0.01; done
+IFS= read -r _
 printf '{second}'
 exec cat >/dev/null
-"#,
-        ready = ready.display(),
-        go = go.display()
+"#
     );
-    let cwd_path = cwd.path().to_path_buf();
-    let worker = std::thread::spawn(move || run_child_in("/bin/bash", &["-c", &script], &cwd_path));
+    let mut session = PtySession::spawn(
+        Path::new("/bin/bash"),
+        &["-c", &script],
+        &[("TERM".into(), "xterm-256color".into())],
+        cwd.path(),
+        PTY_ROWS,
+        PTY_COLS,
+    )
+    .expect("fake child");
+    let abort = AtomicBool::new(false);
+    wait_for_prompt(&mut session, &abort)?;
+    poll_until(&mut session, &abort, Instant::now() + PROMPT_SETTLE)?;
+    session
+        .inject_bytes(b"/usage")
+        .map_err(UsageProbeError::Spawn)?;
+    poll_until(&mut session, &abort, Instant::now() + ENTER_SETTLE)?;
+    session
+        .inject_bytes(b"\r")
+        .map_err(UsageProbeError::Spawn)?;
     let started = Instant::now();
-    while !ready.exists() {
+    loop {
+        session.poll(POLL_SLICE);
+        let screen = session.contents();
+        let kind = match classify_usage_screen(&screen, 0) {
+            UsageScreen::NoPanel => "NoPanel",
+            UsageScreen::Failed => "Failed",
+            UsageScreen::Refreshing => "Refreshing",
+            UsageScreen::Incomplete => "Incomplete",
+            UsageScreen::Ready(_) => "Ready",
+        };
+        if kind != "NoPanel" {
+            assert_eq!(kind, first_kind, "{screen}");
+            break;
+        }
         assert!(
             started.elapsed() < Duration::from_secs(5),
-            "child never painted the first frame"
+            "child never painted the first frame: {screen}"
         );
-        std::thread::sleep(Duration::from_millis(10));
     }
-    std::fs::write(&go, b"").unwrap();
-    worker.join().expect("probe thread")
+    session
+        .inject_bytes(b"\r")
+        .map_err(UsageProbeError::Spawn)?;
+    wait_for_usage(&mut session, &abort, TEST_BUDGET)
 }
 
 fn window_percents(state: &RateLimitState) -> Vec<(&str, Option<f64>)> {
@@ -148,12 +180,14 @@ while os.read(sys.stdin.fileno(), 1024):
 }
 
 // Covers: grow must wait for a named window that paints after the first parse.
+// The first paint is observed in the parser before the second is released.
 // Owner: OS or process
 #[test]
 fn fake_child_grow_picks_up_late_fable() {
     let state = run_two_paint_child(
         r"\033[2J\033[HCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n",
         r"\033[2J\033[HCurrent session\n10%% used\nResets in 1h\nCurrent week (all models)\n20%% used\nResets in 2d\nCurrent week (Fable)\n33%% used\nResets in 2d\n",
+        "Incomplete",
     )
     .expect("fake /usage");
     assert_eq!(
@@ -167,13 +201,16 @@ fn fake_child_grow_picks_up_late_fable() {
 }
 
 // Covers: a completed refresh replaces every placeholder percentage, even when
-// the window count stays the same.
+// the window count stays the same. The placeholder paint is in the parser
+// before the completed panel is released; coalesced later reads still return
+// the completed percentages.
 // Owner: OS or process
 #[test]
 fn fake_child_completed_refresh_returns_current_percentages() {
     let state = run_two_paint_child(
         r"\033[2J\033[HCurrent session\n0%% used\nCurrent week (all models)\n0%% used\nCurrent week (Fable)\n0%% used\nRefreshing…\n",
         r"\033[2J\033[HCurrent session\n14%% used\nCurrent week (all models)\n27%% used\nCurrent week (Fable)\n38%% used\nEsc to cancel\n",
+        "Refreshing",
     )
     .expect("fake /usage");
     assert_eq!(
