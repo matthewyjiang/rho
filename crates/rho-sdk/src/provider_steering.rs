@@ -1,7 +1,4 @@
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
-};
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
 
@@ -20,7 +17,7 @@ pub struct ProviderSteeringRequest {
     content: Vec<ContentBlock>,
     claim: Arc<Mutex<ClaimState>>,
     outcomes: mpsc::UnboundedSender<(SteeringId, ProviderSteeringOutcome)>,
-    settled: AtomicBool,
+    settled: bool,
 }
 
 impl ProviderSteeringRequest {
@@ -35,7 +32,7 @@ impl ProviderSteeringRequest {
             content,
             claim,
             outcomes,
-            settled: AtomicBool::new(false),
+            settled: false,
         }
     }
 
@@ -97,7 +94,7 @@ impl ProviderSteeringRequest {
     }
 
     /// Backend acknowledged it will apply the input inside this turn.
-    pub fn accept(self) {
+    pub fn accept(mut self) {
         if self.ensure_claimed() {
             self.settle(ProviderSteeringOutcome::Accepted);
         } else {
@@ -108,12 +105,12 @@ impl ProviderSteeringRequest {
     /// Provider will not deliver it; the SDK applies it at the turn boundary.
     ///
     /// [`Drop`] does the same.
-    pub fn release(self) {
+    pub fn release(mut self) {
         self.settle(ProviderSteeringOutcome::Released);
     }
 
-    fn settle(&self, outcome: ProviderSteeringOutcome) {
-        if self.settled.swap(true, Ordering::AcqRel) {
+    fn settle(&mut self, outcome: ProviderSteeringOutcome) {
+        if std::mem::replace(&mut self.settled, true) {
             return;
         }
         let _ = self.outcomes.send((self.id.clone(), outcome));
@@ -141,7 +138,7 @@ impl Drop for ProviderSteeringReceiver {
     fn drop(&mut self) {
         self.rx.close();
         while let Ok(request) = self.rx.try_recv() {
-            request.settle(ProviderSteeringOutcome::Released);
+            request.release();
         }
     }
 }
@@ -181,3 +178,7 @@ pub(crate) fn try_retract_claim(claim: &Arc<Mutex<ClaimState>>) -> bool {
         false
     }
 }
+
+#[cfg(test)]
+#[path = "provider_steering_tests.rs"]
+mod tests;
