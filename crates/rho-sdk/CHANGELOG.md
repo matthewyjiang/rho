@@ -1,5 +1,17 @@
 # Changelog
 
+## [5.2.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.2.0...rho-sdk-v5.2.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **runtime:** reconcile background notifications before completion ([#1166](https://github.com/matthewyjiang/rho/issues/1166)) ([b5630f6](https://github.com/matthewyjiang/rho/commit/b5630f671233519a3036608534f52d8ea8a51ac7))
+
+
+### Performance Improvements
+
+* **runtime:** speed up session replay and streamed rendering ([#1163](https://github.com/matthewyjiang/rho/issues/1163)) ([242460c](https://github.com/matthewyjiang/rho/commit/242460c7d7e84c7c11d3503d0c027ca409284922))
+
 ## [5.2.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.1.2...rho-sdk-v5.2.0) (2026-09-04)
 
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.1.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.1.0...rho-agent-tools-v1.1.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **runtime:** reconcile background notifications before completion ([#1166](https://github.com/matthewyjiang/rho/issues/1166)) ([b5630f6](https://github.com/matthewyjiang/rho/commit/b5630f671233519a3036608534f52d8ea8a51ac7))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.3.0 to 5.2.1
+
 ## [1.1.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.0.4...rho-agent-tools-v1.1.0) (2026-09-04)
 
 
