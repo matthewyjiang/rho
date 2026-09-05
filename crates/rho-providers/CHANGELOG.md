@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.4.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.3.0...rho-providers-v2.4.0) (2026-09-05)
+
+
+### Features
+
+* **tui:** show task-first agent message previews ([#1162](https://github.com/matthewyjiang/rho/issues/1162)) ([ead555d](https://github.com/matthewyjiang/rho/commit/ead555dd976b62f7fd1d7ec1350da97c44c3dbcb))
+
+
+### Bug Fixes
+
+* **agents:** resolve host auth for the target provider ([#1170](https://github.com/matthewyjiang/rho/issues/1170)) ([66bd205](https://github.com/matthewyjiang/rho/commit/66bd2051fec65bb8ce4ee9b6add1814dbfc4e2fa))
+* **openai:** route Codex fast mode at connection time ([#1158](https://github.com/matthewyjiang/rho/issues/1158)) ([0013cb1](https://github.com/matthewyjiang/rho/commit/0013cb1b0a7c0b0cd7b42cb8a0e33b7f95c04b06))
+* **runtime:** reconcile background notifications before completion ([#1166](https://github.com/matthewyjiang/rho/issues/1166)) ([b5630f6](https://github.com/matthewyjiang/rho/commit/b5630f671233519a3036608534f52d8ea8a51ac7))
+* **subagents:** deliver completions after starting a new session ([#1171](https://github.com/matthewyjiang/rho/issues/1171)) ([0304725](https://github.com/matthewyjiang/rho/commit/03047257ff640c2d6bb9907853c8129a9cb74685))
+* **tui:** apply reasoning visibility to the whole transcript ([#1168](https://github.com/matthewyjiang/rho/issues/1168)) ([f4c3708](https://github.com/matthewyjiang/rho/commit/f4c3708c9328de1af575775ffc3ee8a22a11bb1b))
+* **tui:** render side chat like the main transcript ([#1172](https://github.com/matthewyjiang/rho/issues/1172)) ([827c746](https://github.com/matthewyjiang/rho/commit/827c74612d220341eab75cf50d2215746f06a2e0))
+
+
+### Performance Improvements
+
+* **runtime:** speed up session replay and streamed rendering ([#1163](https://github.com/matthewyjiang/rho/issues/1163)) ([242460c](https://github.com/matthewyjiang/rho/commit/242460c7d7e84c7c11d3503d0c027ca409284922))
+* **subagents:** stop routine notices from waking parents ([#1167](https://github.com/matthewyjiang/rho/issues/1167)) ([1990b25](https://github.com/matthewyjiang/rho/commit/1990b25802e21b24abd494c87b07eed3cdf32d16))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.3.0 to 5.2.1
+
 ## [2.3.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.2.0...rho-providers-v2.3.0) (2026-09-04)
 
 
