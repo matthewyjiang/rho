@@ -143,6 +143,7 @@ pub(super) const SIDE_BTW_SCENARIO: Scenario = Scenario::new(
     /* smoke */ false,
 )
 // Exercise OSC52 on every host instead of using the runner's native clipboard.
+// Remote sessions cannot read the clipboard; right-click paste needs another fixture.
 .with_env(&[("SSH_TTY", "rho-pty-clipboard")]);
 
 // Covers: opening /side during a parent turn must not abort that turn when
