@@ -176,6 +176,7 @@ impl App {
                 || self.history.images().has_pending()
                 || agent.startup_hydrate_pending()
                 || self.loading_active()
+                || self.side_chat_busy()
             {
                 Duration::from_millis(100)
             } else if subagents_active || self.process_panel.is_active() {
