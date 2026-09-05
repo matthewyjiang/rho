@@ -346,7 +346,7 @@ impl App {
             .map(|side| &mut side.overlay.composer)
     }
 
-    fn side_composer_is_empty(&self) -> bool {
+    pub(super) fn side_composer_is_empty(&self) -> bool {
         self.side_chat
             .as_ref()
             .is_some_and(|side| side.overlay.composer.is_empty())

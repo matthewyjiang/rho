@@ -67,6 +67,40 @@ impl App {
         let size = terminal.size()?;
         let screen = Rect::new(0, 0, size.width, size.height);
         let now = Instant::now();
+        // The side overlay owns pointer input while open. Do not let clicks,
+        // drags or releases reach transcript controls hidden behind it.
+        if matches!(self.input_ui.composer(), ComposerMode::Side) {
+            self.clear_selections();
+            self.clear_hovered_copy_buttons();
+            self.clear_rail_pointer_state();
+            self.history.set_scrollbar_drag(None);
+            match kind {
+                MouseEventKind::ScrollUp => {
+                    self.scroll_side_overlay_wheel(
+                        size.width,
+                        size.height,
+                        -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
+                    );
+                }
+                MouseEventKind::ScrollDown => {
+                    self.scroll_side_overlay_wheel(
+                        size.width,
+                        size.height,
+                        super::HISTORY_MOUSE_SCROLL_LINES as isize,
+                    );
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if let Some(overlay) = self.side_overlay_frame(screen) {
+                        if let Some(text) = overlay.copy_text_at(column, row) {
+                            self.copy_text(text, now);
+                        }
+                    }
+                }
+                MouseEventKind::Down(MouseButton::Right) => self.paste_clipboard_text(),
+                _ => {}
+            }
+            return Ok(());
+        }
         let ctx = self.frame_context(screen);
         let width = ctx.width;
         let settings = ctx.settings;
@@ -83,13 +117,6 @@ impl App {
                     return Ok(());
                 }
                 if self.scroll_doctor_overlay_wheel(
-                    size.width,
-                    size.height,
-                    -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
-                ) {
-                    return Ok(());
-                }
-                if self.scroll_side_overlay_wheel(
                     size.width,
                     size.height,
                     -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
@@ -126,13 +153,6 @@ impl App {
                     return Ok(());
                 }
                 if self.scroll_doctor_overlay_wheel(
-                    size.width,
-                    size.height,
-                    super::HISTORY_MOUSE_SCROLL_LINES as isize,
-                ) {
-                    return Ok(());
-                }
-                if self.scroll_side_overlay_wheel(
                     size.width,
                     size.height,
                     super::HISTORY_MOUSE_SCROLL_LINES as isize,

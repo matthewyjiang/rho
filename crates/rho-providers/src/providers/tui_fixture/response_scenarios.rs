@@ -27,6 +27,9 @@ pub(super) fn compaction(
 pub(super) fn intercept(
     request: &ModelRequest<'_>,
 ) -> Option<Result<ModelResponse, ProviderError>> {
+    if last_user_text(request).as_deref() == Some("fixture code block") {
+        return Some(completed("```rust\nside_copy_payload\n```"));
+    }
     if let Some(result) = tool_result_for_name(request, "skill") {
         let instruction = result
             .content

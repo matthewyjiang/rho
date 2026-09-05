@@ -10,6 +10,7 @@ use ratatui::{
 };
 
 use super::{
+    copy_interaction::CopyHit,
     display_width,
     picker::{clamp_overlay_scroll, OverlayScrollbarState},
     render::truncate_one_line,
@@ -37,6 +38,18 @@ pub(super) struct OverlayPanelFrame {
     pub(super) lines: Vec<Line<'static>>,
     /// Caret inside the panel. `None` for dismiss-only chrome with no text field.
     pub(super) cursor: Option<Position>,
+    /// Targets in panel-body coordinates, before scrolling.
+    pub(super) copy_hits: Vec<CopyHit>,
+    body: Rect,
+    scroll: usize,
+}
+
+impl OverlayPanelFrame {
+    pub(super) fn copy_text_at(&self, column: u16, row: u16) -> Option<&str> {
+        self.copy_hits
+            .iter()
+            .find_map(|hit| hit.text_at(self.body, self.scroll, column, row))
+    }
 }
 
 pub(super) fn overlay_panel_layout(area: Rect, body_line_count: usize) -> OverlayPanelLayout {
@@ -109,6 +122,14 @@ pub(super) fn render_overlay_panel(
         cursor: None,
         outer: layout.outer,
         lines,
+        copy_hits: Vec::new(),
+        body: Rect::new(
+            layout.outer.x.saturating_add(1),
+            layout.outer.y.saturating_add(1),
+            content_width as u16,
+            body_rows as u16,
+        ),
+        scroll,
     }
 }
 
