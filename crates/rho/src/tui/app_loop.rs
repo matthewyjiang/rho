@@ -156,7 +156,7 @@ impl App {
                     .is_some_and(crate::tools::process::ProcessManager::has_pending_notification)
                 || self.pending_subagent_questionnaire.is_some()
                 || self.subagent_inbox.has_queued_questionnaires()
-                || self.subagent_inbox.has_pending_notices();
+                || self.subagent_inbox.has_parent_action_requests();
             let idle_timeout = if self.pending_model_metadata.is_some()
                 || self.pending_update_notice.is_some()
                 || self.pending_custom_models.is_some()

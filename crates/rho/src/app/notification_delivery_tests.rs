@@ -55,6 +55,7 @@ async fn publication_during_final_snapshot_stays_ordered_for_idle_delivery() {
         agent_id: "fixture".into(),
         parent_session_id: session.id().clone(),
         message: "earlier finding".into(),
+        delivery: crate::app::subagent_messaging::NoticeDelivery::NextTurn,
         acknowledged: Default::default(),
     };
     let publication = Arc::new(Barrier::new(2));

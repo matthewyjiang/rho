@@ -130,6 +130,8 @@ pub(super) struct Startup<'a> {
     pub config_path: PathBuf,
     pub cwd: PathBuf,
     pub no_system_prompt: bool,
+    /// Launch-owned instructions appended after the agent and workspace prompt.
+    pub system_prompt_suffix: Option<&'a str>,
     pub no_tools: bool,
     pub no_subagents: bool,
     pub usage_purpose: &'static str,
@@ -483,12 +485,20 @@ async fn run_session_with_output(
         usage_purpose: startup.usage_purpose,
         usage_parent_session_id: startup.parent_session_id.clone(),
         hook_host_labels: startup.hook_host_labels.clone(),
-        extend_tools: |mut tool_set: crate::tools::sdk_registry::AppToolSet| {
-            if let Some(poster) = startup.notice_poster.clone() {
-                tool_set.add_bundle(crate::tools::message_parent_bundle(poster));
-            }
-            tool_set
-        },
+        extend_tools_and_prompt:
+            |mut tool_set: crate::tools::sdk_registry::AppToolSet,
+             prompt: &mut rho_sdk::SystemPrompt| {
+                if let (Some(suffix), rho_sdk::SystemPrompt::Custom(text)) =
+                    (startup.system_prompt_suffix, prompt)
+                {
+                    text.push_str("\n\n");
+                    text.push_str(suffix);
+                }
+                if let Some(poster) = startup.notice_poster.clone() {
+                    tool_set.add_bundle(crate::tools::message_parent_bundle(poster));
+                }
+                tool_set
+            },
         approval: |inputs: ApprovalInputs| {
             Ok(SessionApproval {
                 session: headless_approval_session(

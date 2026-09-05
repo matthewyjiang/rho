@@ -28,6 +28,7 @@ fn terminal_observation_reconciles_notices_and_cannot_be_undone_by_restore() {
         agent_id: "fixture".into(),
         parent_session_id: rho_sdk::SessionId::from_string("session").unwrap(),
         message: "substantive finding before completion".into(),
+        delivery: crate::app::subagent_messaging::NoticeDelivery::NextTurn,
         acknowledged: Default::default(),
     };
     bridge.post(notice.clone()).unwrap();

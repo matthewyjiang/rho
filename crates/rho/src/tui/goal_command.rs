@@ -238,7 +238,11 @@ impl App {
             && self.goal.as_ref().is_some_and(|goal| !goal.is_blocked())
             && !self.input_ui.composer().blocks_auto_continue()
         {
-            if !self.wait_for_goal_subagents(terminal, agent).await? {
+            // A failed parent-action turn already consumed its notice. Retry
+            // before waiting for the child that still needs that action.
+            if !FailedTurn::retries_need_parent_action(&pending_retries)
+                && !self.wait_for_goal_subagents(terminal, agent).await?
+            {
                 break;
             }
             match self.run_subagent_completion_turn(terminal, agent).await? {
@@ -468,6 +472,13 @@ impl App {
                 .await?
             {
                 terminal.draw(|frame| self.draw(frame))?;
+            }
+            if self.subagent_inbox.has_parent_action_requests()
+                && self.pending_subagent_questionnaire.is_none()
+                && !self.subagent_inbox.has_queued_questionnaires()
+                && matches!(self.input_ui.composer(), ComposerMode::Input)
+            {
+                break;
             }
             tokio::select! {
                 terminal_event = self.terminal_session.as_mut().expect("terminal session initialized").next_event() => {

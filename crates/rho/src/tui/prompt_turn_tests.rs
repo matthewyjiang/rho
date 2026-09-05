@@ -18,7 +18,31 @@ fn failed_turn() -> FailedTurn {
         notification_context: None,
         initial_tool_call: None,
         generate_session_title_after_completion: true,
+        parent_action_required: false,
     }
+}
+
+// Covers: newer failed deliveries must not hide an older action retry from the
+// goal's child-wait decision. Owner: failed-turn scheduling policy.
+#[test]
+fn action_retry_keeps_queue_runnable_until_consumed() {
+    let mut action = failed_turn();
+    action.parent_action_required = true;
+    let mut retries = VecDeque::from([action.clone()]);
+    assert!(FailedTurn::retries_need_parent_action(&retries));
+
+    // A later completion/workflow delivery fails and is retried first.
+    retries.push_front(failed_turn());
+    assert!(FailedTurn::retries_need_parent_action(&retries));
+    retries.push_front(failed_turn());
+    assert!(FailedTurn::retries_need_parent_action(&retries));
+    retries.pop_front();
+    retries.pop_front();
+    pretty_assertions::assert_eq!(retries.pop_front(), Some(action));
+    assert!(!FailedTurn::retries_need_parent_action(&retries));
+
+    retries.push_back(failed_turn());
+    assert!(!FailedTurn::retries_need_parent_action(&retries));
 }
 
 #[test]
@@ -230,12 +254,12 @@ fn failed_turn_keeps_live_partial_assistant_text_before_error() {
     assert_eq!(app.status(), "error");
 }
 
-// Covers: idle completion batches stay restorable only until provider start
+// Covers: scheduled-turn notice batches stay restorable only until provider start
 // accepts the input. A later failure must not put the batch back, or the next
 // turn boundary would redeliver the same notice.
 // Owner: TUI turn-boundary delivery
 #[tokio::test]
-async fn committed_idle_boundary_batch_is_not_restored_after_post_start_failure() {
+async fn committed_boundary_batch_is_not_restored_after_post_start_failure() {
     let mut app = test_app();
     let mut agent =
         crate::app::interactive_runtime::test_edit_tool_runtime(crate::config::EditTool::default())
@@ -247,7 +271,8 @@ async fn committed_idle_boundary_batch_is_not_restored_after_post_start_failure(
             run_id: "abc123".into(),
             agent_id: "worker".into(),
             parent_session_id: session_id.clone(),
-            message: "child is blocked on schema".into(),
+            message: "schema inspection complete".into(),
+            delivery: crate::app::subagent_messaging::NoticeDelivery::NextTurn,
         });
 
     let delivery = app

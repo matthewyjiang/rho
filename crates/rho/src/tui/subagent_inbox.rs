@@ -234,8 +234,15 @@ impl SubagentInbox {
         !self.queued_questionnaires.is_empty()
     }
 
+    #[cfg(test)]
     pub(super) fn has_pending_notices(&self) -> bool {
         !self.queued_notices.is_empty()
+    }
+
+    pub(super) fn has_parent_action_requests(&self) -> bool {
+        self.queued_notices
+            .iter()
+            .any(|queued| queued.notice.delivery.requires_parent_action())
     }
 
     /// Terminal status already included these receipts in its tool result.
@@ -262,7 +269,7 @@ impl SubagentInbox {
         self.install_notice_rebind(rebind);
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, debug_assertions))]
     pub(super) fn queued_notice_count(&self) -> usize {
         self.queued_notices.len()
     }

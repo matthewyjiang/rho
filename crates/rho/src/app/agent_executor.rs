@@ -463,6 +463,7 @@ impl AgentExecutor {
                 Some(started_status),
             ) {
                 Launch::ClaudeCli(mut session) => {
+                    append_child_communication_contract(&mut session.system_prompt);
                     session.parent_messages = claude_parent_rx;
                     session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
                     if let Some(frozen) = frozen_cli {
@@ -471,6 +472,7 @@ impl AgentExecutor {
                     crate::claude_runtime::session::run_session(session).await
                 }
                 Launch::Cursor(mut session) => {
+                    append_child_communication_contract(&mut session.system_prompt);
                     session.overrides.live_title = Some(std::sync::Arc::clone(&task_live_title));
                     if let Some(frozen) = frozen_cli {
                         apply_frozen(&mut session.overrides, frozen);
@@ -553,7 +555,7 @@ struct BoundLaunchRequest {
     /// is listening. `None` removes the capability before bind.
     questionnaire_target: Option<rho_sdk::SessionId>,
     /// Parent session that can receive this child's notices, when one is
-    /// listening. `None` withholds `message_parent`.
+    /// listening. `None` withholds both child notice tools.
     notice_target: Option<rho_sdk::SessionId>,
     frozen_cli: Option<FrozenCliLaunch>,
     hook_host_labels: rho_sdk::hooks::HookHostLabels,
@@ -656,6 +658,16 @@ fn apply_frozen(overrides: &mut crate::cli_runtime::CliSessionOverrides, frozen:
     }));
 }
 
+/// External runtimes receive the same child contract as delegated Rho sessions.
+fn append_child_communication_contract(prompt: &mut crate::agent::PromptPolicy) {
+    let (crate::agent::PromptPolicy::Extend(text) | crate::agent::PromptPolicy::Replace(text)) =
+        prompt;
+    if !text.is_empty() {
+        text.push_str("\n\n");
+    }
+    text.push_str(super::subagent_messaging::CHILD_COMMUNICATION_CONTRACT);
+}
+
 /// One delegated run on the Rho runtime, after binding and permit acquisition.
 struct RhoAgentRun {
     bound: super::agent_binding::BoundAgent,
@@ -743,6 +755,7 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         config_path,
         cwd,
         no_system_prompt: false,
+        system_prompt_suffix: Some(super::subagent_messaging::CHILD_COMMUNICATION_CONTRACT),
         no_tools: false,
         no_subagents: true,
         usage_purpose: "subagent",
@@ -782,13 +795,18 @@ struct DelegatedNoticePoster {
 }
 
 impl NoticePoster for DelegatedNoticePoster {
-    fn post(&self, message: ValidatedMessage) -> Result<(), NoticePostError> {
+    fn post(
+        &self,
+        message: ValidatedMessage,
+        delivery: super::subagent_messaging::NoticeDelivery,
+    ) -> Result<(), NoticePostError> {
         self.notices.post(SubagentNotice {
             acknowledged: Default::default(),
             run_id: self.run_id.clone(),
             agent_id: self.agent_id.clone(),
             parent_session_id: self.parent_session_id.clone(),
             message: message.into_string(),
+            delivery,
         })
     }
 }

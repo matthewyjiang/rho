@@ -22,6 +22,14 @@ pub(super) enum SubagentCompletionTurn {
     Completed(TurnOutcome),
 }
 
+/// Already-scheduled provider requests may carry informational notices; notices
+/// alone must not start another request, including at a completion checkpoint.
+#[derive(Clone, Copy)]
+enum BoundaryTrigger {
+    ScheduledTurn,
+    Notification,
+}
+
 fn subagent_completion_changed(outcome: &SubagentCompletionTurn) -> bool {
     !matches!(outcome, SubagentCompletionTurn::NoDelivery)
 }
@@ -38,9 +46,15 @@ impl App {
             request.respond(None).await;
             return;
         }
+        let trigger = match request.boundary() {
+            rho_sdk::InputBoundary::BeforeProvider => BoundaryTrigger::ScheduledTurn,
+            rho_sdk::InputBoundary::BeforeCompletion => BoundaryTrigger::Notification,
+            // Unknown checkpoints must not let routine notices buy inference.
+            _ => BoundaryTrigger::Notification,
+        };
         let captured = {
             let _snapshot = crate::app::notification_delivery::lock();
-            let batch = self.take_turn_boundary_batch_locked(agent);
+            let batch = self.take_turn_boundary_batch_locked(agent, trigger);
             if batch.is_empty() {
                 self.restore_turn_boundary_batch(agent, batch);
                 // Send synchronously while publishers are excluded so later
@@ -147,15 +161,25 @@ impl App {
     /// Returns the joined model prompt, display summary, and the drained batch
     /// so callers can restore on setup failure, or `None` when nothing is
     /// pending. Real prompt turns fold this into the outgoing message; an idle
-    /// parent sends it as a turn of its own. Active turns reply to an SDK
+    /// parent sends completions and action requests as a turn of its own,
+    /// carrying any queued informational notices with them. Informational
+    /// notices alone never create an idle turn. Active turns reply to an SDK
     /// checkpoint instead. Removal is committed only after accepted delivery.
     pub(super) fn collect_turn_boundary_prompts(
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> Option<TurnBoundaryDelivery> {
+        self.collect_boundary_prompts(agent, BoundaryTrigger::ScheduledTurn)
+    }
+
+    fn collect_boundary_prompts(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+        trigger: BoundaryTrigger,
+    ) -> Option<TurnBoundaryDelivery> {
         let batch = {
             let _snapshot = crate::app::notification_delivery::lock();
-            self.take_turn_boundary_batch_locked(agent)
+            self.take_turn_boundary_batch_locked(agent, trigger)
         };
         if batch.is_empty() {
             self.restore_turn_boundary_batch(agent, batch);
@@ -168,11 +192,12 @@ impl App {
     fn take_turn_boundary_batch_locked(
         &mut self,
         agent: &mut InteractiveRuntime,
+        trigger: BoundaryTrigger,
     ) -> TurnBoundaryBatch {
         let mut batch = TurnBoundaryBatch::default();
         self.subagent_inbox.drain();
         self.subagent_inbox.reconcile_observed();
-        batch.notices = self.subagent_inbox.take_notices(agent.session_id());
+        self.subagent_inbox.discard_stale(agent.session_id());
         if let Some(manager) = agent.subagents().cloned() {
             batch.subagent_notifications = manager.take_notifications(agent.session_id().as_str());
         }
@@ -181,6 +206,21 @@ impl App {
             .take_notifications(agent.session_id().as_str());
         if let Some(processes) = agent.processes() {
             batch.process_notifications = processes.take_notifications();
+        }
+        #[cfg(debug_assertions)]
+        if matches!(trigger, BoundaryTrigger::Notification) {
+            super::smoke_injection::quiet_notice_boundary(
+                self.subagent_inbox.queued_notice_count(),
+            );
+        }
+        let deliver_notices = match trigger {
+            BoundaryTrigger::ScheduledTurn => true,
+            BoundaryTrigger::Notification => {
+                !batch.is_empty() || self.subagent_inbox.has_parent_action_requests()
+            }
+        };
+        if deliver_notices {
+            batch.notices = self.subagent_inbox.take_notices(agent.session_id());
         }
         batch
     }
@@ -363,7 +403,8 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<SubagentCompletionTurn> {
-        let Some(delivery) = self.collect_turn_boundary_prompts(agent) else {
+        let Some(delivery) = self.collect_boundary_prompts(agent, BoundaryTrigger::Notification)
+        else {
             return Ok(SubagentCompletionTurn::NoDelivery);
         };
         // The whole drained batch is one message and one model request, no
@@ -410,6 +451,12 @@ pub(super) struct TurnBoundaryBatch {
 }
 
 impl TurnBoundaryBatch {
+    pub(super) fn requires_parent_action(&self) -> bool {
+        self.notices
+            .iter()
+            .any(|notice| notice.delivery.requires_parent_action())
+    }
+
     fn is_empty(&self) -> bool {
         self.notices.is_empty()
             && self.subagent_notifications.is_empty()

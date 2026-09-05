@@ -8,6 +8,7 @@ mod compact;
 mod docs_demo;
 mod edit;
 mod goal;
+mod quiet_subagent;
 mod response_scenarios;
 mod stream_scenarios;
 
@@ -122,6 +123,9 @@ async fn fixture_stream(
         return completed("Fixture run title");
     }
     if let Some(response) = agent_message::intercept(&prompt, &request).await {
+        return response;
+    }
+    if let Some(response) = quiet_subagent::intercept(&prompt, &request).await {
         return response;
     }
     if let Some(response) = docs_demo::intercept(&prompt, &request, &events).await {

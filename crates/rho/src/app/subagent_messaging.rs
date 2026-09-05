@@ -1,11 +1,10 @@
 //! Plain-text messaging between a parent session and its delegated agents.
 //!
 //! Both directions are non-blocking and share one body budget. Child to parent:
-//! notices carry a short finding or blocker and deliver at the parent's next
-//! safe runtime boundary, the same way background completions do (questionnaires, by
-//! contrast, block the child until the parent answers). Parent to child: the
-//! parent stages text into the child's steering queue through [`SteeringSlot`],
-//! applied at the child's next provider turn.
+//! ordinary notices wait for the parent's next turn; explicit action requests
+//! may wake the parent. Questionnaires block the child until the parent answers.
+//! Parent to child: the parent stages text into the child's steering queue
+//! through [`SteeringSlot`], applied at the child's next provider turn.
 
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -15,13 +14,20 @@ use std::sync::{
 use rho_sdk::SessionId;
 use tokio::sync::mpsc;
 
-/// Queue depth for child->parent notices waiting on the parent session.
+pub(crate) const CHILD_COMMUNICATION_CONTRACT: &str = include_str!("child_contract.md");
+
+/// Shared outstanding-notice threshold for admitting ordinary child notices.
 ///
 /// Enough for a burst of parallel children; fail loud when a child floods the
 /// parent instead of growing without bound. The budget is end-to-end: accepted
 /// notices still count after the TUI drains them out of the transport channel
-/// until the parent delivers or discards them.
+/// until the parent delivers or discards them. Action requests can use the
+/// additional [`ACTION_NOTICE_RESERVE`] to wake a parent with a full backlog.
 pub(crate) const NOTICE_QUEUE_CAPACITY: usize = 32;
+
+/// One action request can start a parent turn that drains the entire backlog.
+/// Reserve that admission even when ordinary notices fill their allowance.
+const ACTION_NOTICE_RESERVE: usize = 1;
 
 /// Soft cap on one plain-text message body, in either direction.
 ///
@@ -72,6 +78,22 @@ pub(crate) enum MessageValidationError {
     TooLarge { bytes: usize, max_bytes: usize },
 }
 
+/// Whether a child notice waits for a parent turn or requests parent action.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NoticeDelivery {
+    NextTurn,
+    ParentActionRequired,
+}
+
+impl NoticeDelivery {
+    pub(crate) fn requires_parent_action(self) -> bool {
+        match self {
+            Self::NextTurn => false,
+            Self::ParentActionRequired => true,
+        }
+    }
+}
+
 /// One plain-text notice raised by a delegated run for its parent.
 #[derive(Clone, Debug)]
 pub(crate) struct SubagentNotice {
@@ -79,6 +101,7 @@ pub(crate) struct SubagentNotice {
     pub(crate) agent_id: String,
     pub(crate) parent_session_id: SessionId,
     pub(crate) message: String,
+    pub(crate) delivery: NoticeDelivery,
     pub(crate) acknowledged: Arc<AtomicBool>,
 }
 
@@ -89,11 +112,13 @@ impl PartialEq for SubagentNotice {
             &self.agent_id,
             &self.parent_session_id,
             &self.message,
+            self.delivery,
         ) == (
             &other.run_id,
             &other.agent_id,
             &other.parent_session_id,
             &other.message,
+            other.delivery,
         )
     }
 }
@@ -259,7 +284,7 @@ impl SubagentNoticeBridge {
         // target it after we install the replacement.
         drop(old_receiver);
 
-        let (sender, receiver) = mpsc::channel(self.capacity);
+        let (sender, receiver) = mpsc::channel(self.capacity + ACTION_NOTICE_RESERVE);
         let mut permits = NoticePermits::new();
         permits.pending = Arc::clone(&self.pending);
         *guard = Some(NoticeBinding {
@@ -304,7 +329,12 @@ impl SubagentNoticeBridge {
         notice: SubagentNotice,
         gap: &dyn Fn(),
     ) -> Result<(), NoticePostError> {
-        let capacity = self.capacity;
+        // Both classes share the same generation counter. Ordinary notices
+        // cannot consume the final slot, including before the inbox drains.
+        let capacity = match notice.delivery {
+            NoticeDelivery::NextTurn => self.capacity,
+            NoticeDelivery::ParentActionRequired => self.capacity + ACTION_NOTICE_RESERVE,
+        };
         let _delivery = super::notification_delivery::lock();
         let guard = self.binding_slot();
         let binding = guard.as_ref().ok_or(NoticePostError::Unbound)?;
@@ -366,18 +396,22 @@ pub(crate) enum NoticePostError {
     #[error("delegated agent notices require an interactive parent session listening for them")]
     Unbound,
     #[error(
-        "parent notice queue is full ({capacity} waiting); deliver pending notices before sending more"
+        "parent notice admission limit reached ({capacity} outstanding allowed for this class); deliver pending notices before sending more"
     )]
     QueueFull { capacity: usize },
 }
 
 /// Posts a short plain-text notice from a delegated child to its parent.
 ///
-/// `message_parent` relies on this to stay non-blocking: implementors must not
+/// Both child notice tools rely on this to stay non-blocking: implementors must not
 /// wait on the parent session, and must return [`NoticePostError`] whenever the
 /// notice cannot be accepted (unbound parent, full queue, or equivalent).
 pub(crate) trait NoticePoster: Send + Sync {
-    fn post(&self, message: ValidatedMessage) -> Result<(), NoticePostError>;
+    fn post(
+        &self,
+        message: ValidatedMessage,
+        delivery: NoticeDelivery,
+    ) -> Result<(), NoticePostError>;
 }
 
 /// Publishes a delegated Rho run's steering port for the whole live window.
@@ -429,8 +463,12 @@ pub(crate) fn notice_prompts(notices: &[SubagentNotice]) -> (String, String) {
     let model = notices
         .iter()
         .map(|notice| {
+            let label = match notice.delivery {
+                NoticeDelivery::NextTurn => "Message from delegated agent",
+                NoticeDelivery::ParentActionRequired => "Parent action required by delegated agent",
+            };
             format!(
-                "Message from delegated agent {} ({}):\n{}",
+                "{label} {} ({}):\n{}",
                 notice.run_id, notice.agent_id, notice.message
             )
         })
