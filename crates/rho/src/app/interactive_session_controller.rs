@@ -161,21 +161,22 @@ impl InteractiveSessionController {
         pending_turn: Option<&PendingTurn>,
         outcome: Option<&RunOutcome>,
     ) -> anyhow::Result<()> {
+        // This turn is finished even if saving and durable-state rollback fail.
+        let persisted = std::mem::take(&mut self.persisted_turn_display);
         let Some(storage) = &self.storage else {
             return Ok(());
         };
         let history = self.session.history();
         let display =
             pending_turn.map_or_else(Vec::new, |turn| turn.display_tail(&history, outcome));
-        let display_tail = display.get(self.persisted_turn_display..).ok_or_else(|| {
+        let display_tail = display.get(persisted..).ok_or_else(|| {
             anyhow::anyhow!(
                 "turn display checkpoint exceeds accumulated history: persisted {}, accumulated {}",
-                self.persisted_turn_display,
+                persisted,
                 display.len()
             )
         })?;
         storage.save_snapshot(&self.session.snapshot(), display_tail)?;
-        self.persisted_turn_display = 0;
         Ok(())
     }
 
@@ -185,9 +186,12 @@ impl InteractiveSessionController {
         display: &[Message],
         outcome: &rho_sdk::CompactionOutcome,
     ) -> anyhow::Result<()> {
+        // Reinstate the checkpoint only after the save succeeds. Otherwise a
+        // failed rollback must not carry this turn's offset into the next one.
+        let persisted = std::mem::take(&mut self.persisted_turn_display);
         if let Some(storage) = &self.storage {
-            let display_tail = display.get(self.persisted_turn_display..).ok_or_else(|| {
-                anyhow::anyhow!("compaction display checkpoint exceeds accumulated history: persisted {}, accumulated {}", self.persisted_turn_display, display.len())
+            let display_tail = display.get(persisted..).ok_or_else(|| {
+                anyhow::anyhow!("compaction display checkpoint exceeds accumulated history: persisted {}, accumulated {}", persisted, display.len())
             })?;
             storage.save_compaction_snapshot(snapshot, display_tail, outcome)?;
             self.persisted_turn_display = display.len();
@@ -213,3 +217,7 @@ impl InteractiveSessionController {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "interactive_session_controller_tests.rs"]
+mod tests;
