@@ -190,7 +190,7 @@ impl InputUi {
     }
 
     pub(in crate::tui) fn apply_input_draft(&mut self, draft: InputDraft) {
-        self.shell_mode = draft.shell_mode;
+        self.set_shell_mode(draft.shell_mode);
         self.text = draft.input;
         self.paste_segments = draft.paste_segments;
         self.submission_mode = draft.submission_mode;
@@ -405,10 +405,6 @@ impl InputUi {
 
     pub(in crate::tui) fn shell_mode(&self) -> Option<InlineShellMode> {
         self.shell_mode
-    }
-
-    pub(in crate::tui) fn shell_mode_mut(&mut self) -> &mut Option<InlineShellMode> {
-        &mut self.shell_mode
     }
 
     pub(in crate::tui) fn set_shell_mode(&mut self, mode: Option<InlineShellMode>) {

@@ -37,6 +37,10 @@ Press `tab` in shell mode to complete the word under the cursor, one path compon
 
 One match is inserted at once. A directory ends in `/` and gets no trailing space, so the next `tab` descends into it; a file gets a trailing space. Several matches open a list under the composer showing that directory's entries: keep typing to narrow it, use `up` and `down` to choose, then press `tab` or `enter` to insert the highlighted entry or `esc` to close the list and stay in shell mode. Paths that contain spaces or other characters the shell would interpret are single-quoted.
 
+Quoted directories support the same repeated-Tab descent. If a typed character leaves no matches, the list hides and returns when you backspace to a matching prefix. Recalling history closes completion until you press Tab again.
+
+Completion supports POSIX-style shells: Bash, Zsh, sh, Dash, and Ksh. For PowerShell, cmd, Fish, or other shells, Tab leaves the command unchanged and shows an unsupported-shell notice rather than inserting incompatible quotes.
+
 Completion lists the filesystem as the shell will see it, so untracked and ignored entries such as `target/` are offered. Hidden entries appear only when the component you are typing starts with `.`. Relative paths resolve from the workspace; `~/`, `../`, and absolute paths work as they would in the shell. Completion offers paths only; it does not complete command names or flags.
 
 Rho runs inline commands asynchronously, so you can continue working while a command runs. Press `esc` to cancel a running command. Rho stops commands that run longer than 60 seconds.

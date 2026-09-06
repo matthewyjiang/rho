@@ -4,7 +4,7 @@ use tempfile::tempdir;
 
 use super::{
     super::{file_picker::FilePaletteEntry, palette::ActivePalette, tests::test_app, App},
-    shell_quote, shell_word_candidates_in,
+    shell_quote, shell_word_candidates_in, supports_path_completion,
 };
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -21,6 +21,11 @@ fn shell_app(files: &[&str], typed: &str) -> (App, tempfile::TempDir) {
         std::fs::write(path, "").unwrap();
     }
     let mut app = test_app();
+    app.info
+        .services
+        .config_repository
+        .update(|config| config.inline_shell = "bash".into())
+        .unwrap();
     app.info.runtime.cwd = workspace.path().to_path_buf();
     assert!(app.try_enter_shell_mode_from_bang());
     app.insert_input_text(typed);
@@ -252,8 +257,27 @@ fn shell_quote_wraps_only_unsafe_paths() {
         ("docs/my notes.md", "'docs/my notes.md'"),
         ("it's.txt", "'it'\\''s.txt'"),
         ("a$b", "'a$b'"),
+        ("~/my notes.md", "~/'my notes.md'"),
     ];
     for (input, expected) in cases {
         assert_eq!(shell_quote(input), expected, "{input}");
+    }
+}
+
+// Covers: never insert POSIX quoting into a shell with incompatible syntax.
+// Owner: shell completion eligibility policy.
+#[test]
+fn completion_requires_a_supported_shell() {
+    for (shell, supported) in [
+        ("bash", true),
+        ("/bin/zsh", true),
+        ("fish", false),
+        ("sh.exe", true),
+        ("powershell", false),
+        ("pwsh.exe", false),
+        ("cmd", false),
+        ("nu", false),
+    ] {
+        assert_eq!(supports_path_completion(shell), supported, "{shell}");
     }
 }

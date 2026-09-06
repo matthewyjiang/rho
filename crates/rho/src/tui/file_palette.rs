@@ -30,7 +30,7 @@ impl App {
             if self.input_ui.shell_mode().is_some()
                 && (key.modifiers, key.code) == (KeyModifiers::NONE, KeyCode::Tab)
             {
-                self.open_shell_completion();
+                self.open_shell_completion()?;
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
                 return Ok(true);
@@ -241,10 +241,13 @@ impl App {
     }
 
     /// Reset the highlight when the token changes and keep it inside the list.
-    /// In shell mode an emptied list also closes completion, since nothing
-    /// reopens it but another Tab.
+    /// Keep a shell anchor through zero matches so correcting the word restores
+    /// the list, but drop it when the cursor leaves that word.
     pub(super) fn clamp_file_selection(&mut self) {
         let query = self.active_path_token().map(|token| token.query);
+        if query.is_none() {
+            self.input_ui.set_shell_completion_anchor(None);
+        }
         if self.input_ui.file_query() != query.as_deref() {
             self.input_ui.set_file_query(query);
             self.input_ui.set_file_selection(0);
@@ -253,7 +256,6 @@ impl App {
         let match_count = self.file_match_list().len();
         if match_count == 0 {
             self.input_ui.set_file_selection(0);
-            self.input_ui.set_shell_completion_anchor(None);
         } else if self.input_ui.file_selection() >= match_count {
             self.input_ui.set_file_selection(match_count - 1);
         }

@@ -19,25 +19,36 @@ impl App {
     /// Complete the word under the cursor like a shell would: a lone match is
     /// inserted at once, several open the palette, none leaves the composer
     /// alone and says so.
-    pub(super) fn open_shell_completion(&mut self) {
+    pub(super) fn open_shell_completion(&mut self) -> anyhow::Result<()> {
+        let config = self.info.services.config_repository.load()?;
+        let shell = if config.inline_shell.trim().is_empty() {
+            super::inline_shell::default_shell()
+        } else {
+            config.inline_shell
+        };
+        if !supports_path_completion(&shell) {
+            self.close_file_palette();
+            self.set_status("path completion requires a POSIX-style shell; command left unchanged");
+            return Ok(());
+        }
         let anchor =
-            file_picker::word_at_cursor(self.input_ui.text(), self.input_ui.cursor()).start;
+            file_picker::shell_word_at_cursor(self.input_ui.text(), self.input_ui.cursor()).start;
         self.input_ui.set_shell_completion_anchor(Some(anchor));
         self.input_ui.set_file_palette_dismissed(false);
         self.input_ui.set_file_selection(0);
         let matches = self.file_match_list();
         match matches.len() {
             0 => {
-                self.input_ui.set_shell_completion_anchor(None);
                 self.set_status("no matching paths");
             }
             1 => {
                 if let Some(entry) = matches.get(0) {
-                    let _ = self.apply_file_palette_selection(&entry);
+                    self.apply_file_palette_selection(&entry)?;
                 }
             }
             _ => {}
         }
+        Ok(())
     }
 }
 
@@ -91,8 +102,24 @@ fn shell_word_candidates_in(cwd: &Path, word: &str, home: Option<&Path>) -> Disc
     DiscoveredFilePaths::complete(paths)
 }
 
-/// Single-quote `path` unless every char is safe in every supported shell.
+/// Completion uses POSIX-style quoting, never PowerShell or cmd syntax.
+fn supports_path_completion(shell: &str) -> bool {
+    let name = Path::new(shell)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(shell);
+    matches!(
+        name.to_ascii_lowercase().trim_end_matches(".exe"),
+        "sh" | "bash" | "zsh" | "dash" | "ksh"
+    )
+}
+
+/// Single-quote `path` for the POSIX-style shells accepted above.
 pub(super) fn shell_quote(path: &str) -> String {
+    // Keep home expansion outside quotes when a later component needs them.
+    if let Some(relative) = path.strip_prefix("~/") {
+        return format!("~/{}", shell_quote(relative));
+    }
     let safe = |ch: char| ch.is_alphanumeric() || "-_./~+:@%,=".contains(ch);
     if !path.is_empty() && path.chars().all(safe) {
         return path.to_string();

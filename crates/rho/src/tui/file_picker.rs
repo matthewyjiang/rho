@@ -288,14 +288,13 @@ pub(super) fn anchored_shell_word(
     cursor: usize,
     anchor: usize,
 ) -> Option<FileMention> {
-    let word = word_at_cursor(input, cursor);
-    (word.start == anchor).then(|| FileMention {
-        start: word.start,
-        end: word.end,
-        query: word.head.to_string(),
-        source: PathTokenSource::ShellWord,
-    })
+    let word = shell_word_at_cursor(input, cursor);
+    (word.start == anchor).then_some(word)
 }
+
+#[path = "shell_word.rs"]
+mod shell_word;
+pub(super) use shell_word::shell_word_at_cursor;
 
 #[cfg(test)]
 pub(super) fn matching_file_paths(cwd: &Path, query: &str) -> DiscoveredFilePaths {

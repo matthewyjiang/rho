@@ -561,11 +561,13 @@ impl super::App {
         }
         match self.input_ui.shell_mode() {
             None => {
-                *self.input_ui.shell_mode_mut() = Some(InlineShellMode::IncludeInContext);
+                self.input_ui
+                    .set_shell_mode(Some(InlineShellMode::IncludeInContext));
                 true
             }
             Some(InlineShellMode::IncludeInContext) => {
-                *self.input_ui.shell_mode_mut() = Some(InlineShellMode::ExcludeFromContext);
+                self.input_ui
+                    .set_shell_mode(Some(InlineShellMode::ExcludeFromContext));
                 true
             }
             Some(InlineShellMode::ExcludeFromContext) => true,
@@ -589,7 +591,7 @@ impl super::App {
     ) {
         if paste_segments.is_empty() {
             if let Some((mode, command)) = InlineShellMode::parse(text.trim_end()) {
-                *self.input_ui.shell_mode_mut() = Some(mode);
+                self.input_ui.set_shell_mode(Some(mode));
                 self.input_ui.set_text(command.to_string());
                 self.input_ui.clear_paste_segments();
                 self.input_ui.set_submission_mode(submission_mode);
