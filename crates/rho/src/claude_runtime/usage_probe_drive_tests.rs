@@ -7,6 +7,7 @@ use std::{
 use pretty_assertions::assert_eq;
 
 use super::*;
+use crate::usage_limits::UsageFailure;
 
 /// Short budgets so hung-child cases fail fast instead of waiting out production values.
 const TEST_BUDGET: ProbeBudget = ProbeBudget {
@@ -211,9 +212,10 @@ printf '\033[2J\033[HCurrent session\n10%% used\nCurrent week (all models)\n20%%
 exec cat >/dev/null
 "#;
     let result = run_child("/bin/bash", &["-c", script]);
-    let Err(UsageProbeError::RefreshFailed { screen }) = result else {
+    let Err(UsageProbeError::RefreshFailed { reason, screen }) = result else {
         panic!("{result:?}");
     };
+    assert_eq!(reason, UsageFailure::Other);
     assert_eq!(
         screen.lines().last(),
         Some("Failed to load usage data: response error")

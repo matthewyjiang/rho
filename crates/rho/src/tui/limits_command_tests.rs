@@ -87,6 +87,113 @@ fn formats_reset_relative_only_within_one_day() {
     assert!(!format_reset_at(200_000, 0).starts_with("in "));
 }
 
+// Covers: a throttled usage read names the rate limit in the heading instead
+// of the generic failure copy, with and without a cached snapshot.
+// Owner: pure unit
+#[test]
+fn failed_heading_distinguishes_rate_limit() {
+    let cases = [
+        (
+            UsageFailure::RateLimited,
+            Some(900),
+            "rate limited · showing last known",
+        ),
+        (
+            UsageFailure::RateLimited,
+            None,
+            "rate limited · try again in a moment",
+        ),
+        (UsageFailure::Other, Some(900), "update failed"),
+        (UsageFailure::Other, None, "unavailable"),
+    ];
+    let observed: Vec<String> = cases
+        .iter()
+        .map(|(reason, cached_at_unix, _)| {
+            heading_status(
+                &LimitsSection {
+                    id: LimitsSectionId::ClaudeCode,
+                    label: CLAUDE_CODE_PROVIDER_LABEL.into(),
+                    status: LimitsSectionStatus::Failed {
+                        cached_at_unix: *cached_at_unix,
+                        reason: *reason,
+                    },
+                    windows: Vec::new(),
+                },
+                None,
+                1_000,
+            )
+        })
+        .collect();
+    let expected: Vec<String> = cases.iter().map(|(_, _, text)| (*text).into()).collect();
+    assert_eq!(observed, expected);
+}
+
+// Covers: after a failed probe the cached disk windows stay visible; only a
+// rate-limited refresh names the throttle in the heading, other failures keep
+// the quiet "last seen" heading, and a missing cache reads as a plain failure.
+// Owner: pure unit
+#[test]
+fn disk_fallback_status_follows_failure_reason() {
+    let state = sample_claude_state(900);
+    let cases: [(Option<UsageFailure>, LimitsSectionStatus); 3] = [
+        (
+            Some(UsageFailure::RateLimited),
+            LimitsSectionStatus::Failed {
+                cached_at_unix: Some(900),
+                reason: UsageFailure::RateLimited,
+            },
+        ),
+        (
+            Some(UsageFailure::Other),
+            LimitsSectionStatus::Observed {
+                observed_at_unix: 900,
+            },
+        ),
+        (
+            None,
+            LimitsSectionStatus::Observed {
+                observed_at_unix: 900,
+            },
+        ),
+    ];
+    for (failed, expected) in cases {
+        let mut overlay = empty_overlay();
+        super::limits_claude::apply_claude_disk_state(&mut overlay, Some(&state), failed, 1_000);
+        let section = &overlay.sections[0];
+        assert_eq!(section.status, expected, "{failed:?}");
+        assert_eq!(section.windows.len(), 1, "{failed:?}");
+    }
+
+    let mut overlay = empty_overlay();
+    super::limits_claude::apply_claude_disk_state(
+        &mut overlay,
+        None,
+        Some(UsageFailure::RateLimited),
+        1_000,
+    );
+    assert_eq!(
+        overlay.sections[0].status,
+        LimitsSectionStatus::Failed {
+            cached_at_unix: None,
+            reason: UsageFailure::RateLimited,
+        }
+    );
+    assert!(overlay.sections[0].windows.is_empty());
+
+    let mut overlay = empty_overlay();
+    super::limits_claude::apply_claude_disk_state(&mut overlay, None, None, 1_000);
+    assert!(overlay.sections.is_empty());
+}
+
+fn empty_overlay() -> LimitsOverlay {
+    LimitsOverlay {
+        sections: Vec::new(),
+        empty_note: None,
+        scroll: Default::default(),
+        checking_started: Instant::now(),
+    }
+}
+
 // Covers: a live fetch for one provider must not wait on the others.
 // Owner: pure unit
 #[test]

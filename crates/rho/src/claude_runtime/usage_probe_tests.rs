@@ -118,41 +118,46 @@ fn usage_screen_classification() {
         ),
         ("complete", format!("{windows}Esc to cancel\n"), "Ready"),
         (
+            "rate limit named without a failure notice",
+            format!("rate limited\n{windows}Esc to cancel\n"),
+            "Ready",
+        ),
+        (
             "load error",
             format!("{windows}Failed to load usage data: response error\n"),
-            "Failed",
+            "Failed(Other)",
         ),
         (
             "last-known fallback",
             format!("{windows}Showing last-known usage as of 2 minutes ago (could not refresh)\n"),
-            "Failed",
+            "Failed(Other)",
         ),
         (
             "rate limited",
             format!("{windows}Showing last-known usage (rate limited — try again in a moment)\n"),
-            "Failed",
+            "Failed(RateLimited)",
         ),
         (
             "partial",
             format!("{windows}Partial usage data (rate limited — try again in a moment)\n"),
-            "Failed",
+            "Failed(RateLimited)",
         ),
         (
             "per-model unavailable",
             format!(
                 "{windows}Per-model breakdown unavailable (rate limited — try again in a moment)\n"
             ),
-            "Failed",
+            "Failed(RateLimited)",
         ),
         (
             "could not refresh",
             format!("{windows}Could not refresh usage data\n"),
-            "Failed",
+            "Failed(Other)",
         ),
         (
             "endpoint rate limited",
             format!("{windows}Usage endpoint is rate limited. Please try again in a moment.\n"),
-            "Failed",
+            "Failed(RateLimited)",
         ),
     ];
     let observed: Vec<(&str, &str)> = cases
@@ -167,4 +172,40 @@ fn usage_screen_classification() {
         .collect();
     let expected: Vec<(&str, &str)> = cases.iter().map(|(name, _, kind)| (*name, *kind)).collect();
     pretty_assertions::assert_eq!(observed, expected);
+}
+
+// Covers: only a throttled refresh maps to a rate limit; every other probe
+// error is a plain failure, so `/limits` never claims a throttle it did not see.
+// Owner: pure unit
+#[test]
+fn probe_error_failure_reason() {
+    use super::UsageProbeError;
+    use crate::usage_limits::UsageFailure;
+    let cases = [
+        (
+            UsageProbeError::RefreshFailed {
+                reason: UsageFailure::RateLimited,
+                screen: String::new(),
+            },
+            UsageFailure::RateLimited,
+        ),
+        (
+            UsageProbeError::RefreshFailed {
+                reason: UsageFailure::Other,
+                screen: String::new(),
+            },
+            UsageFailure::Other,
+        ),
+        (UsageProbeError::Unparseable, UsageFailure::Other),
+        (
+            UsageProbeError::TimeoutScreen {
+                what: "panel",
+                screen: String::new(),
+            },
+            UsageFailure::Other,
+        ),
+    ];
+    for (error, expected) in cases {
+        pretty_assertions::assert_eq!(error.failure(), expected, "{error}");
+    }
 }

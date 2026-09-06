@@ -19,7 +19,7 @@ use super::{
     App, ComposerMode,
 };
 use crate::usage_limits::{
-    fetch_usage_provider, now_unix, usage_provider_is_connected, UsageLimitWindow,
+    fetch_usage_provider, now_unix, usage_provider_is_connected, UsageFailure, UsageLimitWindow,
     UsageProviderKind,
 };
 use crate::usage_limits_cache::{self, UsageLimitsCache};
@@ -44,7 +44,9 @@ enum LimitsFetchResult {
         windows: Vec<UsageLimitWindow>,
     },
     Unavailable,
-    Failed,
+    Failed {
+        reason: UsageFailure,
+    },
 }
 
 pub(super) struct PendingUsageFetch {
@@ -68,7 +70,7 @@ pub(super) enum LiveUsage {
         limits: crate::usage_limits::ProviderUsageLimits,
         fetched_at_unix: i64,
     },
-    Failed,
+    Failed(UsageFailure),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,10 +90,17 @@ impl LimitsSectionId {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum LimitsSectionStatus {
-    Checking { cached_at_unix: Option<i64> },
+    Checking {
+        cached_at_unix: Option<i64>,
+    },
     Live,
-    Observed { observed_at_unix: i64 },
-    Failed { cached_at_unix: Option<i64> },
+    Observed {
+        observed_at_unix: i64,
+    },
+    Failed {
+        cached_at_unix: Option<i64>,
+        reason: UsageFailure,
+    },
     Empty,
 }
 
@@ -126,9 +135,13 @@ impl LimitsOverlay {
         &mut self,
         id: LimitsSectionId,
         cached_at_unix: Option<i64>,
+        reason: UsageFailure,
         insert_label: Option<&str>,
     ) {
-        let status = LimitsSectionStatus::Failed { cached_at_unix };
+        let status = LimitsSectionStatus::Failed {
+            cached_at_unix,
+            reason,
+        };
         if let Some(section) = self.section_mut(id) {
             section.status = status;
             return;
@@ -229,7 +242,12 @@ impl App {
             changed = true;
             match fetch.handle.await {
                 Ok(result) => self.apply_limits_fetch(fetch.id, result),
-                Err(_) => self.apply_limits_fetch(fetch.id, LimitsFetchResult::Failed),
+                Err(_) => self.apply_limits_fetch(
+                    fetch.id,
+                    LimitsFetchResult::Failed {
+                        reason: UsageFailure::Other,
+                    },
+                ),
             }
         }
         self.pending_usage_limits = still_pending;
@@ -385,7 +403,9 @@ impl App {
                     match fetch_usage_provider(kind, store.as_ref(), client).await {
                         Ok(Some(limits)) => LimitsFetchResult::ProviderReady { limits },
                         Ok(None) => LimitsFetchResult::Unavailable,
-                        Err(_) => LimitsFetchResult::Failed,
+                        Err(error) => LimitsFetchResult::Failed {
+                            reason: error.failure(),
+                        },
                     }
                 }),
             });
@@ -400,7 +420,7 @@ impl App {
                     let cached_at_unix = match section.status {
                         LimitsSectionStatus::Live => live_fetched_at,
                         LimitsSectionStatus::Checking { cached_at_unix }
-                        | LimitsSectionStatus::Failed { cached_at_unix } => cached_at_unix,
+                        | LimitsSectionStatus::Failed { cached_at_unix, .. } => cached_at_unix,
                         LimitsSectionStatus::Observed { .. } | LimitsSectionStatus::Empty => None,
                     };
                     section.status = LimitsSectionStatus::Checking { cached_at_unix };
@@ -430,13 +450,13 @@ impl App {
                     }
                 }
                 LimitsSectionId::ClaudeCode => {
-                    limits_claude::apply_claude_disk_fallback(self, false)
+                    limits_claude::apply_claude_disk_fallback(self, None)
                 }
             },
-            LimitsFetchResult::Failed => match id {
-                LimitsSectionId::Provider(kind) => self.mark_usage_failed(kind),
+            LimitsFetchResult::Failed { reason } => match id {
+                LimitsSectionId::Provider(kind) => self.mark_usage_failed(kind, reason),
                 LimitsSectionId::ClaudeCode => {
-                    limits_claude::apply_claude_disk_fallback(self, true)
+                    limits_claude::apply_claude_disk_fallback(self, Some(reason))
                 }
             },
         }
@@ -472,13 +492,14 @@ impl App {
         self.apply_limits_scroll(terminal, PanelScrollTarget::Absolute(scroll));
     }
 
-    fn mark_usage_failed(&mut self, kind: UsageProviderKind) {
-        self.usage_limits_live.insert(kind, LiveUsage::Failed);
+    fn mark_usage_failed(&mut self, kind: UsageProviderKind, reason: UsageFailure) {
+        self.usage_limits_live
+            .insert(kind, LiveUsage::Failed(reason));
         let cached_at = usage_limits_cache::load()
             .get(kind)
             .map(|entry| entry.fetched_at_unix);
         if let Some(overlay) = self.limits_overlay_mut() {
-            overlay.apply_failed(LimitsSectionId::Provider(kind), cached_at, None);
+            overlay.apply_failed(LimitsSectionId::Provider(kind), cached_at, reason, None);
         }
     }
 }
@@ -515,6 +536,7 @@ fn build_limits_overlay(
                     label: kind.label().into(),
                     status: LimitsSectionStatus::Failed {
                         cached_at_unix: cached.map(|entry| entry.fetched_at_unix),
+                        reason: UsageFailure::Other,
                     },
                     windows: cached
                         .map(|entry| entry.windows.clone())
@@ -554,11 +576,12 @@ fn provider_section(
             },
             windows: limits.windows.clone(),
         },
-        Some(LiveUsage::Failed) if !checking => LimitsSection {
+        Some(LiveUsage::Failed(reason)) if !checking => LimitsSection {
             id: LimitsSectionId::Provider(kind),
             label: kind.label().into(),
             status: LimitsSectionStatus::Failed {
                 cached_at_unix: cached.map(|entry| entry.fetched_at_unix),
+                reason: *reason,
             },
             windows: cached
                 .map(|entry| entry.windows.clone())
@@ -649,9 +672,14 @@ fn heading_status(section: &LimitsSection, spinner: Option<&str>, now_unix: i64)
                 None => String::new(),
             }
         }
-        LimitsSectionStatus::Failed { cached_at_unix } => match cached_at_unix {
-            Some(_) => "update failed".into(),
-            None => "unavailable".into(),
+        LimitsSectionStatus::Failed {
+            cached_at_unix,
+            reason,
+        } => match (reason, cached_at_unix) {
+            (UsageFailure::RateLimited, Some(_)) => "rate limited · showing last known".into(),
+            (UsageFailure::RateLimited, None) => "rate limited · try again in a moment".into(),
+            (UsageFailure::Other, Some(_)) => "update failed".into(),
+            (UsageFailure::Other, None) => "unavailable".into(),
         },
         LimitsSectionStatus::Empty => String::new(),
     }

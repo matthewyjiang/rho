@@ -20,6 +20,7 @@ use super::{
     rate_limit::{self, RateLimitState},
     usage_parse::{named_window_keys, parse_usage_screen},
 };
+use crate::usage_limits::UsageFailure;
 
 #[cfg(unix)]
 #[path = "usage_probe_drive.rs"]
@@ -64,6 +65,11 @@ const REFRESH_FAILURE_MARKERS: &[&str] = &[
     "per-model breakdown unavailable",
     "usage endpoint is rate limited",
 ];
+/// Every throttle notice Claude paints ("Usage endpoint is rate limited.",
+/// "(rate limited — try again in a moment)") carries this phrase. It only
+/// picks the reason for a screen the failure markers already rejected; it is
+/// not a failure gate on its own.
+const RATE_LIMITED_MARKER: &str = "rate limited";
 
 #[derive(Debug, Error)]
 pub(crate) enum UsageProbeError {
@@ -82,11 +88,33 @@ pub(crate) enum UsageProbeError {
     #[error("claude code: claude exited before {what}: {screen}")]
     Exited { what: &'static str, screen: String },
     #[error("claude code: /usage refresh failed: {screen}")]
-    RefreshFailed { screen: String },
+    RefreshFailed {
+        reason: UsageFailure,
+        screen: String,
+    },
     #[error("claude code: /usage panel was not readable")]
     Unparseable,
     #[error("claude code: auth preflight failed: {0}")]
     Auth(#[from] ClaudeAuthError),
+}
+
+impl UsageProbeError {
+    /// Only a throttled `/usage` refresh is a rate limit; every other probe
+    /// error (spawn, timeout, auth) reads as a plain failure.
+    pub(crate) fn failure(&self) -> UsageFailure {
+        match self {
+            Self::RefreshFailed { reason, .. } => *reason,
+            Self::BinaryMissing
+            | Self::NotSignedIn
+            | Self::Unsupported
+            | Self::Spawn(_)
+            | Self::Cancelled
+            | Self::TimeoutScreen { .. }
+            | Self::Exited { .. }
+            | Self::Unparseable
+            | Self::Auth(_) => UsageFailure::Other,
+        }
+    }
 }
 
 /// Probe finished without a live panel. `/limits` should keep disk windows.
@@ -243,7 +271,7 @@ enum UsageScreen {
     /// The panel has not painted yet.
     NoPanel,
     /// Claude reported a failed or degraded refresh.
-    Failed,
+    Failed(UsageFailure),
     /// The spinner is visible; nothing on screen is a live result.
     Refreshing,
     /// The panel names a window that has no percentage yet.
@@ -255,7 +283,8 @@ enum UsageScreen {
 fn usage_screen_kind(screen: &UsageScreen) -> &'static str {
     match screen {
         UsageScreen::NoPanel => "NoPanel",
-        UsageScreen::Failed => "Failed",
+        UsageScreen::Failed(UsageFailure::RateLimited) => "Failed(RateLimited)",
+        UsageScreen::Failed(UsageFailure::Other) => "Failed(Other)",
         UsageScreen::Refreshing => "Refreshing",
         UsageScreen::Incomplete => "Incomplete",
         UsageScreen::Ready(_) => "Ready",
@@ -265,7 +294,11 @@ fn usage_screen_kind(screen: &UsageScreen) -> &'static str {
 fn classify_usage_screen(screen: &str, now_unix: i64) -> UsageScreen {
     let lower = screen.to_ascii_lowercase();
     if contains_any(&lower, REFRESH_FAILURE_MARKERS) {
-        return UsageScreen::Failed;
+        return UsageScreen::Failed(if lower.contains(RATE_LIMITED_MARKER) {
+            UsageFailure::RateLimited
+        } else {
+            UsageFailure::Other
+        });
     }
     if !contains_any(screen, PANEL_MARKERS) {
         return UsageScreen::NoPanel;
