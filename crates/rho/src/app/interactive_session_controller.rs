@@ -186,9 +186,9 @@ impl InteractiveSessionController {
         display: &[Message],
         outcome: &rho_sdk::CompactionOutcome,
     ) -> anyhow::Result<()> {
-        // Reinstate the checkpoint only after the save succeeds. Otherwise a
-        // failed rollback must not carry this turn's offset into the next one.
-        let persisted = std::mem::take(&mut self.persisted_turn_display);
+        // A failed intermediate save does not undo rows already on disk. The
+        // failed-turn boundary clears this offset, not an individual checkpoint.
+        let persisted = self.persisted_turn_display;
         if let Some(storage) = &self.storage {
             let display_tail = display.get(persisted..).ok_or_else(|| {
                 anyhow::anyhow!("compaction display checkpoint exceeds accumulated history: persisted {}, accumulated {}", persisted, display.len())
@@ -197,6 +197,10 @@ impl InteractiveSessionController {
             self.persisted_turn_display = display.len();
         }
         Ok(())
+    }
+
+    pub(crate) fn abandon_turn_display(&mut self) {
+        self.persisted_turn_display = 0;
     }
 
     pub(crate) fn save_compaction_snapshot(

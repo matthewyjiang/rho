@@ -341,6 +341,11 @@ impl InteractiveRuntime {
 
     pub(crate) async fn next_event(&mut self) -> Option<RunEvent> {
         let event = self.runs.next_event(self.context_window).await;
+        // After a failed write, drain only. Later buffered checkpoints must not
+        // advance storage or replace the failure/rollback checkpoint we captured.
+        if self.pending_persistence_error.is_some() {
+            return event;
+        }
         if let Some(RunEvent::CompactionCompleted { outcome, .. }) = &event {
             let snapshot = outcome.committed_snapshot().ok_or_else(|| {
                 anyhow::anyhow!("automatic compaction event is missing its committed snapshot")
@@ -419,6 +424,7 @@ impl InteractiveRuntime {
         while self.next_event().await.is_some() {}
         let finished = self.runs.finish().await;
         if let Some(error) = self.pending_persistence_error.take() {
+            self.sessions.abandon_turn_display();
             self.tools.checkpoint_tracker().discard_turn();
             let checkpoint = self.pending_persistence_checkpoint.take();
             let rollback = self.restore_durable_session(checkpoint).await;
@@ -434,6 +440,7 @@ impl InteractiveRuntime {
         let finished = match finished {
             Ok(finished) => finished,
             Err(error) => {
+                self.sessions.abandon_turn_display();
                 self.tools.checkpoint_tracker().discard_turn();
                 return Err(error);
             }
