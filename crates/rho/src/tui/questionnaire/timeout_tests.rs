@@ -88,3 +88,48 @@ fn timeout_only_submits_untouched_opted_in_forms_at_the_deadline() {
         );
     }
 }
+
+// Covers: a paste buffered before the form opened is applied without a new
+// terminal event. The edit itself must prevent fallback from replacing it.
+// Owner: questionnaire timer/edit policy, using a manual clock instead of a PTY race.
+#[test]
+fn deferred_text_edits_pause_fallback_without_another_terminal_event() {
+    let request = HostInputRequest::questionnaire(
+        "Color",
+        vec![HostQuestion::new(
+            "color",
+            "Color?",
+            vec![HostChoice::new("blue", "Blue")],
+            SelectionMode::One,
+        )
+        .unwrap()
+        .allow_other()],
+    )
+    .unwrap()
+    .with_timeout_fallback(
+        HostInputResponse::new().answer("color", ["blue"]),
+        "Use blue",
+    )
+    .unwrap();
+    for paste in [false, true] {
+        let (tx, mut rx) = tokio::sync::oneshot::channel();
+        let mut composer =
+            QuestionnaireComposer::new(request.clone(), QuestionnaireResponseChannel::new(tx));
+        let now = Instant::now();
+        composer.start_timeout(NonZeroU64::new(1), now);
+        let edited = if paste {
+            composer.insert_text("green")
+        } else {
+            composer.insert_char('g')
+        };
+        assert!(edited);
+        assert_eq!(
+            composer.submit_timeout_if_due(now + Duration::from_secs(2)),
+            None
+        );
+        assert_eq!(
+            rx.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        );
+    }
+}

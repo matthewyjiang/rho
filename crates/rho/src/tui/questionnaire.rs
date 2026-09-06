@@ -221,6 +221,7 @@ impl QuestionnaireComposer {
         if !self.active_text_entry_active() && !self.activate_other_for_typing() {
             return false;
         }
+        self.pause_timeout();
         self.active_field_mut().insert_char(ch);
         true
     }
@@ -229,6 +230,7 @@ impl QuestionnaireComposer {
         if !self.active_text_entry_active() && !self.activate_other_for_typing() {
             return false;
         }
+        self.pause_timeout();
         self.active_field_mut().insert_text(text);
         true
     }

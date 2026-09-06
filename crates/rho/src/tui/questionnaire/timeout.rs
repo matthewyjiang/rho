@@ -25,9 +25,15 @@ impl QuestionnaireComposer {
 
     pub(in crate::tui) fn observe_input(&mut self, event: &crossterm::event::Event) {
         use crossterm::event::Event;
-        if self.timeout.is_some()
-            && matches!(event, Event::Key(_) | Event::Paste(_) | Event::Mouse(_))
-        {
+        if matches!(event, Event::Key(_) | Event::Paste(_) | Event::Mouse(_)) {
+            self.pause_timeout();
+        }
+    }
+
+    /// Deferred paste can edit a newly opened form without another terminal
+    /// event. Keep the edit guard with the composer, not in shared paste helpers.
+    pub(super) fn pause_timeout(&mut self) {
+        if self.timeout.is_some() {
             self.timeout = Some(QuestionnaireTimer::Paused);
         }
     }
