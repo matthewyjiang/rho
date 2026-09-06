@@ -274,7 +274,7 @@ impl App {
                     .map(|(index, entry)| {
                         let selected = index == selected_index;
                         let marker = if selected { ">" } else { " " };
-                        let text = format!("{marker} {}", file_palette_row(&entry));
+                        let text = format!("{marker} {}", file_palette_row(&entry, matches.source));
                         let style = if selected {
                             Theme::brand()
                         } else {
@@ -310,15 +310,23 @@ impl App {
     }
 }
 
-/// One `@` palette row.
+/// One path palette row.
 ///
-/// A workspace file shows the mention it will insert. A resource shows its
-/// server, its own label, and whether picking it attaches content or writes a
-/// template the user still has to fill in, because those look identical
-/// otherwise and behave differently.
-fn file_palette_row(entry: &file_picker::FilePaletteEntry) -> String {
+/// A workspace file shows what picking it inserts: `@path` for a mention, the
+/// bare path for a shell word. A resource shows its server, its own label, and
+/// whether picking it attaches content or writes a template the user still
+/// has to fill in, because those look identical otherwise and behave
+/// differently.
+fn file_palette_row(
+    entry: &file_picker::FilePaletteEntry,
+    source: file_picker::PathTokenSource,
+) -> String {
+    let prefix = match source {
+        file_picker::PathTokenSource::Mention => "@",
+        file_picker::PathTokenSource::ShellWord => "",
+    };
     match entry {
-        file_picker::FilePaletteEntry::WorkspaceFile(path) => format!("@{path}"),
+        file_picker::FilePaletteEntry::WorkspaceFile(path) => format!("{prefix}{path}"),
         file_picker::FilePaletteEntry::McpResource(resource) => {
             let suffix = if resource.templated {
                 " · template"
@@ -326,7 +334,7 @@ fn file_palette_row(entry: &file_picker::FilePaletteEntry) -> String {
                 ""
             };
             format!(
-                "@{}  {}:{}{suffix}",
+                "{prefix}{}  {}:{}{suffix}",
                 resource.uri,
                 resource.server,
                 resource.label()

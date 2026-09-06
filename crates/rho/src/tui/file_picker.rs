@@ -18,17 +18,33 @@ const WORKSPACE_PATH_CACHE_TTL: Duration = Duration::from_secs(2);
 /// Keep navigation bounded so weak queries stay interactive in large repos.
 const MAX_RANKED_FILE_MATCHES: usize = 500;
 
+/// Where a path palette token came from, and so how a picked path is written.
+///
+/// A mention is written back as `@path`; a shell word is written back as a
+/// quoted path the shell can split safely. The shell source never offers MCP
+/// resources because a shell command cannot read one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PathTokenSource {
+    Mention,
+    ShellWord,
+}
+
+/// The path-palette token under the cursor: which char range an accepted
+/// row replaces, and the query to rank paths against.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct FileMention {
     pub(super) start: usize,
     pub(super) end: usize,
     pub(super) query: String,
+    pub(super) source: PathTokenSource,
 }
 
+/// The directory a `dir/residual` query names, resolved, plus the prefix a
+/// candidate found inside it is displayed and inserted with.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct DirectoryScope {
-    root: PathBuf,
-    display_prefix: String,
+pub(super) struct DirectoryScope {
+    pub(super) root: PathBuf,
+    pub(super) display_prefix: String,
 }
 
 /// Workspace paths discovered for `@` mentions, plus whether the walk finished.
@@ -65,6 +81,8 @@ pub(super) struct FilePaletteMatches {
     paths: Arc<Vec<String>>,
     /// True when workspace discovery stopped early.
     pub(super) incomplete: bool,
+    /// How an accepted row is written back into the composer.
+    pub(super) source: PathTokenSource,
 }
 
 impl FilePaletteMatches {
@@ -73,6 +91,17 @@ impl FilePaletteMatches {
             resources: Arc::new(Vec::new()),
             paths: Arc::new(Vec::new()),
             incomplete: false,
+            source: PathTokenSource::Mention,
+        }
+    }
+
+    /// Workspace paths only, for a token the shell will read.
+    pub(super) fn shell_words(discovered: DiscoveredFilePaths) -> Self {
+        Self {
+            resources: Arc::new(Vec::new()),
+            paths: discovered.paths,
+            incomplete: discovered.incomplete,
+            source: PathTokenSource::ShellWord,
         }
     }
 
@@ -134,12 +163,13 @@ pub(super) fn file_palette_matches(
         resources: Arc::new(matched),
         paths: discovered.paths,
         incomplete: discovered.incomplete,
+        source: PathTokenSource::Mention,
     }
 }
 
 impl DiscoveredFilePaths {
-    #[cfg(test)]
-    fn complete(paths: Vec<String>) -> Self {
+    /// A listing that was not cut short.
+    pub(super) fn complete(paths: Vec<String>) -> Self {
         Self {
             paths: Arc::new(paths),
             incomplete: false,
@@ -186,11 +216,7 @@ impl WorkspacePathCache {
         }
 
         let mut discovered = discover_file_paths(&root, include_hidden);
-        Arc::make_mut(&mut discovered.paths).sort_by(|left, right| {
-            left.to_ascii_lowercase()
-                .cmp(&right.to_ascii_lowercase())
-                .then_with(|| left.cmp(right))
-        });
+        sort_paths_for_display(Arc::make_mut(&mut discovered.paths).as_mut_slice());
         self.inner = Some(WorkspacePathCacheInner {
             key,
             discovered: discovered.clone(),
@@ -207,34 +233,68 @@ impl WorkspacePathCache {
     }
 }
 
-/// The `@query` token under the cursor, if any.
+/// The whitespace-delimited word around `cursor`, in char offsets.
 ///
-/// Works on slices of `input` instead of collecting characters: the render
-/// path calls this several times per frame, so nothing larger than the query
-/// itself is ever copied.
-pub(super) fn active_file_mention(input: &str, cursor: usize) -> Option<FileMention> {
+/// `head` is the part before the cursor; it is what palettes match on, while
+/// `start..end` (which also spans any tail after the cursor) is what an
+/// accepted row replaces. Works on slices of `input` instead of collecting
+/// characters: the render path calls this several times per frame, so nothing
+/// larger than the query itself is ever copied.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CursorWord<'a> {
+    start: usize,
+    end: usize,
+    head: &'a str,
+}
+
+fn word_at_cursor(input: &str, cursor: usize) -> CursorWord<'_> {
     let cursor_byte = input
         .char_indices()
         .nth(cursor)
         .map_or(input.len(), |(byte, _)| byte);
     let (before, after) = input.split_at(cursor_byte);
-    // The token is the last whitespace-delimited piece before the cursor plus
-    // the piece after it up to the next whitespace.
     let head = before
         .rsplit(char::is_whitespace)
         .next()
         .unwrap_or_default();
     let tail = after.split(char::is_whitespace).next().unwrap_or_default();
-    let query = head.strip_prefix('@')?;
+    CursorWord {
+        start: before.chars().count() - head.chars().count(),
+        end: before.chars().count() + tail.chars().count(),
+        head,
+    }
+}
+
+/// The `@query` token under the cursor, if any.
+pub(super) fn active_file_mention(input: &str, cursor: usize) -> Option<FileMention> {
+    let word = word_at_cursor(input, cursor);
+    let query = word.head.strip_prefix('@')?;
     if query.contains('@') {
         return None;
     }
     Some(FileMention {
-        start: before.chars().count() - head.chars().count(),
-        end: before.chars().count() + tail.chars().count(),
+        start: word.start,
+        end: word.end,
         query: query.to_string(),
+        source: PathTokenSource::Mention,
     })
 }
+
+/// The bare word under the cursor as a shell path token, when it still starts
+/// at `anchor`. The anchor is where Tab opened completion; once the cursor
+/// moves to another word the token, and so the palette, is gone.
+pub(super) fn anchored_shell_word(
+    input: &str,
+    cursor: usize,
+    anchor: usize,
+) -> Option<FileMention> {
+    let word = shell_word_at_cursor(input, cursor);
+    (word.start == anchor).then_some(word)
+}
+
+#[path = "shell_word.rs"]
+mod shell_word;
+pub(super) use shell_word::shell_word_at_cursor;
 
 #[cfg(test)]
 pub(super) fn matching_file_paths(cwd: &Path, query: &str) -> DiscoveredFilePaths {
@@ -304,7 +364,13 @@ fn residual_includes_hidden(residual: &str) -> bool {
     residual.split('/').any(|part| part.starts_with('.'))
 }
 
-fn directory_scope(
+/// Split a `dir/residual` query into the existing directory it names and the
+/// residual to match inside it. `None` when the query has no `/` (so it is
+/// matched against `cwd` with no prefix) or the directory does not exist.
+///
+/// A leading `/` is the filesystem root; `~` and `~/` are `home`; anything
+/// else is relative to `cwd`.
+pub(super) fn directory_scope(
     cwd: &Path,
     query: &str,
     home: Option<&Path>,
@@ -370,6 +436,16 @@ fn directory_display_prefix(directory_query: &str) -> String {
     } else {
         format!("{directory_query}/")
     }
+}
+
+/// Case-insensitive, then byte order, so listings read the way a file
+/// browser sorts them and equal-ignoring-case names still have one order.
+pub(super) fn sort_paths_for_display(paths: &mut [String]) {
+    paths.sort_by(|left, right| {
+        left.to_ascii_lowercase()
+            .cmp(&right.to_ascii_lowercase())
+            .then_with(|| left.cmp(right))
+    });
 }
 
 #[cfg(test)]

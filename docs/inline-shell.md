@@ -25,6 +25,26 @@ Rho still displays the command and output in the transcript, but it excludes the
 
 Press `esc` to leave shell mode and return to the normal composer. The command text stays in the composer.
 
+## Complete a path
+
+Press `tab` in shell mode to complete the word under the cursor, one path component at a time, the way a shell does:
+
+```text
+!cat cra<tab>            → !cat crates/
+!cat crates/rh<tab>      → !cat crates/rho/
+!cat crates/rho/Ca<tab>  → !cat crates/rho/Cargo.toml
+```
+
+One match is inserted at once. A directory ends in `/` and gets no trailing space, so the next `tab` descends into it; a file gets a trailing space. Several matches open a list under the composer showing that directory's entries: keep typing to narrow it, use `up` and `down` to choose, then press `tab` or `enter` to insert the highlighted entry or `esc` to close the list and stay in shell mode. Paths that contain spaces or other characters the shell would interpret are single-quoted.
+
+Quoted directories support the same repeated-Tab descent. If a typed character leaves no matches, the list hides and returns when you backspace to a matching prefix. Recalling history closes completion until you press Tab again.
+
+Completion uses the same shell classification as the command runner. Bash, Zsh, sh, Dash, Ksh, Ash, Mksh, and Busybox support completion. PowerShell, cmd, Fish, Nushell, Csh, Tcsh, Xonsh, and unknown shells such as Elvish leave the command unchanged and show an unsupported-shell notice rather than inserting incompatible quotes. Unknown shell executables retain the runner's unwrapped `-lc` invocation, but that fallback does not enable POSIX completion quoting.
+
+Completion lists the filesystem as the shell will see it, so untracked and ignored entries such as `target/` are offered. Hidden entries appear only when the component you are typing starts with `.`. Relative paths resolve from the workspace; `~/`, `../`, and absolute paths work as they would in the shell. Completion offers paths only; it does not complete command names or flags.
+
+A workspace entry whose name starts with `~` is inserted with a `./` prefix, so selecting a literal `~` directory cannot redirect the command to your home directory. An explicitly quoted or escaped leading tilde also stays literal; an unquoted `~/` keeps its home-directory meaning.
+
 Rho runs inline commands asynchronously, so you can continue working while a command runs. Press `esc` to cancel a running command. Rho stops commands that run longer than 60 seconds.
 
 ## Choose a shell

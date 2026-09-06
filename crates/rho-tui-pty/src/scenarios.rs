@@ -35,6 +35,7 @@ mod resume_scrollback;
 mod runtime_info;
 mod send_confirm;
 mod sessions_hub;
+mod shell_completion;
 mod side_chat;
 mod startup;
 mod statusline;
@@ -107,6 +108,7 @@ use resume_delete::RESUME_PICKER_DELETE_STEPS;
 use resume_scrollback::RESUME_SCROLLBACK_ID;
 use runtime_info::RUNTIME_INFO_STEPS;
 use sessions_hub::{setup_sessions_hub, SESSIONS_HUB_STEPS};
+use shell_completion::SHELL_TAB_COMPLETION_SCENARIO;
 use side_chat::{
     SIDE_BTW_SCENARIO, SIDE_DURING_TURN_SCENARIO, SIDE_OVERLAY_SCENARIO, SIDE_TOGGLE_SCENARIO,
 };
@@ -628,6 +630,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     CREATE_AGENT_MISSING_TOOLS_SCENARIO,
     TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO,
     FILE_PATH_AUTOCOMPLETE_SCENARIO,
+    SHELL_TAB_COMPLETION_SCENARIO,
     Scenario::new(
         "mermaid_flowchart_resize",
         "Render a long-labelled flowchart, then explain the fallback in a narrow pane",

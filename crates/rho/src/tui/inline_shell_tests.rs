@@ -46,8 +46,16 @@ fn login_path_wrapper_targets_posix_login_shells_only() {
     let cases = [
         ("bash", vec!["-lc", wrapped.as_str()], true),
         ("/usr/bin/zsh", vec!["-lc", wrapped.as_str()], true),
+        ("ZSH.exe", vec!["-lc", wrapped.as_str()], true),
+        ("ash", vec!["-lc", "true"], false),
+        ("mksh", vec!["-lc", "true"], false),
+        ("busybox", vec!["-lc", "true"], false),
+        ("elvish", vec!["-lc", "true"], false),
+        ("custom-shell.exe", vec!["-lc", "true"], false),
         ("fish", vec!["-lc", "true"], false),
         ("sh", vec!["-c", "true"], false),
+        ("sh.exe", vec!["-c", "true"], false),
+        ("cmd.exe", vec!["/C", "true"], false),
         (
             "pwsh",
             vec!["-NoLogo", "-NoProfile", "-Command", "true"],

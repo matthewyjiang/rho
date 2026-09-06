@@ -44,7 +44,7 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
         entry(
             "!",
             "Run shell",
-            "Prefix a command with ! to run it in the configured inline shell. Output is shown in the transcript and included in model context.",
+            "Prefix a command with ! to run it in the configured inline shell. Output is shown in the transcript and included in model context. Press tab to complete a workspace path.",
         ),
         entry(
             "!!",
