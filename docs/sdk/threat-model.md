@@ -117,7 +117,7 @@ A release must preserve these invariants:
 1. No filesystem, process, or network capability is granted by default.
 2. No environment, credential-store, config, session, terminal, update, or logging side effect occurs during default SDK construction.
 3. Provider and tool adapters do not mutate session history directly.
-4. Provider-native replay requires provider/API identity compatibility and exact model identity unless the backend's native format permits cross-model replay.
+4. Provider-native replay requires exact provider/API/model identity, except for `openai_response_output_item` blocks with `data.type = "compaction"`, which may replay across model names only within `openai-codex` / `openai-responses`.
 5. Raw reasoning is not intentionally persisted.
 6. Sensitive operations require explicit host code and policy, with cancellation available.
 7. A session has no overlapping mutable runs.
