@@ -58,7 +58,7 @@ pub(super) fn agent_progress_card(view: &ToolView, content: &str) -> ToolCard {
     let agent_id = agent_identity(&view.arguments).unwrap_or("agent");
     let mut card = agent_card(&view.arguments, ToolStatus::Running, agent_id, "running");
     if let Some(run_id) = run_id_from_agent_line(content.lines().next().unwrap_or_default()) {
-        card.body = ToolBody::Lines(vec![format!("{run_id} · rho attach {run_id}")]);
+        card.body = ToolBody::Lines(vec![run_id.to_string()]);
     }
     card
 }
@@ -71,10 +71,7 @@ pub(super) fn agent_finished_card(view: &ToolView, content: &str, ok: bool) -> T
             receipt.agent_id,
             "running in background",
         );
-        card.body = ToolBody::Lines(vec![format!(
-            "{} · rho attach {}",
-            receipt.run_id, receipt.run_id
-        )]);
+        card.body = ToolBody::Lines(vec![receipt.run_id.to_string()]);
         return card;
     }
     if let Some(snapshot) = parse_snapshot(content) {
@@ -368,10 +365,6 @@ fn snapshot_card(
     );
 
     let tokens = metrics.and_then(tokens_from_metrics);
-    let attach = snapshot
-        .remaining
-        .iter()
-        .find_map(|line| line.strip_prefix("attach: "));
     let (summary_lines, result_lines) =
         snapshot_sections(&snapshot.remaining, metrics_index, display);
     for text in summary_lines {
@@ -381,17 +374,11 @@ fn snapshot_card(
     }
 
     let mut body = Vec::new();
-    if tokens.is_some() || attach.is_some() || !snapshot.run_id.is_empty() {
-        body.push(match (tokens, attach) {
-            (Some(tokens), _) => format!("{} · {tokens}", snapshot.run_id),
-            (None, Some(attach)) => format!("{} · {attach}", snapshot.run_id),
-            (None, None) => snapshot.run_id.to_string(),
+    if tokens.is_some() || !snapshot.run_id.is_empty() {
+        body.push(match tokens {
+            Some(tokens) => format!("{} · {tokens}", snapshot.run_id),
+            None => snapshot.run_id.to_string(),
         });
-        if tokens.is_some() {
-            if let Some(attach) = attach {
-                body.push(attach.to_string());
-            }
-        }
     }
     body.extend(result_lines);
     if !body.is_empty() {

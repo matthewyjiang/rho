@@ -184,7 +184,7 @@ fn transcript_restores_message_receipts() {
                 visibility: MessageVisibility::Activity,
                 reference: Some("abc123".into()),
                 body: body.trim().into(),
-                details: vec![format!("task: {title}"), "attach: rho attach abc123".into(),],
+                details: vec![format!("task: {title}")],
             }))
         );
     }

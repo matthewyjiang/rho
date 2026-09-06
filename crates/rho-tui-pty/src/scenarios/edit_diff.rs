@@ -33,6 +33,12 @@ const EDIT_DIFF_STEPS: &[Step] = &[
     },
     Step::AssertText("streamed edit line"),
     Step::Custom(assert_one_edit_card),
+    // The answer can render before the turn finishes. Wait for its completion
+    // receipt so the next prompt starts a new turn instead of racing into steering.
+    Step::WaitText {
+        text: "Worked for",
+        timeout: STREAM,
+    },
     Step::SubmitText("fixture cancel edit"),
     // Do not WaitText("edit(") here: the completed first card still matches and
     // Esc can race ahead of the second stream. Wait for cancel-fixture content.

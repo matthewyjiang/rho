@@ -31,9 +31,6 @@ pub(super) fn finished_message(
         visibility: MessageVisibility::Activity,
         reference: Some(run_id.to_string()),
         body: view.arguments.get("message")?.as_str()?.trim().into(),
-        details: vec![
-            format!("task: {title}"),
-            format!("attach: rho attach {run_id}"),
-        ],
+        details: vec![format!("task: {title}")],
     }))
 }
