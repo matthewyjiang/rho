@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.3.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.2.1...rho-sdk-v5.3.0) (2026-09-06)
+
+
+### Features
+
+* **questionnaire:** allow explicit timed fallback answers ([#1184](https://github.com/matthewyjiang/rho/issues/1184)) ([3f66de5](https://github.com/matthewyjiang/rho/commit/3f66de57ad35b82847a7e43d98eea6c667bebf30))
+
+
+### Bug Fixes
+
+* **codex:** preserve compaction summaries across model switches ([#1181](https://github.com/matthewyjiang/rho/issues/1181)) ([af9e72e](https://github.com/matthewyjiang/rho/commit/af9e72eeac7949363a36adfd5245798d86c951f8))
+* **tui:** keep agent notifications distinct from human messages ([#1182](https://github.com/matthewyjiang/rho/issues/1182)) ([ab689b5](https://github.com/matthewyjiang/rho/commit/ab689b54ea1471a2e2d34d295fdac8ab3dd2bb70))
+
 ## [5.2.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.2.0...rho-sdk-v5.2.1) (2026-09-05)
 
 
