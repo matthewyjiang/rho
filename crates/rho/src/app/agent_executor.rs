@@ -844,7 +844,7 @@ fn spawn_run_title(
         let cancellation = rho_sdk::CancellationToken::new();
         let title = crate::title::generate_title(
             model,
-            format!("Role: {agent_id}\n\nDelegated agent run:\n{prompt}"),
+            format!("Agent name: {agent_id}\n\nTask assignment:\n{prompt}"),
             session_id,
             workspace_path,
             usage_recording,
