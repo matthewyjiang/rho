@@ -39,10 +39,12 @@ pub(super) struct FileMention {
     pub(super) source: PathTokenSource,
 }
 
+/// The directory a `dir/residual` query names, resolved, plus the prefix a
+/// candidate found inside it is displayed and inserted with.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct DirectoryScope {
-    root: PathBuf,
-    display_prefix: String,
+pub(super) struct DirectoryScope {
+    pub(super) root: PathBuf,
+    pub(super) display_prefix: String,
 }
 
 /// Workspace paths discovered for `@` mentions, plus whether the walk finished.
@@ -214,11 +216,7 @@ impl WorkspacePathCache {
         }
 
         let mut discovered = discover_file_paths(&root, include_hidden);
-        Arc::make_mut(&mut discovered.paths).sort_by(|left, right| {
-            left.to_ascii_lowercase()
-                .cmp(&right.to_ascii_lowercase())
-                .then_with(|| left.cmp(right))
-        });
+        sort_paths_for_display(Arc::make_mut(&mut discovered.paths).as_mut_slice());
         self.inner = Some(WorkspacePathCacheInner {
             key,
             discovered: discovered.clone(),
@@ -367,7 +365,13 @@ fn residual_includes_hidden(residual: &str) -> bool {
     residual.split('/').any(|part| part.starts_with('.'))
 }
 
-fn directory_scope(
+/// Split a `dir/residual` query into the existing directory it names and the
+/// residual to match inside it. `None` when the query has no `/` (so it is
+/// matched against `cwd` with no prefix) or the directory does not exist.
+///
+/// A leading `/` is the filesystem root; `~` and `~/` are `home`; anything
+/// else is relative to `cwd`.
+pub(super) fn directory_scope(
     cwd: &Path,
     query: &str,
     home: Option<&Path>,
@@ -402,7 +406,7 @@ fn directory_scope(
     ))
 }
 
-pub(super) fn resolve_user_path(cwd: &Path, path: &str, home: Option<&Path>) -> PathBuf {
+fn resolve_user_path(cwd: &Path, path: &str, home: Option<&Path>) -> PathBuf {
     if path == "~" {
         return home
             .map(Path::to_path_buf)
@@ -433,6 +437,16 @@ fn directory_display_prefix(directory_query: &str) -> String {
     } else {
         format!("{directory_query}/")
     }
+}
+
+/// Case-insensitive, then byte order, so listings read the way a file
+/// browser sorts them and equal-ignoring-case names still have one order.
+pub(super) fn sort_paths_for_display(paths: &mut [String]) {
+    paths.sort_by(|left, right| {
+        left.to_ascii_lowercase()
+            .cmp(&right.to_ascii_lowercase())
+            .then_with(|| left.cmp(right))
+    });
 }
 
 #[cfg(test)]

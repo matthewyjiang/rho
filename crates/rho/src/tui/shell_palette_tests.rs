@@ -4,7 +4,7 @@ use tempfile::tempdir;
 
 use super::{
     super::{file_picker::FilePaletteEntry, palette::ActivePalette, tests::test_app, App},
-    shell_quote,
+    shell_quote, shell_word_candidates_in,
 };
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -25,6 +25,49 @@ fn shell_app(files: &[&str], typed: &str) -> (App, tempfile::TempDir) {
     assert!(app.try_enter_shell_mode_from_bang());
     app.insert_input_text(typed);
     (app, workspace)
+}
+
+// Covers: the lister must resolve the directory part of a word the way the
+// shell will, or completion writes a path the command then cannot open.
+// Absolute, `~/`, and `../` each take a different resolver branch, and a
+// naive `rsplit_once('/')` conflates "no slash" with "leading slash".
+// Owner: TUI shell palette candidate policy.
+#[test]
+fn candidates_resolve_the_directory_part_like_a_shell() {
+    let workspace = tempdir().unwrap();
+    let home = tempdir().unwrap();
+    let cwd = workspace.path().join("work");
+    std::fs::create_dir_all(cwd.join("src")).unwrap();
+    std::fs::write(cwd.join("src/lib.rs"), "").unwrap();
+    std::fs::write(workspace.path().join("sibling.txt"), "").unwrap();
+    std::fs::write(home.path().join("dotfile.rc"), "").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(cwd.join("src"), cwd.join("linked")).unwrap();
+
+    let absolute_src = cwd.join("src").display().to_string();
+    let absolute_word = format!("{absolute_src}/li");
+    let absolute_expected = format!("{absolute_src}/lib.rs");
+    let cases: &[(&str, &str, &[&str])] = &[
+        ("bare word lists cwd", "sr", &["src/"]),
+        ("dir word lists inside it", "src/li", &["src/lib.rs"]),
+        ("parent dir", "../sib", &["../sibling.txt"]),
+        ("home dir", "~/dot", &["~/dotfile.rc"]),
+        (
+            "absolute dir stays absolute",
+            &absolute_word,
+            &[&absolute_expected],
+        ),
+        ("nonexistent dir offers nothing", "nope/", &[]),
+        #[cfg(unix)]
+        ("symlinked dir is a dir", "link", &["linked/"]),
+    ];
+    for (name, word, expected) in cases {
+        assert_eq!(
+            shell_word_candidates_in(&cwd, word, Some(home.path())).as_slice(),
+            *expected,
+            "{name}: `{word}`"
+        );
+    }
 }
 
 /// Workspace paths the open palette offers, or `None` while it is closed.

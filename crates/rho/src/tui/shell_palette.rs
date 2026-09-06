@@ -10,7 +10,7 @@
 use std::path::Path;
 
 use super::{
-    file_picker::{self, DiscoveredFilePaths},
+    file_picker::{self, DirectoryScope, DiscoveredFilePaths},
     App,
 };
 use crate::paths::home_dir;
@@ -42,53 +42,52 @@ impl App {
 }
 
 /// Entries of the directory `word` names, filtered to those whose name
-/// starts with the word's last component, in a shell's order: directories
-/// end in `/` so the next Tab descends, files do not.
+/// starts with the word's last component, in a shell's order.
 ///
 /// This is a plain directory listing rather than the workspace index because
 /// a shell sees the filesystem as it is: `target/`, `.git/`, and untracked
 /// files are all valid arguments. Hidden entries still hide until the
 /// component starts with `.`, as in bash.
+///
+/// The trailing `/` on a directory is load-bearing on both sides: it is what
+/// the composer shows and inserts, and it is how the write-back knows to
+/// leave off the space so the next Tab descends. Do not strip it.
 pub(super) fn shell_word_candidates(cwd: &Path, word: &str) -> DiscoveredFilePaths {
     shell_word_candidates_in(cwd, word, home_dir().as_deref())
 }
 
 fn shell_word_candidates_in(cwd: &Path, word: &str, home: Option<&Path>) -> DiscoveredFilePaths {
-    let (directory, partial) = word.rsplit_once('/').unwrap_or(("", word));
-    let root = match directory {
-        "" => cwd.to_path_buf(),
-        "/" => Path::new("/").to_path_buf(),
-        _ => file_picker::resolve_user_path(cwd, directory, home),
+    let (scope, partial) = match file_picker::directory_scope(cwd, word, home) {
+        Some((scope, residual)) => (scope, residual),
+        // A word with a `/` that names no existing directory has nothing to
+        // offer. A bare word lists `cwd`.
+        None if word.contains('/') => return DiscoveredFilePaths::complete(Vec::new()),
+        None => (
+            DirectoryScope {
+                root: cwd.to_path_buf(),
+                display_prefix: String::new(),
+            },
+            word.to_string(),
+        ),
     };
     let show_hidden = partial.starts_with('.');
-    let display_prefix = match directory {
-        "" => String::new(),
-        "/" => "/".into(),
-        _ => format!("{directory}/"),
-    };
 
-    let mut paths: Vec<String> = std::fs::read_dir(&root)
+    let mut paths: Vec<String> = std::fs::read_dir(&scope.root)
         .into_iter()
         .flatten()
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name().into_string().ok()?;
-            if !name.starts_with(partial) || (!show_hidden && name.starts_with('.')) {
+            if !name.starts_with(&partial) || (!show_hidden && name.starts_with('.')) {
                 return None;
             }
-            let is_dir = entry.file_type().ok()?.is_dir();
-            Some(if is_dir {
-                format!("{display_prefix}{name}/")
-            } else {
-                format!("{display_prefix}{name}")
-            })
+            // Labelling only, not walking: following a symlink here decides
+            // whether the next Tab descends, as bash does.
+            let suffix = if entry.path().is_dir() { "/" } else { "" };
+            Some(format!("{}{name}{suffix}", scope.display_prefix))
         })
         .collect();
-    paths.sort_by(|left, right| {
-        left.to_ascii_lowercase()
-            .cmp(&right.to_ascii_lowercase())
-            .then_with(|| left.cmp(right))
-    });
+    file_picker::sort_paths_for_display(&mut paths);
     DiscoveredFilePaths::complete(paths)
 }
 
