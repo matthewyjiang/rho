@@ -674,7 +674,9 @@ impl App {
         match entry {
             Entry::Notice(text)
                 if self.streams.current_stream_kind.is_some()
-                    || self.streams.loading_streams_active() =>
+                    || !self.streams.hold.is_empty()
+                    || !self.streams.assistant_stream.pending_text().is_empty()
+                    || !self.streams.reasoning_stream.pending_text().is_empty() =>
             {
                 self.streams.pending_notices.push(text);
             }

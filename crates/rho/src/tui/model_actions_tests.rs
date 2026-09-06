@@ -583,5 +583,11 @@ fn empty_model_picker_during_turn_does_not_split_a_live_stream() {
         assert_eq!(app.streams.current_stream_kind, None);
         assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
         assert!(app.status_overlay.is_some());
+
+        // Already-emitted text is retained for final-answer reconciliation,
+        // but must not make a later notice wait for another stream boundary.
+        app.insert_entry(&Entry::Notice("after stream".into()));
+        assert!(app.streams.pending_notices.is_empty());
+        assert!(matches!(app.history.last(), Some(Entry::Notice(text)) if text == "after stream"));
     });
 }
