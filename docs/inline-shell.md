@@ -39,7 +39,7 @@ One match is inserted at once. A directory ends in `/` and gets no trailing spac
 
 Quoted directories support the same repeated-Tab descent. If a typed character leaves no matches, the list hides and returns when you backspace to a matching prefix. Recalling history closes completion until you press Tab again.
 
-Completion uses the same shell classification as the command runner. Bash, Zsh, sh, and the POSIX login-shell fallback, including Dash, Ksh, Ash, and Mksh, support completion. PowerShell, cmd, Fish, Nushell, Csh, Tcsh, and Xonsh leave the command unchanged and show an unsupported-shell notice rather than inserting incompatible quotes. Custom shell executables use the runner's POSIX fallback.
+Completion uses the same shell classification as the command runner. Bash, Zsh, sh, Dash, Ksh, Ash, Mksh, and Busybox support completion. PowerShell, cmd, Fish, Nushell, Csh, Tcsh, Xonsh, and unknown shells such as Elvish leave the command unchanged and show an unsupported-shell notice rather than inserting incompatible quotes. Unknown shell executables retain the runner's unwrapped `-lc` invocation, but that fallback does not enable POSIX completion quoting.
 
 Completion lists the filesystem as the shell will see it, so untracked and ignored entries such as `target/` are offered. Hidden entries appear only when the component you are typing starts with `.`. Relative paths resolve from the workspace; `~/`, `../`, and absolute paths work as they would in the shell. Completion offers paths only; it does not complete command names or flags.
 

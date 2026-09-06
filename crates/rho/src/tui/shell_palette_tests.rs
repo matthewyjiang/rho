@@ -289,6 +289,8 @@ fn completion_requires_a_supported_shell() {
         ("bash", true),
         ("ash", true),
         ("mksh", true),
+        ("/bin/dash", true),
+        ("ksh.exe", true),
         ("busybox", true),
         ("/bin/zsh", true),
         ("fish", false),
@@ -297,6 +299,9 @@ fn completion_requires_a_supported_shell() {
         ("pwsh.exe", false),
         ("cmd", false),
         ("nu", false),
+        ("elvish", false),
+        ("/usr/bin/elvish", false),
+        ("custom-shell.exe", false),
     ] {
         assert_eq!(
             ShellFamily::for_executable(shell).supports_path_completion(),

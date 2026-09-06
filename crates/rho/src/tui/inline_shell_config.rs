@@ -19,6 +19,7 @@ pub(super) enum ShellFamily {
     PowerShell,
     Cmd,
     Other,
+    Unknown,
 }
 
 impl ShellFamily {
@@ -33,18 +34,18 @@ impl ShellFamily {
             "cmd" => Self::Cmd,
             "sh" => Self::PosixSh,
             "bash" | "zsh" => Self::PosixWrappedLogin,
+            "ash" | "dash" | "ksh" | "mksh" | "busybox" => Self::PosixLogin,
             "fish" => Self::Fish,
             "nu" | "nushell" | "csh" | "tcsh" | "xonsh" => Self::Other,
-            // Preserve the runner's POSIX login-shell fallback for custom
-            // shell executables, including ash, mksh, and busybox sh links.
-            _ => Self::PosixLogin,
+            // The execution fallback does not establish a shell's quoting syntax.
+            _ => Self::Unknown,
         }
     }
 
     pub(super) fn supports_path_completion(self) -> bool {
         match self {
             Self::PosixSh | Self::PosixLogin | Self::PosixWrappedLogin => true,
-            Self::Fish | Self::PowerShell | Self::Cmd | Self::Other => false,
+            Self::Fish | Self::PowerShell | Self::Cmd | Self::Other | Self::Unknown => false,
         }
     }
 }
@@ -71,9 +72,10 @@ impl ShellArgv {
                 args: vec!["-lc".into(), rho_tools::login_shell_script(command)],
                 carries_parent_path: true,
             },
-            ShellFamily::PosixLogin | ShellFamily::Fish | ShellFamily::Other => {
-                plain(&["-lc", command])
-            }
+            ShellFamily::PosixLogin
+            | ShellFamily::Fish
+            | ShellFamily::Other
+            | ShellFamily::Unknown => plain(&["-lc", command]),
         }
     }
 }
