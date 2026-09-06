@@ -21,6 +21,7 @@ flowchart TD
 | Theme, zen, reasoning display | `[display]` or `/config` → **Appearance** |
 | Permission mode | `[behavior].permission_mode` or `/config` → **Agent behavior** |
 | Concurrent agents | `[behavior].agent_concurrency` or `/config` → **Agent behavior** |
+| Questionnaire timeout | `[questionnaire].timeout_seconds` or `/config` → **Agent behavior**, disabled by default |
 | Prompt templates | `~/.rho/prompts/` files or `[prompt_templates]` |
 | Web search | `[web_search]` or `/config` → **Tools** |
 | xAI image generation | `[xai].image_generation` or `/config` → **Tools** |
@@ -308,6 +309,32 @@ Model metadata supplies the context window when available. Override a model's wi
 ## Update checks
 
 `check_for_updates` controls whether Rho checks the latest GitHub release at TUI startup. It defaults to `true`. When a newer version is available, the session header shows an update notice and points to `rho update`. Change it from **Providers** in `/config`.
+
+## Questionnaire timeout
+
+Questionnaires wait for your answer by default. To let an untouched form use
+explicit fallback answers, set a positive whole number of seconds:
+
+```toml
+[questionnaire]
+timeout_seconds = 60
+```
+
+The value above is an example, not a default. Omit `timeout_seconds` to disable
+automatic answers. Zero, negative values, fractions, and strings are invalid.
+In `/config` → **Agent behavior** → **Questionnaire timeout**, enter positive
+seconds or clear the field for **Disabled**. Changes apply when the next form
+opens, including forms from delegated agents, not to an already-open form.
+
+Only forms whose tool call supplies explicit `on_timeout` fallback answers can
+time out. A question's `default` merely preselects an answer and never enables a
+timeout. The TUI shows the countdown, proposed answers, and the consequence of
+using them. Keyboard, paste, or mouse interaction pauses the timer for the rest
+of that form; submit or cancel explicitly to continue.
+
+Fallbacks are for safe, reversible decisions, never permissions, purchases,
+destructive actions, or other authorization. The tool result records
+`source: "timeout_fallback"` rather than representing silence as user approval.
 
 ## RTK
 

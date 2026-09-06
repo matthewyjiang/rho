@@ -185,7 +185,10 @@ impl App {
                 || self.side_chat_busy()
             {
                 Duration::from_millis(100)
-            } else if subagents_active || self.process_panel.is_active() {
+            } else if subagents_active
+                || self.process_panel.is_active()
+                || self.questionnaire_timeout_running()
+            {
                 Duration::from_millis(500)
             } else {
                 Duration::from_secs(3600)
@@ -216,6 +219,8 @@ impl App {
                     needs_redraw = true;
                 }
                 _ = tokio::time::sleep(timeout) => {
+                    needs_redraw |= self.questionnaire_timeout_running();
+                    needs_redraw |= self.tick_questionnaire_timeout();
                     needs_redraw |= self.flush_due_paste_burst();
                     needs_redraw |= redraw_on_timeout;
                 }
@@ -244,6 +249,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        self.observe_questionnaire_input(&event);
         match self.take_exclusive_event(event) {
             Ok(resize) => {
                 if resize {

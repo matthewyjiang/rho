@@ -173,7 +173,8 @@ pub use event::{
     StopReason, ToolCompletion, ToolFailure,
 };
 pub use host_input::{
-    DefaultSelection, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode,
+    DefaultSelection, HostChoice, HostInputRequest, HostInputResponse, HostInputSource,
+    HostQuestion, SelectionMode,
 };
 pub use id::{
     HookEventId, HostInputId, InvalidId, Revision, RunId, SessionId, SteeringId, ToolCallId,

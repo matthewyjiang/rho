@@ -194,6 +194,7 @@ pub struct HostInputRequest {
     id: HostInputId,
     title: String,
     questions: Vec<HostQuestion>,
+    timeout_fallback: Option<(HostInputResponse, String)>,
 }
 
 impl HostInputRequest {
@@ -216,7 +217,39 @@ impl HostInputRequest {
             id: HostInputId::new(),
             title: title.into(),
             questions,
+            timeout_fallback: None,
         })
+    }
+
+    /// Offer explicit fallback answers for a safe, reversible decision. Hosts
+    /// decide whether and when to use them; defaults never authorize a timeout.
+    /// Never use this for permissions or other authorization.
+    pub fn with_timeout_fallback(
+        mut self,
+        mut response: HostInputResponse,
+        reason: impl Into<String>,
+    ) -> Result<Self, Error> {
+        self.validate_answers(&response)?;
+        let reason = reason.into();
+        if reason.trim().is_empty() {
+            return Err(Error::InvalidHostResponse {
+                message: "timeout fallback reason must not be empty".into(),
+            });
+        }
+        response.source = HostInputSource::TimeoutFallback;
+        self.timeout_fallback = Some((response, reason));
+        Ok(self)
+    }
+
+    /// Validated answers a host may submit after its own inactivity deadline.
+    pub fn timeout_fallback(&self) -> Option<&HostInputResponse> {
+        self.timeout_fallback.as_ref().map(|(response, _)| response)
+    }
+
+    pub fn timeout_reason(&self) -> Option<&str> {
+        self.timeout_fallback
+            .as_ref()
+            .map(|(_, reason)| reason.as_str())
     }
 
     pub fn id(&self) -> &HostInputId {
@@ -232,6 +265,17 @@ impl HostInputRequest {
     }
 
     pub fn validate(&self, response: &HostInputResponse) -> Result<(), Error> {
+        if response.source == HostInputSource::TimeoutFallback
+            && self.timeout_fallback() != Some(response)
+        {
+            return Err(Error::InvalidHostResponse {
+                message: "timeout response must match the request's explicit fallback".into(),
+            });
+        }
+        self.validate_answers(response)
+    }
+
+    fn validate_answers(&self, response: &HostInputResponse) -> Result<(), Error> {
         if let Some(question_id) = response
             .answers
             .keys()
@@ -279,10 +323,20 @@ impl HostInputRequest {
     }
 }
 
-/// Structured host answers keyed by question ID.
+/// Origin of host answers. A timeout fallback is not user authorization.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostInputSource {
+    #[default]
+    User,
+    TimeoutFallback,
+}
+
+/// Structured host answers keyed by question ID, with their origin.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HostInputResponse {
     answers: BTreeMap<String, Vec<String>>,
+    source: HostInputSource,
 }
 
 impl HostInputResponse {
@@ -304,6 +358,17 @@ impl HostInputResponse {
 
     pub fn answers(&self) -> &BTreeMap<String, Vec<String>> {
         &self.answers
+    }
+
+    pub fn source(&self) -> HostInputSource {
+        self.source
+    }
+
+    /// Preserve provenance while adapting host answers. Timeout responses are
+    /// accepted only when they exactly match the request's explicit fallback.
+    pub fn with_source(mut self, source: HostInputSource) -> Self {
+        self.source = source;
+        self
     }
 }
 

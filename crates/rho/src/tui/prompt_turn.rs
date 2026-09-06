@@ -447,7 +447,7 @@ impl App {
                         QuestionnaireReply::Answer(response) => {
                             self.report_herdr_working().await;
                             if let Err(error) = agent
-                                .respond(request_id, event_adapter::host_response(response))
+                                .respond(request_id, response)
                                 .await
                             {
                                 sdk_failure = Some(error.to_string());
@@ -479,6 +479,7 @@ impl App {
                     }
                 }
                 _ = tokio::time::sleep_until(frame_deadline) => {
+                    self.tick_questionnaire_timeout();
                     self.drain_stream_tick(terminal)?;
                     self.flush_due_paste_burst();
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;

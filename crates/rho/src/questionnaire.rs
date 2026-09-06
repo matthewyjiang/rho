@@ -6,6 +6,10 @@ use rho_tools::tool::ToolSpec;
 pub const TOOL_NAME: &str = "questionnaire";
 const MAX_QUESTIONS: usize = 8;
 
+#[path = "questionnaire_timeout.rs"]
+mod timeout;
+pub use timeout::QuestionnaireTimeout;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuestionnaireRequest {
     #[serde(default)]
@@ -13,6 +17,8 @@ pub struct QuestionnaireRequest {
     #[serde(default)]
     pub reason: Option<String>,
     pub questions: Vec<QuestionnaireQuestion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_timeout: Option<QuestionnaireTimeout>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +126,8 @@ impl From<rho_sdk::DefaultSelection> for QuestionnaireDefaultSelection {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QuestionnaireResponse {
     pub answers: Vec<QuestionnaireAnswer>,
+    #[serde(default)]
+    pub source: rho_sdk::HostInputSource,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +139,8 @@ pub struct QuestionnaireAnswer {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawQuestionnaireRequest {
+    #[serde(default)]
+    on_timeout: Option<QuestionnaireTimeout>,
     #[serde(default)]
     title: Option<String>,
     #[serde(default)]
@@ -187,12 +197,13 @@ struct RawDetailedChoice {
 pub fn tool_spec() -> ToolSpec {
     ToolSpec {
         name: TOOL_NAME.into(),
-        description: "Ask a concise selection form only when missing input blocks correctness, safety, or requested preferences. Main mode: concrete choice or multi_select questions with allow_other when needed. Avoid free-text fields unless truly unavoidable.".into(),
+        description: "Ask a concise selection form only when missing input blocks correctness, safety, or requested preferences. Main mode: concrete choice or multi_select questions with allow_other when needed. Avoid free-text fields unless truly unavoidable. Optional on_timeout offers explicit fallback answers only for safe, reversible decisions, never permissions, destructive actions, purchases, or other authorization. The user controls the timeout duration; omitted on_timeout always waits. Defaults only preselect and never authorize a timeout.".into(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
             "required": ["questions"],
             "properties": {
+                "on_timeout": timeout::schema(),
                 "title": {
                     "type": "string",
                     "description": "Optional short form title."
@@ -213,7 +224,7 @@ pub fn tool_spec() -> ToolSpec {
                         "properties": {
                             "id": {
                                 "type": "string",
-                                "description": "Optional stable key for the answer, such as file, language, or confirm_overwrite. If omitted, q1, q2, etc. are assigned."
+                                "description": "Stable key for the answer. Required and unique when on_timeout is present. Otherwise omitted ids become q1, q2, etc."
                             },
                             "question": {
                                 "type": "string",
@@ -318,16 +329,27 @@ pub fn parse_request(arguments: Value) -> Result<QuestionnaireRequest, String> {
         ));
     }
 
+    if raw.on_timeout.is_some()
+        && questions
+            .iter()
+            .any(|question| question.id.as_ref().is_none_or(|id| id.trim().is_empty()))
+    {
+        return Err("on_timeout requires explicit unique ids on every question".into());
+    }
     let questions = questions
         .into_iter()
         .enumerate()
         .map(|(index, question)| parse_question(index, question, legacy_single_question))
         .collect::<Result<Vec<_>, _>>()?;
     ensure_unique_ids(&questions)?;
+    if let Some(fallback) = &raw.on_timeout {
+        fallback.validate(&questions)?;
+    }
     Ok(QuestionnaireRequest {
         title: trim_optional(raw.title),
         reason: trim_optional(raw.reason),
         questions,
+        on_timeout: raw.on_timeout,
     })
 }
 

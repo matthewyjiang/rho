@@ -154,6 +154,12 @@ impl App {
                     }
                 };
                 match saved {
+                    ConfigNumberSave::QuestionnaireTimeout(_) => {
+                        self.open_main_config_picker_selected(
+                            config_picker::QUESTIONNAIRE_TIMEOUT_VALUE,
+                        )?;
+                        self.set_status("questionnaire timeout saved; applies to the next form");
+                    }
                     ConfigNumberSave::MaxOutputBytes(value) => {
                         self.open_main_config_picker_selected(
                             config_picker::MAX_OUTPUT_BYTES_VALUE,

@@ -176,4 +176,52 @@ flowchart TD
 
 Use a tool host for host-driven automation (for example a workflow command step) that must still pass policy and hooks.
 
+## Questionnaire fallback provenance
+
+Available in `rho-sdk` **5.3.0** and later.
+
+`HostInputRequest::with_timeout_fallback(response, reason)` attaches explicit,
+validated fallback answers to a questionnaire. It does not start a timer. The
+host decides whether to enable a timeout, snapshots its duration when opening
+the form, and stops automatic submission once the user starts interacting.
+Hosts that do not implement this policy continue waiting for user input.
+
+The builder requires a nonempty reason and valid answers for every required
+question. Retrieve the tagged response through `request.timeout_fallback()` and
+explain the consequence through `request.timeout_reason()`. A response tagged
+`HostInputSource::TimeoutFallback` must exactly match the request's fallback;
+`HostInputRequest::validate` rejects invented or modified timeout answers.
+Normal `HostInputResponse::new()` answers have `HostInputSource::User`.
+Adapters should preserve `response.source()` with `with_source`.
+
+This policy is only for safe, reversible decisions, never permissions or other
+authorization. Question defaults still only preselect or focus choices.
+
+The application's `questionnaire` tool accepts this optional top-level object:
+
+```json
+{
+  "questions": [
+    {"id": "color", "question": "Preview color?", "type": "choice", "choices": ["red", "blue"], "default": "red"}
+  ],
+  "on_timeout": {
+    "answers": {"color": "blue"},
+    "reason": "Use blue for the reversible local preview"
+  }
+}
+```
+
+Timed forms require explicit unique question IDs. Use exact labels for choices,
+string arrays for multi-select questions, and booleans for confirm questions.
+Optional questions may be omitted from the fallback map. Unknown IDs, invalid
+types or choices, duplicate selections, and missing required answers fail before
+the form opens. There is no model-controlled duration. The TUI uses the optional
+`[questionnaire].timeout_seconds` setting; omission disables timeouts.
+
+Tool output keeps the existing `answers` array and adds `source`, either `user`
+or `timeout_fallback`. Existing answer values retain their representation.
+The tool emits no interim result when timeout handling is disabled. It keeps
+waiting; the eventual result reports the answer source, not whether a timer was
+enabled.
+
 See [hooks](/sdk/hooks), [security](/sdk/security), and the [threat model](/sdk/threat-model) before enabling tools.

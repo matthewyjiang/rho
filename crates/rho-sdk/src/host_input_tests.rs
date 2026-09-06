@@ -2,6 +2,41 @@ use pretty_assertions::assert_eq;
 
 use super::{HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode};
 
+// Covers: hosts cannot attribute changed or unauthorized answers to a timeout.
+// Owner: SDK host-input contract.
+#[test]
+fn timeout_provenance_requires_the_explicit_fallback() {
+    use super::HostInputSource;
+    let answers = HostInputResponse::new()
+        .answer("mode", ["safe"])
+        .answer("features", ["a"]);
+    let timed = request()
+        .with_timeout_fallback(answers.clone(), "Use safe mode")
+        .unwrap();
+    let fallback = timed.timeout_fallback().unwrap();
+    assert_eq!(fallback.source(), HostInputSource::TimeoutFallback);
+    timed.validate(fallback).unwrap();
+    // Registering a fallback validates its answers, not its previous request's provenance.
+    let rebuilt = request()
+        .with_timeout_fallback(fallback.clone(), "Reuse the explicit fallback")
+        .unwrap();
+    assert_eq!(rebuilt.timeout_fallback(), Some(fallback));
+    timed.validate(&answers).unwrap();
+    assert!(request().validate(fallback).is_err());
+    assert!(timed
+        .validate(&fallback.clone().answer("mode", ["fast"]))
+        .is_err());
+    for invalid in [
+        HostInputResponse::new(),
+        answers.clone().answer("unknown", ["a"]),
+    ] {
+        assert!(request()
+            .with_timeout_fallback(invalid, "Fallback")
+            .is_err());
+    }
+    assert!(request().with_timeout_fallback(answers, " ").is_err());
+}
+
 fn request() -> HostInputRequest {
     HostInputRequest::questionnaire(
         "configure",

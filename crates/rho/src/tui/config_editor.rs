@@ -20,6 +20,7 @@ pub(super) struct ConfigNumberInput {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ConfigNumberKey {
+    QuestionnaireTimeout,
     MaxOutputBytes,
     MaxToolOutputLines,
     CompactThresholdPercent,
@@ -109,6 +110,7 @@ pub(super) fn cycle_web_search_provider(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ConfigNumberSave {
+    QuestionnaireTimeout(Option<std::num::NonZeroU64>),
     MaxOutputBytes(usize),
     MaxToolOutputLines(usize),
     CompactThresholdPercent(u8),
@@ -121,38 +123,65 @@ impl ConfigNumberInput {
         &self,
         config_repository: &ConfigRepository,
     ) -> anyhow::Result<ConfigNumberSave> {
-        let value = self.parsed_value()?;
-        match self.key {
+        let mut saved = match self.key {
+            ConfigNumberKey::QuestionnaireTimeout => {
+                let value = self.editor.value.trim();
+                let timeout = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.parse().map_err(|_| {
+                        anyhow::anyhow!("questionnaire timeout must be positive whole seconds; clear the field for Disabled")
+                    })?)
+                };
+                ConfigNumberSave::QuestionnaireTimeout(timeout)
+            }
             ConfigNumberKey::PromptHistoryLimit => {
                 anyhow::bail!("prompt history limit is applied through the confirm flow");
             }
-            ConfigNumberKey::MaxOutputBytes => config_repository.update(|config| {
-                config.max_output_bytes = value;
-                ConfigNumberSave::MaxOutputBytes(value)
-            }),
-            ConfigNumberKey::MaxToolOutputLines => config_repository.update(|config| {
-                config.max_tool_output_lines = value;
-                ConfigNumberSave::MaxToolOutputLines(value)
-            }),
-            ConfigNumberKey::CompactThresholdPercent => config_repository.update(|config| {
-                config.set_compact_threshold_percent(value.clamp(1, 100) as u8);
-                ConfigNumberSave::CompactThresholdPercent(config.compact_threshold_percent)
-            }),
-            ConfigNumberKey::CompactTargetPercent => config_repository.update(|config| {
-                config.set_compact_target_percent(value.clamp(1, 100) as u8);
-                ConfigNumberSave::CompactTargetPercent(config.compact_target_percent)
-            }),
-            ConfigNumberKey::AgentConcurrency => config_repository.update(|config| {
-                config.set_agent_concurrency(value);
-                ConfigNumberSave::AgentConcurrency(config.agent_concurrency)
-            }),
-        }
+            ConfigNumberKey::MaxOutputBytes => {
+                ConfigNumberSave::MaxOutputBytes(self.parsed_value()?)
+            }
+            ConfigNumberKey::MaxToolOutputLines => {
+                ConfigNumberSave::MaxToolOutputLines(self.parsed_value()?)
+            }
+            ConfigNumberKey::CompactThresholdPercent => {
+                ConfigNumberSave::CompactThresholdPercent(self.parsed_value()?.clamp(1, 100) as u8)
+            }
+            ConfigNumberKey::CompactTargetPercent => {
+                ConfigNumberSave::CompactTargetPercent(self.parsed_value()?.clamp(1, 100) as u8)
+            }
+            ConfigNumberKey::AgentConcurrency => {
+                ConfigNumberSave::AgentConcurrency(self.parsed_value()?)
+            }
+        };
+        config_repository.update(|config| {
+            match &mut saved {
+                ConfigNumberSave::QuestionnaireTimeout(value) => {
+                    config.questionnaire.timeout_seconds = *value
+                }
+                ConfigNumberSave::MaxOutputBytes(value) => config.max_output_bytes = *value,
+                ConfigNumberSave::MaxToolOutputLines(value) => {
+                    config.max_tool_output_lines = *value
+                }
+                ConfigNumberSave::CompactThresholdPercent(value) => {
+                    config.set_compact_threshold_percent(*value);
+                    *value = config.compact_threshold_percent;
+                }
+                ConfigNumberSave::CompactTargetPercent(value) => {
+                    config.set_compact_target_percent(*value);
+                    *value = config.compact_target_percent;
+                }
+                ConfigNumberSave::AgentConcurrency(value) => config.set_agent_concurrency(*value),
+            }
+            saved
+        })
     }
 }
 
 impl ConfigNumberKey {
     pub(super) fn label(self) -> &'static str {
         match self {
+            ConfigNumberKey::QuestionnaireTimeout => "questionnaire timeout seconds",
             ConfigNumberKey::MaxOutputBytes => "max output bytes",
             ConfigNumberKey::MaxToolOutputLines => "max tool output lines",
             ConfigNumberKey::CompactThresholdPercent => "compact threshold percent",
@@ -164,6 +193,7 @@ impl ConfigNumberKey {
 
     pub(super) fn picker_value(self) -> &'static str {
         match self {
+            ConfigNumberKey::QuestionnaireTimeout => config_picker::QUESTIONNAIRE_TIMEOUT_VALUE,
             ConfigNumberKey::MaxOutputBytes => config_picker::MAX_OUTPUT_BYTES_VALUE,
             ConfigNumberKey::MaxToolOutputLines => config_picker::MAX_TOOL_OUTPUT_LINES_VALUE,
             ConfigNumberKey::CompactThresholdPercent => {
@@ -242,6 +272,13 @@ impl ConfigNumberInput {
         }
     }
 
+    pub(super) fn questionnaire_timeout(value: Option<std::num::NonZeroU64>) -> Self {
+        Self {
+            key: ConfigNumberKey::QuestionnaireTimeout,
+            editor: LineEditor::new(value.map(|value| value.to_string()).unwrap_or_default()),
+        }
+    }
+
     pub(super) fn insert_char(&mut self, ch: char) {
         if !ch.is_ascii_digit() {
             return;
@@ -261,7 +298,7 @@ pub(super) fn config_number_input_lines(
     width: usize,
 ) -> Vec<Line<'static>> {
     let label = input.key.label();
-    vec![
+    let mut lines = vec![
         styled_line(
             truncate_one_line(
                 &format!(
@@ -280,7 +317,14 @@ pub(super) fn config_number_input_lines(
             Theme::text(),
             LineFill::Natural,
         ),
-    ]
+    ];
+    if input.key == ConfigNumberKey::QuestionnaireTimeout {
+        lines.extend(super::render::wrap_line_at_whitespace(
+            "Positive seconds; empty = Disabled. Only forms with explicit fallback answers time out. Applies when the next form opens.",
+            width,
+        ).into_iter().map(|line| Line::styled(line.to_owned(), Theme::dim())));
+    }
+    lines
 }
 
 #[cfg(test)]

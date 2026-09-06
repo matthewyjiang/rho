@@ -6,9 +6,8 @@ use ratatui::{
 use rho_sdk::{HostQuestion, SelectionMode};
 
 use super::{
-    answer_is_empty, choice_count, is_confirm, normalize_questionnaire_answer,
-    questionnaire_answer_display, request_title, FieldSelection, QuestionnaireComposer,
-    QuestionnaireFieldState,
+    choice_count, is_confirm, normalize_questionnaire_answer, questionnaire_answer_display,
+    request_title, FieldSelection, QuestionnaireComposer, QuestionnaireFieldState,
 };
 use crate::tui::{
     render::{
@@ -74,6 +73,23 @@ fn push_header_lines(
     let request = &questionnaire.request;
     if let Some(title) = request_title(request) {
         push_hanging_text(lines, "", title, width, Theme::input_prompt());
+    }
+    if let Some(notice) = questionnaire.timeout_notice(std::time::Instant::now()) {
+        push_hanging_text(lines, "", &notice, width, Theme::input_prompt());
+        if let Some(reason) = request.timeout_reason() {
+            push_hanging_text(lines, "", reason, width, Theme::text());
+        }
+        if let Some(fallback) = request.timeout_fallback() {
+            for (id, values) in fallback.answers() {
+                push_hanging_text(
+                    lines,
+                    "",
+                    &format!("{id}: {}", values.join(", ")),
+                    width,
+                    Theme::dim(),
+                );
+            }
+        }
     }
     if !lines.is_empty() {
         lines.push(Line::raw(""));
@@ -264,10 +280,10 @@ fn field_answer_summary(
     field: &QuestionnaireFieldState,
 ) -> Option<String> {
     let value = normalize_questionnaire_answer(question, field).ok()?;
-    if answer_is_empty(&value) {
+    if value.is_empty() {
         return None;
     }
-    Some(questionnaire_answer_display(Some(question), &value))
+    Some(questionnaire_answer_display(question, &value))
 }
 
 fn question_number(index: usize, total: usize) -> String {

@@ -227,6 +227,13 @@ impl App {
     fn open_config_number_editor(&mut self, key: ConfigNumberKey) -> anyhow::Result<()> {
         let config = self.info.services.config_repository.load()?;
         let value = match key {
+            ConfigNumberKey::QuestionnaireTimeout => {
+                self.input_ui.set_composer(ComposerMode::ConfigNumberInput(
+                    ConfigNumberInput::questionnaire_timeout(config.questionnaire.timeout_seconds),
+                ));
+                self.set_status("edit questionnaire timeout");
+                return Ok(());
+            }
             ConfigNumberKey::MaxOutputBytes => config.max_output_bytes,
             ConfigNumberKey::MaxToolOutputLines => config.max_tool_output_lines,
             ConfigNumberKey::CompactThresholdPercent => config.compact_threshold_percent as usize,

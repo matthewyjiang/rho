@@ -1,10 +1,9 @@
 use rho_sdk::{
     model::{ContextUsage, ModelUsage},
-    HostInputRequest, HostInputResponse, ModelCallMetrics, ModelCallProfile, RunEvent,
+    HostInputRequest, ModelCallMetrics, ModelCallProfile, RunEvent,
 };
 use {
     crate::app::interactive_presenter::InteractiveToolPresenter,
-    crate::questionnaire::{QuestionnaireAnswer, QuestionnaireResponse},
     rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus},
 };
 
@@ -452,29 +451,6 @@ pub(super) fn compact_finished_event(outcome: CompactionUiOutcome) -> ViewModelE
         call_id: compaction_call_id(),
         presentation: outcome.card().into(),
         image_asset: None,
-    }
-}
-
-pub(super) fn host_response(response: QuestionnaireResponse) -> HostInputResponse {
-    response.answers.into_iter().fold(
-        HostInputResponse::new(),
-        |response, QuestionnaireAnswer { id, answer }| match answer {
-            serde_json::Value::Null => response,
-            serde_json::Value::Array(values) if values.is_empty() => response,
-            serde_json::Value::Array(values) => {
-                response.answer(id, values.into_iter().map(answer_text).collect::<Vec<_>>())
-            }
-            value => response.answer(id, vec![answer_text(value)]),
-        },
-    )
-}
-
-fn answer_text(value: serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(value) => value,
-        serde_json::Value::Bool(value) => value.to_string(),
-        serde_json::Value::Number(value) => value.to_string(),
-        value => value.to_string(),
     }
 }
 

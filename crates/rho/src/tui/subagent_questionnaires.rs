@@ -8,9 +8,8 @@ use super::subagent_delivery::{TurnBoundaryBatch, TurnBoundaryDelivery};
 use crate::display_transcript::DisplayTranscript;
 
 use super::{
-    event_adapter, questionnaire::QuestionnaireResponseChannel, App, ComposerMode, Entry,
-    InteractiveRuntime, PendingSubagentQuestionnaire, QuestionAnswerRequest, QuestionnaireReply,
-    TurnOutcome,
+    questionnaire::QuestionnaireResponseChannel, App, ComposerMode, Entry, InteractiveRuntime,
+    PendingSubagentQuestionnaire, QuestionAnswerRequest, QuestionnaireReply, TurnOutcome,
 };
 
 #[derive(Clone, Copy)]
@@ -288,9 +287,7 @@ impl App {
             .expect("pending questionnaire checked above");
         match reply {
             Ok(QuestionnaireReply::Answer(response)) => {
-                let _ = pending
-                    .response_tx
-                    .send(Ok(event_adapter::host_response(response)));
+                let _ = pending.response_tx.send(Ok(response));
                 self.insert_entry(&Entry::Notice(format!(
                     "answered questionnaire for agent {} ({})",
                     pending.run_id, pending.agent_id

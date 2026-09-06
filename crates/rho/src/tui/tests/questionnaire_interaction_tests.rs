@@ -1,10 +1,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rho_sdk::{HostChoice, HostInputRequest, HostQuestion, SelectionMode};
+use rho_sdk::{HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode};
 
-use crate::{
-    questionnaire::{QuestionnaireAnswer, QuestionnaireResponse},
-    tui::questionnaire::QuestionnaireComposer,
-};
+use crate::tui::questionnaire::QuestionnaireComposer;
 
 use super::*;
 
@@ -58,18 +55,11 @@ fn enter_advances_questions_and_submits_only_on_the_last() {
     assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
     assert_eq!(
         reply_rx.try_recv(),
-        Ok(QuestionnaireReply::Answer(QuestionnaireResponse {
-            answers: vec![
-                QuestionnaireAnswer {
-                    id: "first".into(),
-                    answer: serde_json::json!("alpha"),
-                },
-                QuestionnaireAnswer {
-                    id: "second".into(),
-                    answer: serde_json::json!("yes"),
-                },
-            ],
-        }))
+        Ok(QuestionnaireReply::Answer(
+            HostInputResponse::new()
+                .answer("first", ["alpha"])
+                .answer("second", ["yes"])
+        ))
     );
 }
 

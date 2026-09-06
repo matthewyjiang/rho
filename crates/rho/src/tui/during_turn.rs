@@ -473,6 +473,7 @@ impl App {
         interrupt_requested: &AtomicBool,
         tool_call_active: &AtomicBool,
     ) -> Result<StreamControl, RunningTerminalError> {
+        self.observe_questionnaire_input(&first_event);
         let mut control = StreamControl::Continue;
         let mut approval_resolved = false;
         'event: {

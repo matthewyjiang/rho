@@ -27,6 +27,7 @@ mod mermaid;
 mod paste;
 mod pickers;
 mod process_rail;
+mod questionnaire_timeout;
 #[cfg(unix)]
 mod quiet_subagent;
 mod reasoning_output;
@@ -532,6 +533,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         true,
     ),
     PASTE_MULTILINE_SCENARIO,
+    questionnaire_timeout::TIMEOUT,
+    questionnaire_timeout::PAUSE,
     DOCUMENT_ATTACHMENT_SCENARIO,
     Scenario::new(
         "questionnaire",

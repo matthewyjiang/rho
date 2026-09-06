@@ -196,6 +196,25 @@ While [advisor mode](/configuration/advisor-mode) is on, the top composer divide
 
 While a goal is active, the status line shows an `◎ /goal active` indicator with the evaluated turn count and elapsed time. A goal paused for user action shows `◎ /goal blocked`; sending a new message or running `/goal resume` asks the agent to verify the blocked steps before continuing implementation work.
 
+## Questionnaire fallbacks
+
+A questionnaire normally blocks until you submit or cancel it. You can opt in
+to timed fallback answers through `/config` → **Agent behavior** →
+**Questionnaire timeout**. Enter positive seconds or clear the field for
+**Disabled**. The setting is off by default and is captured when each form opens.
+
+The model must supply a separate `on_timeout` plan; a preselected default is not
+enough. Timed forms show the remaining seconds, fallback answers, and the reason
+for proceeding. Any keyboard, paste, or mouse interaction pauses the countdown
+permanently for that form. Nothing automatically submits while you edit.
+Mouse movement counts as interaction, even without a click.
+Explicit submit still returns your answers with `source: "user"`. Expiry returns
+the proposed fallback with `source: "timeout_fallback"` and a transcript notice,
+not a user message. Neither fallback answers nor silence grant authorization.
+
+Timeouts are serviced by the UI event loop, with input taking priority. Heavy
+event traffic can delay a fallback; it never makes it run early.
+
 ## Activity rail
 
 While a model turn, background `agent` run, or `process` job is live, Rho
