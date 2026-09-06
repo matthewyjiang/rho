@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.1.1...rho-agent-tools-v1.2.0) (2026-09-06)
+
+
+### Features
+
+* **questionnaire:** allow explicit timed fallback answers ([#1184](https://github.com/matthewyjiang/rho/issues/1184)) ([3f66de5](https://github.com/matthewyjiang/rho/commit/3f66de57ad35b82847a7e43d98eea6c667bebf30))
+
 ## [1.1.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.1.0...rho-agent-tools-v1.1.1) (2026-09-05)
 
 

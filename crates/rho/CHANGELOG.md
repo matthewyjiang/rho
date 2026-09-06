@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.9.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.8.0...rho-coding-agent-v2.9.0) (2026-09-06)
+
+
+### Features
+
+* **questionnaire:** allow explicit timed fallback answers ([#1184](https://github.com/matthewyjiang/rho/issues/1184)) ([3f66de5](https://github.com/matthewyjiang/rho/commit/3f66de57ad35b82847a7e43d98eea6c667bebf30))
+* **tui:** Tab completes workspace paths in the inline shell ([#1180](https://github.com/matthewyjiang/rho/issues/1180)) ([48e5c95](https://github.com/matthewyjiang/rho/commit/48e5c95ee36db42acd57c0221d7f4d81b7635c2f))
+
+
+### Bug Fixes
+
+* **permissions:** recognize questionnaire consent in auto mode ([#1188](https://github.com/matthewyjiang/rho/issues/1188)) ([df13ab1](https://github.com/matthewyjiang/rho/commit/df13ab10d82938873f1ee9afff323d550991d835))
+* **titles:** stop sub-agent labels from answering task instructions ([#1187](https://github.com/matthewyjiang/rho/issues/1187)) ([07af55a](https://github.com/matthewyjiang/rho/commit/07af55a88758be5feb98a635b6177cc19db385a8))
+* **tui:** keep agent notifications distinct from human messages ([#1182](https://github.com/matthewyjiang/rho/issues/1182)) ([ab689b5](https://github.com/matthewyjiang/rho/commit/ab689b54ea1471a2e2d34d295fdac8ab3dd2bb70))
+* **tui:** keep side chat running when dismissed ([#1183](https://github.com/matthewyjiang/rho/issues/1183)) ([27625e8](https://github.com/matthewyjiang/rho/commit/27625e804f39f3a8afb3dc2d2b7edf7f69216839))
+* **tui:** prevent notifications from splitting assistant messages ([#1186](https://github.com/matthewyjiang/rho/issues/1186)) ([0354440](https://github.com/matthewyjiang/rho/commit/0354440458f1ce3060a7be80bac19d6a00b39222))
+* **tui:** remove attach command hints from agent cards ([#1185](https://github.com/matthewyjiang/rho/issues/1185)) ([50d7e38](https://github.com/matthewyjiang/rho/commit/50d7e38f2481fced7408f0bb588694dde9d88df5))
+* **tui:** tell users when Claude Code usage is rate limited in /limits ([#1177](https://github.com/matthewyjiang/rho/issues/1177)) ([6218b66](https://github.com/matthewyjiang/rho/commit/6218b666b2ee9bf531faeefb3068c82e4b5e3143))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.4.0 to 2.5.0
+
 ## [2.8.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.7.0...rho-coding-agent-v2.8.0) (2026-09-05)
 
 

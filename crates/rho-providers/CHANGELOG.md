@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.5.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.4.0...rho-providers-v2.5.0) (2026-09-06)
+
+
+### Features
+
+* **questionnaire:** allow explicit timed fallback answers ([#1184](https://github.com/matthewyjiang/rho/issues/1184)) ([3f66de5](https://github.com/matthewyjiang/rho/commit/3f66de57ad35b82847a7e43d98eea6c667bebf30))
+
+
+### Bug Fixes
+
+* **codex:** preserve compaction summaries across model switches ([#1181](https://github.com/matthewyjiang/rho/issues/1181)) ([af9e72e](https://github.com/matthewyjiang/rho/commit/af9e72eeac7949363a36adfd5245798d86c951f8))
+* **titles:** stop sub-agent labels from answering task instructions ([#1187](https://github.com/matthewyjiang/rho/issues/1187)) ([07af55a](https://github.com/matthewyjiang/rho/commit/07af55a88758be5feb98a635b6177cc19db385a8))
+* **tui:** keep side chat running when dismissed ([#1183](https://github.com/matthewyjiang/rho/issues/1183)) ([27625e8](https://github.com/matthewyjiang/rho/commit/27625e804f39f3a8afb3dc2d2b7edf7f69216839))
+* **tui:** prevent notifications from splitting assistant messages ([#1186](https://github.com/matthewyjiang/rho/issues/1186)) ([0354440](https://github.com/matthewyjiang/rho/commit/0354440458f1ce3060a7be80bac19d6a00b39222))
+
 ## [2.4.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.3.0...rho-providers-v2.4.0) (2026-09-05)
 
 
