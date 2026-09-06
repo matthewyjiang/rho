@@ -168,10 +168,7 @@ fn message_card(
         visibility: MessageVisibility::Conversation,
         reference: Some(run_id.into()),
         body,
-        details: vec![
-            format!("task: {task}"),
-            format!("attach: rho attach {run_id}"),
-        ],
+        details: vec![format!("task: {task}")],
     }
 }
 

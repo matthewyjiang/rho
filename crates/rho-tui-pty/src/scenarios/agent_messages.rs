@@ -46,7 +46,7 @@ fn assert_task_routing(harness: &mut PtyHarness) -> Result<()> {
         );
         ensure!(card.contains(excerpt), "message body missing:\n{card}");
         ensure!(
-            !card.contains("attach: rho attach"),
+            !card.contains("task: "),
             "run details leaked into preview:\n{card}"
         );
     }
@@ -67,7 +67,7 @@ fn expand_first_message(harness: &mut PtyHarness) -> Result<()> {
         + 1;
     harness.mouse(MouseButton::Left, 3, row, true)?;
     harness.mouse(MouseButton::Left, 3, row, false)?;
-    harness.wait_for_text("attach: rho attach", STREAM)?;
+    harness.wait_for_text("task: ", STREAM)?;
     let screen = harness.screen().contents();
     let normalized = screen.split_whitespace().collect::<Vec<_>>().join(" ");
     ensure!(
@@ -95,7 +95,7 @@ const STEPS: &[Step] = &[
         timeout: STREAM,
     },
     Step::WaitText {
-        text: "attach: rho attach",
+        text: "task: ",
         timeout: STREAM,
     },
     Step::Key(Key::Ctrl('o')),
