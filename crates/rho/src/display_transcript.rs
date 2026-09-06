@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::presentation::MessageCard;
 
-const PREFIX: &str = "[rho boundary transcript v1]\n";
+const PREFIX: &str = "[rho boundary transcript v1]";
 const FAMILY: &str = "[rho boundary transcript ";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -26,7 +26,7 @@ pub(crate) struct DisplayTranscript(pub(crate) Vec<DisplayRow>);
 impl DisplayTranscript {
     pub(crate) fn display_message(&self) -> Message {
         Message::System(format!(
-            "{PREFIX}{}",
+            "{PREFIX}\n{}",
             serde_json::to_string(self).expect("display rows contain only serializable data")
         ))
     }
@@ -37,6 +37,7 @@ impl DisplayTranscript {
         if !text.starts_with(FAMILY) {
             return None;
         }
+        // JSON accepts both LF and CRLF whitespace after the version marker.
         Some(text.strip_prefix(PREFIX)
             .and_then(|body| serde_json::from_str(body).ok())
             .unwrap_or_else(|| Self(vec![DisplayRow::Notice(

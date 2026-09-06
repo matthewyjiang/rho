@@ -22,10 +22,13 @@ fn saved_v1_card_decodes_without_losing_metadata() {
             "attach: rho attach abc123".into(),
         ],
     }))]);
-    assert_eq!(
-        DisplayTranscript::from_display(include_str!("display_transcript_v1.fixture")),
-        Some(expected),
-    );
+    let fixture = include_str!("display_transcript_v1.fixture").replace("\r\n", "\n");
+    for encoded in [fixture.clone(), fixture.replace('\n', "\r\n")] {
+        assert_eq!(
+            DisplayTranscript::from_display(&encoded),
+            Some(expected.clone())
+        );
+    }
 }
 
 // Covers: saved notifications round-trip, and unknown/damaged records do not
