@@ -18,11 +18,25 @@ const WORKSPACE_PATH_CACHE_TTL: Duration = Duration::from_secs(2);
 /// Keep navigation bounded so weak queries stay interactive in large repos.
 const MAX_RANKED_FILE_MATCHES: usize = 500;
 
+/// Where a path palette token came from, and so how a picked path is written.
+///
+/// A mention is written back as `@path`; a shell word is written back as a
+/// quoted path the shell can split safely. The shell source never offers MCP
+/// resources because a shell command cannot read one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PathTokenSource {
+    Mention,
+    ShellWord,
+}
+
+/// The path-palette token under the cursor: which char range an accepted
+/// row replaces, and the query to rank paths against.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct FileMention {
     pub(super) start: usize,
     pub(super) end: usize,
     pub(super) query: String,
+    pub(super) source: PathTokenSource,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,6 +79,8 @@ pub(super) struct FilePaletteMatches {
     paths: Arc<Vec<String>>,
     /// True when workspace discovery stopped early.
     pub(super) incomplete: bool,
+    /// How an accepted row is written back into the composer.
+    pub(super) source: PathTokenSource,
 }
 
 impl FilePaletteMatches {
@@ -73,6 +89,17 @@ impl FilePaletteMatches {
             resources: Arc::new(Vec::new()),
             paths: Arc::new(Vec::new()),
             incomplete: false,
+            source: PathTokenSource::Mention,
+        }
+    }
+
+    /// Workspace paths only, for a token the shell will read.
+    pub(super) fn shell_words(discovered: DiscoveredFilePaths) -> Self {
+        Self {
+            resources: Arc::new(Vec::new()),
+            paths: discovered.paths,
+            incomplete: discovered.incomplete,
+            source: PathTokenSource::ShellWord,
         }
     }
 
@@ -134,6 +161,7 @@ pub(super) fn file_palette_matches(
         resources: Arc::new(matched),
         paths: discovered.paths,
         incomplete: discovered.incomplete,
+        source: PathTokenSource::Mention,
     }
 }
 
@@ -250,6 +278,24 @@ pub(super) fn active_file_mention(input: &str, cursor: usize) -> Option<FileMent
         start: word.start,
         end: word.end,
         query: query.to_string(),
+        source: PathTokenSource::Mention,
+    })
+}
+
+/// The bare word under the cursor as a shell path token, when it still starts
+/// at `anchor`. The anchor is where Tab opened completion; once the cursor
+/// moves to another word the token, and so the palette, is gone.
+pub(super) fn anchored_shell_word(
+    input: &str,
+    cursor: usize,
+    anchor: usize,
+) -> Option<FileMention> {
+    let word = word_at_cursor(input, cursor);
+    (word.start == anchor).then(|| FileMention {
+        start: word.start,
+        end: word.end,
+        query: word.head.to_string(),
+        source: PathTokenSource::ShellWord,
     })
 }
 

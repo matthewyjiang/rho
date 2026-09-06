@@ -118,9 +118,6 @@ impl App {
         if self.handle_file_palette_key(key)? {
             return Ok(false);
         }
-        if self.handle_shell_palette_key(key)? {
-            return Ok(false);
-        }
         // Same order as the idle composer: pin cycle wins when a user binds
         // `cycle_pinned_model` onto a key that `handle_configurable_*` also
         // owns (for example Ctrl-P rebound to `toggle_tool_output`).
@@ -215,7 +212,6 @@ impl App {
         }
         self.clamp_command_selection();
         self.clamp_file_selection();
-        self.clamp_shell_completion();
         Ok(false)
     }
 

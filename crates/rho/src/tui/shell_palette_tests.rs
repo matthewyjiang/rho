@@ -3,7 +3,7 @@ use pretty_assertions::assert_eq;
 use tempfile::tempdir;
 
 use super::{
-    super::{palette::ActivePalette, tests::test_app, App},
+    super::{file_picker::FilePaletteEntry, palette::ActivePalette, tests::test_app, App},
     shell_quote,
 };
 
@@ -27,9 +27,20 @@ fn shell_app(files: &[&str], typed: &str) -> (App, tempfile::TempDir) {
     (app, workspace)
 }
 
+/// Workspace paths the open palette offers, or `None` while it is closed.
 fn open_paths(app: &mut App) -> Option<Vec<String>> {
     match app.active_palette() {
-        Some(ActivePalette::ShellPath(matches)) => Some(matches.as_slice().to_vec()),
+        Some(ActivePalette::File(matches)) => Some(
+            matches
+                .rows(0, matches.len())
+                .map(|(_, entry)| match entry {
+                    FilePaletteEntry::WorkspaceFile(path) => path,
+                    FilePaletteEntry::McpResource(resource) => {
+                        panic!("shell completion offered a resource: {resource:?}")
+                    }
+                })
+                .collect(),
+        ),
         _ => None,
     }
 }
@@ -81,16 +92,12 @@ fn tab_completes_word_under_cursor() {
 
     for case in cases {
         let (mut app, _workspace) = shell_app(case.files, case.typed);
-        assert!(app.handle_shell_palette_key(key(KeyCode::Tab)).unwrap());
+        assert!(app.handle_file_palette_key(key(KeyCode::Tab)).unwrap());
         assert_eq!(app.input_ui.text(), case.text_after_tab, "{}", case.name);
         assert_eq!(
-            open_paths(&mut app).as_deref(),
+            open_paths(&mut app),
             case.palette_after_tab
-                .map(|paths| paths
-                    .iter()
-                    .map(|path| (*path).to_string())
-                    .collect::<Vec<_>>())
-                .as_deref(),
+                .map(|paths| paths.iter().map(|path| (*path).to_string()).collect()),
             "{}",
             case.name
         );
@@ -105,7 +112,7 @@ fn tab_completes_word_under_cursor() {
 #[test]
 fn open_list_narrows_navigates_accepts_and_dismisses() {
     let (mut app, _workspace) = shell_app(&["src/alpha.rs", "src/beta.rs"], "cat src/");
-    assert!(app.handle_shell_palette_key(key(KeyCode::Tab)).unwrap());
+    assert!(app.handle_file_palette_key(key(KeyCode::Tab)).unwrap());
     assert_eq!(
         open_paths(&mut app),
         Some(vec!["src/alpha.rs".into(), "src/beta.rs".into()])
@@ -115,18 +122,32 @@ fn open_list_narrows_navigates_accepts_and_dismisses() {
     assert_eq!(open_paths(&mut app), Some(vec!["src/beta.rs".into()]));
 
     app.backspace_input();
-    assert!(app.handle_shell_palette_key(key(KeyCode::Down)).unwrap());
-    assert!(app.handle_shell_palette_key(key(KeyCode::Enter)).unwrap());
+    assert!(app.handle_file_palette_key(key(KeyCode::Down)).unwrap());
+    assert!(app.handle_file_palette_key(key(KeyCode::Enter)).unwrap());
     assert_eq!(app.input_ui.text(), "cat src/beta.rs ");
     assert_eq!(open_paths(&mut app), None);
 
     app.insert_input_text("src/");
-    assert!(app.handle_shell_palette_key(key(KeyCode::Tab)).unwrap());
+    assert!(app.handle_file_palette_key(key(KeyCode::Tab)).unwrap());
     assert!(open_paths(&mut app).is_some());
-    assert!(app.handle_shell_palette_key(key(KeyCode::Esc)).unwrap());
+    assert!(app.handle_file_palette_key(key(KeyCode::Esc)).unwrap());
     assert_eq!(open_paths(&mut app), None);
     assert!(app.input_ui.shell_mode().is_some());
     assert_eq!(app.input_ui.text(), "cat src/beta.rs src/");
+}
+
+// Covers: the list is anchored to the word Tab opened it on. Moving the
+// cursor into another word must close it rather than silently retarget.
+// Owner: TUI shell palette policy.
+#[test]
+fn open_list_closes_when_cursor_leaves_the_word() {
+    let (mut app, _workspace) = shell_app(&["src/a.rs", "src/b.rs"], "cat src/");
+    assert!(app.handle_file_palette_key(key(KeyCode::Tab)).unwrap());
+    assert!(open_paths(&mut app).is_some());
+
+    app.input_ui.set_cursor(2); // inside "cat"
+    app.clamp_file_selection();
+    assert_eq!(open_paths(&mut app), None);
 }
 
 // Covers: Tab outside shell mode is not ours; the `@` palette and picker
@@ -136,7 +157,7 @@ fn open_list_narrows_navigates_accepts_and_dismisses() {
 fn tab_outside_shell_mode_is_ignored() {
     let mut app = test_app();
     app.insert_input_text("cat src/");
-    assert!(!app.handle_shell_palette_key(key(KeyCode::Tab)).unwrap());
+    assert!(!app.handle_file_palette_key(key(KeyCode::Tab)).unwrap());
     assert_eq!(app.input_ui.text(), "cat src/");
 }
 

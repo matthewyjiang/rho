@@ -13,6 +13,7 @@ fn finds_mention_at_cursor() {
             start: 7,
             end: 14,
             query: "src/tu".into(),
+            source: PathTokenSource::Mention,
         })
     );
 }
@@ -25,6 +26,7 @@ fn mention_at_mid_token_replaces_through_token_end() {
             start: 7,
             end: 18,
             query: "src".into(),
+            source: PathTokenSource::Mention,
         })
     );
 }
@@ -37,6 +39,7 @@ fn mention_starts_after_newline() {
             start: 7,
             end: 11,
             query: "src".into(),
+            source: PathTokenSource::Mention,
         })
     );
 }
@@ -60,6 +63,7 @@ fn mention_offsets_survive_multibyte_characters_before_the_token() {
             start: 6,
             end: 8,
             query: "w".into(),
+            source: PathTokenSource::Mention,
         })
     );
 }
@@ -72,6 +76,7 @@ fn cursor_past_the_input_still_finds_the_trailing_token() {
             start: 7,
             end: 11,
             query: "src".into(),
+            source: PathTokenSource::Mention,
         })
     );
 }

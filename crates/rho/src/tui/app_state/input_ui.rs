@@ -7,7 +7,6 @@ use crate::tui::{
     feed_image::FeedImage,
     inline_shell::InlineShellMode,
     paste_burst::{expand_paste_segments, PasteBurst},
-    shell_palette::ShellCompletion,
     ChatMedia, ComposerAttachment, ComposerMode, InputDraft, InputSubmissionMode, MediaAttachId,
     PasteSegment, PendingAttachmentSource,
 };
@@ -124,8 +123,10 @@ pub(in crate::tui) struct InputUi {
     last_pointer_click: Option<ComposerClick>,
     composer_view_start: usize,
     shell_mode: Option<InlineShellMode>,
-    /// Open Tab path completion in shell mode; `None` while closed.
-    shell_completion: Option<ShellCompletion>,
+    /// Char offset of the word Tab opened path completion on, in shell mode.
+    /// `None` while completion is closed. The palette itself is derived from
+    /// text and cursor, like the `@` palette.
+    shell_completion_anchor: Option<usize>,
     attachments: Vec<ComposerAttachmentSlot>,
     /// Bumped on every attachment mutation so composer layout caches invalidate.
     attachment_epoch: u64,
@@ -155,7 +156,7 @@ impl InputUi {
         self.text.clear();
         self.paste_segments.clear();
         self.shell_mode = None;
-        self.shell_completion = None;
+        self.shell_completion_anchor = None;
         self.cursor = 0;
         self.selection = ComposerSelectionState::None;
         self.last_pointer_click = None;
@@ -412,30 +413,20 @@ impl InputUi {
 
     pub(in crate::tui) fn set_shell_mode(&mut self, mode: Option<InlineShellMode>) {
         self.shell_mode = mode;
-        self.shell_completion = None;
+        self.shell_completion_anchor = None;
     }
 
     pub(in crate::tui) fn take_shell_mode(&mut self) -> Option<InlineShellMode> {
-        self.shell_completion = None;
+        self.shell_completion_anchor = None;
         self.shell_mode.take()
     }
 
-    pub(in crate::tui) fn shell_completion(&self) -> Option<&ShellCompletion> {
-        self.shell_completion.as_ref()
+    pub(in crate::tui) fn shell_completion_anchor(&self) -> Option<usize> {
+        self.shell_completion_anchor
     }
 
-    pub(in crate::tui) fn set_shell_completion(&mut self, completion: Option<ShellCompletion>) {
-        self.shell_completion = completion;
-    }
-
-    /// Mutate the open completion in place; a no-op while closed.
-    pub(in crate::tui) fn update_shell_completion(
-        &mut self,
-        update: impl FnOnce(&mut ShellCompletion),
-    ) {
-        if let Some(completion) = self.shell_completion.as_mut() {
-            update(completion);
-        }
+    pub(in crate::tui) fn set_shell_completion_anchor(&mut self, anchor: Option<usize>) {
+        self.shell_completion_anchor = anchor;
     }
 
     pub(in crate::tui) fn attachment_slots(&self) -> &[ComposerAttachmentSlot] {

@@ -1,14 +1,14 @@
 //! Which palette, if any, the composer shows.
 //!
-//! One resolution decides between the `/` command palette, the `@` file
-//! palette, and shell-mode Tab path completion, and produces the winning
-//! matches, so visibility checks and painted suggestion lists never compute
-//! the same match list twice.
+//! One resolution decides between the `/` command palette and the path
+//! palette (`@` mentions, or Tab completion in shell mode) and produces the
+//! winning matches, so visibility checks and painted suggestion lists never
+//! compute the same match list twice.
 
 use std::time::{Duration, Instant};
 
 use super::{
-    file_picker::{DiscoveredFilePaths, FilePaletteMatches, WorkspacePathCache},
+    file_picker::{FilePaletteMatches, PathTokenSource, WorkspacePathCache},
     types::CommandChoice,
     App, ComposerMode,
 };
@@ -18,6 +18,7 @@ pub(super) const PALETTE_CACHE_TTL: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug)]
 struct FileMatchCache {
+    source: PathTokenSource,
     query: String,
     matches: FilePaletteMatches,
     refreshed_at: Instant,
@@ -43,14 +44,28 @@ pub(super) struct PaletteCaches {
 }
 
 impl PaletteCaches {
-    /// Fresh matches for `query`, or `None` when discovery must run again.
-    pub(super) fn fresh_file(&self, query: &str, ttl: Duration) -> Option<FilePaletteMatches> {
+    /// Fresh matches for `query` from `source`, or `None` when discovery must
+    /// run again. The source is part of the key: a `@src/` list carries MCP
+    /// resources a shell word must never be offered.
+    pub(super) fn fresh_file(
+        &self,
+        source: PathTokenSource,
+        query: &str,
+        ttl: Duration,
+    ) -> Option<FilePaletteMatches> {
         let cache = self.file.as_ref()?;
-        (cache.query == query && cache.refreshed_at.elapsed() < ttl).then(|| cache.matches.clone())
+        (cache.source == source && cache.query == query && cache.refreshed_at.elapsed() < ttl)
+            .then(|| cache.matches.clone())
     }
 
-    pub(super) fn store_file(&mut self, query: String, matches: FilePaletteMatches) {
+    pub(super) fn store_file(
+        &mut self,
+        source: PathTokenSource,
+        query: String,
+        matches: FilePaletteMatches,
+    ) {
         self.file = Some(FileMatchCache {
+            source,
             query,
             matches,
             refreshed_at: Instant::now(),
@@ -96,13 +111,12 @@ impl PaletteCaches {
 
 /// The palette the composer currently shows, with its matches.
 ///
-/// The command palette wins when both could answer. Shell mode shows only the
-/// Tab completion list, and only after Tab opened it.
+/// The command palette wins when both could answer. In shell mode only the
+/// path palette can show, and only once Tab has opened it.
 #[derive(Debug)]
 pub(super) enum ActivePalette {
     Command(Vec<CommandChoice>),
     File(FilePaletteMatches),
-    ShellPath(DiscoveredFilePaths),
 }
 
 impl App {
@@ -111,14 +125,10 @@ impl App {
         if !matches!(self.input_ui.composer(), ComposerMode::Input) {
             return None;
         }
-        if self.input_ui.shell_mode().is_some() {
-            return self
-                .input_ui
-                .shell_completion()
-                .map(|completion| ActivePalette::ShellPath(completion.matches().clone()));
-        }
-        if let Some(matches) = self.visible_command_matches() {
-            return Some(ActivePalette::Command(matches));
+        if self.input_ui.shell_mode().is_none() {
+            if let Some(matches) = self.visible_command_matches() {
+                return Some(ActivePalette::Command(matches));
+            }
         }
         if self.input_ui.file_palette_dismissed() {
             return None;
