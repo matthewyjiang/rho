@@ -1,5 +1,7 @@
 //! The automatic result is a durable wait target. Pause routing uses a long
 //! deadline so slow CI cannot race input against an intermediate countdown.
+//! Match the active-question marker: bare prompt text also survives in tool cards
+//! after submission and would allow input before the next form opens.
 use super::{DEFAULT_SIZE, STARTUP, STREAM};
 use crate::{
     env::IsolatedHome,
@@ -89,7 +91,7 @@ pub(super) const PAUSE: Scenario = Scenario::new(
         },
         Step::SubmitText("fixture questionnaire timeout"),
         Step::WaitText {
-            text: "Choose a fallback color",
+            text: "▸ Choose a fallback color",
             timeout: STREAM,
         },
         Step::Key(Key::Down),
@@ -104,7 +106,7 @@ pub(super) const PAUSE: Scenario = Scenario::new(
         },
         Step::SubmitText("fixture questionnaire timeout"),
         Step::WaitText {
-            text: "Choose a fallback color",
+            text: "▸ Choose a fallback color",
             timeout: STREAM,
         },
         Step::Paste("green"),
@@ -119,7 +121,7 @@ pub(super) const PAUSE: Scenario = Scenario::new(
         },
         Step::SubmitText("fixture questionnaire timeout"),
         Step::WaitText {
-            text: "Choose a fallback color",
+            text: "▸ Choose a fallback color",
             timeout: STREAM,
         },
         Step::Custom(|harness| harness.mouse_move(1, 1)),

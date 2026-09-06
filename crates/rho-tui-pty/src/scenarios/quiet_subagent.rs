@@ -148,6 +148,59 @@ fn running_notices(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
+// Covers: an accepted boundary notice must not split already rendered text
+// from queued provider deltas or the typewriter's held suffix.
+fn streaming_notice(harness: &mut PtyHarness) -> Result<()> {
+    let cwd = harness
+        .working_directory()
+        .context("scenario working directory")?
+        .to_path_buf();
+    let socket = UnixDatagram::bind(cwd.join(".quiet-parent-pty.sock"))?;
+    socket.set_nonblocking(true)?;
+    let mut received = HashSet::new();
+    harness.submit_text("fixture streaming notice")?;
+    wait_signal(harness, &socket, &mut received, "parent")?;
+    harness.wait_for_text("The checks ha", STREAM)?;
+    wait_signal(harness, &socket, &mut received, "first")?;
+    socket.send_to(b"!", cwd.join(".quiet-child-first.sock"))?;
+    wait_signal(harness, &socket, &mut received, "posted")?;
+    socket.send_to(b"!", cwd.join(".quiet-child-parent.sock"))?;
+    harness.wait_for_text("quiet delivery requests=1 occurrences=[1, 0, 0]", STREAM)?;
+    let screen = harness.screen().contents();
+    let start = screen
+        .find("Streaming verification results:")
+        .context("stream prefix")?;
+    let end = screen
+        .find("The checks have passed without interruption.")
+        .context("intact stream suffix")?;
+    let notice = screen
+        .find("quiet-cache-inspected")
+        .context("delivered child message body")?;
+    let follow_up = screen
+        .find("quiet delivery requests=1 occurrences=[1, 0, 0]")
+        .context("parent incorporated the notice")?;
+    anyhow::ensure!(
+        start < end && end < notice && notice < follow_up,
+        "notification split or overtook the assistant message:\n{screen}"
+    );
+    Ok(())
+}
+
+pub(super) const STREAMING_NOTICE_SCENARIO: Scenario = Scenario::new(
+    "streaming_boundary_notice",
+    "Keep a streaming assistant message intact when a boundary notice arrives",
+    DEFAULT_SIZE,
+    &[
+        Step::WaitText {
+            text: "gpt-5.5",
+            timeout: STARTUP,
+        },
+        Step::Custom(streaming_notice),
+        Step::ExitCommand,
+    ],
+    /*smoke*/ true,
+);
+
 // Covers: /new must attribute new children to the replacement session, so an
 // idle parent receives their final result without another user prompt.
 fn completion_after_new(harness: &mut PtyHarness) -> Result<()> {

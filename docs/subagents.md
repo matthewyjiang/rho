@@ -127,9 +127,12 @@ The interactive parent collects child notices, agent completions, workflow resul
 and process exits at safe provider boundaries after tool work, not only between
 human messages. It also checks pending notifications before committing its final
 response. Streaming stays live, so text may already be visible when a notification
-arrives. Completions, workflow/process results, and action requests found at the
-final checkpoint cause another provider step. Informational notices alone do not;
-they wait for an already-scheduled provider request or join another delivery.
+arrives. Transcript notices wait until the current message's queued and buffered
+text has finished, so they cannot split an assistant response. This display delay
+does not delay delivery to the model. Completions, workflow/process results, and
+action requests found at the final checkpoint cause another provider step.
+Informational notices alone do not; they wait for an already-scheduled provider
+request or join another delivery.
 Completions arriving after the finalization handoff remain queued and wake an idle
 parent as before.
 

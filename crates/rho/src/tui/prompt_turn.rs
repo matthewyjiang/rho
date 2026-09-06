@@ -649,7 +649,7 @@ impl App {
                 self.end_provider_turn_ui();
                 self.debug_assert_provider_turn_sync(agent);
                 self.turn.stop_loading();
-                self.finish_streams();
+                self.finish_stream_text();
                 self.insert_final_answer_suffix(outcome.text());
                 self.insert_assistant_images(outcome.content());
                 if let Some(elapsed) = turn_elapsed {

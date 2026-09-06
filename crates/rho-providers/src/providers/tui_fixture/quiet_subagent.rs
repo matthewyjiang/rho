@@ -13,6 +13,7 @@ const SPAWN: &str = "quiet-parent-spawn";
 const CHILD: &str = "fixture quiet notice child";
 const GOAL_CHILD: &str = "fixture quiet goal child";
 const RUNNING_CHILD: &str = "fixture quiet running child";
+const STREAMING_CHILD: &str = "fixture streaming notice child";
 const FIRST: &str = "quiet-cache-inspected";
 const SECOND: &str = "quiet-routing-inspected";
 const ACTION: &str = "quiet-decision-required";
@@ -24,6 +25,7 @@ static GOAL_RETRY: AtomicBool = AtomicBool::new(false);
 pub(super) async fn intercept(
     prompt: &str,
     request: &ModelRequest<'_>,
+    events: &rho_sdk::provider::ProviderEventSender,
 ) -> Option<Result<ModelResponse, ProviderError>> {
     if prompt == COMPLETION_CHILD {
         return Some(match barrier("completion", request).await {
@@ -60,13 +62,17 @@ pub(super) async fn intercept(
             prompt.matches(COMPLETION).count(),
         )));
     }
-    if prompt == CHILD || prompt == GOAL_CHILD || prompt == RUNNING_CHILD {
+    if prompt == CHILD
+        || prompt == GOAL_CHILD
+        || prompt == RUNNING_CHILD
+        || prompt == STREAMING_CHILD
+    {
         for (stage, tool, message) in [
             ("first", "message_parent", FIRST),
             ("second", "message_parent", SECOND),
             ("action", "request_parent_action", ACTION),
         ] {
-            if prompt == RUNNING_CHILD && stage != "first" {
+            if (prompt == RUNNING_CHILD || prompt == STREAMING_CHILD) && stage != "first" {
                 // The first tool result proves the notice was posted while
                 // the parent provider request is still held at its barrier.
                 if let Err(error) = barrier("posted", request).await {
@@ -84,7 +90,11 @@ pub(super) async fn intercept(
                 }
                 return Some(completed_tool_call(
                     message,
-                    tool,
+                    if prompt == STREAMING_CHILD {
+                        "request_parent_action"
+                    } else {
+                        tool
+                    },
                     serde_json::json!({"message": message}),
                 ));
             }
@@ -95,7 +105,8 @@ pub(super) async fn intercept(
     }
     let goal_retry = prompt.contains("Goal:\nfixture quiet action retry\n");
     let running = prompt == "fixture quiet running subagent";
-    if prompt == "fixture quiet subagent" || goal_retry || running {
+    let streaming = prompt == "fixture streaming notice";
+    if prompt == "fixture quiet subagent" || goal_retry || running || streaming {
         if tool_result(request, SPAWN).is_none() {
             PARENT_REQUESTS.store(0, Ordering::SeqCst);
             GOAL_RETRY.store(goal_retry, Ordering::SeqCst);
@@ -104,10 +115,30 @@ pub(super) async fn intercept(
                 "agent",
                 serde_json::json!({
                     "agent_id": "worker",
-                    "prompt": if goal_retry { GOAL_CHILD } else if running { RUNNING_CHILD } else { CHILD },
+                    "prompt": if goal_retry { GOAL_CHILD } else if streaming { STREAMING_CHILD } else if running { RUNNING_CHILD } else { CHILD },
                     "background": true,
                 }),
             ));
+        }
+        if streaming {
+            let prefix = "Streaming verification results:\nThe checks ha";
+            if let Err(error) = events
+                .send(rho_sdk::model::ModelEvent::OutputDelta(prefix.into()))
+                .await
+            {
+                return Some(Err(error));
+            }
+            if let Err(error) = barrier("parent", request).await {
+                return Some(Err(error));
+            }
+            let suffix = "ve passed without interruption.";
+            if let Err(error) = events
+                .send(rho_sdk::model::ModelEvent::OutputDelta(suffix.into()))
+                .await
+            {
+                return Some(Err(error));
+            }
+            return Some(completed(format!("{prefix}{suffix}")));
         }
         if running {
             if let Err(error) = barrier("parent", request).await {

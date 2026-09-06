@@ -62,6 +62,7 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
 
 impl App {
     pub(super) fn reset_streams(&mut self) {
+        self.flush_pending_notices();
         self.streams.reset();
         // Discard an unfinished reasoning phase. Callers that should keep a
         // summary must finalize before reset (for example `finish_streams`).
@@ -464,6 +465,13 @@ impl App {
         }
     }
     pub(super) fn finish_streams(&mut self) -> bool {
+        let text_finished = self.finish_stream_text();
+        let notices_finished = self.flush_pending_notices();
+        text_finished || notices_finished
+    }
+
+    /// Final answers may still supply missing text; reconcile it before notices.
+    pub(super) fn finish_stream_text(&mut self) -> bool {
         let reasoning_finished = self.finish_stream(StreamKind::Reasoning);
         let assistant_finished = self.finish_stream(StreamKind::Assistant);
         self.streams.current_stream_kind = None;
@@ -660,7 +668,28 @@ impl App {
     }
 
     pub(super) fn record_inserted_entry(&mut self, entry: Entry) {
-        self.push_transcript_entry(entry);
+        // Runtime boundary displays arrive through BoundaryInputApplied in
+        // event order. Local notices must also wait while a message is open,
+        // including between deltas when no text remains in the typewriter.
+        match entry {
+            Entry::Notice(text)
+                if self.streams.current_stream_kind.is_some()
+                    || !self.streams.hold.is_empty()
+                    || !self.streams.assistant_stream.pending_text().is_empty()
+                    || !self.streams.reasoning_stream.pending_text().is_empty() =>
+            {
+                self.streams.pending_notices.push(text);
+            }
+            entry => self.push_transcript_entry(entry),
+        }
+    }
+
+    fn flush_pending_notices(&mut self) -> bool {
+        let changed = !self.streams.pending_notices.is_empty();
+        for notice in std::mem::take(&mut self.streams.pending_notices) {
+            self.push_transcript_entry(Entry::Notice(notice));
+        }
+        changed
     }
 
     fn reset_attempt_accounting(&mut self) {

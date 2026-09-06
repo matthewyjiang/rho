@@ -462,6 +462,9 @@ fn with_empty_provider_models_cache<T>(f: impl FnOnce() -> T) -> T {
 }
 
 fn last_notice(app: &crate::tui::App) -> &str {
+    if let Some(notice) = app.streams.pending_notices.last() {
+        return notice;
+    }
     match app.history.last() {
         Some(Entry::Notice(text)) => text,
         other => panic!("expected a transcript notice, got {other:?}"),
@@ -530,6 +533,7 @@ fn empty_model_picker_wait_clause_follows_busy_session() {
             let mut app = test_app();
             setup(&mut app);
             app.open_config_conversation_model_picker_during_turn();
+            assert!(app.streams.pending_notices.is_empty());
             (name, last_notice(&app).to_string())
         });
 
@@ -544,7 +548,7 @@ fn empty_model_picker_wait_clause_follows_busy_session() {
     });
 }
 
-// Covers: empty /model during a turn must flush the live assistant stream before the notice
+// Covers: repeated empty /model during a turn queues one notice after the complete stream
 // Owner: tui model picker
 #[test]
 fn empty_model_picker_during_turn_does_not_split_a_live_stream() {
@@ -557,12 +561,20 @@ fn empty_model_picker_during_turn_does_not_split_a_live_stream() {
 
         let invocation = parse_command("/model").unwrap().unwrap();
         app.execute_model_command_during_turn(invocation).unwrap();
+        app.open_config_conversation_model_picker_during_turn();
+
+        assert!(app.history.entries().is_empty());
+        assert_eq!(app.streams.pending_notices.len(), 1);
+        app.streams
+            .push_delta(StreamKind::Assistant, " continues", Instant::now());
+        app.finish_streams();
+        assert!(app.streams.pending_notices.is_empty());
 
         assert!(
             matches!(
                 app.history.entries(),
                 [Entry::Assistant(assistant), Entry::Notice(notice)]
-                    if assistant.text == "held assistant tail" && !notice.is_empty()
+                    if assistant.text == "held assistant tail continues" && !notice.is_empty()
             ),
             "notice must follow the flushed assistant row, not split it: {:?}",
             app.history.entries()
@@ -571,5 +583,11 @@ fn empty_model_picker_during_turn_does_not_split_a_live_stream() {
         assert_eq!(app.streams.current_stream_kind, None);
         assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
         assert!(app.status_overlay.is_some());
+
+        // Already-emitted text is retained for final-answer reconciliation,
+        // but must not make a later notice wait for another stream boundary.
+        app.insert_entry(&Entry::Notice("after stream".into()));
+        assert!(app.streams.pending_notices.is_empty());
+        assert!(matches!(app.history.last(), Some(Entry::Notice(text)) if text == "after stream"));
     });
 }

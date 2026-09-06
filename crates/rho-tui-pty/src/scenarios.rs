@@ -844,6 +844,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     quiet_subagent::RUNNING_NOTICES_SCENARIO,
     #[cfg(unix)]
+    quiet_subagent::STREAMING_NOTICE_SCENARIO,
+    #[cfg(unix)]
     quiet_subagent::COMPLETION_AFTER_NEW_SCENARIO,
     agent_messages::AGENT_MESSAGES_SCENARIO,
     boundary_notifications::SCENARIO,

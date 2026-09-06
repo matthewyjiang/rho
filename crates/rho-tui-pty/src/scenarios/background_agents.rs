@@ -78,12 +78,14 @@ pub(super) const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
-fn assert_background_questionnaire_parent_active(harness: &mut crate::PtyHarness) -> Result<()> {
+fn release_background_questionnaire_parent(harness: &mut crate::PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
     if screen.contains("background questionnaire agent dispatched: agent") {
         anyhow::bail!("parent turn ended before the child questionnaire appeared:\n{screen}");
     }
-    Ok(())
+    // Keep the parent live until the form is visibly open, then let it finish
+    // while the unanswered child is still waiting for input.
+    super::release_fixture(harness, ".rho-fixture-release-questionnaire-parent")
 }
 
 pub(super) const BACKGROUND_AGENT_QUESTIONNAIRE_STEPS: &[Step] = &[
@@ -103,7 +105,7 @@ pub(super) const BACKGROUND_AGENT_QUESTIONNAIRE_STEPS: &[Step] = &[
         text: "Choose one color",
         timeout: STREAM,
     },
-    Step::Custom(assert_background_questionnaire_parent_active),
+    Step::Custom(release_background_questionnaire_parent),
     Step::Phase("parent_finishes_while_questionnaire_remains_open"),
     Step::WaitText {
         text: "background questionnaire agent dispatched: agent",

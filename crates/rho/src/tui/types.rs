@@ -95,6 +95,8 @@ pub(super) struct StreamUi {
     /// Provider text waiting to be released into the active stream.
     pub(in crate::tui) hold: String,
     pub(in crate::tui) pacer: StreamPacer,
+    /// Notices raised during a message wait for its ordered boundary, not a UI tick.
+    pub(in crate::tui) pending_notices: Vec<String>,
 }
 
 impl StreamUi {
