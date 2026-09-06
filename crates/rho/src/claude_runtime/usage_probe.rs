@@ -20,6 +20,7 @@ use super::{
     rate_limit::{self, RateLimitState},
     usage_parse::{named_window_keys, parse_usage_screen},
 };
+use crate::usage_limits::UsageFailure;
 
 #[cfg(unix)]
 #[path = "usage_probe_drive.rs"]
@@ -68,15 +69,6 @@ const REFRESH_FAILURE_MARKERS: &[&str] = &[
 /// both a failure marker and the reason.
 const RATE_LIMITED_MARKER: &str = "rate limited";
 
-/// Why a `/usage` refresh did not produce live percentages.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RefreshFailure {
-    /// Anthropic's usage endpoint throttled the read; a retry later works.
-    RateLimited,
-    /// Any other refresh notice (network, auth, partial data).
-    Other,
-}
-
 #[derive(Debug, Error)]
 pub(crate) enum UsageProbeError {
     #[error("claude code: binary not found on PATH")]
@@ -95,13 +87,24 @@ pub(crate) enum UsageProbeError {
     Exited { what: &'static str, screen: String },
     #[error("claude code: /usage refresh failed: {screen}")]
     RefreshFailed {
-        reason: RefreshFailure,
+        reason: UsageFailure,
         screen: String,
     },
     #[error("claude code: /usage panel was not readable")]
     Unparseable,
     #[error("claude code: auth preflight failed: {0}")]
     Auth(#[from] ClaudeAuthError),
+}
+
+impl UsageProbeError {
+    /// Only a throttled `/usage` refresh is a rate limit; every other probe
+    /// error (spawn, timeout, auth) reads as a plain failure.
+    pub(crate) fn failure(&self) -> UsageFailure {
+        match self {
+            Self::RefreshFailed { reason, .. } => *reason,
+            _ => UsageFailure::Other,
+        }
+    }
 }
 
 /// Probe finished without a live panel. `/limits` should keep disk windows.
@@ -258,7 +261,7 @@ enum UsageScreen {
     /// The panel has not painted yet.
     NoPanel,
     /// Claude reported a failed or degraded refresh.
-    Failed(RefreshFailure),
+    Failed(UsageFailure),
     /// The spinner is visible; nothing on screen is a live result.
     Refreshing,
     /// The panel names a window that has no percentage yet.
@@ -270,8 +273,8 @@ enum UsageScreen {
 fn usage_screen_kind(screen: &UsageScreen) -> &'static str {
     match screen {
         UsageScreen::NoPanel => "NoPanel",
-        UsageScreen::Failed(RefreshFailure::RateLimited) => "Failed(RateLimited)",
-        UsageScreen::Failed(RefreshFailure::Other) => "Failed(Other)",
+        UsageScreen::Failed(UsageFailure::RateLimited) => "Failed(RateLimited)",
+        UsageScreen::Failed(UsageFailure::Other) => "Failed(Other)",
         UsageScreen::Refreshing => "Refreshing",
         UsageScreen::Incomplete => "Incomplete",
         UsageScreen::Ready(_) => "Ready",
@@ -281,10 +284,10 @@ fn usage_screen_kind(screen: &UsageScreen) -> &'static str {
 fn classify_usage_screen(screen: &str, now_unix: i64) -> UsageScreen {
     let lower = screen.to_ascii_lowercase();
     if lower.contains(RATE_LIMITED_MARKER) {
-        return UsageScreen::Failed(RefreshFailure::RateLimited);
+        return UsageScreen::Failed(UsageFailure::RateLimited);
     }
     if contains_any(&lower, REFRESH_FAILURE_MARKERS) {
-        return UsageScreen::Failed(RefreshFailure::Other);
+        return UsageScreen::Failed(UsageFailure::Other);
     }
     if !contains_any(screen, PANEL_MARKERS) {
         return UsageScreen::NoPanel;

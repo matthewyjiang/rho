@@ -19,7 +19,7 @@ use super::{
     App, ComposerMode,
 };
 use crate::usage_limits::{
-    fetch_usage_provider, now_unix, usage_provider_is_connected, UsageLimitWindow,
+    fetch_usage_provider, now_unix, usage_provider_is_connected, UsageFailure, UsageLimitWindow,
     UsageProviderKind,
 };
 use crate::usage_limits_cache::{self, UsageLimitsCache};
@@ -45,17 +45,8 @@ enum LimitsFetchResult {
     },
     Unavailable,
     Failed {
-        reason: LimitsFailure,
+        reason: UsageFailure,
     },
-}
-
-/// Why a section's live fetch did not return usage. Surfaced in the heading
-/// so a throttled read is not mistaken for a broken one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LimitsFailure {
-    /// The usage endpoint throttled the read; retrying later works.
-    RateLimited,
-    Other,
 }
 
 pub(super) struct PendingUsageFetch {
@@ -108,7 +99,7 @@ enum LimitsSectionStatus {
     },
     Failed {
         cached_at_unix: Option<i64>,
-        reason: LimitsFailure,
+        reason: UsageFailure,
     },
     Empty,
 }
@@ -144,7 +135,7 @@ impl LimitsOverlay {
         &mut self,
         id: LimitsSectionId,
         cached_at_unix: Option<i64>,
-        reason: LimitsFailure,
+        reason: UsageFailure,
         insert_label: Option<&str>,
     ) {
         let status = LimitsSectionStatus::Failed {
@@ -254,7 +245,7 @@ impl App {
                 Err(_) => self.apply_limits_fetch(
                     fetch.id,
                     LimitsFetchResult::Failed {
-                        reason: LimitsFailure::Other,
+                        reason: UsageFailure::Other,
                     },
                 ),
             }
@@ -412,8 +403,8 @@ impl App {
                     match fetch_usage_provider(kind, store.as_ref(), client).await {
                         Ok(Some(limits)) => LimitsFetchResult::ProviderReady { limits },
                         Ok(None) => LimitsFetchResult::Unavailable,
-                        Err(_) => LimitsFetchResult::Failed {
-                            reason: LimitsFailure::Other,
+                        Err(error) => LimitsFetchResult::Failed {
+                            reason: error.failure(),
                         },
                     }
                 }),
@@ -501,7 +492,7 @@ impl App {
         self.apply_limits_scroll(terminal, PanelScrollTarget::Absolute(scroll));
     }
 
-    fn mark_usage_failed(&mut self, kind: UsageProviderKind, reason: LimitsFailure) {
+    fn mark_usage_failed(&mut self, kind: UsageProviderKind, reason: UsageFailure) {
         self.usage_limits_live.insert(kind, LiveUsage::Failed);
         let cached_at = usage_limits_cache::load()
             .get(kind)
@@ -544,7 +535,7 @@ fn build_limits_overlay(
                     label: kind.label().into(),
                     status: LimitsSectionStatus::Failed {
                         cached_at_unix: cached.map(|entry| entry.fetched_at_unix),
-                        reason: LimitsFailure::Other,
+                        reason: UsageFailure::Other,
                     },
                     windows: cached
                         .map(|entry| entry.windows.clone())
@@ -589,7 +580,7 @@ fn provider_section(
             label: kind.label().into(),
             status: LimitsSectionStatus::Failed {
                 cached_at_unix: cached.map(|entry| entry.fetched_at_unix),
-                reason: LimitsFailure::Other,
+                reason: UsageFailure::Other,
             },
             windows: cached
                 .map(|entry| entry.windows.clone())
@@ -684,10 +675,10 @@ fn heading_status(section: &LimitsSection, spinner: Option<&str>, now_unix: i64)
             cached_at_unix,
             reason,
         } => match (reason, cached_at_unix) {
-            (LimitsFailure::RateLimited, Some(_)) => "rate limited · showing last known".into(),
-            (LimitsFailure::RateLimited, None) => "rate limited · try again in a moment".into(),
-            (LimitsFailure::Other, Some(_)) => "update failed".into(),
-            (LimitsFailure::Other, None) => "unavailable".into(),
+            (UsageFailure::RateLimited, Some(_)) => "rate limited · showing last known".into(),
+            (UsageFailure::RateLimited, None) => "rate limited · try again in a moment".into(),
+            (UsageFailure::Other, Some(_)) => "update failed".into(),
+            (UsageFailure::Other, None) => "unavailable".into(),
         },
         LimitsSectionStatus::Empty => String::new(),
     }

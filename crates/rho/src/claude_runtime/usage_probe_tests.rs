@@ -168,3 +168,39 @@ fn usage_screen_classification() {
     let expected: Vec<(&str, &str)> = cases.iter().map(|(name, _, kind)| (*name, *kind)).collect();
     pretty_assertions::assert_eq!(observed, expected);
 }
+
+// Covers: only a throttled refresh maps to a rate limit; every other probe
+// error is a plain failure, so `/limits` never claims a throttle it did not see.
+// Owner: pure unit
+#[test]
+fn probe_error_failure_reason() {
+    use super::UsageProbeError;
+    use crate::usage_limits::UsageFailure;
+    let cases = [
+        (
+            UsageProbeError::RefreshFailed {
+                reason: UsageFailure::RateLimited,
+                screen: String::new(),
+            },
+            UsageFailure::RateLimited,
+        ),
+        (
+            UsageProbeError::RefreshFailed {
+                reason: UsageFailure::Other,
+                screen: String::new(),
+            },
+            UsageFailure::Other,
+        ),
+        (UsageProbeError::Unparseable, UsageFailure::Other),
+        (
+            UsageProbeError::TimeoutScreen {
+                what: "panel",
+                screen: String::new(),
+            },
+            UsageFailure::Other,
+        ),
+    ];
+    for (error, expected) in cases {
+        pretty_assertions::assert_eq!(error.failure(), expected, "{error}");
+    }
+}

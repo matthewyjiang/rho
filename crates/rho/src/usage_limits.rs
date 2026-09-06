@@ -51,6 +51,16 @@ type UsageLimitsFuture<'a> = Pin<
     Box<dyn Future<Output = Result<Option<ProviderUsageLimits>, UsageLimitsError>> + Send + 'a>,
 >;
 
+/// Why a live usage read did not return percentages. Surfaced in `/limits`
+/// headings so a throttled read is not mistaken for a broken one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsageFailure {
+    /// The usage endpoint throttled the read; retrying later works.
+    RateLimited,
+    /// Any other failure (network, auth, partial data).
+    Other,
+}
+
 #[derive(Debug, Error)]
 pub enum UsageLimitsError {
     #[error("could not load credentials: {0}")]
@@ -74,6 +84,21 @@ pub enum UsageLimitsError {
 }
 
 impl UsageLimitsError {
+    /// Only an HTTP 429 from the usage endpoint is a rate limit.
+    pub fn failure(&self) -> UsageFailure {
+        match self {
+            Self::Request { source, .. }
+                if source.status() == Some(reqwest::StatusCode::TOO_MANY_REQUESTS) =>
+            {
+                UsageFailure::RateLimited
+            }
+            Self::Request { .. }
+            | Self::Credentials(_)
+            | Self::Refresh { .. }
+            | Self::Unauthorized { .. } => UsageFailure::Other,
+        }
+    }
+
     /// Labels a transport failure with the provider that produced it.
     fn request(provider: &'static str) -> impl Fn(reqwest::Error) -> Self {
         move |source| Self::Request { provider, source }

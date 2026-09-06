@@ -7,7 +7,7 @@ use std::{
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::claude_runtime::usage_probe::RefreshFailure;
+use crate::usage_limits::UsageFailure;
 
 /// Short budgets so hung-child cases fail fast instead of waiting out production values.
 const TEST_BUDGET: ProbeBudget = ProbeBudget {
@@ -215,7 +215,7 @@ exec cat >/dev/null
     let Err(UsageProbeError::RefreshFailed { reason, screen }) = result else {
         panic!("{result:?}");
     };
-    assert_eq!(reason, RefreshFailure::Other);
+    assert_eq!(reason, UsageFailure::Other);
     assert_eq!(
         screen.lines().last(),
         Some("Failed to load usage data: response error")

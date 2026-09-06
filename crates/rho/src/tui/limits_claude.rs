@@ -5,11 +5,11 @@
 //! the shared `/limits` list.
 
 use crate::claude_runtime::rate_limit::RateLimitState;
-use crate::claude_runtime::usage_probe::{self, RefreshFailure, UsageProbeError};
-use crate::usage_limits::UsageLimitWindow;
+use crate::claude_runtime::usage_probe;
+use crate::usage_limits::{UsageFailure, UsageLimitWindow};
 
 use super::{
-    now_unix, App, LimitsFailure, LimitsFetchResult, LimitsOverlay, LimitsSection, LimitsSectionId,
+    now_unix, App, LimitsFetchResult, LimitsOverlay, LimitsSection, LimitsSectionId,
     LimitsSectionStatus, PendingUsageFetch, CLAUDE_CODE_PROVIDER_LABEL,
 };
 
@@ -152,7 +152,7 @@ impl App {
                     Err(error) => {
                         tracing::warn!(error = %error, "claude usage probe failed");
                         LimitsFetchResult::Failed {
-                            reason: probe_failure_reason(&error),
+                            reason: error.failure(),
                         }
                     }
                 }
@@ -175,70 +175,50 @@ pub(super) fn apply_claude_live(app: &mut App, windows: Vec<UsageLimitWindow>) {
     }
 }
 
-/// Only a throttled `/usage` refresh is a rate limit; every other probe error
-/// (spawn, timeout, auth) reads as a plain failure.
-fn probe_failure_reason(error: &UsageProbeError) -> LimitsFailure {
-    match error {
-        UsageProbeError::RefreshFailed {
-            reason: RefreshFailure::RateLimited,
-            ..
-        } => LimitsFailure::RateLimited,
-        UsageProbeError::RefreshFailed {
-            reason: RefreshFailure::Other,
-            ..
-        }
-        | UsageProbeError::BinaryMissing
-        | UsageProbeError::NotSignedIn
-        | UsageProbeError::Unsupported
-        | UsageProbeError::Spawn(_)
-        | UsageProbeError::Cancelled
-        | UsageProbeError::TimeoutScreen { .. }
-        | UsageProbeError::Exited { .. }
-        | UsageProbeError::Unparseable
-        | UsageProbeError::Auth(_) => LimitsFailure::Other,
-    }
-}
-
 /// Fall back to the disk cache after a probe that did not return live data.
 /// `failed` is `Some` when the probe errored. A rate-limited refresh is
 /// surfaced in the heading even when cached windows are shown, so a throttled
 /// read is not mistaken for stale-but-fine data; other failures keep the
 /// quieter "last seen" heading when a cache exists.
-pub(super) fn apply_claude_disk_fallback(app: &mut App, failed: Option<LimitsFailure>) {
+pub(super) fn apply_claude_disk_fallback(app: &mut App, failed: Option<UsageFailure>) {
     let Some(overlay) = app.limits_overlay_mut() else {
         return;
     };
     let state = crate::claude_runtime::rate_limit::load().filter(|state| !state.is_empty());
+    apply_claude_disk_state(overlay, state.as_ref(), failed, now_unix());
+}
+
+pub(super) fn apply_claude_disk_state(
+    overlay: &mut LimitsOverlay,
+    state: Option<&RateLimitState>,
+    failed: Option<UsageFailure>,
+    now_unix: i64,
+) {
     match (state, failed) {
-        (Some(state), Some(reason @ LimitsFailure::RateLimited)) => {
-            overlay.upsert(
-                LimitsSectionId::ClaudeCode,
-                CLAUDE_CODE_PROVIDER_LABEL,
-                claude_windows_from_state(&state, now_unix(), AgeNote::Always),
-                LimitsSectionStatus::Failed {
-                    cached_at_unix: state.section_age_unix(),
+        (Some(state), failed) => {
+            let cached_at_unix = state.section_age_unix();
+            let status = match failed {
+                Some(reason @ UsageFailure::RateLimited) => LimitsSectionStatus::Failed {
+                    cached_at_unix,
                     reason,
                 },
-            );
-        }
-        (Some(state), Some(LimitsFailure::Other) | None) => {
+                Some(UsageFailure::Other) | None => LimitsSectionStatus::Observed {
+                    observed_at_unix: cached_at_unix.unwrap_or(now_unix),
+                },
+            };
             overlay.upsert(
                 LimitsSectionId::ClaudeCode,
                 CLAUDE_CODE_PROVIDER_LABEL,
-                claude_windows_from_state(&state, now_unix(), AgeNote::Always),
-                LimitsSectionStatus::Observed {
-                    observed_at_unix: state.section_age_unix().unwrap_or(now_unix()),
-                },
+                claude_windows_from_state(state, now_unix, AgeNote::Always),
+                status,
             );
         }
-        (None, Some(reason)) => {
-            overlay.apply_failed(
-                LimitsSectionId::ClaudeCode,
-                None,
-                reason,
-                Some(CLAUDE_CODE_PROVIDER_LABEL),
-            );
-        }
+        (None, Some(reason)) => overlay.apply_failed(
+            LimitsSectionId::ClaudeCode,
+            None,
+            reason,
+            Some(CLAUDE_CODE_PROVIDER_LABEL),
+        ),
         (None, None) => overlay.remove_id(LimitsSectionId::ClaudeCode),
     }
 }
