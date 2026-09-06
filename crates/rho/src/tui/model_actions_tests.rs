@@ -533,6 +533,7 @@ fn empty_model_picker_wait_clause_follows_busy_session() {
             let mut app = test_app();
             setup(&mut app);
             app.open_config_conversation_model_picker_during_turn();
+            assert!(app.streams.pending_notices.is_empty());
             (name, last_notice(&app).to_string())
         });
 
@@ -567,7 +568,7 @@ fn empty_model_picker_during_turn_does_not_split_a_live_stream() {
         app.streams
             .push_delta(StreamKind::Assistant, " continues", Instant::now());
         app.finish_streams();
-        app.reset_streams();
+        assert!(app.streams.pending_notices.is_empty());
 
         assert!(
             matches!(

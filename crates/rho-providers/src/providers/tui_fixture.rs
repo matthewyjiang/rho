@@ -145,7 +145,13 @@ async fn fixture_stream(
         return response;
     }
     if prompt == "fixture background questionnaire" {
-        fixture_sleep(&request.cancellation, Duration::from_secs(2)).await?;
+        // The PTY releases this only after observing the child's open form.
+        // Child startup can outlast any fixed delay on a loaded CI worker.
+        release::wait_for_release_or_cancel(
+            ".rho-fixture-release-questionnaire-parent",
+            &request.cancellation,
+        )
+        .await?;
     }
     let response = fixture_response(&request)?;
     let ModelResponse::Assistant(blocks) = &response;

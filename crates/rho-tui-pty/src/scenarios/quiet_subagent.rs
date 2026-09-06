@@ -173,7 +173,9 @@ fn streaming_notice(harness: &mut PtyHarness) -> Result<()> {
     let end = screen
         .find("The checks have passed without interruption.")
         .context("intact stream suffix")?;
-    let notice = screen.find(") notice").context("delivered child notice")?;
+    let notice = screen
+        .find("quiet-cache-inspected")
+        .context("delivered child message body")?;
     let follow_up = screen
         .find("quiet delivery requests=1 occurrences=[1, 0, 0]")
         .context("parent incorporated the notice")?;

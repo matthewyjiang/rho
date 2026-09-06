@@ -139,6 +139,13 @@ pub(super) async fn intercept(
         "fixture background questionnaire"
             if tool_result(request, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID).is_none() =>
         {
+            // Clear before spawning: the PTY may release as soon as the child
+            // opens its questionnaire, even before the parent resumes here.
+            if let Err(error) =
+                super::release::consume_release(".rho-fixture-release-questionnaire-parent")
+            {
+                return Some(Err(error));
+            }
             Some(completed_tool_call(
                 BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID,
                 "agent",

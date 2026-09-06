@@ -95,7 +95,6 @@ impl App {
             other => {
                 if should_finish_streams_before_recording(&other) {
                     self.finish_streams();
-                    self.flush_pending_notices();
                 }
                 if let Some(entry) = self.record_agent_event(other) {
                     self.insert_entry(&entry);
@@ -466,6 +465,13 @@ impl App {
         }
     }
     pub(super) fn finish_streams(&mut self) -> bool {
+        let text_finished = self.finish_stream_text();
+        let notices_finished = self.flush_pending_notices();
+        text_finished || notices_finished
+    }
+
+    /// Final answers may still supply missing text; reconcile it before notices.
+    pub(super) fn finish_stream_text(&mut self) -> bool {
         let reasoning_finished = self.finish_stream(StreamKind::Reasoning);
         let assistant_finished = self.finish_stream(StreamKind::Assistant);
         self.streams.current_stream_kind = None;
@@ -662,22 +668,26 @@ impl App {
     }
 
     pub(super) fn record_inserted_entry(&mut self, entry: Entry) {
-        // Boundary replies and other notifications can overtake queued runtime
-        // deltas. A local stream flush is not enough: keep notices out of the
-        // transcript until an ordered lifecycle event or turn finalization has
-        // consumed both those deltas and the typewriter's held text.
+        // Runtime boundary displays arrive through BoundaryInputApplied in
+        // event order. Local notices must also wait while a message is open,
+        // including between deltas when no text remains in the typewriter.
         match entry {
-            Entry::Notice(text) if self.is_provider_turn_ui() => {
+            Entry::Notice(text)
+                if self.streams.current_stream_kind.is_some()
+                    || self.streams.loading_streams_active() =>
+            {
                 self.streams.pending_notices.push(text);
             }
             entry => self.push_transcript_entry(entry),
         }
     }
 
-    fn flush_pending_notices(&mut self) {
+    fn flush_pending_notices(&mut self) -> bool {
+        let changed = !self.streams.pending_notices.is_empty();
         for notice in std::mem::take(&mut self.streams.pending_notices) {
             self.push_transcript_entry(Entry::Notice(notice));
         }
+        changed
     }
 
     fn reset_attempt_accounting(&mut self) {

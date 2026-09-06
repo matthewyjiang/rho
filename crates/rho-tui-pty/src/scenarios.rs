@@ -843,6 +843,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     quiet_subagent::GOAL_ACTION_RETRY_SCENARIO,
     #[cfg(unix)]
     quiet_subagent::RUNNING_NOTICES_SCENARIO,
+    #[cfg(unix)]
     quiet_subagent::STREAMING_NOTICE_SCENARIO,
     #[cfg(unix)]
     quiet_subagent::COMPLETION_AFTER_NEW_SCENARIO,
