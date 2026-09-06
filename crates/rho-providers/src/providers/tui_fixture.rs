@@ -123,7 +123,7 @@ async fn fixture_stream(
     if let Some(response) = agent_message::intercept(&prompt, &request).await {
         return response;
     }
-    if let Some(response) = quiet_subagent::intercept(&prompt, &request).await {
+    if let Some(response) = quiet_subagent::intercept(&prompt, &request, &events).await {
         return response;
     }
     if let Some(response) = docs_demo::intercept(&prompt, &request, &events).await {

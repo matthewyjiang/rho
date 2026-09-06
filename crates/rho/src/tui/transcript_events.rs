@@ -62,6 +62,7 @@ fn should_finish_streams_before_recording(event: &ViewModelEvent) -> bool {
 
 impl App {
     pub(super) fn reset_streams(&mut self) {
+        self.flush_pending_notices();
         self.streams.reset();
         // Discard an unfinished reasoning phase. Callers that should keep a
         // summary must finalize before reset (for example `finish_streams`).
@@ -94,6 +95,7 @@ impl App {
             other => {
                 if should_finish_streams_before_recording(&other) {
                     self.finish_streams();
+                    self.flush_pending_notices();
                 }
                 if let Some(entry) = self.record_agent_event(other) {
                     self.insert_entry(&entry);
@@ -660,7 +662,22 @@ impl App {
     }
 
     pub(super) fn record_inserted_entry(&mut self, entry: Entry) {
-        self.push_transcript_entry(entry);
+        // Boundary replies and other notifications can overtake queued runtime
+        // deltas. A local stream flush is not enough: keep notices out of the
+        // transcript until an ordered lifecycle event or turn finalization has
+        // consumed both those deltas and the typewriter's held text.
+        match entry {
+            Entry::Notice(text) if self.is_provider_turn_ui() => {
+                self.streams.pending_notices.push(text);
+            }
+            entry => self.push_transcript_entry(entry),
+        }
+    }
+
+    fn flush_pending_notices(&mut self) {
+        for notice in std::mem::take(&mut self.streams.pending_notices) {
+            self.push_transcript_entry(Entry::Notice(notice));
+        }
     }
 
     fn reset_attempt_accounting(&mut self) {
