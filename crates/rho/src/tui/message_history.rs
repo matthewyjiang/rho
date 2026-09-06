@@ -8,6 +8,25 @@ use {
 
 use super::{feed_image::FeedImage, ChatMedia, Entry, ToolEntry};
 
+pub(super) fn transcript_entries(
+    transcript: crate::display_transcript::DisplayTranscript,
+) -> Vec<Entry> {
+    use crate::{display_transcript::DisplayRow, presentation::Presentation};
+    transcript
+        .0
+        .into_iter()
+        .map(|row| match row {
+            DisplayRow::Message(card) => Entry::Tool(ToolEntry::new(
+                Presentation::Message(card),
+                /*expanded*/ false,
+                /*image*/ None,
+                /*started_at*/ None,
+            )),
+            DisplayRow::Notice(text) => Entry::Notice(text),
+        })
+        .collect()
+}
+
 pub(super) fn text_blocks(blocks: &[ContentBlock]) -> String {
     blocks
         .iter()
@@ -92,7 +111,13 @@ pub(super) fn transcript_entries_from_messages(
     let mut pending_tools = BTreeMap::<String, ToolCall>::new();
     for message in messages {
         match message {
-            Message::System(_) => {}
+            Message::System(text) => {
+                if let Some(transcript) =
+                    crate::display_transcript::DisplayTranscript::from_display(text)
+                {
+                    entries.extend(transcript_entries(transcript));
+                }
+            }
             Message::User(blocks) => {
                 let text = render_message_blocks(blocks);
                 if !text.is_empty() {

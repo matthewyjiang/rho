@@ -1,5 +1,6 @@
 //! Covers unsolicited parent inference from ordinary child notices.
-//! Owner: interactive turn-boundary scheduling, through real delegated tools.
+//! Also covers incoming child message bodies being lost from the transcript.
+//! Owner: interactive turn-boundary delivery, through real delegated tools.
 
 use std::{
     collections::HashSet,
@@ -38,6 +39,19 @@ fn quiet_notices_then_action(harness: &mut PtyHarness) -> Result<()> {
     // The live child never completes. Only request_parent_action can wake this
     // turn; both earlier notices must arrive exactly once in that same request.
     harness.wait_for_text("quiet delivery requests=1 occurrences=[1, 1, 1]", STREAM)?;
+    // Provider delivery alone does not prove the user can read the messages.
+    // These are the child tool payloads, not card titles or the parent's reply.
+    for message in [
+        "quiet-cache-inspected",
+        "quiet-routing-inspected",
+        "quiet-decision-required",
+    ] {
+        harness.wait_for_text(message, STREAM)?;
+    }
+    harness.inject_key(&crate::keys::Key::Ctrl('o'))?;
+    harness.wait_for_text("attach: rho attach", STREAM)?;
+    harness.inject_key(&crate::keys::Key::Ctrl('o'))?;
+    harness.wait_for_text_gone("attach: rho attach", STREAM)?;
     Ok(())
 }
 
@@ -87,6 +101,29 @@ fn goal_action_retry(harness: &mut PtyHarness) -> Result<()> {
     harness.wait_for_text("quiet delivery requests=2 occurrences=[0, 0, 1]", STREAM)?;
     harness.submit_text("/goal clear")?;
     harness.wait_for_text("goal cleared", STREAM)?;
+    resume_and_check_message(harness, "quiet-decision-required")?;
+    Ok(())
+}
+
+// The accepted failed turn owns the receipt. A retry must not duplicate it on
+// resume, and folding a notice into a human prompt must not discard it.
+fn resume_and_check_message(harness: &mut PtyHarness, message: &str) -> Result<()> {
+    harness.submit_text("/new")?;
+    harness.wait_for_text("new session", STREAM)?;
+    harness.submit_text("/resume")?;
+    harness.wait_for_text("Resume session", STREAM)?;
+    harness.inject_key(&crate::keys::Key::Enter)?;
+    harness.wait_for_text(message, STREAM)?;
+    let rows = harness.screen().rows_text();
+    let message_rows = rows
+        .iter()
+        .filter(|row| row.contains(message))
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        message_rows.len() == 1 && message_rows[0].trim_start().starts_with('│'),
+        "resumed message must appear once as an incoming card:\n{}",
+        harness.screen().contents(),
+    );
     Ok(())
 }
 
@@ -107,6 +144,7 @@ fn running_notices(harness: &mut PtyHarness) -> Result<()> {
     harness.wait_for_text("quiet running parent completed", STREAM)?;
     harness.submit_text("fixture quiet request count")?;
     harness.wait_for_text("quiet extra requests=0 carried notices=1", STREAM)?;
+    resume_and_check_message(harness, "quiet-cache-inspected")?;
     Ok(())
 }
 
@@ -168,7 +206,7 @@ pub(super) const RUNNING_NOTICES_SCENARIO: Scenario = Scenario::new(
 
 pub(super) const QUIET_SUBAGENT_SCENARIO: Scenario = Scenario::new(
     "quiet_subagent_notices",
-    "Keep ordinary child notices queued and coalesce them into the requested parent turn",
+    "Queue child notices, coalesce their delivery, and show their bodies in the transcript",
     DEFAULT_SIZE,
     &[
         Step::WaitText {

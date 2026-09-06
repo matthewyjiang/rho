@@ -1,8 +1,8 @@
-//! Borderless message cards. Routing and task selection belong to the presenter.
+//! Message cards. Routing and task selection belong to the presenter.
 
 use ratatui::text::{Line, Span};
 
-use crate::presentation::{MessageCard, MessageDelivery};
+use crate::presentation::{MessageCard, MessageDelivery, MessagePreview, MessageTone};
 
 use super::{
     render::{push_wrapped_text, truncate_one_line, LineFill},
@@ -16,46 +16,59 @@ pub(super) fn message_card_sections(
     preview_lines: usize,
     expanded: bool,
 ) -> CardSections {
-    let content_width = width.saturating_sub(2).max(1);
+    let received = matches!(message.delivery, MessageDelivery::Received);
+    let rail_width = if received { 2 } else { 0 };
+    let content_width = width.saturating_sub(rail_width + 2).max(1);
+    let tone = match message.tone {
+        MessageTone::Neutral => Theme::tool_primary(),
+        MessageTone::Accent => Theme::accent(),
+        MessageTone::Success => Theme::success(),
+        MessageTone::Warning => Theme::warning(),
+        MessageTone::Error => Theme::error(),
+    };
     let mut lines = vec![Line::from(vec![
-        Span::styled("↳ ", Theme::dim()),
+        Span::styled(if received { "↰ " } else { "↳ " }, tone),
         Span::styled(
             truncate_one_line(&safe_message_text(&message.title), content_width),
-            Theme::tool_primary(),
+            tone,
         ),
     ])];
     let delivery = match message.delivery {
         MessageDelivery::Queued => "queued",
+        MessageDelivery::Received => "received",
     };
-    let routing = format!("{} → {} · {delivery}", message.sender, message.recipient);
+    let mut routing = format!("{} → {} · {delivery}", message.sender, message.recipient);
+    if let Some(reference) = &message.reference {
+        routing.push_str(&format!(" · {reference}"));
+    }
     push_indented(&mut lines, &routing, content_width, Theme::dim());
 
     let mut body = Vec::new();
     push_indented(&mut body, &message.body, content_width, Theme::text());
     let budget = preview_lines.max(1);
     let hidden = body.len().saturating_sub(budget);
-    if !expanded {
+    let show_full_body = expanded || matches!(message.preview, MessagePreview::Full);
+    if !show_full_body {
         body.truncate(budget);
     }
     if expanded {
-        push_indented(
-            &mut body,
-            &format!("task: {}", message.title),
-            content_width,
-            Theme::dim(),
-        );
         for detail in &message.details {
             push_indented(&mut body, detail, content_width, Theme::dim());
         }
     }
     let hint = if expanded {
         "Ctrl+O collapse".to_string()
-    } else if hidden > 0 {
+    } else if hidden > 0 && !show_full_body {
         format!("… {hidden} more lines · Ctrl+O expand")
     } else {
         "Ctrl+O details".to_string()
     };
     push_indented(&mut body, &hint, content_width, Theme::dim());
+    if received {
+        for line in lines.iter_mut().chain(body.iter_mut()) {
+            line.spans.insert(0, Span::styled("│ ", tone));
+        }
+    }
     CardSections {
         header: lines,
         facts: Vec::new(),

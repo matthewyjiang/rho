@@ -20,6 +20,10 @@ fn finished_presentations_preserve_journal_shape() {
         sender: "parent".into(),
         recipient: "reviewer".into(),
         delivery: MessageDelivery::Queued,
+        tone: crate::presentation::MessageTone::Neutral,
+        preview: crate::presentation::MessagePreview::Truncated,
+        visibility: crate::presentation::MessageVisibility::Activity,
+        reference: None,
         body: "Check the queued route.".into(),
         details: vec!["run: abc123".into()],
     });

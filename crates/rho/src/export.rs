@@ -391,7 +391,13 @@ fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
     for entry in messages {
         match &entry.message {
             Message::System(text) => {
-                push_system(html, text);
+                if let Some(transcript) =
+                    crate::display_transcript::DisplayTranscript::from_display(text)
+                {
+                    push_system(html, &transcript.plain_text());
+                } else {
+                    push_system(html, text);
+                }
                 previous_role = None;
             }
             Message::User(blocks) => {

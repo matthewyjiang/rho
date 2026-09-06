@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+#[path = "interactive_runtime_persistence_tests.rs"]
+mod persistence;
+
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ContentBlock, Message, ModelIdentity, ModelResponse, ModelUsage},
@@ -11,8 +14,8 @@ use rho_sdk::{
 };
 
 use super::{
-    build_runtime, InteractiveRunController, InteractiveRuntime, InteractiveSessionController,
-    ProviderController, RuntimeBuildOptions,
+    build_runtime, DisplayCommit, InteractiveRunController, InteractiveRuntime,
+    InteractiveSessionController, ProviderController, RuntimeBuildOptions,
 };
 use crate::{
     agent::{AgentCapabilities, ToolCapability},
@@ -896,8 +899,20 @@ async fn failed_turn_does_not_duplicate_the_previous_assistant_in_display_histor
         .start(UserInput::text("failed prompt"), None)
         .await
         .unwrap();
+    assert_eq!(
+        interactive.take_last_turn_display_commit(),
+        DisplayCommit::Unsaved
+    );
     while interactive.next_event().await.is_some() {}
     assert!(interactive.finish_run().await.is_err());
+    assert_eq!(
+        interactive.take_last_turn_display_commit(),
+        DisplayCommit::Complete
+    );
+    assert_eq!(
+        interactive.take_last_turn_display_commit(),
+        DisplayCommit::Unsaved
+    );
     let committed_assistant = interactive.history()[1].clone();
 
     let (_, histories) =

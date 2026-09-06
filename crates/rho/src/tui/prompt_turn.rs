@@ -1,12 +1,16 @@
+use super::subagent_delivery::TurnBoundaryDelivery;
 use super::*;
+use crate::app::interactive_runtime::DisplayCommit;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct FailedTurn {
     input: rho_sdk::UserInput,
-    display_user: Option<Message>,
+    display_user: Vec<Message>,
+    display_commit: DisplayCommit,
     notification_context: Option<String>,
     initial_tool_call: Option<rho_sdk::model::ToolCall>,
     generate_session_title_after_completion: bool,
+    session_title_user: Option<String>,
     /// Keep action-request retries runnable even after delivery consumed the notice.
     parent_action_required: bool,
 }
@@ -26,10 +30,12 @@ impl FailedTurn {
 
         Ok(Self {
             input: rho_sdk::UserInput::content(model_content)?,
-            display_user: Some(Message::User(display_content)),
+            display_user: vec![Message::User(display_content)],
+            display_commit: DisplayCommit::Unsaved,
             notification_context: None,
             initial_tool_call: prompt.initial_tool_call,
             generate_session_title_after_completion: false,
+            session_title_user: None,
             parent_action_required: false,
         })
     }
@@ -41,8 +47,12 @@ impl FailedTurn {
     }
 
     fn session_title_user_message(&self) -> String {
-        let Some(Message::User(blocks)) = &self.display_user else {
-            return String::new();
+        let Some(Message::User(blocks)) = self
+            .display_user
+            .iter()
+            .find(|message| matches!(message, Message::User(_)))
+        else {
+            return self.session_title_user.clone().unwrap_or_default();
         };
         blocks
             .iter()
@@ -52,6 +62,31 @@ impl FailedTurn {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Retry model input even when its display is already saved. Unsaved display
+    /// must travel with the next attempt so persistence can recover it.
+    fn prepare_retry(&mut self) {
+        if self.generate_session_title_after_completion
+            && !matches!(self.display_commit, DisplayCommit::Unsaved)
+        {
+            self.session_title_user = Some(self.session_title_user_message());
+        }
+        match std::mem::take(&mut self.display_commit) {
+            DisplayCommit::Unsaved => {}
+            DisplayCommit::Complete => self.display_user.clear(),
+            DisplayCommit::Checkpoint(saved) => {
+                for message in saved {
+                    if let Some(index) = self
+                        .display_user
+                        .iter()
+                        .position(|display| display == &message)
+                    {
+                        self.display_user.remove(index);
+                    }
+                }
+            }
+        }
     }
 
     fn attach_notification_context(&mut self, notification: String) {
@@ -76,53 +111,9 @@ enum PromptTurnRequest {
     New {
         prompt: TurnPrompt,
         media: Vec<ChatMedia>,
-        /// Idle completion turns already put boundary content in the prompt.
-        /// Hold only the restorable batch until provider start commits.
-        pre_drained_batch: Option<super::subagent_questionnaires::TurnBoundaryBatch>,
     },
+    Boundary(TurnBoundaryDelivery),
     Retry(FailedTurn),
-}
-
-/// Drained turn-boundary work held until provider start accepts the input.
-enum RestorableTurnBoundary {
-    /// Folded into a real user/command prompt; show a notice on commit.
-    Folded(super::subagent_questionnaires::TurnBoundaryDelivery),
-    /// Idle synthetic turn; the prompt already carries model/display text.
-    Standalone(super::subagent_questionnaires::TurnBoundaryBatch),
-}
-
-impl RestorableTurnBoundary {
-    fn into_batch(self) -> super::subagent_questionnaires::TurnBoundaryBatch {
-        match self {
-            Self::Folded(delivery) => delivery.batch,
-            Self::Standalone(batch) => batch,
-        }
-    }
-
-    fn folded_model(&self) -> Option<&str> {
-        match self {
-            Self::Folded(delivery) => Some(delivery.model.as_str()),
-            Self::Standalone(_) => None,
-        }
-    }
-
-    fn commit_display(&self) -> Option<&str> {
-        match self {
-            Self::Folded(delivery) => Some(delivery.display.as_str()),
-            Self::Standalone(_) => None,
-        }
-    }
-
-    fn notice_count(&self) -> usize {
-        self.batch().notice_count()
-    }
-
-    fn batch(&self) -> &super::subagent_questionnaires::TurnBoundaryBatch {
-        match self {
-            Self::Folded(delivery) => &delivery.batch,
-            Self::Standalone(batch) => batch,
-        }
-    }
 }
 
 async fn questionnaire_reply(
@@ -160,11 +151,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TurnOutcome> {
         self.run_prompt_turn_request(
-            PromptTurnRequest::New {
-                prompt,
-                media,
-                pre_drained_batch: None,
-            },
+            PromptTurnRequest::New { prompt, media },
             authorization,
             terminal,
             agent,
@@ -172,23 +159,16 @@ impl App {
         .await
     }
 
-    /// Runs a turn whose prompt body is already a drained turn-boundary batch
-    /// (idle completion delivery). The batch is restored only if provider start
-    /// never accepts the input.
+    /// Runs a prepared idle delivery, restoring its batch if provider start fails.
     pub(super) async fn run_turn_boundary_prompt_turn(
         &mut self,
-        prompt: TurnPrompt,
-        batch: super::subagent_questionnaires::TurnBoundaryBatch,
+        delivery: TurnBoundaryDelivery,
         authorization: super::send_confirm::SendAuthorization,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TurnOutcome> {
         self.run_prompt_turn_request(
-            PromptTurnRequest::New {
-                prompt,
-                media: Vec::new(),
-                pre_drained_batch: Some(batch),
-            },
+            PromptTurnRequest::Boundary(delivery),
             authorization,
             terminal,
             agent,
@@ -219,16 +199,14 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<TurnOutcome> {
-        anyhow::ensure!(
-            authorization.matches(&agent.provider_identity()),
-            "send authorization became stale before provider start"
-        );
-        let (mut failed_turn, pre_drained_batch) = match request {
-            PromptTurnRequest::New {
-                prompt,
-                media,
-                pre_drained_batch,
-            } => {
+        if !authorization.matches(&agent.provider_identity()) {
+            if let PromptTurnRequest::Boundary(delivery) = request {
+                self.restore_turn_boundary_batch(agent, delivery.batch);
+            }
+            anyhow::bail!("send authorization became stale before provider start");
+        }
+        let (mut failed_turn, prepared_boundary) = match request {
+            PromptTurnRequest::New { prompt, media } => {
                 if !prompt.history.is_empty() {
                     self.push_input_history(&prompt.history);
                 }
@@ -250,9 +228,31 @@ impl App {
                 let mut failed_turn = FailedTurn::from_prompt(prompt, media)?;
                 failed_turn.generate_session_title_after_completion =
                     generate_session_title_after_completion;
-                (failed_turn, pre_drained_batch)
+                (failed_turn, None)
             }
-            PromptTurnRequest::Retry(failed_turn) => {
+            PromptTurnRequest::Boundary(delivery) => {
+                if let Err(error) = self.ensure_session(agent) {
+                    self.restore_turn_boundary_batch(agent, delivery.batch);
+                    return Err(error);
+                }
+                self.info
+                    .services
+                    .herdr
+                    .report_session(self.info.session.session_id.as_deref())
+                    .await;
+                let failed_turn = FailedTurn {
+                    input: rho_sdk::UserInput::text(delivery.model.clone()),
+                    display_user: vec![delivery.transcript.display_message()],
+                    display_commit: DisplayCommit::Unsaved,
+                    notification_context: None,
+                    initial_tool_call: None,
+                    generate_session_title_after_completion: false,
+                    session_title_user: None,
+                    parent_action_required: false,
+                };
+                (failed_turn, Some(delivery))
+            }
+            PromptTurnRequest::Retry(mut failed_turn) => {
                 self.ensure_session(agent)?;
                 self.info
                     .services
@@ -262,36 +262,29 @@ impl App {
                 self.insert_entry(&Entry::Notice(
                     "retrying the previous goal turn without duplicating the prompt".into(),
                 ));
+                failed_turn.prepare_retry();
                 (failed_turn, None)
             }
         };
 
-        // Background completions pending at this turn boundary ride in the
-        // same model request. This runs after retry delays too, while the
-        // persisted display remains the real user-visible prompt. The drained
-        // batch stays restorable until provider start commits delivery.
-        // Idle completion turns pass a pre-drained batch whose content is already
-        // the prompt body; do not collect or fold again.
-        let mut pending_boundary = match pre_drained_batch {
-            Some(batch) => Some(RestorableTurnBoundary::Standalone(batch)),
-            None => self
-                .collect_turn_boundary_prompts(agent)
-                .map(RestorableTurnBoundary::Folded),
-        };
+        // A prepared standalone turn already owns its model and display input.
+        // Human turns and retries fold new arrivals in without replacing the human.
+        let mut pending_boundary = prepared_boundary.or_else(|| {
+            let delivery = self.collect_turn_boundary_prompts(agent)?;
+            failed_turn.attach_notification_context(delivery.model.clone());
+            failed_turn
+                .display_user
+                .push(delivery.transcript.display_message());
+            Some(delivery)
+        });
         failed_turn.parent_action_required |= pending_boundary
             .as_ref()
-            .is_some_and(|boundary| boundary.batch().requires_parent_action());
-        if let Some(model) = pending_boundary
-            .as_ref()
-            .and_then(RestorableTurnBoundary::folded_model)
-        {
-            failed_turn.attach_notification_context(model.to_owned());
-        }
+            .is_some_and(|boundary| boundary.batch.requires_parent_action());
         let model_input = match failed_turn.model_input() {
             Ok(input) => input,
             Err(error) => {
                 if let Some(boundary) = pending_boundary.take() {
-                    self.restore_turn_boundary_batch(agent, boundary.into_batch());
+                    self.restore_turn_boundary_batch(agent, boundary.batch);
                 }
                 return Err(error.into());
             }
@@ -320,7 +313,7 @@ impl App {
         let mut boundary_requests = match agent
             .start_with_boundary_inputs(
                 model_input,
-                failed_turn.display_user.clone(),
+                Some(failed_turn.display_user.clone()),
                 failed_turn.initial_tool_call.clone(),
             )
             .await
@@ -332,15 +325,12 @@ impl App {
             }
         };
         // Provider start accepted the input; commit drained boundary delivery.
-        // Folded deliveries surface a notice; standalone idle completions already
-        // used the batch as the user entry, so committing is just dropping it.
-        // Either way, free end-to-end notice budget for delivered child notices.
+        // Both folded and standalone deliveries use message cards, never a
+        // synthetic human turn. Free notice budget only after acceptance.
         if let Some(boundary) = pending_boundary.take() {
-            let delivered_notices = boundary.notice_count();
-            if let Some(display) = boundary.commit_display() {
-                self.insert_entry(&Entry::Notice(format!(
-                    "delivered with this message:\n{display}"
-                )));
+            let delivered_notices = boundary.batch.notice_count();
+            for entry in super::message_history::transcript_entries(boundary.transcript) {
+                self.insert_entry(&entry);
             }
             self.subagent_inbox
                 .commit_delivered_notices(delivered_notices);
@@ -364,6 +354,7 @@ impl App {
         let mut pending_input_request = None;
         let mut approval_receiver_open = agent.approval_receiver().is_some();
         let mut terminal_event = false;
+        let mut pending_boundary_display = VecDeque::new();
         let mut sdk_failure = None;
         let mut questionnaire_cancelled_by_user = false;
         while !terminal_event {
@@ -462,7 +453,13 @@ impl App {
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;
                 }
                 Some(request) = boundary_requests.recv() => {
-                    self.deliver_running_boundary(request, agent).await;
+                    if let Some((model, transcript)) = self.deliver_running_boundary(request, agent).await {
+                        // Acceptance is not a durable save. Retain findings and
+                        // display receipts if this run later rolls back and retries.
+                        failed_turn.attach_notification_context(model);
+                        failed_turn.display_user.push(transcript.display_message());
+                        pending_boundary_display.push_back(transcript);
+                    }
                 }
                 _ = tokio::time::sleep_until(frame_deadline) => {
                     self.drain_stream_tick(terminal)?;
@@ -489,6 +486,15 @@ impl App {
                             ViewModelEvent::ContextUsage(context),
                             terminal,
                         )?;
+                    }
+                    if matches!(&event, rho_sdk::RunEvent::BoundaryInputApplied { .. }) {
+                        if let Some(transcript) = pending_boundary_display.pop_front() {
+                            self.finish_streams();
+                            for entry in super::message_history::transcript_entries(transcript) {
+                                self.insert_entry(&entry);
+                            }
+                            changed = true;
+                        }
                     }
                     let view_events = adapter.translate(event);
                     for view_event in view_events {
@@ -599,6 +605,7 @@ impl App {
         self.turn.clear_tool_calls();
         tool_call_active.store(false, Ordering::SeqCst);
         let result = agent.finish_run().await;
+        failed_turn.display_commit = agent.take_last_turn_display_commit();
         let inline_shell_error = match self.finish_all_inline_shells().await {
             Ok(()) => self.insert_deferred_inline_shell_context(agent).err(),
             Err(error) => Some(error),
@@ -693,6 +700,13 @@ impl App {
                 outcome
             }
         };
+        // Cancellation can acknowledge a boundary without applying it. Flush
+        // leftovers only after final assistant text and interrupted tools.
+        for transcript in pending_boundary_display {
+            for entry in super::message_history::transcript_entries(transcript) {
+                self.insert_entry(&entry);
+            }
+        }
         let completed = matches!(outcome, TurnOutcome::Completed);
         if completed {
             agent.mark_live_context_warm();
@@ -764,7 +778,7 @@ impl App {
     fn abandon_provider_turn_start(
         &mut self,
         agent: &mut InteractiveRuntime,
-        pending_boundary: &mut Option<RestorableTurnBoundary>,
+        pending_boundary: &mut Option<TurnBoundaryDelivery>,
     ) {
         self.end_busy_ui();
         self.turn.stop_loading();
@@ -775,7 +789,7 @@ impl App {
         self.turn.set_activity_phase(ActivityPhase::default());
         self.set_status("ready");
         if let Some(boundary) = pending_boundary.take() {
-            self.restore_turn_boundary_batch(agent, boundary.into_batch());
+            self.restore_turn_boundary_batch(agent, boundary.batch);
         }
     }
 

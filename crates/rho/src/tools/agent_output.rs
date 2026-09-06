@@ -169,7 +169,8 @@ pub fn notification_prompts(notifications: &[SubagentNotification]) -> (String, 
 }
 
 pub(crate) fn merge_notification_context(existing: Option<&str>, newer: &str) -> String {
-    debug_assert!(newer.len() <= MODEL_NOTIFICATION_BYTES);
+    // The retention budget applies to earlier context. A boundary can combine
+    // multiple bounded sources; never truncate or reject its accepted findings.
     let Some(existing) = existing else {
         return newer.to_string();
     };

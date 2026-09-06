@@ -111,6 +111,14 @@ Background Rho agents with an interactive parent have two non-blocking messaging
 
 Pending notices share a batch with action requests and completion notifications. Multiple notices already waiting at a boundary become one parent turn, not one turn per message. While the parent is working, notices wait for a safe provider boundary rather than interrupt streaming or tool work. A parent pursuing a goal can also handle action requests while waiting for children to finish. Idle delivery still respects input and confirmation gates.
 
+Delivered messages appear in left-rail transcript cards, distinct from human input.
+Each card shows the task, sender, run ID, event type, and message body. Updates and
+results use the configured tool-output preview length; Ctrl+O expands the full
+body and run details. Action requests and failed results show their full body
+without expansion. Incoming cards remain visible in Zen mode. The event label
+distinguishes an update from a completed, failed, or stopped run; receiving an
+update does not imply that the child finished or paused.
+
 Neither tool waits for a reply. Use `questionnaire` when a human must answer before the child can proceed; use `agents` action `message` to steer a child in response to an action request. Both child messaging tools and `agents` action `message` reject bodies over 8 KiB after trimming. Queued notices retain their end-to-end queue budget until delivery or discard. Ordinary notices are admitted while fewer than 32 notices are outstanding; action requests can use one additional reserved slot, so an ordinary backlog cannot prevent the request that wakes the parent to deliver it. Both tools fail explicitly when their allowance is full.
 
 ### Background delivery during a turn

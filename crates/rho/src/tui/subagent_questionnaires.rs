@@ -4,10 +4,13 @@ use futures_util::FutureExt;
 use ratatui::DefaultTerminal;
 use tokio::sync::oneshot;
 
+use super::subagent_delivery::{TurnBoundaryBatch, TurnBoundaryDelivery};
+use crate::display_transcript::DisplayTranscript;
+
 use super::{
-    event_adapter, questionnaire::QuestionnaireResponseChannel, turn_prompt::TurnPrompt, App,
-    ComposerMode, Entry, InteractiveRuntime, PendingSubagentQuestionnaire, QuestionAnswerRequest,
-    QuestionnaireReply, TurnOutcome,
+    event_adapter, questionnaire::QuestionnaireResponseChannel, App, ComposerMode, Entry,
+    InteractiveRuntime, PendingSubagentQuestionnaire, QuestionAnswerRequest, QuestionnaireReply,
+    TurnOutcome,
 };
 
 #[derive(Clone, Copy)]
@@ -41,10 +44,10 @@ impl App {
         &mut self,
         request: rho_sdk::BoundaryInputRequest,
         agent: &mut InteractiveRuntime,
-    ) {
+    ) -> Option<(String, DisplayTranscript)> {
         if request.session_id() != agent.session_id() {
             request.respond(None).await;
-            return;
+            return None;
         }
         let trigger = match request.boundary() {
             rho_sdk::InputBoundary::BeforeProvider => BoundaryTrigger::ScheduledTurn,
@@ -68,20 +71,26 @@ impl App {
             Ok(captured) => captured,
             Err(receipt) => {
                 receipt.await;
-                return;
+                return None;
             }
         };
-        let delivery = batch.render();
+        let delivery = batch.prepare(agent);
         let input = rho_sdk::UserInput::text(format!(
-                "[runtime notifications for session {} run {}]\nThis is internal background context, not a human message or a new task. Incorporate unseen findings into the ongoing work.\n\n{}",
-                request.session_id(), request.run_id(), delivery.model,
-            ));
+            "[runtime notifications for session {} run {}]\nThis is internal background context, not a human message or a new task. Incorporate unseen findings into the ongoing work.\n\n{}",
+            request.session_id(),
+            request.run_id(),
+            delivery.model,
+        ));
+        let model_message = rho_sdk::model::Message::User(input.blocks().to_vec());
         if request.respond(Some(input)).await {
+            let transcript = delivery.transcript;
+            agent.record_boundary_display(model_message, transcript.display_message());
             self.subagent_inbox
                 .commit_delivered_notices(delivery.batch.notice_count());
-            self.insert_entry(&Entry::Notice(delivery.display));
+            Some((delivery.model, transcript))
         } else {
             self.restore_turn_boundary_batch(agent, delivery.batch);
+            None
         }
     }
 
@@ -185,7 +194,7 @@ impl App {
             self.restore_turn_boundary_batch(agent, batch);
             None
         } else {
-            Some(batch.render())
+            Some(batch.prepare(agent))
         }
     }
 
@@ -411,18 +420,15 @@ impl App {
         // matter how many runs finished while the parent was busy. The send
         // gate owns the drained batch until confirmation; provider start owns
         // restoration after that point.
-        let submission = super::send_confirm::SendSubmission::turn_boundary(
-            TurnPrompt::standard(delivery.model, delivery.display),
-            delivery.batch,
-        );
+        let submission = super::send_confirm::SendSubmission::turn_boundary(delivery);
         let Some(submission) = self.gate_send(submission, agent) else {
             return Ok(SubagentCompletionTurn::PendingConfirmation);
         };
         let (payload, authorization, _allow_auto_compact) = submission.into_authorized();
-        let super::send_confirm::SendPayload::TurnBoundary { turn, batch } = payload else {
+        let super::send_confirm::SendPayload::TurnBoundary(delivery) = payload else {
             unreachable!("subagent delivery is a turn-boundary submission");
         };
-        self.run_turn_boundary_prompt_turn(turn, batch, authorization, terminal, agent)
+        self.run_turn_boundary_prompt_turn(delivery, authorization, terminal, agent)
             .await
             .map(SubagentCompletionTurn::Completed)
     }
@@ -440,74 +446,3 @@ impl App {
 #[cfg(test)]
 #[path = "subagent_questionnaires_tests.rs"]
 mod tests;
-
-/// Drained work held until an accepted provider start or runtime checkpoint.
-#[derive(Default)]
-pub(super) struct TurnBoundaryBatch {
-    subagent_notifications: Vec<crate::tools::agent::SubagentNotification>,
-    notices: Vec<crate::app::subagent_messaging::SubagentNotice>,
-    workflow_notifications: Vec<crate::tools::workflow_tracker::WorkflowNotification>,
-    process_notifications: Vec<crate::tools::process::ProcessNotification>,
-}
-
-impl TurnBoundaryBatch {
-    pub(super) fn requires_parent_action(&self) -> bool {
-        self.notices
-            .iter()
-            .any(|notice| notice.delivery.requires_parent_action())
-    }
-
-    fn is_empty(&self) -> bool {
-        self.notices.is_empty()
-            && self.subagent_notifications.is_empty()
-            && self.workflow_notifications.is_empty()
-            && self.process_notifications.is_empty()
-    }
-
-    /// Formats captured notifications after releasing the delivery gate.
-    fn render(self) -> TurnBoundaryDelivery {
-        let mut model_parts = Vec::new();
-        let mut display_parts = Vec::new();
-        let mut push = |(model, display): (String, String)| {
-            model_parts.push(model);
-            display_parts.push(display);
-        };
-        if !self.notices.is_empty() {
-            let (mut model, display) =
-                crate::app::subagent_messaging::notice_prompts(&self.notices);
-            model.insert_str(0, "Earlier child messages in send order. Any terminal result below supersedes that child's planning and progress; preserve substantive findings.\n\n");
-            push((model, display));
-        }
-        if !self.subagent_notifications.is_empty() {
-            push(crate::tools::agent::notification_prompts(
-                &self.subagent_notifications,
-            ));
-        }
-        if !self.workflow_notifications.is_empty() {
-            push(crate::tools::workflow_tracker::notification_prompts(
-                &self.workflow_notifications,
-            ));
-        }
-        if !self.process_notifications.is_empty() {
-            push(crate::tools::process::notification_prompts(
-                &self.process_notifications,
-            ));
-        }
-        TurnBoundaryDelivery {
-            model: model_parts.join("\n\n"),
-            display: display_parts.join("\n"),
-            batch: self,
-        }
-    }
-
-    pub(super) fn notice_count(&self) -> usize {
-        self.notices.len()
-    }
-}
-
-/// Joined prompts plus the restorable drained batch for one turn boundary.
-pub(super) struct TurnBoundaryDelivery {
-    pub(super) model: String,
-    pub(super) display: String,
-    pub(super) batch: TurnBoundaryBatch,
-}

@@ -1,3 +1,4 @@
+pub(crate) use super::interactive_run_controller::DisplayCommit;
 use std::{path::PathBuf, sync::Arc};
 
 use rho_sdk::{
@@ -344,15 +345,12 @@ impl InteractiveRuntime {
             let snapshot = outcome.committed_snapshot().ok_or_else(|| {
                 anyhow::anyhow!("automatic compaction event is missing its committed snapshot")
             });
-            let display_user = self
-                .runs
-                .pending_turn()
-                .map(|turn| turn.display_user().unwrap_or_else(|| turn.model_user()));
             match snapshot {
                 Ok(snapshot) => {
-                    if let Err(error) =
-                        self.sessions
-                            .save_automatic_compaction(snapshot, display_user, outcome)
+                    let display = self.runs.checkpoint_compaction(snapshot);
+                    if let Err(error) = self
+                        .sessions
+                        .save_automatic_compaction(snapshot, &display, outcome)
                     {
                         self.runs.cancel();
                         self.pending_persistence_error = Some(error);
@@ -362,6 +360,8 @@ impl InteractiveRuntime {
                         // happy path.
                         self.pending_persistence_checkpoint =
                             self.capture_durable_session().ok().flatten();
+                    } else if self.sessions.storage().is_some() {
+                        self.runs.mark_display_checkpoint(display);
                     }
                 }
                 Err(error) => {
@@ -397,6 +397,20 @@ impl InteractiveRuntime {
         response: HostInputResponse,
     ) -> Result<(), Error> {
         self.runs.respond(request_id, response).await
+    }
+
+    /// Records a display-only replacement after boundary input is accepted.
+    /// The SDK history remains unchanged; only the persisted display tail uses it.
+    pub(crate) fn record_boundary_display(
+        &mut self,
+        model_message: Message,
+        display_message: Message,
+    ) {
+        self.runs.record_boundary_display(
+            model_message,
+            display_message,
+            &self.sessions.session().snapshot(),
+        );
     }
 
     pub(crate) async fn finish_run(&mut self) -> anyhow::Result<RunOutcome> {
@@ -447,6 +461,7 @@ impl InteractiveRuntime {
             };
         }
         if let Some(storage) = self.sessions.storage() {
+            self.runs.mark_display_committed();
             let outcome = match finished.outcome.as_ref() {
                 Ok(_) => crate::session::workspace_checkpoint::CheckpointOutcome::Completed,
                 Err(Error::Cancelled | Error::Interrupted { .. }) => {
@@ -477,6 +492,11 @@ impl InteractiveRuntime {
         self.refresh_context_usage();
         self.completed_runs = self.completed_runs.saturating_add(1);
         Ok(finished.outcome?)
+    }
+
+    /// A provider error can still commit accepted inputs; a failed save cannot.
+    pub(crate) fn take_last_turn_display_commit(&mut self) -> DisplayCommit {
+        self.runs.take_last_turn_display_commit()
     }
 
     pub(crate) async fn reset(&mut self) -> anyhow::Result<()> {

@@ -168,6 +168,12 @@ fn notification_prompts_bound_many_large_utf8_results_and_keep_run_statuses() {
     let retried_context = merge_notification_context(Some(&model), &newer);
     assert!(retried_context.len() <= NOTIFICATION_CONTEXT_BYTES);
     assert!(retried_context.contains("agent new000 (reviewer): ok"));
+    // A boundary can combine multiple bounded sources. Retention may drop
+    // earlier context, but must keep the accepted newest batch intact.
+    let combined = format!("{model}\n\n{newer}");
+    for prior in [None, Some(model.as_str())] {
+        assert_eq!(merge_notification_context(prior, &combined), combined);
+    }
 }
 
 async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String {

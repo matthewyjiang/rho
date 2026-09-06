@@ -10,8 +10,8 @@ use ratatui::DefaultTerminal;
 use rho_sdk::model::{handoff::HandoffReport, ModelIdentity};
 
 use super::{
-    prompt_turn::FailedTurn, subagent_questionnaires::TurnBoundaryBatch, App, ChatMedia,
-    ComposerMode, Entry, InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending,
+    prompt_turn::FailedTurn, subagent_delivery::TurnBoundaryDelivery, App, ChatMedia, ComposerMode,
+    Entry, InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending,
     InteractiveRuntime, PasteSegment, TurnOutcome, TurnPrompt,
 };
 
@@ -27,10 +27,7 @@ pub(super) enum SendPayload {
         origin: TurnOrigin,
     },
     GoalRetry(FailedTurn),
-    TurnBoundary {
-        turn: TurnPrompt,
-        batch: TurnBoundaryBatch,
-    },
+    TurnBoundary(TurnBoundaryDelivery),
 }
 
 /// Origin of a submitted turn and the state transition to apply on cancellation.
@@ -119,9 +116,9 @@ impl SendSubmission {
         }
     }
 
-    pub(super) fn turn_boundary(turn: TurnPrompt, batch: TurnBoundaryBatch) -> Self {
+    pub(super) fn turn_boundary(delivery: TurnBoundaryDelivery) -> Self {
         Self {
-            payload: SendPayload::TurnBoundary { turn, batch },
+            payload: SendPayload::TurnBoundary(delivery),
             approved_for: None,
             allow_auto_compact: false,
         }
@@ -154,7 +151,7 @@ impl SendSubmission {
     pub(super) fn turn_display(&self) -> Option<&str> {
         match &self.payload {
             SendPayload::Turn { turn, .. } => Some(&turn.display),
-            SendPayload::GoalRetry(_) | SendPayload::TurnBoundary { .. } => None,
+            SendPayload::GoalRetry(_) | SendPayload::TurnBoundary(_) => None,
         }
     }
 }
@@ -392,9 +389,9 @@ impl App {
                 self.resume_goal_after_confirmed_turn(outcome, terminal, agent)
                     .await
             }
-            SendPayload::TurnBoundary { turn, batch } => {
+            SendPayload::TurnBoundary(delivery) => {
                 let outcome = self
-                    .run_turn_boundary_prompt_turn(turn, batch, authorization, terminal, agent)
+                    .run_turn_boundary_prompt_turn(delivery, authorization, terminal, agent)
                     .await?;
                 self.resume_goal_after_confirmed_turn(outcome, terminal, agent)
                     .await
@@ -463,8 +460,8 @@ impl App {
                 self.apply_turn_cancellation(origin, prompt, source);
             }
             SendPayload::GoalRetry(_) => self.set_status("goal retry cancelled"),
-            SendPayload::TurnBoundary { batch, .. } => {
-                self.restore_turn_boundary_batch(agent, batch);
+            SendPayload::TurnBoundary(delivery) => {
+                self.restore_turn_boundary_batch(agent, delivery.batch);
                 self.set_status("send cancelled");
             }
         }

@@ -444,6 +444,14 @@ impl Clone for ToolEntry {
 }
 
 impl ToolEntry {
+    pub(in crate::tui) fn visible_in_zen(&self) -> bool {
+        matches!(
+            &self.presentation,
+            crate::presentation::Presentation::Message(message)
+                if matches!(message.visibility, crate::presentation::MessageVisibility::Conversation)
+        )
+    }
+
     pub(in crate::tui) fn new(
         presentation: impl Into<crate::presentation::Presentation>,
         expanded: bool,
