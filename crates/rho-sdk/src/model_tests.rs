@@ -106,60 +106,82 @@ fn aborted_assistant_history_keeps_partial_tool_calls_and_usage() {
 
 #[test]
 fn native_replay_keeps_provider_api_and_unknown_format_boundaries() {
-    for (provider, api, kind) in [
+    let source = ModelIdentity::new("openai-codex", "openai-responses", "source");
+    let block = ProviderContextBlock {
+        identity: source.clone(),
+        kind: "openai_response_output_item".into(),
+        position: None,
+        data: json!({"type": "compaction"}),
+    };
+    // Explicit expectations avoid repeating the implementation as a test oracle.
+    for (provider, api, model, expected) in [
+        ("openai-codex", "openai-responses", "source", true),
+        ("openai-codex", "openai-responses", "target", true),
+        ("openai", "openai-responses", "source", false),
+        ("openai-codex", "another-api", "source", false),
+    ] {
+        let target = ModelIdentity::new(provider, api, model);
+        assert_eq!(block.is_replayable_to(&target), expected, "{target:?}");
+    }
+    for (provider, api, kind, data) in [
+        (
+            "openai",
+            "openai-responses",
+            "openai_response_output_item",
+            json!({"type": "compaction"}),
+        ),
+        (
+            "openai-codex",
+            "another-api",
+            "openai_response_output_item",
+            json!({"type": "compaction"}),
+        ),
+        (
+            "openai-codex",
+            "openai-responses",
+            "unknown-format",
+            json!({"type": "compaction"}),
+        ),
         (
             "openai-codex",
             "openai-responses",
             "openai_response_output_item",
-        ),
-        ("openai", "openai-responses", "openai_response_output_item"),
-        (
-            "opencode-go",
-            "openai-responses",
-            "openai_response_output_item",
+            json!({"type": "reasoning"}),
         ),
         (
             "openai-codex",
-            "openai-chat-completions",
+            "openai-responses",
             "openai_response_output_item",
+            json!({"type": "unknown"}),
         ),
-        ("openai-codex", "openai-responses", "unknown-format"),
+        (
+            "openai-codex",
+            "openai-responses",
+            "openai_response_output_item",
+            json!({}),
+        ),
         (
             "openai-codex",
             "openai-responses",
             "openai_reasoning_effort",
+            json!("high"),
         ),
-        ("anthropic", "anthropic-messages", "thinking"),
-        ("google", "google-generative-ai", "thought_signature"),
     ] {
-        for item_type in ["compaction", "reasoning", "unknown"] {
-            let block = ProviderContextBlock {
-                identity: ModelIdentity::new(provider, api, "source"),
-                kind: kind.into(),
-                position: None,
-                data: json!({"type": item_type}),
-            };
-            assert!(block.is_replayable_to(&block.identity));
-            for (target_provider, target_api, target_model) in [
-                (provider, api, "target"),
-                ("another-provider", api, "source"),
-                (provider, "another-api", "source"),
-                ("openai-codex", "openai-responses", "target"),
-            ] {
-                let target = ModelIdentity::new(target_provider, target_api, target_model);
-                let compatible = provider == "openai-codex"
-                    && api == "openai-responses"
-                    && kind == "openai_response_output_item"
-                    && item_type == "compaction"
-                    && target_provider == provider
-                    && target_api == api;
-                assert_eq!(
-                    block.is_replayable_to(&target),
-                    compatible,
-                    "{block:?} -> {target:?}"
-                );
-            }
-        }
+        let block = ProviderContextBlock {
+            identity: ModelIdentity::new(provider, api, "source"),
+            kind: kind.into(),
+            data,
+            ..block.clone()
+        };
+        let target = ModelIdentity::new(provider, api, "target");
+        assert_eq!(
+            (
+                block.is_replayable_to(&block.identity),
+                block.is_replayable_to(&target)
+            ),
+            (true, false),
+            "{block:?}"
+        );
     }
 }
 

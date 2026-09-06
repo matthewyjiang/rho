@@ -8,53 +8,59 @@ use crate::model::Message;
 // Owner: provider request contract, through the same omission gate used by hosts.
 #[test]
 fn codex_model_switch_preserves_compaction_on_repeated_sends() {
-    use rho_sdk::model::{
-        handoff::report_message_omissions, AssistantMessage, ProviderContextBlock,
-    };
+    use crate::protocol::openai_responses::{parse_compact_response, CompactUserRetention};
+    use rho_sdk::model::handoff::{report_message_omissions, HandoffReport};
 
-    let source = ModelIdentity::new("openai-codex", "openai-responses", "gpt-5.6-sol");
-    let target = ModelIdentity::new("openai-codex", "openai-responses", "gpt-6-astra");
-    let native_items = [json!({"type": "compaction", "encrypted_content": "compacted-history"})];
-    let mut history = native_items
-        .iter()
-        .map(|item| {
-            Message::assistant(
-                AssistantMessage {
-                    content: Vec::new(),
-                    provenance: Some(source.clone()),
-                    reasoning_summary: None,
-                    provider_context: vec![ProviderContextBlock {
-                        identity: source.clone(),
-                        kind: "openai_response_output_item".into(),
-                        position: Some(0),
-                        data: item.clone(),
-                    }],
-                }
-                .with_portable_fallback("fallback for incompatible backends"),
-            )
-        })
-        .collect::<Vec<_>>();
-    let stored = history.clone();
-
-    for prompt in ["continue", "next message"] {
-        history.push(Message::user_text(prompt));
-        let report = report_message_omissions(&history, &target);
-        pretty_assertions::assert_eq!(report, Default::default());
-        let body = build_codex_responses_body(
-            &target.model,
-            ModelRequest {
-                messages: &history,
-                tools: &[],
-                cancellation: Default::default(),
-                reasoning_level: Default::default(),
-                prompt_cache_key: None,
+    for (source_model, target_model, expected_report) in [
+        ("gpt-5.6-sol", "gpt-6-astra", HandoffReport::default()),
+        (
+            "gpt-6-astra",
+            "gpt-5.6-sol",
+            HandoffReport {
+                omitted_provider_context: 1,
+                omitted_kinds: vec!["openai_reasoning_effort".into()],
             },
+        ),
+    ] {
+        let source = ModelIdentity::new("openai-codex", "openai-responses", source_model);
+        let target = ModelIdentity::new("openai-codex", "openai-responses", target_model);
+        let native_items =
+            [json!({"type": "compaction", "encrypted_content": "compacted-history"})];
+        let assistant_context =
+            super::super::configuration_update::reasoning_effort_context(&source, "high")
+                .into_iter()
+                .collect::<Vec<_>>();
+        let (mut history, _) = parse_compact_response(
+            source,
+            &[],
+            &json!({"output": native_items}),
+            "fallback for incompatible backends",
+            CompactUserRetention::KeepServerUsers,
+            &assistant_context,
         )
         .unwrap();
-        let input = body["input"].as_array().unwrap();
-        pretty_assertions::assert_eq!(&input[..native_items.len()], &native_items);
-        pretty_assertions::assert_eq!(input.len(), history.len());
-        pretty_assertions::assert_eq!(&history[..stored.len()], stored.as_slice());
+        let stored = history.clone();
+
+        for prompt in ["continue", "next message"] {
+            history.push(Message::user_text(prompt));
+            let report = report_message_omissions(&history, &target);
+            pretty_assertions::assert_eq!(report, expected_report);
+            let body = build_codex_responses_body(
+                &target.model,
+                ModelRequest {
+                    messages: &history,
+                    tools: &[],
+                    cancellation: Default::default(),
+                    reasoning_level: Default::default(),
+                    prompt_cache_key: None,
+                },
+            )
+            .unwrap();
+            let input = body["input"].as_array().unwrap();
+            pretty_assertions::assert_eq!(&input[..native_items.len()], &native_items);
+            pretty_assertions::assert_eq!(input.len(), history.len());
+            pretty_assertions::assert_eq!(&history[..stored.len()], stored.as_slice());
+        }
     }
 }
 

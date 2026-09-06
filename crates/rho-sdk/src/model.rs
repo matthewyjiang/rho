@@ -121,6 +121,13 @@ impl ProviderContextBlock {
     /// reasoning still requires the producing model: upstream Codex compacts
     /// history before switching between incompatible model configurations.
     /// Sharing a serializer does not establish backend replay compatibility.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): replace the Codex format exception with explicit
+    /// replay scope on ProviderContextBlock, set by the producing adapter.
+    /// Adding that field now would break downstream struct literals. Until then,
+    /// use this method for both omission reporting and request filtering.
     pub fn is_replayable_to(&self, target: &ModelIdentity) -> bool {
         if self.is_sdk_metadata()
             || self.identity.provider != target.provider
@@ -196,7 +203,7 @@ pub struct AssistantMessage {
     /// Provider-produced reasoning summary. Raw reasoning must never be stored here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_summary: Option<String>,
-    /// Opaque provider data retained only for exact provider/API/model replay.
+    /// Opaque provider data filtered by [`ProviderContextBlock::is_replayable_to`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provider_context: Vec<ProviderContextBlock>,
 }

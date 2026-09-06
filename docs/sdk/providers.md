@@ -47,7 +47,7 @@ Provider events are forwarded in arrival order into the run event stream. Usage 
 
 Opaque blocks may still exist in session history and snapshots. Treat their `data` as sensitive provider content, do not render it by default, and apply retention and encryption policy. Identity checks protect compatibility, not confidentiality.
 
-The Codex rule follows first-party compaction handoff, not the fact that multiple providers share a Responses serializer. It does not extend to raw reasoning, OpenAI API-key requests, or Responses-compatible gateways. Upstream Codex compacts when the backend's model-configuration compatibility hash changes, keeping compaction items but discarding raw reasoning from the compacted output. Rho does not currently fetch that hash, so raw reasoning retains exact-model filtering. SDK metadata is never native replay data. Unknown formats retain exact-identity filtering.
+The Codex rule follows first-party compaction handoff, not the fact that multiple providers share a Responses serializer. It does not extend to raw reasoning, OpenAI API-key requests, or Responses-compatible gateways: the investigated handoff path establishes compatibility only for Codex, not every backend using the same endpoint shape. Upstream Codex compacts when the backend's model-configuration compatibility hash changes, keeping compaction items but discarding raw reasoning from the compacted output. Rho does not currently fetch that hash, so raw reasoning retains exact-model filtering. SDK metadata is never native replay data. Unknown formats retain exact-identity filtering.
 
 ## Stable versus upstream-dependent behavior
 
