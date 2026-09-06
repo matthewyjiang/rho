@@ -50,15 +50,16 @@ const FINAL_RESPONSE: &str = "\
 Done. Request IDs now flow through log spans and response headers.
 Focused tests cover both generated and forwarded IDs.";
 
-/// Handle docs-demo prompts (and their session titles) when present.
+pub(super) fn session_title(source: &str) -> Option<&'static str> {
+    (source.starts_with(TITLE_PREFIX) && source.contains(PROMPT)).then_some(SESSION_TITLE)
+}
+
+/// Handle docs-demo prompts when present.
 pub(super) async fn intercept(
     prompt: &str,
     request: &ModelRequest<'_>,
     events: &ProviderEventSender,
 ) -> Option<Result<ModelResponse, ProviderError>> {
-    if prompt.starts_with(TITLE_PREFIX) && prompt.contains(PROMPT) {
-        return Some(completed(SESSION_TITLE));
-    }
     if prompt == PROMPT {
         return Some(stream(request, events).await);
     }
