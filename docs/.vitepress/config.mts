@@ -122,6 +122,7 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
           { text: 'Model Context Protocol', link: '/integrations/mcp' },
           { text: 'Agent Client Protocol', link: '/integrations/acp' },
           { text: 'Agent Plugins', link: '/integrations/plugins' },
+          { text: 'Community', link: '/integrations/community' },
         ],
       },
     ],

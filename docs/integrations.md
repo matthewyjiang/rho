@@ -21,3 +21,7 @@ All stay optional. Outside Herdr, Rho skips host reporting. Without RTK, shell t
 - [Agent Plugins](/integrations/plugins) - package layout, discovery roots, install and activation, skills and MCP components, failure isolation
 
 Check setup from the interactive TUI with `/doctor`. Inspect MCP with `/mcp` or `rho mcp list`. Manage packages with `rho plugins`. Plugin load problems appear in doctor and plugin inventory output.
+
+## Community
+
+Products that ship their own Rho adapters are listed on [community integrations](/integrations/community). Rho does not maintain those adapters.
