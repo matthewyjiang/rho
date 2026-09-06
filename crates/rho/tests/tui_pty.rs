@@ -642,6 +642,7 @@ fn fragile_surface_scenarios_pass() {
         "markdown_headings",
         "streaming_markdown_stability",
         "side_btw",
+        "side_during_turn",
         "spinner_activity_anchor",
         "spinner_activity_jump_rail",
         "help_overlay",

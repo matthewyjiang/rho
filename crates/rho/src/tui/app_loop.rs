@@ -9,6 +9,15 @@ use super::{
 };
 
 impl App {
+    /// Drain overlay work in both idle and running loops, then redraw once.
+    pub(super) async fn poll_overlay_tasks(&mut self) -> anyhow::Result<bool> {
+        let mut changed = self.poll_limits_command().await?;
+        changed |= self.poll_doctor_command().await?;
+        changed |= self.poll_side_chat();
+        changed |= self.poll_changelog_command().await?;
+        Ok(changed)
+    }
+
     fn insert_recovered_history(&mut self) -> std::io::Result<bool> {
         let messages = std::mem::take(&mut self.info.session.recovered_messages);
         let had_recovered_messages = !messages.is_empty();
@@ -105,10 +114,7 @@ impl App {
             needs_redraw |= self.poll_prompt_history();
             needs_redraw |= self.poll_pending_session_title()?;
             self.poll_pending_interactive_login(terminal, agent).await?;
-            needs_redraw |= self.poll_limits_command().await?;
-            needs_redraw |= self.poll_doctor_command().await?;
-            needs_redraw |= self.poll_side_chat();
-            needs_redraw |= self.poll_changelog_command().await?;
+            needs_redraw |= self.poll_overlay_tasks().await?;
             // Runs on every pass because the composer is what decides whether
             // there is anything to ask about, and it changes on key events
             // rather than on a schedule of its own.

@@ -17,7 +17,7 @@ use super::super::{
 
 pub(super) const TITLE: &str = "Side chat";
 const FOOTER_IDLE: &str = "Enter send   Esc close";
-const FOOTER_BUSY: &str = "Enter send   Esc cancel";
+const FOOTER_BUSY: &str = "Esc close   Ctrl+C cancel";
 const INPUT_PREFIX: &str = "> ";
 
 pub(super) struct SideScrollMetrics {
