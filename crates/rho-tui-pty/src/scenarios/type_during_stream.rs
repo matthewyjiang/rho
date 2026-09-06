@@ -2,28 +2,6 @@ use super::STREAM;
 
 use crate::{harness::PtyHarness, scenario::Step};
 
-pub(super) fn wait_for_later_flood_event(harness: &mut PtyHarness) -> anyhow::Result<()> {
-    let current = highest_visible_flood_event(harness.screen().contents());
-    let target = format!(
-        "input flood event {:03}",
-        current.saturating_add(20).min(400)
-    );
-    harness.wait_for_text(&target, STREAM)?;
-    if harness.screen().contains_text("model interrupted") {
-        anyhow::bail!("overlay Esc aborted the live turn");
-    }
-    Ok(())
-}
-
-fn highest_visible_flood_event(screen: String) -> u16 {
-    screen
-        .split("input flood event ")
-        .skip(1)
-        .filter_map(|rest| rest.get(..3)?.parse().ok())
-        .max()
-        .unwrap_or(10)
-}
-
 fn release_input_flood(harness: &mut PtyHarness) -> anyhow::Result<()> {
     // Must match the marker in tui_fixture/stream_scenarios.rs.
     super::release_fixture(harness, ".rho-fixture-release-input-flood")

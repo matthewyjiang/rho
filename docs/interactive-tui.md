@@ -151,7 +151,7 @@ Some commands replace the message box with a picker. Use `up` and `down` to sele
 
 `/limits` uses the same overlay chrome as those pickers, but as a single scrolling pane of usage bars rather than a two-column list. It is not a picker: `up` and `down` scroll, and `enter` or `esc` close it.
 
-`/side` (and `/btw`) uses that same overlay chrome with its own transcript and prompt. It is not a picker: `enter` sends to the aside. `esc` cancels a running aside, or closes the overlay when idle. Up and down scroll when the prompt is empty; letter keys always insert.
+`/side` (and `/btw`) uses that same overlay chrome with its own transcript and prompt. `Enter` sends to the aside. `Esc` closes the overlay without cancelling its reply, so you can keep using the main chat while the aside runs in the background. Use `/side` or `/btw` again to return to its transcript and any unsent draft. `Ctrl+C` clears the aside's prompt first; with an empty prompt, it cancels only the running aside. Up and down scroll when the prompt is empty; letter keys always insert.
 
 ## Login and logout
 

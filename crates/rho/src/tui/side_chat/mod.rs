@@ -55,6 +55,15 @@ impl SideChat {
         true
     }
 
+    fn cancel(&self) {
+        if !self.overlay.busy {
+            return;
+        }
+        if let Some(handle) = &self.handle {
+            handle.cancel();
+        }
+    }
+
     fn submit(&mut self, prompt: String, launch: Option<SideChatLaunch>) {
         if self.reject_if_busy() {
             return;
@@ -183,92 +192,56 @@ impl App {
         if !self.side_overlay_open() {
             return false;
         }
+        let Some(side) = self.side_chat.as_mut() else {
+            return true;
+        };
         match (key.modifiers, key.code) {
             (KeyModifiers::NONE, KeyCode::Esc) => {
-                if self
-                    .side_chat
-                    .as_ref()
-                    .is_some_and(|side| side.overlay.busy)
-                {
-                    if let Some(handle) = self
-                        .side_chat
-                        .as_ref()
-                        .and_then(|side| side.handle.as_ref())
-                    {
-                        handle.cancel();
-                    }
-                } else {
-                    self.close_side_chat();
-                }
-                true
+                self.close_side_chat();
             }
             (KeyModifiers::NONE, KeyCode::Enter) => {
                 self.submit_side_composer();
-                true
             }
             (KeyModifiers::NONE, KeyCode::Backspace) => {
-                if let Some(composer) = self.side_composer_mut() {
-                    composer.backspace();
-                }
-                true
+                side.overlay.composer.backspace();
             }
             (KeyModifiers::NONE, KeyCode::Left) => {
-                if let Some(composer) = self.side_composer_mut() {
-                    composer.move_cursor_left();
-                }
-                true
+                side.overlay.composer.move_cursor_left();
             }
             (KeyModifiers::NONE, KeyCode::Right) => {
-                if let Some(composer) = self.side_composer_mut() {
-                    composer.move_cursor_right();
-                }
-                true
+                side.overlay.composer.move_cursor_right();
             }
             (KeyModifiers::NONE, KeyCode::Home) => {
-                if let Some(composer) = self.side_composer_mut() {
-                    composer.move_cursor_home();
-                }
-                true
+                side.overlay.composer.move_cursor_home();
             }
             (KeyModifiers::NONE, KeyCode::End) => {
-                if let Some(composer) = self.side_composer_mut() {
-                    composer.move_cursor_end();
-                }
-                true
+                side.overlay.composer.move_cursor_end();
             }
-            (KeyModifiers::NONE, KeyCode::Up) if self.side_composer_is_empty() => {
+            (KeyModifiers::NONE, KeyCode::Up) if side.overlay.composer.is_empty() => {
                 self.scroll_side_overlay(terminal, -1);
-                true
             }
-            (KeyModifiers::NONE, KeyCode::Down) if self.side_composer_is_empty() => {
+            (KeyModifiers::NONE, KeyCode::Down) if side.overlay.composer.is_empty() => {
                 self.scroll_side_overlay(terminal, 1);
-                true
             }
             (_, KeyCode::PageUp) => {
                 self.scroll_side_overlay(terminal, -8);
-                true
             }
             (_, KeyCode::PageDown) => {
                 self.scroll_side_overlay(terminal, 8);
-                true
             }
             (KeyModifiers::NONE | KeyModifiers::SHIFT, KeyCode::Char(ch)) => {
-                if let Some(composer) = self.side_composer_mut() {
-                    composer.insert_char(ch);
-                }
-                true
+                side.overlay.composer.insert_char(ch);
             }
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-                if let Some(composer) = self.side_composer_mut() {
-                    if !composer.is_empty() {
-                        composer.clear();
-                        return true;
-                    }
+                if side.overlay.composer.is_empty() {
+                    side.cancel();
+                } else {
+                    side.overlay.composer.clear();
                 }
-                false
             }
-            _ => true,
+            _ => {}
         }
+        true
     }
 
     fn submit_side_composer(&mut self) {
@@ -346,6 +319,7 @@ impl App {
             .map(|side| &mut side.overlay.composer)
     }
 
+    #[cfg(test)]
     pub(super) fn side_composer_is_empty(&self) -> bool {
         self.side_chat
             .as_ref()

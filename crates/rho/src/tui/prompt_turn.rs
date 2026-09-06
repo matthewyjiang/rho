@@ -367,25 +367,14 @@ impl App {
         let mut sdk_failure = None;
         let mut questionnaire_cancelled_by_user = false;
         while !terminal_event {
-            if self
+            let mut needs_redraw = self
                 .poll_running_subagent_questionnaire_state(agent.session_id())
-                .await?
-            {
-                self.draw_running_frame(terminal, &mut frame_scheduler)?;
-            }
+                .await?;
             queued_interactions
                 .extend_subagent_questionnaires(self.subagent_inbox.take_questionnaires());
-            let panel_changed = self.update_activity_panels(agent)?;
-            if panel_changed {
-                self.draw_running_frame(terminal, &mut frame_scheduler)?;
-            }
-            if self.poll_limits_command().await? {
-                self.draw_running_frame(terminal, &mut frame_scheduler)?;
-            }
-            if self.poll_doctor_command().await? {
-                self.draw_running_frame(terminal, &mut frame_scheduler)?;
-            }
-            if self.poll_changelog_command().await? {
+            needs_redraw |= self.update_activity_panels(agent)?;
+            needs_redraw |= self.poll_overlay_tasks().await?;
+            if needs_redraw {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;
             }
             let frame_deadline =

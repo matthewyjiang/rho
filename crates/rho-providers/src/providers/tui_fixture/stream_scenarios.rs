@@ -150,6 +150,7 @@ pub(super) async fn intercept(
         }
         "fixture steering" => Some(stream_steering(request, events).await),
         "fixture delay" => Some(stream_delay(request, events).await),
+        "fixture gated reply" => Some(stream_gated_reply(request, events).await),
         "fixture input flood" => Some(stream_input_flood(request, events).await),
         "fixture checkpointed input flood" => {
             Some(stream_checkpointed_input_flood(request, events).await)
@@ -473,6 +474,22 @@ async fn stream_steering(
     completed("initial turn waiting for steering")
 }
 
+async fn stream_gated_reply(
+    request: &ModelRequest<'_>,
+    events: &ProviderEventSender,
+) -> Result<ModelResponse, ProviderError> {
+    // Released by rho-tui-pty/src/scenarios/side_chat.rs after hiding the aside.
+    const RELEASE_MARKER: &str = ".rho-fixture-release-reply";
+    super::release::consume_release(RELEASE_MARKER)?;
+    events
+        .send(ModelEvent::OutputDelta("reply waiting for release".into()))
+        .await?;
+    super::release::wait_for_release_or_cancel(RELEASE_MARKER, &request.cancellation).await?;
+    let ending = "\nreply completed after release";
+    events.send(ModelEvent::OutputDelta(ending.into())).await?;
+    completed(format!("reply waiting for release{ending}"))
+}
+
 async fn stream_delay(
     request: &ModelRequest<'_>,
     events: &ProviderEventSender,
@@ -506,13 +523,13 @@ async fn stream_checkpointed_input_flood(
     request: &ModelRequest<'_>,
     events: &ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
-    // Mirrored in rho-tui-pty/src/scenarios/type_during_stream.rs.
+    // Released by rho-tui-pty/src/scenarios/{type_during_stream,side_chat}.rs.
     const RELEASE_MARKER: &str = ".rho-fixture-release-input-flood";
     // Clear a cancelled run's release before any output acknowledges readiness.
     // Never clear at a checkpoint: the harness may already have released it.
     super::release::consume_release(RELEASE_MARKER)?;
-    // Preserve the original 400-delta workload; split it at startup and halfway
-    // so overlay input and draft input each get a separately released flood.
+    // Preserve the original 400-delta workload. The startup and halfway gates
+    // let each scenario choose when input and overlay work overlap the flood.
     for batch in [1..=10, 11..=200, 201..=400] {
         let last = *batch.end();
         for index in batch {

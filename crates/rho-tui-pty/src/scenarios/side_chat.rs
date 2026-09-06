@@ -9,7 +9,7 @@ use crate::{
     scenario::{Scenario, Step},
 };
 
-use super::{type_during_stream::wait_for_later_flood_event, SETTLE, STARTUP, STREAM};
+use super::{SETTLE, STARTUP, STREAM};
 
 const SIZE: PtySize = PtySize {
     rows: 28,
@@ -17,7 +17,8 @@ const SIZE: PtySize = PtySize {
 };
 
 // Covers: /side opens the aside overlay and Esc returns to the session
-// without writing the aside into the parent transcript.
+// without writing the aside into the parent transcript. Idle Ctrl+C belongs
+// to the aside, even when its composer is empty, and must not quit the parent.
 // Owner: interactive TUI
 const SIDE_OVERLAY_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -38,13 +39,25 @@ const SIDE_OVERLAY_STEPS: &[Step] = &[
         text: "just",
         timeout: SETTLE,
     },
+    Step::Phase("clear_aside_then_interrupt_empty_composer"),
+    Step::Key(Key::Ctrl('c')),
+    Step::WaitTextGone {
+        text: "just",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Ctrl('c')),
+    Step::Key(Key::Ctrl('c')),
     Step::Phase("dismiss"),
     Step::Key(Key::Esc),
     Step::WaitTextGone {
         text: "Side chat",
         timeout: SETTLE,
     },
-    Step::Custom(assert_side_overlay_dismissed),
+    Step::SubmitText("parent still accepts input"),
+    Step::WaitText {
+        text: "fixture response: parent still accepts input",
+        timeout: STREAM,
+    },
     Step::ExitCommand,
 ];
 
@@ -146,8 +159,8 @@ pub(super) const SIDE_BTW_SCENARIO: Scenario = Scenario::new(
 // Remote sessions cannot read the clipboard; right-click paste needs another fixture.
 .with_env(&[("SSH_TTY", "rho-pty-clipboard")]);
 
-// Covers: opening /side during a parent turn must not abort that turn when
-// Esc closes the overlay.
+// Covers: dismissing a running aside keeps both turns alive, restores parent
+// input, and retains the background answer when reopened.
 // Owner: interactive TUI
 const SIDE_DURING_TURN_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -156,7 +169,7 @@ const SIDE_DURING_TURN_STEPS: &[Step] = &[
         timeout: STARTUP,
     },
     Step::Phase("start_flood"),
-    Step::SubmitText("fixture input flood"),
+    Step::SubmitText("fixture checkpointed input flood"),
     Step::WaitText {
         text: "input flood event 010",
         timeout: STREAM,
@@ -167,27 +180,84 @@ const SIDE_DURING_TURN_STEPS: &[Step] = &[
         text: "Side chat",
         timeout: SETTLE,
     },
+    Step::SubmitText("fixture gated reply"),
+    Step::WaitText {
+        text: "reply waiting for release",
+        timeout: STARTUP,
+    },
     Step::Phase("overlay_esc_does_not_abort"),
     Step::Key(Key::Esc),
     Step::WaitTextGone {
         text: "Side chat",
         timeout: SETTLE,
     },
-    Step::Custom(wait_for_later_flood_event),
+    Step::TypeText("parent draft"),
+    Step::WaitText {
+        text: "parent draft",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Ctrl('c')),
+    Step::WaitTextGone {
+        text: "parent draft",
+        timeout: SETTLE,
+    },
+    Step::Custom(release_parent_and_side),
+    Step::WaitText {
+        text: "input flood event 200",
+        timeout: STREAM,
+    },
+    Step::SubmitText("/side"),
+    Step::WaitText {
+        text: "reply completed after release",
+        timeout: STREAM,
+    },
+    Step::WaitText {
+        text: "Enter send   Esc close",
+        timeout: SETTLE,
+    },
+    Step::Phase("cancel_only_the_aside"),
+    // The first reply finished in the background; cancel a fresh gated turn.
+    // The parent remains parked at event 200 until its own final Esc.
+    Step::SubmitText("fixture gated reply"),
+    Step::WaitText {
+        text: "Esc close   Ctrl+C cancel",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Ctrl('c')),
+    Step::WaitText {
+        text: "Enter send   Esc close",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitTextGone {
+        text: "Side chat",
+        timeout: SETTLE,
+    },
     Step::WaitTextGone {
         text: "model interrupted",
         timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "model interrupted",
+        timeout: STREAM,
     },
     Step::ExitCommand,
 ];
 
 pub(super) const SIDE_DURING_TURN_SCENARIO: Scenario = Scenario::new(
     "side_during_turn",
-    "Open side chat during a parent turn without aborting it",
+    "Background a running side chat and reopen its reply during a parent turn",
     SIZE,
     SIDE_DURING_TURN_STEPS,
     /* smoke */ false,
 );
+
+fn release_parent_and_side(harness: &mut PtyHarness) -> Result<()> {
+    // Marker owners: rho-providers/src/providers/tui_fixture/stream_scenarios.rs.
+    super::release_fixture(harness, ".rho-fixture-release-input-flood")?;
+    super::release_fixture(harness, ".rho-fixture-release-reply")
+}
 
 fn assert_side_overlay_open(harness: &mut PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
