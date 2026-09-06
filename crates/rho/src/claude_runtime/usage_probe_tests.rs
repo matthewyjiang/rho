@@ -118,6 +118,11 @@ fn usage_screen_classification() {
         ),
         ("complete", format!("{windows}Esc to cancel\n"), "Ready"),
         (
+            "rate limit named without a failure notice",
+            format!("rate limited\n{windows}Esc to cancel\n"),
+            "Ready",
+        ),
+        (
             "load error",
             format!("{windows}Failed to load usage data: response error\n"),
             "Failed(Other)",
