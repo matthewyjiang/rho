@@ -25,6 +25,18 @@ Rho still displays the command and output in the transcript, but it excludes the
 
 Press `esc` to leave shell mode and return to the normal composer. The command text stays in the composer.
 
+## Complete a path
+
+Press `tab` in shell mode to complete the word under the cursor against workspace paths:
+
+```text
+!cat crates/rho/src/tui/inl<tab>
+```
+
+One match is inserted at once, followed by a space. Several matches open a list under the composer: keep typing to narrow it, use `up` and `down` to choose, then press `tab` or `enter` to insert the highlighted path or `esc` to close the list and stay in shell mode. Paths that contain spaces or other characters the shell would interpret are single-quoted.
+
+Completion uses the same workspace index as `@` file mentions, so it honors `.gitignore`, skips hidden entries unless the word contains a `.`-prefixed component, and scopes to a directory when the word ends with `/` (including `~/`, `../`, and absolute paths). It offers files only; it does not complete command names or flags.
+
 Rho runs inline commands asynchronously, so you can continue working while a command runs. Press `esc` to cancel a running command. Rho stops commands that run longer than 60 seconds.
 
 ## Choose a shell

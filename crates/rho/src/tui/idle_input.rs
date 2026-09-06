@@ -118,6 +118,10 @@ impl App {
             return Ok(());
         }
 
+        if self.handle_shell_palette_key(key)? {
+            return Ok(());
+        }
+
         if self
             .handle_configurable_composer_key(key, terminal, agent)
             .await?
@@ -216,6 +220,7 @@ impl App {
         }
         self.clamp_command_selection();
         self.clamp_file_selection();
+        self.clamp_shell_completion();
         Ok(())
     }
 

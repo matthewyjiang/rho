@@ -81,7 +81,7 @@ Most editing keys work the way they do in a normal terminal input. Run `/help` f
 | `/help` | Open the keyboard shortcuts overlay |
 | `@` | Open workspace file path autocomplete |
 | `up` / `down` | Re-enter previous prompts from this and earlier sessions, or select a command or file while a picker is open |
-| `tab` | Complete the selected command or file path |
+| `tab` | Complete the selected command or file path, or complete a workspace path in shell mode |
 | `ctrl-p` | Cycle to the next pinned model. `ctrl-shift-p` cycles backward on terminals that report it. Does nothing when no models are pinned |
 | `enter` | Send a prompt, run a selected slash command, or steer after the current assistant turn while a response is running |
 | `alt-enter` | Queue the composer contents as a follow-up that runs after the current turn ends; while idle, insert a newline. `ctrl-enter` always works as a fallback for terminals that bind `alt-enter` to fullscreen (Windows Terminal, Windows Alacritty, WezTerm). Configurable as `queue_prompt` |

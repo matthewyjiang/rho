@@ -207,31 +207,48 @@ impl WorkspacePathCache {
     }
 }
 
-/// The `@query` token under the cursor, if any.
+/// The whitespace-delimited word around `cursor`, in char offsets.
 ///
-/// Works on slices of `input` instead of collecting characters: the render
-/// path calls this several times per frame, so nothing larger than the query
-/// itself is ever copied.
-pub(super) fn active_file_mention(input: &str, cursor: usize) -> Option<FileMention> {
+/// `head` is the part before the cursor; it is what palettes match on, while
+/// `start..end` (which also spans any tail after the cursor) is what an
+/// accepted row replaces. Works on slices of `input` instead of collecting
+/// characters: the render path calls this several times per frame, so nothing
+/// larger than the query itself is ever copied.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct CursorWord<'a> {
+    pub(super) start: usize,
+    pub(super) end: usize,
+    pub(super) head: &'a str,
+}
+
+pub(super) fn word_at_cursor(input: &str, cursor: usize) -> CursorWord<'_> {
     let cursor_byte = input
         .char_indices()
         .nth(cursor)
         .map_or(input.len(), |(byte, _)| byte);
     let (before, after) = input.split_at(cursor_byte);
-    // The token is the last whitespace-delimited piece before the cursor plus
-    // the piece after it up to the next whitespace.
     let head = before
         .rsplit(char::is_whitespace)
         .next()
         .unwrap_or_default();
     let tail = after.split(char::is_whitespace).next().unwrap_or_default();
-    let query = head.strip_prefix('@')?;
+    CursorWord {
+        start: before.chars().count() - head.chars().count(),
+        end: before.chars().count() + tail.chars().count(),
+        head,
+    }
+}
+
+/// The `@query` token under the cursor, if any.
+pub(super) fn active_file_mention(input: &str, cursor: usize) -> Option<FileMention> {
+    let word = word_at_cursor(input, cursor);
+    let query = word.head.strip_prefix('@')?;
     if query.contains('@') {
         return None;
     }
     Some(FileMention {
-        start: before.chars().count() - head.chars().count(),
-        end: before.chars().count() + tail.chars().count(),
+        start: word.start,
+        end: word.end,
         query: query.to_string(),
     })
 }

@@ -149,6 +149,7 @@ mod session_picker;
 mod session_title;
 mod sessions_hub;
 mod setup_screen;
+mod shell_palette;
 mod side_chat;
 mod syntax;
 mod syntax_warmup;

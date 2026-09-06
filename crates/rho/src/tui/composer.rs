@@ -638,6 +638,7 @@ impl App {
         self.input_ui.set_file_palette_dismissed(false);
         self.clamp_command_selection();
         self.clamp_file_selection();
+        self.clamp_shell_completion();
     }
 
     pub(super) fn parse_input_command(

@@ -305,6 +305,57 @@ impl App {
 
                 lines
             }
+            Some(ActivePalette::ShellPath(matches)) => {
+                let paths = matches.as_slice();
+                let selected_index = self
+                    .input_ui
+                    .shell_completion()
+                    .map_or(0, super::shell_palette::ShellCompletion::selection)
+                    .min(paths.len().saturating_sub(1));
+                let (start, above, below) = file_picker::file_palette_scroll_counts(
+                    paths.len(),
+                    selected_index,
+                    MAX_COMMAND_SUGGESTIONS,
+                );
+
+                let mut lines = paths
+                    .iter()
+                    .enumerate()
+                    .skip(start)
+                    .take(MAX_COMMAND_SUGGESTIONS)
+                    .map(|(index, path)| {
+                        let selected = index == selected_index;
+                        let marker = if selected { ">" } else { " " };
+                        let style = if selected {
+                            Theme::brand()
+                        } else {
+                            Theme::dim()
+                        };
+                        styled_line(
+                            truncate_one_line(&format!("{marker} {path}"), width.max(1)),
+                            width.max(1),
+                            style,
+                            LineFill::Natural,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                if let Some(footer) = file_picker::file_palette_scroll_footer(
+                    above,
+                    below,
+                    paths.len(),
+                    matches.incomplete,
+                ) {
+                    lines.push(styled_line(
+                        truncate_one_line(&footer, width.max(1)),
+                        width.max(1),
+                        Theme::dim(),
+                        LineFill::Natural,
+                    ));
+                }
+
+                lines
+            }
             None => Vec::new(),
         }
     }

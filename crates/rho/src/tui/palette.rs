@@ -1,13 +1,14 @@
 //! Which palette, if any, the composer shows.
 //!
-//! One resolution decides between the `/` command palette and the `@` file
-//! palette and produces the winning matches, so visibility checks and painted
-//! suggestion lists never compute the same match list twice.
+//! One resolution decides between the `/` command palette, the `@` file
+//! palette, and shell-mode Tab path completion, and produces the winning
+//! matches, so visibility checks and painted suggestion lists never compute
+//! the same match list twice.
 
 use std::time::{Duration, Instant};
 
 use super::{
-    file_picker::{FilePaletteMatches, WorkspacePathCache},
+    file_picker::{DiscoveredFilePaths, FilePaletteMatches, WorkspacePathCache},
     types::CommandChoice,
     App, ComposerMode,
 };
@@ -95,20 +96,26 @@ impl PaletteCaches {
 
 /// The palette the composer currently shows, with its matches.
 ///
-/// The command palette wins when both could answer.
+/// The command palette wins when both could answer. Shell mode shows only the
+/// Tab completion list, and only after Tab opened it.
 #[derive(Debug)]
 pub(super) enum ActivePalette {
     Command(Vec<CommandChoice>),
     File(FilePaletteMatches),
+    ShellPath(DiscoveredFilePaths),
 }
 
 impl App {
     /// Resolve the active palette, computing its matches at most once per ask.
     pub(super) fn active_palette(&mut self) -> Option<ActivePalette> {
-        if !matches!(self.input_ui.composer(), ComposerMode::Input)
-            || self.input_ui.shell_mode().is_some()
-        {
+        if !matches!(self.input_ui.composer(), ComposerMode::Input) {
             return None;
+        }
+        if self.input_ui.shell_mode().is_some() {
+            return self
+                .input_ui
+                .shell_completion()
+                .map(|completion| ActivePalette::ShellPath(completion.matches().clone()));
         }
         if let Some(matches) = self.visible_command_matches() {
             return Some(ActivePalette::Command(matches));
