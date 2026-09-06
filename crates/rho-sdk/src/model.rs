@@ -103,7 +103,7 @@ impl ModelIdentity {
     }
 }
 
-/// Opaque provider-native data scoped to an exact model identity.
+/// Opaque provider-native data tagged with its producing model identity.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ProviderContextBlock {
     pub identity: ModelIdentity,
@@ -114,8 +114,35 @@ pub struct ProviderContextBlock {
 }
 
 impl ProviderContextBlock {
+    /// Whether the target can replay this native format without rewriting it.
+    ///
+    /// Unknown formats require exact identity. Codex Responses compaction items
+    /// can replay across model names within the same provider and API. Raw
+    /// reasoning still requires the producing model: upstream Codex compacts
+    /// history before switching between incompatible model configurations.
+    /// Sharing a serializer does not establish backend replay compatibility.
     pub fn is_replayable_to(&self, target: &ModelIdentity) -> bool {
-        !self.is_sdk_metadata() && self.identity == *target
+        if self.is_sdk_metadata()
+            || self.identity.provider != target.provider
+            || self.identity.api != target.api
+        {
+            return false;
+        }
+        self.identity.model == target.model
+            || matches!(
+                (
+                    self.identity.provider.as_str(),
+                    self.identity.api.as_str(),
+                    self.kind.as_str(),
+                    self.data.get("type").and_then(Value::as_str)
+                ),
+                (
+                    "openai-codex",
+                    "openai-responses",
+                    "openai_response_output_item",
+                    Some("compaction")
+                )
+            )
     }
 
     /// Marks a tool call the provider accepted as async.

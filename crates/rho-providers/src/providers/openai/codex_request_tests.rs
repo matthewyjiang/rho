@@ -3,6 +3,61 @@ use std::collections::BTreeSet;
 use super::*;
 use crate::model::Message;
 
+// Covers: switching Codex models must not warn about or discard the opaque
+// compaction summary retained on subsequent sends.
+// Owner: provider request contract, through the same omission gate used by hosts.
+#[test]
+fn codex_model_switch_preserves_compaction_on_repeated_sends() {
+    use rho_sdk::model::{
+        handoff::report_message_omissions, AssistantMessage, ProviderContextBlock,
+    };
+
+    let source = ModelIdentity::new("openai-codex", "openai-responses", "gpt-5.6-sol");
+    let target = ModelIdentity::new("openai-codex", "openai-responses", "gpt-6-astra");
+    let native_items = [json!({"type": "compaction", "encrypted_content": "compacted-history"})];
+    let mut history = native_items
+        .iter()
+        .map(|item| {
+            Message::assistant(
+                AssistantMessage {
+                    content: Vec::new(),
+                    provenance: Some(source.clone()),
+                    reasoning_summary: None,
+                    provider_context: vec![ProviderContextBlock {
+                        identity: source.clone(),
+                        kind: "openai_response_output_item".into(),
+                        position: Some(0),
+                        data: item.clone(),
+                    }],
+                }
+                .with_portable_fallback("fallback for incompatible backends"),
+            )
+        })
+        .collect::<Vec<_>>();
+    let stored = history.clone();
+
+    for prompt in ["continue", "next message"] {
+        history.push(Message::user_text(prompt));
+        let report = report_message_omissions(&history, &target);
+        pretty_assertions::assert_eq!(report, Default::default());
+        let body = build_codex_responses_body(
+            &target.model,
+            ModelRequest {
+                messages: &history,
+                tools: &[],
+                cancellation: Default::default(),
+                reasoning_level: Default::default(),
+                prompt_cache_key: None,
+            },
+        )
+        .unwrap();
+        let input = body["input"].as_array().unwrap();
+        pretty_assertions::assert_eq!(&input[..native_items.len()], &native_items);
+        pretty_assertions::assert_eq!(input.len(), history.len());
+        pretty_assertions::assert_eq!(&history[..stored.len()], stored.as_slice());
+    }
+}
+
 #[tokio::test]
 async fn priority_service_tier_is_sent_as_fast_mode() {
     for model in ["gpt-5.5", "gpt-6-astra"] {

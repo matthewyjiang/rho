@@ -105,16 +105,62 @@ fn aborted_assistant_history_keeps_partial_tool_calls_and_usage() {
 }
 
 #[test]
-fn provider_context_replays_only_to_exact_identity() {
-    let block = ProviderContextBlock {
-        identity: ModelIdentity::new("openai", "responses", "gpt-5"),
-        kind: "reasoning".into(),
-        position: None,
-        data: json!({}),
-    };
-
-    assert!(block.is_replayable_to(&ModelIdentity::new("openai", "responses", "gpt-5")));
-    assert!(!block.is_replayable_to(&ModelIdentity::new("openai", "responses", "gpt-5-mini")));
+fn native_replay_keeps_provider_api_and_unknown_format_boundaries() {
+    for (provider, api, kind) in [
+        (
+            "openai-codex",
+            "openai-responses",
+            "openai_response_output_item",
+        ),
+        ("openai", "openai-responses", "openai_response_output_item"),
+        (
+            "opencode-go",
+            "openai-responses",
+            "openai_response_output_item",
+        ),
+        (
+            "openai-codex",
+            "openai-chat-completions",
+            "openai_response_output_item",
+        ),
+        ("openai-codex", "openai-responses", "unknown-format"),
+        (
+            "openai-codex",
+            "openai-responses",
+            "openai_reasoning_effort",
+        ),
+        ("anthropic", "anthropic-messages", "thinking"),
+        ("google", "google-generative-ai", "thought_signature"),
+    ] {
+        for item_type in ["compaction", "reasoning", "unknown"] {
+            let block = ProviderContextBlock {
+                identity: ModelIdentity::new(provider, api, "source"),
+                kind: kind.into(),
+                position: None,
+                data: json!({"type": item_type}),
+            };
+            assert!(block.is_replayable_to(&block.identity));
+            for (target_provider, target_api, target_model) in [
+                (provider, api, "target"),
+                ("another-provider", api, "source"),
+                (provider, "another-api", "source"),
+                ("openai-codex", "openai-responses", "target"),
+            ] {
+                let target = ModelIdentity::new(target_provider, target_api, target_model);
+                let compatible = provider == "openai-codex"
+                    && api == "openai-responses"
+                    && kind == "openai_response_output_item"
+                    && item_type == "compaction"
+                    && target_provider == provider
+                    && target_api == api;
+                assert_eq!(
+                    block.is_replayable_to(&target),
+                    compatible,
+                    "{block:?} -> {target:?}"
+                );
+            }
+        }
+    }
 }
 
 // Covers: async-call markers round-trip the call id, never replay as provider

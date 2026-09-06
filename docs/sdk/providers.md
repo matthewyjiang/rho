@@ -37,14 +37,17 @@ Provider events are forwarded in arrival order into the run event stream. Usage 
 
 ## Provider-native replay and handoff
 
-`ProviderContextBlock` can contain opaque provider-native data. Each block is tagged with the exact `ModelIdentity` that produced it. Canonical `ModelRequest` history still contains these tagged blocks so an adapter can lower enriched messages. The adapter must use the handoff helpers or equivalent exact-identity filtering before constructing an upstream wire request:
+`ProviderContextBlock` can contain opaque provider-native data. Each block is tagged with the exact `ModelIdentity` that produced it. Canonical `ModelRequest` history still contains these tagged blocks so an adapter can lower enriched messages. The adapter must use the handoff helpers or equivalent `ProviderContextBlock::is_replayable_to` filtering before constructing an upstream wire request:
 
 - exact provider/API/model identity permits replay
-- a changed provider, API, or model requires the adapter to omit incompatible blocks from the upstream request
+- Codex `openai_response_output_item` blocks with `data.type = "compaction"` also replay across model names within `openai-codex` / `openai-responses`
+- a changed provider or API always requires omission; other native formats still require the exact model
 - portable assistant content remains available
 - `Session::replace_provider` returns a `HandoffReport` so the host can surface omissions
 
 Opaque blocks may still exist in session history and snapshots. Treat their `data` as sensitive provider content, do not render it by default, and apply retention and encryption policy. Identity checks protect compatibility, not confidentiality.
+
+The Codex rule follows first-party compaction handoff, not the fact that multiple providers share a Responses serializer. It does not extend to raw reasoning, OpenAI API-key requests, or Responses-compatible gateways. Upstream Codex compacts when the backend's model-configuration compatibility hash changes, keeping compaction items but discarding raw reasoning from the compacted output. Rho does not currently fetch that hash, so raw reasoning retains exact-model filtering. SDK metadata is never native replay data. Unknown formats retain exact-identity filtering.
 
 ## Stable versus upstream-dependent behavior
 

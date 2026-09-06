@@ -78,6 +78,7 @@ Supported GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 Astra Codex models can use OpenAI
 
 ## Notes
 
+- Switching between Codex models replays encrypted compaction items, so the compaction summary itself no longer triggers an omission confirmation just because the model name changed. Raw reasoning and other native items still require the exact model. Retained reasoning can therefore still cause repeated handoff warnings after compaction. Stored history is unchanged; incompatible items use the existing warning and portable fallback.
 - On `gpt-6-astra`, `/reasoning` changes are sent as `configuration_update` items so the prompt cache prefix is preserved.
 - As a subscription auth mode, the statusline estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available) and labels it `(sub)`.
 - [`/limits`](/interactive-tui#commands) reports the usage windows for Codex OAuth when you are logged in.
