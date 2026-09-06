@@ -2,6 +2,7 @@ use rho_sdk::{DefaultSelection, HostChoice, HostInputRequest, HostQuestion, Sele
 use tokio::sync::oneshot;
 
 mod render;
+mod timeout;
 
 pub(in crate::tui) use render::{questionnaire_cursor_position, questionnaire_lines};
 
@@ -71,6 +72,7 @@ pub(super) struct QuestionnaireComposer {
     response: QuestionnaireResponseChannel,
     fields: Vec<QuestionnaireFieldState>,
     active_index: usize,
+    timeout: Option<timeout::QuestionnaireTimer>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,6 +130,7 @@ impl QuestionnaireComposer {
             response,
             fields,
             active_index: 0,
+            timeout: None,
         }
     }
 
@@ -326,7 +329,10 @@ impl QuestionnaireComposer {
                 return Err(format!("question {}: {error}", index + 1));
             }
         };
-        let response = QuestionnaireResponse { answers };
+        let response = QuestionnaireResponse {
+            answers,
+            source: rho_sdk::HostInputSource::User,
+        };
         let display = submitted_questionnaire_entry(&self.request, &response);
         self.response.send_response(response);
         Ok(SubmittedQuestionnaire { display })

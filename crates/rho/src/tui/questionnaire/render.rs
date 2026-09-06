@@ -75,6 +75,23 @@ fn push_header_lines(
     if let Some(title) = request_title(request) {
         push_hanging_text(lines, "", title, width, Theme::input_prompt());
     }
+    if let Some(notice) = questionnaire.timeout_notice(std::time::Instant::now()) {
+        push_hanging_text(lines, "", &notice, width, Theme::input_prompt());
+        if let Some(reason) = request.timeout_reason() {
+            push_hanging_text(lines, "", reason, width, Theme::text());
+        }
+        if let Some(fallback) = request.timeout_fallback() {
+            for (id, values) in fallback.answers() {
+                push_hanging_text(
+                    lines,
+                    "",
+                    &format!("{id}: {}", values.join(", ")),
+                    width,
+                    Theme::dim(),
+                );
+            }
+        }
+    }
     if !lines.is_empty() {
         lines.push(Line::raw(""));
     }

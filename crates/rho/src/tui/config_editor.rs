@@ -20,6 +20,7 @@ pub(super) struct ConfigNumberInput {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ConfigNumberKey {
+    QuestionnaireTimeout,
     MaxOutputBytes,
     MaxToolOutputLines,
     CompactThresholdPercent,
@@ -109,6 +110,7 @@ pub(super) fn cycle_web_search_provider(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ConfigNumberSave {
+    QuestionnaireTimeout,
     MaxOutputBytes(usize),
     MaxToolOutputLines(usize),
     CompactThresholdPercent(u8),
@@ -121,8 +123,22 @@ impl ConfigNumberInput {
         &self,
         config_repository: &ConfigRepository,
     ) -> anyhow::Result<ConfigNumberSave> {
+        if self.key == ConfigNumberKey::QuestionnaireTimeout {
+            let timeout = if self.editor.value.trim().is_empty() {
+                None
+            } else {
+                Some(self.editor.value.parse::<std::num::NonZeroU64>().map_err(|_| {
+                    anyhow::anyhow!("questionnaire timeout must be positive whole seconds; clear the field for Disabled")
+                })?)
+            };
+            return config_repository.update(|config| {
+                config.questionnaire.timeout_seconds = timeout;
+                ConfigNumberSave::QuestionnaireTimeout
+            });
+        }
         let value = self.parsed_value()?;
         match self.key {
+            ConfigNumberKey::QuestionnaireTimeout => unreachable!("handled above"),
             ConfigNumberKey::PromptHistoryLimit => {
                 anyhow::bail!("prompt history limit is applied through the confirm flow");
             }
@@ -153,6 +169,7 @@ impl ConfigNumberInput {
 impl ConfigNumberKey {
     pub(super) fn label(self) -> &'static str {
         match self {
+            ConfigNumberKey::QuestionnaireTimeout => "questionnaire timeout seconds",
             ConfigNumberKey::MaxOutputBytes => "max output bytes",
             ConfigNumberKey::MaxToolOutputLines => "max tool output lines",
             ConfigNumberKey::CompactThresholdPercent => "compact threshold percent",
@@ -164,6 +181,7 @@ impl ConfigNumberKey {
 
     pub(super) fn picker_value(self) -> &'static str {
         match self {
+            ConfigNumberKey::QuestionnaireTimeout => config_picker::QUESTIONNAIRE_TIMEOUT_VALUE,
             ConfigNumberKey::MaxOutputBytes => config_picker::MAX_OUTPUT_BYTES_VALUE,
             ConfigNumberKey::MaxToolOutputLines => config_picker::MAX_TOOL_OUTPUT_LINES_VALUE,
             ConfigNumberKey::CompactThresholdPercent => {
@@ -242,6 +260,13 @@ impl ConfigNumberInput {
         }
     }
 
+    pub(super) fn questionnaire_timeout(value: Option<std::num::NonZeroU64>) -> Self {
+        Self {
+            key: ConfigNumberKey::QuestionnaireTimeout,
+            editor: LineEditor::new(value.map(|value| value.to_string()).unwrap_or_default()),
+        }
+    }
+
     pub(super) fn insert_char(&mut self, ch: char) {
         if !ch.is_ascii_digit() {
             return;
@@ -261,7 +286,7 @@ pub(super) fn config_number_input_lines(
     width: usize,
 ) -> Vec<Line<'static>> {
     let label = input.key.label();
-    vec![
+    let mut lines = vec![
         styled_line(
             truncate_one_line(
                 &format!(
@@ -280,7 +305,14 @@ pub(super) fn config_number_input_lines(
             Theme::text(),
             LineFill::Natural,
         ),
-    ]
+    ];
+    if input.key == ConfigNumberKey::QuestionnaireTimeout {
+        lines.extend(super::render::wrap_line_at_whitespace(
+            "Positive seconds; empty = Disabled. Only forms with explicit fallback answers time out. Applies when the next form opens.",
+            width,
+        ).into_iter().map(|line| Line::styled(line.to_owned(), Theme::dim())));
+    }
+    lines
 }
 
 #[cfg(test)]

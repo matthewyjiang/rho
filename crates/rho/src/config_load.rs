@@ -110,6 +110,9 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
     }
     cfg.validate_model_aliases()?;
     cfg.resolve_model_alias()?;
+    if let Some(group) = file.questionnaire {
+        cfg.questionnaire = group;
+    }
     if let Some(group) = file.display {
         if let Some(value) = group.show_reasoning_output {
             cfg.show_reasoning_output = value;
@@ -306,6 +309,7 @@ fn non_empty_secret(secret: String) -> Option<String> {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PartialConfig {
+    questionnaire: Option<super::QuestionnaireConfig>,
     provider: Option<String>,
     model: Option<ModelSetting>,
     max_output_bytes: Option<usize>,

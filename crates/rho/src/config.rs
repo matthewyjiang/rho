@@ -65,6 +65,7 @@ pub const MAX_AGENT_CONCURRENCY: usize = 64;
 /// credential store and redact their `Debug` representation.
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub questionnaire: QuestionnaireConfig,
     pub provider: String,
     pub model: String,
     /// User-defined short names for concrete models; see `ModelAliases`.
@@ -146,6 +147,7 @@ pub(super) fn inferred_provider_auth(
 impl Default for Config {
     fn default() -> Self {
         Self {
+            questionnaire: QuestionnaireConfig::default(),
             provider: "openai".into(),
             model: "gpt-5.5".into(),
             model_aliases: ModelAliases::default(),
@@ -184,6 +186,20 @@ impl Default for Config {
             providers: ProviderConfigs::default(),
             mcp: McpConfig::default(),
         }
+    }
+}
+
+/// User-owned timeout policy. Absence disables automatic questionnaire answers.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionnaireConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<std::num::NonZeroU64>,
+}
+
+impl QuestionnaireConfig {
+    pub(crate) fn is_disabled(&self) -> bool {
+        self.timeout_seconds.is_none()
     }
 }
 

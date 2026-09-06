@@ -67,4 +67,6 @@ Use the read-only `rho` tool with action `config` to see the sanitized live conf
 
 ## Applying a change
 
+`[questionnaire].timeout_seconds` is optional positive whole seconds. Omission disables automatic answers; zero is invalid. `/config` → Agent behavior → Questionnaire timeout edits the same setting, with an empty field for Disabled. It applies when a form opens. Only forms with explicit model `on_timeout` fallback answers can time out; defaults never authorize a timeout. Interaction pauses it for the rest of that form. Never use fallbacks for authorization or destructive decisions.
+
 State which mechanism you recommend and, when relevant, when it takes effect. Settings that apply to the current session or the next turn need no restart, including `advisor_mode`, `edit_tool`, and `agent_concurrency`; `enable_subagents`, web search hosted state, templates, and keybindings apply on the next session or at startup. When the user edits config directly, tell them a restart may be required and offer to check whether the setting is restart-only. `agent_concurrency` is under Agent behavior in `/config` (Concurrent agents) or `behavior.agent_concurrency` in config; it defaults to 10, max 64, and applies immediately. `RHO_AGENT_CONCURRENCY` is no longer read.

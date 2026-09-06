@@ -59,6 +59,7 @@ fn enter_advances_questions_and_submits_only_on_the_last() {
     assert_eq!(
         reply_rx.try_recv(),
         Ok(QuestionnaireReply::Answer(QuestionnaireResponse {
+            source: rho_sdk::HostInputSource::User,
             answers: vec![
                 QuestionnaireAnswer {
                     id: "first".into(),

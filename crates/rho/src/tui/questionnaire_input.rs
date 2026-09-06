@@ -6,10 +6,34 @@ use super::{
 };
 
 impl App {
+    pub(super) fn pause_questionnaire_timeout(&mut self) {
+        if let Some(questionnaire) = self.questionnaire_mut() {
+            questionnaire.pause_timeout();
+        }
+    }
+
+    pub(super) fn questionnaire_timeout_running(&self) -> bool {
+        matches!(self.input_ui.composer(), ComposerMode::Questionnaire(questionnaire) if questionnaire.timeout_running())
+    }
+
+    pub(super) fn tick_questionnaire_timeout(&mut self) -> bool {
+        let Some(display) = self.questionnaire_mut().and_then(|questionnaire| {
+            questionnaire.submit_timeout_if_due(std::time::Instant::now())
+        }) else {
+            return false;
+        };
+        self.input_ui.take_composer();
+        self.clear_submitted_input();
+        self.insert_entry(&Entry::Notice(display));
+        self.set_status("fallback answers submitted");
+        true
+    }
+
     pub(super) fn handle_questionnaire_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         if !matches!(self.input_ui.composer(), ComposerMode::Questionnaire(_)) {
             return Ok(false);
         }
+        self.pause_questionnaire_timeout();
 
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
@@ -205,16 +229,24 @@ impl App {
         request: QuestionAnswerRequest,
     ) -> std::io::Result<()> {
         self.finish_streams();
+        // Snapshot the user-owned policy at open, not when the model starts the tool.
+        // A config read failure must never enable automatic answers.
+        let timeout_seconds = self
+            .info
+            .services
+            .config_repository
+            .load()
+            .map(|config| config.questionnaire.timeout_seconds)
+            .unwrap_or_default();
         self.clear_submitted_input();
         let notice = request
             .notice
             .unwrap_or_else(|| questionnaire_notice_text(&request.request));
         self.insert_entry(&Entry::Notice(notice));
+        let mut composer = QuestionnaireComposer::new(request.request, request.response);
+        composer.start_timeout(timeout_seconds, std::time::Instant::now());
         self.input_ui
-            .set_composer(ComposerMode::Questionnaire(QuestionnaireComposer::new(
-                request.request,
-                request.response,
-            )));
+            .set_composer(ComposerMode::Questionnaire(composer));
         self.set_status(HerdrUserWait::Questionnaire.message());
         self.report_herdr_waiting_for_user(HerdrUserWait::Questionnaire)
             .await;

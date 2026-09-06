@@ -1,6 +1,29 @@
 use super::{parse_settings, ConfigWarning};
 use pretty_assertions::assert_eq;
 
+// Covers: a typo or zero duration must fail closed, not enable auto answers.
+// Owner: persisted questionnaire policy parser.
+#[test]
+fn questionnaire_timeout_requires_positive_whole_seconds() {
+    for value in ["0", "-1", "1.5", "\"10\""] {
+        assert!(parse_settings(&format!("[questionnaire]\ntimeout_seconds = {value}\n")).is_err());
+    }
+    for (text, expected) in [
+        ("", None),
+        ("[questionnaire]\n", None),
+        ("[questionnaire]\ntimeout_seconds = 17\n", Some(17)),
+    ] {
+        let (config, _) = parse_settings(text).unwrap();
+        assert_eq!(
+            config
+                .questionnaire
+                .timeout_seconds
+                .map(std::num::NonZeroU64::get),
+            expected
+        );
+    }
+}
+
 // Covers: unknown top-level config keys are a hard load error
 // Owner: config load
 #[test]

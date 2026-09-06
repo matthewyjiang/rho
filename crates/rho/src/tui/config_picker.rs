@@ -27,6 +27,7 @@ pub(super) const THEME_VALUE: &str = "theme";
 pub(super) const CHECK_FOR_UPDATES_VALUE: &str = "check_for_updates";
 pub(super) const ENABLE_SUBAGENTS_VALUE: &str = "enable_subagents";
 pub(super) const AGENT_CONCURRENCY_VALUE: &str = "agent_concurrency";
+pub(super) const QUESTIONNAIRE_TIMEOUT_VALUE: &str = "questionnaire_timeout";
 pub(super) const ADVISOR_MODE_VALUE: &str = "advisor_mode";
 pub(super) const ADVISOR_MODEL_VALUE: &str = "advisor_model";
 pub(super) const ADVISOR_REASONING_VALUE: &str = "advisor_reasoning";
@@ -388,6 +389,13 @@ pub(super) fn category_picker(
                 Some(config.agent_concurrency.to_string()),
                 AGENT_CONCURRENCY_VALUE,
             ));
+            items.push(sectioned_item(
+                Some("Questions"),
+                "Questionnaire timeout",
+                "Only forms with explicit fallback answers time out. Enter edits positive seconds; clear for Disabled. Interaction pauses the timer.",
+                Some(config.questionnaire.timeout_seconds.map(|value| format!("{value}s")).unwrap_or_else(|| "Disabled".into())),
+                QUESTIONNAIRE_TIMEOUT_VALUE,
+            ));
             ("Config / Agent behavior", items)
         }
         CONTEXT_CATEGORY_VALUE => (
@@ -536,6 +544,8 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | PERMISSION_CLASSIFIER_MODEL_VALUE
         | PERMISSION_CLASSIFIER_REASONING_VALUE
         | ENABLE_SUBAGENTS_VALUE
+        | AGENT_CONCURRENCY_VALUE
+        | QUESTIONNAIRE_TIMEOUT_VALUE
         | ADVISOR_MODE_VALUE
         | ADVISOR_MODEL_VALUE
         | ADVISOR_REASONING_VALUE => Some(AGENT_CATEGORY_VALUE),

@@ -4,8 +4,8 @@ use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ModelUsage, ToolCall},
     tool::{OperationKind, ToolAsset, ToolMetadata, ToolOutput, ToolProgress},
-    HostChoice, HostInputRequest, HostQuestion, ProviderStreamResetReason, Revision, RunEvent,
-    RunId, SelectionMode, ToolCallId, ToolCompletion,
+    HostChoice, HostInputRequest, HostInputResponse, HostQuestion, ProviderStreamResetReason,
+    Revision, RunEvent, RunId, SelectionMode, ToolCallId, ToolCompletion,
 };
 use rho_tools::tool_card::{
     DiffRow, DiffRowKind, ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus,
@@ -722,7 +722,7 @@ fn yes_no_round_trip_preserves_confirm_semantics_and_values() {
 }
 
 #[test]
-fn optional_unanswered_round_trip_omits_the_answer() {
+fn optional_unanswered_round_trip_preserves_user_omission_and_explicit_fallback() {
     let question = HostQuestion::new(
         "language",
         "Language?",
@@ -738,6 +738,27 @@ fn optional_unanswered_round_trip_omits_the_answer() {
 
     assert!(host.answers().is_empty());
     assert!(request.validate(&host).is_ok());
+
+    // Explicit empty fallbacks must retain their key and provenance through the
+    // composer adapter, otherwise SDK validation rejects the timed response.
+    let fallback = HostInputResponse::new().answer("language", Vec::<String>::new());
+    let request = request
+        .with_timeout_fallback(fallback, "Leave language unset")
+        .unwrap();
+    let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
+    let mut composer =
+        QuestionnaireComposer::new(request.clone(), QuestionnaireResponseChannel::new(reply_tx));
+    let now = std::time::Instant::now();
+    composer.start_timeout(std::num::NonZeroU64::new(1), now);
+    assert!(composer
+        .submit_timeout_if_due(now + std::time::Duration::from_secs(1))
+        .is_some());
+    let QuestionnaireReply::Answer(response) = reply_rx.try_recv().unwrap() else {
+        panic!("expected fallback response");
+    };
+    let host = host_response(response);
+    assert_eq!(Some(&host), request.timeout_fallback());
+    request.validate(&host).unwrap();
 }
 
 #[test]

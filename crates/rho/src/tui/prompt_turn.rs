@@ -479,6 +479,7 @@ impl App {
                     }
                 }
                 _ = tokio::time::sleep_until(frame_deadline) => {
+                    self.tick_questionnaire_timeout();
                     self.drain_stream_tick(terminal)?;
                     self.flush_due_paste_burst();
                     self.draw_running_frame(terminal, &mut frame_scheduler)?;

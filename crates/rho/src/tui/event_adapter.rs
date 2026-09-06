@@ -457,10 +457,14 @@ pub(super) fn compact_finished_event(outcome: CompactionUiOutcome) -> ViewModelE
 
 pub(super) fn host_response(response: QuestionnaireResponse) -> HostInputResponse {
     response.answers.into_iter().fold(
-        HostInputResponse::new(),
+        HostInputResponse::new().with_source(response.source),
         |response, QuestionnaireAnswer { id, answer }| match answer {
             serde_json::Value::Null => response,
-            serde_json::Value::Array(values) if values.is_empty() => response,
+            serde_json::Value::Array(values)
+                if values.is_empty() && response.source() == rho_sdk::HostInputSource::User =>
+            {
+                response
+            }
             serde_json::Value::Array(values) => {
                 response.answer(id, values.into_iter().map(answer_text).collect::<Vec<_>>())
             }

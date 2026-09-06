@@ -72,6 +72,9 @@ impl ConfigRow {
             return Some(Self::InlineShellChoice(shell.to_string()));
         }
         Some(match value {
+            config_picker::QUESTIONNAIRE_TIMEOUT_VALUE => {
+                Self::Number(ConfigNumberKey::QuestionnaireTimeout)
+            }
             config_picker::CONVERSATION_MODEL_VALUE => Self::ConversationModel,
             config_picker::REFRESH_MODEL_LIST_VALUE => Self::RefreshModelList,
             config_picker::REFRESH_MODELS_DEV_VALUE => Self::RefreshModelsDev,

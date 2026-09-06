@@ -1,5 +1,54 @@
 use super::*;
 
+// Covers: defaults or malformed fallbacks must not become automatic answers.
+// Owner: questionnaire argument parser.
+#[test]
+fn timeout_requires_explicit_complete_typed_fallbacks() {
+    let valid = json!({
+        "questions": [
+            {"id":"color", "question":"Color?", "type":"choice", "choices":["red","blue"], "default":"red"},
+            {"id":"checks", "question":"Checks?", "type":"multi_select", "choices":["unit","pty"]},
+            {"id":"extra", "question":"Extra?", "type":"confirm", "required":false}
+        ],
+        "on_timeout":{"answers":{"color":"blue", "checks":["pty"]}, "reason":"Use blue and run PTY checks"}
+    });
+    let parsed = parse_request(valid.clone()).unwrap();
+    pretty_assertions::assert_eq!(parsed.questions[0].default, Some(json!("red")));
+    pretty_assertions::assert_eq!(parsed.on_timeout.unwrap().answers["color"], json!("blue"));
+
+    for (pointer, value) in [
+        ("/questions/0/id", Value::Null),
+        ("/questions/0/id", json!("")),
+        ("/questions/1/id", json!("color")),
+        ("/on_timeout/reason", json!(" ")),
+        ("/on_timeout/answers", json!({"checks":["pty"]})),
+        (
+            "/on_timeout/answers",
+            json!({"color":"blue", "checks":["pty"], "unknown":true}),
+        ),
+        ("/on_timeout/answers/color", json!("green")),
+        ("/on_timeout/answers/color", json!(true)),
+        ("/on_timeout/answers/color", json!(["blue"])),
+        ("/on_timeout/answers/checks", json!("pty")),
+        ("/on_timeout/answers/checks", json!([])),
+        ("/on_timeout/answers/checks", json!(["pty", "pty"])),
+        ("/on_timeout/answers/checks", json!([1])),
+        (
+            "/on_timeout/answers",
+            json!({"color":"blue", "checks":["pty"], "extra":"yes"}),
+        ),
+    ] {
+        let mut input = valid.clone();
+        *input.pointer_mut(pointer).unwrap() = value;
+        assert!(parse_request(input.clone()).is_err(), "accepted {input}");
+    }
+    let mut input = valid;
+    input["on_timeout"]["answers"]["extra"] = json!(false);
+    assert!(parse_request(input.clone()).is_ok());
+    input["on_timeout"]["timeout_seconds"] = json!(1);
+    assert!(parse_request(input).is_err());
+}
+
 #[test]
 fn parse_request_trims_optional_fields() {
     let request = parse_request(json!({
@@ -22,6 +71,7 @@ fn parse_request_trims_optional_fields() {
     assert_eq!(
         request,
         QuestionnaireRequest {
+            on_timeout: None,
             title: Some("Edit target".into()),
             reason: Some("I need a target".into()),
             questions: vec![QuestionnaireQuestion {

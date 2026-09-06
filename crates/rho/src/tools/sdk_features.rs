@@ -243,8 +243,13 @@ impl SdkTool for QuestionnaireTool {
                 .title
                 .clone()
                 .unwrap_or_else(|| "questionnaire".into());
-            let host_request =
+            let mut host_request =
                 HostInputRequest::questionnaire(title, questions).map_err(map_sdk_error)?;
+            if let Some(fallback) = request.on_timeout {
+                host_request = host_request
+                    .with_timeout_fallback(fallback.host_response(), fallback.reason)
+                    .map_err(map_sdk_error)?;
+            }
             let response = context
                 .request_host_input(host_request)
                 .await
@@ -268,7 +273,10 @@ impl SdkTool for QuestionnaireTool {
                 })
                 .collect();
             let content = crate::questionnaire::response_content(
-                &crate::questionnaire::QuestionnaireResponse { answers },
+                &crate::questionnaire::QuestionnaireResponse {
+                    answers,
+                    source: response.source(),
+                },
             );
             Ok(ToolOutput::text(content).metadata(
                 ToolMetadata::new().operation(OperationKind::Other("questionnaire".into())),

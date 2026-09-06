@@ -49,6 +49,19 @@ pub(super) async fn intercept(
         "fixture questionnaire" if tool_result(request, QUESTIONNAIRE_CALL_ID).is_none() => {
             Some(questionnaire_call())
         }
+        "fixture questionnaire timeout"
+            if tool_result(request, QUESTIONNAIRE_CALL_ID).is_none() =>
+        {
+            Some(completed_tool_call(
+                QUESTIONNAIRE_CALL_ID,
+                "questionnaire",
+                serde_json::json!({
+                    "title": "Fallback questionnaire",
+                    "questions": [{"id":"color", "question":"Choose a fallback color", "type":"choice", "choices":["red","blue"], "default":"red", "allow_other":true}],
+                    "on_timeout": {"answers":{"color":"blue"}, "reason":"Continue with blue instead of the red preselection"}
+                }),
+            ))
+        }
         "fixture concurrent progress"
             if tool_result(request, CONCURRENT_SLOW_CALL_ID).is_none()
                 && tool_result(request, CONCURRENT_FAST_CALL_ID).is_none() =>

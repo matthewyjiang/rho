@@ -563,6 +563,7 @@ impl App {
                         control = StreamControl::Resize;
                     }
                     Event::Mouse(mouse) => {
+                        self.pause_questionnaire_timeout();
                         self.flush_pending_paste_burst();
                         self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
                     }

@@ -84,7 +84,7 @@ fn submit_sends_selection_answers() {
     assert!(!submitted.display.is_empty());
     assert!(matches!(
         reply_rx.try_recv(),
-        Ok(QuestionnaireReply::Answer(QuestionnaireResponse { answers }))
+        Ok(QuestionnaireReply::Answer(QuestionnaireResponse { answers, source: rho_sdk::HostInputSource::User }))
             if answers == vec![
                 QuestionnaireAnswer { id: "branch".into(), answer: serde_json::json!("release") },
                 QuestionnaireAnswer { id: "test_suites".into(), answer: serde_json::json!(["unit", "e2e"]) },
