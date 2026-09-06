@@ -15,7 +15,7 @@ impl InteractiveRuntime {
     ) -> Result<(), Error> {
         self.start_run(
             input,
-            display_user,
+            display_user.map(|message| vec![message]),
             TurnPrelude::None,
             /*boundary_inputs*/ None,
         )
@@ -25,7 +25,7 @@ impl InteractiveRuntime {
     pub(crate) async fn start_with_boundary_inputs(
         &mut self,
         input: UserInput,
-        display_user: Option<Message>,
+        display_user: Option<Vec<Message>>,
         tool_call: Option<ToolCall>,
     ) -> Result<tokio::sync::mpsc::Receiver<rho_sdk::BoundaryInputRequest>, Error> {
         let (source, receiver) = rho_sdk::boundary_input_channel();
@@ -38,13 +38,14 @@ impl InteractiveRuntime {
     async fn start_run(
         &mut self,
         input: UserInput,
-        display_user: Option<Message>,
+        display_user: Option<Vec<Message>>,
         prelude: TurnPrelude,
         boundary_inputs: Option<rho_sdk::BoundaryInputSource>,
     ) -> Result<(), Error> {
         if self.runs.state() != InteractiveState::Idle || self.is_compacting() {
             return Err(Error::SessionBusy);
         }
+        self.runs.reset_display_committed();
         if let Some(source) = self.sessions.pending_replacement() {
             self.rebuild_session(
                 source,

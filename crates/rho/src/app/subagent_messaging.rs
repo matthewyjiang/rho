@@ -459,8 +459,8 @@ pub(crate) fn parent_message_prompt(message: &ValidatedMessage) -> String {
 }
 
 /// Renders queued child notices as one model prompt and one display line set.
-pub(crate) fn notice_prompts(notices: &[SubagentNotice]) -> (String, String) {
-    let model = notices
+pub(crate) fn notice_prompt(notices: &[SubagentNotice]) -> String {
+    notices
         .iter()
         .map(|notice| {
             let label = match notice.delivery {
@@ -473,13 +473,7 @@ pub(crate) fn notice_prompts(notices: &[SubagentNotice]) -> (String, String) {
             )
         })
         .collect::<Vec<_>>()
-        .join("\n\n");
-    let display = notices
-        .iter()
-        .map(|notice| format!("agent {} ({}) notice", notice.run_id, notice.agent_id))
-        .collect::<Vec<_>>()
-        .join("\n");
-    (model, display)
+        .join("\n\n")
 }
 
 #[cfg(test)]

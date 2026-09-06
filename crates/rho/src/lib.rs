@@ -17,6 +17,7 @@ mod config_writer;
 mod credential_store;
 mod cursor_runtime;
 mod diagnostics;
+mod display_transcript;
 mod doctor;
 mod executable;
 mod export;

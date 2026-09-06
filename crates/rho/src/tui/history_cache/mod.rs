@@ -92,7 +92,7 @@ impl HistoryRenderSettings {
     /// only reasoning that has no duration receipt left to show.
     pub(super) fn hides_entry(self, entry: &Entry) -> bool {
         match entry {
-            Entry::Tool(_) => self.zen_mode,
+            Entry::Tool(tool) => self.zen_mode && !tool.visible_in_zen(),
             Entry::Reasoning(reasoning) => {
                 self.zen_mode || (!self.show_reasoning_output && reasoning.thought_for.is_none())
             }

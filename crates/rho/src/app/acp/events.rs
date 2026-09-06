@@ -236,7 +236,15 @@ fn replay_message(session_id: &SessionId, message: &Message) -> Vec<SessionNotif
         Message::AbortedAssistant(message) => {
             replay_blocks(session_id, ReplayRole::Agent, &message.content)
         }
-        Message::System(_) | Message::ToolResult(_) => Vec::new(),
+        Message::System(text) => crate::display_transcript::DisplayTranscript::from_display(text)
+            .map(|transcript| {
+                vec![notify(
+                    session_id,
+                    SessionUpdate::AgentMessageChunk(text_chunk(transcript.plain_text())),
+                )]
+            })
+            .unwrap_or_default(),
+        Message::ToolResult(_) => Vec::new(),
     }
 }
 

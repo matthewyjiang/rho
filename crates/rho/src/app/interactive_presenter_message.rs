@@ -2,7 +2,7 @@
 
 use super::{ToolKind, ToolView};
 use crate::{
-    presentation::{MessageCard, MessageDelivery},
+    presentation::{MessageCard, MessageDelivery, MessagePreview, MessageTone, MessageVisibility},
     tools::agent::message_receipt::MessageReceipt,
 };
 
@@ -22,13 +22,17 @@ pub(super) fn finished_message(
         None => ("Delegated task".into(), "child".into(), id.into()),
     };
     Some(Box::new(MessageCard {
-        title,
+        title: title.clone(),
         sender: "parent".into(),
         recipient,
         delivery: MessageDelivery::Queued,
+        tone: MessageTone::Neutral,
+        preview: MessagePreview::Truncated,
+        visibility: MessageVisibility::Activity,
+        reference: Some(run_id.to_string()),
         body: view.arguments.get("message")?.as_str()?.trim().into(),
         details: vec![
-            format!("run: {run_id}"),
+            format!("task: {title}"),
             format!("attach: rho attach {run_id}"),
         ],
     }))

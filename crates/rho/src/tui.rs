@@ -176,6 +176,7 @@ mod stream;
 mod stream_pace;
 mod stream_preview;
 mod subagent_attach;
+mod subagent_delivery;
 mod subagent_panel;
 mod terminal_events;
 mod terminal_session;

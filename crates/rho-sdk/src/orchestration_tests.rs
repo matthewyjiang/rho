@@ -34,6 +34,88 @@ use super::{apply_staged_steering, execute_run, tool_turn::INTERRUPTED_TOOL_RESU
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
+// Covers: cancellation under event backpressure cannot hide a committed
+// compaction snapshot from hosts that persist it while draining the run.
+// Owner: SDK automatic-compaction event delivery.
+#[tokio::test]
+async fn committed_compaction_event_survives_cancelled_backpressure() {
+    use std::future::Future;
+
+    for drop_receiver in [false, true] {
+        let original = vec![Message::user_text("old history")];
+        let replacement = vec![Message::System("summary".into())];
+        let runtime = Rho::builder()
+            .provider(ScriptedProvider::new(
+                ModelIdentity::new("test", "test", "test"),
+                Vec::<ScriptedTurn>::new(),
+            ))
+            .compactor(crate::ScriptedCompactor::new([
+                crate::CompactionOutput::new(replacement.clone()).unwrap(),
+            ]))
+            .compaction_policy(crate::CompactionPolicy::after_messages(
+                NonZeroUsize::new(1).unwrap(),
+            ))
+            .build()
+            .unwrap();
+        let session_id = SessionId::new();
+        let core = SessionCore::new(
+            session_id.clone(),
+            original.clone(),
+            Revision::INITIAL,
+            CompactionState::default(),
+            /*metadata*/ Default::default(),
+            /*prompt_cache_key*/ None,
+            runtime.clone(),
+        );
+        let cancellation = CancellationToken::new();
+        // One slot lets CompactionStarted fill the channel so the committed
+        // completion event must wait for the consumer.
+        let (events, mut receiver) = mpsc::channel(1);
+        let run_id = RunId::new();
+        let mut history = original;
+        let compact = super::maybe_compact(
+            &core,
+            super::ProviderRequestScope {
+                runtime: &runtime,
+                session_id: &session_id,
+                run_id: &run_id,
+                step_index: 0,
+            },
+            &[],
+            &mut history,
+            /*preserve_from*/ None,
+            &cancellation,
+            &events,
+        );
+        tokio::pin!(compact);
+        assert!(poll_fn(|cx| Poll::Ready(compact.as_mut().poll(cx)))
+            .await
+            .is_pending());
+        assert_eq!(core.persistence_snapshot().history(), replacement);
+        cancellation.cancel();
+        if drop_receiver {
+            drop(receiver);
+            assert!(matches!(
+                poll_fn(|cx| Poll::Ready(compact.as_mut().poll(cx))).await,
+                Poll::Ready(Err(Error::Interrupted { .. }))
+            ));
+        } else {
+            assert!(poll_fn(|cx| Poll::Ready(compact.as_mut().poll(cx)))
+                .await
+                .is_pending());
+            assert!(matches!(
+                receiver.recv().await,
+                Some(RunEvent::CompactionStarted { .. })
+            ));
+            assert_eq!(compact.await.unwrap(), None);
+            let Some(RunEvent::CompactionCompleted { outcome, .. }) = receiver.recv().await else {
+                panic!("committed compaction event missing");
+            };
+            assert_eq!(outcome.committed_snapshot().unwrap().history(), replacement);
+        }
+    }
+}
+
 #[derive(Clone)]
 struct StrictContinuationProvider {
     first_response: Vec<ContentBlock>,

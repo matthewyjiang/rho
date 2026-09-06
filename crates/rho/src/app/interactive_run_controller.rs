@@ -14,39 +14,175 @@ pub(crate) type SteeringRetractionFuture =
 
 pub(crate) struct PendingTurn {
     model_user: Message,
-    display_user: Option<Message>,
+    display_user: Option<Vec<Message>>,
     history_start: usize,
+    checkpoints: Vec<DisplayCheckpoint>,
+}
+
+/// Boundary checkpoints own the full accepted prefix, not positions in mutable
+/// SDK history. Compaction checkpoints only establish the next history baseline.
+/// The SDK does not expose discarded precompaction history, so only prefixes
+/// captured before compaction can survive it; later history is appended verbatim.
+struct DisplayCheckpoint {
+    revision: rho_sdk::Revision,
+    history: Vec<Message>,
+    replacement: Option<(usize, Message)>,
 }
 
 impl PendingTurn {
     pub(crate) fn new(
         model_user: Message,
-        display_user: Option<Message>,
+        display_user: Option<Vec<Message>>,
         history_start: usize,
     ) -> Self {
         Self {
             model_user,
             display_user,
             history_start,
+            checkpoints: Vec::new(),
         }
     }
 
-    pub(crate) fn model_user(&self) -> &Message {
-        &self.model_user
+    /// Acceptance checkpoints the input before the host records its display.
+    /// Bind to that occurrence, never to a later text-equivalent user message.
+    pub(crate) fn record_boundary_display(
+        &mut self,
+        model: Message,
+        display: Message,
+        history: &[Message],
+        revision: rho_sdk::Revision,
+    ) {
+        let Some(index) = history.iter().rposition(|message| message == &model) else {
+            return;
+        };
+        let history = &history[..=index];
+        if self.checkpoints.iter().any(|checkpoint| {
+            checkpoint.revision == revision
+                && checkpoint.history == history
+                && checkpoint
+                    .replacement
+                    .as_ref()
+                    .is_some_and(|(at, _)| *at == index)
+        }) {
+            return;
+        }
+        self.checkpoints.push(DisplayCheckpoint {
+            revision,
+            history: history.to_vec(),
+            replacement: Some((index, display)),
+        });
     }
 
-    pub(crate) fn display_user(&self) -> Option<&Message> {
-        self.display_user.as_ref()
+    /// A queued compaction event may precede an already acknowledged input.
+    /// Insert its baseline before that input rather than discarding its capture.
+    pub(crate) fn checkpoint_compaction(
+        &mut self,
+        history: &[Message],
+        revision: rho_sdk::Revision,
+    ) -> Vec<Message> {
+        let index = self
+            .checkpoints
+            .iter()
+            .position(|checkpoint| checkpoint.revision > revision)
+            .unwrap_or(self.checkpoints.len());
+        self.checkpoints.insert(
+            index,
+            DisplayCheckpoint {
+                revision,
+                history: history.to_vec(),
+                replacement: None,
+            },
+        );
+        self.accumulate(&self.checkpoints[..=index], None)
     }
 
-    pub(crate) fn history_start(&self) -> usize {
-        self.history_start
+    pub(crate) fn display_tail(
+        &self,
+        history: &[Message],
+        outcome: Option<&RunOutcome>,
+    ) -> Vec<Message> {
+        let mut display = self.accumulate(&self.checkpoints, Some(history));
+        if self.checkpoints.is_empty() && history.get(self.history_start) != Some(&self.model_user)
+        {
+            display.extend(
+                outcome
+                    .filter(|outcome| !outcome.text().is_empty())
+                    .map(|outcome| Message::assistant_text(outcome.text().to_string())),
+            );
+        }
+        display
+    }
+
+    fn accumulate(
+        &self,
+        checkpoints: &[DisplayCheckpoint],
+        final_history: Option<&[Message]>,
+    ) -> Vec<Message> {
+        let mut display = self
+            .display_user
+            .clone()
+            .unwrap_or_else(|| vec![self.model_user.clone()]);
+        let mut previous: Option<&[Message]> = None;
+        for checkpoint in checkpoints {
+            if let Some((index, replacement)) = &checkpoint.replacement {
+                if let Some(tail) = self.appended_history(previous, &checkpoint.history) {
+                    let start = checkpoint.history.len() - tail.len();
+                    for (offset, message) in tail.iter().enumerate() {
+                        display.push(
+                            if start + offset == *index {
+                                replacement
+                            } else {
+                                message
+                            }
+                            .clone(),
+                        );
+                    }
+                } else {
+                    // Cancellation can prevent consumption of an older compaction
+                    // event. Its missing baseline must not erase accepted input.
+                    display.push(replacement.clone());
+                }
+            }
+            previous = Some(&checkpoint.history);
+        }
+        if let Some(tail) =
+            final_history.and_then(|history| self.appended_history(previous, history))
+        {
+            display.extend_from_slice(tail);
+        }
+        display
+    }
+
+    /// Append only a verified extension of the last checkpoint or initial input.
+    fn appended_history<'a>(
+        &self,
+        previous: Option<&[Message]>,
+        history: &'a [Message],
+    ) -> Option<&'a [Message]> {
+        match previous {
+            Some(previous) => history.strip_prefix(previous),
+            None => (history.get(self.history_start) == Some(&self.model_user))
+                .then(|| &history[self.history_start + 1..]),
+        }
     }
 }
+
+#[cfg(test)]
+#[path = "interactive_run_controller_tests.rs"]
+mod tests;
 
 pub(crate) struct FinishedRun {
     pub(crate) outcome: Result<RunOutcome, Error>,
     pub(crate) pending_turn: Option<PendingTurn>,
+}
+
+/// Exact durability reached before a turn succeeds, fails, or rolls back.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) enum DisplayCommit {
+    #[default]
+    Unsaved,
+    Checkpoint(Vec<Message>),
+    Complete,
 }
 
 #[derive(Default)]
@@ -57,11 +193,44 @@ pub(crate) struct InteractiveRunController {
     pending_context_usage: Option<ContextUsage>,
     cumulative_input_tokens: u64,
     step_input_token_baseline: u64,
+    last_turn_display_commit: DisplayCommit,
 }
 
 impl InteractiveRunController {
-    pub(crate) fn pending_turn(&self) -> Option<&PendingTurn> {
-        self.pending_turn.as_ref()
+    pub(crate) fn reset_display_committed(&mut self) {
+        self.last_turn_display_commit = DisplayCommit::Unsaved;
+    }
+
+    pub(crate) fn mark_display_committed(&mut self) {
+        self.last_turn_display_commit = DisplayCommit::Complete;
+    }
+
+    pub(crate) fn mark_display_checkpoint(&mut self, display: Vec<Message>) {
+        self.last_turn_display_commit = DisplayCommit::Checkpoint(display);
+    }
+
+    pub(crate) fn take_last_turn_display_commit(&mut self) -> DisplayCommit {
+        std::mem::take(&mut self.last_turn_display_commit)
+    }
+
+    pub(crate) fn checkpoint_compaction(
+        &mut self,
+        snapshot: &rho_sdk::SessionSnapshot,
+    ) -> Vec<Message> {
+        self.pending_turn.as_mut().map_or_else(Vec::new, |turn| {
+            turn.checkpoint_compaction(snapshot.history(), snapshot.revision())
+        })
+    }
+
+    pub(crate) fn record_boundary_display(
+        &mut self,
+        model: Message,
+        display: Message,
+        snapshot: &rho_sdk::SessionSnapshot,
+    ) {
+        if let Some(turn) = &mut self.pending_turn {
+            turn.record_boundary_display(model, display, snapshot.history(), snapshot.revision());
+        }
     }
 
     pub(crate) fn is_active(&self) -> bool {

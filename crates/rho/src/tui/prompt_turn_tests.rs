@@ -14,11 +14,58 @@ fn terminal_lifecycle_errors_bypass_sdk_failure_handling() {
 fn failed_turn() -> FailedTurn {
     FailedTurn {
         input: rho_sdk::UserInput::text("continue the existing goal turn"),
-        display_user: Some(Message::user_text("continuing active goal")),
+        display_user: vec![Message::user_text("continuing active goal")],
+        display_commit: DisplayCommit::Unsaved,
         notification_context: None,
+        boundary_recovery: Vec::new(),
         initial_tool_call: None,
         generate_session_title_after_completion: true,
+        session_title_user: None,
         parent_action_required: false,
+    }
+}
+
+// Covers: accepted in-turn findings are recovered after rollback, but not sent
+// again once already present in durable history. Owner: retry input policy.
+#[test]
+fn running_boundary_recovery_follows_durable_receipts() {
+    let first = BoundaryRecovery {
+        model: "first findings".into(),
+        display: Message::System("first receipt".into()),
+    };
+    let second = BoundaryRecovery {
+        model: "second findings".into(),
+        display: Message::System("second receipt".into()),
+    };
+    for (commit, retained) in [
+        (DisplayCommit::Unsaved, vec![first.clone(), second.clone()]),
+        (
+            DisplayCommit::Checkpoint(vec![first.display.clone()]),
+            vec![second.clone()],
+        ),
+        (DisplayCommit::Complete, Vec::new()),
+    ] {
+        let mut retry = failed_turn();
+        retry.boundary_recovery = vec![first.clone(), second.clone()];
+        retry
+            .display_user
+            .extend([first.display.clone(), second.display.clone()]);
+        retry.display_commit = commit;
+        retry.prepare_retry();
+        let mut context = None;
+        for recovery in &retained {
+            context = Some(crate::tools::agent::merge_notification_context(
+                context.as_deref(),
+                &recovery.model,
+            ));
+        }
+        let mut expected = context
+            .into_iter()
+            .map(ContentBlock::Text)
+            .collect::<Vec<_>>();
+        expected.extend_from_slice(retry.input.blocks());
+        pretty_assertions::assert_eq!(retry.model_input().unwrap().blocks(), expected);
+        pretty_assertions::assert_eq!(retry.boundary_recovery, retained);
     }
 }
 
@@ -106,16 +153,36 @@ fn mixed_interactions_preserve_arrival_order() {
     assert!(queue.pop().is_none());
 }
 
-// Covers: retrying the first turn must retain deferred title generation.
-// Owner: TUI turn orchestration
+// Covers: retries suppress saved display but retain unsaved human and boundary
+// messages after checkpoint failure. Owner: failed-turn retry policy.
 #[test]
-fn retry_request_reuses_the_failed_turn_and_deferred_title_state() {
-    let failed_turn = failed_turn();
-    let PromptTurnRequest::Retry(retry) = PromptTurnRequest::Retry(failed_turn.clone()) else {
-        unreachable!("constructed a retry request")
-    };
-
-    assert_eq!(retry, failed_turn);
+fn retry_retains_only_uncommitted_display_without_changing_model_or_title_state() {
+    let transcript = crate::display_transcript::DisplayTranscript(vec![
+        crate::display_transcript::DisplayRow::Notice("worker update".into()),
+    ]);
+    for (commit, retained) in [
+        (DisplayCommit::Unsaved, 2),
+        (DisplayCommit::Complete, 0),
+        (DisplayCommit::Checkpoint(failed_turn().display_user), 1),
+    ] {
+        let mut original = failed_turn();
+        original.display_user.push(transcript.display_message());
+        original.display_commit = commit.clone();
+        let mut expected = original.clone();
+        expected.display_commit = DisplayCommit::Unsaved;
+        if !matches!(commit, DisplayCommit::Unsaved) {
+            expected.session_title_user = Some(original.session_title_user_message());
+            expected
+                .display_user
+                .drain(..expected.display_user.len() - retained);
+        }
+        let mut retry = original;
+        retry.prepare_retry();
+        pretty_assertions::assert_eq!(retry, expected);
+        retry.display_commit = commit;
+        retry.prepare_retry();
+        pretty_assertions::assert_eq!(retry, expected);
+    }
 }
 
 #[test]
@@ -147,7 +214,7 @@ fn persisted_display_excludes_notification_context_for_standard_and_command_prom
         );
         assert_eq!(
             failed_turn.display_user,
-            Some(Message::user_text(expected_display))
+            vec![Message::user_text(expected_display)]
         );
     }
 }
@@ -179,7 +246,7 @@ fn retry_attachment_keeps_prior_batches_and_adds_each_new_batch_once() {
     );
     assert_eq!(
         later_retry_without_new_notifications.display_user,
-        Some(Message::user_text("user prompt"))
+        vec![Message::user_text("user prompt")]
     );
 }
 
@@ -222,11 +289,11 @@ fn prompt_assembly_preserves_order_and_separates_document_display_from_model() {
     );
     assert_eq!(
         failed_turn.display_user,
-        Some(Message::User(vec![
+        vec![Message::User(vec![
             ContentBlock::Text("display prompt".into()),
             ContentBlock::Text("[pdf: report.pdf · 14 chars · truncated]".into()),
             ContentBlock::Image(image),
-        ]))
+        ])]
     );
 }
 
@@ -281,7 +348,7 @@ async fn committed_boundary_batch_is_not_restored_after_post_start_failure() {
     assert!(!app.subagent_inbox.has_pending_notices());
 
     // Pre-start abandon restores so a later turn can deliver again.
-    let mut pending = Some(RestorableTurnBoundary::Standalone(delivery.batch));
+    let mut pending = Some(delivery);
     app.abandon_provider_turn_start(&mut agent, &mut pending);
     assert!(pending.is_none());
     assert!(
@@ -292,11 +359,11 @@ async fn committed_boundary_batch_is_not_restored_after_post_start_failure() {
     let delivery = app
         .collect_turn_boundary_prompts(&mut agent)
         .expect("restored notice should drain again");
-    let mut pending = Some(RestorableTurnBoundary::Standalone(delivery.batch));
+    let mut pending = Some(delivery);
     // Provider start accepted the input: drop the restorable batch and free the
     // end-to-end notice budget, matching the production commit path.
     if let Some(boundary) = pending.take() {
-        let delivered_notices = boundary.notice_count();
+        let delivered_notices = boundary.batch.notice_count();
         app.subagent_inbox
             .commit_delivered_notices(delivered_notices);
     }

@@ -55,7 +55,7 @@ sequenceDiagram
 8. Calls in one model response may overlap. All `ToolProposed` events keep model order, while start, update, host-input, detach, and finish events from different calls may interleave.
 9. Every per-call event and host-input request carries its `ToolCallId`. Within one available call, `ToolStarted` precedes all `ToolUpdated` events and one `ToolFinished` ends the call.
 10. Sync calls in one model response still enter provider and persisted history in model order. Async results enter history in completion order and may be non-adjacent to the original call.
-11. Automatic compaction emits `CompactionStarted` before calling the compactor and `CompactionCompleted` only after committing replacement history. Compaction is skipped while async jobs are pending.
+11. Automatic compaction emits `CompactionStarted` before calling the compactor and `CompactionCompleted` only after committing replacement history. Once committed, cancellation does not suppress that completion event, including under channel backpressure. Hosts must keep consuming events or await `Run::outcome` so the bounded channel can drain. Dropping the run or its receiver still ends delivery. Compaction is skipped while async jobs are pending.
 12. A run that reaches a normal cooperative terminal path emits one of `Completed`, `Cancelled`, or `Failed`.
 
 ### Terminal authority

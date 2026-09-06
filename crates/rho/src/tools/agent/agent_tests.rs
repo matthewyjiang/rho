@@ -140,7 +140,7 @@ fn notification_prompts_bound_many_large_utf8_results_and_keep_run_statuses() {
         })
         .collect::<Vec<_>>();
 
-    let (model, _) = notification_prompts(&notifications);
+    let model = notification_prompt(&notifications);
 
     assert!(
         model.len() <= MODEL_NOTIFICATION_BYTES,
@@ -154,7 +154,7 @@ fn notification_prompts_bound_many_large_utf8_results_and_keep_run_statuses() {
             "missing status for run {index}"
         );
     }
-    assert_eq!(model, notification_prompts(&notifications).0);
+    assert_eq!(model, notification_prompt(&notifications));
 
     let newer = (0..96)
         .map(|index| {
@@ -164,10 +164,16 @@ fn notification_prompts_bound_many_large_utf8_results_and_keep_run_statuses() {
             notification
         })
         .collect::<Vec<_>>();
-    let newer = notification_prompts(&newer).0;
+    let newer = notification_prompt(&newer);
     let retried_context = merge_notification_context(Some(&model), &newer);
     assert!(retried_context.len() <= NOTIFICATION_CONTEXT_BYTES);
     assert!(retried_context.contains("agent new000 (reviewer): ok"));
+    // A boundary can combine multiple bounded sources. Retention may drop
+    // earlier context, but must keep the accepted newest batch intact.
+    let combined = format!("{model}\n\n{newer}");
+    for prior in [None, Some(model.as_str())] {
+        assert_eq!(merge_notification_context(prior, &combined), combined);
+    }
 }
 
 async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String {

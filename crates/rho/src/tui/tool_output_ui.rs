@@ -42,7 +42,12 @@ impl App {
             .size()
             .map(|size| size.width as usize)
             .unwrap_or(TOGGLE_WIDTH_FALLBACK);
-        let status = if let Some(pending) = self.turn.latest_tool_mut() {
+        let zen_mode = self.info.runtime.zen_mode;
+        let status = if let Some(pending) = self
+            .turn
+            .latest_tool_mut()
+            .filter(|tool| !zen_mode || tool.visible_in_zen())
+        {
             if !tool_output_toggleable(pending, self.info.runtime.max_tool_output_lines, width) {
                 Some("no truncated tool output")
             } else {
@@ -62,7 +67,8 @@ impl App {
         }
 
         let Some(index) = self.history.entries().iter().rposition(|entry| {
-            expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines, width)
+            matches!(entry, Entry::Tool(tool) if !zen_mode || tool.visible_in_zen())
+                && expandable_tool_entry(entry, self.info.runtime.max_tool_output_lines, width)
         }) else {
             self.set_status("no truncated tool output");
             return Ok(());

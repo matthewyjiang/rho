@@ -35,6 +35,10 @@ fn attachment_stream_round_trips_view_events() {
         sender: "parent".into(),
         recipient: "reviewer".into(),
         delivery: crate::presentation::MessageDelivery::Queued,
+        tone: crate::presentation::MessageTone::Neutral,
+        preview: crate::presentation::MessagePreview::Truncated,
+        visibility: crate::presentation::MessageVisibility::Activity,
+        reference: None,
         body: "Check the queued route.\nKeep the full body.".into(),
         details: vec!["run: abc123".into()],
     });

@@ -6,6 +6,43 @@ use crate::tui::Entry;
 use rho_providers::model::{ContentBlock, Message, ToolCall, ToolResult};
 use rho_tools::tool_card::ToolHeader;
 
+// Covers: display receipts restore cards, while the same encoded text from a
+// human stays human input. Owner: transcript role projection.
+#[test]
+fn notification_display_preserves_ownership() {
+    use crate::{
+        display_transcript::{DisplayRow, DisplayTranscript},
+        presentation::{
+            MessageCard, MessageDelivery, MessagePreview, MessageTone, MessageVisibility,
+            Presentation,
+        },
+    };
+    let card = MessageCard {
+        title: "Update · Inspect replayability".into(),
+        sender: "worker".into(),
+        recipient: "parent".into(),
+        delivery: MessageDelivery::Received,
+        tone: MessageTone::Accent,
+        preview: MessagePreview::Truncated,
+        visibility: MessageVisibility::Conversation,
+        reference: Some("abc123".into()),
+        body: "First finding\nSecond finding".into(),
+        details: vec!["attach: rho attach abc123".into()],
+    };
+    let display =
+        DisplayTranscript(vec![DisplayRow::Message(Box::new(card.clone()))]).display_message();
+    let Message::System(encoded) = &display else {
+        panic!("expected display envelope")
+    };
+    let messages = [Message::user_text(encoded), display.clone()];
+    let entries = transcript_entries_from_messages(&messages, std::path::Path::new("."));
+    let [Entry::User(user), Entry::Tool(tool)] = entries.as_slice() else {
+        panic!("expected separate human input and incoming card");
+    };
+    assert_eq!(user, encoded);
+    assert_eq!(tool.presentation, Presentation::Message(Box::new(card)));
+}
+
 fn call(id: &str, name: &str) -> Message {
     Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
         id: id.into(),
@@ -98,7 +135,10 @@ fn transcript_pairs_tool_results_by_id() {
 #[test]
 fn transcript_restores_message_receipts() {
     use crate::{
-        presentation::{MessageCard, MessageDelivery, Presentation},
+        presentation::{
+            MessageCard, MessageDelivery, MessagePreview, MessageTone, MessageVisibility,
+            Presentation,
+        },
         tools::agent::message_receipt::MessageReceipt,
     };
 
@@ -139,8 +179,12 @@ fn transcript_restores_message_receipts() {
                 sender: "parent".into(),
                 recipient: recipient.into(),
                 delivery: MessageDelivery::Queued,
+                tone: MessageTone::Neutral,
+                preview: MessagePreview::Truncated,
+                visibility: MessageVisibility::Activity,
+                reference: Some("abc123".into()),
                 body: body.trim().into(),
-                details: vec!["run: abc123".into(), "attach: rho attach abc123".into()],
+                details: vec![format!("task: {title}"), "attach: rho attach abc123".into(),],
             }))
         );
     }

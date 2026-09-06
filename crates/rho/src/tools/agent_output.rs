@@ -146,30 +146,17 @@ pub(super) fn format_notification(snapshots: &[&SubagentSnapshot]) -> String {
 
 /// Formats a drained batch of terminal runs as one bounded notification. The
 /// formatter puts every run's status before the result excerpts.
-pub fn notification_prompts(notifications: &[SubagentNotification]) -> (String, String) {
+pub(crate) fn notification_prompt(notifications: &[SubagentNotification]) -> String {
     let snapshots = notifications
         .iter()
         .map(|notification| &notification.snapshot)
         .collect::<Vec<_>>();
-    let model = format_notification(&snapshots);
-    let display = notifications
-        .iter()
-        .map(|notification| {
-            let snapshot = &notification.snapshot;
-            format!(
-                "agent {} ({}) finished - {}",
-                snapshot.id,
-                snapshot.agent_id,
-                snapshot.status.state.as_str()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    (model, display)
+    format_notification(&snapshots)
 }
 
 pub(crate) fn merge_notification_context(existing: Option<&str>, newer: &str) -> String {
-    debug_assert!(newer.len() <= MODEL_NOTIFICATION_BYTES);
+    // The retention budget applies to earlier context. A boundary can combine
+    // multiple bounded sources; never truncate or reject its accepted findings.
     let Some(existing) = existing else {
         return newer.to_string();
     };

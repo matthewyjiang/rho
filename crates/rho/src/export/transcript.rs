@@ -123,7 +123,13 @@ fn push_markdown_messages(out: &mut String, messages: &[ExportedMessage]) {
         match &entry.message {
             Message::System(text) => {
                 out.push_str("## System\n\n");
-                push_fenced(out, None, text);
+                if let Some(transcript) =
+                    crate::display_transcript::DisplayTranscript::from_display(text)
+                {
+                    push_fenced(out, None, &transcript.plain_text());
+                } else {
+                    push_fenced(out, None, text);
+                }
             }
             Message::User(blocks) => {
                 out.push_str("## You\n\n");

@@ -29,7 +29,7 @@ pub(crate) struct InteractiveSessionController {
     storage: Option<StoredSession>,
     pending_session_id: Option<SessionId>,
     pending_omission: Option<HandoffReport>,
-    persisted_pending_user: bool,
+    persisted_turn_display: usize,
     web_access: WebAccessStore,
     advisor: Option<AdvisorSessionStore>,
 }
@@ -46,7 +46,7 @@ impl InteractiveSessionController {
             storage,
             pending_session_id: None,
             pending_omission: None,
-            persisted_pending_user: false,
+            persisted_turn_display: 0,
             web_access,
             advisor,
         };
@@ -75,7 +75,7 @@ impl InteractiveSessionController {
     pub(crate) fn replace_session(&mut self, session: Session, omission: Option<HandoffReport>) {
         self.session = session;
         self.pending_session_id = None;
-        self.persisted_pending_user = false;
+        self.persisted_turn_display = 0;
         self.pending_omission = omission.filter(HandoffReport::has_omissions);
         self.sync_advisor_session();
     }
@@ -101,7 +101,7 @@ impl InteractiveSessionController {
 
     pub(crate) fn attach_storage(&mut self, storage: StoredSession) {
         self.storage = Some(storage);
-        self.persisted_pending_user = false;
+        self.persisted_turn_display = 0;
         self.sync_web_access();
     }
 
@@ -144,7 +144,7 @@ impl InteractiveSessionController {
         self.session.reset()?;
         self.storage = None;
         self.sync_web_access();
-        self.persisted_pending_user = false;
+        self.persisted_turn_display = 0;
         let session_id = SessionId::new();
         self.pending_session_id = Some(session_id.clone());
         Ok(session_id)
@@ -152,7 +152,7 @@ impl InteractiveSessionController {
 
     pub(crate) fn set_resumed_storage(&mut self, storage: StoredSession) {
         self.storage = Some(storage);
-        self.persisted_pending_user = false;
+        self.persisted_turn_display = 0;
         self.sync_web_access();
     }
 
@@ -161,55 +161,46 @@ impl InteractiveSessionController {
         pending_turn: Option<&PendingTurn>,
         outcome: Option<&RunOutcome>,
     ) -> anyhow::Result<()> {
+        // This turn is finished even if saving and durable-state rollback fail.
+        let persisted = std::mem::take(&mut self.persisted_turn_display);
         let Some(storage) = &self.storage else {
             return Ok(());
         };
         let history = self.session.history();
-        let history_start = pending_turn.map_or(history.len(), PendingTurn::history_start);
-        let current_turn_committed =
-            pending_turn.is_some_and(|turn| history.get(history_start) == Some(turn.model_user()));
-        let mut display_tail = if current_turn_committed {
-            history[history_start..].to_vec()
-        } else {
-            pending_turn
-                .map(|turn| turn.model_user().clone())
-                .into_iter()
-                .chain(outcome.and_then(|outcome| {
-                    (!outcome.text().is_empty())
-                        .then(|| Message::assistant_text(outcome.text().to_string()))
-                }))
-                .collect()
-        };
-        if let (Some(display), Some(first)) = (
-            pending_turn.and_then(PendingTurn::display_user),
-            display_tail.first_mut(),
-        ) {
-            *first = display.clone();
-        }
-        if self.persisted_pending_user && !display_tail.is_empty() {
-            display_tail.remove(0);
-        }
-        storage.save_snapshot(&self.session.snapshot(), &display_tail)?;
-        self.persisted_pending_user = false;
+        let display =
+            pending_turn.map_or_else(Vec::new, |turn| turn.display_tail(&history, outcome));
+        let display_tail = display.get(persisted..).ok_or_else(|| {
+            anyhow::anyhow!(
+                "turn display checkpoint exceeds accumulated history: persisted {}, accumulated {}",
+                persisted,
+                display.len()
+            )
+        })?;
+        storage.save_snapshot(&self.session.snapshot(), display_tail)?;
         Ok(())
     }
 
     pub(crate) fn save_automatic_compaction(
         &mut self,
         snapshot: &rho_sdk::SessionSnapshot,
-        display_user: Option<&Message>,
+        display: &[Message],
         outcome: &rho_sdk::CompactionOutcome,
     ) -> anyhow::Result<()> {
+        // A failed intermediate save does not undo rows already on disk. The
+        // failed-turn boundary clears this offset, not an individual checkpoint.
+        let persisted = self.persisted_turn_display;
         if let Some(storage) = &self.storage {
-            let display_tail = if self.persisted_pending_user {
-                &[][..]
-            } else {
-                display_user.map(std::slice::from_ref).unwrap_or_default()
-            };
+            let display_tail = display.get(persisted..).ok_or_else(|| {
+                anyhow::anyhow!("compaction display checkpoint exceeds accumulated history: persisted {}, accumulated {}", persisted, display.len())
+            })?;
             storage.save_compaction_snapshot(snapshot, display_tail, outcome)?;
-            self.persisted_pending_user |= display_user.is_some();
+            self.persisted_turn_display = display.len();
         }
         Ok(())
+    }
+
+    pub(crate) fn abandon_turn_display(&mut self) {
+        self.persisted_turn_display = 0;
     }
 
     pub(crate) fn save_compaction_snapshot(
@@ -230,3 +221,7 @@ impl InteractiveSessionController {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "interactive_session_controller_tests.rs"]
+mod tests;
