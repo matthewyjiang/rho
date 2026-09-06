@@ -1,4 +1,4 @@
-pub(super) use crate::config::default_inline_shell as default_shell;
+use super::inline_shell_config::{resolve_shell, ShellArgv};
 
 use std::{path::Path, process::Stdio};
 
@@ -426,46 +426,6 @@ impl<'a> ShellCardParts<'a> {
     }
 }
 
-/// Argument vector for one inline shell invocation.
-///
-/// Login shells lose parent `PATH` entries to `/etc/profile`, so bash and zsh
-/// get the `rho_tools::login_shell_script` wrapper plus `RHO_PARENT_PATH`,
-/// matching the bash tool. The wrapper is POSIX parameter expansion, so fish
-/// and unknown shells run the command unwrapped rather than fail to parse.
-#[derive(Debug, PartialEq, Eq)]
-struct ShellArgv {
-    args: Vec<String>,
-    carries_parent_path: bool,
-}
-
-impl ShellArgv {
-    fn for_shell(shell: &str, command: &str) -> Self {
-        let plain = |args: &[&str]| Self {
-            args: args.iter().map(|arg| (*arg).to_string()).collect(),
-            carries_parent_path: false,
-        };
-        match executable_name(shell).to_ascii_lowercase().as_str() {
-            "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe" => {
-                plain(&["-NoLogo", "-NoProfile", "-Command", command])
-            }
-            "cmd" | "cmd.exe" => plain(&["/C", command]),
-            "sh" | "sh.exe" => plain(&["-c", command]),
-            "bash" | "bash.exe" | "zsh" => Self {
-                args: vec!["-lc".into(), rho_tools::login_shell_script(command)],
-                carries_parent_path: true,
-            },
-            _ => plain(&["-lc", command]),
-        }
-    }
-}
-
-fn executable_name(shell: &str) -> &str {
-    Path::new(shell)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(shell)
-}
-
 impl super::App {
     pub(super) fn start_inline_shell(
         &mut self,
@@ -477,11 +437,7 @@ impl super::App {
             return Ok(());
         }
         let config = self.info.services.config_repository.load()?;
-        let shell = if config.inline_shell.trim().is_empty() {
-            default_shell()
-        } else {
-            config.inline_shell
-        };
+        let shell = resolve_shell(&config.inline_shell);
         self.push_input_history(&format!("{}{command}", mode.history_prefix()));
         let cwd = self.info.runtime.cwd.clone();
         let task_shell = shell.clone();

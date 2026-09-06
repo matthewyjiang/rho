@@ -26,6 +26,12 @@ fn setup_shell_completion(home: &IsolatedHome) -> Result<()> {
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join(FILE_ONE), "gamma fixture body\n")?;
     std::fs::write(dir.join(FILE_TWO), "gamma second body\n")?;
+    std::fs::create_dir_all(home.workspace.join("~"))?;
+    std::fs::write(
+        home.workspace.join("~/literal.txt"),
+        "literal tilde selected\n",
+    )?;
+    std::fs::write(home.home.join("literal.txt"), "wrong home expansion\n")?;
     Ok(())
 }
 
@@ -135,6 +141,23 @@ const SHELL_TAB_COMPLETION_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Key(Key::Ctrl('c')),
+    Step::Phase("literal_tilde_stays_in_workspace"),
+    Step::TypeText("!cat ~"),
+    Step::Key(Key::Tab),
+    Step::WaitText {
+        text: "cat ./~/",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Tab),
+    Step::WaitText {
+        text: "cat ./~/literal.txt",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "literal tilde selected",
+        timeout: SETTLE,
+    },
     Step::ExitCommand,
 ];
 

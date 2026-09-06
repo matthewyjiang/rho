@@ -16,6 +16,11 @@ fn quoted_word_boundaries_and_decoding() {
         ("cat \"my\\dir/\"", 13, 4, 13, "my\\dir/"),
         ("cat 'é dir/'", 12, 4, 12, "é dir/"),
         ("cat ", 4, 4, 4, ""),
+        ("cat '~/'", 8, 4, 8, "./~/"),
+        ("cat \"~/\"", 8, 4, 8, "./~/"),
+        ("cat \\~/", 7, 4, 7, "./~/"),
+        ("cat ~/", 6, 4, 6, "~/"),
+        ("cat ''~/", 8, 4, 8, "./~/"),
     ] {
         assert_eq!(
             shell_word_at_cursor(input, cursor),

@@ -90,6 +90,7 @@ mod hook_actions;
 mod info_command;
 mod inline_choice;
 mod inline_shell;
+mod inline_shell_config;
 mod keybindings;
 mod keyboard_modes;
 mod limits_command;

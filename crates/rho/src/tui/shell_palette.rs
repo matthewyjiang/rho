@@ -11,6 +11,7 @@ use std::path::Path;
 
 use super::{
     file_picker::{self, DirectoryScope, DiscoveredFilePaths},
+    inline_shell_config::{resolve_shell, ShellFamily},
     App,
 };
 use crate::paths::home_dir;
@@ -21,12 +22,8 @@ impl App {
     /// alone and says so.
     pub(super) fn open_shell_completion(&mut self) -> anyhow::Result<()> {
         let config = self.info.services.config_repository.load()?;
-        let shell = if config.inline_shell.trim().is_empty() {
-            super::inline_shell::default_shell()
-        } else {
-            config.inline_shell
-        };
-        if !supports_path_completion(&shell) {
+        let shell = resolve_shell(&config.inline_shell);
+        if !ShellFamily::for_executable(&shell).supports_path_completion() {
             self.close_file_palette();
             self.set_status("path completion requires a POSIX-style shell; command left unchanged");
             return Ok(());
@@ -83,6 +80,9 @@ fn shell_word_candidates_in(cwd: &Path, word: &str, home: Option<&Path>) -> Disc
     };
     let show_hidden = partial.starts_with('.');
 
+    // Deliberately retain every matching entry from this one directory, not
+    // the recursive workspace index. This costs memory proportional to the
+    // matches but never hides a valid shell argument behind a result cap.
     let mut paths: Vec<String> = std::fs::read_dir(&scope.root)
         .into_iter()
         .flatten()
@@ -95,23 +95,18 @@ fn shell_word_candidates_in(cwd: &Path, word: &str, home: Option<&Path>) -> Disc
             // Labelling only, not walking: following a symlink here decides
             // whether the next Tab descends, as bash does.
             let suffix = if entry.path().is_dir() { "/" } else { "" };
-            Some(format!("{}{name}{suffix}", scope.display_prefix))
+            // A literal cwd entry must not acquire home expansion on insert
+            // or on the next Tab. Keep intentional ~/ scope prefixes intact.
+            let prefix = if scope.display_prefix.is_empty() && name.starts_with('~') {
+                "./"
+            } else {
+                &scope.display_prefix
+            };
+            Some(format!("{prefix}{name}{suffix}"))
         })
         .collect();
     file_picker::sort_paths_for_display(&mut paths);
     DiscoveredFilePaths::complete(paths)
-}
-
-/// Completion uses POSIX-style quoting, never PowerShell or cmd syntax.
-fn supports_path_completion(shell: &str) -> bool {
-    let name = Path::new(shell)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(shell);
-    matches!(
-        name.to_ascii_lowercase().trim_end_matches(".exe"),
-        "sh" | "bash" | "zsh" | "dash" | "ksh"
-    )
 }
 
 /// Single-quote `path` for the POSIX-style shells accepted above.
@@ -121,7 +116,7 @@ pub(super) fn shell_quote(path: &str) -> String {
         return format!("~/{}", shell_quote(relative));
     }
     let safe = |ch: char| ch.is_alphanumeric() || "-_./~+:@%,=".contains(ch);
-    if !path.is_empty() && path.chars().all(safe) {
+    if !path.is_empty() && !path.starts_with('~') && path.chars().all(safe) {
         return path.to_string();
     }
     format!("'{}'", path.replace('\'', "'\\''"))

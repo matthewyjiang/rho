@@ -241,13 +241,13 @@ impl WorkspacePathCache {
 /// characters: the render path calls this several times per frame, so nothing
 /// larger than the query itself is ever copied.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct CursorWord<'a> {
-    pub(super) start: usize,
-    pub(super) end: usize,
-    pub(super) head: &'a str,
+struct CursorWord<'a> {
+    start: usize,
+    end: usize,
+    head: &'a str,
 }
 
-pub(super) fn word_at_cursor(input: &str, cursor: usize) -> CursorWord<'_> {
+fn word_at_cursor(input: &str, cursor: usize) -> CursorWord<'_> {
     let cursor_byte = input
         .char_indices()
         .nth(cursor)

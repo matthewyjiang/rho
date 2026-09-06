@@ -4,7 +4,7 @@ use tempfile::tempdir;
 
 use super::{
     super::{file_picker::FilePaletteEntry, palette::ActivePalette, tests::test_app, App},
-    shell_quote, shell_word_candidates_in, supports_path_completion,
+    shell_quote, shell_word_candidates_in, ShellFamily,
 };
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -109,6 +109,20 @@ fn tab_completes_one_component_of_the_word_under_cursor() {
         palette_after_tab: Option<&'static [&'static str]>,
     }
     let cases = [
+        Case {
+            name: "literal tilde directory does not expand to home",
+            files: &["~/notes.md"],
+            typed: "cat ",
+            text_after_tab: "cat ./~/",
+            palette_after_tab: None,
+        },
+        Case {
+            name: "literal named-home entry does not expand",
+            files: &["~root"],
+            typed: "cat ",
+            text_after_tab: "cat ./~root ",
+            palette_after_tab: None,
+        },
         Case {
             name: "single file inserts with a trailing space",
             files: &["notes.md"],
@@ -257,6 +271,9 @@ fn shell_quote_wraps_only_unsafe_paths() {
         ("docs/my notes.md", "'docs/my notes.md'"),
         ("it's.txt", "'it'\\''s.txt'"),
         ("a$b", "'a$b'"),
+        ("~root", "'~root'"),
+        ("~", "'~'"),
+        ("./~/", "./~/"),
         ("~/my notes.md", "~/'my notes.md'"),
     ];
     for (input, expected) in cases {
@@ -270,6 +287,9 @@ fn shell_quote_wraps_only_unsafe_paths() {
 fn completion_requires_a_supported_shell() {
     for (shell, supported) in [
         ("bash", true),
+        ("ash", true),
+        ("mksh", true),
+        ("busybox", true),
         ("/bin/zsh", true),
         ("fish", false),
         ("sh.exe", true),
@@ -278,6 +298,10 @@ fn completion_requires_a_supported_shell() {
         ("cmd", false),
         ("nu", false),
     ] {
-        assert_eq!(supports_path_completion(shell), supported, "{shell}");
+        assert_eq!(
+            ShellFamily::for_executable(shell).supports_path_completion(),
+            supported,
+            "{shell}"
+        );
     }
 }

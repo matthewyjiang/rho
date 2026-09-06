@@ -1,7 +1,7 @@
 //! The path palette: `@` mentions in the normal composer, Tab completion in
 //! shell mode.
 //!
-//! Both are the same list over the same workspace index. They differ in how
+//! Both use the same list UI over different path sources. They differ in how
 //! the token under the cursor is found ([`App::active_path_token`]) and how a
 //! picked path is written back ([`App::apply_file_palette_selection`]); the
 //! navigation, caching, and rendering are shared.
@@ -20,26 +20,14 @@ enum TokenTerminator {
     /// The path is a finished argument; separate it from what comes next.
     Space,
     /// The path is a directory the user will keep descending into.
-    None,
+    Continue,
 }
 
 impl App {
     pub(super) fn handle_file_palette_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
-        let Some(ActivePalette::File(matches)) = self.active_palette() else {
-            // Shell mode has no auto-open: Tab on a bare word opens completion.
-            if self.input_ui.shell_mode().is_some()
-                && (key.modifiers, key.code) == (KeyModifiers::NONE, KeyCode::Tab)
-            {
-                self.open_shell_completion()?;
-                self.input_ui.clear_paste_burst();
-                self.ctrl_c_streak = 0;
-                return Ok(true);
-            }
-            return Ok(false);
-        };
-
-        let handled = match (key.modifiers, key.code) {
-            (KeyModifiers::NONE, KeyCode::Up) => {
+        let palette = self.active_palette();
+        let handled = match (palette, key.modifiers, key.code) {
+            (Some(ActivePalette::File(matches)), KeyModifiers::NONE, KeyCode::Up) => {
                 let selection = self.input_ui.file_selection();
                 self.input_ui.set_file_selection(if selection == 0 {
                     matches.len() - 1
@@ -48,12 +36,16 @@ impl App {
                 });
                 true
             }
-            (KeyModifiers::NONE, KeyCode::Down) => {
+            (Some(ActivePalette::File(matches)), KeyModifiers::NONE, KeyCode::Down) => {
                 self.input_ui
                     .set_file_selection((self.input_ui.file_selection() + 1) % matches.len());
                 true
             }
-            (KeyModifiers::NONE, KeyCode::Tab) | (KeyModifiers::NONE, KeyCode::Enter) => {
+            (
+                Some(ActivePalette::File(matches)),
+                KeyModifiers::NONE,
+                KeyCode::Tab | KeyCode::Enter,
+            ) => {
                 if let Some(entry) =
                     selected_palette_entry(&matches, self.input_ui.file_selection())
                 {
@@ -61,8 +53,13 @@ impl App {
                 }
                 true
             }
-            (KeyModifiers::NONE, KeyCode::Esc) => {
+            (Some(ActivePalette::File(_)), KeyModifiers::NONE, KeyCode::Esc) => {
                 self.close_file_palette();
+                true
+            }
+            // Shell mode has no auto-open: Tab on a bare word opens completion.
+            (_, KeyModifiers::NONE, KeyCode::Tab) if self.input_ui.shell_mode().is_some() => {
+                self.open_shell_completion()?;
                 true
             }
             _ => false,
@@ -122,7 +119,7 @@ impl App {
                 &token,
                 shell_palette::shell_quote(path),
                 if path.ends_with('/') {
-                    TokenTerminator::None
+                    TokenTerminator::Continue
                 } else {
                     TokenTerminator::Space
                 },

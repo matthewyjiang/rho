@@ -22,6 +22,7 @@ pub(in crate::tui) fn shell_word_at_cursor(input: &str, cursor: usize) -> FileMe
             query.clear();
             continue;
         }
+        let literal = escaped || quote.is_some();
         let decoded = if escaped {
             escaped = false;
             Some(ch)
@@ -44,6 +45,11 @@ pub(in crate::tui) fn shell_word_at_cursor(input: &str, cursor: usize) -> FileMe
             Some(ch)
         };
         if let Some(ch) = decoded.filter(|_| index < cursor) {
+            // Preserve a quoted/escaped leading tilde as a cwd path rather
+            // than letting the directory resolver reinterpret it as HOME.
+            if query.is_empty() && ch == '~' && (literal || index != start) {
+                query.push_str("./");
+            }
             query.push(ch);
         }
     }
