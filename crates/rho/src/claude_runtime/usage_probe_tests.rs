@@ -120,39 +120,39 @@ fn usage_screen_classification() {
         (
             "load error",
             format!("{windows}Failed to load usage data: response error\n"),
-            "Failed",
+            "Failed(Other)",
         ),
         (
             "last-known fallback",
             format!("{windows}Showing last-known usage as of 2 minutes ago (could not refresh)\n"),
-            "Failed",
+            "Failed(Other)",
         ),
         (
             "rate limited",
             format!("{windows}Showing last-known usage (rate limited — try again in a moment)\n"),
-            "Failed",
+            "Failed(RateLimited)",
         ),
         (
             "partial",
             format!("{windows}Partial usage data (rate limited — try again in a moment)\n"),
-            "Failed",
+            "Failed(RateLimited)",
         ),
         (
             "per-model unavailable",
             format!(
                 "{windows}Per-model breakdown unavailable (rate limited — try again in a moment)\n"
             ),
-            "Failed",
+            "Failed(RateLimited)",
         ),
         (
             "could not refresh",
             format!("{windows}Could not refresh usage data\n"),
-            "Failed",
+            "Failed(Other)",
         ),
         (
             "endpoint rate limited",
             format!("{windows}Usage endpoint is rate limited. Please try again in a moment.\n"),
-            "Failed",
+            "Failed(RateLimited)",
         ),
     ];
     let observed: Vec<(&str, &str)> = cases

@@ -87,6 +87,47 @@ fn formats_reset_relative_only_within_one_day() {
     assert!(!format_reset_at(200_000, 0).starts_with("in "));
 }
 
+// Covers: a throttled usage read names the rate limit in the heading instead
+// of the generic failure copy, with and without a cached snapshot.
+// Owner: pure unit
+#[test]
+fn failed_heading_distinguishes_rate_limit() {
+    let cases = [
+        (
+            LimitsFailure::RateLimited,
+            Some(900),
+            "rate limited · showing last known",
+        ),
+        (
+            LimitsFailure::RateLimited,
+            None,
+            "rate limited · try again in a moment",
+        ),
+        (LimitsFailure::Other, Some(900), "update failed"),
+        (LimitsFailure::Other, None, "unavailable"),
+    ];
+    let observed: Vec<String> = cases
+        .iter()
+        .map(|(reason, cached_at_unix, _)| {
+            heading_status(
+                &LimitsSection {
+                    id: LimitsSectionId::ClaudeCode,
+                    label: CLAUDE_CODE_PROVIDER_LABEL.into(),
+                    status: LimitsSectionStatus::Failed {
+                        cached_at_unix: *cached_at_unix,
+                        reason: *reason,
+                    },
+                    windows: Vec::new(),
+                },
+                None,
+                1_000,
+            )
+        })
+        .collect();
+    let expected: Vec<String> = cases.iter().map(|(_, _, text)| (*text).into()).collect();
+    assert_eq!(observed, expected);
+}
+
 // Covers: a live fetch for one provider must not wait on the others.
 // Owner: pure unit
 #[test]

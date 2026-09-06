@@ -135,7 +135,9 @@ fn wait_for_usage(
         let screen = session.contents();
         let now = Instant::now();
         match classify_usage_screen(&screen, rate_limit::now_unix()) {
-            UsageScreen::Failed => return Err(UsageProbeError::RefreshFailed { screen }),
+            UsageScreen::Failed(reason) => {
+                return Err(UsageProbeError::RefreshFailed { reason, screen })
+            }
             UsageScreen::Ready(state) => {
                 grow_until = None;
                 if !running || now >= *ready_since.get_or_insert(now) + SETTLE_DRAIN {

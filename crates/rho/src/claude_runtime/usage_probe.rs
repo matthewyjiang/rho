@@ -62,8 +62,20 @@ const REFRESH_FAILURE_MARKERS: &[&str] = &[
     "could not refresh usage",
     "partial usage data",
     "per-model breakdown unavailable",
-    "usage endpoint is rate limited",
 ];
+/// Every throttle notice Claude paints ("Usage endpoint is rate limited.",
+/// "(rate limited — try again in a moment)") carries this phrase, so it is
+/// both a failure marker and the reason.
+const RATE_LIMITED_MARKER: &str = "rate limited";
+
+/// Why a `/usage` refresh did not produce live percentages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RefreshFailure {
+    /// Anthropic's usage endpoint throttled the read; a retry later works.
+    RateLimited,
+    /// Any other refresh notice (network, auth, partial data).
+    Other,
+}
 
 #[derive(Debug, Error)]
 pub(crate) enum UsageProbeError {
@@ -82,7 +94,10 @@ pub(crate) enum UsageProbeError {
     #[error("claude code: claude exited before {what}: {screen}")]
     Exited { what: &'static str, screen: String },
     #[error("claude code: /usage refresh failed: {screen}")]
-    RefreshFailed { screen: String },
+    RefreshFailed {
+        reason: RefreshFailure,
+        screen: String,
+    },
     #[error("claude code: /usage panel was not readable")]
     Unparseable,
     #[error("claude code: auth preflight failed: {0}")]
@@ -243,7 +258,7 @@ enum UsageScreen {
     /// The panel has not painted yet.
     NoPanel,
     /// Claude reported a failed or degraded refresh.
-    Failed,
+    Failed(RefreshFailure),
     /// The spinner is visible; nothing on screen is a live result.
     Refreshing,
     /// The panel names a window that has no percentage yet.
@@ -255,7 +270,8 @@ enum UsageScreen {
 fn usage_screen_kind(screen: &UsageScreen) -> &'static str {
     match screen {
         UsageScreen::NoPanel => "NoPanel",
-        UsageScreen::Failed => "Failed",
+        UsageScreen::Failed(RefreshFailure::RateLimited) => "Failed(RateLimited)",
+        UsageScreen::Failed(RefreshFailure::Other) => "Failed(Other)",
         UsageScreen::Refreshing => "Refreshing",
         UsageScreen::Incomplete => "Incomplete",
         UsageScreen::Ready(_) => "Ready",
@@ -264,8 +280,11 @@ fn usage_screen_kind(screen: &UsageScreen) -> &'static str {
 
 fn classify_usage_screen(screen: &str, now_unix: i64) -> UsageScreen {
     let lower = screen.to_ascii_lowercase();
+    if lower.contains(RATE_LIMITED_MARKER) {
+        return UsageScreen::Failed(RefreshFailure::RateLimited);
+    }
     if contains_any(&lower, REFRESH_FAILURE_MARKERS) {
-        return UsageScreen::Failed;
+        return UsageScreen::Failed(RefreshFailure::Other);
     }
     if !contains_any(screen, PANEL_MARKERS) {
         return UsageScreen::NoPanel;
