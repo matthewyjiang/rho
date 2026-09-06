@@ -2,25 +2,26 @@ use pretty_assertions::assert_eq;
 
 use super::{activity_label, sanitize_title};
 
-// Covers: title-model output is cleaned to a single short line.
+// Covers: title-model prose is rejected rather than displayed as a truncated title.
 // Owner: title sanitizer
 #[test]
-fn sanitize_title_strips_quotes_and_caps_length() {
-    assert_eq!(
-        sanitize_title("  \"Review the auth path\".  "),
-        Some("Review the auth path".into())
-    );
-    assert_eq!(
-        sanitize_title("\"Implement resume picker.\""),
-        Some("Implement resume picker".into())
-    );
-    assert_eq!(sanitize_title("\n\n# Draft\n"), Some("Draft".into()));
-    assert_eq!(sanitize_title("   "), None);
-
-    let long = "word ".repeat(30);
-    let sanitized = sanitize_title(&long).expect("long title");
-    assert!(sanitized.ends_with('…'));
-    assert!(sanitized.chars().count() <= 80);
+fn sanitize_title_cleans_labels_and_rejects_prose() {
+    let at_character_limit = "a".repeat(80);
+    let over_character_limit = "a".repeat(81);
+    for (input, expected) in [
+        ("  \"Review the auth path\".  ", Some("Review the auth path")),
+        ("\"Implement resume picker.\"", Some("Implement resume picker")),
+        ("\n\n# Draft\n", Some("Draft")),
+        ("   ", None),
+        ("Fix one two three four five six", Some("Fix one two three four five six")),
+        ("Fix one two three four five six seven", None),
+        ("Unable to inspect or modify the repository because no shell or file tools are available", None),
+        ("Implement resume picker\nI will inspect the repository first", None),
+        (at_character_limit.as_str(), Some(at_character_limit.as_str())),
+        (over_character_limit.as_str(), None),
+    ] {
+        assert_eq!(sanitize_title(input).as_deref(), expected, "input: {input:?}");
+    }
 }
 
 // Covers: rail and picker share one activity mapping.

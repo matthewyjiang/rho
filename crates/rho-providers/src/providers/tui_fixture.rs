@@ -117,11 +117,8 @@ async fn fixture_stream(
     if let Some(response) = boundary_notifications::intercept(&request) {
         return response;
     }
-    if is_subagent_title_request(&request) {
-        if agent_message::is_untitled_task(&prompt) {
-            return completed("");
-        }
-        return completed("Fixture run title");
+    if let Some(response) = title_response(&request) {
+        return response;
     }
     if let Some(response) = agent_message::intercept(&prompt, &request).await {
         return response;
@@ -161,11 +158,8 @@ async fn fixture_stream(
 }
 
 fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, ProviderError> {
-    if is_subagent_title_request(request) {
-        if last_user_text(request).is_some_and(|prompt| agent_message::is_untitled_task(&prompt)) {
-            return completed("");
-        }
-        return completed("Fixture run title");
+    if let Some(response) = title_response(request) {
+        return response;
     }
     if let Some(review) = advisor::review(request) {
         return review;
@@ -183,14 +177,22 @@ fn fixture_response(request: &ModelRequest<'_>) -> Result<ModelResponse, Provide
     completed(format!("fixture response: {prompt}"))
 }
 
-fn is_subagent_title_request(request: &ModelRequest<'_>) -> bool {
-    let is_title_agent = request.messages.iter().any(|message| {
-        matches!(
-            message,
-            Message::System(text) if text.contains("Generate a concise title for this chat session")
-        )
-    });
-    is_title_agent && last_user_text(request).is_some_and(|text| !text.starts_with("First turn:"))
+// Decode the title request envelope rather than matching its system instructions.
+fn title_response(request: &ModelRequest<'_>) -> Option<Result<ModelResponse, ProviderError>> {
+    let prompt = last_user_text(request)?;
+    let source =
+        prompt.strip_prefix("Name the work described in this JSON-quoted source material:\n")?;
+    let source: String = serde_json::from_str(source).ok()?;
+    let title = if let Some(title) = docs_demo::session_title(&source) {
+        title
+    } else if source.starts_with("First turn:") {
+        "Fixture session title"
+    } else if agent_message::is_untitled_task(&source) {
+        ""
+    } else {
+        "Fixture run title"
+    };
+    Some(completed(title))
 }
 
 fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {
