@@ -178,6 +178,8 @@ Use a tool host for host-driven automation (for example a workflow command step)
 
 ## Questionnaire fallback provenance
 
+Available in `rho-sdk` **5.3.0** and later.
+
 `HostInputRequest::with_timeout_fallback(response, reason)` attaches explicit,
 validated fallback answers to a questionnaire. It does not start a timer. The
 host decides whether to enable a timeout, snapshots its duration when opening

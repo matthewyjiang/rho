@@ -154,7 +154,7 @@ impl App {
                     }
                 };
                 match saved {
-                    ConfigNumberSave::QuestionnaireTimeout => {
+                    ConfigNumberSave::QuestionnaireTimeout(_) => {
                         self.open_main_config_picker_selected(
                             config_picker::QUESTIONNAIRE_TIMEOUT_VALUE,
                         )?;

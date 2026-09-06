@@ -82,15 +82,15 @@ fn submit_sends_selection_answers() {
     let submitted = composer.submit().unwrap();
 
     assert!(!submitted.display.is_empty());
-    assert!(matches!(
+    assert_eq!(
         reply_rx.try_recv(),
-        Ok(QuestionnaireReply::Answer(QuestionnaireResponse { answers, source: rho_sdk::HostInputSource::User }))
-            if answers == vec![
-                QuestionnaireAnswer { id: "branch".into(), answer: serde_json::json!("release") },
-                QuestionnaireAnswer { id: "test_suites".into(), answer: serde_json::json!(["unit", "e2e"]) },
-                QuestionnaireAnswer { id: "apply".into(), answer: serde_json::json!("no") },
-            ]
-    ));
+        Ok(QuestionnaireReply::Answer(
+            HostInputResponse::new()
+                .answer("branch", ["release"])
+                .answer("test_suites", ["unit", "e2e"])
+                .answer("apply", ["no"])
+        ))
+    );
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn required_confirm_without_default_requires_explicit_choice() {
     field.toggle_highlighted(&question);
     assert_eq!(
         normalize_questionnaire_answer(&question, &field),
-        Ok(serde_json::json!("yes"))
+        Ok(vec!["yes".into()])
     );
 }
 
@@ -137,7 +137,7 @@ fn multi_select_default_preserves_commas() {
     assert_eq!(field.other_value, "Los Angeles, CA");
     assert_eq!(
         normalize_questionnaire_answer(&question, &field),
-        Ok(serde_json::json!(["New York, NY", "Los Angeles, CA"]))
+        Ok(vec!["New York, NY".into(), "Los Angeles, CA".into()])
     );
 }
 

@@ -6,9 +6,8 @@ use ratatui::{
 use rho_sdk::{HostQuestion, SelectionMode};
 
 use super::{
-    answer_is_empty, choice_count, is_confirm, normalize_questionnaire_answer,
-    questionnaire_answer_display, request_title, FieldSelection, QuestionnaireComposer,
-    QuestionnaireFieldState,
+    choice_count, is_confirm, normalize_questionnaire_answer, questionnaire_answer_display,
+    request_title, FieldSelection, QuestionnaireComposer, QuestionnaireFieldState,
 };
 use crate::tui::{
     render::{
@@ -281,10 +280,10 @@ fn field_answer_summary(
     field: &QuestionnaireFieldState,
 ) -> Option<String> {
     let value = normalize_questionnaire_answer(question, field).ok()?;
-    if answer_is_empty(&value) {
+    if value.is_empty() {
         return None;
     }
-    Some(questionnaire_answer_display(Some(question), &value))
+    Some(questionnaire_answer_display(question, &value))
 }
 
 fn question_number(index: usize, total: usize) -> String {

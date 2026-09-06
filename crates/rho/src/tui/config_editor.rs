@@ -110,7 +110,7 @@ pub(super) fn cycle_web_search_provider(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ConfigNumberSave {
-    QuestionnaireTimeout,
+    QuestionnaireTimeout(Option<std::num::NonZeroU64>),
     MaxOutputBytes(usize),
     MaxToolOutputLines(usize),
     CompactThresholdPercent(u8),
@@ -123,46 +123,58 @@ impl ConfigNumberInput {
         &self,
         config_repository: &ConfigRepository,
     ) -> anyhow::Result<ConfigNumberSave> {
-        if self.key == ConfigNumberKey::QuestionnaireTimeout {
-            let timeout = if self.editor.value.trim().is_empty() {
-                None
-            } else {
-                Some(self.editor.value.parse::<std::num::NonZeroU64>().map_err(|_| {
-                    anyhow::anyhow!("questionnaire timeout must be positive whole seconds; clear the field for Disabled")
-                })?)
-            };
-            return config_repository.update(|config| {
-                config.questionnaire.timeout_seconds = timeout;
-                ConfigNumberSave::QuestionnaireTimeout
-            });
-        }
-        let value = self.parsed_value()?;
-        match self.key {
-            ConfigNumberKey::QuestionnaireTimeout => unreachable!("handled above"),
+        let mut saved = match self.key {
+            ConfigNumberKey::QuestionnaireTimeout => {
+                let value = self.editor.value.trim();
+                let timeout = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.parse().map_err(|_| {
+                        anyhow::anyhow!("questionnaire timeout must be positive whole seconds; clear the field for Disabled")
+                    })?)
+                };
+                ConfigNumberSave::QuestionnaireTimeout(timeout)
+            }
             ConfigNumberKey::PromptHistoryLimit => {
                 anyhow::bail!("prompt history limit is applied through the confirm flow");
             }
-            ConfigNumberKey::MaxOutputBytes => config_repository.update(|config| {
-                config.max_output_bytes = value;
-                ConfigNumberSave::MaxOutputBytes(value)
-            }),
-            ConfigNumberKey::MaxToolOutputLines => config_repository.update(|config| {
-                config.max_tool_output_lines = value;
-                ConfigNumberSave::MaxToolOutputLines(value)
-            }),
-            ConfigNumberKey::CompactThresholdPercent => config_repository.update(|config| {
-                config.set_compact_threshold_percent(value.clamp(1, 100) as u8);
-                ConfigNumberSave::CompactThresholdPercent(config.compact_threshold_percent)
-            }),
-            ConfigNumberKey::CompactTargetPercent => config_repository.update(|config| {
-                config.set_compact_target_percent(value.clamp(1, 100) as u8);
-                ConfigNumberSave::CompactTargetPercent(config.compact_target_percent)
-            }),
-            ConfigNumberKey::AgentConcurrency => config_repository.update(|config| {
-                config.set_agent_concurrency(value);
-                ConfigNumberSave::AgentConcurrency(config.agent_concurrency)
-            }),
-        }
+            ConfigNumberKey::MaxOutputBytes => {
+                ConfigNumberSave::MaxOutputBytes(self.parsed_value()?)
+            }
+            ConfigNumberKey::MaxToolOutputLines => {
+                ConfigNumberSave::MaxToolOutputLines(self.parsed_value()?)
+            }
+            ConfigNumberKey::CompactThresholdPercent => {
+                ConfigNumberSave::CompactThresholdPercent(self.parsed_value()?.clamp(1, 100) as u8)
+            }
+            ConfigNumberKey::CompactTargetPercent => {
+                ConfigNumberSave::CompactTargetPercent(self.parsed_value()?.clamp(1, 100) as u8)
+            }
+            ConfigNumberKey::AgentConcurrency => {
+                ConfigNumberSave::AgentConcurrency(self.parsed_value()?)
+            }
+        };
+        config_repository.update(|config| {
+            match &mut saved {
+                ConfigNumberSave::QuestionnaireTimeout(value) => {
+                    config.questionnaire.timeout_seconds = *value
+                }
+                ConfigNumberSave::MaxOutputBytes(value) => config.max_output_bytes = *value,
+                ConfigNumberSave::MaxToolOutputLines(value) => {
+                    config.max_tool_output_lines = *value
+                }
+                ConfigNumberSave::CompactThresholdPercent(value) => {
+                    config.set_compact_threshold_percent(*value);
+                    *value = config.compact_threshold_percent;
+                }
+                ConfigNumberSave::CompactTargetPercent(value) => {
+                    config.set_compact_target_percent(*value);
+                    *value = config.compact_target_percent;
+                }
+                ConfigNumberSave::AgentConcurrency(value) => config.set_agent_concurrency(*value),
+            }
+            saved
+        })
     }
 }
 

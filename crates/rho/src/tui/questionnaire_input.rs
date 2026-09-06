@@ -6,9 +6,9 @@ use super::{
 };
 
 impl App {
-    pub(super) fn pause_questionnaire_timeout(&mut self) {
+    pub(super) fn observe_questionnaire_input(&mut self, event: &crossterm::event::Event) {
         if let Some(questionnaire) = self.questionnaire_mut() {
-            questionnaire.pause_timeout();
+            questionnaire.observe_input(event);
         }
     }
 
@@ -33,7 +33,6 @@ impl App {
         if !matches!(self.input_ui.composer(), ComposerMode::Questionnaire(_)) {
             return Ok(false);
         }
-        self.pause_questionnaire_timeout();
 
         match (key.modifiers, key.code) {
             (KeyModifiers::CONTROL, KeyCode::Char('c')) => {

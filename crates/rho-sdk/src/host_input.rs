@@ -229,7 +229,7 @@ impl HostInputRequest {
         mut response: HostInputResponse,
         reason: impl Into<String>,
     ) -> Result<Self, Error> {
-        self.validate(&response)?;
+        self.validate_answers(&response)?;
         let reason = reason.into();
         if reason.trim().is_empty() {
             return Err(Error::InvalidHostResponse {
@@ -272,6 +272,10 @@ impl HostInputRequest {
                 message: "timeout response must match the request's explicit fallback".into(),
             });
         }
+        self.validate_answers(response)
+    }
+
+    fn validate_answers(&self, response: &HostInputResponse) -> Result<(), Error> {
         if let Some(question_id) = response
             .answers
             .keys()

@@ -80,7 +80,7 @@ pub(super) const TIMEOUT: Scenario = Scenario::new(
 
 pub(super) const PAUSE: Scenario = Scenario::new(
     "questionnaire_timeout_pause",
-    "Pause fallback on keyboard and paste interaction, then submit as user",
+    "Pause fallback on keyboard, paste, and mouse interaction, then submit as user",
     DEFAULT_SIZE,
     &[
         Step::WaitText {
@@ -115,6 +115,21 @@ pub(super) const PAUSE: Scenario = Scenario::new(
         Step::Key(Key::Enter),
         Step::WaitText {
             text: "\"answer\":\"green\"",
+            timeout: STREAM,
+        },
+        Step::SubmitText("fixture questionnaire timeout"),
+        Step::WaitText {
+            text: "Choose a fallback color",
+            timeout: STREAM,
+        },
+        Step::Custom(|harness| harness.mouse_move(1, 1)),
+        Step::WaitText {
+            text: "Fallback paused",
+            timeout: STREAM,
+        },
+        Step::Key(Key::Enter),
+        Step::WaitText {
+            text: "\"answer\":\"red\"",
             timeout: STREAM,
         },
         Step::ExitCommand,

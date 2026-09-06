@@ -473,6 +473,7 @@ impl App {
         interrupt_requested: &AtomicBool,
         tool_call_active: &AtomicBool,
     ) -> Result<StreamControl, RunningTerminalError> {
+        self.observe_questionnaire_input(&first_event);
         let mut control = StreamControl::Continue;
         let mut approval_resolved = false;
         'event: {
@@ -563,7 +564,6 @@ impl App {
                         control = StreamControl::Resize;
                     }
                     Event::Mouse(mouse) => {
-                        self.pause_questionnaire_timeout();
                         self.flush_pending_paste_burst();
                         self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
                     }

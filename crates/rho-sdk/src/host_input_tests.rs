@@ -16,6 +16,11 @@ fn timeout_provenance_requires_the_explicit_fallback() {
     let fallback = timed.timeout_fallback().unwrap();
     assert_eq!(fallback.source(), HostInputSource::TimeoutFallback);
     timed.validate(fallback).unwrap();
+    // Registering a fallback validates its answers, not its previous request's provenance.
+    let rebuilt = request()
+        .with_timeout_fallback(fallback.clone(), "Reuse the explicit fallback")
+        .unwrap();
+    assert_eq!(rebuilt.timeout_fallback(), Some(fallback));
     timed.validate(&answers).unwrap();
     assert!(request().validate(fallback).is_err());
     assert!(timed

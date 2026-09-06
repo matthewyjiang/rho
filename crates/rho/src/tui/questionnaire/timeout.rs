@@ -4,7 +4,6 @@ use std::{
 };
 
 use super::QuestionnaireComposer;
-use crate::questionnaire::{QuestionnaireAnswer, QuestionnaireResponse};
 
 /// Once touched, a form stays paused until explicit submit or cancel. There is
 /// no idle-resume timer that could submit a user's partially edited answers.
@@ -24,8 +23,11 @@ impl QuestionnaireComposer {
             });
     }
 
-    pub(in crate::tui) fn pause_timeout(&mut self) {
-        if self.timeout.is_some() {
+    pub(in crate::tui) fn observe_input(&mut self, event: &crossterm::event::Event) {
+        use crossterm::event::Event;
+        if self.timeout.is_some()
+            && matches!(event, Event::Key(_) | Event::Paste(_) | Event::Mouse(_))
+        {
             self.timeout = Some(QuestionnaireTimer::Paused);
         }
     }
@@ -61,19 +63,7 @@ impl QuestionnaireComposer {
             "timeout fallback: {}",
             self.request.timeout_reason().unwrap_or_default()
         );
-        let answers = fallback
-            .answers()
-            .iter()
-            .map(|(id, values)| QuestionnaireAnswer {
-                id: id.clone(),
-                // Keep arrays here even for one value; the adapter preserves the SDK shape.
-                answer: serde_json::json!(values),
-            })
-            .collect();
-        self.response.send_response(QuestionnaireResponse {
-            answers,
-            source: fallback.source(),
-        });
+        self.response.send_response(fallback);
         self.timeout = None;
         Some(display)
     }

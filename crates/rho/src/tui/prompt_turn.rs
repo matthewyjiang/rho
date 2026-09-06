@@ -447,7 +447,7 @@ impl App {
                         QuestionnaireReply::Answer(response) => {
                             self.report_herdr_working().await;
                             if let Err(error) = agent
-                                .respond(request_id, event_adapter::host_response(response))
+                                .respond(request_id, response)
                                 .await
                             {
                                 sdk_failure = Some(error.to_string());

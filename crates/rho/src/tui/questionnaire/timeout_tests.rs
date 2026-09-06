@@ -1,5 +1,6 @@
 use super::*;
 use crate::tui::questionnaire::{QuestionnaireReply, QuestionnaireResponseChannel};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     HostChoice, HostInputRequest, HostInputResponse, HostInputSource, HostQuestion, SelectionMode,
@@ -10,11 +11,31 @@ use rho_sdk::{
 #[test]
 fn timeout_only_submits_untouched_opted_in_forms_at_the_deadline() {
     let now = Instant::now();
-    for (seconds, fallback, pause, expected) in [
-        (None, true, false, false),
-        (NonZeroU64::new(1), false, false, false),
-        (NonZeroU64::new(1), true, true, false),
-        (NonZeroU64::new(1), true, false, true),
+    let second = NonZeroU64::new(1);
+    for (seconds, fallback, event, expected) in [
+        (None, true, None, false),
+        (second, false, None, false),
+        (
+            second,
+            true,
+            Some(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))),
+            false,
+        ),
+        (second, true, Some(Event::Paste("blue".into())), false),
+        (
+            second,
+            true,
+            Some(Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Moved,
+                column: 0,
+                row: 0,
+                modifiers: KeyModifiers::NONE,
+            })),
+            false,
+        ),
+        (second, true, Some(Event::Resize(80, 24)), true),
+        (second, true, Some(Event::FocusGained), true),
+        (second, true, None, true),
     ] {
         let mut request = HostInputRequest::questionnaire(
             "Color",
@@ -40,8 +61,8 @@ fn timeout_only_submits_untouched_opted_in_forms_at_the_deadline() {
             QuestionnaireComposer::new(request, QuestionnaireResponseChannel::new(tx));
         composer.start_timeout(seconds, now);
         assert_eq!(composer.submit_timeout_if_due(now), None);
-        if pause {
-            composer.pause_timeout();
+        if let Some(event) = event {
+            composer.observe_input(&event);
         }
         assert_eq!(
             composer
@@ -52,13 +73,11 @@ fn timeout_only_submits_untouched_opted_in_forms_at_the_deadline() {
         if expected {
             assert_eq!(
                 rx.try_recv().unwrap(),
-                QuestionnaireReply::Answer(QuestionnaireResponse {
-                    answers: vec![QuestionnaireAnswer {
-                        id: "color".into(),
-                        answer: serde_json::json!(["blue"])
-                    }],
-                    source: HostInputSource::TimeoutFallback,
-                })
+                QuestionnaireReply::Answer(
+                    HostInputResponse::new()
+                        .answer("color", ["blue"])
+                        .with_source(HostInputSource::TimeoutFallback)
+                )
             );
         } else {
             assert!(rx.try_recv().is_err());

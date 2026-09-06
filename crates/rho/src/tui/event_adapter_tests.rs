@@ -4,20 +4,13 @@ use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ModelUsage, ToolCall},
     tool::{OperationKind, ToolAsset, ToolMetadata, ToolOutput, ToolProgress},
-    HostChoice, HostInputRequest, HostInputResponse, HostQuestion, ProviderStreamResetReason,
-    Revision, RunEvent, RunId, SelectionMode, ToolCallId, ToolCompletion,
+    ProviderStreamResetReason, Revision, RunEvent, RunId, ToolCallId, ToolCompletion,
 };
 use rho_tools::tool_card::{
     DiffRow, DiffRowKind, ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus,
 };
 
-use super::{host_response, SdkEventAdapter, ViewEvent, ViewModelEvent};
-use crate::{
-    questionnaire::QuestionnaireResponse,
-    tui::questionnaire::{
-        is_confirm, QuestionnaireComposer, QuestionnaireReply, QuestionnaireResponseChannel,
-    },
-};
+use super::{SdkEventAdapter, ViewEvent, ViewModelEvent};
 
 fn only_event(events: Vec<ViewEvent>) -> ViewEvent {
     assert_eq!(
@@ -631,176 +624,6 @@ fn compaction_cancel_closes_open_tool_block_before_run_cancelled() {
             && card.status == ToolStatus::Interrupted
     ));
     assert!(matches!(&events[1], ViewEvent::Cancelled));
-}
-
-#[test]
-fn choice_round_trip_renders_label_and_returns_machine_value() {
-    let question = HostQuestion::new(
-        "language",
-        "Language?",
-        vec![
-            HostChoice::new("rust", "Rust").description("Strong type and memory safety"),
-            HostChoice::new("go", "Go"),
-        ],
-        SelectionMode::One,
-    )
-    .unwrap()
-    .help("Choose one");
-    let request = HostInputRequest::questionnaire("Setup", vec![question]).unwrap();
-
-    assert_eq!(request.title(), "Setup");
-    assert_eq!(
-        request.questions()[0].choices(),
-        [
-            HostChoice::new("rust", "Rust").description("Strong type and memory safety"),
-            HostChoice::new("go", "Go"),
-        ]
-    );
-
-    let (response, display) = submit(request.clone(), |composer| composer.toggle_active_choice());
-    let host = host_response(response);
-
-    assert_eq!(display, "Rust");
-    assert_eq!(host.answers()["language"], ["rust"]);
-    assert!(request.validate(&host).is_ok());
-}
-
-#[test]
-fn focused_default_round_trips_without_preselecting() {
-    use rho_sdk::DefaultSelection;
-
-    let question = HostQuestion::new(
-        "prompt",
-        "Prompt mode?",
-        vec![
-            HostChoice::new("replace", "replace"),
-            HostChoice::new("extend", "extend"),
-        ],
-        SelectionMode::One,
-    )
-    .unwrap()
-    .default_value(serde_json::json!("extend"))
-    .default_selection(DefaultSelection::Focused);
-    let request = HostInputRequest::questionnaire("Prompt", vec![question]).unwrap();
-
-    assert_eq!(
-        request.questions()[0].default_selection_mode(),
-        DefaultSelection::Focused
-    );
-    assert_eq!(
-        request.questions()[0].default_value_ref(),
-        Some(&serde_json::json!("extend"))
-    );
-
-    let (response, display) = submit(request.clone(), |composer| composer.toggle_active_choice());
-    let host = host_response(response);
-
-    assert_eq!(display, "extend");
-    assert_eq!(host.answers()["prompt"], ["extend"]);
-    assert!(request.validate(&host).is_ok());
-}
-
-#[test]
-fn yes_no_round_trip_preserves_confirm_semantics_and_values() {
-    let question = HostQuestion::new(
-        "apply",
-        "Apply changes?",
-        vec![HostChoice::new("yes", "Yes"), HostChoice::new("no", "No")],
-        SelectionMode::One,
-    )
-    .unwrap();
-    let request = HostInputRequest::questionnaire("Confirm", vec![question]).unwrap();
-
-    assert!(is_confirm(&request.questions()[0]));
-
-    let (response, display) = submit(request.clone(), |composer| composer.toggle_active_choice());
-    let host = host_response(response);
-
-    assert_eq!(display, "Yes");
-    assert_eq!(host.answers()["apply"], ["yes"]);
-    assert!(request.validate(&host).is_ok());
-}
-
-#[test]
-fn optional_unanswered_round_trip_preserves_user_omission_and_explicit_fallback() {
-    let question = HostQuestion::new(
-        "language",
-        "Language?",
-        vec![HostChoice::new("rust", "Rust")],
-        SelectionMode::One,
-    )
-    .unwrap()
-    .optional();
-    let request = HostInputRequest::questionnaire("Optional", vec![question]).unwrap();
-
-    let (response, _display) = submit(request.clone(), |_| {});
-    let host = host_response(response);
-
-    assert!(host.answers().is_empty());
-    assert!(request.validate(&host).is_ok());
-
-    // Explicit empty fallbacks must retain their key and provenance through the
-    // composer adapter, otherwise SDK validation rejects the timed response.
-    let fallback = HostInputResponse::new().answer("language", Vec::<String>::new());
-    let request = request
-        .with_timeout_fallback(fallback, "Leave language unset")
-        .unwrap();
-    let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
-    let mut composer =
-        QuestionnaireComposer::new(request.clone(), QuestionnaireResponseChannel::new(reply_tx));
-    let now = std::time::Instant::now();
-    composer.start_timeout(std::num::NonZeroU64::new(1), now);
-    assert!(composer
-        .submit_timeout_if_due(now + std::time::Duration::from_secs(1))
-        .is_some());
-    let QuestionnaireReply::Answer(response) = reply_rx.try_recv().unwrap() else {
-        panic!("expected fallback response");
-    };
-    let host = host_response(response);
-    assert_eq!(Some(&host), request.timeout_fallback());
-    request.validate(&host).unwrap();
-}
-
-#[test]
-fn multi_select_round_trip_renders_labels_and_returns_values() {
-    let question = HostQuestion::new(
-        "tests",
-        "Test suites?",
-        vec![
-            HostChoice::new("unit_tests", "Unit tests"),
-            HostChoice::new("e2e", "End to end"),
-        ],
-        SelectionMode::Many,
-    )
-    .unwrap();
-    let request = HostInputRequest::questionnaire("Tests", vec![question]).unwrap();
-
-    let (response, display) = submit(request.clone(), |composer| {
-        composer.toggle_active_choice();
-        composer.move_active_choice_next();
-        composer.toggle_active_choice();
-    });
-    let host = host_response(response);
-
-    assert_eq!(display, "Unit tests, End to end");
-    assert_eq!(host.answers()["tests"], ["unit_tests", "e2e"]);
-    assert!(request.validate(&host).is_ok());
-}
-
-fn submit(
-    request: HostInputRequest,
-    interact: impl FnOnce(&mut QuestionnaireComposer),
-) -> (QuestionnaireResponse, String) {
-    let (reply_tx, mut reply_rx) = tokio::sync::oneshot::channel();
-    let mut composer =
-        QuestionnaireComposer::new(request, QuestionnaireResponseChannel::new(reply_tx));
-    interact(&mut composer);
-    let submitted = composer.submit().unwrap();
-    let reply = reply_rx.try_recv().unwrap();
-    let QuestionnaireReply::Answer(response) = reply else {
-        panic!("expected questionnaire answer");
-    };
-    (response, submitted.display)
 }
 
 #[test]

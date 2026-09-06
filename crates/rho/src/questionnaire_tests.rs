@@ -14,7 +14,10 @@ fn timeout_requires_explicit_complete_typed_fallbacks() {
     });
     let parsed = parse_request(valid.clone()).unwrap();
     pretty_assertions::assert_eq!(parsed.questions[0].default, Some(json!("red")));
-    pretty_assertions::assert_eq!(parsed.on_timeout.unwrap().answers["color"], json!("blue"));
+    pretty_assertions::assert_eq!(
+        parsed.on_timeout.unwrap().answers["color"],
+        timeout::TimeoutAnswer::Text("blue".into())
+    );
 
     for (pointer, value) in [
         ("/questions/0/id", Value::Null),
@@ -29,6 +32,9 @@ fn timeout_requires_explicit_complete_typed_fallbacks() {
         ("/on_timeout/answers/color", json!("green")),
         ("/on_timeout/answers/color", json!(true)),
         ("/on_timeout/answers/color", json!(["blue"])),
+        ("/on_timeout/answers/color", Value::Null),
+        ("/on_timeout/answers/color", json!(42)),
+        ("/on_timeout/answers/color", json!({"value":"blue"})),
         ("/on_timeout/answers/checks", json!("pty")),
         ("/on_timeout/answers/checks", json!([])),
         ("/on_timeout/answers/checks", json!(["pty", "pty"])),
@@ -44,7 +50,18 @@ fn timeout_requires_explicit_complete_typed_fallbacks() {
     }
     let mut input = valid;
     input["on_timeout"]["answers"]["extra"] = json!(false);
-    assert!(parse_request(input.clone()).is_ok());
+    let fallback = parse_request(input.clone()).unwrap().on_timeout.unwrap();
+    pretty_assertions::assert_eq!(
+        serde_json::to_value(&fallback).unwrap(),
+        input["on_timeout"]
+    );
+    pretty_assertions::assert_eq!(
+        fallback.host_response(),
+        rho_sdk::HostInputResponse::new()
+            .answer("color", ["blue"])
+            .answer("checks", ["pty"])
+            .answer("extra", ["no"])
+    );
     input["on_timeout"]["timeout_seconds"] = json!(1);
     assert!(parse_request(input).is_err());
 }

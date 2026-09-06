@@ -1,4 +1,6 @@
-use rho_sdk::{DefaultSelection, HostChoice, HostInputRequest, HostQuestion, SelectionMode};
+use rho_sdk::{
+    DefaultSelection, HostChoice, HostInputRequest, HostInputResponse, HostQuestion, SelectionMode,
+};
 use tokio::sync::oneshot;
 
 mod render;
@@ -7,7 +9,6 @@ mod timeout;
 pub(in crate::tui) use render::{questionnaire_cursor_position, questionnaire_lines};
 
 use super::paste_burst::{next_word_boundary, previous_word_boundary};
-use crate::questionnaire::{QuestionnaireAnswer, QuestionnaireResponse};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum QuestionnaireCancelReason {
@@ -17,7 +18,7 @@ pub(super) enum QuestionnaireCancelReason {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum QuestionnaireReply {
-    Answer(QuestionnaireResponse),
+    Answer(HostInputResponse),
     Cancelled(QuestionnaireCancelReason),
 }
 
@@ -40,7 +41,7 @@ impl QuestionnaireResponseChannel {
         }
     }
 
-    fn send_response(&mut self, response: QuestionnaireResponse) {
+    fn send_response(&mut self, response: HostInputResponse) {
         if let Some(reply_tx) = self.reply_tx.take() {
             let _ = reply_tx.send(QuestionnaireReply::Answer(response));
         }
@@ -320,18 +321,14 @@ impl QuestionnaireComposer {
     }
 
     pub(super) fn submit(&mut self) -> Result<SubmittedQuestionnaire, String> {
-        let answers = match questionnaire_answers(self) {
-            Ok(answers) => answers,
+        let response = match questionnaire_answers(self) {
+            Ok(response) => response,
             Err((index, error)) => {
                 // Jump to the offending question so the user sees what the
                 // status message refers to.
                 self.active_index = index;
                 return Err(format!("question {}: {error}", index + 1));
             }
-        };
-        let response = QuestionnaireResponse {
-            answers,
-            source: rho_sdk::HostInputSource::User,
         };
         let display = submitted_questionnaire_entry(&self.request, &response);
         self.response.send_response(response);
@@ -696,56 +693,41 @@ fn choice_count(question: &HostQuestion) -> usize {
 
 pub(super) fn questionnaire_answers(
     questionnaire: &QuestionnaireComposer,
-) -> Result<Vec<QuestionnaireAnswer>, (usize, String)> {
+) -> Result<HostInputResponse, (usize, String)> {
     questionnaire
         .request
         .questions()
         .iter()
         .zip(questionnaire.fields.iter())
         .enumerate()
-        .map(|(index, (question, field))| {
-            let answer =
-                normalize_questionnaire_answer(question, field).map_err(|error| (index, error))?;
-            Ok((question, answer))
-        })
-        .filter_map(|result| match result {
-            Ok((question, answer)) if !question.is_required() && answer_is_empty(&answer) => None,
-            Ok((question, answer)) => Some(Ok(QuestionnaireAnswer {
-                id: question.id().to_string(),
-                answer,
-            })),
-            Err(error) => Some(Err(error)),
-        })
-        .collect()
-}
-
-fn answer_is_empty(answer: &serde_json::Value) -> bool {
-    match answer {
-        serde_json::Value::Null => true,
-        serde_json::Value::String(value) => value.trim().is_empty(),
-        serde_json::Value::Array(values) => values.is_empty(),
-        serde_json::Value::Bool(_)
-        | serde_json::Value::Number(_)
-        | serde_json::Value::Object(_) => false,
-    }
+        .try_fold(
+            HostInputResponse::new(),
+            |response, (index, (question, field))| {
+                let answers = normalize_questionnaire_answer(question, field)
+                    .map_err(|error| (index, error))?;
+                Ok(if !question.is_required() && answers.is_empty() {
+                    response
+                } else {
+                    response.answer(question.id(), answers)
+                })
+            },
+        )
 }
 
 fn normalize_questionnaire_answer(
     question: &HostQuestion,
     field: &QuestionnaireFieldState,
-) -> Result<serde_json::Value, String> {
+) -> Result<Vec<String>, String> {
     if is_confirm(question) {
         return match field.selection {
-            FieldSelection::Single(index @ 0..=1) => Ok(serde_json::Value::String(
-                question
-                    .choices()
-                    .get(index)
-                    .map_or(if index == 0 { "yes" } else { "no" }, |choice| {
-                        choice.value()
-                    })
-                    .to_string(),
-            )),
-            FieldSelection::None if !question.is_required() => Ok(serde_json::Value::Null),
+            FieldSelection::Single(index @ 0..=1) => Ok(vec![question
+                .choices()
+                .get(index)
+                .map_or(if index == 0 { "yes" } else { "no" }, |choice| {
+                    choice.value()
+                })
+                .to_string()]),
+            FieldSelection::None if !question.is_required() => Ok(Vec::new()),
             FieldSelection::None
             | FieldSelection::Single(_)
             | FieldSelection::Multi { .. }
@@ -769,9 +751,7 @@ fn normalize_questionnaire_answer(
                 if answers.is_empty() && question.is_required() {
                     return Err("select at least one answer".into());
                 }
-                Ok(serde_json::Value::Array(
-                    answers.into_iter().map(serde_json::Value::String).collect(),
-                ))
+                Ok(answers)
             }
             FieldSelection::None | FieldSelection::Single(_) | FieldSelection::Other => {
                 Err("answer is not selected".into())
@@ -781,12 +761,17 @@ fn normalize_questionnaire_answer(
             FieldSelection::Single(index) => question
                 .choices()
                 .get(*index)
-                .map(|choice| serde_json::Value::String(choice.value().to_string()))
+                .map(|choice| vec![choice.value().to_string()])
                 .ok_or_else(|| "answer is not selected".into()),
             FieldSelection::Other => {
-                normalize_text_answer(question, &field.other_value).map(serde_json::Value::String)
+                let answer = normalize_text_answer(question, &field.other_value)?;
+                Ok(if answer.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![answer]
+                })
             }
-            FieldSelection::None if !question.is_required() => Ok(serde_json::Value::Null),
+            FieldSelection::None if !question.is_required() => Ok(Vec::new()),
             FieldSelection::None | FieldSelection::Multi { .. } => {
                 Err("answer is not selected".into())
             }
@@ -805,14 +790,20 @@ fn normalize_text_answer(question: &HostQuestion, value: &str) -> Result<String,
 
 pub(super) fn submitted_questionnaire_entry(
     request: &HostInputRequest,
-    response: &QuestionnaireResponse,
+    response: &HostInputResponse,
 ) -> String {
-    if let [answer] = response.answers.as_slice() {
-        let question = request
-            .questions()
-            .iter()
-            .find(|question| question.id() == answer.id);
-        return questionnaire_answer_display(question, &answer.answer);
+    let answers = request
+        .questions()
+        .iter()
+        .filter_map(|question| {
+            response
+                .answers()
+                .get(question.id())
+                .map(|values| (question, values))
+        })
+        .collect::<Vec<_>>();
+    if let [(question, values)] = answers.as_slice() {
+        return questionnaire_answer_display(question, values);
     }
     let mut lines = Vec::new();
     if let Some(title) = request_title(request) {
@@ -820,48 +811,28 @@ pub(super) fn submitted_questionnaire_entry(
     } else {
         lines.push("questionnaire answers".into());
     }
-    for answer in &response.answers {
-        let label = request
-            .questions()
-            .iter()
-            .find(|question| question.id() == answer.id)
-            .map(HostQuestion::prompt)
-            .unwrap_or(answer.id.as_str());
-        let question = request
-            .questions()
-            .iter()
-            .find(|question| question.id() == answer.id);
+    for (question, values) in answers {
+        let label = question.prompt();
         lines.push(format!(
             "{label}: {}",
-            questionnaire_answer_display(question, &answer.answer)
+            questionnaire_answer_display(question, values)
         ));
     }
     lines.join("\n")
 }
 
-fn questionnaire_answer_display(
-    question: Option<&HostQuestion>,
-    answer: &serde_json::Value,
-) -> String {
-    match answer {
-        serde_json::Value::Array(values) => values
-            .iter()
-            .map(|answer| questionnaire_answer_display(question, answer))
-            .collect::<Vec<_>>()
-            .join(", "),
-        serde_json::Value::String(value) => question
-            .and_then(|question| {
-                question
-                    .choices()
-                    .iter()
-                    .find(|choice| choice.value() == value)
-            })
-            .map_or_else(|| value.clone(), |choice| choice.label().to_string()),
-        serde_json::Value::Bool(value) => value.to_string(),
-        serde_json::Value::Number(value) => value.to_string(),
-        serde_json::Value::Null => String::new(),
-        serde_json::Value::Object(_) => answer.to_string(),
-    }
+fn questionnaire_answer_display(question: &HostQuestion, values: &[String]) -> String {
+    values
+        .iter()
+        .map(|value| {
+            question
+                .choices()
+                .iter()
+                .find(|choice| choice.value() == value)
+                .map_or(value.as_str(), HostChoice::label)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 pub(super) fn questionnaire_notice_text(request: &HostInputRequest) -> String {
@@ -875,3 +846,7 @@ pub(super) fn questionnaire_notice_text(request: &HostInputRequest) -> String {
 #[cfg(test)]
 #[path = "questionnaire_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "questionnaire_response_tests.rs"]
+mod response_tests;

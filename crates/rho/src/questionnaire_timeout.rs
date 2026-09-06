@@ -9,8 +9,18 @@ use super::{QuestionnaireQuestion, QuestionnaireQuestionKind};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionnaireTimeout {
-    pub answers: BTreeMap<String, Value>,
+    pub answers: BTreeMap<String, TimeoutAnswer>,
     pub reason: String,
+}
+
+/// Wire answer shapes accepted by a timeout fallback. Question-specific
+/// validation still enforces selection kind, allowed values, and requiredness.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum TimeoutAnswer {
+    Text(String),
+    Confirm(bool),
+    Selections(Vec<String>),
 }
 
 impl QuestionnaireTimeout {
@@ -41,18 +51,20 @@ impl QuestionnaireTimeout {
                         || question.choices.iter().any(|choice| choice.label == value))
             };
             let valid = match (question.kind, answer) {
-                (QuestionnaireQuestionKind::Confirm, Value::Bool(_)) => true,
-                (QuestionnaireQuestionKind::Choice, Value::String(value)) => valid_choice(value),
-                (QuestionnaireQuestionKind::MultiSelect, Value::Array(values)) => {
+                (QuestionnaireQuestionKind::Confirm, TimeoutAnswer::Confirm(_)) => true,
+                (QuestionnaireQuestionKind::Choice, TimeoutAnswer::Text(value)) => {
+                    valid_choice(value)
+                }
+                (QuestionnaireQuestionKind::MultiSelect, TimeoutAnswer::Selections(values)) => {
                     let mut unique = BTreeSet::new();
                     (!question.required || !values.is_empty())
-                        && values.iter().all(|value| {
-                            value
-                                .as_str()
-                                .is_some_and(|value| valid_choice(value) && unique.insert(value))
-                        })
+                        && values
+                            .iter()
+                            .all(|value| valid_choice(value) && unique.insert(value))
                 }
-                (QuestionnaireQuestionKind::Text, Value::String(value)) => !value.trim().is_empty(),
+                (QuestionnaireQuestionKind::Text, TimeoutAnswer::Text(value)) => {
+                    !value.trim().is_empty()
+                }
                 _ => false,
             };
             if !valid {
@@ -67,14 +79,9 @@ impl QuestionnaireTimeout {
             rho_sdk::HostInputResponse::new(),
             |response, (id, value)| {
                 let values = match value {
-                    Value::Bool(value) => vec![if *value { "yes" } else { "no" }.into()],
-                    Value::String(value) => vec![value.clone()],
-                    Value::Array(values) => values
-                        .iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_owned)
-                        .collect(),
-                    _ => unreachable!("fallback validated by parse_request"),
+                    TimeoutAnswer::Confirm(value) => vec![if *value { "yes" } else { "no" }.into()],
+                    TimeoutAnswer::Text(value) => vec![value.clone()],
+                    TimeoutAnswer::Selections(values) => values.clone(),
                 };
                 response.answer(id, values)
             },

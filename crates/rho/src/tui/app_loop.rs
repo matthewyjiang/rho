@@ -249,6 +249,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        self.observe_questionnaire_input(&event);
         match self.take_exclusive_event(event) {
             Ok(resize) => {
                 if resize {
@@ -271,7 +272,6 @@ impl App {
                     self.apply_terminal_resize(terminal)?;
                 }
                 Event::Mouse(mouse) => {
-                    self.pause_questionnaire_timeout();
                     self.flush_pending_paste_burst();
                     self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
                 }
