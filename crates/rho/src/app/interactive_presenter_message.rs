@@ -33,7 +33,6 @@ pub(super) fn finished_message(
         body: view.arguments.get("message")?.as_str()?.trim().into(),
         details: vec![
             format!("task: {title}"),
-            format!("run: {run_id}"),
             format!("attach: rho attach {run_id}"),
         ],
     }))

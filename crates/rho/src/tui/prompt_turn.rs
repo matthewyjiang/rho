@@ -8,11 +8,19 @@ pub(super) struct FailedTurn {
     display_user: Vec<Message>,
     display_commit: DisplayCommit,
     notification_context: Option<String>,
+    boundary_recovery: Vec<BoundaryRecovery>,
     initial_tool_call: Option<rho_sdk::model::ToolCall>,
     generate_session_title_after_completion: bool,
     session_title_user: Option<String>,
     /// Keep action-request retries runnable even after delivery consumed the notice.
     parent_action_required: bool,
+}
+
+/// Accepted in-turn input is replayed only if its durable checkpoint was lost.
+#[derive(Clone, Debug, PartialEq)]
+struct BoundaryRecovery {
+    model: String,
+    display: Message,
 }
 
 impl FailedTurn {
@@ -33,6 +41,7 @@ impl FailedTurn {
             display_user: vec![Message::User(display_content)],
             display_commit: DisplayCommit::Unsaved,
             notification_context: None,
+            boundary_recovery: Vec::new(),
             initial_tool_call: prompt.initial_tool_call,
             generate_session_title_after_completion: false,
             session_title_user: None,
@@ -74,7 +83,10 @@ impl FailedTurn {
         }
         match std::mem::take(&mut self.display_commit) {
             DisplayCommit::Unsaved => {}
-            DisplayCommit::Complete => self.display_user.clear(),
+            DisplayCommit::Complete => {
+                self.display_user.clear();
+                self.boundary_recovery.clear();
+            }
             DisplayCommit::Checkpoint(saved) => {
                 for message in saved {
                     if let Some(index) = self
@@ -83,6 +95,13 @@ impl FailedTurn {
                         .position(|display| display == &message)
                     {
                         self.display_user.remove(index);
+                    }
+                    if let Some(index) = self
+                        .boundary_recovery
+                        .iter()
+                        .position(|recovery| recovery.display == message)
+                    {
+                        self.boundary_recovery.remove(index);
                     }
                 }
             }
@@ -97,11 +116,18 @@ impl FailedTurn {
     }
 
     fn model_input(&self) -> Result<rho_sdk::UserInput, rho_sdk::Error> {
-        let Some(notification) = &self.notification_context else {
+        let mut notification = self.notification_context.clone();
+        for recovery in &self.boundary_recovery {
+            notification = Some(crate::tools::agent::merge_notification_context(
+                notification.as_deref(),
+                &recovery.model,
+            ));
+        }
+        let Some(notification) = notification else {
             return Ok(self.input.clone());
         };
         let mut content = Vec::with_capacity(1 + self.input.blocks().len());
-        content.push(ContentBlock::Text(notification.clone()));
+        content.push(ContentBlock::Text(notification));
         content.extend_from_slice(self.input.blocks());
         rho_sdk::UserInput::content(content)
     }
@@ -245,6 +271,7 @@ impl App {
                     display_user: vec![delivery.transcript.display_message()],
                     display_commit: DisplayCommit::Unsaved,
                     notification_context: None,
+                    boundary_recovery: Vec::new(),
                     initial_tool_call: None,
                     generate_session_title_after_completion: false,
                     session_title_user: None,
@@ -456,8 +483,9 @@ impl App {
                     if let Some((model, transcript)) = self.deliver_running_boundary(request, agent).await {
                         // Acceptance is not a durable save. Retain findings and
                         // display receipts if this run later rolls back and retries.
-                        failed_turn.attach_notification_context(model);
-                        failed_turn.display_user.push(transcript.display_message());
+                        let display = transcript.display_message();
+                        failed_turn.display_user.push(display.clone());
+                        failed_turn.boundary_recovery.push(BoundaryRecovery { model, display });
                         pending_boundary_display.push_back(transcript);
                     }
                 }

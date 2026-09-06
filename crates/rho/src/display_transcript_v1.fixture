@@ -1,0 +1,17 @@
+[rho boundary transcript v1]
+[
+  {
+    "Message": {
+      "title": "Update · Inspect replayability",
+      "sender": "worker",
+      "recipient": "parent",
+      "delivery": "received",
+      "tone": "accent",
+      "preview": "truncated",
+      "visibility": "conversation",
+      "reference": "abc123",
+      "body": "Schema inspected.\nReady for the next step.",
+      "details": ["task: Inspect replayability", "attach: rho attach abc123"]
+    }
+  }
+]

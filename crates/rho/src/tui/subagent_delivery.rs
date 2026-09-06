@@ -37,7 +37,7 @@ impl TurnBoundaryBatch {
         let mut model = Vec::new();
         let mut rows = Vec::new();
         if !self.notices.is_empty() {
-            let (mut notices, _) = crate::app::subagent_messaging::notice_prompts(&self.notices);
+            let mut notices = crate::app::subagent_messaging::notice_prompt(&self.notices);
             notices.insert_str(0, "Earlier child messages in send order. Any terminal result below supersedes that child's planning and progress; preserve substantive findings.\n\n");
             model.push(notices);
             for notice in &self.notices {
@@ -56,7 +56,9 @@ impl TurnBoundaryBatch {
             }
         }
         if !self.subagent_notifications.is_empty() {
-            model.push(crate::tools::agent::notification_prompts(&self.subagent_notifications).0);
+            model.push(crate::tools::agent::notification_prompt(
+                &self.subagent_notifications,
+            ));
             for notification in &self.subagent_notifications {
                 let snapshot = &notification.snapshot;
                 let event = match snapshot.status.state {

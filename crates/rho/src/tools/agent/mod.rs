@@ -34,7 +34,7 @@ const AGENTS_TOOL: &str = "agents";
 pub use crate::app::subagent_manager::{SubagentManager, SubagentNotification, SubagentSnapshot};
 
 pub(crate) use super::agent_output::merge_notification_context;
-pub use super::agent_output::notification_prompts;
+pub(crate) use super::agent_output::notification_prompt;
 #[cfg(test)]
 pub(crate) use super::agent_output::MODEL_NOTIFICATION_BYTES as NOTIFICATION_CONTEXT_BYTES;
 

@@ -125,14 +125,17 @@ impl PendingTurn {
         let mut previous: Option<&[Message]> = None;
         for checkpoint in checkpoints {
             if let Some((index, replacement)) = &checkpoint.replacement {
-                let start = previous.map_or(self.history_start + 1, <[Message]>::len);
-                let compatible = previous.map_or_else(
-                    || checkpoint.history.get(self.history_start) == Some(&self.model_user),
-                    |previous| checkpoint.history.starts_with(previous),
-                );
-                if compatible {
-                    for (at, message) in checkpoint.history.iter().enumerate().skip(start) {
-                        display.push(if at == *index { replacement } else { message }.clone());
+                if let Some(tail) = self.appended_history(previous, &checkpoint.history) {
+                    let start = checkpoint.history.len() - tail.len();
+                    for (offset, message) in tail.iter().enumerate() {
+                        display.push(
+                            if start + offset == *index {
+                                replacement
+                            } else {
+                                message
+                            }
+                            .clone(),
+                        );
                     }
                 } else {
                     // Cancellation can prevent consumption of an older compaction
@@ -142,17 +145,25 @@ impl PendingTurn {
             }
             previous = Some(&checkpoint.history);
         }
-        if let Some(history) = final_history {
-            let start = previous.map_or(self.history_start + 1, <[Message]>::len);
-            let compatible = previous.map_or_else(
-                || history.get(self.history_start) == Some(&self.model_user),
-                |previous| history.starts_with(previous),
-            );
-            if compatible {
-                display.extend_from_slice(&history[start..]);
-            }
+        if let Some(tail) =
+            final_history.and_then(|history| self.appended_history(previous, history))
+        {
+            display.extend_from_slice(tail);
         }
         display
+    }
+
+    /// Append only a verified extension of the last checkpoint or initial input.
+    fn appended_history<'a>(
+        &self,
+        previous: Option<&[Message]>,
+        history: &'a [Message],
+    ) -> Option<&'a [Message]> {
+        match previous {
+            Some(previous) => history.strip_prefix(previous),
+            None => (history.get(self.history_start) == Some(&self.model_user))
+                .then(|| &history[self.history_start + 1..]),
+        }
     }
 }
 

@@ -627,15 +627,17 @@ async fn maybe_compact(
         .commit_compaction(previous, replacement.clone(), usage)?
         .with_committed_snapshot(core.persistence_snapshot());
     *history = replacement;
-    emit(
-        events,
-        cancellation,
-        RunEvent::CompactionCompleted {
+    // Once committed, hosts must receive this checkpoint even if cancellation
+    // arrives while the event channel is full. Run::outcome drains the channel.
+    events
+        .send(RunEvent::CompactionCompleted {
             trigger: crate::CompactionTrigger::Automatic,
             outcome,
-        },
-    )
-    .await?;
+        })
+        .await
+        .map_err(|_| Error::Interrupted {
+            message: "run event consumer was dropped".into(),
+        })?;
     // Replacement can change content without changing the message count.
     Ok(None)
 }

@@ -17,10 +17,55 @@ fn failed_turn() -> FailedTurn {
         display_user: vec![Message::user_text("continuing active goal")],
         display_commit: DisplayCommit::Unsaved,
         notification_context: None,
+        boundary_recovery: Vec::new(),
         initial_tool_call: None,
         generate_session_title_after_completion: true,
         session_title_user: None,
         parent_action_required: false,
+    }
+}
+
+// Covers: accepted in-turn findings are recovered after rollback, but not sent
+// again once already present in durable history. Owner: retry input policy.
+#[test]
+fn running_boundary_recovery_follows_durable_receipts() {
+    let first = BoundaryRecovery {
+        model: "first findings".into(),
+        display: Message::System("first receipt".into()),
+    };
+    let second = BoundaryRecovery {
+        model: "second findings".into(),
+        display: Message::System("second receipt".into()),
+    };
+    for (commit, retained) in [
+        (DisplayCommit::Unsaved, vec![first.clone(), second.clone()]),
+        (
+            DisplayCommit::Checkpoint(vec![first.display.clone()]),
+            vec![second.clone()],
+        ),
+        (DisplayCommit::Complete, Vec::new()),
+    ] {
+        let mut retry = failed_turn();
+        retry.boundary_recovery = vec![first.clone(), second.clone()];
+        retry
+            .display_user
+            .extend([first.display.clone(), second.display.clone()]);
+        retry.display_commit = commit;
+        retry.prepare_retry();
+        let mut context = None;
+        for recovery in &retained {
+            context = Some(crate::tools::agent::merge_notification_context(
+                context.as_deref(),
+                &recovery.model,
+            ));
+        }
+        let mut expected = context
+            .into_iter()
+            .map(ContentBlock::Text)
+            .collect::<Vec<_>>();
+        expected.extend_from_slice(retry.input.blocks());
+        pretty_assertions::assert_eq!(retry.model_input().unwrap().blocks(), expected);
+        pretty_assertions::assert_eq!(retry.boundary_recovery, retained);
     }
 }
 

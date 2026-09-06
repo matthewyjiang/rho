@@ -414,6 +414,9 @@ impl InteractiveRuntime {
     }
 
     pub(crate) async fn finish_run(&mut self) -> anyhow::Result<RunOutcome> {
+        // The TUI may stop reading after cancellation. Persist queued compaction
+        // checkpoints before outcome() drains the remaining SDK events unseen.
+        while self.next_event().await.is_some() {}
         let finished = self.runs.finish().await;
         if let Some(error) = self.pending_persistence_error.take() {
             self.tools.checkpoint_tracker().discard_turn();

@@ -3,6 +3,8 @@
 //! Session storage currently carries display messages in the model's Message
 //! container. Only the codec below uses that container; presenters keep typed
 //! rows, and real human prompts remain separate User messages.
+//! This private storage adapter can be replaced by typed host records without
+//! changing the public SDK Message enum or waiting for a major SDK release.
 
 use rho_sdk::model::Message;
 use serde::{Deserialize, Serialize};
