@@ -1,4 +1,6 @@
-use rho_providers::model::{ContentBlock, Message};
+use std::collections::HashMap;
+
+use rho_providers::model::{ContentBlock, Message, ToolCall, ToolResult};
 use rho_sdk::{
     ApprovalRequest, CapabilityOperation, CapabilityRequest, CapabilitySource, NetworkTarget,
     PathScope,
@@ -9,6 +11,7 @@ pub(crate) fn render_classifier_transcript(
     pending: &ApprovalRequest,
 ) -> anyhow::Result<String> {
     let mut lines = Vec::new();
+    let mut pending_calls = HashMap::new();
 
     for message in history {
         match message {
@@ -26,14 +29,20 @@ pub(crate) fn render_classifier_transcript(
                     }
                 }
             }
-            Message::Assistant(blocks) => append_tool_calls(&mut lines, blocks)?,
+            Message::Assistant(blocks) => {
+                append_tool_calls(&mut lines, &mut pending_calls, blocks)?;
+            }
             Message::EnrichedAssistant(assistant) => {
-                append_tool_calls(&mut lines, &assistant.content)?;
+                append_tool_calls(&mut lines, &mut pending_calls, &assistant.content)?;
             }
             Message::AbortedAssistant(aborted) => {
-                append_tool_calls(&mut lines, &aborted.content)?;
+                append_tool_calls(&mut lines, &mut pending_calls, &aborted.content)?;
             }
-            Message::ToolResult(_) => {}
+            Message::ToolResult(result) => {
+                if let Some(call) = pending_calls.remove(result.id.as_str()) {
+                    append_questionnaire_answers(&mut lines, call, result)?;
+                }
+            }
         }
     }
 
@@ -43,16 +52,57 @@ pub(crate) fn render_classifier_transcript(
     Ok(lines.join("\n"))
 }
 
-fn append_tool_calls(lines: &mut Vec<String>, blocks: &[ContentBlock]) -> anyhow::Result<()> {
+fn append_tool_calls<'a>(
+    lines: &mut Vec<String>,
+    pending_calls: &mut HashMap<&'a str, &'a ToolCall>,
+    blocks: &'a [ContentBlock],
+) -> anyhow::Result<()> {
     for block in blocks {
         let ContentBlock::ToolCall(call) = block else {
             continue;
         };
+        pending_calls.insert(&call.id, call);
         lines.push(record(
             "tool_call",
             &[
+                ("call_id", json_str(&call.id)),
                 ("name", json_str(&call.name)),
                 ("arguments", call.arguments.to_string()),
+            ],
+        )?);
+    }
+    Ok(())
+}
+
+/// Only the questionnaire host-input bridge supplies answer evidence. Pair by
+/// call ID, parse its structured response, and omit every other tool body.
+fn append_questionnaire_answers(
+    lines: &mut Vec<String>,
+    call: &ToolCall,
+    result: &ToolResult,
+) -> anyhow::Result<()> {
+    if call.name != crate::questionnaire::TOOL_NAME || !result.ok {
+        return Ok(());
+    }
+    let Ok(request) = crate::questionnaire::parse_request(call.arguments.clone()) else {
+        return Ok(());
+    };
+    let Ok(response) =
+        serde_json::from_str::<crate::questionnaire::QuestionnaireResponse>(&result.content)
+    else {
+        return Ok(());
+    };
+    for answer in response.answers {
+        let Some(question) = request.questions.iter().find(|q| q.id == answer.id) else {
+            continue;
+        };
+        lines.push(record(
+            "questionnaire_answer",
+            &[
+                ("call_id", json_str(&call.id)),
+                ("question_id", json_str(&question.id)),
+                ("question", json_str(&question.question)),
+                ("answer", answer.answer.to_string()),
             ],
         )?);
     }

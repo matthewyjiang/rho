@@ -6,6 +6,69 @@ use rho_sdk::{ApprovalRequest, CapabilityRequest, CapabilitySource, PathScope};
 
 use super::render_classifier_transcript;
 
+// Covers: questionnaire consent reaches the classifier, without promoting unrelated,
+// failed, unmatched, or repeated tool results to user authorization.
+// Owner: permission classifier transcript boundary; no TUI rendering changes.
+#[test]
+fn questionnaire_answers_are_paired_with_the_completed_question() {
+    let question = "May I resolve the fixed review thread on PR #1185?";
+    let yes = r#"{"answers":[{"id":"q1","answer":"Yes"}]}"#;
+    let no = r#"{"answers":[{"id":"q1","answer":"No"}]}"#;
+    let unknown = r#"{"answers":[{"id":"unknown","answer":"Yes"}]}"#;
+    for (tool_name, result_id, ok, content, expected_answer) in [
+        ("questionnaire", "ask", true, yes, Some("Yes")),
+        ("questionnaire", "ask", true, no, Some("No")),
+        ("bash", "ask", true, yes, None),
+        ("questionnaire", "other", true, yes, None),
+        ("questionnaire", "ask", false, yes, None),
+        ("questionnaire", "ask", true, "cancelled", None),
+        ("questionnaire", "ask", true, unknown, None),
+        ("questionnaire", "ask", true, r#"{"answers":[]}"#, None),
+    ] {
+        let result = Message::ToolResult(ToolResult {
+            id: result_id.into(),
+            ok,
+            content: content.into(),
+        });
+        let history = vec![
+            Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+                id: "ask".into(),
+                name: tool_name.into(),
+                arguments: serde_json::json!({"questions": [{"question": question, "type": "confirm"}]}),
+            })]),
+            result.clone(),
+            result,
+        ];
+        let pending = ApprovalRequest::new(
+            CapabilityRequest::write_path(
+                "config.toml",
+                PathScope::PrimaryWorkspace,
+                source("write"),
+            ),
+            "pending action",
+        );
+        let transcript = render_classifier_transcript(&history, &pending).unwrap();
+        let answers: Vec<_> = transcript
+            .lines()
+            .filter(|line| line.starts_with("\"questionnaire_answer\""))
+            .collect();
+        let expected: Vec<_> = expected_answer
+            .into_iter()
+            .map(|answer| {
+                let question = serde_json::to_string(question).unwrap();
+                let answer = serde_json::to_string(answer).unwrap();
+                format!(
+                    r#""questionnaire_answer" call_id="ask" question_id="q1" question={question} answer={answer}"#,
+                )
+            })
+            .collect();
+        assert_eq!(
+            answers, expected,
+            "{tool_name}, {result_id}, {ok}, {content}"
+        );
+    }
+}
+
 fn source(name: &str) -> CapabilitySource {
     CapabilitySource::built_in_tool(name)
 }
