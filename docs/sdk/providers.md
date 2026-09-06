@@ -17,7 +17,7 @@ A provider implementation must:
 5. avoid blocking the async runtime thread
 6. apply bounded buffering and backpressure when bridging another streaming API
 7. keep credentials, authorization headers, signed URLs, raw secret-bearing payloads, and transport-specific errors out of public `Debug`, events, diagnostics, and error messages
-8. scope opaque provider-native replay data to the exact provider/API/model identity that produced it
+8. tag opaque provider-native replay data with its exact producing provider/API/model identity, and filter replay through `ProviderContextBlock::is_replayable_to`; only Codex Responses compaction items have the cross-model exception described below
 
 `send_turn` is the non-streaming primitive. `send_turn_stream` may be overridden for streaming. Its default implementation invokes `send_turn` while observing cancellation. `send_turn_stream_with_options` adds request settings. `send_turn_stream_steerable` is the defaulted mid-turn steering port: dropping the receiver releases every request so existing providers keep today's boundary-apply behavior. Streaming providers send semantic `ModelEvent` values through the supplied bounded sender and still return a complete normalized response. The final response, not accumulated deltas, is the authoritative completed turn.
 
@@ -37,14 +37,21 @@ Provider events are forwarded in arrival order into the run event stream. Usage 
 
 ## Provider-native replay and handoff
 
-`ProviderContextBlock` can contain opaque provider-native data. Each block is tagged with the exact `ModelIdentity` that produced it. Canonical `ModelRequest` history still contains these tagged blocks so an adapter can lower enriched messages. The adapter must use the handoff helpers or equivalent exact-identity filtering before constructing an upstream wire request:
+`ProviderContextBlock` can contain opaque provider-native data. Each block is tagged with the exact `ModelIdentity` that produced it. Canonical `ModelRequest` history still contains these tagged blocks so an adapter can lower enriched messages. The adapter must use the handoff helpers or equivalent `ProviderContextBlock::is_replayable_to` filtering before constructing an upstream wire request:
 
 - exact provider/API/model identity permits replay
-- a changed provider, API, or model requires the adapter to omit incompatible blocks from the upstream request
+- Codex `openai_response_output_item` blocks with `data.type = "compaction"` also replay across model names within `openai-codex` / `openai-responses`
+- a changed provider or API always requires omission; other native formats still require the exact model
 - portable assistant content remains available
 - `Session::replace_provider` returns a `HandoffReport` so the host can surface omissions
 
 Opaque blocks may still exist in session history and snapshots. Treat their `data` as sensitive provider content, do not render it by default, and apply retention and encryption policy. Identity checks protect compatibility, not confidentiality.
+
+The Codex rule follows first-party compaction handoff, not the fact that multiple providers share a Responses serializer. It does not extend to raw reasoning, OpenAI API-key requests, or Responses-compatible gateways. The investigated handoff path is specific to Codex, not every backend using the same endpoint shape.
+
+Upstream Codex runs a fresh compaction with the previous model when the backend's model-configuration compatibility hash changes. It keeps compaction items but discards raw reasoning from the compacted output before sending it to the selected model. That supports cross-model compaction replay, but does not establish backend acceptance of every stored item after repeated model switches. Rho replays stored compaction items without that fresh-compaction step and does not currently fetch the compatibility hash. No live backend acceptance test was performed for this rule. A rejected native item fails the turn; the adapter does not automatically retry without it. Treat acceptance and replay longevity as upstream-dependent, not an SDK guarantee.
+
+SDK metadata is never native replay data. Raw reasoning and unknown formats retain exact-model filtering.
 
 ## Stable versus upstream-dependent behavior
 

@@ -22,8 +22,8 @@ pub struct PreparedAssistant {
 
 /// Lowers a canonical assistant message for a target model.
 ///
-/// Opaque provider context is replayed only to the exact provider/API/model that
-/// produced it. When that context cannot replay, portable fallback text (then
+/// Opaque provider context follows [`ProviderContextBlock::is_replayable_to`].
+/// When that context cannot replay, portable fallback text (then
 /// reasoning summaries) is appended so foreign targets still receive a usable
 /// handoff. Raw reasoning must be represented only as opaque context.
 pub fn prepare_assistant(message: AssistantMessage, target: &ModelIdentity) -> PreparedAssistant {

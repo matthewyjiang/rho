@@ -105,16 +105,84 @@ fn aborted_assistant_history_keeps_partial_tool_calls_and_usage() {
 }
 
 #[test]
-fn provider_context_replays_only_to_exact_identity() {
+fn native_replay_keeps_provider_api_and_unknown_format_boundaries() {
+    let source = ModelIdentity::new("openai-codex", "openai-responses", "source");
     let block = ProviderContextBlock {
-        identity: ModelIdentity::new("openai", "responses", "gpt-5"),
-        kind: "reasoning".into(),
+        identity: source.clone(),
+        kind: "openai_response_output_item".into(),
         position: None,
-        data: json!({}),
+        data: json!({"type": "compaction"}),
     };
-
-    assert!(block.is_replayable_to(&ModelIdentity::new("openai", "responses", "gpt-5")));
-    assert!(!block.is_replayable_to(&ModelIdentity::new("openai", "responses", "gpt-5-mini")));
+    // Explicit expectations avoid repeating the implementation as a test oracle.
+    for (provider, api, model, expected) in [
+        ("openai-codex", "openai-responses", "source", true),
+        ("openai-codex", "openai-responses", "target", true),
+        ("openai", "openai-responses", "source", false),
+        ("openai-codex", "another-api", "source", false),
+    ] {
+        let target = ModelIdentity::new(provider, api, model);
+        assert_eq!(block.is_replayable_to(&target), expected, "{target:?}");
+    }
+    for (provider, api, kind, data) in [
+        (
+            "openai",
+            "openai-responses",
+            "openai_response_output_item",
+            json!({"type": "compaction"}),
+        ),
+        (
+            "openai-codex",
+            "another-api",
+            "openai_response_output_item",
+            json!({"type": "compaction"}),
+        ),
+        (
+            "openai-codex",
+            "openai-responses",
+            "unknown-format",
+            json!({"type": "compaction"}),
+        ),
+        (
+            "openai-codex",
+            "openai-responses",
+            "openai_response_output_item",
+            json!({"type": "reasoning"}),
+        ),
+        (
+            "openai-codex",
+            "openai-responses",
+            "openai_response_output_item",
+            json!({"type": "unknown"}),
+        ),
+        (
+            "openai-codex",
+            "openai-responses",
+            "openai_response_output_item",
+            json!({}),
+        ),
+        (
+            "openai-codex",
+            "openai-responses",
+            "openai_reasoning_effort",
+            json!("high"),
+        ),
+    ] {
+        let block = ProviderContextBlock {
+            identity: ModelIdentity::new(provider, api, "source"),
+            kind: kind.into(),
+            data,
+            ..block.clone()
+        };
+        let target = ModelIdentity::new(provider, api, "target");
+        assert_eq!(
+            (
+                block.is_replayable_to(&block.identity),
+                block.is_replayable_to(&target)
+            ),
+            (true, false),
+            "{block:?}"
+        );
+    }
 }
 
 // Covers: async-call markers round-trip the call id, never replay as provider

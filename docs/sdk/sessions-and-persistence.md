@@ -68,7 +68,7 @@ A snapshot does contain conversation content, system and user prompts, tool call
 
 ## Provider context on restore
 
-Provider-native context remains in snapshot history tagged with the exact provider/API/model identity that created it. Restoring with another identity does not reinterpret or delete it. Canonical SDK history still contains the tagged blocks. Before creating an upstream wire request, a provider adapter must omit incompatible blocks with the handoff helpers or equivalent exact-identity filtering while preserving portable content. Hosts should surface handoff omissions and may choose to remove provider-native blocks as a retention policy.
+Provider-native context remains in snapshot history tagged with the exact provider/API/model identity that created it. Restoring with another identity does not reinterpret or delete it. Canonical SDK history still contains the tagged blocks. Before creating an upstream wire request, a provider adapter must omit incompatible blocks with the handoff helpers or equivalent [native replay filtering](/sdk/providers#provider-native-replay-and-handoff) while preserving portable content. Hosts should surface handoff omissions and may choose to remove provider-native blocks as a retention policy.
 
 `SessionOptions::from_snapshot` restores ID, history, revision, and compaction state, and avoids inserting the runtime's system prompt a second time. The runtime's currently configured provider executes future turns; the snapshot's provider identity is compatibility metadata, not an instruction to acquire credentials.
 
