@@ -14,9 +14,11 @@ pub const SESSION_SNAPSHOT_SCHEMA_VERSION: u32 = 2;
 
 /// Versioned, portable state required to continue an SDK session.
 ///
-/// Snapshots retain provider-native context because each block is scoped to an
-/// exact provider/API/model identity. Restoring with another provider leaves
-/// those blocks in history but they are omitted by handoff logic. Raw reasoning
+/// Snapshots retain provider-native context tagged with its producing model
+/// identity. Replay compatibility is defined by
+/// [`ProviderContextBlock::is_replayable_to`](crate::ProviderContextBlock::is_replayable_to).
+/// Restoring with another provider leaves those blocks in history but they are
+/// omitted by handoff logic. Raw reasoning
 /// is always cleared before a snapshot is created or serialized.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SessionSnapshot {
