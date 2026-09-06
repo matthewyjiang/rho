@@ -49,9 +49,9 @@ fn quiet_notices_then_action(harness: &mut PtyHarness) -> Result<()> {
         harness.wait_for_text(message, STREAM)?;
     }
     harness.inject_key(&crate::keys::Key::Ctrl('o'))?;
-    harness.wait_for_text("attach: rho attach", STREAM)?;
+    harness.wait_for_text("task: ", STREAM)?;
     harness.inject_key(&crate::keys::Key::Ctrl('o'))?;
-    harness.wait_for_text_gone("attach: rho attach", STREAM)?;
+    harness.wait_for_text_gone("task: ", STREAM)?;
     Ok(())
 }
 
