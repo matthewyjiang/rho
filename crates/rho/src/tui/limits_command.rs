@@ -70,7 +70,7 @@ pub(super) enum LiveUsage {
         limits: crate::usage_limits::ProviderUsageLimits,
         fetched_at_unix: i64,
     },
-    Failed,
+    Failed(UsageFailure),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -493,7 +493,8 @@ impl App {
     }
 
     fn mark_usage_failed(&mut self, kind: UsageProviderKind, reason: UsageFailure) {
-        self.usage_limits_live.insert(kind, LiveUsage::Failed);
+        self.usage_limits_live
+            .insert(kind, LiveUsage::Failed(reason));
         let cached_at = usage_limits_cache::load()
             .get(kind)
             .map(|entry| entry.fetched_at_unix);
@@ -575,12 +576,12 @@ fn provider_section(
             },
             windows: limits.windows.clone(),
         },
-        Some(LiveUsage::Failed) if !checking => LimitsSection {
+        Some(LiveUsage::Failed(reason)) if !checking => LimitsSection {
             id: LimitsSectionId::Provider(kind),
             label: kind.label().into(),
             status: LimitsSectionStatus::Failed {
                 cached_at_unix: cached.map(|entry| entry.fetched_at_unix),
-                reason: UsageFailure::Other,
+                reason: *reason,
             },
             windows: cached
                 .map(|entry| entry.windows.clone())

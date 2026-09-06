@@ -63,10 +63,12 @@ const REFRESH_FAILURE_MARKERS: &[&str] = &[
     "could not refresh usage",
     "partial usage data",
     "per-model breakdown unavailable",
+    "usage endpoint is rate limited",
 ];
 /// Every throttle notice Claude paints ("Usage endpoint is rate limited.",
-/// "(rate limited — try again in a moment)") carries this phrase, so it is
-/// both a failure marker and the reason.
+/// "(rate limited — try again in a moment)") carries this phrase. It only
+/// picks the reason for a screen the failure markers already rejected; it is
+/// not a failure gate on its own.
 const RATE_LIMITED_MARKER: &str = "rate limited";
 
 #[derive(Debug, Error)]
@@ -102,7 +104,15 @@ impl UsageProbeError {
     pub(crate) fn failure(&self) -> UsageFailure {
         match self {
             Self::RefreshFailed { reason, .. } => *reason,
-            _ => UsageFailure::Other,
+            Self::BinaryMissing
+            | Self::NotSignedIn
+            | Self::Unsupported
+            | Self::Spawn(_)
+            | Self::Cancelled
+            | Self::TimeoutScreen { .. }
+            | Self::Exited { .. }
+            | Self::Unparseable
+            | Self::Auth(_) => UsageFailure::Other,
         }
     }
 }
@@ -283,11 +293,12 @@ fn usage_screen_kind(screen: &UsageScreen) -> &'static str {
 
 fn classify_usage_screen(screen: &str, now_unix: i64) -> UsageScreen {
     let lower = screen.to_ascii_lowercase();
-    if lower.contains(RATE_LIMITED_MARKER) {
-        return UsageScreen::Failed(UsageFailure::RateLimited);
-    }
     if contains_any(&lower, REFRESH_FAILURE_MARKERS) {
-        return UsageScreen::Failed(UsageFailure::Other);
+        return UsageScreen::Failed(if lower.contains(RATE_LIMITED_MARKER) {
+            UsageFailure::RateLimited
+        } else {
+            UsageFailure::Other
+        });
     }
     if !contains_any(screen, PANEL_MARKERS) {
         return UsageScreen::NoPanel;
