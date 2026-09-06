@@ -166,8 +166,8 @@ pub(super) fn file_palette_matches(
 }
 
 impl DiscoveredFilePaths {
-    #[cfg(test)]
-    fn complete(paths: Vec<String>) -> Self {
+    /// A listing that was not cut short.
+    pub(super) fn complete(paths: Vec<String>) -> Self {
         Self {
             paths: Arc::new(paths),
             incomplete: false,
@@ -402,7 +402,7 @@ fn directory_scope(
     ))
 }
 
-fn resolve_user_path(cwd: &Path, path: &str, home: Option<&Path>) -> PathBuf {
+pub(super) fn resolve_user_path(cwd: &Path, path: &str, home: Option<&Path>) -> PathBuf {
     if path == "~" {
         return home
             .map(Path::to_path_buf)

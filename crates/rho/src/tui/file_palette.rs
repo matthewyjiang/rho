@@ -14,6 +14,15 @@ use super::{
     shell_palette, App,
 };
 
+/// What follows a path written into the composer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TokenTerminator {
+    /// The path is a finished argument; separate it from what comes next.
+    Space,
+    /// The path is a directory the user will keep descending into.
+    None,
+}
+
 impl App {
     pub(super) fn handle_file_palette_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
         let Some(ActivePalette::File(matches)) = self.active_palette() else {
@@ -107,9 +116,17 @@ impl App {
                     self.set_status("file path inserted");
                 }
             }
-            PathTokenSource::ShellWord => {
-                self.replace_path_token(&token, shell_palette::shell_quote(path))
-            }
+            // A directory is one component of a longer path: no space after
+            // it, so the next Tab keeps descending from where this one left off.
+            PathTokenSource::ShellWord => self.replace_path_token(
+                &token,
+                shell_palette::shell_quote(path),
+                if path.ends_with('/') {
+                    TokenTerminator::None
+                } else {
+                    TokenTerminator::Space
+                },
+            ),
         }
     }
 
@@ -123,20 +140,25 @@ impl App {
         else {
             return false;
         };
-        self.replace_path_token(&mention, format!("@{text}"));
+        self.replace_path_token(&mention, format!("@{text}"), TokenTerminator::Space);
         true
     }
 
-    /// Write `insertion` over the token, add the space a shell or sentence
-    /// wants after it unless one is already there, and close the palette.
-    fn replace_path_token(&mut self, token: &FileMention, mut insertion: String) {
+    /// Write `insertion` over the token and close the palette. A `Space`
+    /// terminator is added only when the token is not already followed by one.
+    fn replace_path_token(
+        &mut self,
+        token: &FileMention,
+        mut insertion: String,
+        terminator: TokenTerminator,
+    ) {
         let next_is_space = self
             .input_ui
             .text()
             .chars()
             .nth(token.end)
             .is_some_and(char::is_whitespace);
-        if !next_is_space {
+        if terminator == TokenTerminator::Space && !next_is_space {
             insertion.push(' ');
         }
         self.replace_input_range(token.start, token.end, &insertion);
@@ -192,18 +214,19 @@ impl App {
         discovered
     }
 
-    /// Rank the workspace for one token, plus the MCP catalog for a mention.
-    /// The catalog is an in-memory listing refreshed at connect, so this stays
-    /// a local lookup on every keystroke.
+    /// Candidates for one token. A mention fuzzy-searches the whole workspace
+    /// index plus the MCP catalog (an in-memory listing refreshed at connect,
+    /// so this stays a local lookup on every keystroke). A shell word lists one
+    /// directory, one component at a time, as a shell does.
     fn discover_file_palette_matches(&mut self, token: &FileMention) -> FilePaletteMatches {
         let cwd = self.info.runtime.cwd.clone();
-        let discovered = file_picker::matching_file_paths_cached(
-            &cwd,
-            &token.query,
-            self.palette_caches.workspace_mut(),
-        );
         match token.source {
             PathTokenSource::Mention => {
+                let discovered = file_picker::matching_file_paths_cached(
+                    &cwd,
+                    &token.query,
+                    self.palette_caches.workspace_mut(),
+                );
                 let resources = if self.mcp_catalog.is_empty() {
                     Vec::new()
                 } else {
@@ -211,7 +234,9 @@ impl App {
                 };
                 file_picker::file_palette_matches(discovered, &resources, &token.query)
             }
-            PathTokenSource::ShellWord => FilePaletteMatches::shell_words(discovered),
+            PathTokenSource::ShellWord => FilePaletteMatches::shell_words(
+                shell_palette::shell_word_candidates(&cwd, &token.query),
+            ),
         }
     }
 

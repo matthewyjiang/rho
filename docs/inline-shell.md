@@ -27,15 +27,17 @@ Press `esc` to leave shell mode and return to the normal composer. The command t
 
 ## Complete a path
 
-Press `tab` in shell mode to complete the word under the cursor against workspace paths:
+Press `tab` in shell mode to complete the word under the cursor, one path component at a time, the way a shell does:
 
 ```text
-!cat crates/rho/src/tui/inl<tab>
+!cat cra<tab>            → !cat crates/
+!cat crates/rh<tab>      → !cat crates/rho/
+!cat crates/rho/Ca<tab>  → !cat crates/rho/Cargo.toml
 ```
 
-One match is inserted at once, followed by a space. Several matches open a list under the composer: keep typing to narrow it, use `up` and `down` to choose, then press `tab` or `enter` to insert the highlighted path or `esc` to close the list and stay in shell mode. Paths that contain spaces or other characters the shell would interpret are single-quoted.
+One match is inserted at once. A directory ends in `/` and gets no trailing space, so the next `tab` descends into it; a file gets a trailing space. Several matches open a list under the composer showing that directory's entries: keep typing to narrow it, use `up` and `down` to choose, then press `tab` or `enter` to insert the highlighted entry or `esc` to close the list and stay in shell mode. Paths that contain spaces or other characters the shell would interpret are single-quoted.
 
-Completion uses the same workspace index as `@` file mentions, so it honors `.gitignore`, skips hidden entries unless the word contains a `.`-prefixed component, and scopes to a directory when the word ends with `/` (including `~/`, `../`, and absolute paths). It offers files only; it does not complete command names or flags.
+Completion lists the filesystem as the shell will see it, so untracked and ignored entries such as `target/` are offered. Hidden entries appear only when the component you are typing starts with `.`. Relative paths resolve from the workspace; `~/`, `../`, and absolute paths work as they would in the shell. Completion offers paths only; it does not complete command names or flags.
 
 Rho runs inline commands asynchronously, so you can continue working while a command runs. Press `esc` to cancel a running command. Rho stops commands that run longer than 60 seconds.
 

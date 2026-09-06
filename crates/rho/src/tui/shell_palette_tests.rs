@@ -46,12 +46,13 @@ fn open_paths(app: &mut App) -> Option<Vec<String>> {
 }
 
 // Covers: Tab in shell mode must complete the word under the cursor like a
-// shell does: a lone match lands at once, several open a list, and nothing
-// leaves the composer alone. Quoting is part of the contract because a
-// completed path the shell then splits is worse than no completion.
+// shell does: one component at a time, a lone match lands at once, several
+// open a list, and nothing leaves the composer alone. Quoting is part of the
+// contract because a completed path the shell then splits is worse than no
+// completion.
 // Owner: TUI shell palette policy.
 #[test]
-fn tab_completes_word_under_cursor() {
+fn tab_completes_one_component_of_the_word_under_cursor() {
     struct Case {
         name: &'static str,
         files: &'static [&'static str],
@@ -61,18 +62,39 @@ fn tab_completes_word_under_cursor() {
     }
     let cases = [
         Case {
-            name: "single match inserts with a trailing space",
+            name: "single file inserts with a trailing space",
             files: &["notes.md"],
             typed: "cat not",
             text_after_tab: "cat notes.md ",
             palette_after_tab: None,
         },
         Case {
-            name: "several matches open the list and keep the text",
-            files: &["src/a.rs", "src/b.rs"],
+            name: "single directory inserts with a slash and no space",
+            files: &["crates/rho/lib.rs"],
+            typed: "ls cra",
+            text_after_tab: "ls crates/",
+            palette_after_tab: None,
+        },
+        Case {
+            name: "a directory word lists its own entries, not the whole tree",
+            files: &["src/a.rs", "src/nested/deep.rs"],
             typed: "cat src/",
             text_after_tab: "cat src/",
-            palette_after_tab: Some(&["src/a.rs", "src/b.rs"]),
+            palette_after_tab: Some(&["src/a.rs", "src/nested/"]),
+        },
+        Case {
+            name: "a bare word lists the cwd, not the whole tree",
+            files: &["src/a.rs", "README.md"],
+            typed: "ls ",
+            text_after_tab: "ls ",
+            palette_after_tab: Some(&["README.md", "src/"]),
+        },
+        Case {
+            name: "hidden entries appear only for a dot-prefixed component",
+            files: &[".env", "env.txt"],
+            typed: "cat .",
+            text_after_tab: "cat .env ",
+            palette_after_tab: None,
         },
         Case {
             name: "no match leaves the composer alone",
@@ -102,6 +124,25 @@ fn tab_completes_word_under_cursor() {
             case.name
         );
         assert!(app.input_ui.shell_mode().is_some(), "{}", case.name);
+    }
+}
+
+// Covers: repeated Tab walks a nested path one directory per press and ends
+// on the file with a space, instead of jumping to the leaf in one go.
+// Owner: TUI shell palette policy.
+#[test]
+fn repeated_tab_descends_one_directory_per_press() {
+    let (mut app, _workspace) = shell_app(&["crates/rho/src/lib.rs"], "cat cr");
+    let expected = [
+        "cat crates/",
+        "cat crates/rho/",
+        "cat crates/rho/src/",
+        "cat crates/rho/src/lib.rs ",
+    ];
+    for text in expected {
+        assert!(app.handle_file_palette_key(key(KeyCode::Tab)).unwrap());
+        assert_eq!(app.input_ui.text(), text);
+        assert_eq!(open_paths(&mut app), None, "each step had one match");
     }
 }
 

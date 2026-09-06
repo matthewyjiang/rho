@@ -16,17 +16,22 @@ const SIZE: PtySize = PtySize {
     cols: 100,
 };
 
-const FILE_GAMMA: &str = "gamma-unique-fixture.txt";
-const FILE_GAMMA_TWO: &str = "gamma-unique-second.txt";
+const DIR: &str = "gamma-unique-dir";
+const FILE_ONE: &str = "gamma-unique-fixture.txt";
+const FILE_TWO: &str = "gamma-unique-second.txt";
 
 fn setup_shell_completion(home: &IsolatedHome) -> Result<()> {
-    std::fs::write(home.workspace.join(FILE_GAMMA), "gamma fixture body\n")?;
-    std::fs::write(home.workspace.join(FILE_GAMMA_TWO), "gamma second body\n")?;
+    let dir = home.workspace.join(DIR);
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join(FILE_ONE), "gamma fixture body\n")?;
+    std::fs::write(dir.join(FILE_TWO), "gamma second body\n")?;
     Ok(())
 }
 
-// Covers: in shell mode, Tab on an ambiguous word opens a path list, typing
-// narrows it to one, and Tab again inserts that path into the command.
+// Covers: Tab completes one path component per press. A lone directory
+// match inserts `dir/` and stays open for descent; inside it an ambiguous
+// word opens the directory's own entries, typing narrows to one, and Tab
+// inserts that file.
 // Owner: interactive TUI
 const SHELL_TAB_COMPLETION_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -34,26 +39,32 @@ const SHELL_TAB_COMPLETION_STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
-    Step::Phase("open_completion"),
+    Step::Phase("descend_into_directory"),
     Step::TypeText("!cat gamma"),
     Step::WaitText {
-        text: "shell",
+        text: "shell · included in context",
         timeout: SETTLE,
     },
     Step::Key(Key::Tab),
     Step::WaitText {
-        text: FILE_GAMMA_TWO,
+        text: "cat gamma-unique-dir/",
+        timeout: SETTLE,
+    },
+    Step::Phase("list_directory_entries"),
+    Step::Key(Key::Tab),
+    Step::WaitText {
+        text: FILE_TWO,
         timeout: SETTLE,
     },
     Step::Phase("narrow_and_accept"),
-    Step::TypeText("-unique-f"),
+    Step::TypeText("gamma-unique-f"),
     Step::WaitTextGone {
-        text: FILE_GAMMA_TWO,
+        text: FILE_TWO,
         timeout: SETTLE,
     },
     Step::Key(Key::Tab),
     Step::WaitText {
-        text: "cat gamma-unique-fixture.txt",
+        text: "cat gamma-unique-dir/gamma-unique-fixture.txt",
         timeout: SETTLE,
     },
     Step::Key(Key::Ctrl('c')),
@@ -62,7 +73,7 @@ const SHELL_TAB_COMPLETION_STEPS: &[Step] = &[
 
 pub(super) const SHELL_TAB_COMPLETION_SCENARIO: Scenario = Scenario::new(
     "shell_tab_completion",
-    "Complete a workspace path with Tab inside the inline shell composer",
+    "Complete a nested workspace path one component per Tab inside the inline shell composer",
     SIZE,
     SHELL_TAB_COMPLETION_STEPS,
     /* smoke */ false,
