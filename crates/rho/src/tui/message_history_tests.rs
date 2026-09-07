@@ -179,7 +179,7 @@ fn transcript_restores_message_receipts() {
                 sender: "parent".into(),
                 recipient: recipient.into(),
                 delivery: MessageDelivery::Queued,
-                tone: MessageTone::Neutral,
+                tone: MessageTone::Accent,
                 preview: MessagePreview::Truncated,
                 visibility: MessageVisibility::Activity,
                 reference: Some("abc123".into()),
