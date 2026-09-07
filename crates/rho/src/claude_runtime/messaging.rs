@@ -15,7 +15,10 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use tokio::sync::mpsc;
 
-use crate::cli_runtime::drain::FollowUpSource;
+use crate::cli_runtime::drain::{FollowUp, FollowUpSource};
+use crate::cli_runtime::stream_effect::StreamEffect;
+use crate::presentation::{parent_message_card, MessageDelivery};
+use crate::run_artifacts::AttachmentEvent;
 
 /// How many parent messages may wait while Claude is mid-turn.
 ///
@@ -103,51 +106,43 @@ pub(crate) fn message_channel() -> (ClaudeMessageHandle, ClaudeMessageInbox) {
 /// Drain-side adapter: encodes queued parent text as stream-json user turns.
 pub(crate) struct ClaudeFollowUpSource {
     inbox: ClaudeMessageInbox,
-    writing: Option<String>,
 }
 
 impl ClaudeFollowUpSource {
     pub(crate) fn new(inbox: ClaudeMessageInbox) -> Self {
-        Self {
-            inbox,
-            writing: None,
-        }
+        Self { inbox }
     }
 
-    fn encode(&mut self, text: String) -> String {
+    fn encode(text: String) -> FollowUp {
         let line = encode_user_turn(&frame_parent_message(&text));
-        self.writing = Some(text);
-        line
+        FollowUp {
+            line,
+            written: Some(StreamEffect::Attachment(AttachmentEvent::Message(
+                Box::new(parent_message_card(
+                    text,
+                    MessageDelivery::Queued,
+                    "written to Claude stdin; awaiting its next turn".into(),
+                )),
+            ))),
+        }
     }
 }
 
 impl FollowUpSource for ClaudeFollowUpSource {
-    fn try_recv(&mut self) -> Result<String, mpsc::error::TryRecvError> {
+    fn try_recv(&mut self) -> Result<FollowUp, mpsc::error::TryRecvError> {
         let text = self.inbox.try_recv()?;
-        Ok(self.encode(text))
+        Ok(Self::encode(text))
     }
 
-    fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+    fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<FollowUp>> + Send + '_>> {
         Box::pin(async {
             let text = self.inbox.recv().await?;
-            Some(self.encode(text))
+            Some(Self::encode(text))
         })
     }
 
     fn seal(&self) {
         self.inbox.seal();
-    }
-
-    fn take_write_effect(&mut self) -> Option<crate::cli_runtime::stream_effect::StreamEffect> {
-        let text = self.writing.take()?;
-        Some(crate::cli_runtime::stream_effect::StreamEffect::Attachment(
-            crate::run_artifacts::AttachmentEvent::Message(Box::new(
-                crate::app::subagent_messaging::parent_message_card(
-                    text,
-                    crate::presentation::MessageDelivery::Queued,
-                ),
-            )),
-        ))
     }
 }
 

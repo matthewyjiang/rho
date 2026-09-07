@@ -253,12 +253,13 @@ fn notice_post_holds_binding_lock_from_reserve_through_enqueue() {
 // Covers: the steering slot is closed before publish and after clear, so a
 // parent message outside the live window cannot silently vanish.
 // Owner: app messaging policy
-#[test]
-fn steering_slot_is_closed_outside_the_live_window() {
+#[tokio::test]
+async fn steering_slot_is_closed_outside_the_live_window() {
     let slot = super::SteeringSlot::new();
-    assert!(slot.handle().is_none());
+    let message = super::ValidatedMessage::parse("course correction").unwrap();
+    assert!(slot.send(&message).await.is_err());
     slot.clear();
-    assert!(slot.handle().is_none());
+    assert!(slot.send(&message).await.is_err());
 }
 
 fn sample_notice(run_id: &str) -> SubagentNotice {
