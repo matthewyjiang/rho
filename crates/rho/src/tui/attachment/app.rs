@@ -372,6 +372,14 @@ impl AttachmentApp {
         }
         match event {
             AttachmentEvent::Prompt(prompt) => self.transcript.push(Entry::User(prompt)),
+            AttachmentEvent::Message(message) => {
+                // Standalone messages have no tool call id, but still need an
+                // independent identity for expansion and retry reindexing.
+                self.finish_pending_tool(
+                    Some(uuid::Uuid::new_v4().to_string()),
+                    crate::presentation::Presentation::Message(message),
+                );
+            }
             AttachmentEvent::AssistantTextDelta(text) => {
                 let can_append = self
                     .provider_attempt

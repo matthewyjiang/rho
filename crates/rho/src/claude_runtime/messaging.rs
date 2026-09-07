@@ -103,32 +103,51 @@ pub(crate) fn message_channel() -> (ClaudeMessageHandle, ClaudeMessageInbox) {
 /// Drain-side adapter: encodes queued parent text as stream-json user turns.
 pub(crate) struct ClaudeFollowUpSource {
     inbox: ClaudeMessageInbox,
+    writing: Option<String>,
 }
 
 impl ClaudeFollowUpSource {
     pub(crate) fn new(inbox: ClaudeMessageInbox) -> Self {
-        Self { inbox }
+        Self {
+            inbox,
+            writing: None,
+        }
+    }
+
+    fn encode(&mut self, text: String) -> String {
+        let line = encode_user_turn(&frame_parent_message(&text));
+        self.writing = Some(text);
+        line
     }
 }
 
 impl FollowUpSource for ClaudeFollowUpSource {
     fn try_recv(&mut self) -> Result<String, mpsc::error::TryRecvError> {
-        self.inbox
-            .try_recv()
-            .map(|text| encode_user_turn(&frame_parent_message(&text)))
+        let text = self.inbox.try_recv()?;
+        Ok(self.encode(text))
     }
 
     fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
         Box::pin(async {
-            self.inbox
-                .recv()
-                .await
-                .map(|text| encode_user_turn(&frame_parent_message(&text)))
+            let text = self.inbox.recv().await?;
+            Some(self.encode(text))
         })
     }
 
     fn seal(&self) {
         self.inbox.seal();
+    }
+
+    fn take_write_effect(&mut self) -> Option<crate::cli_runtime::stream_effect::StreamEffect> {
+        let text = self.writing.take()?;
+        Some(crate::cli_runtime::stream_effect::StreamEffect::Attachment(
+            crate::run_artifacts::AttachmentEvent::Message(Box::new(
+                crate::app::subagent_messaging::parent_message_card(
+                    text,
+                    crate::presentation::MessageDelivery::Queued,
+                ),
+            )),
+        ))
     }
 }
 

@@ -13,6 +13,7 @@ use {crate::subagent, rho_tools::tool_card::ToolCard};
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub(crate) enum AttachmentEvent {
     Prompt(String),
+    Message(Box<crate::presentation::MessageCard>),
     AssistantTextDelta(String),
     ReasoningDelta(String),
     ToolStarted {

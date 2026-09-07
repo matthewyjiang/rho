@@ -626,13 +626,16 @@ async fn complete_run(
     steering_slot: Option<super::subagent_messaging::SteeringSlot>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let HeadlessRunDeps {
-        reporter,
+        mut reporter,
         external_cancellation,
         jsonl,
         host_input,
     } = dependencies;
     let mut run = session.start(UserInput::text(prompt_text)).await?;
     if let Some(slot) = steering_slot {
+        if let Some(reporter) = reporter.as_deref_mut() {
+            reporter.parent_messages = Some(slot.messages.clone());
+        }
         slot.publish(run.steering_handle());
     }
     let cancellation = run.cancellation_handle();
@@ -661,6 +664,7 @@ pub(crate) struct RunReporter {
     sink: crate::run_artifacts::RunArtifactSink,
     adapter: crate::tui::event_adapter::SdkEventAdapter,
     stream_output: bool,
+    parent_messages: Option<super::parent_steering::ParentSteering>,
 }
 
 impl RunReporter {
@@ -677,6 +681,7 @@ impl RunReporter {
             sink,
             adapter: crate::tui::event_adapter::SdkEventAdapter::new(cwd),
             stream_output,
+            parent_messages: None,
         })
     }
 
@@ -701,7 +706,24 @@ impl RunReporter {
             sink,
             adapter: crate::tui::event_adapter::SdkEventAdapter::new(cwd),
             stream_output,
+            parent_messages: None,
         })
+    }
+
+    pub(super) async fn record_parent_input(&mut self, event: &rho_sdk::RunEvent) {
+        if let rho_sdk::RunEvent::SteeringApplied { ids } = event {
+            if let Some(messages) = &self.parent_messages {
+                for message in messages.applied(ids).await {
+                    self.sink
+                        .record_attachment(crate::run_artifacts::AttachmentEvent::Message(
+                            Box::new(super::subagent_messaging::parent_message_card(
+                                message.into_string(),
+                                crate::presentation::MessageDelivery::Received,
+                            )),
+                        ));
+                }
+            }
+        }
     }
 
     pub(super) fn on_event(&mut self, event: &rho_sdk::RunEvent) {

@@ -44,6 +44,66 @@ credential_store = "file"
     Ok(())
 }
 
+// Covers: real agents(message) delivery disappears from the child's attach view.
+// Owner: interactive incoming-message presentation and replay.
+fn parent_message_card(harness: &mut PtyHarness) -> anyhow::Result<()> {
+    harness.submit_text("fixture parent message attach")?;
+    harness.wait_for_text("parent message queued", STREAM)?;
+    harness.submit_text("/attach")?;
+    harness.wait_for_text("attach subagent", STREAM)?;
+    harness.inject_key(&Key::Enter)?;
+    harness.wait_for_text("q back", STREAM)?;
+    harness.wait_for_text("Inspect incoming parent messages in attach", STREAM)?;
+    anyhow::ensure!(
+        !harness
+            .screen()
+            .contents()
+            .contains("Keep the correction visible."),
+        "a queued correction must not appear as applied input"
+    );
+    harness.inject_key(&Key::Esc)?;
+    harness.wait_for_text_gone("q back", STREAM)?;
+    harness.submit_text("fixture apply parent message")?;
+    harness.wait_for_text("parent correction released", STREAM)?;
+    for _ in 0..2 {
+        harness.submit_text("/attach")?;
+        harness.wait_for_text("attach subagent", STREAM)?;
+        harness.inject_key(&Key::Enter)?;
+        harness.wait_for_text("q back", STREAM)?;
+        harness.wait_for_text("Keep the correction visible.", STREAM)?;
+        let rows = harness.screen().rows_text();
+        let bodies = rows
+            .iter()
+            .filter(|row| row.contains("Keep the correction visible."))
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            bodies.len() == 1 && bodies[0].trim_start().starts_with('│'),
+            "parent input must appear once as a card, not a prompt or notice:\n{}",
+            harness.screen().contents()
+        );
+        harness.inject_key(&Key::Ctrl('o'))?;
+        harness.wait_for_text("applied to conversation history", STREAM)?;
+        harness.inject_key(&Key::Esc)?;
+        harness.wait_for_text_gone("q back", STREAM)?;
+    }
+    Ok(())
+}
+
+pub(super) const ATTACH_PARENT_MESSAGE_SCENARIO: Scenario = Scenario::new(
+    "attach_parent_message",
+    "Show applied parent messages as incoming cards and preserve them on reattach",
+    DEFAULT_SIZE,
+    &[
+        Step::WaitText {
+            text: "gpt-5.5",
+            timeout: STARTUP,
+        },
+        Step::Custom(parent_message_card),
+        Step::ExitCommand,
+    ],
+    /* smoke */ true,
+);
+
 const ATTACH_VIEW_FROM_COMMAND_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {

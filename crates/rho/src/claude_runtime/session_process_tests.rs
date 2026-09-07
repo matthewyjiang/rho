@@ -74,6 +74,97 @@ exit {exit_code}
     write_fake_claude(bin, &script);
 }
 
+// Covers: accepted parent input reaches Claude stdin but disappears from attach replay.
+// Owner: external runtime message delivery and its durable attachment journal.
+#[tokio::test]
+async fn parent_message_is_recorded_after_stdin_delivery() {
+    for authenticated in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let fake = dir.path().join("claude");
+        write_fake_claude(
+            &fake,
+            r#"#!/bin/sh
+IFS= read -r initial
+IFS= read -r follow_up
+printf '%s\n' "$follow_up" > received.json
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"received","num_turns":2}'
+cat >/dev/null
+"#,
+        );
+        let (messages, inbox) = crate::claude_runtime::messaging::message_channel();
+        messages
+            .send("Inspect **routing** next.\nKeep the tests.".into())
+            .await
+            .unwrap();
+        let mut auth = logged_in();
+        auth.logged_in = authenticated;
+        tokio::time::timeout(
+            Duration::from_secs(30),
+            run_session(ClaudeSessionRequest {
+                system_prompt: system_prompt(),
+                identity: claude_identity(),
+                tools: vec!["Read".into()],
+                inherit_claude_config: false,
+                max_turns: 8,
+                prompt: "hi".into(),
+                output_file: output.clone(),
+                cwd: dir.path().into(),
+                permission_mode: PermissionMode::Bypass,
+                cancellation: RunCancellation::new(),
+                status_tx: None,
+                started_status: None,
+                parent_messages: Some(inbox),
+                auth_status: Some(Ok(auth)),
+                rate_limit_state_path: Some(dir.path().join("rate-limits.json")),
+                overrides: CliSessionOverrides {
+                    executable: Some(CliExecutable::from_path(&fake)),
+                    ..CliSessionOverrides::default()
+                },
+            }),
+        )
+        .await
+        .expect("parent follow-up session must finish")
+        .unwrap();
+        if authenticated {
+            let received: serde_json::Value = serde_json::from_str(
+                &std::fs::read_to_string(dir.path().join("received.json")).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                received["message"]["content"],
+                crate::claude_runtime::messaging::frame_parent_message(
+                    "Inspect **routing** next.\nKeep the tests."
+                )
+            );
+        } else {
+            assert!(!dir.path().join("received.json").exists());
+        }
+        let events = read_attachment_events(&output);
+        let cards = events
+            .iter()
+            .filter_map(|event| match event {
+                AttachmentEvent::Message(card) => Some((card.body.as_str(), card.delivery)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let expected = if authenticated {
+            vec![(
+                "Inspect **routing** next.\nKeep the tests.",
+                crate::presentation::MessageDelivery::Queued,
+            )]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(cards, expected, "queue acceptance is not stdin delivery");
+        assert!(matches!(
+            events.last(),
+            Some(AttachmentEvent::Completed | AttachmentEvent::Failed(_))
+        ));
+        assert!(messages.send("late message".into()).await.is_err());
+    }
+}
+
 async fn run_with_fake(
     output: &Path,
     cwd: &Path,

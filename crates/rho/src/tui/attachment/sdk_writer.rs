@@ -119,8 +119,8 @@ fn attachment_update(
         ViewModelEvent::ToolDetached { .. } => None,
         ViewModelEvent::RunStarted => None,
         ViewModelEvent::StepStarted(_) => Some(AttachmentEvent::StepStarted),
-        // This acknowledgement reconciles the interactive TUI's pending-input
-        // controls. Read-only attachments have no corresponding state.
+        // The delegated reporter correlates parent bodies with SteeringApplied
+        // before projecting SDK events. This adapter has no message receipts.
         ViewModelEvent::SteeringApplied(_) | ViewModelEvent::SteeringDelivered(_) => None,
         ViewModelEvent::ProviderStreamReset(_) => {
             adapter.clear_attachment_preview_keys();

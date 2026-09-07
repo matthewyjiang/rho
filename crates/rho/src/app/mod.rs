@@ -20,6 +20,7 @@ mod login;
 mod mcp_cli;
 pub(crate) mod notification_delivery;
 mod parent_bridge;
+mod parent_steering;
 mod plugins_cli;
 mod policy;
 mod provider_controller;

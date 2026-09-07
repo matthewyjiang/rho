@@ -98,6 +98,12 @@ In Supervised mode, Rho-runtime-delegated Write and Process operations fail clos
 
 Pass `--no-subagents` to remove delegation capabilities from a root invocation.
 
+The child's attach view shows parent messages as incoming cards. For Rho children,
+a card appears when the correction enters conversation history, not merely when
+the parent queues it. Claude-cli cards appear after the stdin write succeeds and
+remain labeled queued because stdin delivery does not confirm model consumption.
+The cards are saved in the attachment journal and survive reattachment.
+
 ### Child-to-parent messages
 
 Delegated agents work quietly by default. They should save findings for their final result, which is delivered automatically, rather than send acknowledgments, progress updates, or completion previews. This overrides general instructions to keep a human updated during substantial work.

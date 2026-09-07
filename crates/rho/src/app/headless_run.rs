@@ -116,6 +116,7 @@ async fn pump(
                     continue;
                 };
                 if let Some(reporter) = reporter.as_deref_mut() {
+                    reporter.record_parent_input(&event).await;
                     reporter.on_event(&event);
                 }
                 if let Some(adapter) = jsonl.as_deref_mut() {

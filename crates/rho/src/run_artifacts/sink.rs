@@ -287,6 +287,7 @@ impl RunArtifactSink {
             | AttachmentEvent::ReasoningDelta(_)
             | AttachmentEvent::ToolUpdated { .. } => true,
             AttachmentEvent::Prompt(_)
+            | AttachmentEvent::Message(_)
             | AttachmentEvent::ToolStarted { .. }
             | AttachmentEvent::ToolFinished { .. }
             | AttachmentEvent::Notice(_)
