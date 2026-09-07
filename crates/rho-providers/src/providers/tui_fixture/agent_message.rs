@@ -16,6 +16,10 @@ const SECOND_TASK: &str = "Review message delivery routing";
 
 static FIRST_READY: tokio::sync::Notify = tokio::sync::Notify::const_new();
 static SECOND_READY: tokio::sync::Notify = tokio::sync::Notify::const_new();
+static ATTACH_READY: tokio::sync::Notify = tokio::sync::Notify::const_new();
+static ATTACH_RELEASE: tokio::sync::Notify = tokio::sync::Notify::const_new();
+const ATTACH_TASK: &str = "Inspect incoming parent messages in attach";
+const ATTACH_MESSAGE: &str = "Inspect **the parent route**.\nKeep the correction visible.";
 
 pub(super) fn is_untitled_task(prompt: &str) -> bool {
     prompt.contains(FIRST_TASK) || prompt.contains(SECOND_TASK)
@@ -25,6 +29,54 @@ pub(super) async fn intercept(
     prompt: &str,
     request: &ModelRequest<'_>,
 ) -> Option<Result<ModelResponse, ProviderError>> {
+    if prompt == ATTACH_TASK {
+        ATTACH_READY.notify_one();
+        tokio::select! {
+            () = ATTACH_RELEASE.notified() => return Some(completed("child step before correction")),
+            () = request.cancellation.cancelled() => return Some(Err(ProviderError::interrupted("message fixture stopped"))),
+        }
+    }
+    if prompt.ends_with(ATTACH_MESSAGE) {
+        // Stay live after application so an automatic completion notification
+        // cannot replace the parent's release acknowledgement before PTY sees it.
+        request.cancellation.cancelled().await;
+        return Some(Err(ProviderError::interrupted("message fixture stopped")));
+    }
+    if prompt == "fixture apply parent message" {
+        ATTACH_RELEASE.notify_one();
+        return Some(completed("parent correction released"));
+    }
+    if prompt == "fixture parent message attach" {
+        if tool_result(request, FIRST_CALL).is_none() {
+            return Some(completed_tool_call(
+                FIRST_CALL,
+                "agent",
+                serde_json::json!({
+                    "agent_id": "worker", "prompt": ATTACH_TASK, "background": true,
+                }),
+            ));
+        }
+        if tool_result(request, FIRST_MESSAGE).is_none() {
+            tokio::select! {
+                () = ATTACH_READY.notified() => {},
+                () = request.cancellation.cancelled() => return Some(Err(ProviderError::interrupted("message fixture stopped"))),
+            }
+            let run_id = tool_result(request, FIRST_CALL)?
+                .content
+                .split_whitespace()
+                .nth(1)?;
+            return Some(completed_tool_call(
+                FIRST_MESSAGE,
+                "agents",
+                serde_json::json!({
+                    "action": "message", "id": run_id, "message": ATTACH_MESSAGE,
+                }),
+            ));
+        }
+        // The PTY inspects the queued state, then releases the child's turn
+        // through a separate prompt. No timing window stands in for delivery.
+        return Some(completed("parent message queued"));
+    }
     if prompt == FIRST_TASK || prompt == SECOND_TASK {
         // No timed race with delivery: the child stays available until shutdown.
         if prompt == FIRST_TASK {

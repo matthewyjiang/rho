@@ -57,6 +57,11 @@ pub(crate) trait FollowUpSource: Send {
     fn try_recv(&mut self) -> Result<String, mpsc::error::TryRecvError>;
     fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>>;
     fn seal(&self);
+    /// One optional effect for the last received line, emitted only after its
+    /// entire stdin write succeeds. The drain writes one line at a time.
+    fn take_write_effect(&mut self) -> Option<StreamEffect> {
+        None
+    }
 }
 
 /// How the drain feeds the child's stdin.
@@ -129,8 +134,12 @@ pub(crate) async fn drain_child(
     };
 
     let program_label = config.program_label;
+    // One writer, one outstanding receipt. Backpressure keeps receipt memory
+    // independent of how many follow-ups a source can produce.
+    let (write_effect_tx, mut write_effect_rx) = mpsc::channel(1);
     let (close_tx, stdin_write) = match input {
         DrainInput::Text { prompt } => {
+            drop(write_effect_tx);
             let write =
                 tokio::spawn(async move { write_text_stdin(stdin, prompt, program_label).await });
             (None, write)
@@ -141,8 +150,15 @@ pub(crate) async fn drain_child(
         } => {
             let (close_tx, close_rx) = oneshot::channel::<()>();
             let write = tokio::spawn(async move {
-                write_stream_json_stdin(stdin, initial_line, follow_ups, close_rx, program_label)
-                    .await
+                write_stream_json_stdin(
+                    stdin,
+                    initial_line,
+                    follow_ups,
+                    close_rx,
+                    program_label,
+                    write_effect_tx,
+                )
+                .await
             });
             (Some(close_tx), write)
         }
@@ -160,6 +176,7 @@ pub(crate) async fn drain_child(
     let mut stderr_done = false;
     let mut stdout_done = false;
     let mut stdin_done = false;
+    let mut write_effects_open = true;
     let mut exit_result = None;
     let mut close_tx = close_tx;
     let mut chunk = vec![0_u8; READ_CHUNK_BYTES];
@@ -169,14 +186,15 @@ pub(crate) async fn drain_child(
     // `OwnedChild::wait` kills those leftover process-group members once the
     // leader exits. Waiting for their EOF before reaping would deadlock.
     let early_end: Option<DrainEnd> = loop {
-        if stdin_done && stdout_done && stderr_done && exit_result.is_some() {
+        if stdin_done && stdout_done && stderr_done && exit_result.is_some() && !write_effects_open
+        {
             break None;
         }
         tokio::select! {
             biased;
             () = cancellation.cancelled() => {
-                // Dropping the stdin task closes ChildStdin; the caller
-                // terminates the tree so nothing is left orphaned.
+                // Abort and await the stdin task below before returning;
+                // dropping its JoinHandle alone would detach the writer.
                 break Some(DrainEnd::Cancelled);
             }
             result = &mut stdin_write, if !stdin_done => {
@@ -194,6 +212,12 @@ pub(crate) async fn drain_child(
                             break Some(DrainEnd::StdinFailed(message));
                         }
                     }
+                }
+            }
+            effect = write_effect_rx.recv(), if write_effects_open => {
+                match effect {
+                    Some(effect) => on_effect(effect),
+                    None => write_effects_open = false,
                 }
             }
             captured = &mut read_stderr, if !stderr_done => {
@@ -250,6 +274,13 @@ pub(crate) async fn drain_child(
         }
     };
 
+    if !stdin_done {
+        stdin_write.abort();
+        let _ = stdin_write.await;
+    }
+    while let Ok(effect) = write_effect_rx.try_recv() {
+        on_effect(effect);
+    }
     let end = match early_end {
         Some(end) => end,
         None => match decoder.finish() {
@@ -290,6 +321,7 @@ async fn write_stream_json_stdin(
     mut follow_ups: Option<Box<dyn FollowUpSource>>,
     close_rx: oneshot::Receiver<()>,
     program_label: &'static str,
+    write_effects: mpsc::Sender<StreamEffect>,
 ) -> Result<(), StdinWriteError> {
     write_all(&mut stdin, initial_line.as_bytes(), program_label).await?;
 
@@ -300,7 +332,14 @@ async fn write_stream_json_stdin(
         if let Some(inbox) = follow_ups.as_mut() {
             match inbox.try_recv() {
                 Ok(line) => {
-                    write_all(&mut stdin, line.as_bytes(), program_label).await?;
+                    write_follow_up(
+                        &mut stdin,
+                        &line,
+                        inbox.as_mut(),
+                        program_label,
+                        &write_effects,
+                    )
+                    .await?;
                     continue;
                 }
                 Err(mpsc::error::TryRecvError::Empty) => {}
@@ -327,7 +366,8 @@ async fn write_stream_json_stdin(
             }
             maybe_line = recv_follow_up(&mut follow_ups), if follow_ups.is_some() => {
                 if let Some(line) = maybe_line {
-                    write_all(&mut stdin, line.as_bytes(), program_label).await?;
+                    let inbox = follow_ups.as_deref_mut().expect("received line retains its source");
+                    write_follow_up(&mut stdin, &line, inbox, program_label, &write_effects).await?;
                 }
             }
         }
@@ -339,11 +379,37 @@ async fn write_stream_json_stdin(
         // Seal is idempotent; covers paths that broke without a close signal.
         inbox.seal();
         while let Some(line) = inbox.recv().await {
-            write_all(&mut stdin, line.as_bytes(), program_label).await?;
+            write_follow_up(
+                &mut stdin,
+                &line,
+                inbox.as_mut(),
+                program_label,
+                &write_effects,
+            )
+            .await?;
         }
     }
 
     shutdown_stdin(&mut stdin, program_label).await
+}
+
+/// Reserve the receipt before writing so cancellation cannot drop a successful
+/// write's effect while the writer waits for space in the receipt channel.
+async fn write_follow_up(
+    stdin: &mut ChildStdin,
+    line: &str,
+    inbox: &mut dyn FollowUpSource,
+    program_label: &'static str,
+    effects: &mpsc::Sender<StreamEffect>,
+) -> Result<(), StdinWriteError> {
+    let receipt = effects.reserve().await.map_err(|_| {
+        StdinWriteError::Other(format!("{program_label}: stdin delivery receiver closed"))
+    })?;
+    write_all(stdin, line.as_bytes(), program_label).await?;
+    if let Some(effect) = inbox.take_write_effect() {
+        receipt.send(effect);
+    }
+    Ok(())
 }
 
 async fn write_all(

@@ -91,6 +91,14 @@ fn agent_messages_keep_task_identity_and_expand_details() {
     assert_pass("agent_messages");
 }
 
+// Covers: parent messages must become child attach cards only after application,
+// with their bodies and expandable delivery details preserved on reattach.
+// Owner: interactive TUI
+#[test]
+fn parent_messages_appear_in_child_attach() {
+    assert_pass("attach_parent_message");
+}
+
 // Covers: --prompt must start the first turn without typing Enter.
 // Owner: interactive TUI
 #[test]

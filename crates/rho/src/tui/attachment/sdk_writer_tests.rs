@@ -72,12 +72,6 @@ fn attachment_stream_round_trips_view_events() {
 }
 
 #[test]
-fn attachment_stream_ignores_steering_applied() {
-    let mut adapter = SdkEventAdapter::default();
-    assert!(attachment_update(&mut adapter, ViewModelEvent::SteeringApplied(Vec::new())).is_none());
-}
-
-#[test]
 fn compaction_run_events_project_to_tool_attachment_blocks() {
     let mut adapter = SdkEventAdapter::new(PathBuf::from("/workspace"));
 

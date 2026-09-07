@@ -422,6 +422,7 @@ pub(crate) trait NoticePoster: Send + Sync {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SteeringSlot {
     handle: Arc<Mutex<Option<rho_sdk::SteeringHandle>>>,
+    pub(crate) messages: super::parent_steering::ParentSteering,
 }
 
 impl SteeringSlot {
@@ -437,6 +438,7 @@ impl SteeringSlot {
     /// Closes the live window so late parent messages fail closed.
     pub(crate) fn clear(&self) {
         *self.slot() = None;
+        self.messages.clear();
     }
 
     /// Live steering port, or `None` outside the window.
@@ -456,6 +458,29 @@ pub(crate) fn parent_message_prompt(message: &ValidatedMessage) -> String {
         "Message from the parent session (not a new task - incorporate this into your current work):\n\n{}",
         message.as_str()
     )
+}
+
+/// Incoming parent text, separate from the task prompt and provider output.
+pub(crate) fn parent_message_card(
+    body: String,
+    delivery: crate::presentation::MessageDelivery,
+) -> crate::presentation::MessageCard {
+    use crate::presentation::*;
+    MessageCard {
+        title: "Message from parent".into(),
+        sender: "parent".into(),
+        recipient: "agent".into(),
+        delivery,
+        tone: MessageTone::Neutral,
+        preview: MessagePreview::Full,
+        visibility: MessageVisibility::Conversation,
+        reference: None,
+        body,
+        details: vec![match delivery {
+            MessageDelivery::Received => "applied to conversation history".into(),
+            MessageDelivery::Queued => "written to Claude stdin; awaiting its next turn".into(),
+        }],
+    }
 }
 
 /// Renders queued child notices as one model prompt and one display line set.

@@ -162,12 +162,7 @@ impl AgentRunHandle {
                         "delegated run is still starting; wait until status is running, then message again"
                     );
                 };
-                handle
-                    .steer(rho_sdk::UserInput::text(
-                        super::subagent_messaging::parent_message_prompt(message),
-                    ))
-                    .await
-                    .map_err(|error| anyhow::anyhow!("{error}"))
+                steering.messages.send(handle, message).await
             }
             MessagingSupport::Claude { messages } => {
                 if self.is_complete() {
