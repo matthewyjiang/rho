@@ -112,8 +112,10 @@ Background Rho agents with an interactive parent have two non-blocking messaging
 Pending notices share a batch with action requests and completion notifications. Multiple notices already waiting at a boundary become one parent turn, not one turn per message. While the parent is working, notices wait for a safe provider boundary rather than interrupt streaming or tool work. A parent pursuing a goal can also handle action requests while waiting for children to finish. Idle delivery still respects input and confirmation gates.
 
 Delivered messages appear in left-rail transcript cards, distinct from human input.
-Each card shows the task, sender, run ID, event type, and message body. Updates and
-results use the configured tool-output preview length; Ctrl+O expands the full
+Each card shows the task, sender, run ID, event type, and message body. Bodies use
+the same Markdown formatting as assistant replies, including headings, emphasis,
+and code blocks. Updates and results use the configured tool-output preview
+length; Ctrl+O expands the full
 body and run details. Action requests and failed results show their full body
 without expansion. Incoming cards remain visible in Zen mode. The event label
 distinguishes an update from a completed, failed, or stopped run; receiving an

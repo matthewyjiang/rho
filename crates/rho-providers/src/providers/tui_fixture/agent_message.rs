@@ -63,15 +63,19 @@ pub(super) async fn intercept(
             FIRST_CALL,
             // Delivery trims surrounding whitespace; it must not consume the
             // transcript preview budget or hide the actual message.
-            "\n\n  Keep cache changes isolated from routing.  \n".to_string(),
+            "\n\n  **Keep cache changes isolated from routing.**  \n".to_string(),
         ),
         (
             SECOND_MESSAGE,
             SECOND_CALL,
             [
                 "Check the parent-to-child route before changing the renderer.",
-                "Keep the original message available when expanded.",
+                "Keep the `original message` available when expanded.",
                 "Delivery detail beyond the collapsed preview.",
+                "### Delivery formatting",
+                "```rust",
+                "let delivered = true;",
+                "```",
             ]
             .join("\n"),
         ),

@@ -1,4 +1,4 @@
-//! Covers misattributed messages between same-role tasks and lost expansion details.
+//! Covers misattributed same-role messages, raw Markdown bodies, and lost expansion details.
 //! Owner: interactive UX. Existing agent scenarios exercise launch/completion, not messaging.
 
 use anyhow::{ensure, Result};
@@ -54,6 +54,23 @@ fn assert_task_routing(harness: &mut PtyHarness) -> Result<()> {
         !screen.contains("Delivery detail beyond"),
         "preview ignored configured budget:\n{screen}"
     );
+    ensure!(
+        !screen.contains("**Keep") && !screen.contains("`original message`"),
+        "message preview exposed Markdown syntax:\n{screen}"
+    );
+    Ok(())
+}
+
+fn assert_expanded_markdown(harness: &mut PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    ensure!(
+        screen.contains("Delivery formatting") && screen.contains("let delivered = true;"),
+        "expanded message lost formatted content:\n{screen}"
+    );
+    ensure!(
+        !screen.contains("### Delivery") && !screen.contains("```"),
+        "expanded message exposed Markdown syntax:\n{screen}"
+    );
     Ok(())
 }
 
@@ -98,6 +115,7 @@ const STEPS: &[Step] = &[
         text: "task: ",
         timeout: STREAM,
     },
+    Step::Custom(assert_expanded_markdown),
     Step::Key(Key::Ctrl('o')),
     Step::WaitTextGone {
         text: "Delivery detail beyond",
