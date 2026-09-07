@@ -1,6 +1,6 @@
-use std::{cell::RefCell, fmt, io::Cursor, ops::Range, rc::Rc};
+use std::{cell::RefCell, fmt, ops::Range, rc::Rc};
 
-use image::{DynamicImage, ImageReader, Limits};
+use image::DynamicImage;
 use ratatui::{
     layout::{Rect, Size},
     text::Line,
@@ -37,14 +37,6 @@ const FEED_IMAGE_HEIGHT_TIERS: [(usize, u16); 5] = [
     (53, TALL_IMAGE_HEIGHT),
     (69, MAX_IMAGE_HEIGHT),
 ];
-
-const MAX_THUMBNAIL_WIDTH: u32 = 1_024;
-const MAX_THUMBNAIL_HEIGHT: u32 = 768;
-const MAX_THUMBNAIL_ALLOCATION: u64 = 8 * 1024 * 1024;
-/// Pasted and generated images are full-resolution; decode under the same
-/// bound `read_file` uses before shrinking to the feed thumbnail box.
-const MAX_PREVIEW_DECODE_DIMENSION: u32 = 4_096;
-const MAX_PREVIEW_DECODE_ALLOCATION: u64 = 80 * 1024 * 1024;
 
 /// Max rows one feed image may reserve, from terminal height bands.
 ///
@@ -148,7 +140,6 @@ struct SlicedRenderState {
 /// terminal-specific render state is created on the UI thread.
 pub(super) struct DecodedFeedImage {
     image: DynamicImage,
-    estimated_bytes: usize,
 }
 
 impl fmt::Debug for FeedImage {
@@ -162,17 +153,12 @@ impl FeedImage {
         Self::decode(asset.bytes()).map(|image| image.to_feed_image(picker))
     }
 
-    /// Decode a feed/tool asset that is already within the thumbnail box.
+    /// Decode and resize under the shared tool/display preview budgets.
     pub(super) fn decode(bytes: &[u8]) -> image::ImageResult<DecodedFeedImage> {
-        decode_bounded_image(
-            bytes,
-            MAX_THUMBNAIL_WIDTH,
-            MAX_THUMBNAIL_HEIGHT,
-            MAX_THUMBNAIL_ALLOCATION,
-        )
+        rho_tools::decode_preview_image(bytes).map(|image| DecodedFeedImage { image })
     }
 
-    /// Decode a full-resolution base64 image under the larger bound, then
+    /// Decode a full-resolution base64 image under the shared bounds, then
     /// shrink to the feed thumbnail box. Safe to run on a worker thread.
     pub(super) fn decode_base64_preview(
         data: &str,
@@ -181,21 +167,15 @@ impl FeedImage {
         let bytes = STANDARD
             .decode(data.trim())
             .map_err(|_| Base64ImageLoadError::InvalidBase64)?;
-        let decoded = decode_bounded_image(
-            &bytes,
-            MAX_PREVIEW_DECODE_DIMENSION,
-            MAX_PREVIEW_DECODE_DIMENSION,
-            MAX_PREVIEW_DECODE_ALLOCATION,
-        )
-        .map_err(Base64ImageLoadError::Decode)?;
-        let image = decoded
-            .image
-            .thumbnail(MAX_THUMBNAIL_WIDTH, MAX_THUMBNAIL_HEIGHT);
-        let estimated_bytes = image.as_bytes().len();
-        Ok(DecodedFeedImage {
-            image,
-            estimated_bytes,
-        })
+        Self::decode(&bytes).map_err(Base64ImageLoadError::Decode)
+    }
+
+    /// Best-effort preview for attachments; decode failures leave the original usable.
+    pub(super) async fn decode_base64_preview_async(data: String) -> Option<DecodedFeedImage> {
+        tokio::task::spawn_blocking(move || Self::decode_base64_preview(&data).ok())
+            .await
+            .ok()
+            .flatten()
     }
 
     pub(super) fn height_for_width(&self, width: usize, max_height: u16) -> usize {
@@ -252,7 +232,7 @@ impl FeedImage {
 
 impl DecodedFeedImage {
     pub(super) fn estimated_bytes(&self) -> usize {
-        self.estimated_bytes
+        self.image.as_bytes().len()
     }
 
     pub(super) fn to_feed_image(&self, picker: &Picker) -> FeedImage {
@@ -264,26 +244,6 @@ impl DecodedFeedImage {
             }),
         }
     }
-}
-
-fn decode_bounded_image(
-    bytes: &[u8],
-    max_width: u32,
-    max_height: u32,
-    max_alloc: u64,
-) -> image::ImageResult<DecodedFeedImage> {
-    let mut reader = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
-    let mut limits = Limits::default();
-    limits.max_image_width = Some(max_width);
-    limits.max_image_height = Some(max_height);
-    limits.max_alloc = Some(max_alloc);
-    reader.limits(limits);
-    let image = reader.decode()?;
-    let estimated_bytes = image.as_bytes().len();
-    Ok(DecodedFeedImage {
-        image,
-        estimated_bytes,
-    })
 }
 
 #[derive(Debug, thiserror::Error)]

@@ -98,7 +98,7 @@ impl App {
         let wants_preview = self.image_picker.is_some();
         let task = tokio::spawn(async move {
             let decoded_preview = if wants_preview {
-                decode_composer_preview_async(image.data.clone()).await
+                FeedImage::decode_base64_preview_async(image.data.clone()).await
             } else {
                 None
             };
@@ -129,13 +129,6 @@ impl App {
     }
 }
 
-async fn decode_composer_preview_async(data: String) -> Option<DecodedFeedImage> {
-    tokio::task::spawn_blocking(move || FeedImage::decode_base64_preview(&data).ok())
-        .await
-        .ok()
-        .flatten()
-}
-
 async fn classify_pasted_path(path: PathBuf, original_text: String) -> MediaAttachOutcome {
     let path = match tokio::task::spawn_blocking(move || {
         path.canonicalize().ok().filter(|path| path.is_file())
@@ -150,7 +143,7 @@ async fn classify_pasted_path(path: PathBuf, original_text: String) -> MediaAtta
         tokio::task::spawn_blocking(move || classify_pasted_image(image_path)).await;
     match image_outcome {
         Ok(PastedImageOutcome::Image(image)) => {
-            let decoded_preview = decode_composer_preview_async(image.data.clone()).await;
+            let decoded_preview = FeedImage::decode_base64_preview_async(image.data.clone()).await;
             MediaAttachOutcome::ready_image(image, decoded_preview)
         }
         Ok(PastedImageOutcome::Failed { kind, message }) => {

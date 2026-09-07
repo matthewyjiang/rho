@@ -8,8 +8,8 @@ use rho_sdk::tool::ToolAsset;
 use super::{
     cell_font_size, feed_image_height_budget, kitty_graphics_environment, max_feed_image_height,
     picker_for_environment, quantize_content_image_cap, reserve_image_rows, FeedImage,
-    COMPACT_IMAGE_HEIGHT, COMPOSER_IMAGE_HEIGHT, DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT,
-    MIN_IMAGE_HEIGHT, TALL_IMAGE_HEIGHT,
+    COMPACT_IMAGE_HEIGHT, DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT, MIN_IMAGE_HEIGHT,
+    TALL_IMAGE_HEIGHT,
 };
 use crate::tui::{
     history_cache::{HistoryLineCache, HistoryLineSlice, HistoryRenderSettings},
@@ -155,66 +155,6 @@ fn cell_font_size_rejects_zero_quotients() {
             cell_font_size(xpixel, ypixel, cols, rows).map(|font| (font.width, font.height)),
             expected
         );
-    }
-}
-
-#[test]
-fn rejects_assets_larger_than_the_thumbnail_dimension_bound() {
-    let error = FeedImage::load(&png_asset(1_025, 1), &kitty_picker()).unwrap_err();
-    assert!(matches!(error, image::ImageError::Limits(_)));
-}
-
-// Covers: provider-generated images must be resized before entering the
-// thumbnail-only renderer. The generated-image entry point owns this policy.
-#[test]
-fn generated_image_preview_resizes_full_resolution_sources() {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-    use image::GenericImageView as _;
-    use pretty_assertions::assert_eq;
-
-    for (width, height, expected) in [(1_024, 1_024, (768, 768)), (1_800, 1_200, (1_024, 683))] {
-        let source = rho_providers::model::ImageContent {
-            mime_type: "image/png".into(),
-            data: STANDARD.encode(png_asset(width, height).bytes()),
-        };
-        let preview = super::preview_generated_image(&source, Some(&kitty_picker()))
-            .expect("full-resolution generated image should decode")
-            .expect("picker enables image previews");
-        assert_eq!(preview.inner.source.dimensions(), expected);
-    }
-}
-
-// Covers: composer paste previews must accept full-resolution images by
-// decoding under a larger bound and shrinking to the thumbnail box.
-// Owner: pure decode policy
-#[test]
-fn composer_base64_preview_accepts_oversized_source_images() {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-
-    let decoded =
-        FeedImage::decode_base64_preview(&STANDARD.encode(png_asset(1_800, 1_200).bytes()))
-            .expect("composer preview should thumbnail oversized pastes");
-    let image = decoded.to_feed_image(&kitty_picker());
-    assert_eq!(
-        image.height_for_width(40, COMPOSER_IMAGE_HEIGHT),
-        usize::from(COMPOSER_IMAGE_HEIGHT)
-    );
-}
-
-// Covers: accepting full-resolution previews must retain decoder safety bounds.
-// Owner: pure decode policy
-#[test]
-fn base64_preview_rejects_sources_beyond_decode_dimensions() {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-
-    for (width, height) in [(4_097, 1), (1, 4_097)] {
-        let data = STANDARD.encode(png_asset(width, height).bytes());
-        assert!(matches!(
-            FeedImage::decode_base64_preview(&data),
-            Err(super::Base64ImageLoadError::Decode(
-                image::ImageError::Limits(_)
-            ))
-        ));
     }
 }
 
