@@ -8,8 +8,8 @@ use rho_sdk::tool::ToolAsset;
 use super::{
     cell_font_size, feed_image_height_budget, kitty_graphics_environment, max_feed_image_height,
     picker_for_environment, quantize_content_image_cap, reserve_image_rows, FeedImage,
-    COMPACT_IMAGE_HEIGHT, COMPOSER_IMAGE_HEIGHT, DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT,
-    MIN_IMAGE_HEIGHT, TALL_IMAGE_HEIGHT,
+    COMPACT_IMAGE_HEIGHT, DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT, MIN_IMAGE_HEIGHT,
+    TALL_IMAGE_HEIGHT,
 };
 use crate::tui::{
     history_cache::{HistoryLineCache, HistoryLineSlice, HistoryRenderSettings},
@@ -156,46 +156,6 @@ fn cell_font_size_rejects_zero_quotients() {
             expected
         );
     }
-}
-
-#[test]
-fn rejects_assets_larger_than_the_thumbnail_dimension_bound() {
-    let error = FeedImage::load(&png_asset(1_025, 1), &kitty_picker()).unwrap_err();
-    assert!(matches!(error, image::ImageError::Limits(_)));
-}
-
-// Covers: composer paste previews must accept full-resolution images by
-// decoding under a larger bound and shrinking to the thumbnail box.
-// Owner: pure decode policy
-#[test]
-fn composer_base64_preview_accepts_oversized_source_images() {
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-
-    let bytes = {
-        let image = DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
-            1_800,
-            1_200,
-            image::Rgba([10, 20, 30, 255]),
-        ));
-        let mut encoded = Cursor::new(Vec::new());
-        image
-            .write_to(&mut encoded, ImageFormat::Png)
-            .expect("encode png");
-        encoded.into_inner()
-    };
-    // Feed path still rejects this size at decode time.
-    assert!(matches!(
-        FeedImage::decode(&bytes),
-        Err(image::ImageError::Limits(_))
-    ));
-
-    let decoded = FeedImage::decode_composer_base64(&STANDARD.encode(bytes))
-        .expect("composer preview should thumbnail oversized pastes");
-    let image = decoded.to_feed_image(&kitty_picker());
-    assert_eq!(
-        image.height_for_width(40, COMPOSER_IMAGE_HEIGHT),
-        usize::from(COMPOSER_IMAGE_HEIGHT)
-    );
 }
 
 // Covers: feed image max height tracks terminal height bands, with a compact

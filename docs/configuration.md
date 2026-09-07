@@ -288,6 +288,8 @@ image_generation = false
 
 The setting is xAI-only. Other providers ignore it. The omitted key means on, and Rho does not write the `[xai]` table unless the value is off. In the TUI, `/config` → **Tools** shows the same toggle when the conversation provider is xAI. The change applies to the next session. See [xAI](/providers/xai).
 
+Generated-image previews are resized to fit a 1,024 × 768 pixel box without changing the original image. Preview decoding uses the same safety budgets as pasted images: at most 4,096 pixels per dimension and 80 MiB of decoder allocation. Images beyond those budgets can still be returned by the provider, but their previews are unavailable.
+
 ## Auto compaction
 
 `auto_compact` enables summarizing older conversation history when the estimated current context approaches the effective model window. It is disabled by default. `compact_threshold_percent` controls the trigger point. `compact_target_percent` controls the post-compaction target as a percent of the effective model window; it must stay below the threshold, so values at or above `compact_threshold_percent` are clamped to one below it when the config is loaded or saved. Rho keeps the recent verbatim tail by token budget and safe tool-call boundaries, not by message count. Context estimates are anchored to the most recent provider-reported token usage when available.

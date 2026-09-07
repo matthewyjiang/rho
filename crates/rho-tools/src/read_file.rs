@@ -1,6 +1,6 @@
 use std::{io::Cursor, path::Path};
 
-use image::{ImageFormat, ImageReader, Limits};
+use image::ImageFormat;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::io::AsyncReadExt;
@@ -90,11 +90,6 @@ pub(super) fn read_file_display_content(
         .unwrap_or_else(|| "end".into());
     format!("{path}:{start}-{end}")
 }
-
-const MAX_DECODE_DIMENSION: u32 = 4_096;
-const MAX_DECODE_ALLOCATION: u64 = 80 * 1024 * 1024;
-const THUMBNAIL_WIDTH: u32 = 1_024;
-const THUMBNAIL_HEIGHT: u32 = 768;
 
 pub(super) struct ImageAsset {
     pub(super) media_type: &'static str,
@@ -299,15 +294,7 @@ async fn read_image_content(
 
 fn thumbnail_png(bytes: Vec<u8>) -> Result<Vec<u8>, (image::ImageError, Vec<u8>)> {
     let result = (|| {
-        let mut reader = ImageReader::new(Cursor::new(bytes.as_slice())).with_guessed_format()?;
-        let mut limits = Limits::default();
-        limits.max_image_width = Some(MAX_DECODE_DIMENSION);
-        limits.max_image_height = Some(MAX_DECODE_DIMENSION);
-        limits.max_alloc = Some(MAX_DECODE_ALLOCATION);
-        reader.limits(limits);
-        let thumbnail = reader
-            .decode()?
-            .thumbnail(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT);
+        let thumbnail = crate::decode_preview_image(&bytes)?;
         let mut encoded = Cursor::new(Vec::new());
         thumbnail.write_to(&mut encoded, ImageFormat::Png)?;
         Ok(encoded.into_inner())

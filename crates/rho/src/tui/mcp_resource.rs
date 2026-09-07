@@ -83,13 +83,11 @@ async fn read_resource_attachment(
                     media: ChatMedia::Image(image),
                     decoded_preview: None,
                 } => {
-                    let data = image.data.clone();
-                    let decoded_preview = tokio::task::spawn_blocking(move || {
-                        super::feed_image::FeedImage::decode_composer_base64(&data).ok()
-                    })
-                    .await
-                    .ok()
-                    .flatten();
+                    let decoded_preview =
+                        super::feed_image::FeedImage::decode_base64_preview_async(
+                            image.data.clone(),
+                        )
+                        .await;
                     MediaAttachOutcome::ready_image(image, decoded_preview)
                 }
                 other => other,
