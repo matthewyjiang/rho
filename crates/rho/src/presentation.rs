@@ -35,6 +35,26 @@ pub(crate) struct MessageCard {
     pub details: Vec<String>,
 }
 
+/// Incoming parent text, with delivery details supplied by the runtime owner.
+pub(crate) fn parent_message_card(
+    body: String,
+    delivery: MessageDelivery,
+    detail: String,
+) -> MessageCard {
+    MessageCard {
+        title: "Message from parent".into(),
+        sender: "parent".into(),
+        recipient: "agent".into(),
+        delivery,
+        tone: MessageTone::Neutral,
+        preview: MessagePreview::Full,
+        visibility: MessageVisibility::Conversation,
+        reference: None,
+        body,
+        details: vec![detail],
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum MessageDelivery {

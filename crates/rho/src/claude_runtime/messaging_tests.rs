@@ -14,11 +14,34 @@ fn encode_user_turn_is_single_ndjson_line() {
     assert_eq!(value["message"]["content"], "hello\nworld");
 }
 
-#[test]
-fn frame_parent_message_marks_course_correction() {
-    let framed = frame_parent_message("stop editing tests");
-    assert!(framed.contains("Message from the parent session"));
-    assert!(framed.contains("stop editing tests"));
+// Covers: receiving the next line must not overwrite an earlier line's receipt.
+// Owner: Claude's adapter pairs provider input with its delivery attachment.
+#[tokio::test]
+async fn follow_ups_keep_their_own_delivery_receipts() {
+    let (handle, inbox) = message_channel();
+    let mut source = ClaudeFollowUpSource::new(inbox);
+    handle.send("first".into()).await.unwrap();
+    handle.send("second".into()).await.unwrap();
+    let first = source.try_recv().unwrap();
+    let second = source.recv().await.unwrap();
+    for (follow_up, body) in [(first, "first"), (second, "second")] {
+        assert_eq!(
+            follow_up.line,
+            encode_user_turn(&frame_parent_message(body))
+        );
+        let Some(StreamEffect::Attachment(AttachmentEvent::Message(card))) = follow_up.written
+        else {
+            panic!("parent follow-up must carry its delivery receipt");
+        };
+        assert_eq!(
+            *card,
+            parent_message_card(
+                body.into(),
+                MessageDelivery::Queued,
+                "written to Claude stdin; awaiting its next turn".into(),
+            )
+        );
+    }
 }
 
 #[tokio::test]

@@ -626,16 +626,13 @@ async fn complete_run(
     steering_slot: Option<super::subagent_messaging::SteeringSlot>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     let HeadlessRunDeps {
-        mut reporter,
+        reporter,
         external_cancellation,
         jsonl,
         host_input,
     } = dependencies;
     let mut run = session.start(UserInput::text(prompt_text)).await?;
     if let Some(slot) = steering_slot {
-        if let Some(reporter) = reporter.as_deref_mut() {
-            reporter.parent_messages = Some(slot.messages.clone());
-        }
         slot.publish(run.steering_handle());
     }
     let cancellation = run.cancellation_handle();
@@ -664,7 +661,7 @@ pub(crate) struct RunReporter {
     sink: crate::run_artifacts::RunArtifactSink,
     adapter: crate::tui::event_adapter::SdkEventAdapter,
     stream_output: bool,
-    parent_messages: Option<super::parent_steering::ParentSteering>,
+    steering_slot: Option<super::subagent_messaging::SteeringSlot>,
 }
 
 impl RunReporter {
@@ -681,7 +678,7 @@ impl RunReporter {
             sink,
             adapter: crate::tui::event_adapter::SdkEventAdapter::new(cwd),
             stream_output,
-            parent_messages: None,
+            steering_slot: None,
         })
     }
 
@@ -691,9 +688,9 @@ impl RunReporter {
         started_status: RunStatus,
         cwd: PathBuf,
         prompt: &str,
-        stream_output: bool,
         status_tx: Option<tokio::sync::watch::Sender<RunStatus>>,
         live_title: Option<crate::run_artifacts::LiveRunTitle>,
+        steering_slot: Option<super::subagent_messaging::SteeringSlot>,
     ) -> anyhow::Result<Self> {
         let sink = crate::run_artifacts::RunArtifactSink::continue_from(
             path,
@@ -705,30 +702,28 @@ impl RunReporter {
         Ok(Self {
             sink,
             adapter: crate::tui::event_adapter::SdkEventAdapter::new(cwd),
-            stream_output,
-            parent_messages: None,
+            stream_output: false,
+            steering_slot,
         })
-    }
-
-    pub(super) async fn record_parent_input(&mut self, event: &rho_sdk::RunEvent) {
-        if let rho_sdk::RunEvent::SteeringApplied { ids } = event {
-            if let Some(messages) = &self.parent_messages {
-                for message in messages.applied(ids).await {
-                    self.sink
-                        .record_attachment(crate::run_artifacts::AttachmentEvent::Message(
-                            Box::new(super::subagent_messaging::parent_message_card(
-                                message.into_string(),
-                                crate::presentation::MessageDelivery::Received,
-                            )),
-                        ));
-                }
-            }
-        }
     }
 
     pub(super) fn on_event(&mut self, event: &rho_sdk::RunEvent) {
         use rho_sdk::RunEvent;
 
+        if let rho_sdk::RunEvent::SteeringApplied { ids } = event {
+            if let Some(slot) = &self.steering_slot {
+                for message in slot.applied(ids) {
+                    self.sink
+                        .record_attachment(crate::run_artifacts::AttachmentEvent::Message(
+                            Box::new(crate::presentation::parent_message_card(
+                                message.into_string(),
+                                crate::presentation::MessageDelivery::Received,
+                                "applied to conversation history".into(),
+                            )),
+                        ));
+                }
+            }
+        }
         let attachments = crate::tui::translate_run_event(&mut self.adapter, event);
         for attachment in attachments {
             // Reasoning is deliberately kept out of `last_text`: the status file

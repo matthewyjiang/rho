@@ -414,42 +414,7 @@ pub(crate) trait NoticePoster: Send + Sync {
     ) -> Result<(), NoticePostError>;
 }
 
-/// Publishes a delegated Rho run's steering port for the whole live window.
-///
-/// The slot is empty while the child is still starting and again once the run
-/// finishes, so a parent message outside that window fails loud instead of
-/// vanishing into a run that will never apply it.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct SteeringSlot {
-    handle: Arc<Mutex<Option<rho_sdk::SteeringHandle>>>,
-    pub(crate) messages: super::parent_steering::ParentSteering,
-}
-
-impl SteeringSlot {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
-
-    /// Opens the live window once the child session has a run.
-    pub(crate) fn publish(&self, handle: rho_sdk::SteeringHandle) {
-        *self.slot() = Some(handle);
-    }
-
-    /// Closes the live window so late parent messages fail closed.
-    pub(crate) fn clear(&self) {
-        *self.slot() = None;
-        self.messages.clear();
-    }
-
-    /// Live steering port, or `None` outside the window.
-    pub(crate) fn handle(&self) -> Option<rho_sdk::SteeringHandle> {
-        self.slot().clone()
-    }
-
-    fn slot(&self) -> std::sync::MutexGuard<'_, Option<rho_sdk::SteeringHandle>> {
-        self.handle.lock().expect("delegated steering slot lock")
-    }
-}
+pub(crate) use super::parent_steering::SteeringSlot;
 
 /// Frames a parent message so the child treats it as a course correction
 /// rather than a fresh task.
@@ -458,29 +423,6 @@ pub(crate) fn parent_message_prompt(message: &ValidatedMessage) -> String {
         "Message from the parent session (not a new task - incorporate this into your current work):\n\n{}",
         message.as_str()
     )
-}
-
-/// Incoming parent text, separate from the task prompt and provider output.
-pub(crate) fn parent_message_card(
-    body: String,
-    delivery: crate::presentation::MessageDelivery,
-) -> crate::presentation::MessageCard {
-    use crate::presentation::*;
-    MessageCard {
-        title: "Message from parent".into(),
-        sender: "parent".into(),
-        recipient: "agent".into(),
-        delivery,
-        tone: MessageTone::Neutral,
-        preview: MessagePreview::Full,
-        visibility: MessageVisibility::Conversation,
-        reference: None,
-        body,
-        details: vec![match delivery {
-            MessageDelivery::Received => "applied to conversation history".into(),
-            MessageDelivery::Queued => "written to Claude stdin; awaiting its next turn".into(),
-        }],
-    }
 }
 
 /// Renders queued child notices as one model prompt and one display line set.
