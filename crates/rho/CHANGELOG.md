@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.9.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.9.0...rho-coding-agent-v2.9.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* **attach:** show parent messages in subagent cards ([#1192](https://github.com/matthewyjiang/rho/issues/1192)) ([fea16f2](https://github.com/matthewyjiang/rho/commit/fea16f275874d76cd7ea829cdfc59b302d525752))
+* **tui:** color parent agent-message titles with accent ([#1194](https://github.com/matthewyjiang/rho/issues/1194)) ([461f1cb](https://github.com/matthewyjiang/rho/commit/461f1cb2118b3ae7e09cf620b445f1c7977e98c4))
+* **tui:** preserve markdown formatting in agent message cards ([#1190](https://github.com/matthewyjiang/rho/issues/1190)) ([99b7e5c](https://github.com/matthewyjiang/rho/commit/99b7e5c963801c01bef174866ee5de1ae66d8dd4))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.5.0 to 2.5.1
+
 ## [2.9.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.8.0...rho-coding-agent-v2.9.0) (2026-09-06)
 
 
