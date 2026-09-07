@@ -85,7 +85,7 @@ async fn read_resource_attachment(
                 } => {
                     let data = image.data.clone();
                     let decoded_preview = tokio::task::spawn_blocking(move || {
-                        super::feed_image::FeedImage::decode_composer_base64(&data).ok()
+                        super::feed_image::FeedImage::decode_base64_preview(&data).ok()
                     })
                     .await
                     .ok()

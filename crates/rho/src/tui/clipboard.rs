@@ -130,7 +130,7 @@ impl App {
 }
 
 async fn decode_composer_preview_async(data: String) -> Option<DecodedFeedImage> {
-    tokio::task::spawn_blocking(move || FeedImage::decode_composer_base64(&data).ok())
+    tokio::task::spawn_blocking(move || FeedImage::decode_base64_preview(&data).ok())
         .await
         .ok()
         .flatten()

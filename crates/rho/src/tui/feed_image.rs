@@ -41,10 +41,10 @@ const FEED_IMAGE_HEIGHT_TIERS: [(usize, u16); 5] = [
 const MAX_THUMBNAIL_WIDTH: u32 = 1_024;
 const MAX_THUMBNAIL_HEIGHT: u32 = 768;
 const MAX_THUMBNAIL_ALLOCATION: u64 = 8 * 1024 * 1024;
-/// Pasted composer images are often full-resolution; decode under the same
+/// Pasted and generated images are full-resolution; decode under the same
 /// bound `read_file` uses before shrinking to the feed thumbnail box.
-const MAX_COMPOSER_DECODE_DIMENSION: u32 = 4_096;
-const MAX_COMPOSER_DECODE_ALLOCATION: u64 = 80 * 1024 * 1024;
+const MAX_PREVIEW_DECODE_DIMENSION: u32 = 4_096;
+const MAX_PREVIEW_DECODE_ALLOCATION: u64 = 80 * 1024 * 1024;
 
 /// Max rows one feed image may reserve, from terminal height bands.
 ///
@@ -172,22 +172,22 @@ impl FeedImage {
         )
     }
 
-    /// Decode a full-resolution composer paste under the larger bound, then
+    /// Decode a full-resolution base64 image under the larger bound, then
     /// shrink to the feed thumbnail box. Safe to run on a worker thread.
-    pub(super) fn decode_composer_base64(
+    pub(super) fn decode_base64_preview(
         data: &str,
-    ) -> Result<DecodedFeedImage, ComposerImageLoadError> {
+    ) -> Result<DecodedFeedImage, Base64ImageLoadError> {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         let bytes = STANDARD
             .decode(data.trim())
-            .map_err(|_| ComposerImageLoadError::InvalidBase64)?;
+            .map_err(|_| Base64ImageLoadError::InvalidBase64)?;
         let decoded = decode_bounded_image(
             &bytes,
-            MAX_COMPOSER_DECODE_DIMENSION,
-            MAX_COMPOSER_DECODE_DIMENSION,
-            MAX_COMPOSER_DECODE_ALLOCATION,
+            MAX_PREVIEW_DECODE_DIMENSION,
+            MAX_PREVIEW_DECODE_DIMENSION,
+            MAX_PREVIEW_DECODE_ALLOCATION,
         )
-        .map_err(|_| ComposerImageLoadError::Decode)?;
+        .map_err(Base64ImageLoadError::Decode)?;
         let image = decoded
             .image
             .thumbnail(MAX_THUMBNAIL_WIDTH, MAX_THUMBNAIL_HEIGHT);
@@ -286,10 +286,12 @@ fn decode_bounded_image(
     })
 }
 
-#[derive(Debug)]
-pub(super) enum ComposerImageLoadError {
+#[derive(Debug, thiserror::Error)]
+pub(super) enum Base64ImageLoadError {
+    #[error("image was not valid base64")]
     InvalidBase64,
-    Decode,
+    #[error(transparent)]
+    Decode(image::ImageError),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -400,11 +402,11 @@ pub(super) fn preview_generated_image(
     image: &rho_providers::model::ImageContent,
     picker: Option<&Picker>,
 ) -> Result<Option<FeedImage>, String> {
-    use base64::Engine as _;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(image.data.trim())
-        .map_err(|_| "generated image was not valid base64".to_string())?;
-    load_optional_feed_image(picker, &ToolAsset::new(&image.mime_type, bytes))
+    let Some(picker) = picker else {
+        return Ok(None);
+    };
+    FeedImage::decode_base64_preview(&image.data)
+        .map(|decoded| Some(decoded.to_feed_image(picker)))
         .map_err(|error| error.to_string())
 }
 
