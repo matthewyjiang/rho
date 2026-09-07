@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span};
 use crate::presentation::{MessageCard, MessageDelivery, MessagePreview, MessageTone};
 
 use super::{
+    markdown::{push_wrapped_markdown_without_copy_button_from_fence_state, CodeFenceState},
     render::{push_wrapped_text, truncate_one_line, LineFill},
     theme::Theme,
     tool_card_render::CardSections,
@@ -44,7 +45,15 @@ pub(super) fn message_card_sections(
     push_indented(&mut lines, &routing, content_width, Theme::dim());
 
     let mut body = Vec::new();
-    push_indented(&mut body, &message.body, content_width, Theme::text());
+    push_wrapped_markdown_without_copy_button_from_fence_state(
+        &mut body,
+        &safe_message_text(&message.body),
+        content_width,
+        &mut CodeFenceState::default(),
+    );
+    for line in &mut body {
+        line.spans.insert(0, Span::raw("  "));
+    }
     let budget = preview_lines.max(1);
     let hidden = body.len().saturating_sub(budget);
     let show_full_body = expanded || matches!(message.preview, MessagePreview::Full);
