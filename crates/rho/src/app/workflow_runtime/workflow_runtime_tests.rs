@@ -719,12 +719,16 @@ fn artifact_writes_do_not_follow_symlinks() {
 }
 
 // Failure bound around event-driven worker completion. Not used for synchronization.
-const WORKER_COMPLETION_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+// Receipt: Ubuntu lib tests finish in ~14s; Windows workspace hit this bound at 5s
+// under the same suite (~204s). Keep the tripwire generous until touched.
+const WORKER_COMPLETION_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
 
 async fn within_budget<T>(label: &str, future: impl std::future::Future<Output = T>) -> T {
     tokio::time::timeout(WORKER_COMPLETION_BUDGET, future)
         .await
-        .unwrap_or_else(|_| panic!("{label} exceeded the worker completion budget"))
+        .unwrap_or_else(|_| {
+            panic!("{label} exceeded WORKER_COMPLETION_BUDGET ({WORKER_COMPLETION_BUDGET:?})")
+        })
 }
 
 /// Like [`within_budget`], but aborts a detached task on timeout so it cannot
@@ -738,7 +742,9 @@ async fn join_within_budget<T: 'static>(label: &str, handle: tokio::task::JoinHa
         () = tokio::time::sleep(WORKER_COMPLETION_BUDGET) => {
             handle.abort();
             let _ = handle.await;
-            panic!("{label} exceeded the worker completion budget");
+            panic!(
+                "{label} exceeded WORKER_COMPLETION_BUDGET ({WORKER_COMPLETION_BUDGET:?})"
+            );
         }
     }
 }

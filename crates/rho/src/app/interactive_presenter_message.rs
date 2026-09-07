@@ -26,7 +26,7 @@ pub(super) fn finished_message(
         sender: "parent".into(),
         recipient,
         delivery: MessageDelivery::Queued,
-        tone: MessageTone::Neutral,
+        tone: MessageTone::Accent,
         preview: MessagePreview::Truncated,
         visibility: MessageVisibility::Activity,
         reference: Some(run_id.to_string()),
