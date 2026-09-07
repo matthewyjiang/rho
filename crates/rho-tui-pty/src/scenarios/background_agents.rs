@@ -111,18 +111,16 @@ pub(super) const BACKGROUND_AGENT_QUESTIONNAIRE_STEPS: &[Step] = &[
         text: "background questionnaire agent dispatched: agent",
         timeout: STREAM,
     },
+    Step::WaitText {
+        text: "(worker) started in background",
+        timeout: STREAM,
+    },
+    // Check dispatch before answering. Completion can scroll the dispatch
+    // receipt out of view as soon as the child receives the answer.
     Step::Key(Key::Down),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "answered questionnaire for agent",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "background questionnaire agent dispatched: agent",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "(worker) started in background",
         timeout: STREAM,
     },
     Step::Phase("automatic_completion_delivery"),

@@ -157,12 +157,7 @@ impl AgentRunHandle {
                 if self.is_complete() {
                     anyhow::bail!("delegated run has already finished");
                 }
-                let Some(handle) = steering.handle() else {
-                    anyhow::bail!(
-                        "delegated run is still starting; wait until status is running, then message again"
-                    );
-                };
-                steering.messages.send(handle, message).await
+                steering.send(message).await
             }
             MessagingSupport::Claude { messages } => {
                 if self.is_complete() {
@@ -725,9 +720,9 @@ async fn run_rho_agent(run: RhoAgentRun) -> anyhow::Result<()> {
         started_status,
         cwd.clone(),
         &prompt,
-        /* stream_output */ false,
         Some(status_tx),
         Some(live_title),
+        steering_slot.clone(),
     )?;
     let agent_id = bound.id().to_string();
     let max_steps = std::num::NonZeroUsize::new(

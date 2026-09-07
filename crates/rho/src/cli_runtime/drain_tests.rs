@@ -58,12 +58,20 @@ struct ChannelFollowUps {
 }
 
 impl FollowUpSource for ChannelFollowUps {
-    fn try_recv(&mut self) -> Result<String, mpsc::error::TryRecvError> {
-        self.receiver.try_recv()
+    fn try_recv(&mut self) -> Result<FollowUp, mpsc::error::TryRecvError> {
+        self.receiver.try_recv().map(|line| FollowUp {
+            line,
+            written: None,
+        })
     }
 
-    fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
-        Box::pin(async { self.receiver.recv().await })
+    fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<FollowUp>> + Send + '_>> {
+        Box::pin(async {
+            self.receiver.recv().await.map(|line| FollowUp {
+                line,
+                written: None,
+            })
+        })
     }
 
     fn seal(&self) {}
@@ -71,6 +79,60 @@ impl FollowUpSource for ChannelFollowUps {
 
 #[cfg(unix)]
 use std::process::Stdio;
+
+// Covers: cancellation under receipt backpressure must neither write an
+// unacknowledged line nor lose the previous successful write's receipt.
+// Owner: shared CLI stdin writer and its bounded acknowledgement channel.
+#[cfg(unix)]
+#[tokio::test]
+async fn cancelled_follow_up_preserves_successful_write_receipt() {
+    let mut command = tokio::process::Command::new("cat");
+    command.stdin(Stdio::piped()).stdout(Stdio::piped());
+    let mut child = OwnedChild::spawn(command).expect("spawn stdin echo fixture");
+    let mut stdin = child.stdin().unwrap();
+    let mut stdout = child.stdout().unwrap();
+    let (effects, mut receipts) = mpsc::channel(1);
+    let written = StreamEffect::Status(Default::default());
+    assert!(write_follow_up(
+        &mut stdin,
+        FollowUp {
+            line: "written\n".into(),
+            written: Some(written.clone())
+        },
+        "cat",
+        &effects,
+    )
+    .await
+    .is_ok());
+
+    {
+        let pending = write_follow_up(
+            &mut stdin,
+            FollowUp {
+                line: "cancelled\n".into(),
+                written: Some(written.clone()),
+            },
+            "cat",
+            &effects,
+        );
+        tokio::pin!(pending);
+        // Poll once to establish that the full receipt channel blocks the
+        // write, then drop the future exactly as writer cancellation does.
+        std::future::poll_fn(|cx| {
+            assert!(pending.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+    }
+
+    drop(stdin);
+    let mut received = String::new();
+    stdout.read_to_string(&mut received).await.unwrap();
+    assert!(child.wait().await.unwrap().success());
+    assert_eq!(received, "written\n");
+    assert_eq!(receipts.try_recv(), Ok(written));
+    assert_eq!(receipts.try_recv(), Err(mpsc::error::TryRecvError::Empty));
+}
 
 /// Covers: a descendant that inherits a captured pipe cannot keep a completed
 /// Claude run open forever.

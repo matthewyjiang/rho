@@ -49,19 +49,22 @@ enum StdinWriteError {
     Other(String),
 }
 
+/// An encoded stdin line paired with its optional successful-write receipt.
+pub(crate) struct FollowUp {
+    pub(crate) line: String,
+    /// Emitted only after the entire line is written to the child's stdin.
+    pub(crate) written: Option<StreamEffect>,
+}
+
 /// Source of already-encoded follow-up stdin lines after the initial user turn.
 ///
 /// Implementors own framing. `recv` is boxed so the trait stays object-safe
-/// for [`DrainInput::StreamJson`].
+/// for [`DrainInput::StreamJson`]. It must be cancellation-safe: dropping a
+/// pending receive must not consume a follow-up or its receipt.
 pub(crate) trait FollowUpSource: Send {
-    fn try_recv(&mut self) -> Result<String, mpsc::error::TryRecvError>;
-    fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>>;
+    fn try_recv(&mut self) -> Result<FollowUp, mpsc::error::TryRecvError>;
+    fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<FollowUp>> + Send + '_>>;
     fn seal(&self);
-    /// One optional effect for the last received line, emitted only after its
-    /// entire stdin write succeeds. The drain writes one line at a time.
-    fn take_write_effect(&mut self) -> Option<StreamEffect> {
-        None
-    }
 }
 
 /// How the drain feeds the child's stdin.
@@ -331,15 +334,8 @@ async fn write_stream_json_stdin(
         // parent turn or the close signal from the stream side.
         if let Some(inbox) = follow_ups.as_mut() {
             match inbox.try_recv() {
-                Ok(line) => {
-                    write_follow_up(
-                        &mut stdin,
-                        &line,
-                        inbox.as_mut(),
-                        program_label,
-                        &write_effects,
-                    )
-                    .await?;
+                Ok(follow_up) => {
+                    write_follow_up(&mut stdin, follow_up, program_label, &write_effects).await?;
                     continue;
                 }
                 Err(mpsc::error::TryRecvError::Empty) => {}
@@ -364,10 +360,9 @@ async fn write_stream_json_stdin(
                     inbox.seal();
                 }
             }
-            maybe_line = recv_follow_up(&mut follow_ups), if follow_ups.is_some() => {
-                if let Some(line) = maybe_line {
-                    let inbox = follow_ups.as_deref_mut().expect("received line retains its source");
-                    write_follow_up(&mut stdin, &line, inbox, program_label, &write_effects).await?;
+            maybe_follow_up = recv_follow_up(&mut follow_ups), if follow_ups.is_some() => {
+                if let Some(follow_up) = maybe_follow_up {
+                    write_follow_up(&mut stdin, follow_up, program_label, &write_effects).await?;
                 }
             }
         }
@@ -378,15 +373,8 @@ async fn write_stream_json_stdin(
     if let Some(mut inbox) = follow_ups.take() {
         // Seal is idempotent; covers paths that broke without a close signal.
         inbox.seal();
-        while let Some(line) = inbox.recv().await {
-            write_follow_up(
-                &mut stdin,
-                &line,
-                inbox.as_mut(),
-                program_label,
-                &write_effects,
-            )
-            .await?;
+        while let Some(follow_up) = inbox.recv().await {
+            write_follow_up(&mut stdin, follow_up, program_label, &write_effects).await?;
         }
     }
 
@@ -397,16 +385,15 @@ async fn write_stream_json_stdin(
 /// write's effect while the writer waits for space in the receipt channel.
 async fn write_follow_up(
     stdin: &mut ChildStdin,
-    line: &str,
-    inbox: &mut dyn FollowUpSource,
+    follow_up: FollowUp,
     program_label: &'static str,
     effects: &mpsc::Sender<StreamEffect>,
 ) -> Result<(), StdinWriteError> {
     let receipt = effects.reserve().await.map_err(|_| {
         StdinWriteError::Other(format!("{program_label}: stdin delivery receiver closed"))
     })?;
-    write_all(stdin, line.as_bytes(), program_label).await?;
-    if let Some(effect) = inbox.take_write_effect() {
+    write_all(stdin, follow_up.line.as_bytes(), program_label).await?;
+    if let Some(effect) = follow_up.written {
         receipt.send(effect);
     }
     Ok(())
@@ -454,7 +441,7 @@ fn map_stdin_io_error(error: std::io::Error, program_label: &str) -> StdinWriteE
 /// Waits for the next follow-up line when a source is still installed.
 ///
 /// Returns `None` when the parent handle is dropped (channel closed).
-async fn recv_follow_up(follow_ups: &mut Option<Box<dyn FollowUpSource>>) -> Option<String> {
+async fn recv_follow_up(follow_ups: &mut Option<Box<dyn FollowUpSource>>) -> Option<FollowUp> {
     let Some(inbox) = follow_ups.as_mut() else {
         std::future::pending::<()>().await;
         unreachable!("pending future resolved");

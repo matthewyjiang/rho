@@ -192,6 +192,13 @@ impl Drop for RestoreTerminal {
     }
 }
 
+/// Keep journal call ids separate from deterministic standalone-message ids.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum AttachmentEntryKey {
+    Tool(String),
+    Message(usize),
+}
+
 pub(crate) struct AttachmentApp {
     id: String,
     directory: PathBuf,
@@ -215,10 +222,10 @@ pub(crate) struct AttachmentApp {
     last_mouse_position: Option<(u16, u16)>,
     /// Stable tool key under the last left-button press, if any. Survives
     /// pending→transcript promotion and provider resets that shift indexes.
-    press_tool_key: Option<String>,
+    press_tool_key: Option<AttachmentEntryKey>,
     press_cell: Option<(u16, u16)>,
     /// Current transcript index for each finished tool key.
-    finished_tool_index: BTreeMap<String, usize>,
+    finished_tool_index: BTreeMap<AttachmentEntryKey, usize>,
     /// Cached history render shared by draw and hit-testing. Invalidated on
     /// content, status, toggle, and width changes so mouse and scroll events
     /// reuse it instead of re-rendering the whole transcript.
@@ -373,11 +380,12 @@ impl AttachmentApp {
         match event {
             AttachmentEvent::Prompt(prompt) => self.transcript.push(Entry::User(prompt)),
             AttachmentEvent::Message(message) => {
-                // Standalone messages have no tool call id, but still need an
-                // independent identity for expansion and retry reindexing.
-                self.finish_pending_tool(
-                    Some(uuid::Uuid::new_v4().to_string()),
+                // Finished entries survive retry resets, so their count stays
+                // monotonic even when transcript indexes shift on reindexing.
+                self.insert_finished_presentation(
+                    AttachmentEntryKey::Message(self.finished_tool_index.len()),
                     crate::presentation::Presentation::Message(message),
+                    /*expanded*/ false,
                 );
             }
             AttachmentEvent::AssistantTextDelta(text) => {
@@ -470,6 +478,15 @@ impl AttachmentApp {
             .remove(&key)
             .is_some_and(|entry| entry.expanded);
         self.pending_order.retain(|pending| pending != &key);
+        self.insert_finished_presentation(AttachmentEntryKey::Tool(key), presentation, expanded);
+    }
+
+    fn insert_finished_presentation(
+        &mut self,
+        key: AttachmentEntryKey,
+        presentation: crate::presentation::Presentation,
+        expanded: bool,
+    ) {
         self.transcript.push(Entry::Tool(ToolEntry::new(
             presentation,
             expanded,
@@ -534,9 +551,9 @@ impl AttachmentApp {
         self.painted.as_ref().expect("painted history just ensured")
     }
 
-    fn tool_key_for_target(&self, target: &ToggleTarget) -> Option<String> {
+    fn tool_key_for_target(&self, target: &ToggleTarget) -> Option<AttachmentEntryKey> {
         match target {
-            ToggleTarget::Pending(key) => Some(key.clone()),
+            ToggleTarget::Pending(key) => Some(AttachmentEntryKey::Tool(key.clone())),
             ToggleTarget::Transcript(index) => self
                 .finished_tool_index
                 .iter()
@@ -544,15 +561,17 @@ impl AttachmentApp {
         }
     }
 
-    fn target_for_tool_key(&self, key: &str) -> Option<ToggleTarget> {
-        if self.pending_tools.contains_key(key) {
-            Some(ToggleTarget::Pending(key.to_string()))
-        } else {
-            self.finished_tool_index
-                .get(key)
-                .copied()
-                .map(ToggleTarget::Transcript)
+    fn target_for_tool_key(&self, key: &AttachmentEntryKey) -> Option<ToggleTarget> {
+        match key {
+            AttachmentEntryKey::Tool(call_id) if self.pending_tools.contains_key(call_id) => {
+                return Some(ToggleTarget::Pending(call_id.clone()));
+            }
+            AttachmentEntryKey::Tool(_) | AttachmentEntryKey::Message(_) => {}
         }
+        self.finished_tool_index
+            .get(key)
+            .copied()
+            .map(ToggleTarget::Transcript)
     }
 
     fn clear_pending_tools(&mut self) {
