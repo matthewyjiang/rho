@@ -1,4 +1,6 @@
 mod coordinator;
 mod planner;
 
-pub(super) use coordinator::{execute, INTERRUPTED_TOOL_RESULT_CONTENT};
+#[cfg(test)]
+pub(super) use coordinator::INTERRUPTED_TOOL_RESULT_CONTENT;
+pub(super) use coordinator::{execute, interrupted_result};

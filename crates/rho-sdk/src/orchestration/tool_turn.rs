@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     event::RunOutcome,
-    model::{ContentBlock, Message, ToolCall, ToolResult},
+    model::{ContentBlock, Message, ToolCall},
     session::SessionCore,
     tool::ToolInvocationSource,
     Error, RunEvent, ToolCallId,
@@ -21,13 +21,11 @@ pub(super) use tool_batch::INTERRUPTED_TOOL_RESULT_CONTENT;
 /// Pair calls already present in history when cancellation or failure prevents
 /// them from entering the synchronous scheduler, which normally owns cleanup.
 pub(super) fn interrupt_unstarted_calls(calls: Vec<ToolCall>, history: &mut Vec<Message>) {
-    history.extend(calls.into_iter().map(|call| {
-        Message::ToolResult(ToolResult {
-            id: call.id,
-            ok: false,
-            content: tool_batch::INTERRUPTED_TOOL_RESULT_CONTENT.into(),
-        })
-    }));
+    history.extend(
+        calls
+            .iter()
+            .map(|call| Message::ToolResult(tool_batch::interrupted_result(call))),
+    );
 }
 
 pub(super) struct StagedToolTurn {

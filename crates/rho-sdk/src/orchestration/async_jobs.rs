@@ -25,9 +25,7 @@ use crate::{
     CancellationToken, Error, RunEvent, ToolCallId,
 };
 
-use super::{
-    emit, run_hooks::RunHooks, tool_batch::INTERRUPTED_TOOL_RESULT_CONTENT, Rho, RunControl,
-};
+use super::{emit, run_hooks::RunHooks, tool_batch::interrupted_result, Rho, RunControl};
 
 pub(super) enum JobNotice {
     Progress {
@@ -615,14 +613,6 @@ async fn settle_job(mut job: AsyncJob) -> ToolResult {
             content: error.message().to_owned(),
         },
         Err(_) => interrupted_result(&job.call),
-    }
-}
-
-fn interrupted_result(call: &ToolCall) -> ToolResult {
-    ToolResult {
-        id: call.id.clone(),
-        ok: false,
-        content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
     }
 }
 
