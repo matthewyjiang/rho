@@ -3,12 +3,12 @@ use std::collections::BTreeSet;
 use super::*;
 use crate::model::Message;
 
-// Covers: switching Codex models must not warn about or discard the opaque
-// compaction summary retained on subsequent sends.
+// Covers: Codex model switches preserve encrypted native context on repeated
+// sends, while omission reports name only the incompatible effort metadata.
 // Owner: provider request contract, through the same omission gate used by hosts.
 #[test]
-fn codex_model_switch_preserves_compaction_on_repeated_sends() {
-    use crate::protocol::openai_responses::{parse_compact_response, CompactUserRetention};
+fn codex_model_switch_preserves_native_context_on_repeated_sends() {
+    use crate::model::{AssistantMessage, ProviderContextBlock};
     use rho_sdk::model::handoff::{report_message_omissions, HandoffReport};
 
     for (source_model, target_model, expected_report) in [
@@ -24,42 +24,50 @@ fn codex_model_switch_preserves_compaction_on_repeated_sends() {
     ] {
         let source = ModelIdentity::new("openai-codex", "openai-responses", source_model);
         let target = ModelIdentity::new("openai-codex", "openai-responses", target_model);
-        let native_items =
-            [json!({"type": "compaction", "encrypted_content": "compacted-history"})];
-        let assistant_context =
-            super::super::configuration_update::reasoning_effort_context(&source, "high")
-                .into_iter()
-                .collect::<Vec<_>>();
-        let (mut history, _) = parse_compact_response(
-            source,
-            &[],
-            &json!({"output": native_items}),
-            "fallback for incompatible backends",
-            CompactUserRetention::KeepServerUsers,
-            &assistant_context,
-        )
-        .unwrap();
-        let stored = history.clone();
+        for native_item in [
+            json!({"type": "compaction", "encrypted_content": "compacted-history"}),
+            json!({"type": "reasoning", "id": "rs_1", "encrypted_content": "signed"}),
+        ] {
+            let mut provider_context =
+                super::super::configuration_update::reasoning_effort_context(&source, "high")
+                    .into_iter()
+                    .collect::<Vec<_>>();
+            provider_context.push(ProviderContextBlock {
+                identity: source.clone(),
+                kind: "openai_response_output_item".into(),
+                position: Some(0),
+                data: native_item.clone(),
+            });
+            let mut history = vec![Message::assistant(AssistantMessage {
+                content: Vec::new(),
+                provenance: Some(source.clone()),
+                reasoning_summary: Some(
+                    "portable summary when native context cannot replay".into(),
+                ),
+                provider_context,
+            })];
+            let stored = history.clone();
 
-        for prompt in ["continue", "next message"] {
-            history.push(Message::user_text(prompt));
-            let report = report_message_omissions(&history, &target);
-            pretty_assertions::assert_eq!(report, expected_report);
-            let body = build_codex_responses_body(
-                &target.model,
-                ModelRequest {
-                    messages: &history,
-                    tools: &[],
-                    cancellation: Default::default(),
-                    reasoning_level: Default::default(),
-                    prompt_cache_key: None,
-                },
-            )
-            .unwrap();
-            let input = body["input"].as_array().unwrap();
-            pretty_assertions::assert_eq!(&input[..native_items.len()], &native_items);
-            pretty_assertions::assert_eq!(input.len(), history.len());
-            pretty_assertions::assert_eq!(&history[..stored.len()], stored.as_slice());
+            for prompt in ["continue", "next message"] {
+                history.push(Message::user_text(prompt));
+                let report = report_message_omissions(&history, &target);
+                pretty_assertions::assert_eq!(report, expected_report);
+                let body = build_codex_responses_body(
+                    &target.model,
+                    ModelRequest {
+                        messages: &history,
+                        tools: &[],
+                        cancellation: Default::default(),
+                        reasoning_level: Default::default(),
+                        prompt_cache_key: None,
+                    },
+                )
+                .unwrap();
+                let input = body["input"].as_array().unwrap();
+                pretty_assertions::assert_eq!(input.first(), Some(&native_item));
+                pretty_assertions::assert_eq!(input.len(), history.len());
+                pretty_assertions::assert_eq!(&history[..stored.len()], stored.as_slice());
+            }
         }
     }
 }
