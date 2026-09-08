@@ -352,6 +352,7 @@ async fn execute_turn_loop(
             )
             .await
         {
+            tool_turn::interrupt_unstarted_calls(sync_calls, &mut history);
             return terminate_run(core, history, control.async_jobs, hooks, &events, error).await;
         }
 
@@ -361,6 +362,7 @@ async fn execute_turn_loop(
         if !sync_calls.is_empty() {
             if control.async_jobs.has_pending() {
                 if let Err(error) = await_all_jobs(&mut control).await {
+                    tool_turn::interrupt_unstarted_calls(sync_calls, &mut history);
                     return terminate_run(core, history, control.async_jobs, hooks, &events, error)
                         .await;
                 }

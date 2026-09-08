@@ -736,7 +736,7 @@ impl Tool for PendingPrepareAsyncTool {
 }
 
 // Covers: cancelling while one async call is preparing pairs every proposed call,
-// including calls that the spawn loop has not reached yet.
+// including async and synchronous calls that have not started yet.
 // Owner: sdk orchestration
 #[tokio::test]
 async fn cancel_while_async_tool_awaits_approval_pairs_the_batch() {
@@ -745,11 +745,15 @@ async fn cancel_while_async_tool_awaits_approval_pairs_the_batch() {
         tool_call("call-a", "running"),
         tool_call("call-b", "slow"),
         tool_call("call-c", "slow"),
+        tool_call("call-sync", "sync_tool"),
     ];
     let provider = ScriptedProvider::new(
         identity(),
         [ScriptedTurn::streaming(
-            calls.iter().map(|call| async_marker(&call.id)).collect(),
+            calls[..3]
+                .iter()
+                .map(|call| async_marker(&call.id))
+                .collect(),
             ModelResponse::Assistant(calls.iter().cloned().map(ContentBlock::ToolCall).collect()),
         )],
     );
@@ -761,6 +765,7 @@ async fn cancel_while_async_tool_awaits_approval_pairs_the_batch() {
             exclusive: false,
         })
         .tool(PendingPrepareAsyncTool)
+        .tool(ImmediateSyncTool { name: "sync_tool" })
         .build()
         .unwrap()
         .session(SessionOptions::default())
@@ -799,6 +804,90 @@ async fn cancel_while_async_tool_awaits_approval_pairs_the_batch() {
             })
             .collect::<Vec<_>>()
     );
+}
+
+// Covers: cancelling a foreground async wait pairs queued synchronous calls so
+// the next user prompt cannot replay an unanswered call to the provider.
+// Owner: sdk orchestration
+#[tokio::test]
+async fn cancel_before_sync_batch_pairs_calls_for_next_prompt() {
+    for same_response in [true, false] {
+        let async_call = tool_call("call-async", "async_tool");
+        let sync_call = tool_call("call-sync", "sync_tool");
+        let mut turns = if same_response {
+            vec![ScriptedTurn::streaming(
+                vec![async_marker(&async_call.id)],
+                ModelResponse::Assistant(vec![
+                    ContentBlock::ToolCall(async_call.clone()),
+                    ContentBlock::ToolCall(sync_call.clone()),
+                ]),
+            )]
+        } else {
+            vec![
+                async_call_turn(&async_call.id, &async_call.name),
+                ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                    sync_call.clone(),
+                )])),
+            ]
+        };
+        turns.push(text_turn("continued"));
+        let provider = ScriptedProvider::new(identity(), turns);
+        let session = Rho::builder()
+            .provider(provider.clone())
+            .tool(GatedAsyncTool {
+                name: "async_tool",
+                gate: Arc::new(Notify::new()),
+                exclusive: false,
+            })
+            .tool(ImmediateSyncTool { name: "sync_tool" })
+            .build()
+            .unwrap()
+            .session(SessionOptions::default())
+            .await
+            .unwrap();
+        let mut run = session.start(UserInput::text("start")).await.unwrap();
+        let mut step = 0;
+        loop {
+            match next_event(&mut run).await {
+                RunEvent::StepStarted { step: current, .. } => step = current,
+                RunEvent::ToolDetached { .. } if same_response => break,
+                RunEvent::ModelCallCompleted { .. } if !same_response && step == 2 => break,
+                RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
+                _ => {}
+            }
+        }
+        run.cancel();
+        let outcome = tokio::time::timeout(TEST_TIMEOUT, run.outcome())
+            .await
+            .expect("cancelled run timed out");
+        assert!(matches!(outcome, Err(Error::Cancelled)), "{outcome:?}");
+
+        let expected = [async_call, sync_call].map(|call| ToolResult {
+            id: call.id,
+            ok: false,
+            content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
+        });
+        let mut results = tool_results_in(&session.history());
+        results.sort_by(|left, right| left.id.cmp(&right.id));
+        assert_eq!(results, expected, "same_response={same_response}");
+
+        let outcome = tokio::time::timeout(
+            TEST_TIMEOUT,
+            session
+                .start(UserInput::text("continue"))
+                .await
+                .unwrap()
+                .outcome(),
+        )
+        .await
+        .expect("next prompt timed out")
+        .unwrap();
+        assert_eq!(outcome.stop_reason(), StopReason::EndTurn);
+        let requests = provider.recorded_requests();
+        let mut replayed = tool_results_in(&requests.last().unwrap().messages);
+        replayed.sort_by(|left, right| left.id.cmp(&right.id));
+        assert_eq!(replayed, expected);
+    }
 }
 
 // Covers: exhausting the step budget with a still-pending async job interrupts

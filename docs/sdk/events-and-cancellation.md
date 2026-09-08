@@ -141,7 +141,7 @@ Event-consumer interrupts still leave uncommitted candidate history uninstalled;
 
 Cancellation can race with event delivery or other failing work; see [known limitations](#known-limitations). In those cases, `Run::outcome` can still report cancellation or interruption without a cancellation commit or terminal event.
 
-Cancellation is not rollback. A tool or remote provider may have completed an external side effect before observing cancellation. During a tool batch, cancellation preserves already completed result slots and writes a deterministic interrupted result for every unresolved call, including calls cancelled during preparation. Pending async jobs are cancelled the same way before every cooperative terminal commit (`Cancelled`, `Failed`, and `MaxSteps`). Design tools for idempotency and record enough operation identity for reconciliation.
+Cancellation is not rollback. A tool or remote provider may have completed an external side effect before observing cancellation. During a tool batch, cancellation preserves already completed result slots and writes a deterministic interrupted result for every unresolved call, including calls cancelled during preparation or queued behind pending async jobs. Calls already added to history receive these results even if they never enter the synchronous scheduler, so the next prompt does not replay unanswered tool calls. Pending async jobs are cancelled the same way before every cooperative terminal commit (`Cancelled`, `Failed`, and `MaxSteps`). Design tools for idempotency and record enough operation identity for reconciliation.
 
 ## Drop contract
 

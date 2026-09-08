@@ -108,15 +108,14 @@ impl AsyncJobSet {
         count
     }
 
-    /// Collects every job whose worker is already finished without waiting.
-    pub(super) fn harvest_ready(&mut self) -> Vec<JobNotice> {
-        let mut notices = Vec::new();
+    /// Takes one ready completion, leaving other jobs owned until it is forwarded.
+    fn harvest_ready(&mut self) -> Option<JobNotice> {
         while let Ok(completion) = self.completions.try_recv() {
             if let Some(notice) = self.take_completion(completion) {
-                notices.push(notice);
+                return Some(notice);
             }
         }
-        notices
+        None
     }
 
     fn take_completion(&mut self, completion: JobCompletion) -> Option<JobNotice> {
@@ -690,8 +689,8 @@ pub(super) async fn forward_job_notice(
 }
 
 pub(super) async fn harvest_ready_jobs(control: &mut RunControl<'_>) -> Result<(), Error> {
-    let notices = control.async_jobs.harvest_ready();
-    for notice in notices {
+    // Forwarding can fail or observe cancellation; do not remove later jobs yet.
+    while let Some(notice) = control.async_jobs.harvest_ready() {
         forward_job_notice(
             notice,
             control.async_jobs,
