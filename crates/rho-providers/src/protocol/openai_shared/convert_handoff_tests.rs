@@ -358,8 +358,10 @@ fn codex_remote_compaction_marker_replays_item_without_portable_text() {
         .contains("portable summary"));
 }
 
+// Covers: model switches must preserve encrypted reasoning in Responses input.
+// Owner: OpenAI Responses history conversion
 #[test]
-fn codex_handoff_replays_only_exact_model_context() {
+fn codex_handoff_replays_encrypted_reasoning_across_models() {
     let source = crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
     let message = Message::assistant(crate::model::AssistantMessage {
         content: vec![ContentBlock::Text("answer".into())],
@@ -379,6 +381,19 @@ fn codex_handoff_replays_only_exact_model_context() {
         Some(&source),
     )
     .unwrap();
+    let target =
+        crate::model::ModelIdentity::new("openai-codex", "openai-responses", "another-model");
+    assert_eq!(
+        rho_sdk::model::handoff::report_message_omissions(std::slice::from_ref(&message), &target),
+        rho_sdk::model::handoff::HandoffReport::default(),
+    );
+    let switched = codex_input_items_for_target(
+        std::slice::from_ref(&message),
+        &mut Vec::new(),
+        Some(&target),
+    )
+    .unwrap();
+    assert_eq!(switched, exact);
     let foreign = codex_input_items_for_target(
         std::slice::from_ref(&message),
         &mut Vec::new(),
