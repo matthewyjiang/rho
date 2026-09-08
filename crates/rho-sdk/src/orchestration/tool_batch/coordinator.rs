@@ -27,6 +27,14 @@ use preparation::prepare_batch;
 pub(in crate::orchestration) const INTERRUPTED_TOOL_RESULT_CONTENT: &str =
     "tool call interrupted before completion";
 
+pub(in crate::orchestration) fn interrupted_result(call: &ToolCall) -> ToolResult {
+    ToolResult {
+        id: call.id.clone(),
+        ok: false,
+        content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
+    }
+}
+
 type AuthorizationFuture<'a> = Pin<Box<dyn Future<Output = Result<(), ToolError>> + Send + 'a>>;
 type ExecutionFuture<'a> = Pin<Box<dyn Future<Output = Result<ToolOutput, ToolError>> + Send + 'a>>;
 
@@ -305,13 +313,11 @@ fn append_interrupted_calls(
     calls: &[(ToolCall, ToolCallId, ToolInvocationSource)],
     history: &mut Vec<Message>,
 ) {
-    history.extend(calls.iter().map(|(call, _, _)| {
-        Message::ToolResult(ToolResult {
-            id: call.id.clone(),
-            ok: false,
-            content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
-        })
-    }));
+    history.extend(
+        calls
+            .iter()
+            .map(|(call, _, _)| Message::ToolResult(interrupted_result(call))),
+    );
 }
 
 async fn resolve_without_work(
@@ -841,11 +847,7 @@ fn interrupt_batch(
             }
         }
         if !matches!(entry.state, CallState::Resolved) {
-            entry.result = Some(ToolResult {
-                id: entry.call.id.clone(),
-                ok: false,
-                content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
-            });
+            entry.result = Some(interrupted_result(&entry.call));
             entry.state = CallState::Resolved;
         }
     }

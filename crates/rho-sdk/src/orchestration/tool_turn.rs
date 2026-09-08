@@ -18,6 +18,16 @@ use super::{
 #[cfg(test)]
 pub(super) use tool_batch::INTERRUPTED_TOOL_RESULT_CONTENT;
 
+/// Pair calls already present in history when cancellation or failure prevents
+/// them from entering the synchronous scheduler, which normally owns cleanup.
+pub(super) fn interrupt_unstarted_calls(calls: Vec<ToolCall>, history: &mut Vec<Message>) {
+    history.extend(
+        calls
+            .iter()
+            .map(|call| Message::ToolResult(tool_batch::interrupted_result(call))),
+    );
+}
+
 pub(super) struct StagedToolTurn {
     calls: Vec<(ToolCall, ToolCallId, ToolInvocationSource)>,
 }

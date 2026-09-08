@@ -340,31 +340,34 @@ async fn execute_turn_loop(
         let (async_calls, sync_calls) = split_tool_calls(tool_calls, &async_ids, &runtime.tools);
         let spawned_async = !async_calls.is_empty();
         core.publish_in_flight_history(&history);
-        if let Err(error) = control
-            .async_jobs
-            .spawn(
-                async_calls,
-                &core,
-                &runtime,
-                control.hooks,
-                control.events,
-                control.cancellation,
-            )
-            .await
+        if let Err(error) = async {
+            control
+                .async_jobs
+                .spawn(
+                    async_calls,
+                    &core,
+                    &runtime,
+                    control.hooks,
+                    control.events,
+                    control.cancellation,
+                )
+                .await?;
+
+            // Detached jobs may keep using shared resources for their lifetime.
+            // Wait before entering the synchronous scheduler, which may run an
+            // exclusive plan and must not overlap that work.
+            if !sync_calls.is_empty() && control.async_jobs.has_pending() {
+                await_all_jobs(&mut control).await?;
+            }
+            Ok(())
+        }
+        .await
         {
+            tool_turn::interrupt_unstarted_calls(sync_calls, &mut history);
             return terminate_run(core, history, control.async_jobs, hooks, &events, error).await;
         }
 
-        // Detached jobs may keep using shared resources for their lifetime.
-        // Wait before entering the synchronous scheduler, which may run an
-        // exclusive plan and must not overlap that work.
         if !sync_calls.is_empty() {
-            if control.async_jobs.has_pending() {
-                if let Err(error) = await_all_jobs(&mut control).await {
-                    return terminate_run(core, history, control.async_jobs, hooks, &events, error)
-                        .await;
-                }
-            }
             control.async_jobs.drain_finished(&mut history);
         }
 
