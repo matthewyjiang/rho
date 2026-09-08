@@ -254,7 +254,14 @@ fn render_messages_for_summary(messages: &[Message]) -> String {
 fn render_message_for_summary(message: &Message) -> String {
     match message {
         Message::System(text) => format!("system:\n{text}"),
-        Message::User(blocks) => format!("user:\n{}", render_blocks(blocks)),
+        Message::User(blocks) => {
+            let role = if message.as_tool_image_supplement().is_some() {
+                "tool output images"
+            } else {
+                "user"
+            };
+            format!("{role}:\n{}", render_blocks(blocks))
+        }
         Message::Assistant(blocks) => format!("assistant:\n{}", render_blocks(blocks)),
         Message::EnrichedAssistant(message) => {
             let mut rendered = render_blocks(&message.content);
