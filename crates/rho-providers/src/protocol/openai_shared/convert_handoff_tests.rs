@@ -359,7 +359,7 @@ fn codex_remote_compaction_marker_replays_item_without_portable_text() {
 }
 
 #[test]
-fn codex_handoff_replays_only_exact_model_context() {
+fn codex_handoff_keeps_reasoning_native_or_uses_foreign_summary() {
     let source = crate::model::ModelIdentity::new("openai-codex", "openai-responses", "gpt-test");
     let message = Message::assistant(crate::model::AssistantMessage {
         content: vec![ContentBlock::Text("answer".into())],

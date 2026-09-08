@@ -117,10 +117,9 @@ impl ProviderContextBlock {
     /// Whether the target can replay this native format without rewriting it.
     ///
     /// Unknown formats require exact identity. Codex Responses compaction items
-    /// can replay across model names within the same provider and API. Raw
-    /// reasoning still requires the producing model: upstream Codex compacts
-    /// history before switching between incompatible model configurations.
-    /// Sharing a serializer does not establish backend replay compatibility.
+    /// and reasoning items with nonempty encrypted content can replay across
+    /// model names within the same provider and API. This exception does not
+    /// apply to API-key OpenAI or other Responses-compatible providers.
     ///
     /// # Next major
     ///
@@ -136,20 +135,30 @@ impl ProviderContextBlock {
             return false;
         }
         self.identity.model == target.model
-            || matches!(
-                (
-                    self.identity.provider.as_str(),
-                    self.identity.api.as_str(),
-                    self.kind.as_str(),
-                    self.data.get("type").and_then(Value::as_str)
-                ),
+            || match (
+                self.identity.provider.as_str(),
+                self.identity.api.as_str(),
+                self.kind.as_str(),
+                self.data.get("type").and_then(Value::as_str),
+            ) {
                 (
                     "openai-codex",
                     "openai-responses",
                     "openai_response_output_item",
-                    Some("compaction")
-                )
-            )
+                    Some("compaction"),
+                ) => true,
+                (
+                    "openai-codex",
+                    "openai-responses",
+                    "openai_response_output_item",
+                    Some("reasoning"),
+                ) => self
+                    .data
+                    .get("encrypted_content")
+                    .and_then(Value::as_str)
+                    .is_some_and(|content| !content.is_empty()),
+                _ => false,
+            }
     }
 
     /// Marks a tool call the provider accepted as async.
