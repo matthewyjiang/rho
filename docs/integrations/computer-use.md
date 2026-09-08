@@ -34,7 +34,7 @@ This is a Rho tool-registration boundary, not an OS sandbox. An independently co
 | `rho computer status [--json]` | Detect the executable without starting it or inspecting the desktop |
 | `rho computer setup` | Show setup guidance outside the TUI |
 
-`/computer off` works during a model turn. It prevents later computer calls through that grant. It cannot undo actions already completed. An old tool registration may remain visible until the runtime refreshes, but its calls fail closed.
+`/computer off` works during a model turn. It prevents later computer calls through that grant. It cannot retract input already handed to the OS, and an in-flight action may finish during driver cleanup. An old tool registration may remain visible until the runtime refreshes, but its calls fail closed.
 
 CLI status is a local installation check, not a query of another running Rho session. A successful MCP handshake also does not prove that the OS has granted capture or input permissions.
 
