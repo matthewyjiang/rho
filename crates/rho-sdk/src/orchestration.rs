@@ -43,6 +43,7 @@ mod steering_control;
 mod stream_capture;
 mod terminal;
 mod tool_batch;
+mod tool_images;
 mod tool_turn;
 
 use async_jobs::{
@@ -337,6 +338,9 @@ async fn execute_turn_loop(
         history.push(Message::assistant(assistant));
         drain_commands(control.commands, control.steering);
         let was_steered = control.steering.has_staged();
+        control
+            .async_jobs
+            .register_calls(tool_calls.iter().map(|call| call.id.as_str()));
         let (async_calls, sync_calls) = split_tool_calls(tool_calls, &async_ids, &runtime.tools);
         let spawned_async = !async_calls.is_empty();
         core.publish_in_flight_history(&history);
@@ -494,7 +498,7 @@ async fn execute_turn_loop(
                 Ok(false) => {}
                 Err(error) => {
                     return terminate_run(core, history, control.async_jobs, hooks, &events, error)
-                        .await
+                        .await;
                 }
             }
         }

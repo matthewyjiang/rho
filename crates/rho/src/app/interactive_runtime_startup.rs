@@ -94,6 +94,17 @@ pub(super) async fn initialize(
         agent: &agent,
     })
     .await?;
+    // Desktop authority belongs to this interactive host, not agent definitions
+    // or cloned config. Automation, side chats and subagents never get this handle.
+    let tools = if !no_tools && agent.rho_capabilities().is_some() {
+        tools.with_computer_use(crate::tools::computer_use::ComputerUseSession::new(
+            /*driver*/ None,
+            config.max_output_bytes,
+            cwd.clone(),
+        ))
+    } else {
+        tools
+    };
     let mcp_report = inventory.mcp;
     let plugins_report = inventory.plugins;
     let context_window = configured_context_window(config);

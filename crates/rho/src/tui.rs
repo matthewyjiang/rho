@@ -36,6 +36,7 @@ mod compaction_display;
 mod composer;
 mod composer_attachments;
 mod composer_chrome;
+mod computer_command;
 mod config_actions;
 mod config_editor;
 mod config_input;
@@ -589,6 +590,7 @@ struct App {
     screen_selection: Option<TextSelection>,
     /// MCP inventory for `/mcp` and `/doctor` (session snapshot from tool assembly).
     mcp_report: crate::tools::mcp::McpSessionReport,
+    computer_use: Option<crate::tools::computer_use::ComputerUseSession>,
     /// Prompts and resources connected MCP servers offer, for palette matching.
     mcp_catalog: crate::tools::mcp::McpCatalog,
     /// Fetched argument suggestions for the MCP prompt being typed, so palette

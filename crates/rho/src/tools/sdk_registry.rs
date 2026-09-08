@@ -147,6 +147,7 @@ pub struct AppToolSet {
     tools: Vec<Arc<dyn Tool>>,
     bundles: Vec<Box<dyn ToolBundle>>,
     advisor: Option<AdvisorTools>,
+    computer_use: Option<super::computer_use::ComputerUseSession>,
     subagents: Option<SubagentManager>,
     processes: Option<super::process::ProcessManager>,
     workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
@@ -164,6 +165,7 @@ impl AppToolSet {
             bundles: Vec::new(),
             advisor: None,
             subagents: None,
+            computer_use: None,
             processes: None,
             workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
             checkpoint_tracker: Arc::new(
@@ -299,6 +301,40 @@ impl AppToolSet {
         self.bundles.push(Box::new(bundle));
     }
 
+    /// Attach the root interactive session's host-controlled desktop grant.
+    pub(crate) fn with_computer_use(
+        mut self,
+        session: super::computer_use::ComputerUseSession,
+    ) -> Self {
+        let connected = session.status() == super::computer_use::ComputerUseStatus::Connected;
+        self.computer_use = Some(session);
+        self.set_computer_use_registered(connected);
+        self
+    }
+
+    pub(crate) fn computer_use(&self) -> Option<&super::computer_use::ComputerUseSession> {
+        self.computer_use.as_ref()
+    }
+
+    /// Advertising is separate from authorization. The host must disconnect
+    /// on off; old runtime tool handles then fail closed immediately too.
+    pub(crate) fn set_computer_use_registered(&mut self, registered: bool) -> bool {
+        let Some(session) = &self.computer_use else {
+            return false;
+        };
+        let registered =
+            registered && session.status() == super::computer_use::ComputerUseStatus::Connected;
+        if self.contains("computer") == registered {
+            return false;
+        }
+        if registered {
+            self.tools.push(session.tool());
+        } else {
+            self.tools.retain(|tool| tool.spec().name != "computer");
+        }
+        true
+    }
+
     /// Prompts and resources connected servers offer the user.
     pub(crate) fn mcp_catalog(&self) -> &super::mcp::McpCatalog {
         &self.mcp_catalog
@@ -423,6 +459,9 @@ impl AppToolSet {
     }
 
     pub async fn shutdown(&self) {
+        if let Some(session) = &self.computer_use {
+            session.disconnect().await;
+        }
         for bundle in &self.bundles {
             bundle.shutdown().await;
         }

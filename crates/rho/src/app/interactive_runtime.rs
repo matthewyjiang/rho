@@ -20,6 +20,8 @@ mod advisor;
 mod cache;
 #[path = "interactive_runtime_compact.rs"]
 mod compact;
+#[path = "interactive_runtime_computer.rs"]
+mod computer;
 #[path = "interactive_runtime_edit_tool.rs"]
 pub(crate) mod edit_tool;
 #[path = "interactive_runtime_mcp.rs"]
@@ -196,6 +198,9 @@ impl InteractiveRuntime {
         }
         if self.permission_mode == mode {
             return Ok(());
+        }
+        if mode == PermissionMode::Plan {
+            self.disable_computer_use().await?;
         }
 
         let session_writes = self
@@ -513,6 +518,7 @@ impl InteractiveRuntime {
         if self.is_session_busy() {
             anyhow::bail!("cannot reset while a run or compaction is active");
         }
+        self.disable_computer_use().await?;
         self.runtime
             .hooks()
             .session_completed(self.sessions.session().id(), self.completed_runs);
@@ -535,6 +541,7 @@ impl InteractiveRuntime {
             }
             anyhow::bail!("cannot switch sessions while compaction is active");
         }
+        self.disable_computer_use().await?;
         self.runtime
             .hooks()
             .session_completed(self.sessions.session().id(), self.completed_runs);
@@ -573,6 +580,7 @@ impl InteractiveRuntime {
         }
         let identity = self.provider.provider().identity();
         let id = storage.id().to_string();
+        self.disable_computer_use().await?;
         let snapshot =
             storage.snapshot_for_node(target_id, identity.clone(), prompt_cache_key(&id))?;
         let resume_omission = resume_omissions_report(&snapshot, &identity);

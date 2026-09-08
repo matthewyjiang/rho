@@ -43,6 +43,24 @@ fn notification_display_preserves_ownership() {
     assert_eq!(tool.presentation, Presentation::Message(Box::new(card)));
 }
 
+// Covers: restored tool screenshots must not be presented as human messages.
+// Owner: pure history-to-transcript projection; the SDK owns image transport.
+#[test]
+fn tool_image_supplement_preserves_tool_ownership() {
+    let message = Message::tool_image_supplement(
+        "computer",
+        "capture",
+        vec![rho_sdk::model::ImageContent {
+            data: "image-data".into(),
+            mime_type: "image/png".into(),
+        }],
+    )
+    .unwrap();
+    let entries = transcript_entries_from_messages(&[message], std::path::Path::new("."));
+    assert!(matches!(entries.as_slice(), [Entry::Tool(_)]));
+    assert_eq!(tool_names(&entries), vec!["computer"]);
+}
+
 fn call(id: &str, name: &str) -> Message {
     Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
         id: id.into(),

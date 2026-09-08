@@ -389,6 +389,18 @@ fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
     // transcript reads as exchanges, not a stack of identical blocks.
     let mut previous_role: Option<&str> = None;
     for entry in messages {
+        if let Some(images) = entry.message.as_tool_image_supplement() {
+            let _ = writeln!(
+                html,
+                "<div class=\"notice\">Tool output images: {}</div>",
+                escape_html(images.tool_name())
+            );
+            for image in images.images() {
+                push_image(html, image);
+            }
+            previous_role = None;
+            continue;
+        }
         match &entry.message {
             Message::System(text) => {
                 if let Some(transcript) =

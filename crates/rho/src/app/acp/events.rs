@@ -216,6 +216,25 @@ fn success_content(output: &ToolOutput) -> Vec<ToolCallContent> {
 }
 
 fn replay_message(session_id: &SessionId, message: &Message) -> Vec<SessionNotification> {
+    if let Some(images) = message.as_tool_image_supplement() {
+        let content = images
+            .images()
+            .map(|image| {
+                ToolCallContent::from(ContentBlock::Image(ImageContent::new(
+                    image.data.clone(),
+                    image.mime_type.clone(),
+                )))
+            })
+            .collect::<Vec<_>>();
+        return vec![notify(
+            session_id,
+            SessionUpdate::ToolCall(
+                ToolCall::new(ToolCallId::new(images.tool_call_id()), images.tool_name())
+                    .status(ToolCallStatus::Completed)
+                    .content(content),
+            ),
+        )];
+    }
     match message {
         Message::User(blocks) => replay_blocks(session_id, ReplayRole::User, blocks),
         Message::Assistant(blocks) => replay_blocks(session_id, ReplayRole::Agent, blocks),

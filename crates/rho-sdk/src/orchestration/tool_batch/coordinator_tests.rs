@@ -50,6 +50,7 @@ async fn cancellation_cleanup_keeps_result_completed_during_trailing_progress() 
         queued_at: Instant::now(),
         execution_started: Some(Instant::now()),
         result: None,
+        images: None,
         first_capability: None,
     }];
 

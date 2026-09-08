@@ -183,6 +183,11 @@ pub enum Command {
         #[command(subcommand)]
         command: McpCommand,
     },
+    /// Inspect computer use powered by Cua Driver. Never grants desktop access.
+    Computer {
+        #[command(subcommand)]
+        command: ComputerCommand,
+    },
     /// List, inspect, install, and activate local Agent Plugin packages.
     Plugins {
         #[command(subcommand)]
@@ -481,6 +486,17 @@ pub enum CredentialStoreCommand {
         #[arg(value_name = "BACKEND", value_parser = parse_credential_store_backend)]
         backend: CredentialStoreBackend,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ComputerCommand {
+    /// Detect the driver without starting it or inspecting the desktop.
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show installation guidance and explain desktop access.
+    Setup,
 }
 
 #[cfg(test)]

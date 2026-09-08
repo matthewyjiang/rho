@@ -132,7 +132,11 @@ fn push_markdown_messages(out: &mut String, messages: &[ExportedMessage]) {
                 }
             }
             Message::User(blocks) => {
-                out.push_str("## You\n\n");
+                if entry.message.as_tool_image_supplement().is_some() {
+                    out.push_str("## Tool output images\n\n");
+                } else {
+                    out.push_str("## You\n\n");
+                }
                 push_blocks_markdown(out, blocks, &results_by_id, /*pair_tools*/ false);
             }
             Message::Assistant(blocks) => {

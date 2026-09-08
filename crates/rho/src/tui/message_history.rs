@@ -110,6 +110,22 @@ pub(super) fn transcript_entries_from_messages(
     let mut entries = Vec::new();
     let mut pending_tools = BTreeMap::<String, ToolCall>::new();
     for message in messages {
+        if let Some(images) = message.as_tool_image_supplement() {
+            let mut card = ToolCard::new(
+                ToolStatus::Ok,
+                ToolFamily::Default,
+                ToolHeader::call(images.tool_name(), None),
+            );
+            for image in images.images() {
+                card.push_fact(ToolFact::Text {
+                    text: image_summary(image),
+                });
+            }
+            entries.push(Entry::Tool(ToolEntry::new(
+                card, /*expanded*/ false, /*image*/ None, /*started_at*/ None,
+            )));
+            continue;
+        }
         match message {
             Message::System(text) => {
                 if let Some(transcript) =

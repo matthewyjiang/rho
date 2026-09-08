@@ -64,7 +64,11 @@ fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
             out.push('\n');
         }
         Message::User(blocks) => {
-            out.push_str("\n## user\n\n");
+            if message.as_tool_image_supplement().is_some() {
+                out.push_str("\n## tool output images\n\n");
+            } else {
+                out.push_str("\n## user\n\n");
+            }
             push_blocks(out, blocks, budget);
         }
         Message::Assistant(blocks) => {

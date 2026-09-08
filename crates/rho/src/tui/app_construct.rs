@@ -152,6 +152,7 @@ impl App {
             last_mouse_position: None,
             screen_selection: None,
             mcp_report,
+            computer_use: None,
             mcp_catalog,
             mcp_argument_completions:
                 super::mcp_argument_completion::McpArgumentCompletions::default(),

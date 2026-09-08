@@ -14,6 +14,11 @@ pub(crate) fn render_classifier_transcript(
     let mut pending_calls = HashMap::new();
 
     for message in history {
+        // Screenshots are tool data, never evidence that the user requested an
+        // action. The SDK's minor-compatible image carrier uses the user role.
+        if message.as_tool_image_supplement().is_some() {
+            continue;
+        }
         match message {
             Message::System(_) => {}
             Message::User(blocks) => {

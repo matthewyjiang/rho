@@ -6,6 +6,7 @@ mod automation;
 pub(crate) mod automation_protocol;
 mod bootstrap;
 mod cli_config;
+mod computer_cli;
 pub(crate) mod config_repository;
 pub(crate) mod conversation_switch;
 mod doctor_cli;

@@ -107,6 +107,19 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
         model_names.extend(names);
     }
 
+    // Computer is advertised only after an explicit interactive grant. Read
+    // the owned tool's spec without connecting to a driver for this inventory.
+    model_names.push(
+        super::super::computer_use::ComputerUseSession::new(
+            /*driver*/ None,
+            Config::default().max_output_bytes,
+            root.path().to_owned(),
+        )
+        .tool()
+        .spec()
+        .name,
+    );
+
     for name in super::super::HOST_ONLY_TOOL_NAMES
         .iter()
         .chain(super::super::DELEGATED_OPT_IN_TOOL_NAMES.iter())

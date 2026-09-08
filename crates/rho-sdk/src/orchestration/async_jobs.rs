@@ -74,6 +74,9 @@ pub(super) struct AsyncJobSet {
     /// Proposed calls not yet represented by either a live job or a parked result.
     unstarted: VecDeque<(ToolCallId, ToolCall)>,
     finished: VecDeque<ToolResult>,
+    pending_images: Vec<Message>,
+    /// Only calls accepted in this run; restored dangling history is unrelated.
+    outstanding_calls: BTreeSet<String>,
     completions: mpsc::UnboundedReceiver<JobCompletion>,
     completions_tx: mpsc::UnboundedSender<JobCompletion>,
     execution_slots: Arc<Semaphore>,
@@ -86,6 +89,8 @@ impl AsyncJobSet {
             jobs: BTreeMap::new(),
             unstarted: VecDeque::new(),
             finished: VecDeque::new(),
+            pending_images: Vec::new(),
+            outstanding_calls: BTreeSet::new(),
             completions,
             completions_tx,
             execution_slots: Arc::new(Semaphore::new(max_parallel_tools.get())),
@@ -102,8 +107,27 @@ impl AsyncJobSet {
 
     pub(super) fn drain_finished(&mut self, history: &mut Vec<Message>) -> usize {
         let count = self.finished.len();
+        for result in &self.finished {
+            self.outstanding_calls.remove(&result.id);
+        }
         history.extend(self.finished.drain(..).map(Message::ToolResult));
+        if self.outstanding_calls.is_empty() {
+            history.append(&mut self.pending_images);
+        }
         count
+    }
+
+    pub(super) fn register_calls<'a>(&mut self, ids: impl IntoIterator<Item = &'a str>) {
+        self.outstanding_calls
+            .extend(ids.into_iter().map(str::to_owned));
+    }
+
+    pub(super) fn resolve_call(&mut self, id: &str) {
+        self.outstanding_calls.remove(id);
+    }
+
+    pub(super) fn park_images(&mut self, message: Message) {
+        self.pending_images.push(message);
     }
 
     /// Takes one ready completion, leaving other jobs owned until it is forwarded.
@@ -365,6 +389,9 @@ impl AsyncJobSet {
         hooks: &RunHooks,
         events: &mpsc::Sender<RunEvent>,
     ) {
+        // All terminal interruptions discard undelivered images, including
+        // provider failure. Completed ToolFinished payloads remain intact.
+        self.pending_images.clear();
         history.extend(
             std::mem::take(&mut self.unstarted)
                 .into_iter()
@@ -379,15 +406,7 @@ impl AsyncJobSet {
             let name = job.name.clone();
             let duration = Some(job.started.elapsed());
             let capability = job.first_capability.get().cloned();
-            let result = settle_job(job).await;
-            let completion = if result.ok {
-                ToolCompletion::Success(crate::tool::ToolOutput::text(result.content.clone()))
-            } else {
-                ToolCompletion::Failure(ToolFailure::new(
-                    ToolErrorKind::Cancelled,
-                    result.content.clone(),
-                ))
-            };
+            let (result, completion) = settle_job(job).await;
             let _ = send_tool_finished(events, id.clone(), completion.clone()).await;
             hooks.after_tool_use(&name, &id, &completion, duration, capability.as_ref());
             history.push(Message::ToolResult(result));
@@ -583,7 +602,7 @@ async fn run_detached_job(
     }
 }
 
-async fn settle_job(mut job: AsyncJob) -> ToolResult {
+async fn settle_job(mut job: AsyncJob) -> (ToolResult, ToolCompletion) {
     let result = match job.cancellation_policy {
         ToolCancellationPolicy::Complete { timeout } => {
             match tokio::time::timeout(timeout, &mut job.worker).await {
@@ -591,7 +610,12 @@ async fn settle_job(mut job: AsyncJob) -> ToolResult {
                 Err(_) => {
                     job.worker.abort();
                     let _ = (&mut job.worker).await;
-                    return interrupted_result(&job.call);
+                    let result = interrupted_result(&job.call);
+                    let completion = ToolCompletion::Failure(ToolFailure::new(
+                        ToolErrorKind::Cancelled,
+                        result.content.clone(),
+                    ));
+                    return (result, completion);
                 }
             }
         }
@@ -601,18 +625,30 @@ async fn settle_job(mut job: AsyncJob) -> ToolResult {
         }
     };
     match result {
-        Ok(Ok(output)) => ToolResult {
-            id: job.call.id,
-            ok: true,
-            content: output.content().to_owned(),
-        },
-        Ok(Err(error)) if error.kind() == ToolErrorKind::Cancelled => interrupted_result(&job.call),
-        Ok(Err(error)) => ToolResult {
-            id: job.call.id,
-            ok: false,
-            content: error.message().to_owned(),
-        },
-        Err(_) => interrupted_result(&job.call),
+        Ok(Ok(output)) => (
+            ToolResult {
+                id: job.call.id,
+                ok: true,
+                content: output.content().to_owned(),
+            },
+            ToolCompletion::Success(output),
+        ),
+        Ok(Err(error)) if error.kind() != ToolErrorKind::Cancelled => (
+            ToolResult {
+                id: job.call.id,
+                ok: false,
+                content: error.message().to_owned(),
+            },
+            ToolCompletion::Failure(ToolFailure::new(error.kind(), error.message().to_owned())),
+        ),
+        Ok(Err(_)) | Err(_) => {
+            let result = interrupted_result(&job.call);
+            let completion = ToolCompletion::Failure(ToolFailure::new(
+                ToolErrorKind::Cancelled,
+                result.content.clone(),
+            ));
+            (result, completion)
+        }
     }
 }
 
@@ -667,6 +703,13 @@ pub(super) async fn forward_job_notice(
             // The completion was removed from `jobs`; park its history result
             // before publishing anything that can be cancelled.
             jobs.park_finished(result);
+            if let ToolCompletion::Success(output) = &completion {
+                if let Some(message) =
+                    super::tool_images::supplemental_output(&name, call_id.as_str(), output)
+                {
+                    jobs.park_images(message);
+                }
+            }
             let published = send_tool_finished(events, call_id.clone(), completion.clone()).await;
             hooks.after_tool_use(&name, &call_id, &completion, duration, capability.as_ref());
             published?;
