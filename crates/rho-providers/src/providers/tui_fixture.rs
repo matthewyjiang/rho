@@ -211,15 +211,14 @@ fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {
         let SemanticMessage::User(content) = message.semantic() else {
             return None;
         };
-        Some(
-            content
-                .iter()
-                .filter_map(|block| match block {
-                    ContentBlock::Text(text) => Some(text.as_str()),
-                    ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
-                })
-                .collect::<String>(),
-        )
+        let text = content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text(text) => Some(text.as_str()),
+                ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
+            })
+            .collect::<String>();
+        (!text.is_empty()).then_some(text)
     })
 }
 
