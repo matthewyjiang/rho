@@ -19,7 +19,7 @@ flowchart LR
     run --> code[Exit code]
 ```
 
-This page starts with `rho run` output and exit behavior, then covers login and updates. The full flag and subcommand tables are in [CLI reference](#cli-reference).
+This page starts with `rho run` output and exit behavior, then covers login, updates, and uninstalling. The full flag and subcommand tables are in [CLI reference](#cli-reference).
 
 `rho run` accepts prompt text as arguments and can append stdin with `--stdin`:
 
@@ -178,6 +178,46 @@ On Windows, `rho update` prints the detected update command instead of running i
 
 Set `RHO_INSTALL_METHOD` to `cargo`, `pacman`, `scoop`, `scoop-global`, or `script` to override detection.
 
+## `rho uninstall`
+
+```sh
+rho uninstall                  # preserve local configuration and sessions
+rho uninstall --purge          # also delete ~/.rho and its contents
+rho uninstall --purge --dry-run # preview without prompting or deleting
+```
+
+Rho lists the exact paths it will remove and asks for confirmation with `[y/N]`.
+Enter, `n`, `no`, or end-of-input cancels. Only `y` or `yes` proceeds, ignoring
+case. Unrecognized answers ask again. Ctrl+C at the prompt exits without deleting.
+There is no confirmation-bypass flag.
+Cancellation through the prompt exits successfully without changes; removal or
+safety-check failures exit with an error.
+
+Automatic executable removal is limited to the default Unix script-install
+location, `~/.local/bin/rho`. Package-managed installations print manual uninstall
+instructions instead. Custom installation paths and Windows executable removal
+are also manual; Rho does not launch a background shell to delete itself.
+`RHO_INSTALL_METHOD=script` does not authorize deletion of an arbitrary executable.
+Package ownership takes precedence over install-method hints. Unconfirmed Cargo
+metadata also prevents automatic executable removal.
+
+`--purge` permanently removes `~/.rho`, including configuration, sessions,
+installed user plugins, and file-backed credentials stored there. It can clean
+that directory even when the executable requires manual removal. Linked cleanup
+roots are refused, and links inside the data directory are removed without
+following them into other directories. Uninstall runs before configuration
+loading, so a broken config does not block cleanup.
+The preview lists removals in execution order: data first, then the executable.
+All targets are revalidated after confirmation and before any deletion. If the
+data purge fails, the executable remains available to retry.
+
+OS keyring entries, environment credentials, shell/PATH edits, shared `~/.agents`,
+project files, and data outside `~/.rho` remain untouched. This includes a custom
+`RHO_HOME` or external `--config` file. Log out of providers before uninstalling
+or remove Rho's keyring entries with your OS credential manager. Deleting local
+credentials does not revoke them remotely. Removal failures are reported, and
+completed deletions are not rolled back.
+
 ## CLI reference
 
 Rho accepts global options before an optional subcommand. Provider, model, auth, and reasoning selections apply to the current invocation; add `--save` to write them as the saved defaults. Security and session-control switches apply only to the current invocation.
@@ -227,6 +267,7 @@ Rho accepts global options before an optional subcommand. Provider, model, auth,
 | `rho plugins remove <NAME> [--yes]` | Remove a package from a managed root; keeps plugin data. |
 | `rho doctor [--json]` | Run the same setup diagnostics as the interactive `/doctor` overlay and print a text report (or one JSON document). Root `--provider`, `--model`, `--auth`, and `--reasoning` apply to this invocation the same way they do for `rho run`. Exits with status 1 when any check fails; warnings exit 0. |
 | `rho update` | Update Rho using the detected installation method. |
+| `rho uninstall [--purge] [--dry-run]` | Preview and confirm uninstall; preserve local data unless `--purge` is given. |
 | `rho help [COMMAND]` | Show help for Rho or a subcommand. |
 
 Provider, model, auth, and reasoning options are described further in [authentication and models](/authentication-and-models) and [configuration](/configuration). For provider-specific automation caveats, see the [provider pages](/authentication-and-models#providers). For example, [GitHub Copilot](/providers/github-copilot#automation) needs a prior `/login` or a `GITHUB_COPILOT_TOKEN` override.

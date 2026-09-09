@@ -5,6 +5,10 @@ use std::{
     time::Duration,
 };
 
+use crate::installation::{
+    self, cargo_install_root_contains_crate, cargo_update_root_for_exe, InstallHint,
+    ManagedInstallation, ScoopInstallScope,
+};
 #[cfg(not(windows))]
 use anyhow::Context;
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
@@ -92,12 +96,6 @@ impl InstallMethod {
             Self::Script => script_update_command_display(git_ref),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ScoopInstallScope {
-    User,
-    Global,
 }
 
 #[derive(Deserialize)]
@@ -315,33 +313,27 @@ fn script_update_command(git_ref: &str) -> Command {
 
 pub fn detect_install_method() -> InstallMethod {
     if let Ok(method) = std::env::var("RHO_INSTALL_METHOD") {
-        match method.trim().to_ascii_lowercase().as_str() {
-            "cargo" => return InstallMethod::Cargo,
-            "pacman" => return InstallMethod::Pacman,
-            "scoop" => return InstallMethod::Scoop,
-            "scoop-global" | "scoop_global" => return InstallMethod::ScoopGlobal,
-            "script" | "install-script" => return InstallMethod::Script,
-            _ => {}
+        match installation::install_hint(&method) {
+            InstallHint::Cargo => return InstallMethod::Cargo,
+            InstallHint::Pacman => return InstallMethod::Pacman,
+            InstallHint::Scoop(ScoopInstallScope::User) => return InstallMethod::Scoop,
+            InstallHint::Scoop(ScoopInstallScope::Global) => return InstallMethod::ScoopGlobal,
+            InstallHint::Script => return InstallMethod::Script,
+            InstallHint::Unknown => {}
         }
     }
 
     let current_exe = std::env::current_exe().ok();
-    if current_exe
+    match current_exe
         .as_deref()
-        .is_some_and(|path| is_cargo_bin_path(path) || is_cargo_installed_at_root(path))
+        .and_then(|path| installation::detect(path).managed)
     {
-        return InstallMethod::Cargo;
+        Some(ManagedInstallation::Cargo { .. }) => InstallMethod::Cargo,
+        Some(ManagedInstallation::Pacman) => InstallMethod::Pacman,
+        Some(ManagedInstallation::Scoop(ScoopInstallScope::User)) => InstallMethod::Scoop,
+        Some(ManagedInstallation::Scoop(ScoopInstallScope::Global)) => InstallMethod::ScoopGlobal,
+        None => InstallMethod::Script,
     }
-    if current_exe.as_deref().is_some_and(is_pacman_owned) {
-        return InstallMethod::Pacman;
-    }
-    if let Some(scope) = current_exe.as_deref().and_then(scoop_install_scope) {
-        return match scope {
-            ScoopInstallScope::User => InstallMethod::Scoop,
-            ScoopInstallScope::Global => InstallMethod::ScoopGlobal,
-        };
-    }
-    InstallMethod::Script
 }
 
 fn current_exe_parent() -> Option<PathBuf> {
@@ -353,48 +345,6 @@ fn current_exe_parent() -> Option<PathBuf> {
 fn current_cargo_update_root() -> Option<PathBuf> {
     let current_exe = std::env::current_exe().ok()?;
     cargo_update_root_for_exe(&current_exe, cargo_install_root_contains_crate)
-}
-
-fn cargo_update_root_for_exe(
-    path: &Path,
-    cargo_root_contains_crate: impl FnOnce(&Path) -> bool,
-) -> Option<PathBuf> {
-    if is_cargo_bin_path(path) {
-        return None;
-    }
-    let root = cargo_root_from_bin_path(path)?;
-    cargo_root_contains_crate(&root).then_some(root)
-}
-
-fn is_cargo_bin_path(path: &Path) -> bool {
-    let normalized = path.to_string_lossy().replace('\\', "/");
-    normalized.contains("/.cargo/bin/")
-}
-
-fn cargo_root_from_bin_path(path: &Path) -> Option<PathBuf> {
-    let bin_dir = path.parent()?;
-    (bin_dir.file_name()? == "bin").then(|| bin_dir.parent().map(Path::to_path_buf))?
-}
-
-fn is_cargo_installed_at_root(path: &Path) -> bool {
-    cargo_update_root_for_exe(path, cargo_install_root_contains_crate).is_some()
-}
-
-fn cargo_install_root_contains_crate(root: &Path) -> bool {
-    std::process::Command::new("cargo")
-        .args(["install", "--list", "--root"])
-        .arg(root)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .is_some_and(|stdout| cargo_install_list_contains_crate(&stdout))
-}
-
-fn cargo_install_list_contains_crate(output: &str) -> bool {
-    output
-        .lines()
-        .any(|line| line.split_whitespace().next() == Some(CRATE_NAME))
 }
 
 fn shell_quote_path(path: &Path) -> String {
@@ -422,69 +372,6 @@ fn powershell_quote(value: &str) -> String {
 #[cfg(windows)]
 fn powershell_quote_path(path: &Path) -> String {
     powershell_quote(&path.to_string_lossy())
-}
-
-#[cfg(target_os = "linux")]
-fn is_pacman_owned(path: &Path) -> bool {
-    std::process::Command::new("pacman")
-        .arg("-Qqo")
-        .arg(path)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .is_some_and(|owner| owner.trim().contains("rho"))
-}
-
-#[cfg(not(target_os = "linux"))]
-fn is_pacman_owned(_path: &Path) -> bool {
-    false
-}
-
-fn scoop_install_scope(path: &Path) -> Option<ScoopInstallScope> {
-    scoop_install_scope_for_path(path, scoop_global_roots_from_env())
-}
-
-fn scoop_global_roots_from_env() -> Vec<String> {
-    std::env::var("SCOOP_GLOBAL")
-        .ok()
-        .into_iter()
-        .filter(|root| !root.trim().is_empty())
-        .collect()
-}
-
-fn scoop_install_scope_for_path(
-    path: &Path,
-    global_roots: impl IntoIterator<Item = impl AsRef<str>>,
-) -> Option<ScoopInstallScope> {
-    let lower = path
-        .to_string_lossy()
-        .replace('\\', "/")
-        .to_ascii_lowercase();
-    if !is_scoop_rho_path(&lower) {
-        return None;
-    }
-    for root in global_roots {
-        let root = root
-            .as_ref()
-            .replace('\\', "/")
-            .trim_end_matches('/')
-            .to_ascii_lowercase();
-        if !root.is_empty() && (lower == root || lower.starts_with(&format!("{root}/"))) {
-            return Some(ScoopInstallScope::Global);
-        }
-    }
-    // Default global Scoop root is %ProgramData%\scoop.
-    if lower.contains("/programdata/scoop/") {
-        return Some(ScoopInstallScope::Global);
-    }
-    Some(ScoopInstallScope::User)
-}
-
-fn is_scoop_rho_path(lower_path: &str) -> bool {
-    lower_path.contains("/scoop/apps/rho/")
-        || lower_path.ends_with("/scoop/shims/rho")
-        || lower_path.ends_with("/scoop/shims/rho.exe")
 }
 
 pub(crate) async fn latest_release_tag() -> anyhow::Result<String> {
@@ -551,13 +438,10 @@ fn parse_version(version: &str) -> Option<Vec<u64>> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::{
-        cargo_install_list_contains_crate, cargo_root_from_bin_path, cargo_update_root_for_exe,
         install_script_ref, latest_app_release_tag, pacman_update_command_display,
-        release_tag_to_version, scoop_install_scope_for_path, scoop_update_command_display,
-        version_is_newer, InstallMethod, Release, ScoopInstallScope,
+        release_tag_to_version, scoop_update_command_display, version_is_newer, InstallMethod,
+        Release, ScoopInstallScope,
     };
 
     #[test]
@@ -687,107 +571,5 @@ mod tests {
             "scoop update; scoop update -g rho"
         );
         assert_eq!(InstallMethod::ScoopGlobal.label(), "Scoop (global)");
-    }
-
-    #[test]
-    fn detects_user_and_global_scoop_install_paths() {
-        assert_eq!(
-            scoop_install_scope_for_path(
-                Path::new(r"C:\Users\me\scoop\apps\rho\current\rho.exe"),
-                None::<&str>,
-            ),
-            Some(ScoopInstallScope::User)
-        );
-        assert_eq!(
-            scoop_install_scope_for_path(
-                Path::new(r"C:\Users\me\scoop\apps\rho\0.26.0\rho.exe"),
-                None::<&str>,
-            ),
-            Some(ScoopInstallScope::User)
-        );
-        assert_eq!(
-            scoop_install_scope_for_path(
-                Path::new(r"C:\Users\me\scoop\shims\rho.exe"),
-                None::<&str>,
-            ),
-            Some(ScoopInstallScope::User)
-        );
-        assert_eq!(
-            scoop_install_scope_for_path(
-                Path::new(r"C:\ProgramData\scoop\apps\rho\current\rho.exe"),
-                None::<&str>,
-            ),
-            Some(ScoopInstallScope::Global)
-        );
-        assert_eq!(
-            scoop_install_scope_for_path(
-                Path::new(r"C:\ProgramData\scoop\shims\rho.exe"),
-                None::<&str>,
-            ),
-            Some(ScoopInstallScope::Global)
-        );
-        assert_eq!(
-            scoop_install_scope_for_path(
-                Path::new(r"D:\tools\apps\rho\current\rho.exe"),
-                [r"D:\tools"],
-            ),
-            None
-        );
-        assert_eq!(
-            scoop_install_scope_for_path(
-                Path::new(r"D:\tools\scoop\apps\rho\current\rho.exe"),
-                [r"D:\tools\scoop"],
-            ),
-            Some(ScoopInstallScope::Global)
-        );
-        assert_eq!(
-            scoop_install_scope_for_path(
-                Path::new(r"C:\Users\me\AppData\Local\Programs\rho\bin\rho.exe"),
-                None::<&str>,
-            ),
-            None
-        );
-        assert_eq!(
-            scoop_install_scope_for_path(
-                Path::new(r"C:\Users\me\scoop\apps\git\current\bin\git.exe"),
-                None::<&str>,
-            ),
-            None
-        );
-        assert_eq!(
-            scoop_install_scope_for_path(
-                Path::new(r"C:\Users\me\.cargo\bin\rho.exe"),
-                None::<&str>,
-            ),
-            None
-        );
-    }
-
-    #[test]
-    fn detects_cargo_root_from_parent_bin_directory() {
-        let exe = Path::new("/opt/rho/bin/rho");
-
-        assert_eq!(
-            cargo_root_from_bin_path(exe).as_deref(),
-            Some(Path::new("/opt/rho"))
-        );
-        assert_eq!(
-            cargo_update_root_for_exe(exe, |root| root == Path::new("/opt/rho")).as_deref(),
-            Some(Path::new("/opt/rho"))
-        );
-        assert!(cargo_update_root_for_exe(exe, |_| false).is_none());
-        assert!(
-            cargo_update_root_for_exe(Path::new("/home/me/.cargo/bin/rho"), |_| true).is_none()
-        );
-    }
-
-    #[test]
-    fn detects_crate_in_cargo_install_list_output() {
-        let output = "ripgrep v14.1.1:\n    rg\nrho-coding-agent v0.12.3:\n    rho\n";
-
-        assert!(cargo_install_list_contains_crate(output));
-        assert!(!cargo_install_list_contains_crate(
-            "rho-helper v0.1.0:\n    rho-helper\n"
-        ));
     }
 }

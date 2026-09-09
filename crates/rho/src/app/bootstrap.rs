@@ -143,6 +143,11 @@ enum EarlyDispatch {
 }
 
 async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
+    if let Some(Command::Uninstall { purge, dry_run }) = &cli.command {
+        return Ok(EarlyDispatch::Handled(crate::uninstall::run(
+            *purge, *dry_run,
+        )));
+    }
     if let Some(Command::Workflow { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(
             workflow_cli::run(command, cli).await,
