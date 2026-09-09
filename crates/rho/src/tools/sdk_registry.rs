@@ -316,14 +316,12 @@ impl AppToolSet {
         self.computer_use.as_ref()
     }
 
-    /// Advertising is separate from authorization. The host must disconnect
-    /// on off; old runtime tool handles then fail closed immediately too.
+    /// Advertising is separate from authorization. The runtime reconciles this
+    /// at idle boundaries; retained tool handles enforce the grant themselves.
     pub(crate) fn set_computer_use_registered(&mut self, registered: bool) -> bool {
         let Some(session) = &self.computer_use else {
             return false;
         };
-        let registered =
-            registered && session.status() == super::computer_use::ComputerUseStatus::Connected;
         if self.contains("computer") == registered {
             return false;
         }

@@ -39,6 +39,11 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
             text: "Status: connected",
             timeout: SETTLE,
         },
+        Step::SubmitText("fixture tool available computer"),
+        Step::WaitText {
+            text: "tool available computer: true",
+            timeout: STREAM,
+        },
         Step::SubmitText("fixture delay"),
         Step::WaitText {
             text: "partial assistant before cancellation",
@@ -50,17 +55,19 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
         // the stream boundary rather than racing the temporary status toast.
         Step::Key(Key::Esc),
         Step::WaitText {
-            text: "computer use off; this session is disconnected",
+            text: "computer use off; access revoked",
             timeout: SETTLE,
         },
         Step::WaitText {
             text: "model interrupted",
             timeout: STREAM,
         },
-        Step::SubmitText("/new"),
-        Step::WaitTextGone {
-            text: "Status: connected",
-            timeout: SETTLE,
+        // The same session's next request must not advertise the revoked tool.
+        // /new would mask registry drift by rebuilding the entire session.
+        Step::SubmitText("fixture tool available computer"),
+        Step::WaitText {
+            text: "tool available computer: false",
+            timeout: STREAM,
         },
         Step::SubmitText("/computer status"),
         Step::WaitText {

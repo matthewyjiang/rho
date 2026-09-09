@@ -590,7 +590,7 @@ struct App {
     screen_selection: Option<TextSelection>,
     /// MCP inventory for `/mcp` and `/doctor` (session snapshot from tool assembly).
     mcp_report: crate::tools::mcp::McpSessionReport,
-    computer_use: Option<crate::tools::computer_use::ComputerUseSession>,
+    computer_use: Option<crate::tools::computer_use::ComputerUseControl>,
     /// Prompts and resources connected MCP servers offer, for palette matching.
     mcp_catalog: crate::tools::mcp::McpCatalog,
     /// Fetched argument suggestions for the MCP prompt being typed, so palette

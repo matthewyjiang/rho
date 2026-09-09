@@ -124,6 +124,10 @@ pub(super) fn intercept(
         return Some(completion);
     }
     let prompt = last_user_text(request).unwrap_or_default();
+    if let Some(name) = prompt.strip_prefix("fixture tool available ") {
+        let available = request.tools.iter().any(|tool| tool.name == name);
+        return Some(completed(format!("tool available {name}: {available}")));
+    }
     if is_agent_notification(&prompt) {
         // Notifications can continue the parent's assistant stream. Start a
         // paragraph so every marker stays separate from the spawn receipt.

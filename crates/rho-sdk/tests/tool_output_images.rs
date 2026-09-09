@@ -274,6 +274,50 @@ async fn tool_images_follow_all_results_and_survive_resume() {
     }
 }
 
+// Covers: host-started calls use the same output commitment path without a provider tool turn.
+// Owner: SDK run initiation/history contract; model-requested coverage above does not enter this path.
+#[tokio::test]
+async fn host_started_tool_commits_paired_image_before_first_provider_request() {
+    let provider = Arc::new(ScriptedProvider::new(
+        identity(),
+        [ScriptedTurn::completed(text_response("done"))],
+    ));
+    let session = Rho::builder()
+        .provider_shared(provider.clone())
+        .tool(ImageTool {
+            finished: Arc::new(Semaphore::new(0)),
+            block_second: false,
+        })
+        .build()
+        .unwrap()
+        .session(SessionOptions::default())
+        .await
+        .unwrap();
+    let mut run = session
+        .start_with_tool_call(UserInput::text("capture"), call("first"))
+        .await
+        .unwrap();
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        while run.next_event().await.is_some() {}
+        run.outcome().await.unwrap();
+    })
+    .await
+    .expect("host-started image call did not finish");
+    assert_eq!(
+        provider.recorded_requests()[0].messages,
+        vec![
+            Message::User(vec![ContentBlock::Text("capture".into())]),
+            Message::Assistant(vec![ContentBlock::ToolCall(call("first"))]),
+            Message::ToolResult(ToolResult {
+                id: "first".into(),
+                ok: true,
+                content: "captured".into(),
+            }),
+            Message::tool_image_supplement("capture", "first", vec![image()]).unwrap(),
+        ]
+    );
+}
+
 // Covers: a successful image buffered before another call is cancelled must not leak into history.
 // Owner: SDK cancellation contract.
 #[tokio::test]

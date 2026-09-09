@@ -10,6 +10,10 @@ use std::{
 };
 
 use anyhow::{anyhow, bail};
+use futures_util::{
+    future::{BoxFuture, Shared},
+    FutureExt,
+};
 use rho_sdk::{tool::Tool, CancellationToken};
 
 use super::{
@@ -28,11 +32,35 @@ pub(crate) enum ComputerUseStatus {
     Off,
     Connecting,
     Connected,
+    Closing,
 }
 
 #[derive(Clone)]
 pub(crate) struct ComputerUseSession {
     inner: Arc<Inner>,
+}
+
+/// The TUI can inspect and revoke authority while a turn borrows the runtime.
+/// Activation and transport task ownership remain with the runtime's session.
+#[derive(Clone)]
+pub(crate) struct ComputerUseControl(ComputerUseSession);
+
+impl ComputerUseControl {
+    pub(crate) fn revoke(&self) {
+        self.0.revoke();
+    }
+
+    pub(crate) fn status(&self) -> ComputerUseStatus {
+        self.0.status()
+    }
+
+    pub(crate) fn driver_path(&self) -> Option<PathBuf> {
+        self.0.driver_path()
+    }
+
+    pub(crate) fn terminal_error(&self) -> Option<String> {
+        self.0.terminal_error()
+    }
 }
 
 struct Inner {
@@ -44,11 +72,24 @@ struct Inner {
     operation: tokio::sync::Mutex<()>,
 }
 
-struct State {
-    status: ComputerUseStatus,
-    cancellation: CancellationToken,
-    connection: Option<Arc<Connection>>,
-    pending: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+type Task<T> = Shared<BoxFuture<'static, Result<T, Arc<str>>>>;
+
+enum State {
+    Off {
+        error: Option<Arc<str>>,
+    },
+    Connecting {
+        grant: Arc<CancellationToken>,
+        task: Task<Arc<Connection>>,
+    },
+    Connected {
+        grant: Arc<CancellationToken>,
+        connection: Arc<Connection>,
+    },
+    Closing {
+        grant: Arc<CancellationToken>,
+        task: Task<()>,
+    },
 }
 
 struct Connection {
@@ -58,25 +99,29 @@ struct Connection {
 }
 
 impl ComputerUseSession {
+    pub(crate) fn control(&self) -> ComputerUseControl {
+        ComputerUseControl(self.clone())
+    }
+
     pub(crate) fn new(driver: Option<PathBuf>, max_output_bytes: usize, cwd: PathBuf) -> Self {
         Self {
             inner: Arc::new(Inner {
                 driver,
                 max_output_bytes,
                 cwd,
-                state: Mutex::new(State {
-                    status: ComputerUseStatus::Off,
-                    cancellation: CancellationToken::new(),
-                    connection: None,
-                    pending: None,
-                }),
+                state: Mutex::new(State::Off { error: None }),
                 operation: tokio::sync::Mutex::new(()),
             }),
         }
     }
 
     pub(crate) fn status(&self) -> ComputerUseStatus {
-        self.state().status
+        match &*self.state() {
+            State::Off { .. } => ComputerUseStatus::Off,
+            State::Connecting { .. } => ComputerUseStatus::Connecting,
+            State::Connected { .. } => ComputerUseStatus::Connected,
+            State::Closing { .. } => ComputerUseStatus::Closing,
+        }
     }
 
     /// Detection does not launch the driver or alter the desktop.
@@ -97,49 +142,83 @@ impl ComputerUseSession {
 
     /// Start a host-authorized connection without blocking the UI. The manager
     /// owns its task so every revocation path also stops pending activation.
-    pub(crate) fn start_connect(&self) {
+    pub(crate) fn start_connect(&self) -> anyhow::Result<()> {
         let mut state = self.state();
-        if state.pending.is_some() || state.status == ComputerUseStatus::Connected {
-            return;
+        match &*state {
+            State::Connected { .. } | State::Connecting { .. } => return Ok(()),
+            State::Closing { .. } => {
+                bail!("computer transport is still closing; try /computer on after it finishes")
+            }
+            State::Off { .. } => {}
         }
+        let grant = Arc::new(CancellationToken::new());
         let session = self.clone();
-        state.pending = Some(tokio::spawn(async move { session.connect().await }));
-    }
-
-    pub(crate) fn connection_pending(&self) -> bool {
-        self.state().pending.is_some()
+        let cancellation = grant.clone();
+        let task = retained_task(async move { session.open_connection(&cancellation).await });
+        *state = State::Connecting { grant, task };
+        Ok(())
     }
 
     pub(crate) async fn take_connect_result(&self) -> Option<anyhow::Result<()>> {
-        let task = self
-            .state()
-            .pending
-            .take_if(|handle| handle.is_finished())?;
-        Some(match task.await {
-            Ok(result) => result,
-            Err(error) => Err(error.into()),
-        })
+        let (grant, task) = match &*self.state() {
+            State::Connecting { grant, task } => (grant.clone(), task.clone()),
+            _ => return None,
+        };
+        let result = task.now_or_never()?;
+        Some(self.finish_connect(&grant, result))
     }
 
     /// Host-only activation. Never called from a tool, retry path, or startup.
+    #[cfg(test)]
     pub(crate) async fn connect(&self) -> anyhow::Result<()> {
-        if self.status() == ComputerUseStatus::Connected {
-            return Ok(());
+        self.start_connect()?;
+        let (grant, task) = match &*self.state() {
+            State::Connecting { grant, task } => (grant.clone(), task.clone()),
+            State::Connected { .. } => return Ok(()),
+            State::Off { .. } | State::Closing { .. } => {
+                bail!("computer access was disabled during connection")
+            }
+        };
+        let mut guard = RevokeOnDrop::new(self.clone(), grant.clone());
+        let result = self.finish_connect(&grant, task.await);
+        guard.armed = false;
+        result
+    }
+
+    fn finish_connect(
+        &self,
+        grant: &Arc<CancellationToken>,
+        result: Result<Arc<Connection>, Arc<str>>,
+    ) -> anyhow::Result<()> {
+        let mut state = self.state();
+        if !matches!(&*state, State::Connecting { grant: current, .. } if Arc::ptr_eq(current, grant))
+        {
+            bail!("computer access was disabled during connection");
         }
-        // Never queue a host grant behind an old action: an intervening off
-        // must not be undone by a previously requested on.
-        let _operation = self.inner.operation.try_lock().map_err(|_| anyhow!("computer operation is still closing or connecting; try /computer on after it finishes"))?;
+        match result {
+            Ok(connection) => {
+                *state = State::Connected {
+                    grant: grant.clone(),
+                    connection,
+                };
+                Ok(())
+            }
+            Err(error) => {
+                *state = State::Off {
+                    error: Some(error.clone()),
+                };
+                Err(anyhow!(error.to_string()))
+            }
+        }
+    }
+
+    async fn open_connection(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> anyhow::Result<Arc<Connection>> {
         let driver = self
             .driver_path()
             .ok_or_else(|| anyhow!(Self::setup_guidance()))?;
-        let cancellation = CancellationToken::new();
-        {
-            let mut state = self.state();
-            state.status = ComputerUseStatus::Connecting;
-            state.cancellation = cancellation.clone();
-        }
-        // A dropped connect future revokes its grant too.
-        let mut guard = RevokeOnDrop::new(self.clone());
         let config = McpConfig {
             servers: BTreeMap::from([(
                 "cua".into(),
@@ -170,7 +249,8 @@ impl ComputerUseSession {
             self.inner.max_output_bytes,
             mcp::McpRoots::default(),
             mcp::McpAuthorizationMode::NonInteractive,
-        );
+        )
+        .with_image_delivery(mcp::McpImageDelivery::ModelAndPresentation);
         let outcome = tokio::select! {
             biased;
             _ = cancellation.cancelled() => bail!("computer access was disabled during connection"),
@@ -203,28 +283,14 @@ impl ComputerUseSession {
             tools,
             instructions: report.instructions().map(str::to_owned),
         });
-        {
-            let mut state = self.state();
-            if cancellation.is_cancelled() {
-                close_owned(connection);
-                bail!("computer access was disabled during connection");
-            }
-            state.connection = Some(connection);
-            state.status = ComputerUseStatus::Connected;
-        }
-        guard.armed = false;
-        Ok(())
+        Ok(connection)
     }
 
     /// Revoke first, then close only this session's MCP child transport.
     /// Shutdown runs independently so dropping this future cannot abandon it.
     pub(crate) async fn disconnect(&self) {
-        if let Some(task) = self.state().pending.take() {
-            task.abort();
-        }
-        if let Some(task) = self.revoke() {
-            let _ = task.await;
-        }
+        self.revoke();
+        self.finish_closing(/*wait*/ true).await;
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
@@ -234,11 +300,67 @@ impl ComputerUseSession {
             .unwrap_or_else(|error| error.into_inner())
     }
 
-    fn revoke(&self) -> Option<tokio::task::JoinHandle<()>> {
+    pub(crate) fn revoke(&self) {
+        self.revoke_grant(None);
+    }
+
+    fn revoke_grant(&self, expected: Option<&Arc<CancellationToken>>) {
         let mut state = self.state();
-        state.status = ComputerUseStatus::Off;
-        state.cancellation.cancel();
-        state.connection.take().map(close_owned)
+        let grant = match &*state {
+            State::Connecting { grant, .. } | State::Connected { grant, .. } => grant.clone(),
+            State::Off { .. } | State::Closing { .. } => return,
+        };
+        if expected.is_some_and(|expected| !Arc::ptr_eq(expected, &grant)) {
+            return;
+        }
+        grant.cancel();
+        let previous = std::mem::replace(&mut *state, State::Off { error: None });
+        let session = self.clone();
+        let task = retained_task(async move {
+            let connection = match previous {
+                State::Connecting { task, .. } => {
+                    Some(task.await.map_err(|error| anyhow!(error.to_string()))?)
+                }
+                State::Connected { connection, .. } => Some(connection),
+                State::Off { .. } | State::Closing { .. } => unreachable!(),
+            };
+            // Revocation is immediate, but cleanup must also wait for an old
+            // action to release its transport before accepting another grant.
+            let _operation = session.inner.operation.lock().await;
+            if let Some(connection) = connection {
+                connection.bundle.shutdown().await;
+            }
+            Ok(())
+        });
+        *state = State::Closing { grant, task };
+    }
+
+    pub(crate) async fn finish_closing(&self, wait: bool) {
+        let (grant, task) = match &*self.state() {
+            State::Closing { grant, task } => (grant.clone(), task.clone()),
+            _ => return,
+        };
+        let result = if wait {
+            Some(task.await)
+        } else {
+            task.now_or_never()
+        };
+        if let Some(result) = result {
+            let mut state = self.state();
+            if matches!(&*state, State::Closing { grant: current, .. } if Arc::ptr_eq(current, &grant))
+            {
+                *state = State::Off {
+                    error: result.err(),
+                };
+            }
+        }
+    }
+
+    pub(crate) fn terminal_error(&self) -> Option<String> {
+        match &*self.state() {
+            State::Off { error } => error.as_ref().map(ToString::to_string),
+            _ => None,
+        }
     }
 
     pub(crate) fn tool(&self) -> Arc<dyn Tool> {
@@ -254,22 +376,31 @@ pub(crate) fn detect_driver() -> Option<PathBuf> {
     )
 }
 
-fn close_owned(connection: Arc<Connection>) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        connection.bundle.shutdown().await;
-    })
+fn retained_task<T: Clone + Send + Sync + 'static>(
+    future: impl std::future::Future<Output = anyhow::Result<T>> + Send + 'static,
+) -> Task<T> {
+    let task = tokio::spawn(future);
+    async move {
+        task.await
+            .map_err(|error| Arc::from(error.to_string()))?
+            .map_err(|error| Arc::from(error.to_string()))
+    }
+    .boxed()
+    .shared()
 }
 
 /// A cancelled/dropped action has an uncertain desktop effect. Fail closed and
 /// require a new user grant rather than let the next action race that effect.
 struct RevokeOnDrop {
     session: ComputerUseSession,
+    grant: Arc<CancellationToken>,
     armed: bool,
 }
 impl RevokeOnDrop {
-    fn new(session: ComputerUseSession) -> Self {
+    fn new(session: ComputerUseSession, grant: Arc<CancellationToken>) -> Self {
         Self {
             session,
+            grant,
             armed: true,
         }
     }
@@ -277,7 +408,7 @@ impl RevokeOnDrop {
 impl Drop for RevokeOnDrop {
     fn drop(&mut self) {
         if self.armed {
-            self.session.revoke();
+            self.session.revoke_grant(Some(&self.grant));
         }
     }
 }

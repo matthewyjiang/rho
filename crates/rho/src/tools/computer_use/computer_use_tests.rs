@@ -42,14 +42,13 @@ async fn disconnect_stops_pending_activation() {
     let (root, session) = fixture();
     let socket_path = root.path().join("blocked-connect.sock");
     let listener = tokio::net::UnixListener::bind(socket_path).unwrap();
-    session.start_connect();
+    session.start_connect().unwrap();
     let (mut child_signal, _) = tokio::time::timeout(Duration::from_secs(10), listener.accept())
         .await
         .unwrap()
         .unwrap();
     session.disconnect().await;
     assert_eq!(session.status(), ComputerUseStatus::Off);
-    assert!(!session.connection_pending());
     let mut buffer = Vec::new();
     tokio::time::timeout(
         Duration::from_secs(10),
@@ -180,7 +179,7 @@ async fn cancellation_revokes_the_grant_and_closes_the_owned_transport() {
         task.await.unwrap().unwrap_err().kind(),
         ToolErrorKind::Cancelled
     );
-    assert_eq!(session.status(), ComputerUseStatus::Off);
+    assert_eq!(session.status(), ComputerUseStatus::Closing);
     assert_eq!(
         tool.call(invocation(json!({"action":"list"})), context())
             .await
@@ -188,5 +187,37 @@ async fn cancellation_revokes_the_grant_and_closes_the_owned_transport() {
             .kind(),
         ToolErrorKind::Execution
     );
+    session.disconnect().await;
+}
+
+// Covers: a dropped shutdown waiter must not let re-enable overlap old cleanup,
+// and a cancellation guard from an old grant must not revoke a newer one.
+// Owner: Cua lifecycle over a real stdio transport; the action lock holds cleanup.
+#[tokio::test]
+async fn cleanup_is_retained_until_complete_and_guards_are_grant_scoped() {
+    let (_root, session) = fixture();
+    session.connect().await.unwrap();
+    let grant = match &*session.state() {
+        State::Connected { grant, .. } => grant.clone(),
+        _ => unreachable!(),
+    };
+    let stale_guard = RevokeOnDrop::new(session.clone(), grant);
+    let action = session.inner.operation.lock().await;
+    session.revoke();
+    assert_eq!(session.status(), ComputerUseStatus::Closing);
+    assert!(session.start_connect().is_err());
+    {
+        let shutdown = session.disconnect();
+        tokio::pin!(shutdown);
+        assert!(futures_util::poll!(shutdown.as_mut()).is_pending());
+    }
+    assert_eq!(session.status(), ComputerUseStatus::Closing);
+    assert!(session.start_connect().is_err());
+    drop(action);
+    session.disconnect().await;
+    assert_eq!(session.status(), ComputerUseStatus::Off);
+    session.connect().await.unwrap();
+    drop(stale_guard);
+    assert_eq!(session.status(), ComputerUseStatus::Connected);
     session.disconnect().await;
 }

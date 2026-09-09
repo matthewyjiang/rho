@@ -3,7 +3,9 @@ use pretty_assertions::assert_eq;
 use rho_sdk::tool::ToolErrorKind;
 use rmcp::model::{CallToolResult, ContentBlock, Resource, ResourceContents};
 
-use super::{render, RenderedResult, ResultExpectation, MAX_RETAINED_IMAGE_BYTES};
+use super::{
+    render, McpImageDelivery, RenderedResult, ResultExpectation, MAX_RETAINED_IMAGE_BYTES,
+};
 
 const LIMIT: usize = 12_000;
 
@@ -44,6 +46,7 @@ fn content_blocks_render_by_kind() {
         ]),
         &ResultExpectation::default(),
         LIMIT,
+        McpImageDelivery::PresentationOnly,
     )
     .unwrap();
 
@@ -78,19 +81,31 @@ fn structured_content_is_presented_once_and_required_when_declared() {
     mirrored.structured_content = Some(structured.clone());
 
     assert_eq!(
-        render(&mirrored, &ResultExpectation::default(), LIMIT).unwrap(),
+        render(
+            &mirrored,
+            &ResultExpectation::default(),
+            LIMIT,
+            McpImageDelivery::PresentationOnly
+        )
+        .unwrap(),
         RenderedResult {
             text: "{\n  \"count\": 2\n}".into(),
             assets: Vec::new(),
+            images: Vec::new(),
         }
     );
 
     let mut with_prose = result(vec![ContentBlock::text("Found 2 matches.")]);
     with_prose.structured_content = Some(structured.clone());
     assert_eq!(
-        render(&with_prose, &ResultExpectation::default(), LIMIT)
-            .unwrap()
-            .text,
+        render(
+            &with_prose,
+            &ResultExpectation::default(),
+            LIMIT,
+            McpImageDelivery::PresentationOnly
+        )
+        .unwrap()
+        .text,
         "Found 2 matches.\n\n{\n  \"count\": 2\n}"
     );
 
@@ -102,6 +117,7 @@ fn structured_content_is_presented_once_and_required_when_declared() {
             "properties": {"count": {"type": "integer"}},
         })),
         LIMIT,
+        McpImageDelivery::PresentationOnly,
     )
     .unwrap_err();
     assert_eq!(missing.kind(), ToolErrorKind::Execution);
@@ -118,6 +134,7 @@ fn structured_content_is_presented_once_and_required_when_declared() {
                 "properties": {"count": {"type": "integer"}},
             })),
             LIMIT,
+            McpImageDelivery::PresentationOnly,
         )
         .unwrap()
         .text,
@@ -140,6 +157,7 @@ fn structured_content_must_match_declared_output_schema() {
             "properties": {"count": {"type": "integer"}},
         })),
         LIMIT,
+        McpImageDelivery::PresentationOnly,
     )
     .unwrap_err();
     assert_eq!(error.kind(), ToolErrorKind::Execution);
@@ -155,16 +173,27 @@ fn structured_content_must_match_declared_output_schema() {
 fn error_results_and_empty_results_stay_readable() {
     let mut failed = result(vec![ContentBlock::text("disk is full")]);
     failed.is_error = Some(true);
-    let error = render(&failed, &ResultExpectation::default(), LIMIT).unwrap_err();
+    let error = render(
+        &failed,
+        &ResultExpectation::default(),
+        LIMIT,
+        McpImageDelivery::PresentationOnly,
+    )
+    .unwrap_err();
     assert_eq!(
         (error.kind(), error.message()),
         (ToolErrorKind::Execution, "disk is full")
     );
 
     assert_eq!(
-        render(&result(Vec::new()), &ResultExpectation::default(), LIMIT)
-            .unwrap()
-            .text,
+        render(
+            &result(Vec::new()),
+            &ResultExpectation::default(),
+            LIMIT,
+            McpImageDelivery::PresentationOnly
+        )
+        .unwrap()
+        .text,
         "The MCP server returned no content."
     );
 }
@@ -184,6 +213,7 @@ fn image_assets_keep_only_the_first_that_fits_the_budget() {
         ]),
         &ResultExpectation::default(),
         LIMIT,
+        McpImageDelivery::PresentationOnly,
     )
     .unwrap();
     assert_eq!(multi.assets.len(), 1);
@@ -195,11 +225,56 @@ fn image_assets_keep_only_the_first_that_fits_the_budget() {
         &result(vec![ContentBlock::image(encode(&oversized), "image/png")]),
         &ResultExpectation::default(),
         LIMIT,
+        McpImageDelivery::PresentationOnly,
     )
     .unwrap();
     assert!(too_large.assets.is_empty());
     assert!(too_large.text.contains("not retained: exceeds"));
     assert!(!too_large.text.contains(&encode(&oversized[..16])));
+}
+
+// Covers: model observations must not depend on which images fit the preview
+// card. Delivery remains host-opt-in and preserves typed source payloads.
+// Owner: MCP result interpretation, before SDK history commitment.
+#[test]
+fn model_images_are_independent_of_presentation_retention() {
+    use rho_sdk::model::ImageContent;
+
+    let small = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut large = small.clone();
+    large.resize(MAX_RETAINED_IMAGE_BYTES + 1, 0);
+    let expected = vec![
+        ImageContent {
+            data: encode(&small),
+            mime_type: "image/png".into(),
+        },
+        ImageContent {
+            data: encode(&small),
+            mime_type: "image/png".into(),
+        },
+        ImageContent {
+            data: encode(&large),
+            mime_type: "image/png".into(),
+        },
+    ];
+    let content = result(vec![
+        ContentBlock::image(expected[0].data.clone(), "image/png"),
+        ContentBlock::image(expected[1].data.clone(), "image/png"),
+        ContentBlock::resource(ResourceContents::BlobResourceContents {
+            uri: "file:///observation.png".into(),
+            mime_type: Some("image/png".into()),
+            blob: expected[2].data.clone(),
+            meta: None,
+        }),
+    ]);
+    for (delivery, images) in [
+        (McpImageDelivery::PresentationOnly, Vec::new()),
+        (McpImageDelivery::ModelAndPresentation, expected),
+    ] {
+        let rendered = render(&content, &ResultExpectation::default(), LIMIT, delivery).unwrap();
+        assert_eq!(rendered.images, images);
+        assert_eq!(rendered.assets.len(), 1);
+    }
 }
 
 // Covers: untrusted output schemas and structured payloads must be rejected
@@ -219,7 +294,13 @@ fn structured_validation_rejects_oversize_schemas() {
     });
     let mut call = result(Vec::new());
     call.structured_content = Some(serde_json::json!({}));
-    let error = render(&call, &expect_schema(schema), LIMIT).unwrap_err();
+    let error = render(
+        &call,
+        &expect_schema(schema),
+        LIMIT,
+        McpImageDelivery::PresentationOnly,
+    )
+    .unwrap_err();
     assert_eq!(error.kind(), ToolErrorKind::Execution);
     assert!(
         error.message().contains("validation budget"),

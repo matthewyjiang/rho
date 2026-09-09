@@ -1,6 +1,5 @@
-use base64::Engine;
 use rho_sdk::{
-    model::{ImageContent, ToolSpec},
+    model::ToolSpec,
     tool::{
         Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolOutput,
         ToolSecurity,
@@ -9,7 +8,7 @@ use rho_sdk::{
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use super::{ComputerUseSession, ComputerUseStatus, RevokeOnDrop};
+use super::{ComputerUseSession, RevokeOnDrop, State};
 
 pub(super) struct ComputerTool(pub(super) ComputerUseSession);
 
@@ -55,13 +54,12 @@ impl Tool for ComputerTool {
             // execute after the host disconnects and establishes a new session.
             let (connection, cancellation) = {
                 let state = self.0.state();
-                if state.status != ComputerUseStatus::Connected {
-                    return Err(disabled());
+                match &*state {
+                    State::Connected { connection, grant } => (connection.clone(), grant.clone()),
+                    State::Off { .. } | State::Connecting { .. } | State::Closing { .. } => {
+                        return Err(disabled())
+                    }
                 }
-                (
-                    state.connection.clone().ok_or_else(disabled)?,
-                    state.cancellation.clone(),
-                )
             };
             let _operation = tokio::select! {
                 biased;
@@ -128,7 +126,7 @@ impl Tool for ComputerTool {
                             "computer calls must omit session; Rho owns the transport session",
                         ));
                     }
-                    let mut guard = RevokeOnDrop::new(self.0.clone());
+                    let mut guard = RevokeOnDrop::new(self.0.clone(), cancellation.clone());
                     let call = remote.call(
                         ToolInvocation::new(invocation.id().clone(), Value::Object(arguments)),
                         context.clone(),
@@ -144,7 +142,7 @@ impl Tool for ComputerTool {
                     if result.is_ok() {
                         guard.armed = false;
                     }
-                    result.map(model_images)
+                    result
                 }
             }
         })
@@ -156,22 +154,4 @@ fn disabled() -> ToolError {
         ToolErrorKind::Execution,
         "computer access is off; only the user can enable it with /computer on",
     )
-}
-
-/// Only this explicitly granted desktop tool promotes presentation assets to
-/// model-visible images. Ordinary MCP servers retain presentation-only assets.
-fn model_images(output: ToolOutput) -> ToolOutput {
-    let images = output
-        .presentation()
-        .assets()
-        .iter()
-        .filter_map(|asset| {
-            let mime_type = ImageContent::mime_type_from_bytes(asset.bytes())?;
-            Some(ImageContent {
-                data: base64::engine::general_purpose::STANDARD.encode(asset.bytes()),
-                mime_type: mime_type.into(),
-            })
-        })
-        .collect();
-    output.with_images(images)
 }

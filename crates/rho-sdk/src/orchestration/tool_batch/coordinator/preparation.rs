@@ -139,7 +139,6 @@ async fn prepare_call<'a>(
             queued_at: Instant::now(),
             execution_started: None,
             result: None,
-            images: None,
             first_capability: None,
         };
     };
@@ -175,7 +174,6 @@ async fn prepare_call<'a>(
         queued_at: Instant::now(),
         execution_started: None,
         result: None,
-        images: None,
         first_capability,
     }
 }
@@ -191,7 +189,6 @@ fn interrupted_entry<'a>(call: ToolCall, id: ToolCallId) -> BatchCall<'a> {
         queued_at: Instant::now(),
         execution_started: None,
         result: None,
-        images: None,
         first_capability: None,
     }
 }

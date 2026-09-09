@@ -69,7 +69,6 @@ struct BatchCall<'a> {
     queued_at: Instant,
     execution_started: Option<Instant>,
     result: Option<ToolResult>,
-    images: Option<Message>,
     first_capability: Option<FirstCapability>,
 }
 
@@ -123,9 +122,6 @@ pub(in crate::orchestration) async fn execute(
     // Tools that reason about the conversation read this instead of committed
     // history, which does not include the turn they were called from.
     core.publish_in_flight_history(history);
-    control
-        .async_jobs
-        .register_calls(calls.iter().map(|(call, _, _)| call.id.as_str()));
     let batch_cancellation = control.cancellation.clone();
     if let Err(error) = propose_calls(control, &calls).await {
         batch_cancellation.cancel();
@@ -214,18 +210,17 @@ pub(in crate::orchestration) async fn execute(
             .iter()
             .all(|entry| matches!(entry.state, CallState::Resolved))
         {
-            append_results(&mut batch, history);
             if control.cancellation.is_cancelled() {
+                append_results(&mut batch, history);
                 return Ok(true);
             }
-            // NEXT_MAJOR(rho-sdk): represent images in structured tool results instead of supplemental user messages.
-            for entry in &mut batch {
-                control.async_jobs.resolve_call(&entry.call.id);
-                if let Some(images) = entry.images.take() {
-                    control.async_jobs.park_images(images);
-                }
-            }
-            control.async_jobs.drain_finished(history);
+            control.pending_outputs.commit_results(
+                batch
+                    .iter_mut()
+                    .map(|entry| entry.result.take().expect("resolved call has a result")),
+                history,
+            );
+            control.pending_outputs.drain_finished(history);
             tracing::debug!(peak_parallel_tools = peak_running, "tool batch completed");
             core.set_state(SessionState::Running);
             return Ok(false);
@@ -732,14 +727,6 @@ async fn finish_call(
     entry: &mut BatchCall<'_>,
     result: Result<ToolOutput, ToolError>,
 ) -> Result<(), Error> {
-    let normalized = match &result {
-        Ok(output) => ToolResult {
-            id: entry.call.id.clone(),
-            ok: true,
-            content: output.content().to_owned(),
-        },
-        Err(error) => failed_result(&entry.call, error),
-    };
     let duration = entry.execution_started.map(|started| started.elapsed());
     if let Some(elapsed) = duration {
         tracing::debug!(
@@ -748,19 +735,16 @@ async fn finish_call(
         );
     }
     let completion = match result {
-        Ok(output) => {
-            entry.images = crate::orchestration::tool_images::supplemental_output(
-                &entry.call.name,
-                &entry.call.id,
-                &output,
-            );
-            ToolCompletion::Success(output)
-        }
+        Ok(output) => ToolCompletion::Success(output),
         Err(error) => {
             ToolCompletion::Failure(ToolFailure::new(error.kind(), error.message().to_owned()))
         }
     };
-    entry.result = Some(normalized);
+    entry.result = Some(control.pending_outputs.record_completion(
+        &entry.call.name,
+        &entry.call.id,
+        &completion,
+    ));
     entry.state = CallState::Resolved;
     control.hooks.after_tool_use(
         &entry.call.name,

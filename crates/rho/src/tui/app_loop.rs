@@ -171,7 +171,7 @@ impl App {
                 || self.pending_syntax_warmup.is_some()
                 || self.pending_herdr_graphics.is_some()
                 || self.pending_github_pr.is_some()
-                || self.computer_connect_pending()
+                || self.computer_lifecycle_pending()
                 || self.prompt_history.load_pending()
                 || self.pending_session_title.is_some()
                 || self.pending_interactive_login.is_some()

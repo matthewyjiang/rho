@@ -34,7 +34,7 @@ This is a Rho tool-registration boundary, not an OS sandbox. An independently co
 | `rho computer status [--json]` | Detect the executable without starting it or inspecting the desktop |
 | `rho computer setup` | Show setup guidance outside the TUI |
 
-`/computer off` works during a model turn. It prevents later computer calls through that grant. It cannot retract input already handed to the OS, and an in-flight action may finish during driver cleanup. An old tool registration may remain visible until the runtime refreshes, but its calls fail closed.
+`/computer off` works during a model turn. It prevents later computer calls through that grant. It cannot retract input already handed to the OS, and an in-flight action may finish during driver cleanup. Status remains `closing (access revoked)` until cleanup completes; a new grant cannot start before that. The runtime removes the revoked tool at the next idle boundary, before another model request.
 
 CLI status is a local installation check, not a query of another running Rho session. A successful MCP handshake also does not prove that the OS has granted capture or input permissions.
 
@@ -74,4 +74,4 @@ The PID above is illustrative; the model must discover the real target. Availabl
 
 Actions are serialized within the managed session. Rho does not coordinate desktop ownership with other Rho processes or other computer-use clients. Failed or cancelled actions revoke the grant because their effects may be uncertain; the model cannot reconnect itself or automatically replay an input action. The user must explicitly enable access again.
 
-Supported screenshot assets from computer calls become model-visible image input, while ordinary MCP assets remain presentation-only. The existing MCP retained-image budget applies; omitted images are described in the tool output rather than silently presented as successful visual observations.
+Supported typed image content from computer calls becomes model-visible image input, while ordinary MCP output remains presentation-only. Model observations preserve the original payloads independently of the preview card's image selection and size budget. A screenshot omitted from the preview can still reach the model; unsupported image formats are identified in the text output. Provider image limits still apply.
