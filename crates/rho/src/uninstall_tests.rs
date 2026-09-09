@@ -98,7 +98,13 @@ fn only_default_script_location_authorizes_executable_removal() {
 fn refuses_root_relative_traversal_and_wrong_target_types() {
     let temp = tempfile::tempdir().unwrap();
     let home = fs::canonicalize(temp.path()).unwrap();
-    for path in [PathBuf::from("relative/.rho"), home.join("../.rho")] {
+    // Windows verbatim (`\\?\`) join pops `..` instead of keeping ParentDir.
+    let traversal = PathBuf::from(if cfg!(windows) {
+        r"C:\Users\foo\..\bar"
+    } else {
+        "/home/foo/../.rho"
+    });
+    for path in [PathBuf::from("relative/.rho"), traversal] {
         assert!(validate_path(&path).is_err(), "{path:?}");
     }
     let root = home.ancestors().last().unwrap();
