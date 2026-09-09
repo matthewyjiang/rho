@@ -9,7 +9,7 @@
 // shipping server still uses it.
 #![expect(deprecated)]
 
-use std::{collections::BTreeMap, path::Path, sync::Arc};
+use std::{collections::BTreeMap, path::Path, process::Stdio, sync::Arc};
 
 use anyhow::{bail, Context};
 use http::{HeaderName, HeaderValue};
@@ -317,7 +317,11 @@ async fn establish_session(
             // Start from the shared sanitized base. Servers opt into all other
             // inherited variables through `env_from_env`.
             apply_stdio_environment(&mut command, env, env_from_env)?;
-            let transport = TokioChildProcess::new(command)
+            // Child diagnostics must never write over the interactive terminal.
+            // MCP protocol logging and connection errors use host-owned reporting.
+            let (transport, _) = TokioChildProcess::builder(command)
+                .stderr(Stdio::null())
+                .spawn()
                 .with_context(|| format!("failed to spawn MCP server `{identity}`"))?;
             Ok(handler.serve(transport).await?)
         }

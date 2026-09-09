@@ -2,7 +2,7 @@
 
 use std::{fs, os::unix::fs::PermissionsExt};
 
-use anyhow::Result;
+use anyhow::{ensure, Result};
 
 use super::{SETTLE, STARTUP, STREAM};
 use crate::{
@@ -29,6 +29,12 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
             text: "Status: off",
             timeout: SETTLE,
         },
+        Step::Custom(|harness| {
+            if cfg!(target_os = "linux") {
+                harness.wait_for_text("DISPLAY is unset or empty", SETTLE)?;
+            }
+            Ok(())
+        }),
         Step::SubmitText("/computer on"),
         Step::WaitText {
             text: "the computer tool is available for the next turn",
@@ -75,11 +81,22 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
             timeout: SETTLE,
         },
         Step::ExitCommand,
+        // Check the entire stream, including output a later redraw erased.
+        Step::Custom(|harness| {
+            ensure!(
+                !harness
+                    .raw_output()
+                    .windows(b"fixture-cua-stderr".len())
+                    .any(|window| window == b"fixture-cua-stderr"),
+                "driver stderr leaked into the terminal"
+            );
+            Ok(())
+        }),
     ],
     /*smoke*/ false,
 )
 .with_setup(setup_driver)
-.with_env(&[("PATH", "")]);
+.with_env(&[("PATH", ""), ("DISPLAY", "")]);
 
 pub(super) const COMPUTER_PLAN_SCENARIO: Scenario = Scenario::new(
     "computer_plan_denied",
@@ -154,6 +171,7 @@ fn setup_driver(home: &IsolatedHome) -> Result<()> {
         &path,
         r##"#!/usr/bin/python3
 import json, sys
+print('fixture-cua-stderr startup notice', file=sys.stderr, flush=True)
 for line in sys.stdin:
     request = json.loads(line)
     if 'id' not in request:
@@ -162,6 +180,7 @@ for line in sys.stdin:
     if method == 'initialize':
         result = {'protocolVersion': request['params']['protocolVersion'], 'capabilities': {'tools': {}}, 'serverInfo': {'name': 'fake-cua', 'version': '1'}}
     elif method == 'tools/list':
+        print('fixture-cua-stderr discovery warning', file=sys.stderr, flush=True)
         result = {'tools': [{'name': 'get_window_state', 'description': 'fixture observation', 'inputSchema': {'type': 'object'}}]}
     elif method == 'ping':
         result = {}

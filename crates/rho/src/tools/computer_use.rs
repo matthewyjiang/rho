@@ -385,6 +385,16 @@ pub(crate) fn detect_driver() -> Option<PathBuf> {
     )
 }
 
+/// Read-only environment diagnostic, not a desktop permission probe.
+pub(crate) fn desktop_warning() -> Option<&'static str> {
+    if cfg!(target_os = "linux") && std::env::var_os("DISPLAY").is_none_or(|value| value.is_empty())
+    {
+        Some("DISPLAY is unset or empty; Cua's X11 overlay cannot connect. A Wayland session may still be available, but desktop access has not been verified. Launch Rho from your desktop session with its display environment; do not guess a DISPLAY value.")
+    } else {
+        None
+    }
+}
+
 fn retained_task<T: Clone + Send + Sync + 'static>(
     future: impl std::future::Future<Output = anyhow::Result<T>> + Send + 'static,
 ) -> Task<T> {

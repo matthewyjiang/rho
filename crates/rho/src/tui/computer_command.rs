@@ -1,7 +1,9 @@
 //! Explicit desktop access, kept separate from ordinary MCP configuration.
 
 use crate::app::interactive_runtime::ComputerUseUpdate;
-use crate::tools::computer_use::{ComputerUseControl, ComputerUseSession, ComputerUseStatus};
+use crate::tools::computer_use::{
+    desktop_warning, ComputerUseControl, ComputerUseSession, ComputerUseStatus,
+};
 
 use super::{App, CommandInvocation, Entry, InteractiveRuntime};
 
@@ -35,6 +37,9 @@ impl App {
                 self.insert_entry(&Entry::Notice(
                     "computer use enabled for this session: Cua Driver can access the local desktop, including signed-in apps. This grants computer actions without per-action Rho approval, including supervised mode. Captured images are sent to your model provider and saved in session history. /computer off revokes access".into(),
                 ));
+                if let Some(warning) = desktop_warning() {
+                    self.insert_entry(&Entry::Notice(format!("warning: {warning}")));
+                }
                 self.set_status(
                     "connecting computer use through Cua Driver; /computer off cancels",
                 );
@@ -99,6 +104,9 @@ impl App {
         self.insert_entry(&Entry::Notice(format!(
             "Computer use, powered by Cua Driver\nStatus: {status}\nDriver: {driver}\nConnection does not verify desktop permissions. /computer on grants this session access to the local desktop; /computer off revokes it"
         )));
+        if let Some(warning) = desktop_warning() {
+            self.insert_entry(&Entry::Notice(format!("warning: {warning}")));
+        }
         if let Some(error) = self
             .computer_use
             .as_ref()

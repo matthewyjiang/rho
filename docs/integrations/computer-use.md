@@ -50,6 +50,10 @@ Rho does not install or upgrade the driver, change OS permissions, select unrest
 
 On Linux, the driver child receives the available desktop connection variables such as `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `XAUTHORITY`, and `DBUS_SESSION_BUS_ADDRESS`. Other process environment filtering remains unchanged. A headless shell or missing OS permissions may allow discovery but prevent actual observation or input.
 
+When Linux `DISPLAY` is unset or empty, `/computer on`, `/computer status`, and `rho computer status` warn that the X11 overlay cannot connect. CLI JSON includes a nullable `desktop_warning` field. This check does not rule out a Wayland session or verify desktop permissions. Launch Rho from the intended desktop session with its environment rather than guessing a display value.
+
+Driver stderr is discarded so startup notices and warnings cannot overwrite the TUI. MCP protocol logging and connection errors still use Rho's reporting path.
+
 ## Tool behavior
 
 The model first requests the supported operations:
