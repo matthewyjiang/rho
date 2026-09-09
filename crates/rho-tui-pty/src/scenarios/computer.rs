@@ -98,7 +98,7 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
             timeout: STREAM,
         },
         Step::WaitText {
-            text: "computer access granted · /computer off",
+            text: "computer use enabled",
             timeout: SETTLE,
         },
         Step::SubmitText("fixture delay"),

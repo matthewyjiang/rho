@@ -77,17 +77,13 @@ impl App {
                 let labels = match status {
                     ComputerUseStatus::Off => return None,
                     ComputerUseStatus::Installing => [
-                        "computer driver installing · access off · /computer off",
-                        "driver installing · /computer off",
+                        "computer driver installing · access off",
+                        "driver installing",
                     ],
-                    ComputerUseStatus::Connecting => [
-                        "computer access granted · connecting · /computer off",
-                        "computer connecting · /computer off",
-                    ],
-                    ComputerUseStatus::Connected => [
-                        "computer access granted · /computer off",
-                        "computer on · /computer off",
-                    ],
+                    ComputerUseStatus::Connecting => {
+                        ["computer use connecting", "computer connecting"]
+                    }
+                    ComputerUseStatus::Connected => ["computer use enabled", "computer enabled"],
                     ComputerUseStatus::Closing => [
                         "computer access off · disconnecting",
                         "computer disconnecting",
