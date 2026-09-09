@@ -123,6 +123,20 @@ impl App {
                 "/computer setup installs the missing driver after separate consent".into()
             });
         lines.extend(indented_wrapped_lines(&path, 0, width, Theme::dim()));
+        lines.extend(indented_wrapped_lines(
+            "cua-driver doctor  installation diagnostics",
+            0,
+            width,
+            Theme::dim(),
+        ));
+        if cfg!(target_os = "macos") {
+            lines.extend(indented_wrapped_lines(
+                "cua-driver permissions status  check permissions after the daemon starts",
+                0,
+                width,
+                Theme::dim(),
+            ));
+        }
         lines.push(Line::default());
         lines.push(heading_with_status("Access and privacy", "", width));
         for note in [

@@ -11,7 +11,7 @@ Computer use starts off. Enable it explicitly inside an interactive Rho session:
 
 `/computer setup` detects the driver, offers a separately authorized installation if needed, then asks for session desktop access and verifies the connection. An existing driver skips installation. `/computer on` asks you to review the access scope and explicitly allow it for this session before connecting. Cancel is selected by default; cancelling does not start the driver or grant access. If the terminal clips the confirmation, Rho blocks the grant and asks you to enlarge it so the full disclosure is visible.
 
-Connection runs in the background so the composer remains usable. Once connected, the model receives a `computer` tool for discovering and calling supported Cua operations. Use an image-capable model for visual tasks. A persistent indicator near the composer shows connecting, driver-connected, or access-off/disconnecting state, even as other status messages change.
+Connection runs in the background so the composer remains usable. Once connected, the model receives a `computer` tool for discovering and calling supported Cua operations. Use an image-capable model for visual tasks. A persistent indicator near the composer shows connecting, enabled, or access-off/disconnecting state, even as other status messages change. Successful connections do not add transcript notices; `/computer` holds connection details, permission status, and diagnostic commands. Errors and actionable warnings still appear in the transcript.
 
 ## Access and privacy
 

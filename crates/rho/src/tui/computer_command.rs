@@ -145,10 +145,6 @@ impl App {
             )));
             return;
         }
-        self.insert_entry(&Entry::Notice(
-            "computer access granted; connecting to Cua Driver. /computer off revokes access"
-                .into(),
-        ));
         if let Some(warning) = desktop_warning() {
             self.insert_entry(&Entry::Notice(format!("warning: {warning}")));
         }
@@ -199,11 +195,8 @@ impl App {
         let setup_changed = self.poll_computer_installation(agent);
         match agent.reconcile_computer_use().await {
             Ok(ComputerUseUpdate::Unchanged) => return setup_changed,
-            Ok(ComputerUseUpdate::Connected) => {
-                self.insert_entry(&Entry::Notice("computer use connected through Cua Driver; the computer tool is available for the next turn".into()));
-                self.set_status("computer use connected");
-                self.insert_entry(&Entry::Notice("driver handshake verified; OS desktop capture and input permissions are not checked. Use cua-driver doctor for diagnostics; on macOS, use cua-driver permissions status after the daemon starts".into()));
-            }
+            // The persistent indicator shows success without transcript chatter.
+            Ok(ComputerUseUpdate::Connected) => {}
             Ok(ComputerUseUpdate::ConnectionFailed(error)) => {
                 self.insert_entry(&Entry::Error(format!(
                     "could not connect computer use: {error}"

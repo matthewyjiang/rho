@@ -83,7 +83,7 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
         },
         Step::Key(Key::Char('g')),
         Step::WaitText {
-            text: "the computer tool is available for the next turn",
+            text: "computer use enabled",
             timeout: STARTUP,
         },
         Step::SubmitText("/computer status"),
