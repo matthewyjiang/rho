@@ -72,6 +72,7 @@ pub(super) struct InlineChoiceModal {
 
 #[derive(Debug)]
 pub(super) enum InlineChoicePending {
+    ComputerAccess,
     CredentialStore {
         next: super::login::StoreChoiceNext,
     },
@@ -106,7 +107,9 @@ impl InlineChoiceModal {
     pub(super) fn blocks_auto_continue(&self) -> bool {
         matches!(
             self.pending,
-            InlineChoicePending::ContextHandoff(_) | InlineChoicePending::ConfirmSend(_)
+            InlineChoicePending::ContextHandoff(_)
+                | InlineChoicePending::ConfirmSend(_)
+                | InlineChoicePending::ComputerAccess
         )
     }
 }
@@ -185,20 +188,18 @@ impl InlineChoice {
 
 pub(super) fn inline_choice_lines(choice: &InlineChoice, width: usize) -> Vec<Line<'static>> {
     let width = width.max(1);
-    let mut lines = vec![
-        styled_line(
-            truncate_one_line(&choice.title, width),
-            width,
-            Theme::input_prompt(),
-            LineFill::Natural,
-        ),
-        styled_line(
-            truncate_one_line(&choice.description, width),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ),
-    ];
+    let mut lines = vec![styled_line(
+        truncate_one_line(&choice.title, width),
+        width,
+        Theme::input_prompt(),
+        LineFill::Natural,
+    )];
+    lines.extend(super::panel_text::indented_wrapped_lines(
+        &choice.description,
+        0,
+        width,
+        Theme::dim(),
+    ));
 
     for (index, option) in choice.options.iter().enumerate() {
         let selected = index == choice.active && option.available;

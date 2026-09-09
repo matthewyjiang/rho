@@ -26,6 +26,9 @@ use super::{
 
 mod native;
 mod policy;
+mod recovery;
+mod setup;
+use recovery::{Revocation, RevokeOnDrop};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ComputerUseStatus {
@@ -61,6 +64,10 @@ impl ComputerUseControl {
     pub(crate) fn terminal_error(&self) -> Option<String> {
         self.0.terminal_error()
     }
+
+    pub(crate) fn revocation_reason(&self) -> Option<String> {
+        self.0.revocation_reason()
+    }
 }
 
 struct Inner {
@@ -77,6 +84,7 @@ type Task<T> = Shared<BoxFuture<'static, Result<T, Arc<str>>>>;
 enum State {
     Off {
         error: Option<Arc<str>>,
+        revocation: Option<Revocation>,
     },
     Connecting {
         grant: Arc<CancellationToken>,
@@ -89,6 +97,7 @@ enum State {
     Closing {
         grant: Arc<CancellationToken>,
         task: Task<()>,
+        revocation: Option<Revocation>,
     },
 }
 
@@ -109,7 +118,10 @@ impl ComputerUseSession {
                 driver,
                 max_output_bytes,
                 cwd,
-                state: Mutex::new(State::Off { error: None }),
+                state: Mutex::new(State::Off {
+                    error: None,
+                    revocation: None,
+                }),
                 operation: tokio::sync::Mutex::new(()),
             }),
         }
@@ -134,10 +146,6 @@ impl ComputerUseSession {
             });
         }
         detect_driver()
-    }
-
-    pub(crate) fn setup_guidance() -> &'static str {
-        "Install Cua Driver separately using https://docs.cua.ai/ and make cua-driver available on PATH or at ~/.local/bin/cua-driver. Grant required desktop permissions in Cua's setup. Rho does not install, update, or bypass OS permissions. Use /computer on to grant desktop access for this session, including signed-in apps. Screenshots are sent to the model provider and persisted in session history."
     }
 
     /// Start a host-authorized connection without blocking the UI. The manager
@@ -215,6 +223,7 @@ impl ComputerUseSession {
             Err(error) => {
                 *state = State::Off {
                     error: Some(error.clone()),
+                    revocation: None,
                 };
                 Err(anyhow!(error.to_string()))
             }
@@ -227,7 +236,7 @@ impl ComputerUseSession {
     ) -> anyhow::Result<Arc<Connection>> {
         let driver = self
             .driver_path()
-            .ok_or_else(|| anyhow!(Self::setup_guidance()))?;
+            .ok_or_else(|| anyhow!("Cua Driver was not found; use /computer setup for installation and permission guidance"))?;
         let config = McpConfig {
             servers: BTreeMap::from([(
                 "cua".into(),
@@ -310,10 +319,14 @@ impl ComputerUseSession {
     }
 
     pub(crate) fn revoke(&self) {
-        self.revoke_grant(None);
+        self.revoke_grant(/*expected*/ None, /*revocation*/ None);
     }
 
-    fn revoke_grant(&self, expected: Option<&Arc<CancellationToken>>) {
+    fn revoke_grant(
+        &self,
+        expected: Option<&Arc<CancellationToken>>,
+        revocation: Option<Revocation>,
+    ) {
         let mut state = self.state();
         let grant = match &*state {
             State::Connecting { grant, .. } | State::Connected { grant, .. } => grant.clone(),
@@ -323,7 +336,13 @@ impl ComputerUseSession {
             return;
         }
         grant.cancel();
-        let previous = std::mem::replace(&mut *state, State::Off { error: None });
+        let previous = std::mem::replace(
+            &mut *state,
+            State::Off {
+                error: None,
+                revocation: None,
+            },
+        );
         let session = self.clone();
         let task = retained_task(async move {
             let connection = match previous {
@@ -341,12 +360,16 @@ impl ComputerUseSession {
             }
             Ok(())
         });
-        *state = State::Closing { grant, task };
+        *state = State::Closing {
+            grant,
+            task,
+            revocation,
+        };
     }
 
     pub(crate) async fn finish_closing(&self, wait: bool) {
         let (grant, task) = match &*self.state() {
-            State::Closing { grant, task } => (grant.clone(), task.clone()),
+            State::Closing { grant, task, .. } => (grant.clone(), task.clone()),
             _ => return,
         };
         let result = if wait {
@@ -356,18 +379,29 @@ impl ComputerUseSession {
         };
         if let Some(result) = result {
             let mut state = self.state();
-            if matches!(&*state, State::Closing { grant: current, .. } if Arc::ptr_eq(current, &grant))
-            {
-                *state = State::Off {
-                    error: result.err(),
-                };
+            match &mut *state {
+                State::Closing {
+                    grant: current,
+                    revocation,
+                    ..
+                } if Arc::ptr_eq(current, &grant) => {
+                    let revocation = revocation.take();
+                    *state = State::Off {
+                        error: result.err(),
+                        revocation,
+                    };
+                }
+                State::Off { .. }
+                | State::Connecting { .. }
+                | State::Connected { .. }
+                | State::Closing { .. } => {}
             }
         }
     }
 
     pub(crate) fn terminal_error(&self) -> Option<String> {
         match &*self.state() {
-            State::Off { error } => error.as_ref().map(ToString::to_string),
+            State::Off { error, .. } => error.as_ref().map(ToString::to_string),
             _ => None,
         }
     }
@@ -406,30 +440,6 @@ fn retained_task<T: Clone + Send + Sync + 'static>(
     }
     .boxed()
     .shared()
-}
-
-/// A cancelled/dropped action has an uncertain desktop effect. Fail closed and
-/// require a new user grant rather than let the next action race that effect.
-struct RevokeOnDrop {
-    session: ComputerUseSession,
-    grant: Arc<CancellationToken>,
-    armed: bool,
-}
-impl RevokeOnDrop {
-    fn new(session: ComputerUseSession, grant: Arc<CancellationToken>) -> Self {
-        Self {
-            session,
-            grant,
-            armed: true,
-        }
-    }
-}
-impl Drop for RevokeOnDrop {
-    fn drop(&mut self) {
-        if self.armed {
-            self.session.revoke_grant(Some(&self.grant));
-        }
-    }
 }
 
 #[cfg(test)]

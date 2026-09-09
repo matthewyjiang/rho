@@ -15,6 +15,7 @@ pub(crate) enum ComputerUseUpdate {
     Unchanged,
     Connected,
     ConnectionFailed(String),
+    Revoked(String),
 }
 
 impl InteractiveRuntime {
@@ -67,7 +68,9 @@ impl InteractiveRuntime {
         Ok(match connection_result {
             Some(Ok(())) if desired => ComputerUseUpdate::Connected,
             Some(Err(error)) => ComputerUseUpdate::ConnectionFailed(error.to_string()),
-            Some(Ok(())) | None => ComputerUseUpdate::Unchanged,
+            Some(Ok(())) | None => session
+                .take_revocation_notice()
+                .map_or(ComputerUseUpdate::Unchanged, ComputerUseUpdate::Revoked),
         })
     }
 
@@ -75,7 +78,12 @@ impl InteractiveRuntime {
         if let Some(session) = self.tools.computer_use() {
             session.revoke();
         }
-        self.reconcile_computer_use().await?;
+        match self.reconcile_computer_use().await? {
+            ComputerUseUpdate::Revoked(notice) => self.sessions.queue_notice(notice),
+            ComputerUseUpdate::Unchanged
+            | ComputerUseUpdate::Connected
+            | ComputerUseUpdate::ConnectionFailed(_) => {}
+        }
         Ok(())
     }
 }

@@ -101,6 +101,9 @@ impl App {
         if self.handle_limits_overlay_key(key, terminal) {
             return Ok(false);
         }
+        if self.handle_computer_overlay_key(key, terminal) {
+            return Ok(false);
+        }
         if self.handle_doctor_overlay_key(key, terminal) {
             return Ok(false);
         }

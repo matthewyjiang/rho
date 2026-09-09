@@ -56,6 +56,7 @@ impl InteractiveRuntime {
             ComputerUseUpdate::ConnectionFailed(error) => self
                 .sessions
                 .queue_notice(format!("could not connect computer use: {error}")),
+            ComputerUseUpdate::Revoked(notice) => self.sessions.queue_notice(notice),
         }
         self.runs.reset_display_committed();
         if let Some(source) = self.sessions.pending_replacement() {

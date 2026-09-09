@@ -26,7 +26,7 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
         },
         Step::SubmitText("/computer status"),
         Step::WaitText {
-            text: "Status: off",
+            text: "No desktop access granted",
             timeout: SETTLE,
         },
         Step::Custom(|harness| {
@@ -35,27 +35,89 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
             }
             Ok(())
         }),
+        Step::Key(Key::Esc),
+        Step::Resize { rows: 24, cols: 60 },
         Step::SubmitText("/computer on"),
+        Step::WaitText {
+            text: "Grant desktop access?",
+            timeout: SETTLE,
+        },
+        // Security disclosure must be visible before consent, even when wrapped.
+        Step::WaitText {
+            text: "supervised mode",
+            timeout: SETTLE,
+        },
+        Step::WaitText {
+            text: "history.",
+            timeout: SETTLE,
+        },
+        // Enter chooses the safe default, without starting a connection.
+        Step::Key(Key::Enter),
+        Step::SubmitText("/computer status"),
+        Step::WaitText {
+            text: "No desktop access granted",
+            timeout: SETTLE,
+        },
+        Step::Key(Key::Esc),
+        // A short split pane clips consent; its hidden grant shortcut must fail closed.
+        Step::Resize { rows: 8, cols: 60 },
+        Step::SubmitText("/computer on"),
+        Step::WaitText {
+            text: "Grant desktop access?",
+            timeout: SETTLE,
+        },
+        Step::Key(Key::Char('g')),
+        Step::WaitText {
+            text: "enlarge terminal",
+            timeout: SETTLE,
+        },
+        Step::Key(Key::Esc),
+        Step::Resize {
+            rows: 40,
+            cols: 120,
+        },
+        Step::SubmitText("/computer on"),
+        Step::WaitText {
+            text: "Grant desktop access?",
+            timeout: SETTLE,
+        },
+        Step::Key(Key::Char('g')),
         Step::WaitText {
             text: "the computer tool is available for the next turn",
             timeout: STARTUP,
         },
         Step::SubmitText("/computer status"),
         Step::WaitText {
-            text: "Status: connected",
+            text: "Desktop access granted for this session",
             timeout: SETTLE,
         },
+        Step::Key(Key::Enter),
         Step::SubmitText("fixture tool available computer"),
         Step::WaitText {
             text: "tool available computer: true",
             timeout: STREAM,
+        },
+        Step::WaitText {
+            text: "computer access granted · /computer off",
+            timeout: SETTLE,
         },
         Step::SubmitText("fixture delay"),
         Step::WaitText {
             text: "partial assistant before cancellation",
             timeout: STREAM,
         },
-        Step::SubmitText("/computer off"),
+        Step::SubmitText("/computer"),
+        Step::WaitText {
+            text: "Desktop access granted for this session",
+            timeout: SETTLE,
+        },
+        // Revoke directly without dismissing the dashboard or interrupting.
+        Step::Key(Key::Char('r')),
+        Step::WaitText {
+            text: "Access revoked; driver connection is closing",
+            timeout: SETTLE,
+        },
+        Step::Key(Key::Esc),
         // Local notices wait for an open assistant message to finish. Input
         // order still applies off before Esc; assert the durable notice after
         // the stream boundary rather than racing the temporary status toast.
@@ -77,8 +139,30 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
         },
         Step::SubmitText("/computer status"),
         Step::WaitText {
-            text: "Status: off",
+            text: "No desktop access granted",
             timeout: SETTLE,
+        },
+        Step::Resize { rows: 18, cols: 60 },
+        // Wait for the narrower viewport before sending a scroll key.
+        Step::WaitTextGone {
+            text: "/computer setup",
+            timeout: SETTLE,
+        },
+        Step::Key(Key::End),
+        Step::WaitText {
+            text: "/computer setup",
+            timeout: SETTLE,
+        },
+        Step::Key(Key::Home),
+        Step::WaitText {
+            text: "No desktop access granted",
+            timeout: SETTLE,
+        },
+        Step::Key(Key::Esc),
+        Step::SubmitText("fixture overlay closed"),
+        Step::WaitText {
+            text: "fixture response: fixture overlay closed",
+            timeout: STREAM,
         },
         Step::ExitCommand,
         // Check the entire stream, including output a later redraw erased.
@@ -136,6 +220,11 @@ pub(super) const COMPUTER_FAILURE_SCENARIO: Scenario = Scenario::new(
             timeout: STARTUP,
         },
         Step::SubmitText("/computer on"),
+        Step::WaitText {
+            text: "Grant desktop access?",
+            timeout: SETTLE,
+        },
+        Step::Key(Key::Char('g')),
         Step::WaitText {
             text: "could not connect computer use:",
             timeout: STARTUP,

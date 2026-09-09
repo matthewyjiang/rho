@@ -139,8 +139,9 @@ impl Tool for ComputerTool {
                     };
                     // Preserve MCP output metadata and assets without another
                     // rendering or RPC implementation.
-                    if result.is_ok() {
-                        guard.armed = false;
+                    match &result {
+                        Ok(_) => guard.armed = false,
+                        Err(error) => guard.record_error(error),
                     }
                     result
                 }

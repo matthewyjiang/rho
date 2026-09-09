@@ -49,6 +49,7 @@ async fn disconnect_stops_pending_activation() {
         .unwrap();
     session.disconnect().await;
     assert_eq!(session.status(), ComputerUseStatus::Off);
+    assert_eq!(session.revocation_reason(), None);
     assert_eq!(session.terminal_error(), None);
     let mut buffer = Vec::new();
     tokio::time::timeout(
@@ -181,6 +182,10 @@ async fn cancellation_revokes_the_grant_and_closes_the_owned_transport() {
         ToolErrorKind::Cancelled
     );
     assert_eq!(session.status(), ComputerUseStatus::Closing);
+    let reason = session.revocation_reason();
+    assert!(reason.is_some());
+    assert!(session.take_revocation_notice().is_some());
+    assert_eq!(session.take_revocation_notice(), None);
     assert_eq!(
         tool.call(invocation(json!({"action":"list"})), context())
             .await
@@ -188,6 +193,11 @@ async fn cancellation_revokes_the_grant_and_closes_the_owned_transport() {
             .kind(),
         ToolErrorKind::Execution
     );
+    session.disconnect().await;
+    assert_eq!(session.revocation_reason(), reason);
+    assert_eq!(session.take_revocation_notice(), None);
+    session.connect().await.unwrap();
+    assert_eq!(session.revocation_reason(), None);
     session.disconnect().await;
 }
 

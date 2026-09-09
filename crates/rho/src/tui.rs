@@ -37,6 +37,7 @@ mod composer;
 mod composer_attachments;
 mod composer_chrome;
 mod computer_command;
+mod computer_overlay;
 mod config_actions;
 mod config_editor;
 mod config_input;

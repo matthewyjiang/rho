@@ -17,7 +17,7 @@ pub(super) const FOOTER_SEPARATOR: &str = " · ";
 pub(super) enum ComposerDividerSlot {
     /// Above the composer. May show shell mode and advisor captions.
     Top,
-    /// Below the composer. Rule only.
+    /// Below the composer. May show persistent access state.
     Bottom,
 }
 

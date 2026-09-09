@@ -375,6 +375,7 @@ impl App {
             | ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
             | ComposerMode::Doctor(_)
+            | ComposerMode::Computer(_)
             | ComposerMode::Side
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
@@ -436,6 +437,7 @@ impl App {
         self.clamp_overlay_detail_scroll(terminal);
         self.clamp_limits_overlay_scroll(terminal);
         self.clamp_doctor_overlay_scroll(terminal);
+        self.clamp_computer_overlay_scroll(terminal);
         self.clear_selections();
         self.clear_hovered_copy_buttons();
         self.subagent_panel.clear_pointer_state();

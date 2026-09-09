@@ -16,10 +16,19 @@ impl App {
 
         match outcome {
             InlineChoiceKeyOutcome::Selected(value) => {
+                if value == "grant"
+                    && matches!(self.input_ui.composer(), ComposerMode::InlineChoice(modal) if matches!(modal.pending, InlineChoicePending::ComputerAccess))
+                    && !self.computer_consent_visible(terminal)
+                {
+                    return Ok(true);
+                }
                 let ComposerMode::InlineChoice(modal) = self.input_ui.take_composer() else {
                     unreachable!("inline choice checked above");
                 };
                 match modal.pending {
+                    InlineChoicePending::ComputerAccess => {
+                        self.confirm_computer_access(&value, agent)
+                    }
                     InlineChoicePending::CredentialStore { next } => {
                         self.submit_credential_store_choice(modal.choice, next, terminal, agent)
                             .await?;
@@ -80,6 +89,9 @@ impl App {
                     unreachable!("inline choice checked above");
                 };
                 match modal.pending {
+                    InlineChoicePending::ComputerAccess => {
+                        self.confirm_computer_access("cancel", agent)
+                    }
                     InlineChoicePending::CredentialStore { .. }
                     | InlineChoicePending::ClaudeCodeLogin
                     | InlineChoicePending::ClaudeCodeRelogin

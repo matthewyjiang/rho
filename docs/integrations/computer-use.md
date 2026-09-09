@@ -9,7 +9,9 @@ Computer use starts off. Enable it explicitly inside an interactive Rho session:
 /computer on
 ```
 
-Connection runs in the background so the composer remains usable. Once connected, the model receives a `computer` tool for discovering and calling supported Cua operations. Use an image-capable model for visual tasks.
+`/computer setup` shows driver detection, the setup guide, permission checks, and the next step. `/computer on` asks you to review the access scope and explicitly allow it for this session before connecting. Cancel is selected by default; cancelling does not start the driver or grant access. If the terminal clips the confirmation, Rho blocks the grant and asks you to enlarge it so the full disclosure is visible.
+
+Connection runs in the background so the composer remains usable. Once connected, the model receives a `computer` tool for discovering and calling supported Cua operations. Use an image-capable model for visual tasks. A persistent indicator near the composer shows connecting, driver-connected, or access-off/disconnecting state, even as other status messages change.
 
 ## Access and privacy
 
@@ -27,9 +29,9 @@ This is a Rho tool-registration boundary, not an OS sandbox. An independently co
 
 | Command | Effect |
 | --- | --- |
-| `/computer` or `/computer status` | Show this session's state and driver detection without connecting |
-| `/computer setup` | Show setup and privacy guidance without installing anything |
-| `/computer on` | Grant desktop access for this session and connect |
+| `/computer` or `/computer status` | Open the dashboard with session state, a direct revoke action, driver detection, and access details |
+| `/computer setup` | Detect the driver and show installation, permission, and privacy guidance without starting it |
+| `/computer on` | Review and confirm desktop access for this session, then connect |
 | `/computer off` or `/computer stop` | Revoke access, cancel pending connection or computer actions, and disconnect |
 | `rho computer status [--json]` | Detect the executable without starting it or inspecting the desktop |
 | `rho computer setup` | Show setup guidance outside the TUI |
@@ -37,6 +39,8 @@ This is a Rho tool-registration boundary, not an OS sandbox. An independently co
 `/computer off` works during a model turn. It prevents later computer calls through that grant. It cannot retract input already handed to the OS, and an in-flight action may finish during driver cleanup. Status remains `closing (access revoked)` until cleanup completes; a new grant cannot start before that. The runtime removes the revoked tool at the next idle boundary, before another model request.
 
 CLI status is a local installation check, not a query of another running Rho session. A successful MCP handshake also does not prove that the OS has granted capture or input permissions.
+
+The interactive dashboard uses the same overlay as `/limits` and `/doctor`, without adding status output to the transcript. Session state and available actions appear before diagnostics and privacy details. Scroll with arrow keys, PgUp/PgDn, Home/End, or the mouse wheel; Enter or Esc closes it. It can be opened during a running turn, and closing it does not interrupt the model. Press `r` to revoke access immediately without another confirmation. Access still requires `/computer on` and explicit confirmation.
 
 ## Driver setup
 
@@ -76,6 +80,6 @@ It then calls the exact operation with arguments matching that schema:
 
 The PID above is illustrative; the model must discover the real target. Available operations vary by driver version and platform. Rho only exposes an explicit set of observation, input, and navigation operations. Unknown operations and driver administration, recording, permission changes, and session lifecycle controls are excluded. Calls cannot supply another session's identifier.
 
-Actions are serialized within the managed session. Rho does not coordinate desktop ownership with other Rho processes or other computer-use clients. Failed or cancelled actions revoke the grant because their effects may be uncertain; the model cannot reconnect itself or automatically replay an input action. The user must explicitly enable access again.
+Actions are serialized within the managed session. Rho does not coordinate desktop ownership with other Rho processes or other computer-use clients. Failed or cancelled actions revoke the grant because their effects may be uncertain; the model cannot reconnect itself or automatically replay an input action. Rho reports the revocation at the next idle boundary and retains its reason in the dashboard until a new grant. Check the desktop for partial effects before explicitly enabling access again.
 
 Supported typed image content from computer calls becomes model-visible image input, while ordinary MCP output remains presentation-only. Model observations preserve the original payloads independently of the preview card's image selection and size budget. A screenshot omitted from the preview can still reach the model; unsupported image formats are identified in the text output. Provider image limits still apply.
