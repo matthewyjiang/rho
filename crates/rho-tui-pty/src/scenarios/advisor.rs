@@ -385,6 +385,13 @@ pub(super) const ADVISOR_REVIEW_STEPS: &[Step] = &[
         text: "advisor consulted (advice)",
         timeout: STREAM,
     },
+    // The advice can render before the turn finishes. Wait for its completion
+    // receipt so the failure prompt starts a new turn instead of racing into
+    // steering.
+    Step::WaitText {
+        text: "Worked for",
+        timeout: STREAM,
+    },
     Step::Phase("advisor_failure_stays_a_tool_error"),
     Step::SubmitText("fixture advisor failure"),
     Step::WaitText {
