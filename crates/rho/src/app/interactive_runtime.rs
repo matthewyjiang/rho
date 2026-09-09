@@ -116,6 +116,7 @@ pub(crate) struct InteractiveRuntime {
     pending_persistence_checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
     /// True after the current provider completes a live turn on the current history.
     live_context_warm: bool,
+    computer_context: Option<String>,
     /// Advertised tool specs last submitted on a provider request.
     cached_tool_specs: Vec<rho_sdk::model::ToolSpec>,
     /// Sticky until the TUI samples it: the tool list now differs from the last
@@ -282,6 +283,7 @@ impl InteractiveRuntime {
 
     fn invalidate_live_context(&mut self) {
         self.live_context_warm = false;
+        self.computer_context = None;
     }
 
     pub(crate) fn take_pending_omission(
@@ -429,6 +431,10 @@ impl InteractiveRuntime {
         // checkpoints before outcome() drains the remaining SDK events unseen.
         while self.next_event().await.is_some() {}
         let finished = self.runs.finish().await;
+        if !matches!(&finished, Ok(finished) if finished.outcome.is_ok()) {
+            // Cancellation can acknowledge a boundary without applying it.
+            self.computer_context = None;
+        }
         if let Some(error) = self.pending_persistence_error.take() {
             self.sessions.abandon_turn_display();
             self.tools.checkpoint_tracker().discard_turn();
@@ -528,6 +534,8 @@ impl InteractiveRuntime {
         bind_subagent_parent(&self.tools, &session_id, None);
         self.session_writes.clear();
         self.invalidate_live_context();
+        self.restore_computer_preference(computer::ComputerPreferenceSource::NewSession)
+            .await;
         Ok(())
     }
 
@@ -560,6 +568,8 @@ impl InteractiveRuntime {
         bind_subagent_parent(&self.tools, self.sessions.session().id(), Some(&storage));
         self.sessions.set_resumed_storage(storage);
         self.invalidate_live_context();
+        self.restore_computer_preference(computer::ComputerPreferenceSource::SavedSession)
+            .await;
         Ok(())
     }
 
@@ -627,6 +637,8 @@ impl InteractiveRuntime {
         previous_runtime.shutdown();
         self.invalidate_live_context();
         self.refresh_context_usage();
+        self.restore_computer_preference(computer::ComputerPreferenceSource::SavedSession)
+            .await;
         Ok(())
     }
 
@@ -874,6 +886,7 @@ impl InteractiveRuntime {
         self.sessions
             .replace_session(replacement_session, resume_omission);
         self.install_rebuilt_permission(permission.pending);
+        self.computer_context = None;
         previous_runtime.shutdown();
         Ok(())
     }

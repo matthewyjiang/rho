@@ -70,6 +70,10 @@ impl InteractiveRuntime {
                 message: error.to_string(),
             })?;
         }
+        self.refresh_computer_context()
+            .map_err(|error| Error::Persistence {
+                message: error.to_string(),
+            })?;
         self.sessions
             .session()
             .set_boundary_inputs(boundary_inputs)?;

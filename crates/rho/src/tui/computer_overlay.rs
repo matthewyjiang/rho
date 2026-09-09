@@ -143,6 +143,7 @@ impl App {
             "Enabling grants local desktop access, including signed-in apps.",
             "No per-action Rho approval, including in supervised mode.",
             "Captured images go to your model provider and session history.",
+            "This machine saves each session's access separately. Explicit on/off also sets the default for new sessions. Resumed sessions keep their own choice.",
         ] {
             lines.extend(indented_wrapped_lines(note, 0, width, Theme::text()));
         }
@@ -219,14 +220,14 @@ impl App {
             return false;
         }
         if key.code == crossterm::event::KeyCode::Char('r') && key.modifiers.is_empty() {
-            if let Some(control) = self.computer_use.as_ref().filter(|control| {
+            if self.computer_use.as_ref().is_some_and(|control| {
                 control.installation_pending()
                     || matches!(
                         control.status(),
                         ComputerUseStatus::Connecting | ComputerUseStatus::Connected
                     )
             }) {
-                control.revoke();
+                self.revoke_computer_preference();
                 self.show_computer_off();
             }
             return true;

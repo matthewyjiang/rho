@@ -142,6 +142,14 @@ fn computer_use_authorization_and_revocation() {
     }
 }
 
+// Covers: real restarts restore consent, restricted startup cannot use it, and
+// during-turn off persists revocation for the next process.
+// Owner: interactive TUI and machine-local preference lifecycle.
+#[test]
+fn computer_preference_survives_restart_and_respects_revocation() {
+    assert_pass("computer_preference");
+}
+
 // Covers: a turn held during MCP connect must start on its own once the
 // servers settle, without a second Enter.
 // Owner: interactive TUI

@@ -1,7 +1,9 @@
 //! Explicit desktop access, kept separate from ordinary MCP configuration.
 
 use crate::app::interactive_runtime::ComputerUseUpdate;
-use crate::tools::computer_use::{desktop_warning, ComputerUseSession, ComputerUseStatus};
+use crate::tools::computer_use::{
+    desktop_warning, ComputerUseControl, ComputerUsePreference, ComputerUseStatus,
+};
 
 use super::{
     App, CommandInvocation, ComposerMode, Entry, InlineChoice, InlineChoiceModal,
@@ -17,7 +19,10 @@ impl App {
         invocation: CommandInvocation,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        self.computer_use = agent.computer_use().map(ComputerUseSession::control);
+        self.computer_use = Some(ComputerUseControl::new(
+            agent.computer_use().cloned(),
+            agent.session_id().clone(),
+        ));
         match invocation.args.trim() {
             "setup" => self.setup_computer(agent)?,
             "on" => {
@@ -44,6 +49,7 @@ impl App {
                 self.prompt_computer_access()?;
             }
             "off" | "stop" => {
+                self.revoke_computer_preference();
                 if let Err(error) = agent.disable_computer_use().await {
                     self.insert_entry(&Entry::Error(format!(
                         "could not refresh computer tool registration: {error}"
@@ -59,10 +65,10 @@ impl App {
     fn prompt_computer_access(&mut self) -> anyhow::Result<()> {
         let choice = InlineChoice::new(
             "Grant desktop access?",
-            "Rho can control your local desktop, including signed-in apps. No per-action Rho approval, even in supervised mode. Captured images go to your model provider and session history.",
+            "Rho can control your local desktop, including signed-in apps. No per-action Rho approval, even in supervised mode. Captured images go to your model provider and session history. Save access for this session and default new sessions to on, on this machine. /computer off saves off for this session and the new-session default. Other saved sessions keep their own choice.",
             vec![
                 InlineChoiceOption::available("cancel", 'c', "Cancel", "Keep access off"),
-                InlineChoiceOption::available("grant", 'g', "Grant access", "This session only; /computer off revokes"),
+                InlineChoiceOption::available("grant", 'g', "Grant access", "Save session on and new-session default on"),
             ],
         )?;
         self.input_ui
@@ -80,11 +86,7 @@ impl App {
     ) -> anyhow::Result<()> {
         match invocation.args.trim() {
             "off" | "stop" => {
-                // Revoke the shared handle immediately. The old registered tool
-                // fails closed; the runtime can refresh its registry when idle.
-                if let Some(session) = &self.computer_use {
-                    session.revoke();
-                }
+                self.revoke_computer_preference();
                 self.show_computer_off();
             }
             "on" | "setup" => self.set_status(
@@ -117,6 +119,25 @@ impl App {
         self.set_status("computer use off");
     }
 
+    /// Revoke before touching disk, even if the saved preference cannot be changed.
+    pub(super) fn revoke_computer_preference(&mut self) {
+        if let Some(control) = &self.computer_use {
+            control.revoke();
+        }
+        let result = match &self.computer_use {
+            Some(control) => control.save_preference(ComputerUsePreference::Disabled),
+            None => ComputerUsePreference::Disabled.save(),
+        };
+        match result {
+            Ok(()) => self.insert_entry(&Entry::Notice(
+                "computer use saved off for this session and new sessions on this machine".into(),
+            )),
+            Err(error) => self.insert_entry(&Entry::Error(format!(
+                "could not save computer use preference: {error}; access is revoked now, but saved session access or the new-session default may still be on"
+            ))),
+        }
+    }
+
     fn can_grant_computer_access(&mut self, agent: &InteractiveRuntime) -> bool {
         if agent.is_session_busy() {
             self.set_status("interrupt the current turn before granting computer access");
@@ -142,6 +163,20 @@ impl App {
         if let Err(error) = agent.enable_computer_use() {
             self.insert_entry(&Entry::Error(format!(
                 "could not grant computer access: {error}"
+            )));
+            return;
+        }
+        let save = self
+            .computer_use
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("computer use session is unavailable"))
+            .and_then(|control| control.save_preference(ComputerUsePreference::Enabled));
+        if let Err(error) = save {
+            if let Some(session) = agent.computer_use() {
+                session.revoke();
+            }
+            self.insert_entry(&Entry::Error(format!(
+                "could not save computer use preference: {error}; desktop access revoked"
             )));
             return;
         }
@@ -189,6 +224,10 @@ impl App {
         &mut self,
         agent: &mut InteractiveRuntime,
     ) -> bool {
+        self.computer_use = Some(ComputerUseControl::new(
+            agent.computer_use().cloned(),
+            agent.session_id().clone(),
+        ));
         if agent.is_session_busy() {
             return false;
         }

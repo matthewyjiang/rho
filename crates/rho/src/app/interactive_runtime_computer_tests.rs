@@ -37,7 +37,10 @@ async fn failed_computer_connect_preserves_next_prompt() {
     assert_eq!(computer.status(), ComputerUseStatus::Off);
     assert!(!runtime.tools.contains("computer"));
     assert_eq!(
-        runtime.history().first(),
+        runtime
+            .history()
+            .iter()
+            .find(|message| **message == Message::user_text("keep my prompt")),
         Some(&Message::user_text("keep my prompt"))
     );
     assert_eq!(runtime.take_notices().len(), 1);

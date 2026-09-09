@@ -12,6 +12,7 @@ use super::InteractiveRuntime;
 /// Drained work held until an accepted provider start or runtime checkpoint.
 #[derive(Default)]
 pub(super) struct TurnBoundaryBatch {
+    pub(super) runtime_context: Option<(String, String)>,
     pub(super) subagent_notifications: Vec<crate::tools::agent::SubagentNotification>,
     pub(super) notices: Vec<crate::app::subagent_messaging::SubagentNotice>,
     pub(super) workflow_notifications: Vec<crate::tools::workflow_tracker::WorkflowNotification>,
@@ -26,7 +27,8 @@ impl TurnBoundaryBatch {
     }
 
     pub(super) fn is_empty(&self) -> bool {
-        self.notices.is_empty()
+        self.runtime_context.is_none()
+            && self.notices.is_empty()
             && self.subagent_notifications.is_empty()
             && self.workflow_notifications.is_empty()
             && self.process_notifications.is_empty()
@@ -107,6 +109,10 @@ impl TurnBoundaryBatch {
                 crate::tools::process::notification_prompts(&self.process_notifications);
             model.push(input);
             rows.push(DisplayRow::Notice(display));
+        }
+        if let Some((context, display)) = &self.runtime_context {
+            model.push(context.clone());
+            rows.push(DisplayRow::Notice(display.clone()));
         }
         TurnBoundaryDelivery {
             model: model.join("\n\n"),

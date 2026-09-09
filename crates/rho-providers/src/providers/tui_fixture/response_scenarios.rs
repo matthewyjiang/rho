@@ -124,6 +124,25 @@ pub(super) fn intercept(
         return Some(completion);
     }
     let prompt = last_user_text(request).unwrap_or_default();
+    if prompt == "fixture computer context" {
+        let context = request.messages.iter().rev().find_map(|message| {
+            let Message::User(blocks) = message else {
+                return None;
+            };
+            blocks.iter().find_map(|block| match block {
+                ContentBlock::Text(text) => text
+                    .split_once("[computer use context]\n")
+                    .map(|(_, context)| context),
+                _ => None,
+            })
+        });
+        return Some(completed(format!(
+            "computer context: {}",
+            context
+                .and_then(|context| context.lines().next())
+                .unwrap_or("missing")
+        )));
+    }
     if let Some(name) = prompt.strip_prefix("fixture tool available ") {
         let available = request.tools.iter().any(|tool| tool.name == name);
         return Some(completed(format!("tool available {name}: {available}")));

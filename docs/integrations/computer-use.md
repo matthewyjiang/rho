@@ -2,16 +2,18 @@
 
 Rho can interact with desktop apps through **Cua Driver**. Rho manages the connection and tool access; Cua Driver performs desktop automation. `/computer setup` can install a missing driver with your confirmation or connect an existing installation.
 
-Computer use starts off. Enable it explicitly inside an interactive Rho session:
+Computer use starts off until you choose otherwise. Enable it explicitly inside an interactive Rho session:
 
 ```text
 /computer setup
 /computer on
 ```
 
-`/computer setup` detects the driver, offers a separately authorized installation if needed, then asks for session desktop access and verifies the connection. An existing driver skips installation. `/computer on` asks you to review the access scope and explicitly allow it for this session before connecting. Cancel is selected by default; cancelling does not start the driver or grant access. If the terminal clips the confirmation, Rho blocks the grant and asks you to enlarge it so the full disclosure is visible.
+`/computer setup` detects the driver, offers a separately authorized installation if needed, then asks for desktop access and verifies the connection. An existing driver skips installation. `/computer on` asks you to review the access scope before connecting. Confirmation saves this session's access as on and makes on the default for new sessions on this machine. Other saved sessions keep their own on/off choice. Cancel is selected by default; cancelling does not start the driver or grant access. If the terminal clips the confirmation, Rho blocks the grant and asks you to enlarge it so the full disclosure is visible.
 
-Connection runs in the background so the composer remains usable. Once connected, the model receives a `computer` tool for discovering and calling supported Cua operations. Use an image-capable model for visual tasks. A persistent indicator near the composer shows connecting, enabled, or access-off/disconnecting state, even as other status messages change. Successful connections do not add transcript notices; `/computer` holds connection details, permission status, and diagnostic commands. Errors and actionable warnings still appear in the transcript.
+Connection runs in the background so the composer remains usable. Once connected, the model receives a `computer` tool for discovering and calling supported Cua operations. Use an image-capable model for visual tasks. A persistent indicator near the composer shows connecting, enabled, or access-off/disconnecting state, even as other status messages change. `/computer` holds connection details, permission status, and diagnostic commands. Errors and actionable warnings appear in the transcript.
+
+Rho adds a runtime-authored capability notice to model context, including the actual tool schema when access is enabled. Live state overrides stale notices from resumed history. Turning access off during a turn updates the next scheduled provider request; the change does not start a new turn by itself.
 
 ## Access and privacy
 
@@ -21,7 +23,11 @@ This is a session-wide grant. Rho does not ask for separate approval before each
 
 Captured images are sent to your configured model provider and retained in session history. Driver output, screen text, web pages, and clipboard contents are untrusted tool data, not instructions. Enable the feature only when that scope is appropriate for your task.
 
-The grant lasts for the current interactive session. It is not saved in config or restored from conversation history. New sessions, session switches, and entering plan mode revoke it. Subagents, side chats, workflows, ACP sessions, and `rho run` do not inherit this managed connection. `--no-tools` and plan mode cannot enable it.
+Consent stays on this machine, separately from config and conversation history. `~/.rho/computer-use.toml` stores the default for new sessions. `~/.rho/computer-use-sessions/<uuid>.toml` stores each session's own on/off choice. Both paths use `$RHO_HOME` instead of `~/.rho` when an absolute Rho home override is set. Project configuration and conversation history cannot opt in. A missing default means off. A resumed session without its own record, including a legacy session, starts off even if the new-session default is on. Invalid or unreadable preferences leave access off with a nonfatal startup warning. Native interactive sessions with tools enabled connect automatically when their saved choice is on. Startup connection errors do not prevent using Rho.
+
+`/computer off`, `/computer stop`, and dashboard `r` revoke the current connection, save this session as off, and set the new-session default to off. They do not change other sessions' records. Revocation happens before saving. If saving fails, access remains revoked now and Rho warns that a saved session choice or the new-session default may still be on. An enable-save failure also revokes the current grant rather than silently keeping session-only access.
+
+Session switches close the current connection. `/new` and fresh launches inherit the last explicitly chosen default. `/resume` and `--resume` restore the selected session's own saved on/off choice instead. Restoring a session does not change the new-session default; only explicit access toggles change it. For example, enable session A, then disable session B. Resuming A enables access, but new sessions still start off. Entering plan mode revokes the current connection without changing saved choices. Subagents, side chats, workflows, ACP sessions, and `rho run` do not inherit this managed connection. `--no-tools` and plan mode cannot enable it. Saved consent never bypasses those restrictions.
 
 This is a Rho tool-registration boundary, not an OS sandbox. An independently configured MCP server or an agent with shell access may still invoke an installed automation program outside this integration.
 
@@ -31,8 +37,8 @@ This is a Rho tool-registration boundary, not an OS sandbox. An independently co
 | --- | --- |
 | `/computer` or `/computer status` | Open the dashboard with session state, a direct revoke action, driver detection, and access details |
 | `/computer setup` | Install a missing driver after confirmation, then configure session access and verify the connection |
-| `/computer on` | Review and confirm desktop access for this session, then connect |
-| `/computer off` or `/computer stop` | Cancel installation, revoke access, cancel pending connection or computer actions, and disconnect |
+| `/computer on` | Review and confirm desktop access, save this session and the new-session default as on, then connect |
+| `/computer off` or `/computer stop` | Cancel installation, revoke access, disconnect, and save this session and the new-session default as off |
 | `rho computer status [--json]` | Detect the executable without starting it or inspecting the desktop |
 | `rho computer setup` | Show read-only guidance directing you to the interactive setup flow |
 
@@ -40,7 +46,7 @@ This is a Rho tool-registration boundary, not an OS sandbox. An independently co
 
 CLI status is a local installation check, not a query of another running Rho session. A successful MCP handshake also does not prove that the OS has granted capture or input permissions.
 
-The interactive dashboard uses the same overlay as `/limits` and `/doctor`, without adding status output to the transcript. Session state and available actions appear before diagnostics and privacy details. Scroll with arrow keys, PgUp/PgDn, Home/End, or the mouse wheel; Enter or Esc closes it. It can be opened during a running turn, and closing it does not interrupt the model. Press `r` to revoke access immediately without another confirmation. Access still requires explicit confirmation through `/computer setup` or `/computer on`.
+The interactive dashboard uses the same overlay as `/limits` and `/doctor`, without adding status output to the transcript. Session state and available actions appear before diagnostics and privacy details. Scroll with arrow keys, PgUp/PgDn, Home/End, or the mouse wheel; Enter or Esc closes it. It can be opened during a running turn, and closing it does not interrupt the model. Press `r` to revoke access immediately and save this session and the new-session default as off without another confirmation. Initial consent requires explicit confirmation through `/computer setup` or `/computer on`.
 
 ## Driver setup
 
@@ -60,7 +66,7 @@ For existing drivers, Rho applies the environment overrides when desktop access 
 
 Installation runs in the background with output retained in a private temporary log whose path appears in the transcript. The installer receives an allowlist of environment variables for platform paths, proxies, and certificates, plus Rho's forced telemetry opt-out, not model credentials or shell startup hooks. `/computer off` or dashboard `r` cancels its supervised process tree; session changes, entering plan mode, and shutdown also cancel pending installation. On Windows, this does not guarantee cancellation of elevated work launched outside the job. Cancellation does not roll back files already written. Rerun `/computer setup` to detect a completed installation or retry if the driver is still missing; detecting a driver does not repair an incomplete saved telemetry opt-out. Setup cannot start during a model turn or in plan mode.
 
-After installation, Rho asks separately for desktop access. If you are typing or another overlay is open, it preserves that UI and asks you to continue with `/computer setup`. No persistent MCP configuration or desktop grant is written: Rho discovers the executable and manages the connection for this session.
+After installation, Rho asks separately for desktop access. If you are typing or another overlay is open, it preserves that UI and asks you to continue with `/computer setup`. Installation does not change saved desktop consent. Confirming access saves this session and the new-session default as on in machine-local records; no persistent MCP configuration is written.
 
 Rho detects `cua-driver` in absolute directories on `PATH`, then the standard `~/.local/bin/cua-driver` installation. Empty and relative `PATH` entries are ignored so a repository-local program cannot be selected accidentally. On Windows, detection also checks `~/.cua-driver/bin` (the managed installation location) and `%LOCALAPPDATA%/Programs/Cua/cua-driver/bin`; the executable is `cua-driver.exe`. Rho starts its stdio connection using:
 

@@ -243,10 +243,12 @@ impl App {
                     .herdr
                     .report_session(self.info.session.session_id.as_deref())
                     .await;
+                // Runtime capability notices can precede the first user prompt.
+                // They must not suppress titling the first assistant turn.
                 let generate_session_title_after_completion = !agent
                     .history()
                     .iter()
-                    .any(|message| matches!(message, Message::User(_)));
+                    .any(|message| matches!(message, Message::Assistant(_)));
                 self.insert_entry(&Entry::User(super::message_history::render_user_entry(
                     &prompt.display,
                     &media,

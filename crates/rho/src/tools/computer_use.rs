@@ -26,8 +26,10 @@ use super::{
 
 mod native;
 mod policy;
+mod preference;
 mod recovery;
 mod setup;
+pub(crate) use preference::ComputerUsePreference;
 use recovery::{Revocation, RevokeOnDrop};
 pub(crate) use setup::{setup_platform, ComputerSetupUpdate, INSTALLATION_RECOVERY};
 
@@ -48,31 +50,66 @@ pub(crate) struct ComputerUseSession {
 /// The TUI can inspect and revoke authority while a turn borrows the runtime.
 /// Activation and transport task ownership remain with the runtime's session.
 #[derive(Clone)]
-pub(crate) struct ComputerUseControl(ComputerUseSession);
+pub(crate) struct ComputerUseControl {
+    session: Option<ComputerUseSession>,
+    session_id: rho_sdk::SessionId,
+}
 
 impl ComputerUseControl {
+    pub(crate) fn new(session: Option<ComputerUseSession>, session_id: rho_sdk::SessionId) -> Self {
+        Self {
+            session,
+            session_id,
+        }
+    }
+
+    pub(crate) fn save_preference(&self, preference: ComputerUsePreference) -> anyhow::Result<()> {
+        match preference {
+            ComputerUsePreference::Enabled => {
+                preference.save()?;
+                preference.save_session(&self.session_id)
+            }
+            ComputerUsePreference::Disabled => {
+                preference.save_session(&self.session_id)?;
+                preference.save()
+            }
+        }
+    }
+
     pub(crate) fn installation_pending(&self) -> bool {
-        self.0.installation_pending()
+        self.session
+            .as_ref()
+            .is_some_and(ComputerUseSession::installation_pending)
     }
 
     pub(crate) fn revoke(&self) {
-        self.0.revoke();
+        if let Some(session) = &self.session {
+            session.revoke();
+        }
     }
 
     pub(crate) fn status(&self) -> ComputerUseStatus {
-        self.0.status()
+        self.session
+            .as_ref()
+            .map_or(ComputerUseStatus::Off, ComputerUseSession::status)
     }
 
     pub(crate) fn driver_path(&self) -> Option<PathBuf> {
-        self.0.driver_path()
+        self.session
+            .as_ref()
+            .and_then(ComputerUseSession::driver_path)
     }
 
     pub(crate) fn terminal_error(&self) -> Option<String> {
-        self.0.terminal_error()
+        self.session
+            .as_ref()
+            .and_then(ComputerUseSession::terminal_error)
     }
 
     pub(crate) fn revocation_reason(&self) -> Option<String> {
-        self.0.revocation_reason()
+        self.session
+            .as_ref()
+            .and_then(ComputerUseSession::revocation_reason)
     }
 }
 
@@ -115,10 +152,6 @@ struct Connection {
 }
 
 impl ComputerUseSession {
-    pub(crate) fn control(&self) -> ComputerUseControl {
-        ComputerUseControl(self.clone())
-    }
-
     pub(crate) fn new(driver: Option<PathBuf>, max_output_bytes: usize, cwd: PathBuf) -> Self {
         Self {
             inner: Arc::new(Inner {

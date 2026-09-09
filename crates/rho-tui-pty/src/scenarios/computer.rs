@@ -97,6 +97,25 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
             text: "tool available computer: true",
             timeout: STREAM,
         },
+        Step::SubmitText("fixture computer context"),
+        Step::WaitText {
+            text: "computer context: enabled",
+            timeout: STREAM,
+        },
+        Step::SubmitText("/new"),
+        Step::WaitTextGone {
+            text: "computer context: enabled",
+            timeout: SETTLE,
+        },
+        Step::WaitText {
+            text: "computer use enabled",
+            timeout: STARTUP,
+        },
+        Step::SubmitText("fixture computer context"),
+        Step::WaitText {
+            text: "computer context: enabled",
+            timeout: STREAM,
+        },
         Step::WaitText {
             text: "computer use enabled",
             timeout: SETTLE,
@@ -140,6 +159,11 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
         Step::SubmitText("fixture tool available computer"),
         Step::WaitText {
             text: "tool available computer: false",
+            timeout: STREAM,
+        },
+        Step::SubmitText("fixture computer context"),
+        Step::WaitText {
+            text: "computer context: disabled",
             timeout: STREAM,
         },
         Step::SubmitText("/computer status"),

@@ -13,6 +13,8 @@ mod command_palette;
 #[cfg(unix)]
 mod computer;
 #[cfg(unix)]
+mod computer_preference;
+#[cfg(unix)]
 mod computer_setup;
 mod config;
 mod conversation_tree;
@@ -683,6 +685,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     #[cfg(unix)]
     COMPUTER_USE_SCENARIO,
     #[cfg(unix)]
+    computer_preference::COMPUTER_PREFERENCE_SCENARIO,
+    #[cfg(unix)]
     computer_setup::COMPUTER_SETUP_SCENARIO,
     #[cfg(unix)]
     computer_setup::COMPUTER_SETUP_CANCEL_SCENARIO,
@@ -969,6 +973,10 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         .iter()
         .find(|scenario| scenario.id == name)
         .ok_or_else(|| anyhow::anyhow!("unknown scenario '{name}'"))?;
+    #[cfg(unix)]
+    if name == computer_preference::COMPUTER_PREFERENCE_SCENARIO.id {
+        return computer_preference::run(runner);
+    }
     if workflow::is_workflow_scenario(name) {
         return workflow::run(runner, name);
     }

@@ -35,7 +35,7 @@ impl App {
             return Ok(());
         }
         if let Some(path) = session.driver_path() {
-            self.insert_entry(&Entry::Notice(format!("Cua Driver configured for this session: {}. Installation skipped; no persistent MCP config or access grant written", path.display())));
+            self.insert_entry(&Entry::Notice(format!("Cua Driver detected: {}. Installation skipped; session access and the new-session default are unchanged until confirmation", path.display())));
             return self.prompt_computer_access();
         }
         let platform = setup_platform();
@@ -86,7 +86,7 @@ impl App {
         };
         match result {
             ComputerSetupUpdate::Installed => {
-                self.insert_entry(&Entry::Notice("Cua Driver installed and detected; configured for this session without a persistent grant. Desktop access is still off; /computer setup continues to access confirmation and connection verification".into()));
+                self.insert_entry(&Entry::Notice("Cua Driver installed and detected. Installation does not change saved desktop consent. Desktop access is still off; /computer setup continues to access confirmation and connection verification".into()));
                 // Do not replace another overlay or discard a prompt being typed.
                 if matches!(self.input_ui.composer(), ComposerMode::Input)
                     && self.input_ui.text().is_empty()
