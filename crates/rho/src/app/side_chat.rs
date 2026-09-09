@@ -244,7 +244,8 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         usage_purpose: USAGE_PURPOSE,
         usage_parent_session_id: Some(launch.parent_session_id.clone()),
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-        extend_tools_and_prompt: |tools, _prompt: &mut rho_sdk::SystemPrompt| tools,
+        extend_tools: std::convert::identity,
+        system_prompt_suffix: None,
         approval: |_: ApprovalInputs| {
             Ok(SessionApproval {
                 session: None,

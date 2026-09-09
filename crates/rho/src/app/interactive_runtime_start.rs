@@ -62,8 +62,9 @@ impl InteractiveRuntime {
         if let Some(source) = self.sessions.pending_replacement() {
             self.rebuild_session(
                 source,
-                ReplacementLifecycle::Started,
+                ReplacementLifecycle::AfterReset,
                 SessionWriteRetention::Keep,
+                None,
             )
             .await
             .map_err(|error| Error::Persistence {

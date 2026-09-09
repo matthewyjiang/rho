@@ -90,6 +90,7 @@ async fn mid_session_switch_updates_provider_reasoning_and_compaction() {
 
     apply_conversation_switch(
         ConversationSwitch {
+            prepared_prompt: None,
             session: &session,
             tools: &tools,
             previous_provider,
@@ -136,6 +137,7 @@ async fn empty_session_switch_stays_silent() {
 
     apply_conversation_switch(
         ConversationSwitch {
+            prepared_prompt: None,
             session: &session,
             tools: &tools,
             previous_provider,
@@ -155,5 +157,65 @@ async fn empty_session_switch_stays_silent() {
     assert_eq!(
         session.snapshot().provider(),
         &identity("replacement", "next")
+    );
+}
+
+// Covers: failed host persistence after provider replacement must restore the
+// old prompt and transcript, not just the provider and reasoning selection.
+// Owner: shared conversation switch transaction (Interactive and ACP)
+#[tokio::test]
+async fn failed_notice_restores_prompt_provider_and_history() {
+    let history = vec![
+        Message::System("original prompt".into()),
+        Message::user_text("keep me"),
+    ];
+    let (_runtime, session, tools, previous_provider) =
+        switchable_session(history.clone(), Some(1_000)).await;
+    let home = tempfile::tempdir().unwrap();
+    let running =
+        crate::model_identity::PromptModel::from_sdk_identity(&identity("replacement", "next"));
+    let mut prepared = crate::prompt::system_prompt_with_home_and_models(
+        &[],
+        home.path(),
+        Some(home.path()),
+        crate::prompt::PromptModels {
+            running: &running,
+            advisor: None,
+        },
+    );
+    prepared.text = "new prompt".into();
+    let mut fail_notice = |_: String, _: String| {
+        Err(rho_sdk::Error::Persistence {
+            message: "injected write failure".into(),
+        })
+    };
+    assert!(apply_conversation_switch(
+        ConversationSwitch {
+            prepared_prompt: Some(&prepared),
+            session: &session,
+            tools: &tools,
+            previous_provider,
+            new_provider: replacement("replacement", "next"),
+            new_reasoning: rho_sdk::ReasoningLevel::Low,
+            auth: "test-auth",
+            compaction: CompactionConfig::default(),
+            context_window: Some(2_000),
+            previous_context_window: Some(1_000),
+            usage_recording: Default::default(),
+        },
+        SwitchNotice::WithDisplay(&mut fail_notice),
+    )
+    .is_err());
+    assert_eq!(
+        (
+            session.history(),
+            session.snapshot().provider().clone(),
+            session.reasoning_level()
+        ),
+        (
+            history,
+            identity("original", "start"),
+            rho_sdk::ReasoningLevel::Medium
+        )
     );
 }

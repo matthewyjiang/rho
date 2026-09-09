@@ -77,6 +77,13 @@ fn smoke_startup_stream_exit() {
     assert_pass("startup_stream_exit");
 }
 
+// Covers: model-scoped prompt switches are visible and invalid files do not
+// interrupt the interactive session. Owner: interactive TUI lifecycle.
+#[test]
+fn model_prompt_switch_and_invalid_file_recovery() {
+    assert_pass("model_prompt_switch");
+}
+
 // Covers: /new must not strand new child results behind the previous session ID.
 // Owner: interactive TUI session lifecycle and automatic completion delivery.
 #[test]

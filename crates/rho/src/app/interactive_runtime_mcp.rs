@@ -1,15 +1,10 @@
 //! Deferred MCP connect and pre-request system prompt refresh.
 
 use futures_util::FutureExt;
-use rho_sdk::{model::Message, SystemPrompt};
+use rho_sdk::SystemPrompt;
 
 use super::InteractiveRuntime;
-use crate::{
-    agent::{PromptPolicy, ToolCapability},
-    model_identity::PromptModel,
-    prompt,
-    tools::mcp::McpConnectOutcome,
-};
+use crate::{model_identity::PromptModel, prompt, tools::mcp::McpConnectOutcome};
 
 impl InteractiveRuntime {
     pub(crate) fn mcp_connect_pending(&self) -> bool {
@@ -58,7 +53,11 @@ impl InteractiveRuntime {
                 if let Some(handle) = self.pending_catalog_names.take() {
                     let _ = handle.now_or_never();
                     if self.pending_mcp.is_none() {
-                        changed |= self.refresh_startup_system_prompt()?;
+                        let prompt_changed = self.refresh_startup_system_prompt()?;
+                        if prompt_changed {
+                            self.replace_history_system_prompt()?;
+                        }
+                        changed |= prompt_changed;
                     }
                 }
             }
@@ -76,6 +75,16 @@ impl InteractiveRuntime {
             .collect::<Vec<_>>();
         self.tools.attach_mcp(outcome);
         self.mcp_report = self.tools.mcp_report().clone();
+        if let Some(template) = self.prompt_template.as_mut() {
+            let mut retained = String::new();
+            prompt::append_mcp_instructions(
+                &mut retained,
+                instructions
+                    .iter()
+                    .map(|(identity, text)| (identity.as_str(), text.as_str())),
+            );
+            template.append_retained(&retained);
+        }
         let prompt_changed = self.refresh_startup_system_prompt()?;
         self.rebind_current_session().await?;
         self.remember_tool_list();
@@ -100,54 +109,18 @@ impl InteractiveRuntime {
         if !self.may_rewrite_startup_prompt || self.live_context_warm {
             return Ok(false);
         }
-        let PromptPolicy::Extend(extra) = self.agent.prompt() else {
+        let Some(template) = self.prompt_template.as_ref() else {
             return Ok(false);
         };
-        let extra = extra.clone();
-        let running = self.agent.prompt_model();
-        let advisor_capable = self
-            .agent
-            .rho_capabilities()
-            .is_some_and(|capabilities| capabilities.contains(&ToolCapability::Advisor));
-        let advisor = advisor_capable
-            .then(|| crate::tools::advisor::advisor_model(&self.config))
-            .flatten()
-            .map(PromptModel::from_internal_agent);
-        let plugin_skills =
-            crate::plugins::discover(self.workspace.root(), crate::paths::home_dir().as_deref())
-                .skills;
-        let specs = self.tools.specs();
-        let mut built = prompt::system_prompt_with_plugin_skills(
-            &specs,
-            self.workspace.root(),
-            prompt::PromptModels {
-                running: &running,
-                advisor: advisor.as_ref(),
-            },
-            plugin_skills,
-        );
-        if !self.has_tool("agent") {
-            prompt::append_subagents_disabled_instruction(&mut built.text);
-        }
-        let mcp_instructions = self
-            .mcp_report
-            .servers
-            .iter()
-            .filter_map(|server| Some((server.identity.as_str(), server.instructions()?)))
-            .collect::<Vec<_>>();
-        prompt::append_mcp_instructions(&mut built.text, mcp_instructions.iter().copied());
-        if !extra.is_empty() {
-            built
-                .text
-                .push_str(&format!("\n\n# Agent instructions\n\n{extra}"));
-        }
-        if built.text.is_empty() {
-            built.text = "You are a coding agent.".into();
-        }
+        // Catalog hydration changes display names, not the selected file. Keep
+        // startup AGENTS/skills and the loaded model prompt without filesystem IO.
+        let running = PromptModel::from_sdk_identity(&self.provider.provider().identity());
+        let built = template.render(&running, self.model_prompt.as_ref());
         let next = SystemPrompt::Custom(built.text);
         if next == self.system_prompt {
             return Ok(false);
         }
+        self.diagnostics.update_prompt_sources(built.sources);
         self.system_prompt = next;
         if let Some(store) = self.tools.advisor() {
             store.bind_system_prompt(match &self.system_prompt {
@@ -162,12 +135,7 @@ impl InteractiveRuntime {
         let SystemPrompt::Custom(prompt) = &self.system_prompt else {
             return Ok(());
         };
-        let mut history = self.sessions.history();
-        match history.first() {
-            Some(Message::System(_)) => history[0] = Message::System(prompt.clone()),
-            _ => history.insert(0, Message::System(prompt.clone())),
-        }
-        self.sessions.session().replace_history(history)?;
+        crate::app::conversation_switch::replace_system_prompt(self.sessions.session(), prompt)?;
         Ok(())
     }
 }

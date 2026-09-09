@@ -80,6 +80,9 @@ async fn built_session(
         tools: AppToolSet::disabled(),
         hooks: None,
         approval_receiver: None,
+        prompt_template: None,
+        model_prompt: None,
+        diagnostics: crate::diagnostics::RuntimeDiagnostics::new(&test_config()),
     }
 }
 

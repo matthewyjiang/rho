@@ -61,6 +61,8 @@ pub(crate) enum SwitchNotice<'a> {
 }
 
 pub(crate) struct ConversationSwitch<'a> {
+    /// Prepared before any live session mutation; loading failures leave it untouched.
+    pub(crate) prepared_prompt: Option<&'a crate::prompt::SystemPrompt>,
     pub(crate) session: &'a Session,
     pub(crate) tools: &'a AppToolSet,
     pub(crate) previous_provider: Arc<dyn ModelProvider>,
@@ -81,6 +83,7 @@ pub(crate) fn apply_conversation_switch(
     let previous_reasoning = switch.session.reasoning_level();
     let previous_prompt_model = PromptModel::from_sdk_identity(&previous_provider.identity());
     let session_started = !switch.session.history().is_empty();
+    let previous_history = switch.session.history();
 
     switch.session.set_reasoning_level(switch.new_reasoning)?;
     let report = match switch
@@ -96,27 +99,41 @@ pub(crate) fn apply_conversation_switch(
 
     if let Err(error) = refresh_session_compaction(&switch) {
         return Err(restore_after_failed_step(
-            switch.session,
-            previous_provider,
+            &switch,
             previous_reasoning,
             error,
             RestoreCompaction::Skip,
-            None,
+            previous_history,
         ));
     }
 
-    let current_prompt_model = PromptModel::from_sdk_identity(&switch.new_provider.identity());
-    if session_started && current_prompt_model != previous_prompt_model {
-        let (context, display) =
-            model_switch_context(ModelSwitchKind::Conversation, &current_prompt_model);
-        if let Err(error) = record_switch_notice(switch.session, notice, context, display) {
+    if let Some(prompt) = switch.prepared_prompt {
+        if let Err(error) = replace_system_prompt(switch.session, &prompt.text) {
             return Err(restore_after_failed_step(
-                switch.session,
-                previous_provider,
+                &switch,
                 previous_reasoning,
                 error,
                 RestoreCompaction::Required,
-                Some(&switch),
+                previous_history,
+            ));
+        }
+    }
+    let current_prompt_model = PromptModel::from_sdk_identity(&switch.new_provider.identity());
+    if session_started && current_prompt_model != previous_prompt_model {
+        let (context, mut display) =
+            model_switch_context(ModelSwitchKind::Conversation, &current_prompt_model);
+        if let Some(prompt) = switch.prepared_prompt {
+            let detail =
+                super::model_prompt_metadata::selection_notice(prompt.model_prompt.as_ref());
+            display.push_str(&format!("\n{detail}"));
+        }
+        if let Err(error) = record_switch_notice(switch.session, notice, context, display) {
+            return Err(restore_after_failed_step(
+                &switch,
+                previous_reasoning,
+                error,
+                RestoreCompaction::Required,
+                previous_history,
             ));
         }
     }
@@ -131,6 +148,18 @@ pub(crate) fn apply_conversation_switch(
         );
     }
     Ok(report)
+}
+
+/// Replace the assembled leading prompt without accumulating model overlays or
+/// changing conversation messages. Snapshot resumes use the same operation.
+pub(crate) fn replace_system_prompt(session: &Session, text: &str) -> Result<(), Error> {
+    let mut history = session.history();
+    match history.first_mut() {
+        Some(Message::System(prompt)) if prompt == text => return Ok(()),
+        Some(Message::System(prompt)) => *prompt = text.to_owned(),
+        _ => history.insert(0, Message::System(text.to_owned())),
+    }
+    session.replace_history(history).map(|_| ())
 }
 
 fn record_switch_notice(
@@ -165,13 +194,14 @@ fn refresh_session_compaction(switch: &ConversationSwitch<'_>) -> Result<(), Err
 }
 
 fn restore_after_failed_step(
-    session: &Session,
-    previous_provider: Arc<dyn ModelProvider>,
+    switch: &ConversationSwitch<'_>,
     previous_reasoning: ReasoningLevel,
     primary: Error,
     compaction: RestoreCompaction,
-    switch: Option<&ConversationSwitch<'_>>,
+    previous_history: Vec<Message>,
 ) -> Error {
+    let session = switch.session;
+    let previous_provider = Arc::clone(&switch.previous_provider);
     if let Err(rollback_error) = session.set_reasoning_level(previous_reasoning) {
         return Error::InvalidConfiguration {
             message: format!(
@@ -187,9 +217,6 @@ fn restore_after_failed_step(
         };
     }
     if matches!(compaction, RestoreCompaction::Required) {
-        let Some(switch) = switch else {
-            return primary;
-        };
         let (compactor, policy) = build_compaction(
             previous_provider,
             switch.tools.tools(),
@@ -206,7 +233,12 @@ fn restore_after_failed_step(
             };
         }
     }
-    primary
+    match session.replace_history(previous_history) {
+        Ok(_) => primary,
+        Err(rollback) => Error::InvalidConfiguration {
+            message: format!("{primary}; could not restore previous prompt/history: {rollback}"),
+        },
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

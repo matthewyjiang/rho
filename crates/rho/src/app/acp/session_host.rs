@@ -195,6 +195,23 @@ impl SessionHost {
             built.teardown().await;
             return Err(error);
         }
+        if built.prompt_template.is_some() {
+            if let Some(notice) = crate::app::model_prompt_metadata::change_notice(
+                &built.session.snapshot(),
+                built.model_prompt.as_ref(),
+            ) {
+                if let Err(error) = replay_display_history(
+                    &request.session_id,
+                    &[Message::assistant_text(notice)],
+                    client,
+                )
+                .await
+                {
+                    built.teardown().await;
+                    return Err(error);
+                }
+            }
+        }
         let host = Self::from_built(
             request.session_id,
             built,
@@ -295,9 +312,21 @@ impl SessionHost {
             build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore))
                 .await
                 .map_err(host_apply_error)?;
+        let prepared_prompt = self
+            .built
+            .prompt_template
+            .as_ref()
+            .map(|template| {
+                template.build(&crate::model_identity::PromptModel::from_sdk_identity(
+                    &provider.identity(),
+                ))
+            })
+            .transpose()
+            .map_err(host_apply_error)?;
         // HandoffReport could ride along in `_meta` later; ACP has no place for it yet.
         let _handoff = apply_conversation_switch(
             ConversationSwitch {
+                prepared_prompt: prepared_prompt.as_ref(),
                 session: &self.built.session,
                 tools: &self.built.tools,
                 previous_provider: Arc::clone(&self.built.provider),
@@ -313,6 +342,10 @@ impl SessionHost {
         )
         .map_err(host_apply_error)?;
         self.built.provider = provider;
+        if let Some(prompt) = prepared_prompt {
+            self.built.diagnostics.update_prompt_sources(prompt.sources);
+            self.built.model_prompt = prompt.model_prompt;
+        }
         self.auth = selection.auth;
         Ok(self.config_options(process_config))
     }
@@ -441,8 +474,13 @@ impl SessionHost {
         if let Some(text) = assistant_text.filter(|text| !text.is_empty()) {
             display_tail.push(Message::assistant_text(text));
         }
-        self.stored
-            .save_snapshot(&self.built.session.snapshot(), &display_tail)
+        self.stored.save_snapshot(
+            &crate::app::model_prompt_metadata::decorate(
+                self.built.session.snapshot(),
+                self.built.model_prompt.as_ref(),
+            ),
+            &display_tail,
+        )
     }
 
     fn dispatch_failed(&self, message: &str) {

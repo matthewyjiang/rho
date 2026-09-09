@@ -36,7 +36,7 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     pub(crate) mcp_sampling: McpSamplingSupport,
     /// Whether this run starts MCP servers from user config and Agent Plugins.
     pub(crate) mcp_attach: McpAttach,
-    /// Permanent system-prompt model labels should wait on a models.dev
+    /// Startup system-prompt model labels should wait on a models.dev
     /// catalog hydrate. Interactive sessions stay cache-only on the first
     /// frame and rewrite once if the hydrate lands before the first request.
     /// Automation stays cache-only so cold/offline launches do not block.
@@ -74,9 +74,10 @@ pub(crate) struct StartupInventory {
 
 pub(crate) struct ToolsAndPrompt {
     pub(crate) tools: AppToolSet,
-    /// Fixed for the session so prompt cache stays stable across mid-session
-    /// tool-list changes (advisor / edit tool). Those changes use context notices.
+    /// Stable across tool-list changes, rebuilt when the conversation model changes.
     pub(crate) system_prompt: SystemPrompt,
+    pub(crate) prompt_template: Option<prompt::ModelPromptTemplate>,
+    pub(crate) model_prompt: Option<prompt::model_prompts::ModelPrompt>,
     pub(crate) inventory: StartupInventory,
     /// In-flight MCP connect when the interactive host deferred it off the
     /// first frame. `None` when connect was awaited or skipped.
@@ -214,6 +215,8 @@ pub(crate) async fn assemble_tools_and_prompt(
     };
     let mcp_report = tools.mcp_report().clone();
     let specs = tools.specs();
+    let mut prompt_template = None;
+    let mut model_prompt = None;
     let system_prompt = if options.no_system_prompt {
         options.diagnostics.update_prompt_sources(Vec::new());
         SystemPrompt::None
@@ -234,18 +237,15 @@ pub(crate) async fn assemble_tools_and_prompt(
                 if options.await_catalog_names {
                     rho_providers::model::ensure_model_catalog_names().await;
                 }
-                let mut built = prompt::system_prompt_with_plugin_skills(
+                let mut template = prompt::system_prompt_template_with_plugin_skills(
                     &specs,
                     options.cwd,
-                    prompt::PromptModels {
-                        running: &running,
-                        advisor: advisor.as_ref(),
-                    },
+                    advisor.as_ref(),
                     plugin_skills,
                 );
-                options.diagnostics.update_prompt_sources(built.sources);
+                let mut retained = String::new();
                 if !launch_delegation_enabled {
-                    prompt::append_subagents_disabled_instruction(&mut built.text);
+                    prompt::append_subagents_disabled_instruction(&mut retained);
                 }
                 // Server guidance describes the MCP tools this run actually has.
                 let mcp_instructions = mcp_report
@@ -253,12 +253,24 @@ pub(crate) async fn assemble_tools_and_prompt(
                     .iter()
                     .filter_map(|server| Some((server.identity.as_str(), server.instructions()?)))
                     .collect::<Vec<_>>();
-                prompt::append_mcp_instructions(&mut built.text, mcp_instructions.iter().copied());
+                prompt::append_mcp_instructions(&mut retained, mcp_instructions.iter().copied());
                 if !extra.is_empty() {
-                    built
-                        .text
-                        .push_str(&format!("\n\n# Agent instructions\n\n{extra}"));
+                    retained.push_str(&format!("\n\n# Agent instructions\n\n{extra}"));
                 }
+                template.append_retained(&retained);
+                let built = match template.build(&running) {
+                    Ok(built) => built,
+                    Err(error) => {
+                        if let Some(pending) = pending_mcp {
+                            pending.abort();
+                        }
+                        tools.shutdown().await;
+                        return Err(error);
+                    }
+                };
+                options.diagnostics.update_prompt_sources(built.sources);
+                prompt_template = Some(template);
+                model_prompt = built.model_prompt;
                 built.text
             }
         };
@@ -281,6 +293,8 @@ pub(crate) async fn assemble_tools_and_prompt(
     Ok(ToolsAndPrompt {
         tools,
         system_prompt,
+        prompt_template,
+        model_prompt,
         inventory: StartupInventory {
             mcp: mcp_report,
             plugins: plugins_report,

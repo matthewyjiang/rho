@@ -57,8 +57,10 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub usage_purpose: &'static str,
     pub usage_parent_session_id: Option<rho_sdk::SessionId>,
     pub hook_host_labels: rho_sdk::hooks::HookHostLabels,
-    /// Adds caller-owned tools and instructions after shared prompt assembly.
-    pub extend_tools_and_prompt: ExtendTools,
+    /// Adds caller-owned tools after shared assembly.
+    pub extend_tools: ExtendTools,
+    /// Host instructions retained across model-specific behavioral replacement.
+    pub system_prompt_suffix: Option<&'a str>,
     /// Builds the approval wiring for this caller's permission story.
     pub approval: Approval,
     /// Chooses the session options once the provider is known.
@@ -88,6 +90,9 @@ pub(super) struct BuiltSession {
     pub tools: AppToolSet,
     pub hooks: Option<crate::hooks::HookPipeline>,
     pub approval_receiver: Option<ApprovalRequestReceiver>,
+    pub prompt_template: Option<crate::prompt::ModelPromptTemplate>,
+    pub model_prompt: Option<crate::prompt::model_prompts::ModelPrompt>,
+    pub diagnostics: RuntimeDiagnostics,
 }
 
 impl BuiltSession {
@@ -126,7 +131,7 @@ pub(super) async fn assemble_session<ExtendTools, Approval, Options>(
     options: SessionAssemblyOptions<'_, ExtendTools, Approval, Options>,
 ) -> anyhow::Result<SessionAssembly>
 where
-    ExtendTools: FnOnce(AppToolSet, &mut rho_sdk::SystemPrompt) -> AppToolSet,
+    ExtendTools: FnOnce(AppToolSet) -> AppToolSet,
     Approval: FnOnce(ApprovalInputs) -> anyhow::Result<SessionApproval>,
     Options: FnOnce(Arc<dyn ModelProvider>) -> anyhow::Result<SessionOptions>,
 {
@@ -148,7 +153,8 @@ where
         usage_purpose,
         usage_parent_session_id,
         hook_host_labels,
-        extend_tools_and_prompt,
+        extend_tools,
+        system_prompt_suffix,
         approval,
         session_options,
     } = options;
@@ -167,6 +173,8 @@ where
     let ToolsAndPrompt {
         tools: tool_set,
         mut system_prompt,
+        mut prompt_template,
+        model_prompt,
         ..
     } = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config,
@@ -189,7 +197,20 @@ where
         agent,
     })
     .await?;
-    let tool_set = extend_tools_and_prompt(tool_set, &mut system_prompt);
+    let tool_set = extend_tools(tool_set);
+    if let (Some(suffix), rho_sdk::SystemPrompt::Custom(text)) =
+        (system_prompt_suffix, &mut system_prompt)
+    {
+        let retained = format!("\n\n{suffix}");
+        text.push_str(&retained);
+        if let Some(template) = prompt_template.as_mut() {
+            template.append_retained(&retained);
+        }
+    }
+    let resumed_prompt = prompt_template.as_ref().and_then(|_| match &system_prompt {
+        rho_sdk::SystemPrompt::Custom(text) => Some(text.clone()),
+        _ => None,
+    });
 
     let context_window = configured_context_window(config);
     let compaction = sdk_options.runtime.compaction.clone();
@@ -244,6 +265,12 @@ where
                 return Err(error.into());
             }
         };
+        if let Some(text) = resumed_prompt {
+            if let Err(error) = super::conversation_switch::replace_system_prompt(&session, &text) {
+                runtime.shutdown();
+                return Err(error.into());
+            }
+        }
         anyhow::Ok((runtime, session))
     }
     .await;
@@ -265,6 +292,9 @@ where
             tools: tool_set,
             hooks,
             approval_receiver,
+            prompt_template,
+            model_prompt,
+            diagnostics: diagnostics.clone(),
         },
         workspace_root,
     })

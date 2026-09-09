@@ -3,6 +3,9 @@ use std::sync::Arc;
 #[path = "interactive_runtime_persistence_tests.rs"]
 mod persistence;
 
+#[path = "interactive_runtime_model_prompt_tests.rs"]
+mod model_prompt;
+
 use pretty_assertions::assert_eq;
 use rho_sdk::{
     model::{ContentBlock, Message, ModelIdentity, ModelResponse, ModelUsage},
@@ -289,6 +292,9 @@ pub(super) async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime
         plugins_report: Default::default(),
         workspace,
         system_prompt: SystemPrompt::None,
+        prompt_template: None,
+        model_prompt: None,
+        diagnostics: RuntimeDiagnostics::new(&Config::default()),
         compaction: CompactionConfig::default(),
         pending_compact: None,
         context_window: None,

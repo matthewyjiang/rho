@@ -307,11 +307,10 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
     assert!(!agent.has_tool("str_replace"));
 }
 
-// Covers: a mid-session model switch must reach the model as an appended line,
-// because the system prompt names the starting model and then stays fixed. The
-// line names only the new model, and includes the catalog name when the snapshot
-// already has one. A first selection on an empty session is not a switch and
-// must stay silent.
+// Covers: a mid-session model switch remains visible in conversation history,
+// even when model-scoped assembly also rebuilds the system prompt. The notice
+// includes the catalog name when available. Empty conversations need no history
+// notice before their first request.
 // Owner: model switch context notice
 #[tokio::test]
 async fn select_model_report_tells_the_model_about_a_mid_session_switch() {

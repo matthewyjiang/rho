@@ -35,6 +35,8 @@ mod session_hooks;
 mod start;
 #[path = "interactive_runtime_startup.rs"]
 pub(super) mod startup;
+#[path = "interactive_runtime_tree.rs"]
+mod tree;
 #[path = "interactive_runtime_workspace_rewind.rs"]
 mod workspace_rewind;
 
@@ -91,12 +93,15 @@ pub(crate) struct InteractiveRuntime {
     mcp_report: crate::tools::mcp::McpSessionReport,
     pending_mcp: Option<tokio::task::JoinHandle<crate::tools::mcp::McpConnectOutcome>>,
     pending_catalog_names: Option<tokio::task::JoinHandle<usize>>,
-    /// Fresh sessions may replace the startup system prompt once before the
-    /// first request. Resumed snapshots keep the stored prompt.
+    /// Hydrates may refresh a fresh session before its first request. Resumes
+    /// and model switches rebuild explicitly from the retained prompt recipe.
     may_rewrite_startup_prompt: bool,
     plugins_report: crate::plugins::PluginLoadReport,
     workspace: Workspace,
     system_prompt: rho_sdk::SystemPrompt,
+    prompt_template: Option<crate::prompt::ModelPromptTemplate>,
+    model_prompt: Option<crate::prompt::model_prompts::ModelPrompt>,
+    diagnostics: RuntimeDiagnostics,
     compaction: CompactionConfig,
     /// Spawned manual / TUI auto-compact work. Presence means the session is busy.
     pending_compact: Option<tokio::task::JoinHandle<compact::CompactTaskResult>>,
@@ -132,6 +137,9 @@ pub(crate) struct InteractiveRuntime {
 #[derive(Clone, Copy)]
 enum ReplacementLifecycle {
     Started,
+    /// Materialize `/new` after reset already ended the previous session and
+    /// restored the new session's machine-local capability preferences.
+    AfterReset,
     Rebound,
 }
 
@@ -426,7 +434,7 @@ impl InteractiveRuntime {
         self.runs.record_boundary_display(
             model_message,
             display_message,
-            &self.sessions.session().snapshot(),
+            &self.sessions.snapshot(),
         );
     }
 
@@ -529,12 +537,20 @@ impl InteractiveRuntime {
         if self.is_session_busy() {
             anyhow::bail!("cannot reset while a run or compaction is active");
         }
+        let prepared_prompt = self.prepare_model_prompt(self.provider.provider())?;
         self.revoke_computer_use();
         self.runtime
             .hooks()
             .session_completed(self.sessions.session().id(), self.completed_runs);
         self.completed_runs = 0;
         let session_id = self.sessions.reset()?;
+        if let Some(prompt) = prepared_prompt {
+            super::conversation_switch::replace_system_prompt(
+                self.sessions.session(),
+                &prompt.text,
+            )?;
+            self.adopt_model_prompt(prompt);
+        }
         bind_subagent_parent(&self.tools, &session_id, None);
         self.session_writes.clear();
         self.invalidate_live_context();
@@ -554,11 +570,7 @@ impl InteractiveRuntime {
             }
             anyhow::bail!("cannot switch sessions while compaction is active");
         }
-        self.revoke_computer_use();
-        self.runtime
-            .hooks()
-            .session_completed(self.sessions.session().id(), self.completed_runs);
-        self.completed_runs = 0;
+        let prepared_prompt = self.prepare_model_prompt(self.provider.provider())?;
         let id = storage.id().to_string();
         self.rebuild_session(
             ReplacementSessionSource::Snapshot {
@@ -567,6 +579,7 @@ impl InteractiveRuntime {
             },
             ReplacementLifecycle::Started,
             SessionWriteRetention::Forget,
+            prepared_prompt,
         )
         .await?;
         bind_subagent_parent(&self.tools, self.sessions.session().id(), Some(&storage));
@@ -579,72 +592,6 @@ impl InteractiveRuntime {
 
     pub(crate) fn stored_session(&self) -> Option<StoredSession> {
         self.sessions.storage().cloned()
-    }
-
-    pub(crate) async fn select_tree_node(
-        &mut self,
-        storage: StoredSession,
-        target_id: &crate::session::tree::NodeId,
-    ) -> anyhow::Result<()> {
-        if self.is_session_busy() {
-            anyhow::bail!(if self.runs.is_active() {
-                "cannot navigate the session tree while a run is active"
-            } else {
-                "cannot navigate the session tree while compaction is active"
-            });
-        }
-        let identity = self.provider.provider().identity();
-        let id = storage.id().to_string();
-        self.revoke_computer_use();
-        let snapshot =
-            storage.snapshot_for_node(target_id, identity.clone(), prompt_cache_key(&id))?;
-        let resume_omission = resume_omissions_report(&snapshot, &identity);
-        let same_session = self
-            .sessions
-            .storage()
-            .is_some_and(|current| current.id() == storage.id());
-        let permission = self.permission_for_rebuild(if same_session {
-            SessionWriteRetention::Keep
-        } else {
-            SessionWriteRetention::Forget
-        });
-        let replacement_runtime = build_runtime(RuntimeBuildOptions {
-            provider: Arc::clone(self.provider.provider()),
-            tools: self.tools.tools(),
-            workspace: self.workspace.clone(),
-            workspace_policy: permission.workspace_policy,
-            approval_session: permission.approval_session,
-            system_prompt: self.active_system_prompt(),
-            reasoning: self.provider.reasoning(),
-            service_tier: self.sessions.session().service_tier(),
-            compaction: self.compaction.clone(),
-            context_window: self.context_window,
-            usage_purpose: "agent",
-            usage_parent_session_id: None,
-            usage_recording: self.usage_recording.clone(),
-            hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-            hooks: self.hooks.as_ref(),
-        })?;
-        let replacement_session = replacement_runtime
-            .rebind_session(SessionOptions::from_snapshot(snapshot))
-            .await?;
-        // Do not change the live runtime until the selected leaf is durable.
-        if let Err(error) = storage.set_leaf(target_id) {
-            replacement_runtime.shutdown();
-            return Err(error);
-        }
-        let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
-        self.sessions
-            .replace_session(replacement_session, resume_omission);
-        self.computer_runtime_dirty = false;
-        self.sessions.set_resumed_storage(storage);
-        self.install_rebuilt_permission(permission.pending);
-        previous_runtime.shutdown();
-        self.invalidate_live_context();
-        self.refresh_context_usage();
-        self.restore_computer_preference(computer::ComputerPreferenceSource::SavedSession)
-            .await;
-        Ok(())
     }
 
     fn refresh_compaction(&mut self) -> Result<(), Error> {
@@ -813,6 +760,7 @@ impl InteractiveRuntime {
                 ReplacementSessionSource::DurableSnapshot { snapshot },
                 ReplacementLifecycle::Rebound,
                 SessionWriteRetention::Keep,
+                None,
             )
             .await?;
             self.sessions.set_resumed_storage(storage);
@@ -831,6 +779,7 @@ impl InteractiveRuntime {
             },
             ReplacementLifecycle::Rebound,
             SessionWriteRetention::Keep,
+            None,
         )
         .await?;
         self.sessions.set_resumed_storage(storage);
@@ -842,6 +791,7 @@ impl InteractiveRuntime {
         source: ReplacementSessionSource,
         lifecycle: ReplacementLifecycle,
         writes: SessionWriteRetention,
+        prepared_prompt: Option<crate::prompt::SystemPrompt>,
     ) -> anyhow::Result<()> {
         let identity = self.provider.provider().identity();
         let (options, resume_omission) = match source {
@@ -884,9 +834,34 @@ impl InteractiveRuntime {
             hooks: self.hooks.as_ref(),
         })?;
         let replacement_session = match lifecycle {
-            ReplacementLifecycle::Started => replacement_runtime.session(options).await?,
+            ReplacementLifecycle::Started | ReplacementLifecycle::AfterReset => {
+                replacement_runtime.session(options).await?
+            }
             ReplacementLifecycle::Rebound => replacement_runtime.rebind_session(options).await?,
         };
+        if let Some(prompt) = prepared_prompt.as_ref() {
+            let notice = super::model_prompt_metadata::change_notice(
+                &replacement_session.snapshot(),
+                prompt.model_prompt.as_ref(),
+            );
+            if let Err(error) = super::conversation_switch::replace_system_prompt(
+                &replacement_session,
+                &prompt.text,
+            ) {
+                replacement_runtime.shutdown();
+                return Err(error.into());
+            }
+            if let Some(notice) = notice {
+                self.sessions.queue_notice(notice);
+            }
+        }
+        if matches!(lifecycle, ReplacementLifecycle::Started) {
+            self.revoke_computer_use();
+            self.runtime
+                .hooks()
+                .session_completed(self.sessions.session().id(), self.completed_runs);
+            self.completed_runs = 0;
+        }
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions
             .replace_session(replacement_session, resume_omission);
@@ -894,6 +869,9 @@ impl InteractiveRuntime {
         self.computer_context = None;
         self.computer_runtime_dirty = false;
         previous_runtime.shutdown();
+        if let Some(prompt) = prepared_prompt {
+            self.adopt_model_prompt(prompt);
+        }
         Ok(())
     }
 

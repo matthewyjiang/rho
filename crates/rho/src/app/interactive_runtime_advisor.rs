@@ -5,9 +5,9 @@
 //! rebinds the session so the change lands on the next turn. The session ID and
 //! history survive it.
 //!
-//! The system prompt stays fixed for prompt-cache stability. The model learns
-//! about the tool list change from an appended context notice (with the tool
-//! schema when enabling) rather than a rewritten system prompt.
+//! Advisor changes keep the system prompt stable. The model learns about the
+//! tool list change from an appended context notice (with the tool schema when
+//! enabling). Conversation-model switches rebuild their own behavioral prompt.
 
 use std::sync::Arc;
 
@@ -38,7 +38,7 @@ pub(super) fn take_fail_next_advisor_notice_snapshot_save_for_tests() -> bool {
 }
 
 impl InteractiveRuntime {
-    /// Fixed system prompt for this session.
+    /// The assembled prompt for the active conversation model.
     ///
     /// Mid-session tool list changes keep this value stable and tell the model
     /// through appended context instead.

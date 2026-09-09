@@ -325,7 +325,19 @@ impl App {
             }
         };
 
-        let handoff = agent.replace_provider(new_provider, reasoning.effective, &auth)?;
+        let handoff = match agent.replace_provider(new_provider, reasoning.effective, &auth) {
+            Ok(handoff) => handoff,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not switch to {provider_model}: {error}"
+                )));
+                self.set_status("model switch failed");
+                return Ok(None);
+            }
+        };
+        if let Some(notice) = agent.model_prompt_notice() {
+            self.insert_entry(&Entry::Notice(notice));
+        }
         self.info.runtime.provider = provider.clone();
         self.info.runtime.model = model.clone();
         self.info

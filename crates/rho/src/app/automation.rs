@@ -487,20 +487,13 @@ async fn run_session_with_output(
         usage_purpose: startup.usage_purpose,
         usage_parent_session_id: startup.parent_session_id.clone(),
         hook_host_labels: startup.hook_host_labels.clone(),
-        extend_tools_and_prompt:
-            |mut tool_set: crate::tools::sdk_registry::AppToolSet,
-             prompt: &mut rho_sdk::SystemPrompt| {
-                if let (Some(suffix), rho_sdk::SystemPrompt::Custom(text)) =
-                    (startup.system_prompt_suffix, prompt)
-                {
-                    text.push_str("\n\n");
-                    text.push_str(suffix);
-                }
-                if let Some(poster) = startup.notice_poster.clone() {
-                    tool_set.add_bundle(crate::tools::message_parent_bundle(poster));
-                }
-                tool_set
-            },
+        system_prompt_suffix: startup.system_prompt_suffix,
+        extend_tools: |mut tool_set: crate::tools::sdk_registry::AppToolSet| {
+            if let Some(poster) = startup.notice_poster.clone() {
+                tool_set.add_bundle(crate::tools::message_parent_bundle(poster));
+            }
+            tool_set
+        },
         approval: |inputs: ApprovalInputs| {
             Ok(SessionApproval {
                 session: headless_approval_session(

@@ -63,6 +63,8 @@ pub(super) async fn initialize(
     let ToolsAndPrompt {
         tools,
         system_prompt,
+        prompt_template,
+        model_prompt,
         inventory,
         pending_mcp,
         mcp_sampling,
@@ -167,6 +169,16 @@ pub(super) async fn initialize(
                 return Err(error.into());
             }
         };
+        if prompt_template.is_some() {
+            if let rho_sdk::SystemPrompt::Custom(text) = &system_prompt {
+                if let Err(error) =
+                    crate::app::conversation_switch::replace_system_prompt(&session, text)
+                {
+                    runtime.shutdown();
+                    return Err(error.into());
+                }
+            }
+        }
         anyhow::Ok((runtime, session))
     }
     .await;
@@ -212,7 +224,10 @@ pub(super) async fn initialize(
         plugins_report,
         workspace,
         system_prompt,
+        prompt_template,
+        model_prompt,
         compaction,
+        diagnostics,
         pending_compact: None,
         context_window,
         usage_recording,
@@ -235,6 +250,17 @@ pub(super) async fn initialize(
         tool_list_changed: false,
         completed_runs: 0,
     };
+    runtime
+        .sessions
+        .set_model_prompt(runtime.model_prompt.as_ref());
+    if runtime.prompt_template.is_some() {
+        if let Some(notice) = crate::app::model_prompt_metadata::change_notice(
+            &runtime.sessions.session().snapshot(),
+            runtime.model_prompt.as_ref(),
+        ) {
+            runtime.sessions.queue_notice(notice);
+        }
+    }
     runtime
         .restore_computer_preference(computer_preference_source)
         .await;

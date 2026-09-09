@@ -23,6 +23,7 @@ flowchart TD
 | Concurrent agents | `[behavior].agent_concurrency` or `/config` → **Agent behavior** |
 | Questionnaire timeout | `[questionnaire].timeout_seconds` or `/config` → **Agent behavior**, disabled by default |
 | Prompt templates | `~/.rho/prompts/` files or `[prompt_templates]` |
+| Model-scoped system instructions | `~/.rho/model-prompts/*.md` with provider/model frontmatter |
 | Web search | `[web_search]` or `/config` → **Tools** |
 | xAI image generation | `[xai].image_generation` or `/config` → **Tools** |
 | Edit tool | `[behavior].edit_tool` or `/config` → **Tools** |
@@ -65,6 +66,39 @@ rho --config ~/.rho/config.toml
 ```
 
 `--no-system-prompt`, `--no-tools`, `--no-subagents`, and `--agent` are only available on the command line and apply only to the current run. `--no-system-prompt` and `--no-tools` must come before a subcommand (`rho --no-tools run "..."`). `--no-subagents` and `--agent` may appear before or after the subcommand. `--no-subagents` has the same tool and prompt behavior as setting `enable_subagents = false`.
+
+## Model-scoped system prompts
+
+Put Markdown files directly in `~/.rho/model-prompts/` to tune Rho's behavioral instructions for a particular provider and model. Filenames are arbitrary. Identity comes from required YAML frontmatter:
+
+```markdown
+---
+provider: openai-codex
+model: gpt-6-astra
+mode: append
+---
+Prefer direct implementation over extended planning.
+When a tool fails, inspect the error before retrying.
+```
+
+`provider` and `model` must match the resolved provider and model IDs exactly, not a display name or model alias. The optional `mode` is `append` by default:
+
+- `append` puts the Markdown body after Rho's default behavioral prompt, before runtime and project instructions.
+- `replace` substitutes the body for that default behavioral block. It does **not** remove tool contracts, the working directory and model identity, rendering guidance, `AGENTS.md`, available skills, MCP instructions, or additional agent instructions. It does not change permission enforcement.
+
+This directory is global only. Rho does not load project-local model prompts, recurse into subdirectories, or apply wildcards or provider-wide inheritance. Every `.md` file must have valid frontmatter and a nonempty body. Unknown fields or modes, unreadable files, and duplicate provider/model pairs are errors, including errors in files for other models. A missing directory or no matching file uses the default prompt.
+
+### Switching and resuming
+
+Rho reads model prompt files at startup, `/new`, session resume, conversation-tree branch selection, and model switches, not on every turn. Switching prepares the target prompt before changing the active model. An invalid catalog leaves the previous model and prompt active. An in-progress turn finishes before an interactive switch takes effect. Internal recovery after a failed save restores the saved state without reloading prompt files.
+
+The next request uses the target model's prompt. Rho removes the previous model's custom system instructions rather than appending another patch. Conversation messages and tool results remain, so a switch is not a clean behavioral reset. Switching back reads that model's file again. There is no file watcher or separate reload command.
+
+Prompt-source diagnostics identify the selected file and whether it appends or replaces. Session snapshots record its path, mode, and SHA-256 fingerprint. Resume uses current file contents and reports changes from a recorded fingerprint.
+
+These rules apply to interactive, headless, ACP, and native Rho subagent sessions that use normal prompt assembly. Each subagent matches its own resolved model. `--no-system-prompt` and agent definitions with an explicit whole-prompt replacement bypass model prompt files. Dedicated internal requests such as summarization and title generation, and delegated external CLI runtimes, keep their own prompt behavior.
+
+Model prompts are separate from [prompt templates](#prompt-templates), which expand reusable user messages.
 
 ## Permission modes
 

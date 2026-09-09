@@ -33,6 +33,7 @@ pub(crate) struct InteractiveSessionController {
     persisted_turn_display: usize,
     web_access: WebAccessStore,
     advisor: Option<AdvisorSessionStore>,
+    model_prompt_metadata: String,
 }
 
 impl InteractiveSessionController {
@@ -51,6 +52,7 @@ impl InteractiveSessionController {
             persisted_turn_display: 0,
             web_access,
             advisor,
+            model_prompt_metadata: super::model_prompt_metadata::encode(None),
         };
         controller.sync_web_access();
         controller.sync_advisor_session();
@@ -72,6 +74,20 @@ impl InteractiveSessionController {
 
     pub(crate) fn session(&self) -> &Session {
         &self.session
+    }
+
+    pub(crate) fn set_model_prompt(
+        &mut self,
+        prompt: Option<&crate::prompt::model_prompts::ModelPrompt>,
+    ) {
+        self.model_prompt_metadata = super::model_prompt_metadata::encode(prompt);
+    }
+
+    pub(crate) fn snapshot(&self) -> rho_sdk::SessionSnapshot {
+        super::model_prompt_metadata::decorate_encoded(
+            self.session.snapshot(),
+            &self.model_prompt_metadata,
+        )
     }
 
     pub(crate) fn replace_session(&mut self, session: Session, omission: Option<HandoffReport>) {
@@ -181,7 +197,7 @@ impl InteractiveSessionController {
                 display.len()
             )
         })?;
-        storage.save_snapshot(&self.session.snapshot(), display_tail)?;
+        storage.save_snapshot(&self.snapshot(), display_tail)?;
         Ok(())
     }
 
@@ -198,7 +214,11 @@ impl InteractiveSessionController {
             let display_tail = display.get(persisted..).ok_or_else(|| {
                 anyhow::anyhow!("compaction display checkpoint exceeds accumulated history: persisted {}, accumulated {}", persisted, display.len())
             })?;
-            storage.save_compaction_snapshot(snapshot, display_tail, outcome)?;
+            let snapshot = super::model_prompt_metadata::decorate_encoded(
+                snapshot.clone(),
+                &self.model_prompt_metadata,
+            );
+            storage.save_compaction_snapshot(&snapshot, display_tail, outcome)?;
             self.persisted_turn_display = display.len();
         }
         Ok(())
@@ -214,14 +234,14 @@ impl InteractiveSessionController {
         outcome: &rho_sdk::CompactionOutcome,
     ) -> anyhow::Result<()> {
         if let Some(storage) = &self.storage {
-            storage.save_compaction_snapshot(&self.session.snapshot(), display_tail, outcome)?;
+            storage.save_compaction_snapshot(&self.snapshot(), display_tail, outcome)?;
         }
         Ok(())
     }
 
     pub(crate) fn save_snapshot(&self, display_tail: &[Message]) -> anyhow::Result<()> {
         if let Some(storage) = &self.storage {
-            storage.save_snapshot(&self.session.snapshot(), display_tail)?;
+            storage.save_snapshot(&self.snapshot(), display_tail)?;
         }
         Ok(())
     }
