@@ -14,6 +14,7 @@ use super::{
 };
 
 pub(super) struct Startup<'a> {
+    pub(super) keyring_notice: crate::credential_store::StartupKeyringNotice,
     pub(super) cli: &'a Cli,
     pub(super) catalog: crate::agent::DiscoveredAgentCatalog,
     pub(super) config: Config,
@@ -41,6 +42,7 @@ fn validate_resume_agent(
 
 pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
     let Startup {
+        keyring_notice,
         cli,
         catalog,
         config,
@@ -96,6 +98,9 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
         unavailable_error: missing_auth_model_error,
     })
     .await?;
+    // Background credential reads must stop writing to stderr before the TUI
+    // takes ownership of the terminal.
+    drop(keyring_notice);
     let result = tui::run(
         &mut runtime,
         TuiBootstrap {

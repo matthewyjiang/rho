@@ -10,6 +10,9 @@ use rho_providers::credentials::{
 
 use crate::config::Config;
 
+mod startup_notice;
+pub(crate) use startup_notice::StartupKeyringNotice;
+
 const LEGACY_POLICY_FILE: &str = "credential-store";
 const ENV_BACKEND: &str = "RHO_CREDENTIAL_STORE";
 
@@ -245,7 +248,10 @@ fn resolve_backend(
 }
 
 fn activate(backend: CredentialStoreBackend) -> CredentialResult<()> {
-    let store = open_credential_store(backend)?;
+    let store = Arc::new(startup_notice::NotifyingCredentialStore {
+        inner: open_credential_store(backend)?,
+        backend,
+    });
     let mut guard = process_state()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
