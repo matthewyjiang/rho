@@ -198,6 +198,8 @@ location, `~/.local/bin/rho`. Package-managed installations print manual uninsta
 instructions instead. Custom installation paths and Windows executable removal
 are also manual; Rho does not launch a background shell to delete itself.
 `RHO_INSTALL_METHOD=script` does not authorize deletion of an arbitrary executable.
+Package ownership takes precedence over install-method hints. Unconfirmed Cargo
+metadata also prevents automatic executable removal.
 
 `--purge` permanently removes `~/.rho`, including configuration, sessions,
 installed user plugins, and file-backed credentials stored there. It can clean
@@ -205,6 +207,9 @@ that directory even when the executable requires manual removal. Linked cleanup
 roots are refused, and links inside the data directory are removed without
 following them into other directories. Uninstall runs before configuration
 loading, so a broken config does not block cleanup.
+The preview lists removals in execution order: data first, then the executable.
+All targets are revalidated after confirmation and before any deletion. If the
+data purge fails, the executable remains available to retry.
 
 OS keyring entries, environment credentials, shell/PATH edits, shared `~/.agents`,
 project files, and data outside `~/.rho` remain untouched. This includes a custom

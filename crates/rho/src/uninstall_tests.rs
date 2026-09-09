@@ -1,4 +1,6 @@
+use super::planning::{installation_with_evidence, removal};
 use super::*;
+use crate::installation::InstallationEvidence;
 use pretty_assertions::assert_eq;
 use std::io::{Cursor, Read};
 
@@ -19,7 +21,7 @@ fn only_default_script_location_authorizes_executable_removal() {
         (
             ".local/bin/rho",
             Some("pacman"),
-            Installation::Managed(String::new()),
+            Installation::Managed(ManagedInstallation::Pacman),
         ),
     ] {
         let paths = Paths {
@@ -28,27 +30,68 @@ fn only_default_script_location_authorizes_executable_removal() {
             install_method: hint.map(str::to_owned),
             custom_data: None,
         };
-        let expected = if cfg!(windows) && expected == Installation::Script {
+        let expected = if !cfg!(unix) && expected == Installation::Script {
             Installation::Unknown
         } else {
             expected
         };
-        // Only the deletion decision is contractual, not the manual instructions.
         assert_eq!(
-            std::mem::discriminant(&installation(&paths)),
-            std::mem::discriminant(&expected)
+            installation_with_evidence(
+                &paths,
+                InstallationEvidence {
+                    managed: None,
+                    cargo_metadata: false,
+                    pacman_owned: false
+                }
+            ),
+            expected
         );
     }
-    // A cargo --root install can occupy the script's default directory.
-    fs::create_dir_all(home.join(".local")).unwrap();
-    fs::write(home.join(".local/.crates2.json"), "{}").unwrap();
+    // A package-owned executable can occupy the script's default directory.
+    for evidence in [
+        ManagedInstallation::Cargo {
+            root: Some(home.join(".local")),
+        },
+        ManagedInstallation::Pacman,
+        ManagedInstallation::Scoop(ScoopInstallScope::Global),
+    ] {
+        for hint in [None, Some("script"), Some("unknown"), Some("cargo")] {
+            let paths = Paths {
+                executable: home.join(".local/bin/rho"),
+                home: home.clone(),
+                install_method: hint.map(str::to_owned),
+                custom_data: None,
+            };
+            assert_eq!(
+                installation_with_evidence(
+                    &paths,
+                    InstallationEvidence {
+                        managed: Some(evidence.clone()),
+                        cargo_metadata: false,
+                        pacman_owned: false
+                    }
+                ),
+                Installation::Managed(evidence.clone())
+            );
+        }
+    }
     let paths = Paths {
         executable: home.join(".local/bin/rho"),
         home,
         install_method: Some("script".into()),
         custom_data: None,
     };
-    assert!(matches!(installation(&paths), Installation::Managed(_)));
+    assert_eq!(
+        installation_with_evidence(
+            &paths,
+            InstallationEvidence {
+                managed: None,
+                cargo_metadata: true,
+                pacman_owned: false
+            }
+        ),
+        Installation::Unknown
+    );
 }
 
 #[test]
@@ -156,40 +199,107 @@ impl<F: FnOnce()> BufRead for ChangeBeforeAnswer<F> {
 // Owner: uninstall filesystem transaction, not the confirmation parser.
 #[test]
 fn changed_target_aborts_before_removing_anything() {
+    for changed_kind in [TargetKind::DataDirectory, TargetKind::Executable] {
+        if changed_kind == TargetKind::Executable && !cfg!(unix) {
+            continue;
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let home = fs::canonicalize(temp.path()).unwrap();
+        let data = home.join(".rho");
+        fs::create_dir(&data).unwrap();
+        fs::create_dir_all(home.join(".local/bin")).unwrap();
+        let executable = home.join(".local/bin/rho");
+        fs::write(&executable, "binary").unwrap();
+        let backup = home.join("original");
+        let mut input = ChangeBeforeAnswer {
+            answer: Cursor::new(b"yes\n".as_slice()),
+            change: Some(|| match changed_kind {
+                TargetKind::DataDirectory => {
+                    fs::rename(&data, &backup).unwrap();
+                    fs::create_dir(&data).unwrap();
+                    fs::write(data.join("keep"), "replacement").unwrap();
+                }
+                TargetKind::Executable => {
+                    fs::rename(&executable, &backup).unwrap();
+                    fs::write(&executable, "replacement").unwrap();
+                }
+            }),
+        };
+        let paths = Paths {
+            home,
+            executable: executable.clone(),
+            install_method: None,
+            custom_data: None,
+        };
+        assert!(run_with_io(
+            &paths,
+            /*purge*/ true,
+            /*dry_run*/ false,
+            &mut input,
+            &mut Vec::new()
+        )
+        .is_err());
+        match changed_kind {
+            TargetKind::DataDirectory => assert_eq!(
+                fs::read_to_string(data.join("keep")).unwrap(),
+                "replacement"
+            ),
+            TargetKind::Executable => {
+                assert_eq!(fs::read_to_string(&executable).unwrap(), "replacement")
+            }
+        }
+        assert!(data.exists());
+        assert!(backup.exists());
+        assert!(executable.exists());
+    }
+}
+
+// Covers: a failed data purge must leave the executable available for retry.
+// Owner: uninstall execution; injected I/O failure works even as root.
+#[cfg(unix)]
+#[test]
+fn failed_purge_keeps_binary_and_uses_preview_order() {
     let temp = tempfile::tempdir().unwrap();
     let home = fs::canonicalize(temp.path()).unwrap();
     let data = home.join(".rho");
-    fs::create_dir(&data).unwrap();
-    fs::create_dir_all(home.join(".local/bin")).unwrap();
     let executable = home.join(".local/bin/rho");
+    fs::create_dir(&data).unwrap();
+    fs::create_dir_all(executable.parent().unwrap()).unwrap();
     fs::write(&executable, "binary").unwrap();
-    let backup = home.join("original");
-    let mut input = ChangeBeforeAnswer {
-        answer: Cursor::new(b"yes\n".as_slice()),
-        change: Some(|| {
-            fs::rename(&data, &backup).unwrap();
-            fs::create_dir(&data).unwrap();
-            fs::write(data.join("keep"), "replacement").unwrap();
-        }),
-    };
     let paths = Paths {
         home,
         executable: executable.clone(),
         install_method: None,
         custom_data: None,
     };
-    assert!(run_with_io(
-        &paths,
-        /*purge*/ true,
-        /*dry_run*/ false,
-        &mut input,
-        &mut Vec::new()
-    )
-    .is_err());
+    let plan = plan(&paths, /*purge*/ true).unwrap();
     assert_eq!(
-        fs::read_to_string(data.join("keep")).unwrap(),
-        "replacement"
+        plan.removals
+            .iter()
+            .map(|target| (target.path.clone(), target.kind))
+            .collect::<Vec<_>>(),
+        vec![
+            (data.clone(), TargetKind::DataDirectory),
+            (executable.clone(), TargetKind::Executable),
+        ]
     );
-    assert!(backup.exists());
-    assert!(executable.exists());
+    let mut attempted = Vec::new();
+    let error = execute(plan, &mut Vec::new(), |path, kind| {
+        attempted.push((path.to_path_buf(), kind));
+        match kind {
+            TargetKind::DataDirectory => Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "injected purge failure",
+            )),
+            TargetKind::Executable => fs::remove_file(path),
+        }
+    })
+    .unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<io::Error>().unwrap().kind(),
+        io::ErrorKind::PermissionDenied
+    );
+    assert_eq!(attempted, vec![(data.clone(), TargetKind::DataDirectory)]);
+    assert_eq!(fs::read_to_string(executable).unwrap(), "binary");
+    assert!(data.exists());
 }

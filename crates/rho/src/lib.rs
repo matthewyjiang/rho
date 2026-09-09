@@ -23,6 +23,7 @@ mod executable;
 mod export;
 mod herdr;
 mod hooks;
+mod installation;
 mod keybindings;
 mod logging;
 mod login_prompt_print;

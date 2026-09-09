@@ -11,6 +11,64 @@ use std::{
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
+// Covers: a script override must not permit deleting a package-owned binary,
+// even at the default script location and without a local Cargo receipt.
+// Owner: CLI process / package-manager probe integration.
+#[test]
+fn package_ownership_overrides_script_deletion_hint() {
+    use std::os::unix::fs::PermissionsExt;
+    for (owner, package) in [
+        ("cargo", "rho-coding-agent"),
+        ("pacman", "rho-coding-agent"),
+        ("pacman", "other-package"),
+    ] {
+        let temp = TempDir::new().unwrap();
+        let home = temp.path().canonicalize().unwrap();
+        let bin = home.join(".local/bin/rho");
+        let tools = home.join("tools");
+        fs::create_dir_all(bin.parent().unwrap()).unwrap();
+        fs::create_dir(&tools).unwrap();
+        fs::copy(env!("CARGO_BIN_EXE_rho"), &bin).unwrap();
+        for tool in ["cargo", "pacman"] {
+            let script = if tool == owner {
+                if tool == "cargo" {
+                    format!("#!/bin/sh\nprintf '{package} v2.9.1:\\n    rho\\n'\n")
+                } else {
+                    format!("#!/bin/sh\nprintf '{package}\\n'\n")
+                }
+            } else {
+                "#!/bin/sh\nexit 1\n".into()
+            };
+            let path = tools.join(tool);
+            fs::write(&path, script).unwrap();
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        // pacman probing is Linux-only, matching production detection.
+        if owner == "pacman" && !cfg!(target_os = "linux") {
+            continue;
+        }
+        let mut child = Command::new(&bin)
+            .arg("uninstall")
+            .env("HOME", &home)
+            .env("PATH", &tools)
+            .env("RHO_INSTALL_METHOD", "script")
+            .env_remove("RHO_HOME")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // Managed installs need no confirmation; ignore a closed input pipe.
+        let _ = child.stdin.take().unwrap().write_all(b"yes\n");
+        let output = child.wait_with_output().unwrap();
+        assert!(output.status.success(), "{owner}: {output:?}");
+        assert!(
+            bin.exists(),
+            "{owner} ownership must prevent executable deletion"
+        );
+    }
+}
+
 // Covers: cancellation/preview must not delete files; explicit consent removes
 // only the selected installation/data, even with broken configuration.
 // Owner: CLI process and filesystem.
