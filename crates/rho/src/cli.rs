@@ -111,6 +111,19 @@ pub struct Cli {
 }
 
 #[derive(Subcommand, Debug)]
+pub enum ModelPromptCommand {
+    /// Edit the matching file, or create one automatically after a valid save.
+    Edit {
+        /// Provider ID, defaulting to the configured provider.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Exact model ID or @alias, defaulting to the configured model.
+        #[arg(long)]
+        model: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 pub enum Command {
     /// Run one non-interactive automation prompt and print the final answer.
     Run {
@@ -161,6 +174,11 @@ pub enum Command {
     CredentialStore {
         #[command(subcommand)]
         command: CredentialStoreCommand,
+    },
+    /// Configure model-scoped system instructions in an external editor.
+    ModelPrompt {
+        #[command(subcommand)]
+        command: ModelPromptCommand,
     },
     /// Update rho using the detected installation method.
     Update,

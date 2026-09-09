@@ -41,11 +41,11 @@ pub(crate) struct ModelPrompt {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Frontmatter {
+pub(super) struct Frontmatter {
     #[serde(deserialize_with = "deserialize_identifier")]
-    provider: String,
+    pub(super) provider: String,
     #[serde(deserialize_with = "deserialize_identifier")]
-    model: String,
+    pub(super) model: String,
     #[serde(default)]
     mode: ModelPromptMode,
 }
@@ -86,7 +86,7 @@ pub(crate) fn load(home: Option<&Path>, model: &PromptModel) -> Result<Option<Mo
                     "could not read model prompt directory {}",
                     directory.display()
                 )
-            })
+            });
         }
     };
     let mut paths = Vec::new();
@@ -133,7 +133,7 @@ pub(crate) fn load(home: Option<&Path>, model: &PromptModel) -> Result<Option<Mo
     Ok(selected)
 }
 
-fn parse(path: &Path, source: &str) -> Result<(Frontmatter, ModelPrompt)> {
+pub(super) fn parse(path: &Path, source: &str) -> Result<(Frontmatter, ModelPrompt)> {
     let mut lines = source.split_inclusive('\n');
     if lines.next().map(|line| line.trim_end_matches(['\r', '\n'])) != Some("---") {
         bail!("required YAML frontmatter must begin with --- on the first line");

@@ -4,6 +4,7 @@ use serde::Serialize;
 
 use {crate::model_identity::PromptModel, crate::skills, rho_tools::tool::ToolSpec};
 
+pub(crate) mod model_prompt_edit;
 mod model_prompt_template;
 pub(crate) mod model_prompts;
 pub(crate) use model_prompt_template::ModelPromptTemplate;

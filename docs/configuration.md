@@ -69,6 +69,20 @@ rho --config ~/.rho/config.toml
 
 ## Model-scoped system prompts
 
+Use the CLI to edit instructions for the configured model, or select an exact target:
+
+```bash
+rho model-prompt edit
+rho model-prompt edit --provider openai-codex --model gpt-6-astra
+rho model-prompt edit --model @local
+```
+
+The command uses `$VISUAL`, falling back to `$EDITOR`. Editor arguments are supported, for example `EDITOR='code --wait'`. Configure an editor that waits until you finish editing; Rho validates and saves when the process exits. This command works offline and does not start a session, access provider credentials, or change your configured model. Use `rho --config /path/to/config.toml model-prompt edit` to select a different configuration file.
+
+Rho first finds an existing file by its frontmatter, even if you renamed it. If none matches, it creates a draft with the resolved provider/model and `mode: append`. It creates the directory as needed and, on a valid save, writes a file named `<provider>_<model>.md`. Filename components preserve ASCII letters, numbers, `.`, `-`, and `_`; other characters become `-`, with consecutive replacements collapsed. A leading `.` gets an `_` prefix. Occupied names receive `-2.md`, `-3.md`, and so on instead of being overwritten.
+
+Edits use a private draft and an atomic save. Leaving the draft unchanged cancels creation or leaves an existing file untouched. Invalid edits, changed provider/model identity, and editor failures preserve the draft and report its recovery path. The command refuses to overwrite a file changed during editing, and refuses read-only or symlink targets. Running sessions keep their loaded instructions until a reload boundary below; there is no TUI configuration command for this feature.
+
 Put Markdown files directly in `~/.rho/model-prompts/` to tune Rho's behavioral instructions for a particular provider and model. Filenames are arbitrary. Identity comes from required YAML frontmatter:
 
 ```markdown
