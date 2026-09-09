@@ -33,23 +33,29 @@ for line in sys.stdin:
     elif method == "tools/list":
         result = {"tools": [
             {"name": name, "description": name, "inputSchema": {"type": "object"}}
-            for name in ["click", "get_window_state", "set_config", "start_recording", "future_tool"]
+            for name in ["click", "get_window_state", "launch_app", "set_config", "start_recording", "future_tool"]
         ]}
     elif method == "tools/call":
         params = message["params"]
-        assert params["name"] in ["click", "get_window_state"]
-        assert "session" not in params["arguments"]
-        if params["name"] == "click":
+        assert params["name"] in ["click", "get_window_state", "launch_app"]
+        arguments = params.get("arguments") or {}
+        assert "session" not in arguments
+        if arguments.get("fail"):
+            result = {"content": [
+                {"type": "text", "text": "no action taken"},
+            ], "isError": True}
+        elif params["name"] == "click" or arguments.get("hang"):
             token = params.get("_meta", {}).get("progressToken")
             if token is not None:
                 send({"jsonrpc": "2.0", "method": "notifications/progress", "params": {
                     "progressToken": token, "progress": 1, "message": "action received"
                 }})
             continue
-        result = {"content": [
-            {"type": "text", "text": "observed"},
-            {"type": "image", "mimeType": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="},
-        ], "isError": False}
+        else:
+            result = {"content": [
+                {"type": "text", "text": "observed"},
+                {"type": "image", "mimeType": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="},
+            ], "isError": False}
     else:
         result = {}
     send({"jsonrpc": "2.0", "id": message["id"], "result": result})

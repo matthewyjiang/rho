@@ -71,7 +71,7 @@ fn fixture() -> (tempfile::TempDir, ComputerUseSession) {
     let driver = root.path().join("cua-driver");
     fs::write(&driver, include_str!("fixture.py")).unwrap();
     fs::set_permissions(&driver, fs::Permissions::from_mode(0o700)).unwrap();
-    // Sized from this fixture's two tiny schemas, not a production budget.
+    // Sized from this fixture's three tiny allowed schemas, not a production budget.
     let session = ComputerUseSession::new(Some(driver), 4096, root.path().into());
     (root, session)
 }
@@ -115,7 +115,7 @@ async fn explicit_grant_filters_remote_tools_and_revokes_retained_handles() {
         .iter()
         .map(|spec| spec["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, vec!["click", "get_window_state"]);
+    assert_eq!(names, vec!["click", "get_window_state", "launch_app"]);
     for args in [
         json!({"action":"call","tool":"set_config","arguments":{}}),
         json!({"action":"call","tool":"click","arguments":{"session":"other"}}),
@@ -153,6 +153,124 @@ async fn explicit_grant_filters_remote_tools_and_revokes_retained_handles() {
         ToolErrorKind::Execution
     );
     assert!(registry.set_computer_use_registered(false));
+}
+
+// Covers: only audited observation names retain the grant; unknown and input
+// names stay fail-closed. Server hints and error text are not consulted.
+// Owner: computer-use revocation policy
+#[test]
+fn only_audited_observation_names_are_trusted_read_only() {
+    for (name, arguments, trusted) in [
+        ("get_window_state", json!({}), true),
+        ("get_desktop_state", json!({}), true),
+        ("zoom", json!({}), true),
+        ("click", json!({}), false),
+        ("screenshot", json!({}), false),
+        ("get_window_state_and_click", json!({}), false),
+        ("", json!({}), false),
+        (
+            "get_desktop_state",
+            json!({"screenshot_out_file":"/tmp/capture.png"}),
+            false,
+        ),
+    ] {
+        assert_eq!(
+            recovery::is_trusted_read_only(name, arguments.as_object().unwrap()),
+            trusted,
+            "{name}: {arguments}",
+        );
+    }
+}
+
+// Covers: a screenshot/observation failure used to revoke the grant; cancel
+// of that same audited name must also keep the session usable.
+// Owner: Cua session lifecycle over a real stdio MCP fixture.
+#[tokio::test]
+async fn observation_failure_and_cancellation_retain_the_grant() {
+    let (_root, session) = fixture();
+    session.connect().await.unwrap();
+    let tool = session.tool();
+    assert_eq!(
+        tool.call(
+            invocation(
+                json!({"action":"call","tool":"get_window_state","arguments":{"fail":true}})
+            ),
+            context()
+        )
+        .await
+        .unwrap_err()
+        .kind(),
+        ToolErrorKind::Execution
+    );
+    assert_eq!(session.status(), ComputerUseStatus::Connected);
+    assert_eq!(session.revocation_reason(), None);
+
+    let cancellation = CancellationToken::new();
+    let (sender, mut progress) = tool_progress_channel(NonZeroUsize::new(1).unwrap());
+    let task = {
+        let tool = tool.clone();
+        let context = ToolContext::new(None, cancellation.clone(), sender);
+        tokio::spawn(async move {
+            tool.call(
+                invocation(
+                    json!({"action":"call","tool":"get_window_state","arguments":{"hang":true}}),
+                ),
+                context,
+            )
+            .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(10), progress.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    cancellation.cancel();
+    assert_eq!(
+        task.await.unwrap().unwrap_err().kind(),
+        ToolErrorKind::Cancelled
+    );
+    assert_eq!(session.status(), ComputerUseStatus::Connected);
+    assert_eq!(session.revocation_reason(), None);
+    tool.call(
+        invocation(json!({"action":"call","tool":"get_window_state","arguments":{}})),
+        context(),
+    )
+    .await
+    .unwrap();
+    session.disconnect().await;
+}
+
+// Covers: an input failure still revokes, and Rho does not reconnect or replay.
+// Owner: Cua session lifecycle over a real stdio MCP fixture.
+#[tokio::test]
+async fn action_failure_revokes_the_grant_without_replay() {
+    for name in ["click", "launch_app"] {
+        let (_root, session) = fixture();
+        session.connect().await.unwrap();
+        let tool = session.tool();
+        assert_eq!(
+            tool.call(
+                invocation(json!({"action":"call","tool":name,"arguments":{"fail":true}})),
+                context()
+            )
+            .await
+            .unwrap_err()
+            .kind(),
+            ToolErrorKind::Execution
+        );
+        assert_eq!(session.status(), ComputerUseStatus::Closing);
+        assert!(session.revocation_reason().is_some());
+        assert!(session.take_revocation_notice().is_some());
+        assert_eq!(
+            tool.call(invocation(json!({"action":"list"})), context())
+                .await
+                .unwrap_err()
+                .kind(),
+            ToolErrorKind::Execution
+        );
+        assert_eq!(session.status(), ComputerUseStatus::Closing);
+        session.disconnect().await;
+    }
 }
 
 // Covers: a cancelled desktop action has uncertain effect; subsequent calls

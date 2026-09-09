@@ -3,7 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-// Exact audited observation/input/navigation names from Cua Driver 0.23.2.
+// Exact audited observation/input/navigation names from Cua Driver 0.23.2,
+// plus launch_app audited against 0.24.0 (includes command launching on Linux).
 // Unknown future tools are denied. No setup, browser endpoint preparation,
 // installation, recording, configuration, or session lifecycle RPCs.
 pub(super) const ALLOWED_TOOLS: &[&str] = &[
@@ -26,6 +27,7 @@ pub(super) const ALLOWED_TOOLS: &[&str] = &[
     "get_window_state",
     "hotkey",
     "invoke_menu",
+    "launch_app",
     "list_apps",
     "list_windows",
     "press_key",
@@ -111,18 +113,49 @@ fn executable(path: &Path) -> bool {
 
 /// Desktop transport needs these ambient OS handles, but never provider secrets.
 pub(super) fn desktop_environment() -> std::collections::BTreeMap<String, String> {
+    desktop_environment_from(|name| std::env::var_os(name).is_some())
+}
+
+fn desktop_environment_from(
+    mut is_set: impl FnMut(&str) -> bool,
+) -> std::collections::BTreeMap<String, String> {
     [
         "DISPLAY",
         "WAYLAND_DISPLAY",
         "XDG_RUNTIME_DIR",
         "XAUTHORITY",
         "DBUS_SESSION_BUS_ADDRESS",
+        "HYPRLAND_INSTANCE_SIGNATURE",
+        // Explicit choices override the managed Wayland default.
+        "CUA_DRIVER_RS_ENABLE_WAYLAND",
     ]
     .into_iter()
-    .filter(|name| std::env::var_os(name).is_some())
+    .filter(|name| is_set(name))
     .map(|name| (name.to_owned(), name.to_owned()))
     .collect()
 }
+
+/// Managed connections use native Wayland when available, unless overridden.
+/// This default is local to the driver child, not the installer or user config.
+pub(super) fn driver_environment() -> std::collections::BTreeMap<String, String> {
+    driver_environment_from(|name| std::env::var_os(name))
+}
+
+fn driver_environment_from(
+    mut read: impl FnMut(&str) -> Option<OsString>,
+) -> std::collections::BTreeMap<String, String> {
+    let mut environment = telemetry_environment();
+    if read("CUA_DRIVER_RS_ENABLE_WAYLAND").is_none()
+        && read("WAYLAND_DISPLAY").is_some_and(|display| !display.is_empty())
+    {
+        environment.insert("CUA_DRIVER_RS_ENABLE_WAYLAND".into(), "1".into());
+    }
+    environment
+}
+
+#[cfg(test)]
+#[path = "policy_tests.rs"]
+mod tests;
 
 /// Override both Cua runtime and compatibility opt-ins before any managed launch.
 pub(super) fn telemetry_environment() -> std::collections::BTreeMap<String, String> {

@@ -70,7 +70,15 @@ cua-driver mcp
 
 Connection verification checks the MCP handshake and supported tools, not OS capture/input permissions. Rho does not change OS permissions or select unrestricted mode. Run `cua-driver doctor` for installation diagnostics. On macOS, use `cua-driver permissions status` after starting the daemon and grant Accessibility and Screen Recording in System Settings as needed; Cua's daemon-backed permission flow remains in charge. Outside the separately authorized installer, Rho does not stop a shared Cua daemon: closing its MCP connection does not close other clients' sessions.
 
-On Linux, the driver child receives the available desktop connection variables such as `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `XAUTHORITY`, and `DBUS_SESSION_BUS_ADDRESS`. Other process environment filtering remains unchanged. A headless shell or missing OS permissions may allow discovery but prevent actual observation or input.
+On Linux, the driver child receives the available desktop connection variables `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `XAUTHORITY`, `DBUS_SESSION_BUS_ADDRESS`, and `HYPRLAND_INSTANCE_SIGNATURE`. Rho also forwards an existing `CUA_DRIVER_RS_ENABLE_WAYLAND` value. Other process environment filtering remains unchanged. A headless shell or missing OS permissions may allow discovery but prevent actual observation or input.
+
+When `WAYLAND_DISPLAY` is nonempty, Rho defaults its managed driver child to `CUA_DRIVER_RS_ENABLE_WAYLAND=1`. This selects Cua's experimental native Wayland backend instead of the X11 path, even when the desktop also exports `DISPLAY` for XWayland. X11-only and headless sessions get no automatic opt-in. An existing `CUA_DRIVER_RS_ENABLE_WAYLAND` value always takes precedence, including `0`, `false`, or an empty value. To disable native Wayland explicitly:
+
+```sh
+CUA_DRIVER_RS_ENABLE_WAYLAND=0 rho
+```
+
+This default applies only after you grant desktop access. It does not change global settings, the installer environment, or unrestricted mode. The Hyprland instance signature lets Cua find the correct compositor IPC socket. Forwarding it does not install a compositor plugin or guarantee capture and input support. If using a terminal server such as Herdr, start that server from the desktop session too; attaching a desktop client does not necessarily update the server's environment.
 
 When Linux `DISPLAY` is unset or empty, `/computer on`, `/computer status`, and `rho computer status` warn that the X11 overlay cannot connect. CLI JSON includes a nullable `desktop_warning` field. This check does not rule out a Wayland session or verify desktop permissions. Launch Rho from the intended desktop session with its environment rather than guessing a display value.
 
@@ -93,11 +101,11 @@ When the combined schemas exceed the configured `max_output_bytes`, it gets oper
 It then calls the exact operation with arguments matching that schema:
 
 ```json
-{"action":"call","tool":"get_window_state","arguments":{"pid":12345}}
+{"action":"call","tool":"get_window_state","arguments":{"pid":12345,"window_id":67890}}
 ```
 
-The PID above is illustrative; the model must discover the real target. Available operations vary by driver version and platform. Rho only exposes an explicit set of observation, input, and navigation operations. Unknown operations and driver administration, recording, permission changes, and session lifecycle controls are excluded. Calls cannot supply another session's identifier.
+The PID and window ID above are illustrative; the model must discover the real target. Available operations vary by driver version and platform. Rho only exposes an explicit set of observation, input, navigation, and app-launch operations. `launch_app` can open apps, files, and URLs. On Linux it also accepts commands and extra arguments, so this grant is not limited to installed-app IDs. Launch calls are mutating operations: failure or cancellation revokes access, and Rho never replays them automatically. Unknown operations and driver administration, recording, permission changes, and session lifecycle controls are excluded. Calls cannot supply another session's identifier.
 
-Actions are serialized within the managed session. Rho does not coordinate desktop ownership with other Rho processes or other computer-use clients. Failed or cancelled actions revoke the grant because their effects may be uncertain; the model cannot reconnect itself or automatically replay an input action. Rho reports the revocation at the next idle boundary and retains its reason in the dashboard until a new grant. Check the desktop for partial effects before explicitly enabling access again.
+Actions are serialized within the managed session. Rho does not coordinate desktop ownership with other Rho processes or other computer-use clients. Failed or cancelled dispatched calls revoke the grant unless they are audited observations. Observation calls, including screenshots returned to the model, keep the grant on failure or cancellation. Screenshots requested with `screenshot_out_file` still revoke on failure or cancellation because they may have written a file. Rho classifies calls by their tool name and arguments, not by server hints or error text. The model cannot reconnect itself or automatically replay an input action. Rho reports a revocation at the next idle boundary and retains its reason in the dashboard until a new grant. Check the desktop for partial effects before explicitly enabling access again.
 
 Supported typed image content from computer calls becomes model-visible image input, while ordinary MCP output remains presentation-only. Model observations preserve the original payloads independently of the preview card's image selection and size budget. A screenshot omitted from the preview can still reach the model; unsupported image formats are identified in the text output. Provider image limits still apply.
