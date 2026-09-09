@@ -23,6 +23,7 @@ fn test_cli() -> Cli {
         reasoning: None,
         permission_mode: None,
         save: false,
+        no_save: false,
         resume: None,
         prompt: None,
         command: None,

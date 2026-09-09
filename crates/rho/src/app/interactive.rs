@@ -122,6 +122,7 @@ pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
                 prompt_templates,
             },
             session: SessionBootstrap {
+                no_save: cli.no_save,
                 session_id,
                 recovered_messages,
                 open_resume_picker,

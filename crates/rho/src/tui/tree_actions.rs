@@ -74,6 +74,10 @@ impl App {
         &mut self,
         agent: &InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.no_save {
+            self.set_status("conversation tree unavailable with --no-save");
+            return Ok(());
+        }
         let Some(storage) = agent.stored_session() else {
             self.set_status("no active session tree; send a message first");
             return Ok(());

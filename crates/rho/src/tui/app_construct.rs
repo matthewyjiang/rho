@@ -83,7 +83,8 @@ impl App {
             prompt_history_limit,
             info.services.pending_prompt_history.take(),
         );
-        let statusline = StatusLine::new(&info.runtime);
+        let mut statusline = StatusLine::new(&info.runtime);
+        statusline.update_not_saved(info.session.no_save);
         let mut app = Self {
             info,
             terminal_session: None,

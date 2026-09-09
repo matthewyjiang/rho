@@ -24,6 +24,7 @@ mod login;
 mod markdown_stream;
 mod mcp;
 mod mermaid;
+mod no_save;
 mod paste;
 mod pickers;
 mod process_rail;
@@ -95,6 +96,7 @@ use mcp::{
     MCP_INVENTORY_SCENARIO,
 };
 use mermaid::MERMAID_FLOWCHART_RESIZE_STEPS;
+use no_save::NO_SAVE_SESSION_SCENARIO;
 use paste::PASTE_MULTILINE_SCENARIO;
 use pickers::{
     setup_edit_user_agent, setup_pinned_models, CYCLE_AND_PINNED_MODEL_PICKER_STEPS,
@@ -461,6 +463,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     STARTUP_FIRST_FRAME_SCENARIO,
     STARTUP_STREAM_EXIT_SCENARIO,
     STARTUP_PROMPT_STREAM_EXIT_SCENARIO,
+    NO_SAVE_SESSION_SCENARIO,
     REASONING_OUTPUT_RETROACTIVE_SCENARIO,
     Scenario::new(
         "cancel_and_resubmit",

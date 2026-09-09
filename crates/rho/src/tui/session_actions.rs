@@ -13,6 +13,9 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.no_save {
+            return self.open_resume_picker();
+        }
         let session_id = invocation.args.trim();
         if !session_id.is_empty() {
             return self
@@ -24,6 +27,12 @@ impl App {
     }
 
     pub(super) fn open_resume_picker(&mut self) -> anyhow::Result<()> {
+        if self.info.session.no_save {
+            self.insert_entry(&Entry::Notice(
+                "resume unavailable with --no-save; start Rho without it to resume".into(),
+            ));
+            return Ok(());
+        }
         match Session::list(&self.info.runtime.cwd) {
             Ok(sessions) if sessions.is_empty() => {
                 self.input_ui.set_composer(ComposerMode::Input);
@@ -231,6 +240,10 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
+            !self.info.session.no_save,
+            "resume unavailable with --no-save; start Rho without it to resume"
+        );
+        anyhow::ensure!(
             !is_cross_project(session.cwd(), &self.info.runtime.cwd),
             "start Rho in {} to resume this session",
             crate::paths::display(session.cwd())
@@ -253,6 +266,9 @@ impl App {
 
 impl App {
     pub(super) fn ensure_session(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
+        if self.info.session.no_save {
+            return Ok(());
+        }
         if self.info.session.session_id.is_none() {
             let session_id = agent.session_id().to_string();
             let (agent_id, agent_fingerprint) = agent.agent_identity();

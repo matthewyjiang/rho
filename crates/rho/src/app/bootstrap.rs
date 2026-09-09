@@ -432,7 +432,7 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         )
     });
     let prompt_history_limit = startup.config.prompt_history_limit;
-    let pending_prompt_history = (prompt_history_limit > 0).then(|| {
+    let pending_prompt_history = (prompt_history_limit > 0 && !startup.cli.no_save).then(|| {
         tokio::spawn(
             async move {
                 tokio::task::spawn_blocking(move || {

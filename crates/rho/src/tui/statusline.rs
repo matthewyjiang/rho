@@ -83,6 +83,7 @@ pub(super) struct StatusLineState {
     /// The active provider resolved to usable credentials. When false the row
     /// names the gap instead of a model the session cannot reach.
     signed_in: bool,
+    not_saved: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -127,6 +128,7 @@ impl Default for StatusLineState {
             extra_cost_usd_micros: 0,
             average_generation_rate: None,
             signed_in: true,
+            not_saved: false,
         }
     }
 }
@@ -150,11 +152,19 @@ impl StatusLineState {
             extra_cost_usd_micros: 0,
             average_generation_rate: None,
             signed_in: true,
+            not_saved: false,
         }
     }
 }
 
 impl StatusLine {
+    pub(super) fn update_not_saved(&mut self, not_saved: bool) {
+        if self.state.not_saved != not_saved {
+            self.state.not_saved = not_saved;
+            self.invalidate();
+        }
+    }
+
     pub(super) fn new(info: &RuntimeModelView) -> Self {
         Self {
             state: StatusLineState::from_tui(info),
@@ -318,6 +328,8 @@ const RANK_MODEL: u8 = 60;
 const RANK_LOGIN_HINT: u8 = 60;
 /// Warning/critical context outranks model but stays below permission.
 const RANK_CONTEXT_URGENT: u8 = 65;
+/// Unsaved-session warning outranks model identity but never hides permission mode.
+const RANK_NOT_SAVED: u8 = RANK_CONTEXT_URGENT;
 const RANK_PERMISSION: u8 = 70;
 /// Signed-out copy outranks permission so the row still names the fix.
 const RANK_SIGNED_OUT: u8 = 80;
@@ -335,6 +347,7 @@ enum FieldKey {
     Reasoning,
     SignedOut,
     LoginHint,
+    NotSaved,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -468,7 +481,7 @@ fn statusline_lines(
 /// Bottom row layout with an explicit field hierarchy.
 ///
 /// Sides:
-/// - left metrics: `context · cost · rate`
+/// - left: `not saved · context · cost · rate`
 /// - right identity: `permission · zen · provider · model · reasoning`
 ///
 /// Drop order when width is scarce (first dropped first):
@@ -479,7 +492,8 @@ fn statusline_lines(
 /// 5. session cost
 /// 6. context usage (ambient; promotes above model at warning/critical fill, rank 65)
 /// 7. model id
-/// 8. permission mode (kept last)
+/// 8. unsaved-session warning
+/// 9. permission mode (kept last)
 ///
 /// Warning and critical fill share the urgent rank; only style differs at 90%.
 /// Bypass permission and signed-out copy keep their rank guarantees.
@@ -494,6 +508,17 @@ fn pack_bottom_status(
 
 fn bottom_fields(state: &StatusLineState) -> Vec<StatusField> {
     let mut fields = Vec::with_capacity(9);
+
+    if state.not_saved {
+        fields.push(field(
+            FieldKey::NotSaved,
+            Side::Left,
+            RANK_NOT_SAVED,
+            0,
+            "not saved",
+            Theme::warning(),
+        ));
+    }
 
     if let Some((text, style, rank)) = resolve_context_field(state) {
         fields.push(field(FieldKey::Context, Side::Left, rank, 0, text, style));

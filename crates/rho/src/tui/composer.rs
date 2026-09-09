@@ -167,7 +167,7 @@ impl App {
         if prompt.is_empty() {
             return;
         }
-        if self.input_ui.push_history_if_new(prompt) {
+        if self.input_ui.push_history_if_new(prompt) && !self.info.session.no_save {
             self.prompt_history.push(prompt);
         }
     }

@@ -26,6 +26,9 @@ impl ProviderRefreshStatus {
 }
 
 pub(super) fn validate(cli: &Cli) -> anyhow::Result<()> {
+    if cli.no_save && cli.command.is_some() {
+        anyhow::bail!("--no-save is only supported for interactive sessions");
+    }
     if cli.resume.is_some() && cli.command.is_some() {
         anyhow::bail!("--resume is only supported for interactive sessions");
     }

@@ -388,6 +388,8 @@ impl RuntimeModelView {
 }
 
 pub struct SessionBootstrap {
+    /// Invocation-wide policy, retained when starting a new conversation.
+    pub no_save: bool,
     pub session_id: Option<String>,
     /// Take-once startup buffer. `insert_recovered_history` converts this into
     /// transcript entries and drops the `Message` vec.
