@@ -442,3 +442,7 @@ fn build_openai_compatible_provider(
 #[cfg(test)]
 #[path = "builder_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "builder_session_tests.rs"]
+mod session_tests;

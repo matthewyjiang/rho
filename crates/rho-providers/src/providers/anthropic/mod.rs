@@ -41,6 +41,7 @@ pub struct AnthropicProvider {
     /// Per-conversation prefix effort and later shifts, keyed by prompt cache
     /// key, so a mid-session change does not rewrite top-level effort.
     per_message_effort: Mutex<per_message_effort::PerMessageEffortState>,
+    session_headers: super::opencode_go::SessionHeaders,
 }
 
 impl AnthropicProvider {
@@ -58,6 +59,7 @@ impl AnthropicProvider {
             model,
             max_tokens_override: Some(DEFAULT_MAX_TOKENS),
             thinking_override,
+            session_headers: super::opencode_go::SessionHeaders::new("anthropic"),
             thinking_budget_ceiling: OnceLock::new(),
             per_message_effort: Mutex::new(per_message_effort::PerMessageEffortState::default()),
         }
@@ -98,6 +100,7 @@ impl AnthropicProvider {
             model,
             max_tokens_override: None,
             thinking_override: None,
+            session_headers: super::opencode_go::SessionHeaders::new(identity_provider),
             thinking_budget_ceiling: OnceLock::new(),
             per_message_effort: Mutex::new(per_message_effort::PerMessageEffortState::default()),
         }
@@ -214,8 +217,14 @@ impl AnthropicProvider {
     }
 
     async fn send_messages(&self, request: ModelRequest<'_>) -> Result<ModelResponse, ModelError> {
+        let headers = self.session_headers.headers(request.prompt_cache_key);
         let body = self.request_body(request, false)?;
-        let response = self.messages_request(&body).json(&body).send().await?;
+        let response = self
+            .messages_request(&body)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         let response: AnthropicResponse = response.json().await?;
         convert_anthropic_response(response)
@@ -226,8 +235,14 @@ impl AnthropicProvider {
         request: ModelRequest<'_>,
         on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
     ) -> Result<ModelResponse, ModelError> {
+        let headers = self.session_headers.headers(request.prompt_cache_key);
         let body = self.request_body(request, true)?;
-        let response = self.messages_request(&body).json(&body).send().await?;
+        let response = self
+            .messages_request(&body)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         collect_anthropic_sse_response(response, on_event).await
     }

@@ -235,6 +235,9 @@ async fn opencode_go_anthropic_npm_posts_messages_with_x_api_key() {
         assert!(!headers
             .to_ascii_lowercase()
             .contains("authorization: bearer"));
+        assert!(headers
+            .lines()
+            .any(|line| line == "x-opencode-session: rho:session"));
         let content_length = headers.lines().find_map(|line| {
             line.to_ascii_lowercase()
                 .strip_prefix("content-length:")
@@ -291,7 +294,7 @@ async fn opencode_go_anthropic_npm_posts_messages_with_x_api_key() {
             tools: &[],
             cancellation: Default::default(),
             reasoning_level: ReasoningLevel::Max,
-            prompt_cache_key: None,
+            prompt_cache_key: Some("rho:session"),
         })
         .await
         .unwrap();
@@ -503,7 +506,7 @@ async fn custom_responses_does_not_inject_hosted_web_search() {
     );
 }
 
-async fn read_complete_http_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
+pub(super) async fn read_complete_http_request(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
     use tokio::io::AsyncReadExt;
 
     let mut buf = vec![0; 16_384];

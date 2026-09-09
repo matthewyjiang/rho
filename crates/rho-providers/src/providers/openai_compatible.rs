@@ -31,6 +31,7 @@ pub(crate) struct OpenAiCompatibleProvider {
     auth: CompatibleAuth,
     api_base: String,
     reasoning: reasoning::DialectReasoning,
+    session_headers: super::opencode_go::SessionHeaders,
 }
 
 impl OpenAiCompatibleProvider {
@@ -51,6 +52,7 @@ impl OpenAiCompatibleProvider {
             auth,
             api_base,
             reasoning,
+            session_headers: super::opencode_go::SessionHeaders::new(provider),
         }
     }
 
@@ -206,7 +208,10 @@ impl OpenAiCompatibleProvider {
                 (url.to_string(), Some(authorization))
             }
         };
-        let mut request = self.client.post(url).json(body);
+        let mut request = self.client.post(url).json(body).headers(
+            self.session_headers
+                .headers(body.prompt_cache_key.as_deref()),
+        );
         match auth {
             RequestAuth::None => {}
             RequestAuth::Bearer(token) => {
