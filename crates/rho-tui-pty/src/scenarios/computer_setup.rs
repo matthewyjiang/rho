@@ -28,7 +28,7 @@ pub(super) const COMPUTER_SETUP_SCENARIO: Scenario = Scenario::new(
             timeout: SETTLE,
         },
         Step::WaitText {
-            text: "telemetry is enabled by default",
+            text: "Rho disables Cua telemetry",
             timeout: SETTLE,
         },
         Step::Key(Key::Enter),
@@ -39,7 +39,7 @@ pub(super) const COMPUTER_SETUP_SCENARIO: Scenario = Scenario::new(
         },
         Step::Resize { rows: 8, cols: 60 },
         Step::WaitTextGone {
-            text: "telemetry is enabled by default",
+            text: "Cancelling cannot undo",
             timeout: SETTLE,
         },
         Step::Key(Key::Char('i')),
@@ -94,7 +94,11 @@ pub(super) const COMPUTER_SETUP_SCENARIO: Scenario = Scenario::new(
     /*smoke*/ false,
 )
 .with_setup(setup_installer)
-.with_env(&[("PATH", ".rho-fixture-bin")]);
+.with_env(&[
+    ("PATH", ".rho-fixture-bin"),
+    ("CUA_DRIVER_RS_TELEMETRY_ENABLED", "true"),
+    ("CUA_TELEMETRY_ENABLED", "true"),
+]);
 
 pub(super) const COMPUTER_SETUP_CANCEL_SCENARIO: Scenario = Scenario::new(
     "computer_setup_cancel",
@@ -174,6 +178,8 @@ fn setup_installer(home: &IsolatedHome) -> Result<()> {
     fs::write(
         home.home.join("fixture-installer.sh"),
         r#"set -eu
+[ "$CUA_DRIVER_RS_TELEMETRY_ENABLED" = false ]
+[ "$CUA_TELEMETRY_ENABLED" = false ]
 [ "$1" = --no-modify-path ]
 [ "$2" = --bin-dir ]
 [ "$3" = "$HOME/.local/bin" ]

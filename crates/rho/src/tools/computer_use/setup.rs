@@ -10,6 +10,37 @@ use super::{ComputerUseSession, State, Task};
 
 mod installer;
 
+/// Platform-specific installation disclosure shared by CLI guidance and consent.
+pub(crate) struct ComputerSetupPlatform {
+    pub source: &'static str,
+    pub locations: &'static str,
+    pub notes: &'static str,
+}
+
+pub(crate) fn setup_platform() -> ComputerSetupPlatform {
+    if cfg!(windows) {
+        ComputerSetupPlatform {
+            source: "https://cua.ai/driver/install.ps1 with PowerShell",
+            locations: "%USERPROFILE%\\.cua-driver, with the executable in %USERPROFILE%\\.cua-driver\\bin",
+            notes: "Rho requests -NoAutoStart, but the installer may re-register an existing cua-driver-serve task and prompt for UAC elevation. Elevated work may run outside Rho's supervision and continue after cancellation; task changes are not rolled back.",
+        }
+    } else if cfg!(target_os = "macos") {
+        ComputerSetupPlatform {
+            source: "https://cua.ai/driver/install.sh with Bash",
+            locations: "~/.cua-driver and /Applications/CuaDriver.app, with a link in ~/.local/bin",
+            notes: "After the daemon is running, use cua-driver permissions status and grant Accessibility and Screen Recording in System Settings as needed.",
+        }
+    } else {
+        ComputerSetupPlatform {
+            source: "https://cua.ai/driver/install.sh with Bash",
+            locations: "~/.cua-driver, with a link in ~/.local/bin",
+            notes: "Launch Rho from the desktop session you intend to control.",
+        }
+    }
+}
+
+pub(crate) const INSTALLATION_RECOVERY: &str = "Partial files may remain and the saved telemetry preference may be unchanged. If /computer setup detects the driver, it skips installation and does not retry the saved opt-out; run cua-driver telemetry disable manually to save it. Rho still forces telemetry off for managed connections.";
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ComputerSetupUpdate {
     Installed,
@@ -65,8 +96,12 @@ impl ComputerUseSession {
         let token = cancellation.clone();
         let log_path = log.clone();
         let task = super::retained_task(async move {
-            installer::run(command, &token).await
-                .map_err(|error| anyhow!("{error}; installer log: {}. Partial installation files may remain; rerun /computer setup to recover", log_path.display()))
+            installer::run(command, &token).await.map_err(|error| {
+                anyhow!(
+                    "{error}; installer log: {}. {INSTALLATION_RECOVERY}",
+                    log_path.display()
+                )
+            })
         });
         *state = State::Installing(Installation { cancellation, task });
         Ok(log)
@@ -121,7 +156,12 @@ impl ComputerUseSession {
     }
 
     pub(crate) fn setup_guidance() -> String {
-        "Run /computer setup inside Rho to detect Cua Driver, install it if missing after separate installation consent, then review session desktop access and verify the driver connection. No persistent desktop grant or MCP config is written.\n\nThe installer downloads and executes Cua's official script. Cua telemetry is enabled by default; cua-driver telemetry disable opts out. Rho requests no PATH or shell profile changes. Installation does not grant Rho desktop access.\n\nDriver handshake is not an OS permission check. Run cua-driver doctor for installation diagnostics. On macOS, after the daemon is running, use cua-driver permissions status and grant Accessibility and Screen Recording in System Settings as needed. On Linux, launch Rho from the desktop session you intend to control.\n\nOfficial setup: https://cua.ai/docs/how-to-guides/driver/install\n/computer off cancels installation or revokes session access; it cannot undo installation files or completed desktop actions.".into()
+        let ComputerSetupPlatform {
+            source,
+            locations,
+            notes,
+        } = setup_platform();
+        format!("Run /computer setup inside Rho to detect Cua Driver, install it if missing after separate installation consent, then review session desktop access and verify the driver connection. No persistent desktop grant or MCP config is written.\n\nThe installer runs {source} and writes to {locations}. {notes}\n\nRho forces Cua telemetry off before installation and every managed driver launch, overriding caller telemetry settings. After installation it runs cua-driver telemetry disable to save the opt-out. Existing drivers are not run until desktop access is confirmed; their saved telemetry preferences are unchanged. Rho requests no PATH or shell profile changes. Installation does not grant Rho desktop access.\n\nIf installation fails or is cancelled: {INSTALLATION_RECOVERY}\n\nDriver handshake is not an OS permission check. Run cua-driver doctor for installation diagnostics.\n\nOfficial setup: https://cua.ai/docs/how-to-guides/driver/install\n/computer off cancels supervised installation processes or revokes session access; it cannot undo installation files or completed desktop actions.")
     }
 }
 

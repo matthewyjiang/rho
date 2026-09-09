@@ -185,7 +185,12 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
     /*smoke*/ false,
 )
 .with_setup(setup_driver)
-.with_env(&[("PATH", ""), ("DISPLAY", "")]);
+.with_env(&[
+    ("PATH", ""),
+    ("DISPLAY", ""),
+    ("CUA_DRIVER_RS_TELEMETRY_ENABLED", "true"),
+    ("CUA_TELEMETRY_ENABLED", "true"),
+]);
 
 pub(super) const COMPUTER_PLAN_SCENARIO: Scenario = Scenario::new(
     "computer_plan_denied",
@@ -264,7 +269,22 @@ pub(super) fn setup_driver(home: &IsolatedHome) -> Result<()> {
     fs::write(
         &path,
         r##"#!/usr/bin/python3
-import json, sys
+import json, os, pathlib, sys
+assert os.environ['CUA_DRIVER_RS_TELEMETRY_ENABLED'] == 'false'
+assert os.environ['CUA_TELEMETRY_ENABLED'] == 'false'
+home = pathlib.Path(__file__).parent.parent.parent
+installed = (home / 'fixture-driver').exists()
+if sys.argv[1:] == ['telemetry', 'disable']:
+    # Existing-driver setup must never invoke the CLI before desktop consent.
+    if not installed:
+        (home / 'unexpected-telemetry-command').touch()
+        sys.exit(1)
+    (home / 'telemetry-disabled').write_text('false')
+    sys.exit(0)
+assert sys.argv[1:] == ['mcp']
+assert not (home / 'unexpected-telemetry-command').exists()
+if installed:
+    assert (home / 'telemetry-disabled').read_text() == 'false'
 print('fixture-cua-stderr startup notice', file=sys.stderr, flush=True)
 for line in sys.stdin:
     request = json.loads(line)

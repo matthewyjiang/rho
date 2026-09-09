@@ -123,3 +123,11 @@ pub(super) fn desktop_environment() -> std::collections::BTreeMap<String, String
     .map(|name| (name.to_owned(), name.to_owned()))
     .collect()
 }
+
+/// Override both Cua runtime and compatibility opt-ins before any managed launch.
+pub(super) fn telemetry_environment() -> std::collections::BTreeMap<String, String> {
+    ["CUA_DRIVER_RS_TELEMETRY_ENABLED", "CUA_TELEMETRY_ENABLED"]
+        .into_iter()
+        .map(|name| (name.to_owned(), "false".to_owned()))
+        .collect()
+}

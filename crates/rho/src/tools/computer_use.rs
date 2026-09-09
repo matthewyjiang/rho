@@ -29,7 +29,7 @@ mod policy;
 mod recovery;
 mod setup;
 use recovery::{Revocation, RevokeOnDrop};
-pub(crate) use setup::ComputerSetupUpdate;
+pub(crate) use setup::{setup_platform, ComputerSetupUpdate, INSTALLATION_RECOVERY};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ComputerUseStatus {
@@ -266,7 +266,7 @@ impl ComputerUseSession {
                         command: driver.to_string_lossy().into_owned(),
                         args: vec!["mcp".into()],
                         cwd: Some(self.inner.cwd.clone()),
-                        env: BTreeMap::new(),
+                        env: policy::telemetry_environment(),
                         env_from_env: policy::desktop_environment(),
                     },
                     filesystem: None,

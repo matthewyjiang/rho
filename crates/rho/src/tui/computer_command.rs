@@ -106,7 +106,10 @@ impl App {
 
     pub(super) fn show_computer_off(&mut self) {
         if self.computer_installation_pending() {
-            self.insert_entry(&Entry::Notice("Cua Driver installation cancellation requested; partial files may remain. Desktop access not granted".into()));
+            self.insert_entry(&Entry::Notice(format!(
+                "Cua Driver installation cancellation requested; desktop access not granted. {}",
+                crate::tools::computer_use::INSTALLATION_RECOVERY
+            )));
             self.set_status("computer setup cancellation requested; desktop access off");
             return;
         }

@@ -1,4 +1,5 @@
-//! Official installer execution, isolated from the terminal and cancellable as a tree.
+//! Official installer execution with process-tree supervision.
+//! Windows upstream elevation can launch outside the supervised job.
 
 use std::{
     path::{Path, PathBuf},
@@ -40,14 +41,19 @@ try {
     }
 } finally { $client.Dispose() }
 & ([scriptblock]::Create($script)) -NoPathUpdate -NoAutoStart
-if (-not $?) { exit 1 }
+# Native stderr must not become a terminating PowerShell error. A missing
+# executable must fail too, without inheriting the installer's last exit code.
+$ErrorActionPreference = 'Continue'
+$LASTEXITCODE = 1
+& (Join-Path $env:CUA_DRIVER_RS_INSTALL_DIR 'cua-driver.exe') telemetry disable
+exit $LASTEXITCODE
 "#;
 
 pub(super) fn command(home: &Path) -> anyhow::Result<Command> {
     let mut command = if cfg!(any(target_os = "linux", target_os = "macos")) {
         let mut command = Command::new("/bin/bash");
         // Fetch completely before executing: a failed/partial download never runs.
-        command.args(["--noprofile", "--norc", "-c", "set -euo pipefail; script=$(curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL https://cua.ai/driver/install.sh); /bin/bash --noprofile --norc -c \"$script\" cua-driver-install --no-modify-path --bin-dir \"$HOME/.local/bin\""]);
+        command.args(["--noprofile", "--norc", "-c", "set -euo pipefail; script=$(curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL https://cua.ai/driver/install.sh); /bin/bash --noprofile --norc -c \"$script\" cua-driver-install --no-modify-path --bin-dir \"$HOME/.local/bin\"; \"$HOME/.local/bin/cua-driver\" telemetry disable"]);
         command
     } else if cfg!(windows) {
         let mut command = Command::new("powershell.exe");
@@ -57,8 +63,8 @@ pub(super) fn command(home: &Path) -> anyhow::Result<Command> {
         bail!("automatic Cua Driver installation supports macOS, Linux and Windows only");
     };
     // Do not pass model credentials, shell startup hooks, or installer location
-    // overrides into downloaded code. Proxy/certificate and telemetry preferences
-    // remain explicit inputs. HOME is also the working directory, never the repo.
+    // overrides into downloaded code. Proxy/certificate settings remain explicit
+    // inputs. HOME is also the working directory, never the repo.
     command
         .env_clear()
         .env("HOME", home)
@@ -82,8 +88,6 @@ pub(super) fn command(home: &Path) -> anyhow::Result<Command> {
         "no_proxy",
         "SSL_CERT_FILE",
         "SSL_CERT_DIR",
-        "CUA_DRIVER_RS_TELEMETRY_ENABLED",
-        "CUA_TELEMETRY_ENABLED",
     ] {
         if let Some(value) = std::env::var_os(key) {
             command.env(key, value);
@@ -116,7 +120,12 @@ pub(super) async fn run(
     if cancellation.is_cancelled() {
         bail!("Cua Driver installation cancelled");
     }
-    command.stdin(Stdio::null()).kill_on_drop(true);
+    // Apply last so even caller opt-ins cannot enable installer hooks or the
+    // post-install telemetry command. Both stages share supervision and the log.
+    command
+        .envs(super::super::policy::telemetry_environment())
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
     SupervisedTree::prepare(&mut command);
     let mut child = command
         .spawn()
