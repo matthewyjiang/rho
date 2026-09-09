@@ -45,11 +45,18 @@ impl InteractiveRuntime {
         if self.runs.state() != InteractiveState::Idle || self.is_compacting() {
             return Err(Error::SessionBusy);
         }
-        self.reconcile_computer_use()
-            .await
-            .map_err(|error| Error::Persistence {
-                message: error.to_string(),
-            })?;
+        let computer_update =
+            self.reconcile_computer_use()
+                .await
+                .map_err(|error| Error::Persistence {
+                    message: error.to_string(),
+                })?;
+        match computer_update {
+            ComputerUseUpdate::Unchanged | ComputerUseUpdate::Connected => {}
+            ComputerUseUpdate::ConnectionFailed(error) => self
+                .sessions
+                .queue_notice(format!("could not connect computer use: {error}")),
+        }
         self.runs.reset_display_committed();
         if let Some(source) = self.sessions.pending_replacement() {
             self.rebuild_session(

@@ -22,6 +22,7 @@ mod cache;
 mod compact;
 #[path = "interactive_runtime_computer.rs"]
 mod computer;
+pub(crate) use computer::ComputerUseUpdate;
 #[path = "interactive_runtime_edit_tool.rs"]
 pub(crate) mod edit_tool;
 #[path = "interactive_runtime_mcp.rs"]

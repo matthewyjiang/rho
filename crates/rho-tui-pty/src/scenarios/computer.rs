@@ -104,6 +104,46 @@ pub(super) const COMPUTER_PLAN_SCENARIO: Scenario = Scenario::new(
 )
 .with_args(&["--permission-mode", "plan"]);
 
+// Covers: a failed desktop connection must leave ordinary prompts usable.
+// Owner: interactive command path; the runtime test fixes the completion race.
+pub(super) const COMPUTER_FAILURE_SCENARIO: Scenario = Scenario::new(
+    "computer_connect_failure",
+    "A failed desktop connection does not prevent the next prompt",
+    PtySize {
+        rows: 40,
+        cols: 120,
+    },
+    &[
+        Step::WaitText {
+            text: "gpt-5.5",
+            timeout: STARTUP,
+        },
+        Step::SubmitText("/computer on"),
+        Step::WaitText {
+            text: "could not connect computer use:",
+            timeout: STARTUP,
+        },
+        Step::SubmitText("fixture tool available computer"),
+        Step::WaitText {
+            text: "tool available computer: false",
+            timeout: STREAM,
+        },
+        Step::ExitCommand,
+    ],
+    /*smoke*/ false,
+)
+.with_setup(setup_failed_driver)
+.with_env(&[("PATH", "")]);
+
+fn setup_failed_driver(home: &IsolatedHome) -> Result<()> {
+    let bin = home.home.join(".local/bin");
+    fs::create_dir_all(&bin)?;
+    let path = bin.join("cua-driver");
+    fs::write(&path, "#!/bin/sh\nexit 1\n")?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
+    Ok(())
+}
+
 fn setup_driver(home: &IsolatedHome) -> Result<()> {
     let bin = home.home.join(".local/bin");
     fs::create_dir_all(&bin)?;

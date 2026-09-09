@@ -7,6 +7,16 @@ use crate::{
 
 use super::InteractiveRuntime;
 
+#[cfg(test)]
+#[path = "interactive_runtime_computer_tests.rs"]
+mod tests;
+
+pub(crate) enum ComputerUseUpdate {
+    Unchanged,
+    Connected,
+    ConnectionFailed(String),
+}
+
 impl InteractiveRuntime {
     pub(crate) fn computer_use(&self) -> Option<&ComputerUseSession> {
         self.tools.computer_use()
@@ -32,13 +42,14 @@ impl InteractiveRuntime {
 
     /// The idle boundary owns registration for both activation and revocation,
     /// including revocations from retained tools or the during-turn UI handle.
-    /// Returns true when a newly connected grant becomes available to the model.
-    pub(crate) async fn reconcile_computer_use(&mut self) -> anyhow::Result<bool> {
+    /// Driver failures are updates, not runtime failures. Only registration or
+    /// session rebind errors may prevent the next turn from starting.
+    pub(crate) async fn reconcile_computer_use(&mut self) -> anyhow::Result<ComputerUseUpdate> {
         if self.is_session_busy() {
-            return Ok(false);
+            return Ok(ComputerUseUpdate::Unchanged);
         }
         let Some(session) = self.computer_use().cloned() else {
-            return Ok(false);
+            return Ok(ComputerUseUpdate::Unchanged);
         };
         let connection_result = session.take_connect_result().await;
         session.finish_closing(/*wait*/ false).await;
@@ -53,10 +64,11 @@ impl InteractiveRuntime {
             }
             self.remember_tool_list();
         }
-        match connection_result {
-            Some(result) => result.map(|()| desired),
-            None => Ok(false),
-        }
+        Ok(match connection_result {
+            Some(Ok(())) if desired => ComputerUseUpdate::Connected,
+            Some(Err(error)) => ComputerUseUpdate::ConnectionFailed(error.to_string()),
+            Some(Ok(())) | None => ComputerUseUpdate::Unchanged,
+        })
     }
 
     pub(crate) async fn disable_computer_use(&mut self) -> anyhow::Result<()> {

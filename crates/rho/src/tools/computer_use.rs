@@ -168,6 +168,15 @@ impl ComputerUseSession {
         Some(self.finish_connect(&grant, result))
     }
 
+    #[cfg(test)]
+    pub(crate) async fn wait_for_connect_result(&self) {
+        let task = match &*self.state() {
+            State::Connecting { task, .. } => task.clone(),
+            _ => panic!("expected a pending connection"),
+        };
+        let _ = task.await;
+    }
+
     /// Host-only activation. Never called from a tool, retry path, or startup.
     #[cfg(test)]
     pub(crate) async fn connect(&self) -> anyhow::Result<()> {

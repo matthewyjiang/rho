@@ -1,5 +1,6 @@
 //! Explicit desktop access, kept separate from ordinary MCP configuration.
 
+use crate::app::interactive_runtime::ComputerUseUpdate;
 use crate::tools::computer_use::{ComputerUseControl, ComputerUseSession, ComputerUseStatus};
 
 use super::{App, CommandInvocation, Entry, InteractiveRuntime};
@@ -137,16 +138,21 @@ impl App {
             return false;
         }
         match agent.reconcile_computer_use().await {
-            Ok(false) => return false,
-            Ok(true) => {
+            Ok(ComputerUseUpdate::Unchanged) => return false,
+            Ok(ComputerUseUpdate::Connected) => {
                 self.insert_entry(&Entry::Notice("computer use connected through Cua Driver; the computer tool is available for the next turn".into()));
                 self.set_status("computer use connected");
             }
-            Err(error) => {
+            Ok(ComputerUseUpdate::ConnectionFailed(error)) => {
                 self.insert_entry(&Entry::Error(format!(
                     "could not connect computer use: {error}"
                 )));
                 self.set_status("computer use off; /computer setup for help");
+            }
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not refresh computer tool registration: {error}"
+                )));
             }
         }
         true
