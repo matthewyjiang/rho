@@ -11,6 +11,7 @@ pub(super) struct InlineChoiceOption {
     pub(super) label: String,
     pub(super) detail: String,
     pub(super) available: bool,
+    requires_full_visibility: bool,
 }
 
 impl InlineChoiceOption {
@@ -27,11 +28,18 @@ impl InlineChoiceOption {
             label: label.into(),
             detail: detail.into(),
             available: true,
+            requires_full_visibility: false,
         }
     }
 
     pub(super) fn with_alternate_shortcut(mut self, shortcut: char) -> Self {
         self.alternate_shortcut = Some(shortcut);
+        self
+    }
+
+    /// Reject submission while any part of the choice disclosure is clipped.
+    pub(super) fn require_full_visibility(mut self) -> Self {
+        self.requires_full_visibility = true;
         self
     }
 
@@ -104,28 +112,6 @@ pub(super) enum InlineChoicePending {
     ClearPromptHistory,
 }
 
-impl InlineChoicePending {
-    pub(super) fn requires_visible_computer_consent(&self, value: &str) -> bool {
-        match self {
-            Self::ComputerAccess => value == "grant",
-            Self::ComputerInstall => value == "install",
-            Self::CredentialStore { .. }
-            | Self::ContextHandoff(_)
-            | Self::ConfirmSend(_)
-            | Self::ClaudeCodeLogin
-            | Self::ClaudeCodeRelogin
-            | Self::ClaudeCodeLogout
-            | Self::DeleteSession { .. }
-            | Self::DeleteDirectorySessions { .. }
-            | Self::CleanupMissingSessionDirectories { .. }
-            | Self::DeleteWorkflowPlan { .. }
-            | Self::DeleteWorkflowRun { .. }
-            | Self::PromptHistoryLimit { .. }
-            | Self::ClearPromptHistory => false,
-        }
-    }
-}
-
 impl InlineChoiceModal {
     pub(super) fn blocks_auto_continue(&self) -> bool {
         matches!(
@@ -158,6 +144,10 @@ impl InlineChoice {
 
     pub(super) fn selected_value(&self) -> &str {
         &self.options[self.active].value
+    }
+
+    pub(super) fn selected_requires_full_visibility(&self) -> bool {
+        self.options[self.active].requires_full_visibility
     }
 
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> InlineChoiceKeyOutcome {

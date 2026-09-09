@@ -1,6 +1,6 @@
 //! Explicit desktop access, kept separate from ordinary MCP configuration.
 
-use crate::app::interactive_runtime::ComputerUseUpdate;
+use crate::app::interactive_runtime::{ComputerUseEligibilityError, ComputerUseUpdate};
 use crate::tools::computer_use::{
     desktop_warning, ComputerUseControl, ComputerUsePreference, ComputerUseStatus,
 };
@@ -68,7 +68,7 @@ impl App {
             "Rho can control your local desktop, including signed-in apps. No per-action Rho approval, even in supervised mode. Captured images go to your model provider and session history. Save access for this session and default new sessions to on, on this machine. /computer off saves off for this session and the new-session default. Other saved sessions keep their own choice.",
             vec![
                 InlineChoiceOption::available("cancel", 'c', "Cancel", "Keep access off"),
-                InlineChoiceOption::available("grant", 'g', "Grant access", "Save session on and new-session default on"),
+                InlineChoiceOption::available("grant", 'g', "Grant access", "Save session on and new-session default on").require_full_visibility(),
             ],
         )?;
         self.input_ui
@@ -89,9 +89,7 @@ impl App {
                 self.revoke_computer_preference();
                 self.show_computer_off();
             }
-            "on" | "setup" => self.set_status(
-                "interrupt the current turn before setting up or enabling computer use",
-            ),
+            "on" | "setup" => self.set_status(ComputerUseEligibilityError::Busy.to_string()),
             _ => self.show_computer_command(&invocation),
         }
         Ok(())
@@ -139,25 +137,18 @@ impl App {
     }
 
     fn can_grant_computer_access(&mut self, agent: &InteractiveRuntime) -> bool {
-        if agent.is_session_busy() {
-            self.set_status("interrupt the current turn before granting computer access");
-            return false;
+        match agent.computer_use_eligibility() {
+            Ok(_) => true,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(error.to_string()));
+                false
+            }
         }
-        if self.info.runtime.permission_mode == crate::permission::PermissionMode::Plan {
-            self.insert_entry(&Entry::Error(
-                "computer use is unavailable in plan mode".into(),
-            ));
-            return false;
-        }
-        true
     }
 
     pub(super) fn confirm_computer_access(&mut self, value: &str, agent: &mut InteractiveRuntime) {
         if value != "grant" {
             self.set_status("computer access not granted");
-            return;
-        }
-        if !self.can_grant_computer_access(agent) {
             return;
         }
         if let Err(error) = agent.enable_computer_use() {
@@ -183,24 +174,6 @@ impl App {
         if let Some(warning) = desktop_warning() {
             self.insert_entry(&Entry::Notice(format!("warning: {warning}")));
         }
-    }
-
-    /// A shortcut must not grant access while the terminal clips the disclosure.
-    pub(super) fn computer_consent_visible(&mut self, terminal: &ratatui::DefaultTerminal) -> bool {
-        let Ok(size) = terminal.size() else {
-            self.set_status(
-                "could not check consent visibility; resize the terminal or Esc cancel",
-            );
-            return false;
-        };
-        let frame = self.frame_context(ratatui::layout::Rect::new(0, 0, size.width, size.height));
-        let needed = frame.composer.lines.len();
-        let visible = usize::from(frame.layout.composer.height);
-        if frame.layout.composer_start != 0 || visible < needed {
-            self.set_status(format!("enlarge terminal to review computer consent: consent needs {needed} rows, {visible} visible; Esc cancel"));
-            return false;
-        }
-        true
     }
 
     pub(super) fn computer_connect_pending(&self) -> bool {

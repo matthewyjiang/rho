@@ -1,7 +1,7 @@
 //! Non-stream completions: tool results, compaction, and prompt fallbacks.
 
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelRequest, ModelResponse},
+    model::{ContentBlock, Message, ModelRequest, ModelResponse, SemanticMessage},
     ProviderError,
 };
 
@@ -214,8 +214,8 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
         .iter()
         .filter(|message| {
             matches!(
-                message,
-                Message::User(content) if content.iter().any(|block| matches!(
+                message.semantic(),
+                SemanticMessage::User(content) if content.iter().any(|block| matches!(
                     block,
                     ContentBlock::Text(text) if is_agent_notification(text)
                 ))

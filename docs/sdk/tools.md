@@ -80,15 +80,17 @@ tools. `ToolFinished` still emits one `ToolCompletion::Success` containing the f
 output; there is no second completion event. Hooks continue to report status and
 bounded failure information, not tool output or image bytes.
 
-The runtime first appends the ordinary text `ToolResult` for each call. Once every
-outstanding call in the current run has a paired result, it appends supplemental `Message::User`
+Each completion commit first appends its ordinary text `ToolResult` entries,
+then appends supplemental `Message::User`
 content with the images and an explicit untrusted-tool-output attribution naming
-the tool and call id. In a mixed sync/async batch, images wait for both sets of
-results. These messages are tool data, not new human instructions. Hosts must not
+the tool and call id. Pending detached calls do not delay images from completed
+calls. These messages are tool data, not new human instructions. Hosts must not
 interpret every user-role history entry as a human submission.
 
 Use `Message::tool_image_supplement(tool_name, tool_call_id, images)` to construct
-this representation, and `Message::as_tool_image_supplement()` to recognize it.
+this representation. Prefer exhaustive matching on `Message::semantic()` to
+distinguish `SemanticMessage::ToolImageSupplement` from human `User` submissions.
+`Message::as_tool_image_supplement()` is also available for targeted recognition.
 The constructor returns `None` for empty images. The recognized
 `ToolImageSupplement` exposes `tool_name()`, `tool_call_id()`, and an `images()`
 iterator. Prefer these helpers over parsing text. Recognition is attribution,
@@ -99,8 +101,8 @@ classifiers should distinguish supplements from actual human submissions.
 Delivered images persist in normal session history and survive snapshot
 serialization and resume. Failed tool calls have no images. Any interrupted run,
 including cancellation, terminal provider failure, and other run errors, deliberately
-discards images that have not yet been appended. This includes images buffered from
-successful calls while other calls are pending. Cleanup still settles paired text
+discards images from completion units that have not yet been committed. Images
+from earlier commits remain in history. Cleanup still settles paired text
 results and reports full successful outputs, including images, in `ToolFinished`;
 already-delivered history is retained. Hosts that
 persist or inspect history must apply the same privacy policy to these images as

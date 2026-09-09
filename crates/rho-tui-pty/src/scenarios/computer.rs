@@ -127,7 +127,7 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
         },
         Step::SubmitText("/computer setup"),
         Step::WaitText {
-            text: "interrupt the current turn before setting up",
+            text: "computer use can only be enabled while the session is idle",
             timeout: SETTLE,
         },
         Step::SubmitText("/computer"),

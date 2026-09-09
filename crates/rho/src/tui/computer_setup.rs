@@ -17,14 +17,12 @@ impl App {
     }
 
     pub(super) fn setup_computer(&mut self, agent: &InteractiveRuntime) -> anyhow::Result<()> {
-        if !self.can_grant_computer_access(agent) {
-            return Ok(());
-        }
-        let Some(session) = agent.computer_use() else {
-            self.insert_entry(&Entry::Error(
-                "computer setup requires an interactive native session with tools enabled".into(),
-            ));
-            return Ok(());
+        let session = match agent.computer_use_eligibility() {
+            Ok(session) => session,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(error.to_string()));
+                return Ok(());
+            }
         };
         if self.computer_installation_pending() {
             self.set_status("Cua Driver installation pending; /computer off cancels");
@@ -46,7 +44,7 @@ impl App {
                 format!("Download and execute {source}. Writes Cua installation files to {locations}. Rho disables Cua telemetry before installation and saves the opt-out afterward if setup completes. No PATH/profile edits requested. Installation may replace Cua files and stop old Cua daemons. {notes} This does not grant Rho desktop access; that requires a separate confirmation. Cancelling cannot undo files already written or guarantee the saved telemetry opt-out."),
                 vec![
                     InlineChoiceOption::available("cancel", 'c', "Cancel", "Do not install"),
-                    InlineChoiceOption::available("install", 'i', "Install driver", "Download and execute Cua's installer"),
+                    InlineChoiceOption::available("install", 'i', "Install driver", "Download and execute Cua's installer").require_full_visibility(),
                 ],
             )?,
             pending: InlineChoicePending::ComputerInstall,
@@ -62,9 +60,6 @@ impl App {
     ) {
         if value != "install" {
             self.set_status("Cua Driver installation not authorized");
-            return;
-        }
-        if !self.can_grant_computer_access(agent) {
             return;
         }
         match agent.install_computer_driver() {

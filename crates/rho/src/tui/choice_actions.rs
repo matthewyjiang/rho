@@ -16,8 +16,8 @@ impl App {
 
         match outcome {
             InlineChoiceKeyOutcome::Selected(value) => {
-                if matches!(self.input_ui.composer(), ComposerMode::InlineChoice(modal) if modal.pending.requires_visible_computer_consent(&value))
-                    && !self.computer_consent_visible(terminal)
+                if matches!(self.input_ui.composer(), ComposerMode::InlineChoice(modal) if modal.choice.selected_requires_full_visibility())
+                    && !self.inline_choice_fully_visible(terminal)
                 {
                     return Ok(true);
                 }
@@ -137,5 +137,21 @@ impl App {
         self.input_ui.clear_paste_burst();
         self.ctrl_c_streak = 0;
         Ok(true)
+    }
+
+    /// Submission must not bypass a disclosure clipped by the terminal viewport.
+    fn inline_choice_fully_visible(&mut self, terminal: &DefaultTerminal) -> bool {
+        let Ok(size) = terminal.size() else {
+            self.set_status("could not check choice visibility; resize the terminal or Esc cancel");
+            return false;
+        };
+        let frame = self.frame_context(ratatui::layout::Rect::new(0, 0, size.width, size.height));
+        let needed = frame.composer.lines.len();
+        let visible = usize::from(frame.layout.composer.height);
+        if frame.layout.composer_start != 0 || visible < needed {
+            self.set_status(format!("enlarge terminal to review choice: disclosure needs {needed} rows, {visible} visible; Esc cancel"));
+            return false;
+        }
+        true
     }
 }

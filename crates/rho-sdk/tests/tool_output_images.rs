@@ -42,18 +42,26 @@ fn call(id: &str) -> ToolCall {
 struct ImageTool {
     finished: Arc<Semaphore>,
     block_second: bool,
+    release_second: Option<Arc<Semaphore>>,
+    release_first: Option<Arc<Semaphore>>,
 }
 
 impl ImageTool {
     fn execute(&self, invocation: ToolInvocation) -> ToolFuture<'_> {
         Box::pin(async move {
             if invocation.arguments()["id"] == "second" {
+                if let Some(release) = &self.release_second {
+                    release.acquire().await.unwrap().forget();
+                }
                 if self.block_second {
                     std::future::pending::<()>().await;
                 }
                 self.finished.add_permits(1);
                 Err(ToolError::new(ToolErrorKind::Execution, "capture failed"))
             } else {
+                if let Some(release) = &self.release_first {
+                    release.acquire().await.unwrap().forget();
+                }
                 self.finished.add_permits(1);
                 Ok(ToolOutput::text("captured").with_images(vec![image()]))
             }
@@ -100,6 +108,8 @@ struct ImageProvider {
     turns: AtomicUsize,
     requests: Mutex<Vec<Vec<Message>>>,
     finished: Arc<Semaphore>,
+    release_second: Option<Arc<Semaphore>>,
+    release_first: Option<Arc<Semaphore>>,
 }
 
 impl ModelProvider for ImageProvider {
@@ -137,6 +147,21 @@ impl ModelProvider for ImageProvider {
                     ContentBlock::ToolCall(call("second")),
                 ]));
             }
+            if let Some(release) = &self.release_first {
+                release.add_permits(1);
+            }
+            if let Some(release) = &self.release_second {
+                if request
+                    .messages
+                    .iter()
+                    .any(|message| message.as_tool_image_supplement().is_some())
+                {
+                    release.add_permits(1);
+                }
+                let permit = self.finished.acquire().await.unwrap();
+                drop(permit);
+                return Ok(text_response("waiting for second"));
+            }
             // Two tool completions are the synchronization condition, not elapsed time.
             if self.fail_after_first {
                 let permit = self.finished.acquire().await.unwrap();
@@ -154,11 +179,16 @@ impl ModelProvider for ImageProvider {
     }
 }
 
-// Covers: current images ignore restored dangling calls, follow paired results, and survive resume.
-// Owner: SDK model/history contract. Existing batch tests cover text-only results.
+// Covers: image supplements follow their results and survive resume despite restored dangling calls.
+// Owner: SDK orchestration/history contract. Existing batch tests cover text-only results.
 #[tokio::test]
-async fn tool_images_follow_all_results_and_survive_resume() {
-    for async_calls in [&[][..], &["first"][..], &["first", "second"][..]] {
+async fn tool_images_follow_committed_results_and_survive_resume() {
+    for async_calls in [
+        &[][..],
+        &["first"][..],
+        &["second"][..],
+        &["first", "second"][..],
+    ] {
         let finished = Arc::new(Semaphore::new(0));
         let provider = Arc::new(ImageProvider {
             async_calls,
@@ -166,12 +196,16 @@ async fn tool_images_follow_all_results_and_survive_resume() {
             turns: AtomicUsize::new(0),
             requests: Mutex::new(Vec::new()),
             finished: finished.clone(),
+            release_second: None,
+            release_first: None,
         });
         let runtime = Rho::builder()
             .provider_shared(provider.clone())
             .tool(ImageTool {
                 finished,
                 block_second: false,
+                release_second: None,
+                release_first: None,
             })
             .build()
             .unwrap();
@@ -216,7 +250,7 @@ async fn tool_images_follow_all_results_and_survive_resume() {
                 .iter()
                 .position(|message| message.as_tool_image_supplement().is_some())
                 .expect("model did not receive the tool image");
-            let mut results = last[..image_index]
+            let mut results = last
                 .iter()
                 .filter_map(|message| match message {
                     Message::ToolResult(result) => Some(result.clone()),
@@ -240,6 +274,17 @@ async fn tool_images_follow_all_results_and_survive_resume() {
                 ]
             );
             let supplement = last[image_index].as_tool_image_supplement().unwrap();
+            assert!(last[..image_index].iter().any(
+                |message| matches!(message, Message::ToolResult(result) if result.id == "first")
+            ));
+            assert_eq!(
+                last[..image_index]
+                    .iter()
+                    .filter(|message| matches!(message, Message::ToolResult(_)))
+                    .count(),
+                2,
+                "all available batch results must precede supplements: {async_calls:?}"
+            );
             assert_eq!(
                 (
                     supplement.tool_name(),
@@ -274,6 +319,68 @@ async fn tool_images_follow_all_results_and_survive_resume() {
     }
 }
 
+// Covers: a completed image reaches the model while another detached call is still pending.
+// Owner: SDK orchestration; batch completion coverage cannot detect a run-global image barrier.
+#[tokio::test]
+async fn completed_image_does_not_wait_for_unrelated_async_call() {
+    let finished = Arc::new(Semaphore::new(0));
+    let release_second = Arc::new(Semaphore::new(0));
+    let provider = Arc::new(ImageProvider {
+        async_calls: &["first", "second"],
+        fail_after_first: false,
+        turns: AtomicUsize::new(0),
+        requests: Mutex::new(Vec::new()),
+        finished: finished.clone(),
+        release_second: Some(release_second.clone()),
+        release_first: None,
+    });
+    let session = Rho::builder()
+        .provider_shared(provider.clone())
+        .tool(ImageTool {
+            finished,
+            block_second: false,
+            release_second: Some(release_second),
+            release_first: None,
+        })
+        .build()
+        .unwrap()
+        .session(SessionOptions::default())
+        .await
+        .unwrap();
+    let mut run = session.start(UserInput::text("capture")).await.unwrap();
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        while run.next_event().await.is_some() {}
+        run.outcome().await.unwrap();
+    })
+    .await
+    .expect("first image was withheld behind the pending second call");
+    let requests = provider.requests.lock().unwrap();
+    let first_image_request = requests
+        .iter()
+        .find(|request| {
+            request
+                .iter()
+                .any(|message| message.as_tool_image_supplement().is_some())
+        })
+        .unwrap();
+    let results = first_image_request
+        .iter()
+        .filter_map(|message| match message {
+            Message::ToolResult(result) => Some(result.id.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(results, vec!["first"]);
+    assert_eq!(
+        session
+            .history()
+            .iter()
+            .filter(|message| message.as_tool_image_supplement().is_some())
+            .count(),
+        1
+    );
+}
+
 // Covers: host-started calls use the same output commitment path without a provider tool turn.
 // Owner: SDK run initiation/history contract; model-requested coverage above does not enter this path.
 #[tokio::test]
@@ -287,6 +394,8 @@ async fn host_started_tool_commits_paired_image_before_first_provider_request() 
         .tool(ImageTool {
             finished: Arc::new(Semaphore::new(0)),
             block_second: false,
+            release_second: None,
+            release_first: None,
         })
         .build()
         .unwrap()
@@ -318,11 +427,11 @@ async fn host_started_tool_commits_paired_image_before_first_provider_request() 
     );
 }
 
-// Covers: a successful image buffered before another call is cancelled must not leak into history.
+// Covers: cancellation drops uncommitted batch images and parked detached images.
 // Owner: SDK cancellation contract.
 #[tokio::test]
-async fn cancelled_batch_discards_undelivered_tool_images() {
-    for async_calls in [&[][..], &["first"][..], &["first", "second"][..]] {
+async fn cancelled_batch_discards_only_uncommitted_tool_images() {
+    for async_calls in [&[][..], &["first"][..]] {
         let finished = Arc::new(Semaphore::new(0));
         let provider = ImageProvider {
             async_calls,
@@ -330,12 +439,16 @@ async fn cancelled_batch_discards_undelivered_tool_images() {
             turns: AtomicUsize::new(0),
             requests: Mutex::new(Vec::new()),
             finished: finished.clone(),
+            release_second: None,
+            release_first: None,
         };
         let session = Rho::builder()
             .provider(provider)
             .tool(ImageTool {
                 finished,
                 block_second: true,
+                release_second: None,
+                release_first: None,
             })
             .build()
             .unwrap()
@@ -367,7 +480,13 @@ async fn cancelled_batch_discards_undelivered_tool_images() {
                 .count(),
             2
         );
-        assert!(!history.iter().any(|message| matches!(message, Message::User(content) if content.iter().any(|block| matches!(block, ContentBlock::Image(_))))));
+        assert_eq!(
+            history
+                .iter()
+                .filter(|message| message.as_tool_image_supplement().is_some())
+                .count(),
+            0
+        );
     }
 }
 
@@ -376,17 +495,25 @@ async fn cancelled_batch_discards_undelivered_tool_images() {
 #[tokio::test]
 async fn provider_failure_discards_buffered_images_after_settlement() {
     let finished = Arc::new(Semaphore::new(0));
+    // The image completes during the failing request, never before its initial drain.
+    let release_first = Arc::new(Semaphore::new(0));
     let session = Rho::builder()
+        // Both calls must detach before the provider releases the first tool.
+        .max_parallel_tools(std::num::NonZeroUsize::new(2).unwrap())
         .provider(ImageProvider {
             async_calls: &["first", "second"],
             fail_after_first: true,
             turns: AtomicUsize::new(0),
             requests: Mutex::new(Vec::new()),
             finished: finished.clone(),
+            release_second: None,
+            release_first: Some(release_first.clone()),
         })
         .tool(ImageTool {
             finished,
             block_second: true,
+            release_second: None,
+            release_first: Some(release_first),
         })
         .build()
         .unwrap()

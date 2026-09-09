@@ -308,6 +308,7 @@ pub(super) async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime
         session_writes: Default::default(),
         live_context_warm: false,
         computer_context: None,
+        computer_runtime_dirty: false,
         cached_tool_specs,
         tool_list_changed: false,
     }

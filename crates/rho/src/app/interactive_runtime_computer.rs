@@ -25,9 +25,14 @@ pub(super) enum ComputerPreferenceSource {
     SavedSession,
 }
 
-enum ComputerContextNotice {
-    Append,
-    Skip,
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum ComputerUseEligibilityError {
+    #[error("computer use can only be enabled while the session is idle")]
+    Busy,
+    #[error("computer use is unavailable in plan mode")]
+    PlanMode,
+    #[error("computer use requires an interactive native session with tools enabled")]
+    UnsupportedHost,
 }
 
 impl InteractiveRuntime {
@@ -35,26 +40,26 @@ impl InteractiveRuntime {
         self.tools.computer_use()
     }
 
-    fn authorize_computer_use(&self) -> anyhow::Result<ComputerUseSession> {
+    pub(crate) fn computer_use_eligibility(
+        &self,
+    ) -> Result<&ComputerUseSession, ComputerUseEligibilityError> {
         if self.is_session_busy() {
-            anyhow::bail!("computer use can only be enabled while the session is idle");
+            return Err(ComputerUseEligibilityError::Busy);
         }
         if self.permission_mode == PermissionMode::Plan {
-            anyhow::bail!("computer use is unavailable in plan mode");
+            return Err(ComputerUseEligibilityError::PlanMode);
         }
-        self.tools.computer_use().cloned().ok_or_else(|| {
-            anyhow::anyhow!(
-                "computer use requires an interactive native session with tools enabled"
-            )
-        })
+        self.tools
+            .computer_use()
+            .ok_or(ComputerUseEligibilityError::UnsupportedHost)
     }
 
     pub(crate) fn enable_computer_use(&self) -> anyhow::Result<()> {
-        self.authorize_computer_use()?.start_connect()
+        self.computer_use_eligibility()?.start_connect()
     }
 
     pub(crate) fn install_computer_driver(&self) -> anyhow::Result<std::path::PathBuf> {
-        self.authorize_computer_use()?.start_installation()
+        self.computer_use_eligibility()?.start_installation()
     }
 
     /// The idle boundary owns registration for both activation and revocation,
@@ -62,14 +67,6 @@ impl InteractiveRuntime {
     /// Driver failures are updates, not runtime failures. Only registration or
     /// session rebind errors may prevent the next turn from starting.
     pub(crate) async fn reconcile_computer_use(&mut self) -> anyhow::Result<ComputerUseUpdate> {
-        self.reconcile_computer_use_with_context(ComputerContextNotice::Append)
-            .await
-    }
-
-    async fn reconcile_computer_use_with_context(
-        &mut self,
-        notice: ComputerContextNotice,
-    ) -> anyhow::Result<ComputerUseUpdate> {
         if self.is_session_busy() {
             return Ok(ComputerUseUpdate::Unchanged);
         }
@@ -80,19 +77,20 @@ impl InteractiveRuntime {
         session.finish_closing(/*wait*/ false).await;
         let desired = session.status() == ComputerUseStatus::Connected;
         let registration_changed = self.tools.set_computer_use_registered(desired);
+        self.computer_runtime_dirty |= registration_changed;
         if registration_changed {
+            self.remember_tool_list();
+        }
+        if self.computer_runtime_dirty && self.sessions.pending_replacement().is_none() {
             if let Err(error) = self.rebind_current_session().await {
-                // Restore the registry so the next boundary retries the bind.
-                // Any retained tool still fails closed after revocation.
-                self.tools.set_computer_use_registered(!desired);
+                // The dirty flag retries the bind at the next idle boundary.
+                // Retained tools fail closed immediately, even if rebinding fails.
                 session.revoke();
                 return Err(error);
             }
-            self.remember_tool_list();
         }
         if (registration_changed || self.computer_context.is_none())
             && self.sessions.pending_replacement().is_none()
-            && matches!(notice, ComputerContextNotice::Append)
         {
             if let Err(error) = self.refresh_computer_context() {
                 self.computer_context = None;
@@ -109,22 +107,24 @@ impl InteractiveRuntime {
     }
 
     pub(crate) async fn disable_computer_use(&mut self) -> anyhow::Result<()> {
+        self.revoke_computer_use();
+        if let ComputerUseUpdate::Revoked(notice) = self.reconcile_computer_use().await? {
+            self.sessions.queue_notice(notice);
+        }
+        Ok(())
+    }
+
+    /// Revoke authority and unregister without rebuilding a runtime the caller
+    /// will replace. Failed replacements leave a dirty bind for the next boundary.
+    pub(super) fn revoke_computer_use(&mut self) {
         if let Some(session) = self.tools.computer_use() {
             session.revoke();
         }
+        self.computer_runtime_dirty |= self.tools.set_computer_use_registered(false);
+        self.remember_tool_list();
         // Lifecycle callers must not write a disabled notice into the session
         // they are leaving. A retained session gets fresh context before its next call.
         self.computer_context = None;
-        match self
-            .reconcile_computer_use_with_context(ComputerContextNotice::Skip)
-            .await?
-        {
-            ComputerUseUpdate::Revoked(notice) => self.sessions.queue_notice(notice),
-            ComputerUseUpdate::Unchanged
-            | ComputerUseUpdate::Connected
-            | ComputerUseUpdate::ConnectionFailed(_) => {}
-        }
-        Ok(())
     }
 
     /// A new conversation gets a fresh grant only from machine-local consent.

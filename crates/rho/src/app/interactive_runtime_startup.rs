@@ -230,6 +230,7 @@ pub(super) async fn initialize(
         pending_persistence_checkpoint: None,
         live_context_warm: false,
         computer_context: None,
+        computer_runtime_dirty: false,
         cached_tool_specs,
         tool_list_changed: false,
         completed_runs: 0,

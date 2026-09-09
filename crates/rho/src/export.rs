@@ -16,7 +16,7 @@ use clap::ValueEnum;
 
 use {
     crate::session::{ExportedMessage, Session, SessionExport},
-    rho_providers::model::{ContentBlock, ImageContent, Message},
+    rho_providers::model::{ContentBlock, ImageContent},
     rho_tools::tool::{ToolCall, ToolResult},
 };
 
@@ -359,29 +359,32 @@ fn push_meta_row(html: &mut String, label: &str, value: &str) {
 }
 
 fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
+    use rho_sdk::model::SemanticMessage;
     let mut results_by_id: HashMap<&str, &ToolResult> = HashMap::new();
     let mut called_ids: HashSet<&str> = HashSet::new();
     for entry in messages {
-        match &entry.message {
-            Message::ToolResult(result) => {
+        match entry.message.semantic() {
+            SemanticMessage::ToolResult(result) => {
                 results_by_id.entry(result.id.as_str()).or_insert(result);
             }
-            Message::Assistant(blocks) => {
+            SemanticMessage::Assistant(blocks) => {
                 for block in blocks {
                     if let ContentBlock::ToolCall(call) = block {
                         called_ids.insert(call.id.as_str());
                     }
                 }
             }
-            Message::EnrichedAssistant(message) => {
+            SemanticMessage::EnrichedAssistant(message) => {
                 for block in &message.content {
                     if let ContentBlock::ToolCall(call) = block {
                         called_ids.insert(call.id.as_str());
                     }
                 }
             }
-            Message::AbortedAssistant(_) => {}
-            Message::System(_) | Message::User(_) => {}
+            SemanticMessage::AbortedAssistant(_) => {}
+            SemanticMessage::System(_)
+            | SemanticMessage::User(_)
+            | SemanticMessage::ToolImageSupplement(_) => {}
         }
     }
 
@@ -389,20 +392,19 @@ fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
     // transcript reads as exchanges, not a stack of identical blocks.
     let mut previous_role: Option<&str> = None;
     for entry in messages {
-        if let Some(images) = entry.message.as_tool_image_supplement() {
-            let _ = writeln!(
-                html,
-                "<div class=\"notice\">Tool output images: {}</div>",
-                escape_html(images.tool_name())
-            );
-            for image in images.images() {
-                push_image(html, image);
+        match entry.message.semantic() {
+            SemanticMessage::ToolImageSupplement(images) => {
+                let _ = writeln!(
+                    html,
+                    "<div class=\"notice\">Tool output images: {}</div>",
+                    escape_html(images.tool_name())
+                );
+                for image in images.images() {
+                    push_image(html, image);
+                }
+                previous_role = None;
             }
-            previous_role = None;
-            continue;
-        }
-        match &entry.message {
-            Message::System(text) => {
+            SemanticMessage::System(text) => {
                 if let Some(transcript) =
                     crate::display_transcript::DisplayTranscript::from_display(text)
                 {
@@ -412,17 +414,17 @@ fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
                 }
                 previous_role = None;
             }
-            Message::User(blocks) => {
+            SemanticMessage::User(blocks) => {
                 let continuation = previous_role == Some("user");
                 push_user(html, entry.timestamp, blocks, continuation);
                 previous_role = Some("user");
             }
-            Message::Assistant(blocks) => {
+            SemanticMessage::Assistant(blocks) => {
                 let continuation = previous_role == Some("assistant");
                 push_assistant(html, entry.timestamp, blocks, &results_by_id, continuation);
                 previous_role = Some("assistant");
             }
-            Message::EnrichedAssistant(message) => {
+            SemanticMessage::EnrichedAssistant(message) => {
                 let continuation = previous_role == Some("assistant");
                 push_assistant(
                     html,
@@ -433,7 +435,7 @@ fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
                 );
                 previous_role = Some("assistant");
             }
-            Message::AbortedAssistant(message) => {
+            SemanticMessage::AbortedAssistant(message) => {
                 let continuation = previous_role == Some("assistant");
                 push_assistant(
                     html,
@@ -447,8 +449,8 @@ fn push_messages(html: &mut String, messages: &[ExportedMessage]) {
             }
             // Rendered inline with the tool call that produced it; the
             // speaker run continues across it.
-            Message::ToolResult(result) if called_ids.contains(result.id.as_str()) => {}
-            Message::ToolResult(result) => {
+            SemanticMessage::ToolResult(result) if called_ids.contains(result.id.as_str()) => {}
+            SemanticMessage::ToolResult(result) => {
                 push_tool_call(html, None, Some(result));
                 previous_role = None;
             }

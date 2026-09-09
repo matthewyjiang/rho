@@ -364,13 +364,12 @@ impl AsyncJobSet {
     ) {
         // All terminal interruptions discard undelivered images, including
         // provider failure. Completed ToolFinished payloads remain intact.
-        outputs.discard_images();
         history.extend(
             std::mem::take(&mut self.unstarted)
                 .into_iter()
                 .map(|(_, call)| Message::ToolResult(interrupted_result(&call))),
         );
-        outputs.drain_finished(history);
+        outputs.drain_interrupted(history);
         let jobs = std::mem::take(&mut self.jobs);
         for job in jobs.values() {
             job.cancellation.cancel();

@@ -911,10 +911,7 @@ pub(super) fn session_file_stats(path: &Path) -> (Option<i64>, Option<i64>) {
 }
 
 pub(super) fn user_message_text(message: &Message) -> Option<String> {
-    if message.as_tool_image_supplement().is_some() {
-        return None;
-    }
-    let Message::User(blocks) = message else {
+    let rho_sdk::model::SemanticMessage::User(blocks) = message.semantic() else {
         return None;
     };
     let text = blocks

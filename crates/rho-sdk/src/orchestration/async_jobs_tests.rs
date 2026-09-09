@@ -152,7 +152,6 @@ async fn cancelled_harvest_preserves_all_ready_tool_results() {
     let (_commands_tx, mut commands) = mpsc::channel(1);
     let mut steering = super::super::SteeringQueue::new();
     let mut pending_outputs = PendingToolOutputs::default();
-    pending_outputs.register_calls(["call-a", "call-b"]);
     cancellation.cancel();
     let result = harvest_ready_jobs(&mut RunControl {
         hooks: &hooks,

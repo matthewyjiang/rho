@@ -623,6 +623,32 @@ fn advisor_registration_toggles_without_rebuilding_the_tool_set() {
     assert!(tools.advisor().is_some());
 }
 
+// Covers: toggling desktop access removes only the owned handle, even if another
+// registration has the same tool name. Owner: application tool registry.
+#[test]
+fn computer_registration_preserves_other_handles_with_the_same_name() {
+    let root = tempfile::tempdir().unwrap();
+    let session = super::super::computer_use::ComputerUseSession::new(
+        /*driver*/ None,
+        Config::default().max_output_bytes,
+        root.path().to_owned(),
+    );
+    let other = session.tool();
+    let mut tools = AppToolSet::disabled();
+    tools.tools.push(Arc::clone(&other));
+    let mut tools = tools.with_computer_use(session);
+    for (registered, changed, count) in [
+        (true, true, 2),
+        (true, false, 2),
+        (false, true, 1),
+        (false, false, 1),
+    ] {
+        assert_eq!(tools.set_computer_use_registered(registered), changed);
+        assert_eq!(tools.tools().len(), count);
+        assert!(Arc::ptr_eq(&tools.tools()[0], &other));
+    }
+}
+
 // Covers: /config edit-tool selection must swap the single advertised edit
 // surface without rebuilding the rest of the tool set.
 // Owner: application tool registry.

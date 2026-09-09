@@ -22,7 +22,7 @@ mod cache;
 mod compact;
 #[path = "interactive_runtime_computer.rs"]
 mod computer;
-pub(crate) use computer::ComputerUseUpdate;
+pub(crate) use computer::{ComputerUseEligibilityError, ComputerUseUpdate};
 #[path = "interactive_runtime_edit_tool.rs"]
 pub(crate) mod edit_tool;
 #[path = "interactive_runtime_mcp.rs"]
@@ -117,6 +117,9 @@ pub(crate) struct InteractiveRuntime {
     /// True after the current provider completes a live turn on the current history.
     live_context_warm: bool,
     computer_context: Option<String>,
+    /// Registry changes not yet installed in the SDK runtime, including a
+    /// revocation whose intended session replacement failed or is still pending.
+    computer_runtime_dirty: bool,
     /// Advertised tool specs last submitted on a provider request.
     cached_tool_specs: Vec<rho_sdk::model::ToolSpec>,
     /// Sticky until the TUI samples it: the tool list now differs from the last
@@ -202,7 +205,7 @@ impl InteractiveRuntime {
             return Ok(());
         }
         if mode == PermissionMode::Plan {
-            self.disable_computer_use().await?;
+            self.revoke_computer_use();
         }
 
         let session_writes = self
@@ -245,6 +248,7 @@ impl InteractiveRuntime {
 
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions.replace_runtime_session(replacement_session);
+        self.computer_runtime_dirty = false;
         self.permission_mode = mode;
         self.config.permission_mode = mode;
         self.session_writes = session_writes;
@@ -525,7 +529,7 @@ impl InteractiveRuntime {
         if self.is_session_busy() {
             anyhow::bail!("cannot reset while a run or compaction is active");
         }
-        self.disable_computer_use().await?;
+        self.revoke_computer_use();
         self.runtime
             .hooks()
             .session_completed(self.sessions.session().id(), self.completed_runs);
@@ -550,7 +554,7 @@ impl InteractiveRuntime {
             }
             anyhow::bail!("cannot switch sessions while compaction is active");
         }
-        self.disable_computer_use().await?;
+        self.revoke_computer_use();
         self.runtime
             .hooks()
             .session_completed(self.sessions.session().id(), self.completed_runs);
@@ -591,7 +595,7 @@ impl InteractiveRuntime {
         }
         let identity = self.provider.provider().identity();
         let id = storage.id().to_string();
-        self.disable_computer_use().await?;
+        self.revoke_computer_use();
         let snapshot =
             storage.snapshot_for_node(target_id, identity.clone(), prompt_cache_key(&id))?;
         let resume_omission = resume_omissions_report(&snapshot, &identity);
@@ -632,6 +636,7 @@ impl InteractiveRuntime {
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions
             .replace_session(replacement_session, resume_omission);
+        self.computer_runtime_dirty = false;
         self.sessions.set_resumed_storage(storage);
         self.install_rebuilt_permission(permission.pending);
         previous_runtime.shutdown();
@@ -887,6 +892,7 @@ impl InteractiveRuntime {
             .replace_session(replacement_session, resume_omission);
         self.install_rebuilt_permission(permission.pending);
         self.computer_context = None;
+        self.computer_runtime_dirty = false;
         previous_runtime.shutdown();
         Ok(())
     }

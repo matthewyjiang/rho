@@ -200,6 +200,7 @@ impl InteractiveRuntime {
             .await?;
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions.replace_runtime_session(replacement_session);
+        self.computer_runtime_dirty = false;
         previous_runtime.shutdown();
         Ok(())
     }

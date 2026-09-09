@@ -1,5 +1,6 @@
 use pretty_assertions::assert_eq;
 
+use super::super::SemanticMessage;
 use super::*;
 
 // Covers: history classification must recognize exact tool attribution without
@@ -42,8 +43,13 @@ fn recognize_tool_images_without_classifying_human_uploads() {
         (Message::User(malformed), false),
         (Message::assistant_text("capture"), false),
     ] {
-        let recognized = message.as_tool_image_supplement();
+        let recognized = match message.semantic() {
+            SemanticMessage::ToolImageSupplement(images) => Some(images),
+            SemanticMessage::User(_) | SemanticMessage::Assistant(_) => None,
+            other => panic!("unexpected classification: {other:?}"),
+        };
         assert_eq!(recognized.is_some(), expected, "{message:?}");
+        assert_eq!(message.as_tool_image_supplement().is_some(), expected);
         if let Some(supplement) = recognized {
             assert_eq!(
                 (

@@ -58,7 +58,18 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
                 harness.wait_for_text("tool available computer: false", STREAM)?;
                 harness.submit_text("/computer")?;
                 harness.wait_for_text("No desktop access granted", SETTLE)?;
-                harness.inject_key(&Key::Esc)
+                harness.inject_key(&Key::Esc)?;
+                // Ineligible hosts must reject before showing impossible consent.
+                harness.submit_text("/computer on")?;
+                harness.wait_for_text(
+                    if name == "plan" {
+                        "computer use is unavailable in plan mode"
+                    } else {
+                        "computer use requires an interactive native session with tools enabled"
+                    },
+                    SETTLE,
+                )?;
+                harness.wait_for_text_gone("Grant desktop access?", SETTLE)
             })?;
         }
         run_phase(runner, &plan, "restored", &mut timing, |harness| {

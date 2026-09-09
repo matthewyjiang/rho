@@ -13,9 +13,14 @@ mod release;
 mod response_scenarios;
 mod stream_scenarios;
 
+#[cfg(test)]
+#[path = "tui_fixture/semantic_tests.rs"]
+mod semantic_tests;
+
 use rho_sdk::{
     model::{
-        ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ToolCall,
+        ContentBlock, Message, ModelEvent, ModelIdentity, ModelRequest, ModelResponse,
+        SemanticMessage, ToolCall,
     },
     provider::{
         ModelProvider, ModelRequestOptions, NativeCompactionFuture, ProviderEventSender,
@@ -203,7 +208,7 @@ fn title_response(request: &ModelRequest<'_>) -> Option<Result<ModelResponse, Pr
 
 fn last_user_text(request: &ModelRequest<'_>) -> Option<String> {
     request.messages.iter().rev().find_map(|message| {
-        let Message::User(content) = message else {
+        let SemanticMessage::User(content) = message.semantic() else {
             return None;
         };
         Some(
@@ -226,7 +231,7 @@ fn tool_result_for_name<'a>(
         .messages
         .iter()
         .rev()
-        .take_while(|message| !matches!(message, Message::User(_)))
+        .take_while(|message| !matches!(message.semantic(), SemanticMessage::User(_)))
         .collect::<Vec<_>>();
     let call_id = current_turn.iter().find_map(|message| {
         message
@@ -250,7 +255,7 @@ fn current_turn_tool_results<'a>(
         .messages
         .iter()
         .rev()
-        .take_while(|message| !matches!(message, Message::User(_)))
+        .take_while(|message| !matches!(message.semantic(), SemanticMessage::User(_)))
         .filter_map(|message| match message {
             Message::ToolResult(result) => Some(result),
             _ => None,

@@ -1,87 +1,94 @@
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
-
 use crate::{
     event::ToolCompletion,
     model::{Message, ToolResult},
 };
 
-/// Commits tool output for this run, independently of how tools are scheduled.
-/// Restored dangling calls are deliberately not included in the pairing barrier.
-#[derive(Default)]
-pub(super) struct PendingToolOutputs {
-    calls: BTreeSet<String>,
-    finished: VecDeque<ToolResult>,
-    images: BTreeMap<String, Message>,
-    ready_images: Vec<Message>,
+/// One completion owns its textual result and optional image supplement together.
+/// Schedulers may park it, but cannot commit its image without its result.
+pub(super) struct CompletedToolOutput {
+    result: ToolResult,
+    supplement: Option<Message>,
 }
 
-impl PendingToolOutputs {
-    pub(super) fn register_calls<'a>(&mut self, ids: impl IntoIterator<Item = &'a str>) {
-        self.calls.extend(ids.into_iter().map(str::to_owned));
-    }
-
-    pub(super) fn record_completion(
-        &mut self,
-        name: &str,
-        id: &str,
-        completion: &ToolCompletion,
-    ) -> ToolResult {
-        if let ToolCompletion::Success(output) = completion {
-            if let Some(message) =
-                Message::tool_image_supplement(name, id, output.images().to_vec())
-            {
-                self.images.insert(id.to_owned(), message);
-            }
-        }
-        ToolResult {
-            id: id.to_owned(),
-            ok: matches!(completion, ToolCompletion::Success(_)),
-            content: match completion {
-                ToolCompletion::Success(output) => output.content().to_owned(),
-                ToolCompletion::Failure(failure) => failure.message().to_owned(),
-                ToolCompletion::Unavailable => format!("tool '{name}' is unavailable"),
+impl CompletedToolOutput {
+    pub(super) fn new(name: &str, id: &str, completion: &ToolCompletion) -> Self {
+        Self {
+            result: ToolResult {
+                id: id.to_owned(),
+                ok: matches!(completion, ToolCompletion::Success(_)),
+                content: match completion {
+                    ToolCompletion::Success(output) => output.content().to_owned(),
+                    ToolCompletion::Failure(failure) => failure.message().to_owned(),
+                    ToolCompletion::Unavailable => format!("tool '{name}' is unavailable"),
+                },
+            },
+            supplement: match completion {
+                ToolCompletion::Success(output) => {
+                    Message::tool_image_supplement(name, id, output.images().to_vec())
+                }
+                ToolCompletion::Failure(_) | ToolCompletion::Unavailable => None,
             },
         }
     }
 
+    /// A commit writes every result before its supplements, in the same order.
+    /// Other detached calls may finish later. Adjacency-only providers normalize
+    /// those late results at conversion; they do not require a run-global barrier.
+    pub(super) fn commit_all(outputs: impl IntoIterator<Item = Self>, history: &mut Vec<Message>) {
+        let mut supplements = Vec::new();
+        for output in outputs {
+            history.push(Message::ToolResult(output.result));
+            supplements.extend(output.supplement);
+        }
+        history.extend(supplements);
+    }
+
+    /// Terminal settlement keeps text pairing but drops undelivered images.
+    pub(super) fn into_result(self) -> ToolResult {
+        self.result
+    }
+}
+
+impl From<ToolResult> for CompletedToolOutput {
+    fn from(result: ToolResult) -> Self {
+        Self {
+            result,
+            supplement: None,
+        }
+    }
+}
+
+/// Detached completions are owned here before cancellable event publication.
+#[derive(Default)]
+pub(super) struct PendingToolOutputs {
+    finished: Vec<CompletedToolOutput>,
+}
+
+impl PendingToolOutputs {
     pub(super) fn park_completion(&mut self, name: &str, id: &str, completion: &ToolCompletion) {
-        let result = self.record_completion(name, id, completion);
-        self.park_finished(result);
+        self.park_finished(CompletedToolOutput::new(name, id, completion));
     }
 
-    /// Park detached results before cancellable event publication.
-    pub(super) fn park_finished(&mut self, result: ToolResult) {
-        self.finished.push_back(result);
+    pub(super) fn park_finished(&mut self, output: impl Into<CompletedToolOutput>) {
+        self.finished.push(output.into());
     }
 
-    /// Keep supplements in result-commit order, behind every accepted call's result.
-    pub(super) fn commit_results(
-        &mut self,
-        results: impl IntoIterator<Item = ToolResult>,
-        history: &mut Vec<Message>,
-    ) {
-        for result in results {
-            self.calls.remove(&result.id);
-            if let Some(message) = self.images.remove(&result.id) {
-                self.ready_images.push(message);
-            }
-            history.push(Message::ToolResult(result));
-        }
-        if self.calls.is_empty() {
-            history.append(&mut self.ready_images);
-        }
+    pub(super) fn take_finished(&mut self) -> Vec<CompletedToolOutput> {
+        std::mem::take(&mut self.finished)
     }
 
     pub(super) fn drain_finished(&mut self, history: &mut Vec<Message>) -> usize {
-        let results = std::mem::take(&mut self.finished);
-        let count = results.len();
-        self.commit_results(results, history);
+        let outputs = self.take_finished();
+        let count = outputs.len();
+        CompletedToolOutput::commit_all(outputs, history);
         count
     }
 
-    /// Terminal paths preserve committed history but never deliver more images.
-    pub(super) fn discard_images(&mut self) {
-        self.images.clear();
-        self.ready_images.clear();
+    pub(super) fn drain_interrupted(&mut self, history: &mut Vec<Message>) {
+        history.extend(
+            self.finished
+                .drain(..)
+                .map(|output| Message::ToolResult(output.into_result())),
+        );
     }
 }

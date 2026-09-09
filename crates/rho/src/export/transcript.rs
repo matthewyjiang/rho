@@ -94,34 +94,38 @@ pub(super) fn render_json(export: &SessionExport) -> anyhow::Result<String> {
 }
 
 fn push_markdown_messages(out: &mut String, messages: &[ExportedMessage]) {
+    use rho_sdk::model::SemanticMessage;
     let mut results_by_id: HashMap<&str, &ToolResult> = HashMap::new();
     let mut called_ids: HashSet<&str> = HashSet::new();
     for entry in messages {
-        match &entry.message {
-            Message::ToolResult(result) => {
+        match entry.message.semantic() {
+            SemanticMessage::ToolResult(result) => {
                 results_by_id.entry(result.id.as_str()).or_insert(result);
             }
-            Message::Assistant(blocks) => {
+            SemanticMessage::Assistant(blocks) => {
                 for block in blocks {
                     if let ContentBlock::ToolCall(call) = block {
                         called_ids.insert(call.id.as_str());
                     }
                 }
             }
-            Message::EnrichedAssistant(message) => {
+            SemanticMessage::EnrichedAssistant(message) => {
                 for block in &message.content {
                     if let ContentBlock::ToolCall(call) = block {
                         called_ids.insert(call.id.as_str());
                     }
                 }
             }
-            Message::System(_) | Message::User(_) | Message::AbortedAssistant(_) => {}
+            SemanticMessage::System(_)
+            | SemanticMessage::User(_)
+            | SemanticMessage::AbortedAssistant(_)
+            | SemanticMessage::ToolImageSupplement(_) => {}
         }
     }
 
     for entry in messages {
-        match &entry.message {
-            Message::System(text) => {
+        match entry.message.semantic() {
+            SemanticMessage::System(text) => {
                 out.push_str("## System\n\n");
                 if let Some(transcript) =
                     crate::display_transcript::DisplayTranscript::from_display(text)
@@ -131,19 +135,29 @@ fn push_markdown_messages(out: &mut String, messages: &[ExportedMessage]) {
                     push_fenced(out, None, text);
                 }
             }
-            Message::User(blocks) => {
-                if entry.message.as_tool_image_supplement().is_some() {
-                    out.push_str("## Tool output images\n\n");
-                } else {
-                    out.push_str("## You\n\n");
-                }
+            SemanticMessage::ToolImageSupplement(images) => {
+                out.push_str("## Tool output images\n\n");
+                push_fenced(
+                    out,
+                    None,
+                    &format!("tool: {} ({})", images.tool_name(), images.tool_call_id()),
+                );
+                push_blocks_markdown(
+                    out,
+                    images.content(),
+                    &results_by_id,
+                    /*pair_tools*/ false,
+                );
+            }
+            SemanticMessage::User(blocks) => {
+                out.push_str("## You\n\n");
                 push_blocks_markdown(out, blocks, &results_by_id, /*pair_tools*/ false);
             }
-            Message::Assistant(blocks) => {
+            SemanticMessage::Assistant(blocks) => {
                 out.push_str("## Rho\n\n");
                 push_blocks_markdown(out, blocks, &results_by_id, /*pair_tools*/ true);
             }
-            Message::EnrichedAssistant(message) => {
+            SemanticMessage::EnrichedAssistant(message) => {
                 out.push_str("## Rho\n\n");
                 push_blocks_markdown(
                     out,
@@ -152,7 +166,7 @@ fn push_markdown_messages(out: &mut String, messages: &[ExportedMessage]) {
                     /*pair_tools*/ true,
                 );
             }
-            Message::AbortedAssistant(message) => {
+            SemanticMessage::AbortedAssistant(message) => {
                 out.push_str("## Rho\n\n");
                 push_blocks_markdown(
                     out,
@@ -162,8 +176,8 @@ fn push_markdown_messages(out: &mut String, messages: &[ExportedMessage]) {
                 );
                 out.push_str("_Operation aborted_\n\n");
             }
-            Message::ToolResult(result) if called_ids.contains(result.id.as_str()) => {}
-            Message::ToolResult(result) => {
+            SemanticMessage::ToolResult(result) if called_ids.contains(result.id.as_str()) => {}
+            SemanticMessage::ToolResult(result) => {
                 out.push_str("### tool result\n\n");
                 push_tool_result_markdown(out, None, Some(result));
             }

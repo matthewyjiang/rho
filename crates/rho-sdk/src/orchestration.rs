@@ -135,7 +135,6 @@ async fn execute_turn_loop(
     let mut async_jobs = AsyncJobSet::new(runtime.max_parallel_tools);
     let mut pending_outputs = pending_tool_outputs::PendingToolOutputs::default();
     if let Some(call) = start.initial_tool_call {
-        pending_outputs.register_calls([call.id.as_str()]);
         history.push(Message::Assistant(vec![ContentBlock::ToolCall(
             call.clone(),
         )]));
@@ -165,30 +164,19 @@ async fn execute_turn_loop(
     let mut preserve_from = None;
     for step in 1..=runtime.max_steps.get() {
         drain_commands(&mut commands, &mut steering);
-        {
-            let mut control = RunControl {
-                hooks,
-                cancellation: &cancellation,
-                events: &events,
-                commands: &mut commands,
-                steering: &mut steering,
-                async_jobs: &mut async_jobs,
-                pending_outputs: &mut pending_outputs,
-            };
-            if let Err(error) = harvest_ready_jobs(&mut control).await {
-                return terminate_run(
-                    core,
-                    history,
-                    &mut async_jobs,
-                    &mut pending_outputs,
-                    hooks,
-                    &events,
-                    error,
-                )
-                .await;
-            }
+        let mut control = RunControl {
+            hooks,
+            cancellation: &cancellation,
+            events: &events,
+            commands: &mut commands,
+            steering: &mut steering,
+            async_jobs: &mut async_jobs,
+            pending_outputs: &mut pending_outputs,
+        };
+        if let Err(error) = harvest_ready_jobs(&mut control).await {
+            return control.terminate(core, history, error).await;
         }
-        pending_outputs.drain_finished(&mut history);
+        control.pending_outputs.drain_finished(&mut history);
         let request_scope = ProviderRequestScope {
             runtime: &runtime,
             session_id: core.id(),
@@ -196,7 +184,7 @@ async fn execute_turn_loop(
             step_index: step,
         };
         let mut compaction_estimate = None;
-        if !async_jobs.has_pending() {
+        if !control.async_jobs.has_pending() {
             match maybe_compact(
                 &core,
                 request_scope,
@@ -210,25 +198,16 @@ async fn execute_turn_loop(
             {
                 Ok(estimate) => compaction_estimate = estimate,
                 Err(error) => {
-                    return terminate_run(
-                        core,
-                        history,
-                        &mut async_jobs,
-                        &mut pending_outputs,
-                        hooks,
-                        &events,
-                        error,
-                    )
-                    .await;
+                    return control.terminate(core, history, error).await;
                 }
             }
         } else if runtime.compaction_policy.is_some() {
             tracing::warn!(
-                pending = async_jobs.pending_count(),
+                pending = control.async_jobs.pending_count(),
                 "skipping compaction while async tool jobs are pending"
             );
         }
-        if !async_jobs.has_pending() {
+        if !control.async_jobs.has_pending() {
             match boundary_input::collect(
                 &runtime,
                 &core,
@@ -243,43 +222,27 @@ async fn execute_turn_loop(
                 Ok(true) => compaction_estimate = None,
                 Ok(false) => {}
                 Err(error) => {
-                    return terminate_run(
-                        core,
-                        history,
-                        &mut async_jobs,
-                        &mut pending_outputs,
-                        hooks,
-                        &events,
-                        error,
-                    )
-                    .await;
+                    return control.terminate(core, history, error).await;
                 }
             }
         }
-        drain_commands(&mut commands, &mut steering);
+        drain_commands(control.commands, control.steering);
         // Delivered steers stay staged so a Reuse continuation still matches the
         // suffix the server already prepended. Undelivered steers accepted
         // between steps (including during compact) are applied before the next
         // request so default providers do not spend a turn just to release them.
-        if !steering.has_delivered() {
+        if !control.steering.has_delivered() {
             // Boundary input above and staged steering invalidate the estimate.
             // Tools are immutable for this run; jobs were drained before compaction.
-            if steering.has_staged() {
+            if control.steering.has_staged() {
                 compaction_estimate = None;
             }
-            match apply_staged_steering(&mut steering, &mut history, &events, &cancellation).await {
+            match apply_staged_steering(control.steering, &mut history, &events, &cancellation)
+                .await
+            {
                 Ok(()) => {}
                 Err(error) => {
-                    return terminate_run(
-                        core,
-                        history,
-                        &mut async_jobs,
-                        &mut pending_outputs,
-                        hooks,
-                        &events,
-                        error,
-                    )
-                    .await;
+                    return control.terminate(core, history, error).await;
                 }
             }
         }
@@ -301,28 +264,10 @@ async fn execute_turn_loop(
         {
             Ok(()) => {}
             Err(error) => {
-                return terminate_run(
-                    core,
-                    history,
-                    &mut async_jobs,
-                    &mut pending_outputs,
-                    hooks,
-                    &events,
-                    error,
-                )
-                .await;
+                return control.terminate(core, history, error).await;
             }
         }
 
-        let mut control = RunControl {
-            hooks,
-            cancellation: &cancellation,
-            events: &events,
-            commands: &mut commands,
-            steering: &mut steering,
-            async_jobs: &mut async_jobs,
-            pending_outputs: &mut pending_outputs,
-        };
         let (response, mut capture) = match request_valid_response(
             request_scope,
             &history,
@@ -335,33 +280,17 @@ async fn execute_turn_loop(
         .await
         {
             Ok(result) => result,
-            Err(error) if cancellation.is_cancelled() => {
-                control
-                    .async_jobs
-                    .interrupt(control.pending_outputs, &mut history, hooks, &events)
-                    .await;
-                return commit_terminal(
-                    core,
-                    history,
-                    error.capture,
-                    TerminalKind::Cancelled,
-                    &events,
-                )
-                .await;
-            }
             Err(error) => {
+                let kind = if cancellation.is_cancelled() {
+                    TerminalKind::Cancelled
+                } else {
+                    TerminalKind::Failed(Error::from(error.error))
+                };
                 control
                     .async_jobs
                     .interrupt(control.pending_outputs, &mut history, hooks, &events)
                     .await;
-                return commit_terminal(
-                    core,
-                    history,
-                    error.capture,
-                    TerminalKind::Failed(Error::from(error.error)),
-                    &events,
-                )
-                .await;
+                return commit_terminal(core, history, error.capture, kind, &events).await;
             }
         };
         accumulated_usage = accumulated_usage.saturating_add(capture.usage());
@@ -385,9 +314,6 @@ async fn execute_turn_loop(
         history.push(Message::assistant(assistant));
         drain_commands(control.commands, control.steering);
         let was_steered = control.steering.has_staged();
-        control
-            .pending_outputs
-            .register_calls(tool_calls.iter().map(|call| call.id.as_str()));
         let (async_calls, sync_calls) = split_tool_calls(tool_calls, &async_ids, &runtime.tools);
         let spawned_async = !async_calls.is_empty();
         core.publish_in_flight_history(&history);
@@ -406,10 +332,6 @@ async fn execute_turn_loop(
         {
             tool_turn::interrupt_unstarted_calls(sync_calls, &mut history);
             return control.terminate(core, history, error).await;
-        }
-
-        if !sync_calls.is_empty() {
-            control.pending_outputs.drain_finished(&mut history);
         }
 
         if !sync_calls.is_empty() || (!spawned_async && was_steered) {
@@ -548,41 +470,6 @@ async fn execute_turn_loop(
     Ok(outcome)
 }
 
-/// Interrupts pending async jobs, then commits or returns the terminal error.
-///
-/// Event-consumer interrupts stay uncommitted. Every terminal path that would
-/// otherwise copy this match goes through here so interrupted jobs emit
-/// `ToolFinished`.
-async fn terminate_run(
-    core: Arc<SessionCore>,
-    mut history: Vec<Message>,
-    async_jobs: &mut AsyncJobSet,
-    pending_outputs: &mut pending_tool_outputs::PendingToolOutputs,
-    hooks: &RunHooks,
-    events: &mpsc::Sender<RunEvent>,
-    error: Error,
-) -> Result<RunOutcome, Error> {
-    async_jobs
-        .interrupt(pending_outputs, &mut history, hooks, events)
-        .await;
-    match error {
-        Error::Cancelled => {
-            commit_terminal_history(core, history, TerminalKind::Cancelled, events).await
-        }
-        Error::Interrupted { .. } => Err(error),
-        error => {
-            commit_terminal(
-                core,
-                history,
-                StreamCapture::default(),
-                TerminalKind::Failed(error),
-                events,
-            )
-            .await
-        }
-    }
-}
-
 async fn maybe_compact(
     core: &Arc<SessionCore>,
     scope: ProviderRequestScope<'_>,
@@ -675,22 +562,33 @@ pub(super) struct RunControl<'a> {
 }
 
 impl RunControl<'_> {
+    /// Settle detached jobs before committing a terminal error. Event-consumer
+    /// interrupts stay uncommitted; cancellation and failures preserve text pairing.
     async fn terminate(
         &mut self,
         core: Arc<SessionCore>,
-        history: Vec<Message>,
+        mut history: Vec<Message>,
         error: Error,
     ) -> Result<RunOutcome, Error> {
-        terminate_run(
-            core,
-            history,
-            self.async_jobs,
-            self.pending_outputs,
-            self.hooks,
-            self.events,
-            error,
-        )
-        .await
+        self.async_jobs
+            .interrupt(self.pending_outputs, &mut history, self.hooks, self.events)
+            .await;
+        match error {
+            Error::Cancelled => {
+                commit_terminal_history(core, history, TerminalKind::Cancelled, self.events).await
+            }
+            Error::Interrupted { .. } => Err(error),
+            error => {
+                commit_terminal(
+                    core,
+                    history,
+                    StreamCapture::default(),
+                    TerminalKind::Failed(error),
+                    self.events,
+                )
+                .await
+            }
+        }
     }
 }
 

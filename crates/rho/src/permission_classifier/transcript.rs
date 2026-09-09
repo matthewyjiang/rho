@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use rho_providers::model::{ContentBlock, Message, ToolCall, ToolResult};
+use rho_sdk::model::SemanticMessage;
 use rho_sdk::{
     ApprovalRequest, CapabilityOperation, CapabilityRequest, CapabilitySource, NetworkTarget,
     PathScope,
@@ -14,14 +15,10 @@ pub(crate) fn render_classifier_transcript(
     let mut pending_calls = HashMap::new();
 
     for message in history {
-        // Screenshots are tool data, never evidence that the user requested an
-        // action. The SDK's minor-compatible image carrier uses the user role.
-        if message.as_tool_image_supplement().is_some() {
-            continue;
-        }
-        match message {
-            Message::System(_) => {}
-            Message::User(blocks) => {
+        match message.semantic() {
+            // Tool images cannot supply evidence of user authorization.
+            SemanticMessage::System(_) | SemanticMessage::ToolImageSupplement(_) => {}
+            SemanticMessage::User(blocks) => {
                 for block in blocks {
                     match block {
                         ContentBlock::Text(text) => {
@@ -34,16 +31,16 @@ pub(crate) fn render_classifier_transcript(
                     }
                 }
             }
-            Message::Assistant(blocks) => {
+            SemanticMessage::Assistant(blocks) => {
                 append_tool_calls(&mut lines, &mut pending_calls, blocks)?;
             }
-            Message::EnrichedAssistant(assistant) => {
+            SemanticMessage::EnrichedAssistant(assistant) => {
                 append_tool_calls(&mut lines, &mut pending_calls, &assistant.content)?;
             }
-            Message::AbortedAssistant(aborted) => {
+            SemanticMessage::AbortedAssistant(aborted) => {
                 append_tool_calls(&mut lines, &mut pending_calls, &aborted.content)?;
             }
-            Message::ToolResult(result) => {
+            SemanticMessage::ToolResult(result) => {
                 if let Some(call) = pending_calls.remove(result.id.as_str()) {
                     append_questionnaire_answers(&mut lines, call, result)?;
                 }
