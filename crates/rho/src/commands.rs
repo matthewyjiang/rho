@@ -162,7 +162,7 @@ const COMPUTER_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     CommandArgumentChoice {
         completion: "/computer setup",
         usage: "/computer setup",
-        description: "show setup guidance and desktop access scope",
+        description: "install, configure and verify Cua Driver with separate consent",
     },
     CommandArgumentChoice {
         completion: "/computer on",

@@ -41,6 +41,10 @@ impl InteractiveRuntime {
         self.authorize_computer_use()?.start_connect()
     }
 
+    pub(crate) fn install_computer_driver(&self) -> anyhow::Result<std::path::PathBuf> {
+        self.authorize_computer_use()?.start_installation()
+    }
+
     /// The idle boundary owns registration for both activation and revocation,
     /// including revocations from retained tools or the during-turn UI handle.
     /// Driver failures are updates, not runtime failures. Only registration or

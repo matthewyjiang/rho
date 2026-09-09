@@ -1,23 +1,130 @@
-//! Read-only onboarding: detection and next steps without starting the driver.
+//! Installation is host-authorized separately from session desktop access.
 
-use super::{desktop_warning, detect_driver, ComputerUseSession};
+use std::{path::PathBuf, sync::Arc};
 
-impl ComputerUseSession {
-    pub(crate) fn setup_guidance() -> String {
-        let driver = detect_driver().map_or_else(
-            || "Driver not detected. Install Cua Driver separately and make cua-driver available on PATH or at ~/.local/bin/cua-driver.".into(),
-            |path| format!("Driver detected: {}", path.display()),
-        );
-        let permissions = if cfg!(target_os = "macos") {
-            "Follow Cua's setup to grant Accessibility and Screen Recording permissions in macOS System Settings."
-        } else {
-            "Complete Cua's desktop permission setup for your platform. Launch Rho from the desktop session you intend to control."
-        };
-        let warning = desktop_warning()
-            .map(|warning| format!("\n\nDisplay warning: {warning}"))
-            .unwrap_or_default();
-        format!(
-            "Computer use setup\n\n1. Install and detect\n{driver}\nSetup guide: https://cua.ai/docs/how-to-guides/driver/connect-your-agent\n\n2. Check desktop permissions\n{permissions}\nDesktop capture and input permissions have not been checked by Rho.{warning}\n\n3. Allow access in Rho\nUse an image-capable model, then run /computer on and review the confirmation. Access includes signed-in apps, without per-action Rho approval even in supervised mode. Screenshots go to your model provider and session history.\n\n/computer opens the dashboard; /computer off revokes access. Rho does not install or update the driver, change permissions, or configure an MCP server for you."
-        )
+use anyhow::{anyhow, bail};
+use futures_util::FutureExt;
+use rho_sdk::CancellationToken;
+
+use super::{ComputerUseSession, State, Task};
+
+mod installer;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ComputerSetupUpdate {
+    Installed,
+    Cancelled,
+    Failed(String),
+}
+
+pub(super) struct Installation {
+    cancellation: Arc<CancellationToken>,
+    task: Task<()>,
+}
+
+impl Installation {
+    pub(super) fn cancel(&self) {
+        self.cancellation.cancel();
     }
 }
+
+impl Drop for Installation {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
+}
+
+impl ComputerUseSession {
+    pub(crate) fn installation_pending(&self) -> bool {
+        matches!(&*self.state(), State::Installing(_))
+    }
+
+    /// Called only after installation consent. Does not grant desktop access.
+    pub(crate) fn start_installation(&self) -> anyhow::Result<PathBuf> {
+        let mut state = self.state();
+        match &*state {
+            State::Off { .. } => {}
+            State::Installing(_) => {
+                bail!("Cua Driver installation is already pending; /computer off cancels")
+            }
+            State::Connecting { .. } | State::Connected { .. } | State::Closing { .. } => {
+                bail!("turn computer use off before installing Cua Driver")
+            }
+        }
+        if self.driver_path().is_some() {
+            bail!("a driver is already configured; run /computer setup again to connect without installing");
+        }
+        let home = crate::paths::home_dir()
+            .filter(|home| home.is_absolute())
+            .ok_or_else(|| {
+                anyhow!("an absolute home directory is required to install Cua Driver")
+            })?;
+        let command = installer::command(&home)?;
+        let (command, log) = installer::with_log(command)?;
+        let cancellation = Arc::new(CancellationToken::new());
+        let token = cancellation.clone();
+        let log_path = log.clone();
+        let task = super::retained_task(async move {
+            installer::run(command, &token).await
+                .map_err(|error| anyhow!("{error}; installer log: {}. Partial installation files may remain; rerun /computer setup to recover", log_path.display()))
+        });
+        *state = State::Installing(Installation { cancellation, task });
+        Ok(log)
+    }
+
+    /// Keep the lifecycle occupied until the cancelled process tree is reaped.
+    pub(super) async fn finish_installation(&self) {
+        let (cancellation, task) = match &*self.state() {
+            State::Installing(installation) => {
+                (installation.cancellation.clone(), installation.task.clone())
+            }
+            State::Off { .. }
+            | State::Connecting { .. }
+            | State::Connected { .. }
+            | State::Closing { .. } => return,
+        };
+        let _ = task.await;
+        let mut state = self.state();
+        if matches!(&*state, State::Installing(current) if Arc::ptr_eq(&current.cancellation, &cancellation))
+        {
+            *state = State::Off {
+                error: None,
+                revocation: None,
+            };
+        }
+    }
+
+    pub(crate) fn take_installation_result(&self) -> Option<ComputerSetupUpdate> {
+        let mut state = self.state();
+        let installation = match &*state {
+            State::Installing(installation) => installation,
+            State::Off { .. }
+            | State::Connecting { .. }
+            | State::Connected { .. }
+            | State::Closing { .. } => return None,
+        };
+        let result = installation.task.clone().now_or_never()?;
+        let cancelled = installation.cancellation.is_cancelled();
+        *state = State::Off {
+            error: None,
+            revocation: None,
+        };
+        Some(if cancelled {
+            ComputerSetupUpdate::Cancelled
+        } else {
+            match result {
+                Ok(()) if self.driver_path().is_some() => ComputerSetupUpdate::Installed,
+                Ok(()) => ComputerSetupUpdate::Failed("installer exited successfully but Cua Driver was not detected; check the installer log and run /computer setup again".into()),
+                Err(error) => ComputerSetupUpdate::Failed(error.to_string()),
+            }
+        })
+    }
+
+    pub(crate) fn setup_guidance() -> String {
+        "Run /computer setup inside Rho to detect Cua Driver, install it if missing after separate installation consent, then review session desktop access and verify the driver connection. No persistent desktop grant or MCP config is written.\n\nThe installer downloads and executes Cua's official script. Cua telemetry is enabled by default; cua-driver telemetry disable opts out. Rho requests no PATH or shell profile changes. Installation does not grant Rho desktop access.\n\nDriver handshake is not an OS permission check. Run cua-driver doctor for installation diagnostics. On macOS, after the daemon is running, use cua-driver permissions status and grant Accessibility and Screen Recording in System Settings as needed. On Linux, launch Rho from the desktop session you intend to control.\n\nOfficial setup: https://cua.ai/docs/how-to-guides/driver/install\n/computer off cancels installation or revokes session access; it cannot undo installation files or completed desktop actions.".into()
+    }
+}
+
+#[cfg(test)]
+#[path = "setup_tests.rs"]
+mod tests;

@@ -28,7 +28,11 @@ fn discovery_ignores_relative_installation_locations() {
         ),
     ] {
         assert_eq!(
-            policy::driver_candidates(Some(path.into()), Some(home.into())),
+            policy::driver_candidates(
+                Some(path.into()),
+                Some(home.into()),
+                /*local_app_data*/ None
+            ),
             expected
         );
     }

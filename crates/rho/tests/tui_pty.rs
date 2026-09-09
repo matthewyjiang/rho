@@ -132,7 +132,12 @@ fn mcp_connecting_keeps_the_session_inspectable() {
 // Owner: interactive TUI
 #[test]
 fn computer_use_authorization_and_revocation() {
-    for scenario in ["computer_use", "computer_plan_denied"] {
+    for scenario in [
+        "computer_use",
+        "computer_setup",
+        "computer_setup_cancel",
+        "computer_plan_denied",
+    ] {
         assert_pass(scenario);
     }
 }

@@ -495,7 +495,7 @@ pub enum ComputerCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Show installation guidance and explain desktop access.
+    /// Explain setup; run /computer setup inside Rho for consent-based installation.
     Setup,
 }
 

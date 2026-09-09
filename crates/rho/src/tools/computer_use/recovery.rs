@@ -17,7 +17,7 @@ impl ComputerUseSession {
             State::Off { revocation, .. } | State::Closing { revocation, .. } => revocation
                 .as_ref()
                 .map(|revocation| revocation.reason.clone()),
-            State::Connecting { .. } | State::Connected { .. } => None,
+            State::Installing(_) | State::Connecting { .. } | State::Connected { .. } => None,
         }
     }
 
@@ -34,7 +34,7 @@ impl ComputerUseSession {
                     revocation.reason
                 ))
             }
-            State::Connecting { .. } | State::Connected { .. } => None,
+            State::Installing(_) | State::Connecting { .. } | State::Connected { .. } => None,
         }
     }
 }

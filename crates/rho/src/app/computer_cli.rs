@@ -1,4 +1,4 @@
-//! Read-only setup diagnostics. Desktop access is granted inside the TUI only.
+//! Read-only CLI diagnostics; installation and access consent belong to the TUI.
 
 use crate::{
     cli::ComputerCommand,

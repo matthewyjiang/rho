@@ -76,6 +76,10 @@ impl App {
                 use crate::tools::computer_use::ComputerUseStatus;
                 let labels = match status {
                     ComputerUseStatus::Off => return None,
+                    ComputerUseStatus::Installing => [
+                        "computer driver installing · access off · /computer off",
+                        "driver installing · /computer off",
+                    ],
                     ComputerUseStatus::Connecting => [
                         "computer access granted · connecting · /computer off",
                         "computer connecting · /computer off",

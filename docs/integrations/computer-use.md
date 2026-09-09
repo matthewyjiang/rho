@@ -1,6 +1,6 @@
 # Computer use
 
-Rho can interact with desktop apps through **Cua Driver**. Rho manages the connection and tool access; Cua Driver performs desktop automation. The driver is installed separately.
+Rho can interact with desktop apps through **Cua Driver**. Rho manages the connection and tool access; Cua Driver performs desktop automation. `/computer setup` can install a missing driver with your confirmation or connect an existing installation.
 
 Computer use starts off. Enable it explicitly inside an interactive Rho session:
 
@@ -9,7 +9,7 @@ Computer use starts off. Enable it explicitly inside an interactive Rho session:
 /computer on
 ```
 
-`/computer setup` shows driver detection, the setup guide, permission checks, and the next step. `/computer on` asks you to review the access scope and explicitly allow it for this session before connecting. Cancel is selected by default; cancelling does not start the driver or grant access. If the terminal clips the confirmation, Rho blocks the grant and asks you to enlarge it so the full disclosure is visible.
+`/computer setup` detects the driver, offers a separately authorized installation if needed, then asks for session desktop access and verifies the connection. An existing driver skips installation. `/computer on` asks you to review the access scope and explicitly allow it for this session before connecting. Cancel is selected by default; cancelling does not start the driver or grant access. If the terminal clips the confirmation, Rho blocks the grant and asks you to enlarge it so the full disclosure is visible.
 
 Connection runs in the background so the composer remains usable. Once connected, the model receives a `computer` tool for discovering and calling supported Cua operations. Use an image-capable model for visual tasks. A persistent indicator near the composer shows connecting, driver-connected, or access-off/disconnecting state, even as other status messages change.
 
@@ -30,27 +30,33 @@ This is a Rho tool-registration boundary, not an OS sandbox. An independently co
 | Command | Effect |
 | --- | --- |
 | `/computer` or `/computer status` | Open the dashboard with session state, a direct revoke action, driver detection, and access details |
-| `/computer setup` | Detect the driver and show installation, permission, and privacy guidance without starting it |
+| `/computer setup` | Install a missing driver after confirmation, then configure session access and verify the connection |
 | `/computer on` | Review and confirm desktop access for this session, then connect |
-| `/computer off` or `/computer stop` | Revoke access, cancel pending connection or computer actions, and disconnect |
+| `/computer off` or `/computer stop` | Cancel installation, revoke access, cancel pending connection or computer actions, and disconnect |
 | `rho computer status [--json]` | Detect the executable without starting it or inspecting the desktop |
-| `rho computer setup` | Show setup guidance outside the TUI |
+| `rho computer setup` | Show read-only guidance directing you to the interactive setup flow |
 
 `/computer off` works during a model turn. It prevents later computer calls through that grant. It cannot retract input already handed to the OS, and an in-flight action may finish during driver cleanup. Status remains `closing (access revoked)` until cleanup completes; a new grant cannot start before that. The runtime removes the revoked tool at the next idle boundary, before another model request.
 
 CLI status is a local installation check, not a query of another running Rho session. A successful MCP handshake also does not prove that the OS has granted capture or input permissions.
 
-The interactive dashboard uses the same overlay as `/limits` and `/doctor`, without adding status output to the transcript. Session state and available actions appear before diagnostics and privacy details. Scroll with arrow keys, PgUp/PgDn, Home/End, or the mouse wheel; Enter or Esc closes it. It can be opened during a running turn, and closing it does not interrupt the model. Press `r` to revoke access immediately without another confirmation. Access still requires `/computer on` and explicit confirmation.
+The interactive dashboard uses the same overlay as `/limits` and `/doctor`, without adding status output to the transcript. Session state and available actions appear before diagnostics and privacy details. Scroll with arrow keys, PgUp/PgDn, Home/End, or the mouse wheel; Enter or Esc closes it. It can be opened during a running turn, and closing it does not interrupt the model. Press `r` to revoke access immediately without another confirmation. Access still requires explicit confirmation through `/computer setup` or `/computer on`.
 
 ## Driver setup
 
-Follow [Cua Driver's setup instructions](https://cua.ai/docs/how-to-guides/driver/connect-your-agent). Rho detects `cua-driver` in absolute directories on `PATH`, then the standard `~/.local/bin/cua-driver` installation. Empty and relative `PATH` entries are ignored so a repository-local program cannot be selected accidentally. On Windows, the executable is `cua-driver.exe`. Rho starts its stdio connection using:
+Installation and desktop access are separate authorizations, both defaulting to Cancel. `/computer setup` never upgrades a detected driver. For a missing driver it offers to download and execute Cua's official installer with Bash on macOS/Linux or PowerShell on Windows. Rho requests no PATH or shell-profile edits and disables Windows installer autostart registration. Installation writes under your home directory and, on macOS, `/Applications/CuaDriver.app`; the upstream installer may replace Cua files or stop old Cua daemons. Cua telemetry is enabled by default; `cua-driver telemetry disable` opts out. You can instead install manually using [Cua Driver's setup instructions](https://cua.ai/docs/how-to-guides/driver/install).
+
+Installation runs in the background with output retained in a private temporary log whose path appears in the transcript. The installer receives an allowlist of environment variables for platform paths, proxies, certificates, and Cua telemetry preferences, not model credentials or shell startup hooks. `/computer off` or dashboard `r` cancels its process tree; session changes, entering plan mode, and shutdown also cancel pending installation. Cancellation does not roll back files already written. Rerun `/computer setup` to detect a completed installation or retry a partial one. Setup cannot start during a model turn or in plan mode.
+
+After installation, Rho asks separately for desktop access. If you are typing or another overlay is open, it preserves that UI and asks you to continue with `/computer setup`. No persistent MCP configuration or desktop grant is written: Rho discovers the executable and manages the connection for this session.
+
+Rho detects `cua-driver` in absolute directories on `PATH`, then the standard `~/.local/bin/cua-driver` installation. Empty and relative `PATH` entries are ignored so a repository-local program cannot be selected accidentally. On Windows, detection also checks `~/.cua-driver/bin` (the managed installation location) and `%LOCALAPPDATA%/Programs/Cua/cua-driver/bin`; the executable is `cua-driver.exe`. Rho starts its stdio connection using:
 
 ```sh
 cua-driver mcp
 ```
 
-Rho does not install or upgrade the driver, change OS permissions, select unrestricted mode, or stop a shared Cua daemon. On macOS, Cua's normal daemon-backed permission flow remains in charge. Closing Rho closes its own MCP connection, not other clients' sessions.
+Connection verification checks the MCP handshake and supported tools, not OS capture/input permissions. Rho does not change OS permissions or select unrestricted mode. Run `cua-driver doctor` for installation diagnostics. On macOS, use `cua-driver permissions status` after starting the daemon and grant Accessibility and Screen Recording in System Settings as needed; Cua's daemon-backed permission flow remains in charge. Outside the separately authorized installer, Rho does not stop a shared Cua daemon: closing its MCP connection does not close other clients' sessions.
 
 On Linux, the driver child receives the available desktop connection variables such as `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `XAUTHORITY`, and `DBUS_SESSION_BUS_ADDRESS`. Other process environment filtering remains unchanged. A headless shell or missing OS permissions may allow discovery but prevent actual observation or input.
 

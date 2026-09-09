@@ -31,6 +31,11 @@ impl App {
             .map(ComputerUseControl::status)
             .unwrap_or(ComputerUseStatus::Off);
         let (status, access, next) = match state {
+            ComputerUseStatus::Installing => (
+                "Installing",
+                "Cua Driver installation pending; desktop access remains off",
+                "r or /computer off cancels installation",
+            ),
             ComputerUseStatus::Off => (
                 "Off",
                 "No desktop access granted",
@@ -115,7 +120,7 @@ impl App {
         let path = driver
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| {
-                "Install the driver separately; /computer setup for instructions".into()
+                "/computer setup installs the missing driver after separate consent".into()
             });
         lines.extend(indented_wrapped_lines(&path, 0, width, Theme::dim()));
         lines.push(Line::default());
@@ -131,7 +136,7 @@ impl App {
         lines.push(heading_with_status("Commands", "", width));
         for command in [
             next,
-            "/computer setup  installation and permission guidance",
+            "/computer setup  install, configure and verify connection",
         ] {
             lines.extend(indented_wrapped_lines(command, 0, width, Theme::text()));
         }
@@ -146,13 +151,15 @@ impl App {
         let lines = self.computer_status_lines(overlay_panel_inner_width(area).saturating_sub(1));
         Some(render_overlay_panel(
             "Computer use",
-            if self.computer_use.as_ref().is_some_and(|control| {
-                matches!(
-                    control.status(),
-                    ComputerUseStatus::Connecting | ComputerUseStatus::Connected
-                )
-            }) {
-                "r revoke access · Enter/Esc close"
+            if self.computer_installation_pending()
+                || self.computer_use.as_ref().is_some_and(|control| {
+                    matches!(
+                        control.status(),
+                        ComputerUseStatus::Connecting | ComputerUseStatus::Connected
+                    )
+                })
+            {
+                "r cancel setup / revoke access · Enter/Esc close"
             } else {
                 "Enter/Esc close"
             },
@@ -199,10 +206,11 @@ impl App {
         }
         if key.code == crossterm::event::KeyCode::Char('r') && key.modifiers.is_empty() {
             if let Some(control) = self.computer_use.as_ref().filter(|control| {
-                matches!(
-                    control.status(),
-                    ComputerUseStatus::Connecting | ComputerUseStatus::Connected
-                )
+                control.installation_pending()
+                    || matches!(
+                        control.status(),
+                        ComputerUseStatus::Connecting | ComputerUseStatus::Connected
+                    )
             }) {
                 control.revoke();
                 self.show_computer_off();

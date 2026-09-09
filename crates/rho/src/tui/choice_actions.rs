@@ -16,8 +16,7 @@ impl App {
 
         match outcome {
             InlineChoiceKeyOutcome::Selected(value) => {
-                if value == "grant"
-                    && matches!(self.input_ui.composer(), ComposerMode::InlineChoice(modal) if matches!(modal.pending, InlineChoicePending::ComputerAccess))
+                if matches!(self.input_ui.composer(), ComposerMode::InlineChoice(modal) if modal.pending.requires_visible_computer_consent(&value))
                     && !self.computer_consent_visible(terminal)
                 {
                     return Ok(true);
@@ -26,6 +25,9 @@ impl App {
                     unreachable!("inline choice checked above");
                 };
                 match modal.pending {
+                    InlineChoicePending::ComputerInstall => {
+                        self.confirm_computer_installation(&value, agent)
+                    }
                     InlineChoicePending::ComputerAccess => {
                         self.confirm_computer_access(&value, agent)
                     }
@@ -89,6 +91,9 @@ impl App {
                     unreachable!("inline choice checked above");
                 };
                 match modal.pending {
+                    InlineChoicePending::ComputerInstall => {
+                        self.confirm_computer_installation("cancel", agent)
+                    }
                     InlineChoicePending::ComputerAccess => {
                         self.confirm_computer_access("cancel", agent)
                     }

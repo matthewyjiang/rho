@@ -73,6 +73,7 @@ pub(super) struct InlineChoiceModal {
 #[derive(Debug)]
 pub(super) enum InlineChoicePending {
     ComputerAccess,
+    ComputerInstall,
     CredentialStore {
         next: super::login::StoreChoiceNext,
     },
@@ -103,6 +104,28 @@ pub(super) enum InlineChoicePending {
     ClearPromptHistory,
 }
 
+impl InlineChoicePending {
+    pub(super) fn requires_visible_computer_consent(&self, value: &str) -> bool {
+        match self {
+            Self::ComputerAccess => value == "grant",
+            Self::ComputerInstall => value == "install",
+            Self::CredentialStore { .. }
+            | Self::ContextHandoff(_)
+            | Self::ConfirmSend(_)
+            | Self::ClaudeCodeLogin
+            | Self::ClaudeCodeRelogin
+            | Self::ClaudeCodeLogout
+            | Self::DeleteSession { .. }
+            | Self::DeleteDirectorySessions { .. }
+            | Self::CleanupMissingSessionDirectories { .. }
+            | Self::DeleteWorkflowPlan { .. }
+            | Self::DeleteWorkflowRun { .. }
+            | Self::PromptHistoryLimit { .. }
+            | Self::ClearPromptHistory => false,
+        }
+    }
+}
+
 impl InlineChoiceModal {
     pub(super) fn blocks_auto_continue(&self) -> bool {
         matches!(
@@ -110,6 +133,7 @@ impl InlineChoiceModal {
             InlineChoicePending::ContextHandoff(_)
                 | InlineChoicePending::ConfirmSend(_)
                 | InlineChoicePending::ComputerAccess
+                | InlineChoicePending::ComputerInstall
         )
     }
 }

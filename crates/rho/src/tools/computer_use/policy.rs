@@ -38,15 +38,23 @@ pub(super) const ALLOWED_TOOLS: &[&str] = &[
     "zoom",
 ];
 
-pub(super) fn detect_driver(path: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
-    driver_candidates(path, home)
+pub(super) fn detect_driver(
+    path: Option<OsString>,
+    home: Option<OsString>,
+    local_app_data: Option<OsString>,
+) -> Option<PathBuf> {
+    driver_candidates(path, home, local_app_data)
         .into_iter()
         .find(|candidate| executable(candidate))
         .and_then(|candidate| candidate.canonicalize().ok())
 }
 
 /// Only explicitly absolute installation locations may receive desktop authority.
-pub(super) fn driver_candidates(path: Option<OsString>, home: Option<OsString>) -> Vec<PathBuf> {
+pub(super) fn driver_candidates(
+    path: Option<OsString>,
+    home: Option<OsString>,
+    local_app_data: Option<OsString>,
+) -> Vec<PathBuf> {
     let executable_name = if cfg!(windows) {
         "cua-driver.exe"
     } else {
@@ -64,6 +72,21 @@ pub(super) fn driver_candidates(path: Option<OsString>, home: Option<OsString>) 
         .collect();
     if let Some(home) = home.map(PathBuf::from).filter(|home| home.is_absolute()) {
         candidates.push(home.join(".local/bin").join(executable_name));
+        if cfg!(windows) {
+            candidates.push(home.join(".cua-driver/bin").join(executable_name));
+        }
+    }
+    if cfg!(windows) {
+        if let Some(local_app_data) = local_app_data
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+        {
+            candidates.push(
+                local_app_data
+                    .join("Programs/Cua/cua-driver/bin")
+                    .join(executable_name),
+            );
+        }
     }
     candidates
 }

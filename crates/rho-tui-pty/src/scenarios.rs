@@ -12,6 +12,8 @@ mod changelog;
 mod command_palette;
 #[cfg(unix)]
 mod computer;
+#[cfg(unix)]
+mod computer_setup;
 mod config;
 mod conversation_tree;
 mod doctor;
@@ -680,6 +682,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     HOOKS_CONTRACT_SCENARIO,
     #[cfg(unix)]
     COMPUTER_USE_SCENARIO,
+    #[cfg(unix)]
+    computer_setup::COMPUTER_SETUP_SCENARIO,
+    #[cfg(unix)]
+    computer_setup::COMPUTER_SETUP_CANCEL_SCENARIO,
     #[cfg(unix)]
     COMPUTER_FAILURE_SCENARIO,
     #[cfg(unix)]

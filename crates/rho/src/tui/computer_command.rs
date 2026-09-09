@@ -8,6 +8,9 @@ use super::{
     InlineChoiceOption, InlineChoicePending, InteractiveRuntime,
 };
 
+#[path = "computer_setup.rs"]
+mod setup;
+
 impl App {
     pub(super) async fn execute_computer_command(
         &mut self,
@@ -16,12 +19,17 @@ impl App {
     ) -> anyhow::Result<()> {
         self.computer_use = agent.computer_use().map(ComputerUseSession::control);
         match invocation.args.trim() {
+            "setup" => self.setup_computer(agent)?,
             "on" => {
                 if !self.can_grant_computer_access(agent) {
                     return Ok(());
                 }
                 if self.computer_connect_pending() {
                     self.set_status("computer use is connecting; /computer off cancels");
+                    return Ok(());
+                }
+                if self.computer_installation_pending() {
+                    self.set_status("Cua Driver installation pending; /computer off cancels");
                     return Ok(());
                 }
                 if self.computer_use.as_ref().is_some_and(|control| {
@@ -33,18 +41,7 @@ impl App {
                     self.show_computer_status();
                     return Ok(());
                 }
-                self.input_ui.set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
-                    choice: InlineChoice::new(
-                        "Grant desktop access?",
-                        "Rho can control your local desktop, including signed-in apps. No per-action Rho approval, even in supervised mode. Captured images go to your model provider and session history.",
-                        vec![
-                            InlineChoiceOption::available("cancel", 'c', "Cancel", "Keep access off"),
-                            InlineChoiceOption::available("grant", 'g', "Grant access", "This session only; /computer off revokes"),
-                        ],
-                    )?,
-                    pending: InlineChoicePending::ComputerAccess,
-                    parent_picker: None,
-                }));
+                self.prompt_computer_access()?;
             }
             "off" | "stop" => {
                 if let Err(error) = agent.disable_computer_use().await {
@@ -56,6 +53,24 @@ impl App {
             }
             _ => self.show_computer_command(&invocation),
         }
+        Ok(())
+    }
+
+    fn prompt_computer_access(&mut self) -> anyhow::Result<()> {
+        let choice = InlineChoice::new(
+            "Grant desktop access?",
+            "Rho can control your local desktop, including signed-in apps. No per-action Rho approval, even in supervised mode. Captured images go to your model provider and session history.",
+            vec![
+                InlineChoiceOption::available("cancel", 'c', "Cancel", "Keep access off"),
+                InlineChoiceOption::available("grant", 'g', "Grant access", "This session only; /computer off revokes"),
+            ],
+        )?;
+        self.input_ui
+            .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
+                choice,
+                pending: InlineChoicePending::ComputerAccess,
+                parent_picker: None,
+            }));
         Ok(())
     }
 
@@ -72,7 +87,9 @@ impl App {
                 }
                 self.show_computer_off();
             }
-            "on" => self.set_status("interrupt the current turn before enabling computer use"),
+            "on" | "setup" => self.set_status(
+                "interrupt the current turn before setting up or enabling computer use",
+            ),
             _ => self.show_computer_command(&invocation),
         }
         Ok(())
@@ -81,7 +98,6 @@ impl App {
     fn show_computer_command(&mut self, invocation: &CommandInvocation) {
         match invocation.args.trim() {
             "" | "status" => self.show_computer_status(),
-            "setup" => self.insert_entry(&Entry::Notice(ComputerUseSession::setup_guidance())),
             _ => self.insert_entry(&Entry::Error(
                 "usage: /computer [status|setup|on|off]".into(),
             )),
@@ -89,6 +105,11 @@ impl App {
     }
 
     pub(super) fn show_computer_off(&mut self) {
+        if self.computer_installation_pending() {
+            self.insert_entry(&Entry::Notice("Cua Driver installation cancellation requested; partial files may remain. Desktop access not granted".into()));
+            self.set_status("computer setup cancellation requested; desktop access off");
+            return;
+        }
         self.insert_entry(&Entry::Notice("computer use off; access revoked while the transport closes. Completed desktop actions cannot be undone by disconnecting".into()));
         self.set_status("computer use off");
     }
@@ -142,7 +163,7 @@ impl App {
         let needed = frame.composer.lines.len();
         let visible = usize::from(frame.layout.composer.height);
         if frame.layout.composer_start != 0 || visible < needed {
-            self.set_status(format!("enlarge terminal to review desktop access: consent needs {needed} rows, {visible} visible; Esc cancel"));
+            self.set_status(format!("enlarge terminal to review computer consent: consent needs {needed} rows, {visible} visible; Esc cancel"));
             return false;
         }
         true
@@ -158,7 +179,9 @@ impl App {
         self.computer_use
             .as_ref()
             .is_some_and(|control| match control.status() {
-                ComputerUseStatus::Connecting | ComputerUseStatus::Closing => true,
+                ComputerUseStatus::Installing
+                | ComputerUseStatus::Connecting
+                | ComputerUseStatus::Closing => true,
                 ComputerUseStatus::Off | ComputerUseStatus::Connected => false,
             })
     }
@@ -170,11 +193,13 @@ impl App {
         if agent.is_session_busy() {
             return false;
         }
+        let setup_changed = self.poll_computer_installation(agent);
         match agent.reconcile_computer_use().await {
-            Ok(ComputerUseUpdate::Unchanged) => return false,
+            Ok(ComputerUseUpdate::Unchanged) => return setup_changed,
             Ok(ComputerUseUpdate::Connected) => {
                 self.insert_entry(&Entry::Notice("computer use connected through Cua Driver; the computer tool is available for the next turn".into()));
                 self.set_status("computer use connected");
+                self.insert_entry(&Entry::Notice("driver handshake verified; OS desktop capture and input permissions are not checked. Use cua-driver doctor for diagnostics; on macOS, use cua-driver permissions status after the daemon starts".into()));
             }
             Ok(ComputerUseUpdate::ConnectionFailed(error)) => {
                 self.insert_entry(&Entry::Error(format!(

@@ -37,7 +37,7 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
         }),
         Step::Key(Key::Esc),
         Step::Resize { rows: 24, cols: 60 },
-        Step::SubmitText("/computer on"),
+        Step::SubmitText("/computer setup"),
         Step::WaitText {
             text: "Grant desktop access?",
             timeout: SETTLE,
@@ -105,6 +105,11 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
         Step::WaitText {
             text: "partial assistant before cancellation",
             timeout: STREAM,
+        },
+        Step::SubmitText("/computer setup"),
+        Step::WaitText {
+            text: "interrupt the current turn before setting up",
+            timeout: SETTLE,
         },
         Step::SubmitText("/computer"),
         Step::WaitText {
@@ -194,7 +199,7 @@ pub(super) const COMPUTER_PLAN_SCENARIO: Scenario = Scenario::new(
             text: "gpt-5.5",
             timeout: STARTUP,
         },
-        Step::SubmitText("/computer on"),
+        Step::SubmitText("/computer setup"),
         Step::WaitText {
             text: "computer use is unavailable in plan mode",
             timeout: SETTLE,
@@ -250,7 +255,7 @@ fn setup_failed_driver(home: &IsolatedHome) -> Result<()> {
     Ok(())
 }
 
-fn setup_driver(home: &IsolatedHome) -> Result<()> {
+pub(super) fn setup_driver(home: &IsolatedHome) -> Result<()> {
     let bin = home.home.join(".local/bin");
     fs::create_dir_all(&bin)?;
     let path = bin.join("cua-driver");

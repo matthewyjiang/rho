@@ -29,10 +29,12 @@ mod policy;
 mod recovery;
 mod setup;
 use recovery::{Revocation, RevokeOnDrop};
+pub(crate) use setup::ComputerSetupUpdate;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ComputerUseStatus {
     Off,
+    Installing,
     Connecting,
     Connected,
     Closing,
@@ -49,6 +51,10 @@ pub(crate) struct ComputerUseSession {
 pub(crate) struct ComputerUseControl(ComputerUseSession);
 
 impl ComputerUseControl {
+    pub(crate) fn installation_pending(&self) -> bool {
+        self.0.installation_pending()
+    }
+
     pub(crate) fn revoke(&self) {
         self.0.revoke();
     }
@@ -82,6 +88,7 @@ struct Inner {
 type Task<T> = Shared<BoxFuture<'static, Result<T, Arc<str>>>>;
 
 enum State {
+    Installing(setup::Installation),
     Off {
         error: Option<Arc<str>>,
         revocation: Option<Revocation>,
@@ -129,6 +136,7 @@ impl ComputerUseSession {
 
     pub(crate) fn status(&self) -> ComputerUseStatus {
         match &*self.state() {
+            State::Installing(_) => ComputerUseStatus::Installing,
             State::Off { .. } => ComputerUseStatus::Off,
             State::Connecting { .. } => ComputerUseStatus::Connecting,
             State::Connected { .. } => ComputerUseStatus::Connected,
@@ -153,6 +161,9 @@ impl ComputerUseSession {
     pub(crate) fn start_connect(&self) -> anyhow::Result<()> {
         let mut state = self.state();
         match &*state {
+            State::Installing(_) => {
+                bail!("wait for Cua Driver installation to finish before granting desktop access")
+            }
             State::Connected { .. } | State::Connecting { .. } => return Ok(()),
             State::Closing { .. } => {
                 bail!("computer transport is still closing; try /computer on after it finishes")
@@ -192,7 +203,7 @@ impl ComputerUseSession {
         let (grant, task) = match &*self.state() {
             State::Connecting { grant, task } => (grant.clone(), task.clone()),
             State::Connected { .. } => return Ok(()),
-            State::Off { .. } | State::Closing { .. } => {
+            State::Off { .. } | State::Installing(_) | State::Closing { .. } => {
                 bail!("computer access was disabled during connection")
             }
         };
@@ -308,6 +319,7 @@ impl ComputerUseSession {
     /// Shutdown runs independently so dropping this future cannot abandon it.
     pub(crate) async fn disconnect(&self) {
         self.revoke();
+        self.finish_installation().await;
         self.finish_closing(/*wait*/ true).await;
     }
 
@@ -329,6 +341,12 @@ impl ComputerUseSession {
     ) {
         let mut state = self.state();
         let grant = match &*state {
+            State::Installing(installation) => {
+                if expected.is_none() {
+                    installation.cancel();
+                }
+                return;
+            }
             State::Connecting { grant, .. } | State::Connected { grant, .. } => grant.clone(),
             State::Off { .. } | State::Closing { .. } => return,
         };
@@ -350,7 +368,7 @@ impl ComputerUseSession {
                 // produced. That is completed cleanup, not a lifecycle failure.
                 State::Connecting { task, .. } => task.await.ok(),
                 State::Connected { connection, .. } => Some(connection),
-                State::Off { .. } | State::Closing { .. } => unreachable!(),
+                State::Off { .. } | State::Installing(_) | State::Closing { .. } => unreachable!(),
             };
             // Revocation is immediate, but cleanup must also wait for an old
             // action to release its transport before accepting another grant.
@@ -392,6 +410,7 @@ impl ComputerUseSession {
                     };
                 }
                 State::Off { .. }
+                | State::Installing(_)
                 | State::Connecting { .. }
                 | State::Connected { .. }
                 | State::Closing { .. } => {}
@@ -416,6 +435,7 @@ pub(crate) fn detect_driver() -> Option<PathBuf> {
     policy::detect_driver(
         std::env::var_os("PATH"),
         crate::paths::home_dir().map(PathBuf::into_os_string),
+        std::env::var_os("LOCALAPPDATA"),
     )
 }
 

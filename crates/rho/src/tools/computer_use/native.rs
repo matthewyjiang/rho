@@ -56,9 +56,10 @@ impl Tool for ComputerTool {
                 let state = self.0.state();
                 match &*state {
                     State::Connected { connection, grant } => (connection.clone(), grant.clone()),
-                    State::Off { .. } | State::Connecting { .. } | State::Closing { .. } => {
-                        return Err(disabled())
-                    }
+                    State::Off { .. }
+                    | State::Installing(_)
+                    | State::Connecting { .. }
+                    | State::Closing { .. } => return Err(disabled()),
                 }
             };
             let _operation = tokio::select! {
