@@ -50,6 +50,7 @@ mod title;
 mod tools;
 mod transcript;
 mod tui;
+mod uninstall;
 mod update;
 mod usage;
 mod usage_limits;

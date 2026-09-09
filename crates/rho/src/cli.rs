@@ -161,6 +161,15 @@ pub enum Command {
     },
     /// Update rho using the detected installation method.
     Update,
+    /// Uninstall Rho after confirmation, preserving user data by default.
+    Uninstall {
+        /// Also permanently delete local Rho user data under ~/.rho.
+        #[arg(long)]
+        purge: bool,
+        /// Preview removal paths without changing anything or prompting.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// List, rename, or delete saved sessions.
     Sessions {
         #[command(subcommand)]

@@ -168,6 +168,7 @@ pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Op
             | Command::Workflow { .. }
             | Command::WorkflowPlannerWorker
             | Command::Update
+            | Command::Uninstall { .. }
             | Command::Doctor { .. }
             | Command::Acp,
         )
