@@ -155,6 +155,8 @@ flowchart TD
 
 Rho recommends the native OS credential store. When the credential backend is still unset, the first interactive login for a **normal Rho provider** probes available backends and opens a picker before any secret is saved. Bare `/login` opens the provider group picker first; the store chooser appears only after you pick a normal provider (or run `/login <provider>`). CLI `rho login` asks the same store question on a TTY. If the OS probe fails, you can choose local file storage instead.
 
+Interactive startup, including `rho --resume`, prints a notice before its first OS-keyring access. If startup pauses there, check your desktop for a keyring unlock prompt. The notice does not mean the keyring is locked; it identifies a step that can wait for desktop approval. File-backed credentials and non-interactive runs do not show it.
+
 Local file storage keeps secrets in `~/.rho/credentials/secrets.json` (or under `RHO_HOME`). Rho applies owner-only directory and file permissions on Unix and a protected user-only ACL on Windows. It is not encrypted at rest. Rho never selects it without an explicit login picker answer, CLI command, config value, or environment setting.
 
 ```bash

@@ -74,6 +74,9 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
         return result;
     }
 
+    let keyring_notice = crate::credential_store::StartupKeyringNotice::begin(
+        /*interactive*/ cli.command.is_none(),
+    );
     let PreparedStartup {
         cli,
         catalog,
@@ -124,6 +127,7 @@ async fn run_inner(cli: Cli) -> anyhow::Result<()> {
         .await;
     }
     run_interactive_startup(InteractiveStartup {
+        keyring_notice,
         cli: &cli,
         catalog,
         config,
@@ -404,6 +408,7 @@ async fn run_acp_startup(startup: AcpCommandStartup) -> anyhow::Result<()> {
 }
 
 struct InteractiveStartup<'a> {
+    keyring_notice: crate::credential_store::StartupKeyringNotice,
     cli: &'a Cli,
     catalog: crate::agent::DiscoveredAgentCatalog,
     config: crate::config::Config,
@@ -479,6 +484,7 @@ async fn run_interactive_startup(startup: InteractiveStartup<'_>) -> anyhow::Res
         Err(error) => return Err(error.into()),
     };
     interactive::run(interactive::Startup {
+        keyring_notice: startup.keyring_notice,
         cli: startup.cli,
         catalog: startup.catalog,
         config: startup.config,
