@@ -191,11 +191,21 @@ where
 pub(crate) struct ResponsesHttpTransport<'a> {
     client: &'a reqwest::Client,
     api_base: &'a str,
+    headers: reqwest::header::HeaderMap,
 }
 
 impl<'a> ResponsesHttpTransport<'a> {
     pub(crate) fn new(client: &'a reqwest::Client, api_base: &'a str) -> Self {
-        Self { client, api_base }
+        Self {
+            client,
+            api_base,
+            headers: reqwest::header::HeaderMap::new(),
+        }
+    }
+
+    pub(crate) fn with_headers(mut self, headers: reqwest::header::HeaderMap) -> Self {
+        self.headers = headers;
+        self
     }
 
     /// Posts JSON with no refresh. A `401` is the final response.
@@ -270,7 +280,7 @@ impl<'a> ResponsesHttpTransport<'a> {
         for (name, value) in &auth.extra_headers {
             request = request.header(name, value);
         }
-        request
+        request.headers(self.headers.clone())
     }
 
     async fn send(

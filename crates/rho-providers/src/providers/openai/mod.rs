@@ -69,6 +69,7 @@ pub struct OpenAiProvider {
     codex_ws: CodexWsTransport,
     hosted_web_search: bool,
     async_tools: BTreeSet<String>,
+    session_headers: super::opencode_go::SessionHeaders,
 }
 
 impl OpenAiProvider {
@@ -140,6 +141,7 @@ impl OpenAiProvider {
             crate::model::models_dev::current_model_metadata(profile.provider(), profile.model()),
         );
         let codex_ws = CodexWsTransport::new(&api_base);
+        let session_headers = super::opencode_go::SessionHeaders::new(profile.provider());
         Self {
             client,
             auth,
@@ -147,6 +149,7 @@ impl OpenAiProvider {
             profile,
             reasoning,
             codex_ws,
+            session_headers,
             hosted_web_search,
             async_tools,
         }
@@ -163,7 +166,10 @@ impl OpenAiProvider {
         cancellation: Option<&rho_sdk::CancellationToken>,
     ) -> ResponsesHttpResult {
         responses_post::post(
-            &self.http(),
+            &self.http().with_headers(
+                self.session_headers
+                    .headers(body.get("prompt_cache_key").and_then(Value::as_str)),
+            ),
             &self.client,
             self.auth.as_ref(),
             responses_post::DEFAULT_CODEX_REFRESH_URL,
