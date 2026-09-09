@@ -11,6 +11,7 @@ pub(super) struct InlineChoiceOption {
     pub(super) label: String,
     pub(super) detail: String,
     pub(super) available: bool,
+    requires_full_visibility: bool,
 }
 
 impl InlineChoiceOption {
@@ -27,11 +28,18 @@ impl InlineChoiceOption {
             label: label.into(),
             detail: detail.into(),
             available: true,
+            requires_full_visibility: false,
         }
     }
 
     pub(super) fn with_alternate_shortcut(mut self, shortcut: char) -> Self {
         self.alternate_shortcut = Some(shortcut);
+        self
+    }
+
+    /// Reject submission while any part of the choice disclosure is clipped.
+    pub(super) fn require_full_visibility(mut self) -> Self {
+        self.requires_full_visibility = true;
         self
     }
 
@@ -72,6 +80,8 @@ pub(super) struct InlineChoiceModal {
 
 #[derive(Debug)]
 pub(super) enum InlineChoicePending {
+    ComputerAccess,
+    ComputerInstall,
     CredentialStore {
         next: super::login::StoreChoiceNext,
     },
@@ -106,7 +116,10 @@ impl InlineChoiceModal {
     pub(super) fn blocks_auto_continue(&self) -> bool {
         matches!(
             self.pending,
-            InlineChoicePending::ContextHandoff(_) | InlineChoicePending::ConfirmSend(_)
+            InlineChoicePending::ContextHandoff(_)
+                | InlineChoicePending::ConfirmSend(_)
+                | InlineChoicePending::ComputerAccess
+                | InlineChoicePending::ComputerInstall
         )
     }
 }
@@ -131,6 +144,10 @@ impl InlineChoice {
 
     pub(super) fn selected_value(&self) -> &str {
         &self.options[self.active].value
+    }
+
+    pub(super) fn selected_requires_full_visibility(&self) -> bool {
+        self.options[self.active].requires_full_visibility
     }
 
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> InlineChoiceKeyOutcome {
@@ -185,20 +202,18 @@ impl InlineChoice {
 
 pub(super) fn inline_choice_lines(choice: &InlineChoice, width: usize) -> Vec<Line<'static>> {
     let width = width.max(1);
-    let mut lines = vec![
-        styled_line(
-            truncate_one_line(&choice.title, width),
-            width,
-            Theme::input_prompt(),
-            LineFill::Natural,
-        ),
-        styled_line(
-            truncate_one_line(&choice.description, width),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ),
-    ];
+    let mut lines = vec![styled_line(
+        truncate_one_line(&choice.title, width),
+        width,
+        Theme::input_prompt(),
+        LineFill::Natural,
+    )];
+    lines.extend(super::panel_text::indented_wrapped_lines(
+        &choice.description,
+        0,
+        width,
+        Theme::dim(),
+    ));
 
     for (index, option) in choice.options.iter().enumerate() {
         let selected = index == choice.active && option.available;

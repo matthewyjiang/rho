@@ -8,14 +8,12 @@ use std::{process::Stdio, time::Duration};
 
 use tokio::io::AsyncWriteExt;
 
-use crate::cli_runtime::StderrTail;
-
-use super::{
-    config::HookDefinition,
-    environment::child_environment,
-    protocol::MAX_DECISION_BYTES,
-    supervisor::{ProcessTree, SupervisedTree},
+use crate::{
+    cli_runtime::StderrTail,
+    process_tree::{ProcessTree, SupervisedTree},
 };
+
+use super::{config::HookDefinition, environment::child_environment, protocol::MAX_DECISION_BYTES};
 
 /// What running one hook program produced.
 #[derive(Clone, Debug, PartialEq, Eq)]

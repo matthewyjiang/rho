@@ -42,7 +42,6 @@ mod dispatch;
 mod environment;
 mod matcher;
 mod protocol;
-mod supervisor;
 
 use std::sync::Arc;
 

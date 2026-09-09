@@ -106,25 +106,41 @@ pub(super) fn transcript_entries_from_messages(
     messages: &[Message],
     cwd: &std::path::Path,
 ) -> Vec<Entry> {
+    use rho_sdk::model::SemanticMessage;
     let presenter = InteractiveToolPresenter::new(cwd.to_path_buf());
     let mut entries = Vec::new();
     let mut pending_tools = BTreeMap::<String, ToolCall>::new();
     for message in messages {
-        match message {
-            Message::System(text) => {
+        match message.semantic() {
+            SemanticMessage::ToolImageSupplement(images) => {
+                let mut card = ToolCard::new(
+                    ToolStatus::Ok,
+                    ToolFamily::Default,
+                    ToolHeader::call(images.tool_name(), None),
+                );
+                for image in images.images() {
+                    card.push_fact(ToolFact::Text {
+                        text: image_summary(image),
+                    });
+                }
+                entries.push(Entry::Tool(ToolEntry::new(
+                    card, /*expanded*/ false, /*image*/ None, /*started_at*/ None,
+                )));
+            }
+            SemanticMessage::System(text) => {
                 if let Some(transcript) =
                     crate::display_transcript::DisplayTranscript::from_display(text)
                 {
                     entries.extend(transcript_entries(transcript));
                 }
             }
-            Message::User(blocks) => {
+            SemanticMessage::User(blocks) => {
                 let text = render_message_blocks(blocks);
                 if !text.is_empty() {
                     entries.push(Entry::User(text));
                 }
             }
-            Message::Assistant(blocks) => {
+            SemanticMessage::Assistant(blocks) => {
                 let text = text_blocks(blocks);
                 if !text.is_empty() {
                     entries.push(Entry::Assistant(text.into()));
@@ -135,7 +151,7 @@ pub(super) fn transcript_entries_from_messages(
                     ContentBlock::Text(_) | ContentBlock::Image(_) => None,
                 }));
             }
-            Message::EnrichedAssistant(message) => {
+            SemanticMessage::EnrichedAssistant(message) => {
                 let blocks = &message.content;
                 let text = text_blocks(blocks);
                 if !text.is_empty() {
@@ -147,7 +163,7 @@ pub(super) fn transcript_entries_from_messages(
                     ContentBlock::Text(_) | ContentBlock::Image(_) => None,
                 }));
             }
-            Message::AbortedAssistant(message) => {
+            SemanticMessage::AbortedAssistant(message) => {
                 let text = text_blocks(&message.content);
                 if !text.is_empty() {
                     entries.push(Entry::Assistant(text.into()));
@@ -165,7 +181,7 @@ pub(super) fn transcript_entries_from_messages(
                 }
                 entries.push(Entry::Notice("model interrupted".into()));
             }
-            Message::ToolResult(result) => {
+            SemanticMessage::ToolResult(result) => {
                 let call = pending_tools
                     .remove(&result.id)
                     .unwrap_or_else(|| ToolCall {

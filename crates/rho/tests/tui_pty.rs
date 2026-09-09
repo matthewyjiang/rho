@@ -127,6 +127,29 @@ fn mcp_connecting_keeps_the_session_inspectable() {
     assert_pass("mcp_connecting");
 }
 
+// Covers: desktop grants are explicit and can be revoked while a turn runs;
+// plan mode cannot grant desktop input authority.
+// Owner: interactive TUI
+#[test]
+fn computer_use_authorization_and_revocation() {
+    for scenario in [
+        "computer_use",
+        "computer_setup",
+        "computer_setup_cancel",
+        "computer_plan_denied",
+    ] {
+        assert_pass(scenario);
+    }
+}
+
+// Covers: real restarts restore consent, restricted startup cannot use it, and
+// during-turn off persists revocation for the next process.
+// Owner: interactive TUI and machine-local preference lifecycle.
+#[test]
+fn computer_preference_survives_restart_and_respects_revocation() {
+    assert_pass("computer_preference");
+}
+
 // Covers: a turn held during MCP connect must start on its own once the
 // servers settle, without a second Enter.
 // Owner: interactive TUI

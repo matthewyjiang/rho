@@ -29,6 +29,7 @@ pub(crate) struct InteractiveSessionController {
     storage: Option<StoredSession>,
     pending_session_id: Option<SessionId>,
     pending_omission: Option<HandoffReport>,
+    notices: Vec<String>,
     persisted_turn_display: usize,
     web_access: WebAccessStore,
     advisor: Option<AdvisorSessionStore>,
@@ -46,6 +47,7 @@ impl InteractiveSessionController {
             storage,
             pending_session_id: None,
             pending_omission: None,
+            notices: Vec::new(),
             persisted_turn_display: 0,
             web_access,
             advisor,
@@ -114,16 +116,19 @@ impl InteractiveSessionController {
     }
 
     pub(crate) fn take_notices(&mut self) -> Vec<String> {
-        self.take_pending_omission()
-            .map(|report| {
-                format!(
-                    "omitted {} incompatible provider-native context block(s) while resuming session (kinds: {})",
-                    report.omitted_provider_context,
-                    report.omitted_kinds.join(", ")
-                )
-            })
-            .into_iter()
-            .collect()
+        let mut notices = std::mem::take(&mut self.notices);
+        if let Some(report) = self.take_pending_omission() {
+            notices.push(format!(
+                "omitted {} incompatible provider-native context block(s) while resuming session (kinds: {})",
+                report.omitted_provider_context,
+                report.omitted_kinds.join(", ")
+            ));
+        }
+        notices
+    }
+
+    pub(crate) fn queue_notice(&mut self, notice: String) {
+        self.notices.push(notice);
     }
 
     pub(crate) fn pending_replacement(&self) -> Option<ReplacementSessionSource> {

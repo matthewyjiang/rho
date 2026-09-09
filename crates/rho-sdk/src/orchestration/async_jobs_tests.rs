@@ -48,10 +48,51 @@ async fn complete_policy_timeout_aborts_worker() {
     })
     .await;
 
-    assert_eq!(result, interrupted_result(&call));
+    assert_eq!(result.0, interrupted_result(&call));
     dropped_rx
         .try_recv()
         .expect("settle must await the aborted worker");
+}
+
+// Covers: settlement must preserve full successful output and the original failure kind.
+// Owner: SDK async completion contract.
+#[tokio::test]
+async fn settled_jobs_preserve_completion_metadata() {
+    let output = ToolOutput::text("captured").with_images(vec![crate::model::ImageContent {
+        data: "aW1hZ2U=".into(),
+        mime_type: "image/png".into(),
+    }]);
+    for outcome in [
+        Ok(output),
+        Err(ToolError::new(ToolErrorKind::Execution, "failed")),
+    ] {
+        let expected = match &outcome {
+            Ok(output) => ToolCompletion::Success(output.clone()),
+            Err(error) => {
+                ToolCompletion::Failure(ToolFailure::new(error.kind(), error.message().to_owned()))
+            }
+        };
+        let worker = tokio::spawn(async move { outcome });
+        let (_progress, progress) = tool_progress_channel(NonZeroUsize::MIN);
+        let (_, completion) = settle_job(AsyncJob {
+            call: ToolCall {
+                id: "capture-1".into(),
+                name: "capture".into(),
+                arguments: serde_json::json!({}),
+            },
+            name: "capture".into(),
+            cancellation: CancellationToken::new(),
+            cancellation_policy: ToolCancellationPolicy::Complete {
+                timeout: Duration::from_secs(2),
+            },
+            progress,
+            worker,
+            started: Instant::now(),
+            first_capability: FirstCapability::default(),
+        })
+        .await;
+        assert_eq!(completion, expected);
+    }
 }
 
 // Covers: cancellation forwarding one ready completion must not lose the other calls' results.
@@ -110,6 +151,7 @@ async fn cancelled_harvest_preserves_all_ready_tool_results() {
     let (events, _receiver) = mpsc::channel(expected.len());
     let (_commands_tx, mut commands) = mpsc::channel(1);
     let mut steering = super::super::SteeringQueue::new();
+    let mut pending_outputs = PendingToolOutputs::default();
     cancellation.cancel();
     let result = harvest_ready_jobs(&mut RunControl {
         hooks: &hooks,
@@ -118,10 +160,12 @@ async fn cancelled_harvest_preserves_all_ready_tool_results() {
         commands: &mut commands,
         steering: &mut steering,
         async_jobs: &mut jobs,
+        pending_outputs: &mut pending_outputs,
     })
     .await;
     assert!(matches!(result, Err(Error::Cancelled)));
     let mut history = Vec::new();
-    jobs.interrupt(&mut history, &hooks, &events).await;
+    jobs.interrupt(&mut pending_outputs, &mut history, &hooks, &events)
+        .await;
     assert_eq!(history, expected);
 }

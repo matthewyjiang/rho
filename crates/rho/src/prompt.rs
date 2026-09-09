@@ -365,7 +365,7 @@ Current tool: `{current_name}` ({current_label})\n\n\
     (model, display)
 }
 
-fn tool_schema_block(spec: &ToolSpec) -> String {
+pub(crate) fn tool_schema_block(spec: &ToolSpec) -> String {
     let schema = serde_json::to_string_pretty(&spec.input_schema).unwrap_or_else(|_| "{}".into());
     format!(
         "Tool schema for `{name}`:\n\

@@ -20,7 +20,7 @@ use {
 use super::{
     acp,
     agent_binding::{AgentBinder, AgentInvocation, AgentRole},
-    automation, automation_protocol, cli_config,
+    automation, automation_protocol, cli_config, computer_cli,
     config_repository::ConfigRepository,
     doctor_cli, interactive, login, mcp_cli, plugins_cli,
     sdk_config::SdkBootstrapOptions,
@@ -168,6 +168,9 @@ async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
     }
     if let Some(Command::Mcp { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(mcp_cli::run(command, cli).await));
+    }
+    if let Some(Command::Computer { command }) = &cli.command {
+        return Ok(EarlyDispatch::Handled(computer_cli::run(command)));
     }
     if let Some(Command::Plugins { command }) = &cli.command {
         return Ok(EarlyDispatch::Handled(plugins_cli::run(command, cli)));

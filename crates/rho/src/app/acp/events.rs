@@ -216,10 +216,30 @@ fn success_content(output: &ToolOutput) -> Vec<ToolCallContent> {
 }
 
 fn replay_message(session_id: &SessionId, message: &Message) -> Vec<SessionNotification> {
-    match message {
-        Message::User(blocks) => replay_blocks(session_id, ReplayRole::User, blocks),
-        Message::Assistant(blocks) => replay_blocks(session_id, ReplayRole::Agent, blocks),
-        Message::EnrichedAssistant(message) => {
+    use rho_sdk::model::SemanticMessage;
+    match message.semantic() {
+        SemanticMessage::ToolImageSupplement(images) => {
+            let content = images
+                .images()
+                .map(|image| {
+                    ToolCallContent::from(ContentBlock::Image(ImageContent::new(
+                        image.data.clone(),
+                        image.mime_type.clone(),
+                    )))
+                })
+                .collect::<Vec<_>>();
+            vec![notify(
+                session_id,
+                SessionUpdate::ToolCall(
+                    ToolCall::new(ToolCallId::new(images.tool_call_id()), images.tool_name())
+                        .status(ToolCallStatus::Completed)
+                        .content(content),
+                ),
+            )]
+        }
+        SemanticMessage::User(blocks) => replay_blocks(session_id, ReplayRole::User, blocks),
+        SemanticMessage::Assistant(blocks) => replay_blocks(session_id, ReplayRole::Agent, blocks),
+        SemanticMessage::EnrichedAssistant(message) => {
             let mut notifications = replay_blocks(session_id, ReplayRole::Agent, &message.content);
             if let Some(summary) = message
                 .reasoning_summary
@@ -233,18 +253,20 @@ fn replay_message(session_id: &SessionId, message: &Message) -> Vec<SessionNotif
             }
             notifications
         }
-        Message::AbortedAssistant(message) => {
+        SemanticMessage::AbortedAssistant(message) => {
             replay_blocks(session_id, ReplayRole::Agent, &message.content)
         }
-        Message::System(text) => crate::display_transcript::DisplayTranscript::from_display(text)
-            .map(|transcript| {
-                vec![notify(
-                    session_id,
-                    SessionUpdate::AgentMessageChunk(text_chunk(transcript.plain_text())),
-                )]
-            })
-            .unwrap_or_default(),
-        Message::ToolResult(_) => Vec::new(),
+        SemanticMessage::System(text) => {
+            crate::display_transcript::DisplayTranscript::from_display(text)
+                .map(|transcript| {
+                    vec![notify(
+                        session_id,
+                        SessionUpdate::AgentMessageChunk(text_chunk(transcript.plain_text())),
+                    )]
+                })
+                .unwrap_or_default()
+        }
+        SemanticMessage::ToolResult(_) => Vec::new(),
     }
 }
 

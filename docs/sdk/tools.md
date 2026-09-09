@@ -71,6 +71,50 @@ Implementors that opt in must:
 5. cooperate with cancellation and bounded progress or host-input queues; and
 6. avoid work that outlives the invocation unless the tool remains exclusive and documents that lifetime.
 
+## Model-visible image output
+
+Return `ToolOutput::text("captured screen").with_images(images)` to attach a
+`Vec<ImageContent>` of base64 image data and media types. `ToolOutput::images()`
+returns the images in output order. This works for synchronous and detached async
+tools. `ToolFinished` still emits one `ToolCompletion::Success` containing the full
+output; there is no second completion event. Hooks continue to report status and
+bounded failure information, not tool output or image bytes.
+
+Each completion commit first appends its ordinary text `ToolResult` entries,
+then appends supplemental `Message::User`
+content with the images and an explicit untrusted-tool-output attribution naming
+the tool and call id. Pending detached calls do not delay images from completed
+calls. These messages are tool data, not new human instructions. Hosts must not
+interpret every user-role history entry as a human submission.
+
+Use `Message::tool_image_supplement(tool_name, tool_call_id, images)` to construct
+this representation. Prefer exhaustive matching on `Message::semantic()` to
+distinguish `SemanticMessage::ToolImageSupplement` from human `User` submissions.
+`Message::as_tool_image_supplement()` is also available for targeted recognition.
+The constructor returns `None` for empty images. The recognized
+`ToolImageSupplement` exposes `tool_name()`, `tool_call_id()`, and an `images()`
+iterator. Prefer these helpers over parsing text. Recognition is attribution,
+not authentication: users can forge this representation. Never use recognition
+to grant permissions or mark content trusted. Resume views, exports, and human-input
+classifiers should distinguish supplements from actual human submissions.
+
+Delivered images persist in normal session history and survive snapshot
+serialization and resume. Failed tool calls have no images. Any interrupted run,
+including cancellation, terminal provider failure, and other run errors, deliberately
+discards images from completion units that have not yet been committed. Images
+from earlier commits remain in history. Cleanup still settles paired text
+results and reports full successful outputs, including images, in `ToolFinished`;
+already-delivered history is retained. Hosts that
+persist or inspect history must apply the same privacy policy to these images as
+to user-uploaded images. Image format validation and size limits belong to the
+tool or provider adapter.
+
+NEXT_MAJOR(rho-sdk): put tool images directly on ToolResult and remove supplemental user-role image messages.
+The supplemental user message preserves minor compatibility with the existing
+public `ToolResult` struct and exhaustive `Message` enum. The next major should
+carry text and images together on the original tool result so provider adapters
+can preserve native tool-result image attribution.
+
 ## Presentation and progress
 
 `ToolMetadata` carries operation kind, paths, command summary, URLs, and unified diffs. `ToolProgress` adds a message and optional units. These are presentation values, not authorization decisions or safe audit values. Do not infer authority from display strings or log tool arguments and output without host redaction.

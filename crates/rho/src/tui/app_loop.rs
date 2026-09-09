@@ -100,6 +100,7 @@ impl App {
                 || agent.startup_hydrate_pending();
             self.poll_model_metadata_fetch(agent).await;
             needs_redraw |= self.poll_startup_hydrates(agent).await?;
+            needs_redraw |= self.poll_computer_connection(agent).await;
             needs_redraw |= self.poll_compact(agent).await?;
             needs_redraw |= self.release_pending_held_turn(terminal, agent).await?;
             needs_redraw |= self.start_next_follow_up(terminal, agent).await?;
@@ -170,6 +171,7 @@ impl App {
                 || self.pending_syntax_warmup.is_some()
                 || self.pending_herdr_graphics.is_some()
                 || self.pending_github_pr.is_some()
+                || self.computer_lifecycle_pending()
                 || self.prompt_history.load_pending()
                 || self.pending_session_title.is_some()
                 || self.pending_interactive_login.is_some()
@@ -373,6 +375,7 @@ impl App {
             | ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
             | ComposerMode::Doctor(_)
+            | ComposerMode::Computer(_)
             | ComposerMode::Side
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
@@ -434,6 +437,7 @@ impl App {
         self.clamp_overlay_detail_scroll(terminal);
         self.clamp_limits_overlay_scroll(terminal);
         self.clamp_doctor_overlay_scroll(terminal);
+        self.clamp_computer_overlay_scroll(terminal);
         self.clear_selections();
         self.clear_hovered_copy_buttons();
         self.subagent_panel.clear_pointer_state();

@@ -10,6 +10,12 @@ mod background_agents;
 mod boundary_notifications;
 mod changelog;
 mod command_palette;
+#[cfg(unix)]
+mod computer;
+#[cfg(unix)]
+mod computer_preference;
+#[cfg(unix)]
+mod computer_setup;
 mod config;
 mod conversation_tree;
 mod doctor;
@@ -70,6 +76,8 @@ use command_palette::{
     CREATE_AGENT_COMMAND_SCENARIO, CREATE_AGENT_MISSING_TOOLS_SCENARIO, HELP_OVERLAY_SCENARIO,
     SLASH_COMMAND_PALETTE_SCENARIO, TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO,
 };
+#[cfg(unix)]
+use computer::{COMPUTER_FAILURE_SCENARIO, COMPUTER_PLAN_SCENARIO, COMPUTER_USE_SCENARIO};
 use config::{
     setup_auto_without_classifier, AUTO_PERMISSION_MODE_CONFIG_STEPS,
     AUTO_PERMISSION_MODE_STARTUP_STEPS, OPEN_CONFIG_PICKER_STEPS,
@@ -674,6 +682,18 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     WORKSPACE_REWIND_SCENARIO,
     HOOKS_CONTRACT_SCENARIO,
+    #[cfg(unix)]
+    COMPUTER_USE_SCENARIO,
+    #[cfg(unix)]
+    computer_preference::COMPUTER_PREFERENCE_SCENARIO,
+    #[cfg(unix)]
+    computer_setup::COMPUTER_SETUP_SCENARIO,
+    #[cfg(unix)]
+    computer_setup::COMPUTER_SETUP_CANCEL_SCENARIO,
+    #[cfg(unix)]
+    COMPUTER_FAILURE_SCENARIO,
+    #[cfg(unix)]
+    COMPUTER_PLAN_SCENARIO,
     MCP_INVENTORY_SCENARIO,
     MCP_CONNECTING_SCENARIO,
     MCP_CONNECT_RELEASE_SCENARIO,
@@ -953,6 +973,10 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         .iter()
         .find(|scenario| scenario.id == name)
         .ok_or_else(|| anyhow::anyhow!("unknown scenario '{name}'"))?;
+    #[cfg(unix)]
+    if name == computer_preference::COMPUTER_PREFERENCE_SCENARIO.id {
+        return computer_preference::run(runner);
+    }
     if workflow::is_workflow_scenario(name) {
         return workflow::run(runner, name);
     }

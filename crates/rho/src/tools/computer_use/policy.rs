@@ -1,0 +1,166 @@
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
+
+// Exact audited observation/input/navigation names from Cua Driver 0.23.2,
+// plus launch_app audited against 0.24.0 (includes command launching on Linux).
+// Unknown future tools are denied. No setup, browser endpoint preparation,
+// installation, recording, configuration, or session lifecycle RPCs.
+pub(super) const ALLOWED_TOOLS: &[&str] = &[
+    "bring_to_front",
+    "browser_click",
+    "browser_dialog",
+    "browser_navigate",
+    "browser_pointer",
+    "browser_type",
+    "click",
+    "clipboard_read",
+    "clipboard_write",
+    "double_click",
+    "drag",
+    "get_accessibility_tree",
+    "get_browser_state",
+    "get_cursor_position",
+    "get_desktop_state",
+    "get_screen_size",
+    "get_window_state",
+    "hotkey",
+    "invoke_menu",
+    "launch_app",
+    "list_apps",
+    "list_windows",
+    "press_key",
+    "right_click",
+    "scroll",
+    "set_value",
+    "set_window_frame",
+    "type_text",
+    "verify_state",
+    "zoom",
+];
+
+pub(super) fn detect_driver(
+    path: Option<OsString>,
+    home: Option<OsString>,
+    local_app_data: Option<OsString>,
+) -> Option<PathBuf> {
+    driver_candidates(path, home, local_app_data)
+        .into_iter()
+        .find(|candidate| executable(candidate))
+        .and_then(|candidate| candidate.canonicalize().ok())
+}
+
+/// Only explicitly absolute installation locations may receive desktop authority.
+pub(super) fn driver_candidates(
+    path: Option<OsString>,
+    home: Option<OsString>,
+    local_app_data: Option<OsString>,
+) -> Vec<PathBuf> {
+    let executable_name = if cfg!(windows) {
+        "cua-driver.exe"
+    } else {
+        "cua-driver"
+    };
+    let mut candidates: Vec<PathBuf> = path
+        .as_deref()
+        .map(std::env::split_paths)
+        .into_iter()
+        .flatten()
+        // Never promote a repository executable through empty/relative PATH
+        // entries into the host's desktop-authorized driver.
+        .filter(|dir| dir.is_absolute())
+        .map(|dir| dir.join(executable_name))
+        .collect();
+    if let Some(home) = home.map(PathBuf::from).filter(|home| home.is_absolute()) {
+        candidates.push(home.join(".local/bin").join(executable_name));
+        if cfg!(windows) {
+            candidates.push(home.join(".cua-driver/bin").join(executable_name));
+        }
+    }
+    if cfg!(windows) {
+        if let Some(local_app_data) = local_app_data
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+        {
+            candidates.push(
+                local_app_data
+                    .join("Programs/Cua/cua-driver/bin")
+                    .join(executable_name),
+            );
+        }
+    }
+    candidates
+}
+
+fn executable(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+/// Desktop transport needs these ambient OS handles, but never provider secrets.
+pub(super) fn desktop_environment() -> std::collections::BTreeMap<String, String> {
+    desktop_environment_from(|name| std::env::var_os(name).is_some())
+}
+
+fn desktop_environment_from(
+    mut is_set: impl FnMut(&str) -> bool,
+) -> std::collections::BTreeMap<String, String> {
+    [
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "XDG_RUNTIME_DIR",
+        "XAUTHORITY",
+        "DBUS_SESSION_BUS_ADDRESS",
+        "HYPRLAND_INSTANCE_SIGNATURE",
+        // Explicit choices override the managed Wayland default.
+        "CUA_DRIVER_RS_ENABLE_WAYLAND",
+    ]
+    .into_iter()
+    .filter(|name| is_set(name))
+    .map(|name| (name.to_owned(), name.to_owned()))
+    .collect()
+}
+
+/// Managed connections use native Wayland when available, unless overridden.
+/// This default is local to the driver child, not the installer or user config.
+pub(super) fn driver_environment() -> std::collections::BTreeMap<String, String> {
+    driver_environment_from(|name| std::env::var_os(name))
+}
+
+fn driver_environment_from(
+    mut read: impl FnMut(&str) -> Option<OsString>,
+) -> std::collections::BTreeMap<String, String> {
+    let mut environment = telemetry_environment();
+    if read("CUA_DRIVER_RS_ENABLE_WAYLAND").is_none()
+        && read("WAYLAND_DISPLAY").is_some_and(|display| !display.is_empty())
+    {
+        environment.insert("CUA_DRIVER_RS_ENABLE_WAYLAND".into(), "1".into());
+    }
+    environment
+}
+
+#[cfg(test)]
+#[path = "policy_tests.rs"]
+mod tests;
+
+/// Override both Cua runtime and compatibility opt-ins before any managed launch.
+pub(super) fn telemetry_environment() -> std::collections::BTreeMap<String, String> {
+    ["CUA_DRIVER_RS_TELEMETRY_ENABLED", "CUA_TELEMETRY_ENABLED"]
+        .into_iter()
+        .map(|name| (name.to_owned(), "false".to_owned()))
+        .collect()
+}

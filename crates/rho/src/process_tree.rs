@@ -1,6 +1,6 @@
-//! Per-platform supervision of a hook child and everything it starts.
+//! Per-platform supervision of a child and everything it starts.
 //!
-//! A hook that forks a background process must not outlive its timeout. Unix
+//! A child that forks a background process must not outlive its owner. Unix
 //! gets a process group, Windows a job object; both are killed on completion,
 //! timeout, cancellation, and drop. Windows starts the child suspended, assigns
 //! it to the job, and only then resumes its primary thread.
@@ -11,7 +11,7 @@ use tokio::process::Command;
 ///
 /// `kill` must be idempotent and safe to call repeatedly: the run loop calls it
 /// on every exit path and `Drop` calls it again.
-pub(super) trait ProcessTree: Sized + Send {
+pub(crate) trait ProcessTree: Sized + Send {
     /// Configures the command before spawn.
     fn prepare(command: &mut Command);
 
@@ -21,7 +21,7 @@ pub(super) trait ProcessTree: Sized + Send {
 }
 
 #[cfg(unix)]
-pub(super) struct SupervisedTree {
+pub(crate) struct SupervisedTree {
     pid: Option<u32>,
 }
 
@@ -40,13 +40,13 @@ impl ProcessTree for SupervisedTree {
             return;
         };
         // A negative PID targets the group created by `process_group(0)`, so
-        // descendants die with the hook rather than surviving it.
+        // descendants die with the child rather than surviving it.
         let _ = unsafe { libc::kill(-pid, libc::SIGKILL) };
     }
 }
 
 #[cfg(windows)]
-pub(super) struct SupervisedTree {
+pub(crate) struct SupervisedTree {
     job: Option<windows_sys::Win32::Foundation::HANDLE>,
 }
 
@@ -68,10 +68,10 @@ impl ProcessTree for SupervisedTree {
 
         let pid = child
             .id()
-            .ok_or_else(|| std::io::Error::other("spawned hook process has no id"))?;
+            .ok_or_else(|| std::io::Error::other("spawned child process has no id"))?;
         let process = child
             .raw_handle()
-            .ok_or_else(|| std::io::Error::other("spawned hook process has no handle"))?;
+            .ok_or_else(|| std::io::Error::other("spawned child process has no handle"))?;
         unsafe {
             let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if job.is_null() {
@@ -138,7 +138,7 @@ unsafe fn resume_process_thread(pid: u32) -> std::io::Result<()> {
     if !found {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            "spawned hook process has no thread",
+            "spawned child process has no thread",
         ));
     }
 

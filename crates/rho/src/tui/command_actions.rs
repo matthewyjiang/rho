@@ -59,6 +59,7 @@ impl App {
         } = submission;
         match invocation.id {
             CommandId::Advisor => self.execute_advisor_command(invocation, agent).await,
+            CommandId::Computer => self.execute_computer_command(invocation, agent).await,
             CommandId::Exit => self.execute_exit_command(),
             CommandId::New => self.execute_new_command(terminal, agent).await,
             CommandId::Model => {

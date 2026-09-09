@@ -139,14 +139,47 @@ impl ToolSetOptions {
 /// set rather than a reason to rebuild it.
 struct AdvisorTools {
     store: AdvisorSessionStore,
+    registration: HostToolRegistration,
+}
+
+struct ComputerTools {
+    session: super::computer_use::ComputerUseSession,
+    registration: HostToolRegistration,
+}
+
+/// Retains ownership independently of whether a host-controlled tool is advertised.
+struct HostToolRegistration {
     tool: Arc<dyn Tool>,
     registered: bool,
+}
+
+impl HostToolRegistration {
+    fn new(tool: Arc<dyn Tool>) -> Self {
+        Self {
+            tool,
+            registered: false,
+        }
+    }
+
+    fn set_registered(&mut self, tools: &mut Vec<Arc<dyn Tool>>, registered: bool) -> bool {
+        if self.registered == registered {
+            return false;
+        }
+        if registered {
+            tools.push(Arc::clone(&self.tool));
+        } else {
+            tools.retain(|tool| !Arc::ptr_eq(tool, &self.tool));
+        }
+        self.registered = registered;
+        true
+    }
 }
 
 pub struct AppToolSet {
     tools: Vec<Arc<dyn Tool>>,
     bundles: Vec<Box<dyn ToolBundle>>,
     advisor: Option<AdvisorTools>,
+    computer_use: Option<ComputerTools>,
     subagents: Option<SubagentManager>,
     processes: Option<super::process::ProcessManager>,
     workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
@@ -164,6 +197,7 @@ impl AppToolSet {
             bundles: Vec::new(),
             advisor: None,
             subagents: None,
+            computer_use: None,
             processes: None,
             workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
             checkpoint_tracker: Arc::new(
@@ -232,9 +266,10 @@ impl AppToolSet {
             // registration state both come from the same config read.
             store.set_model(super::advisor::advisor_model(config).cloned());
             tool_set.advisor = Some(AdvisorTools {
-                tool: super::advisor::advisor_tool(store.clone()),
+                registration: HostToolRegistration::new(super::advisor::advisor_tool(
+                    store.clone(),
+                )),
                 store,
-                registered: false,
             });
             tool_set.set_advisor_registered(super::advisor::advisor_available(config));
         }
@@ -299,6 +334,36 @@ impl AppToolSet {
         self.bundles.push(Box::new(bundle));
     }
 
+    /// Attach the root interactive session's host-controlled desktop grant.
+    pub(crate) fn with_computer_use(
+        mut self,
+        session: super::computer_use::ComputerUseSession,
+    ) -> Self {
+        let connected = session.status() == super::computer_use::ComputerUseStatus::Connected;
+        self.set_computer_use_registered(false);
+        self.computer_use = Some(ComputerTools {
+            registration: HostToolRegistration::new(session.tool()),
+            session,
+        });
+        self.set_computer_use_registered(connected);
+        self
+    }
+
+    pub(crate) fn computer_use(&self) -> Option<&super::computer_use::ComputerUseSession> {
+        self.computer_use.as_ref().map(|computer| &computer.session)
+    }
+
+    /// Advertising is separate from authorization. The runtime reconciles this
+    /// at idle boundaries; retained tool handles enforce the grant themselves.
+    pub(crate) fn set_computer_use_registered(&mut self, registered: bool) -> bool {
+        let Some(computer) = self.computer_use.as_mut() else {
+            return false;
+        };
+        computer
+            .registration
+            .set_registered(&mut self.tools, registered)
+    }
+
     /// Prompts and resources connected servers offer the user.
     pub(crate) fn mcp_catalog(&self) -> &super::mcp::McpCatalog {
         &self.mcp_catalog
@@ -335,7 +400,7 @@ impl AppToolSet {
     pub fn advisor_registered(&self) -> bool {
         self.advisor
             .as_ref()
-            .is_some_and(|advisor| advisor.registered)
+            .is_some_and(|advisor| advisor.registration.registered)
     }
 
     /// Adds or removes the `advisor` tool, so `/advisor` reaches the next
@@ -347,17 +412,9 @@ impl AppToolSet {
         let Some(advisor) = self.advisor.as_mut() else {
             return false;
         };
-        if advisor.registered == registered {
-            return false;
-        }
-        advisor.registered = registered;
-        let tool = Arc::clone(&advisor.tool);
-        if registered {
-            self.tools.push(tool);
-        } else {
-            self.tools.retain(|existing| !Arc::ptr_eq(existing, &tool));
-        }
-        true
+        advisor
+            .registration
+            .set_registered(&mut self.tools, registered)
     }
 
     /// Replaces the advertised built-in file edit tool.
@@ -423,6 +480,9 @@ impl AppToolSet {
     }
 
     pub async fn shutdown(&self) {
+        if let Some(computer) = &self.computer_use {
+            computer.session.disconnect().await;
+        }
         for bundle in &self.bundles {
             bundle.shutdown().await;
         }

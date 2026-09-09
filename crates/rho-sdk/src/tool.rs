@@ -508,6 +508,7 @@ impl ToolContext {
 pub struct ToolOutput {
     content: String,
     metadata: ToolMetadata,
+    images: Vec<crate::model::ImageContent>,
 }
 
 impl ToolOutput {
@@ -515,6 +516,7 @@ impl ToolOutput {
         Self {
             content: content.into(),
             metadata: ToolMetadata::default(),
+            images: Vec::new(),
         }
     }
 
@@ -525,6 +527,26 @@ impl ToolOutput {
 
     pub fn content(&self) -> &str {
         &self.content
+    }
+
+    /// Attaches model-visible images to this successful output, replacing any prior images.
+    ///
+    /// The runtime delivers images as attributed, untrusted supplemental user content
+    /// after all outstanding tool calls have paired results. Cancelled batches discard
+    /// undelivered images. Hosts can also read them from `ToolCompletion::Success`.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): represent images in structured tool results instead of supplemental user messages.
+    /// Adding fields to `ToolResult` or variants to `Message` would break minor compatibility.
+    pub fn with_images(mut self, images: Vec<crate::model::ImageContent>) -> Self {
+        self.images = images;
+        self
+    }
+
+    /// Images returned by the tool, in output order.
+    pub fn images(&self) -> &[crate::model::ImageContent] {
+        &self.images
     }
 
     pub fn presentation(&self) -> &ToolMetadata {

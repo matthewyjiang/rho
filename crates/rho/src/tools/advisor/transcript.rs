@@ -6,7 +6,7 @@
 //! they are written, then the whole transcript is elided in the middle so the
 //! advisor keeps both the opening of the session and the most recent work.
 
-use rho_sdk::model::{ContentBlock, Message, ToolCall};
+use rho_sdk::model::{ContentBlock, Message, SemanticMessage, ToolCall};
 
 /// Size limits applied while rendering one transcript.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,25 +57,34 @@ pub(crate) fn render_transcript(
 }
 
 fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
-    match message {
-        Message::System(text) => {
+    match message.semantic() {
+        SemanticMessage::System(text) => {
             out.push_str("\n## system\n\n");
             push_clipped(out, text, budget.system_prompt_bytes);
             out.push('\n');
         }
-        Message::User(blocks) => {
+        SemanticMessage::ToolImageSupplement(images) => {
+            out.push_str("\n## tool output images\n\n");
+            out.push_str(&format!(
+                "tool: {} ({})\n",
+                images.tool_name(),
+                images.tool_call_id()
+            ));
+            push_blocks(out, images.content(), budget);
+        }
+        SemanticMessage::User(blocks) => {
             out.push_str("\n## user\n\n");
             push_blocks(out, blocks, budget);
         }
-        Message::Assistant(blocks) => {
+        SemanticMessage::Assistant(blocks) => {
             out.push_str("\n## assistant\n\n");
             push_blocks(out, blocks, budget);
         }
-        Message::EnrichedAssistant(assistant) => {
+        SemanticMessage::EnrichedAssistant(assistant) => {
             out.push_str("\n## assistant\n\n");
             push_blocks(out, &assistant.content, budget);
         }
-        Message::AbortedAssistant(aborted) => {
+        SemanticMessage::AbortedAssistant(aborted) => {
             out.push_str("\n## assistant (interrupted)\n\n");
             push_blocks(out, &aborted.content, budget);
             for call in &aborted.tool_calls {
@@ -87,7 +96,7 @@ fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
                 push_arguments_line(out, &call.arguments, budget.tool_call_bytes);
             }
         }
-        Message::ToolResult(result) => {
+        SemanticMessage::ToolResult(result) => {
             let status = if result.ok { "ok" } else { "error" };
             out.push_str("\n## tool result ");
             out.push_str(&result.id);

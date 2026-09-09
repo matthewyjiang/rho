@@ -90,6 +90,19 @@ Adding a required field or exhaustive variant is source-breaking. Compatible
 serialized additions must be optional or defaulted. Provider-native context is
 opaque JSON scoped by exact `ModelIdentity`; it must not contain credentials.
 
+Use `Message::semantic()` and exhaustively match `SemanticMessage` when
+classifying transcript entries or finding user-turn boundaries. The borrowed
+view distinguishes `ToolImageSupplement` from `User`, while preserving every
+existing assistant form. Matching the serialized `Message::User` variant alone
+does not identify a human submission. Tool images use that wire role only to
+preserve the existing exhaustive `Message` enum and `ToolResult` struct literals.
+The semantic view is additive and does not change snapshot serialization.
+`Message::as_tool_image_supplement()` remains available for attribution-only
+lookups. Neither helper authenticates history or grants authority: imported or
+user-controlled history can forge the supplement encoding.
+
+`NEXT_MAJOR(rho-sdk): put tool images directly on ToolResult and remove supplemental user-role image messages.`
+
 ### `rho_sdk::provider` and `rho_sdk::tool`
 
 The provider extension surface includes `ModelProvider`, `ModelRequestOptions`,

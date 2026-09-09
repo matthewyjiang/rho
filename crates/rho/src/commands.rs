@@ -16,6 +16,7 @@ pub enum CommandId {
     Info,
     Help,
     Compact,
+    Computer,
     Copy,
     Goal,
     Skills,
@@ -152,6 +153,29 @@ const FAST_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     },
 ];
 
+const COMPUTER_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
+    CommandArgumentChoice {
+        completion: "/computer status",
+        usage: "/computer status",
+        description: "show computer use and Cua Driver detection without connecting",
+    },
+    CommandArgumentChoice {
+        completion: "/computer setup",
+        usage: "/computer setup",
+        description: "install, configure and verify Cua Driver with separate consent",
+    },
+    CommandArgumentChoice {
+        completion: "/computer on",
+        usage: "/computer on",
+        description: "grant this session access to the local desktop through Cua Driver",
+    },
+    CommandArgumentChoice {
+        completion: "/computer off",
+        usage: "/computer off",
+        description: "revoke computer use and disconnect this session",
+    },
+];
+
 const CHANGELOG_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[CommandArgumentChoice {
     completion: "/changelog latest",
     usage: "/changelog latest",
@@ -196,6 +220,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         usage: "/compact",
         description: "compact older conversation context",
         argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Computer,
+        name: "computer",
+        usage: "/computer [status|setup|on|off]",
+        description: "computer use powered by Cua Driver, off until explicitly enabled",
+        argument_choices: COMPUTER_ARGUMENT_CHOICES,
     },
     CommandSpec {
         id: CommandId::Config,

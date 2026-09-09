@@ -4,12 +4,12 @@
 //! marker. Do not finish compact on a wall-clock timer; that races typing.
 
 use rho_sdk::{
-    model::ModelRequest,
+    model::{ContentBlock, ModelRequest, SemanticMessage},
     provider::{NativeCompactionFuture, NativeCompactionResponse},
     ProviderError, ProviderErrorKind, Retryability,
 };
 
-use super::{last_user_text, release::wait_for_release_or_cancel};
+use super::release::wait_for_release_or_cancel;
 
 /// Workspace-relative marker that releases a hanging compact fixture.
 ///
@@ -18,9 +18,23 @@ use super::{last_user_text, release::wait_for_release_or_cancel};
 /// strings identical or `submit_during_compact` hangs until the STREAM timeout.
 const RELEASE_MARKER: &str = ".rho-fixture-release-compact";
 
+fn history_contains_user_text(request: &ModelRequest<'_>, needle: &str) -> bool {
+    request.messages.iter().any(|message| {
+        let SemanticMessage::User(content) = message.semantic() else {
+            return false;
+        };
+        content.iter().any(|block| match block {
+            ContentBlock::Text(text) => text.contains(needle),
+            ContentBlock::Image(_) | ContentBlock::ToolCall(_) => false,
+        })
+    })
+}
+
 pub(super) fn native_compact(request: ModelRequest<'_>) -> Option<NativeCompactionFuture<'_>> {
-    let prompt = last_user_text(&request)?;
-    if prompt.contains("fixture compact until cancel") {
+    // Match the seed prompt anywhere in history. Compact requests can grow a
+    // later empty or non-fixture user entry; last-only matching then falls
+    // through to the fast summary path and races PTY waits.
+    if history_contains_user_text(&request, "fixture compact until cancel") {
         return Some(Box::pin(async move {
             request.cancellation.cancelled().await;
             NativeCompactionResponse::failure(ProviderError::interrupted(
@@ -28,7 +42,7 @@ pub(super) fn native_compact(request: ModelRequest<'_>) -> Option<NativeCompacti
             ))
         }));
     }
-    if prompt.contains("fixture compact until release") {
+    if history_contains_user_text(&request, "fixture compact until release") {
         return Some(Box::pin(async move {
             match wait_for_release_or_cancel(RELEASE_MARKER, &request.cancellation).await {
                 Ok(()) => NativeCompactionResponse::failure(ProviderError::new(

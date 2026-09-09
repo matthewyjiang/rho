@@ -44,6 +44,7 @@ pub(crate) use report::{
     McpLoadMode, McpServerReport, McpServerStatus, McpSessionReport, McpToolReport,
     McpTransportSummary,
 };
+pub(crate) use result::McpImageDelivery;
 pub(crate) use roots::McpRoots;
 pub(crate) use sampling::{McpSamplingBridge, McpSamplingModel};
 pub(crate) use validate::{
@@ -78,6 +79,7 @@ pub(crate) struct McpSessionOptions {
     /// Whether a server that needs OAuth may open a browser login.
     pub(crate) authorization: McpAuthorizationMode,
     services: session::McpSessionServices,
+    image_delivery: McpImageDelivery,
 }
 
 impl McpSessionOptions {
@@ -90,6 +92,7 @@ impl McpSessionOptions {
             max_output_bytes: max_output_bytes.max(1),
             roots,
             authorization,
+            image_delivery: McpImageDelivery::PresentationOnly,
             services: session::McpSessionServices {
                 elicitation: McpElicitationSupport::Unavailable,
                 sampling: None,
@@ -106,6 +109,13 @@ impl McpSessionOptions {
     /// Declare that this run will bind a model that opted-in servers may sample.
     pub(crate) fn with_sampling(mut self, bridge: McpSamplingBridge) -> Self {
         self.services.sampling = Some(bridge);
+        self
+    }
+
+    /// Model-visible image output requires a separate host opt-in. Card assets
+    /// alone never determine the observations sent to the model.
+    pub(crate) fn with_image_delivery(mut self, delivery: McpImageDelivery) -> Self {
+        self.image_delivery = delivery;
         self
     }
 }
@@ -214,7 +224,7 @@ impl McpBundle {
         // BTreeMap iteration order is preserved by join_all input order.
         let connect_results = futures_util::future::join_all(connect_jobs).await;
 
-        let mut bundle = McpBundleBuilder::new(options.max_output_bytes);
+        let mut bundle = McpBundleBuilder::new(options.max_output_bytes, options.image_delivery);
         for (identity, server, transport, result) in connect_results {
             let connected = match result {
                 ConnectResult::Ready(connected) => connected,
@@ -288,6 +298,7 @@ impl ToolBundle for McpBundle {
 /// finish connecting, so `connect` stays a readable pass over the results.
 struct McpBundleBuilder {
     max_output_bytes: usize,
+    image_delivery: McpImageDelivery,
     tools: Vec<Arc<dyn Tool>>,
     sessions: Vec<McpSession>,
     maintenance: Vec<tokio::task::JoinHandle<()>>,
@@ -296,9 +307,10 @@ struct McpBundleBuilder {
 }
 
 impl McpBundleBuilder {
-    fn new(max_output_bytes: usize) -> Self {
+    fn new(max_output_bytes: usize, image_delivery: McpImageDelivery) -> Self {
         Self {
             max_output_bytes,
+            image_delivery,
             tools: Vec::new(),
             sessions: Vec::new(),
             maintenance: Vec::new(),
@@ -354,6 +366,7 @@ impl McpBundleBuilder {
                 calls: calls.clone(),
                 transport: server.transport.clone(),
                 max_output_bytes: self.max_output_bytes,
+                image_delivery: self.image_delivery,
             }));
             exported.push(McpToolReport {
                 remote_name,

@@ -59,6 +59,7 @@ impl App {
             ComposerMode::Picker(_)
             | ComposerMode::Limits(_)
             | ComposerMode::Doctor(_)
+            | ComposerMode::Computer(_)
             | ComposerMode::Side
             | ComposerMode::Questionnaire(_)
             | ComposerMode::Approval(_)
@@ -68,15 +69,39 @@ impl App {
             | ComposerMode::TextInput(_)
             | ComposerMode::InteractivePending(_) => Theme::dim(),
         };
-        let left = (slot == ComposerDividerSlot::Top
-            && matches!(self.input_ui.composer(), ComposerMode::Input))
-        .then(|| self.input_ui.shell_mode())
-        .flatten()
-        .and_then(|mode| {
-            DividerCaption::new(
-                inline_shell::mode_divider_labels(mode).iter().copied(),
-                style,
-            )
+        let computer = (slot == ComposerDividerSlot::Bottom)
+            .then(|| self.computer_use.as_ref().map(|control| control.status()))
+            .flatten()
+            .and_then(|status| {
+                use crate::tools::computer_use::ComputerUseStatus;
+                let labels = match status {
+                    ComputerUseStatus::Off => return None,
+                    ComputerUseStatus::Installing => [
+                        "computer driver installing · access off",
+                        "driver installing",
+                    ],
+                    ComputerUseStatus::Connecting => {
+                        ["computer use connecting", "computer connecting"]
+                    }
+                    ComputerUseStatus::Connected => ["computer use enabled", "computer enabled"],
+                    ComputerUseStatus::Closing => [
+                        "computer access off · disconnecting",
+                        "computer disconnecting",
+                    ],
+                };
+                DividerCaption::new(labels, Theme::warning())
+            });
+        let left = computer.or_else(|| {
+            (slot == ComposerDividerSlot::Top
+                && matches!(self.input_ui.composer(), ComposerMode::Input))
+            .then(|| self.input_ui.shell_mode())
+            .flatten()
+            .and_then(|mode| {
+                DividerCaption::new(
+                    inline_shell::mode_divider_labels(mode).iter().copied(),
+                    style,
+                )
+            })
         });
         // Stay on the top rule in every composer mode so overlays do not hide
         // the reviewer. Follow the rule color; warning only when no model.
@@ -200,9 +225,10 @@ impl App {
                 approval_lines(approval, width, viewport_height),
                 Position { x: 0, y: 0 },
             ),
-            ComposerMode::Limits(_) | ComposerMode::Doctor(_) | ComposerMode::Side => {
-                ComposerFrame::new(Vec::new(), Position { x: 0, y: 0 })
-            }
+            ComposerMode::Limits(_)
+            | ComposerMode::Doctor(_)
+            | ComposerMode::Computer(_)
+            | ComposerMode::Side => ComposerFrame::new(Vec::new(), Position { x: 0, y: 0 }),
         }
     }
 

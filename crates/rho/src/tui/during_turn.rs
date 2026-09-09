@@ -101,6 +101,9 @@ impl App {
         if self.handle_limits_overlay_key(key, terminal) {
             return Ok(false);
         }
+        if self.handle_computer_overlay_key(key, terminal) {
+            return Ok(false);
+        }
         if self.handle_doctor_overlay_key(key, terminal) {
             return Ok(false);
         }
@@ -394,6 +397,7 @@ impl App {
             CommandId::Copy => self.execute_copy_command(),
             CommandId::Export => self.execute_export_command(&invocation),
             CommandId::Mcp => self.execute_mcp_command(),
+            CommandId::Computer => self.execute_computer_command_during_turn(invocation).await,
             CommandId::Title => self.execute_title_command(&invocation),
             CommandId::Goal => self.execute_goal_command_during_turn(invocation),
             CommandId::Model => self.execute_model_command_during_turn(invocation),

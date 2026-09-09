@@ -21,7 +21,7 @@ use crate::{
 mod preparation;
 
 use super::planner::{plan, Dependency};
-use crate::orchestration::{emit, Rho, RunControl};
+use crate::orchestration::{emit, pending_tool_outputs::CompletedToolOutput, Rho, RunControl};
 use preparation::prepare_batch;
 
 pub(in crate::orchestration) const INTERRUPTED_TOOL_RESULT_CONTENT: &str =
@@ -68,7 +68,7 @@ struct BatchCall<'a> {
     dependencies: Vec<Dependency>,
     queued_at: Instant,
     execution_started: Option<Instant>,
-    result: Option<ToolResult>,
+    result: Option<CompletedToolOutput>,
     first_capability: Option<FirstCapability>,
 }
 
@@ -210,7 +210,20 @@ pub(in crate::orchestration) async fn execute(
             .iter()
             .all(|entry| matches!(entry.state, CallState::Resolved))
         {
-            append_results(&mut batch, history);
+            if control.cancellation.is_cancelled() {
+                append_results(&mut batch, history);
+                return Ok(true);
+            }
+            // Parked detached completions and this batch are available together.
+            // Commit all their results before any image supplements.
+            CompletedToolOutput::commit_all(
+                control.pending_outputs.take_finished().into_iter().chain(
+                    batch
+                        .iter_mut()
+                        .map(|entry| entry.result.take().expect("resolved call has a result")),
+                ),
+                history,
+            );
             tracing::debug!(peak_parallel_tools = peak_running, "tool batch completed");
             core.set_state(SessionState::Running);
             return Ok(false);
@@ -326,14 +339,7 @@ async fn resolve_without_work(
 ) -> Result<(), Error> {
     for entry in batch {
         let completion = match &entry.state {
-            CallState::Unavailable => Some((
-                ToolCompletion::Unavailable,
-                ToolResult {
-                    id: entry.call.id.clone(),
-                    ok: false,
-                    content: format!("tool '{}' is unavailable", entry.call.name),
-                },
-            )),
+            CallState::Unavailable => Some(ToolCompletion::Unavailable),
             CallState::PreparationFailed(error) => {
                 emit(
                     control.events,
@@ -345,20 +351,21 @@ async fn resolve_without_work(
                     },
                 )
                 .await?;
-                Some((
-                    ToolCompletion::Failure(ToolFailure::new(
-                        error.kind(),
-                        error.message().to_owned(),
-                    )),
-                    failed_result(&entry.call, error),
-                ))
+                Some(ToolCompletion::Failure(ToolFailure::new(
+                    error.kind(),
+                    error.message().to_owned(),
+                )))
             }
             _ => None,
         };
-        let Some((completion, result)) = completion else {
+        let Some(completion) = completion else {
             continue;
         };
-        entry.result = Some(result);
+        entry.result = Some(CompletedToolOutput::new(
+            &entry.call.name,
+            &entry.call.id,
+            &completion,
+        ));
         entry.state = CallState::Resolved;
         control.hooks.after_tool_use(
             &entry.call.name,
@@ -717,14 +724,6 @@ async fn finish_call(
     entry: &mut BatchCall<'_>,
     result: Result<ToolOutput, ToolError>,
 ) -> Result<(), Error> {
-    let normalized = match &result {
-        Ok(output) => ToolResult {
-            id: entry.call.id.clone(),
-            ok: true,
-            content: output.content().to_owned(),
-        },
-        Err(error) => failed_result(&entry.call, error),
-    };
     let duration = entry.execution_started.map(|started| started.elapsed());
     if let Some(elapsed) = duration {
         tracing::debug!(
@@ -738,7 +737,11 @@ async fn finish_call(
             ToolCompletion::Failure(ToolFailure::new(error.kind(), error.message().to_owned()))
         }
     };
-    entry.result = Some(normalized);
+    entry.result = Some(CompletedToolOutput::new(
+        &entry.call.name,
+        &entry.call.id,
+        &completion,
+    ));
     entry.state = CallState::Resolved;
     control.hooks.after_tool_use(
         &entry.call.name,
@@ -757,14 +760,6 @@ async fn finish_call(
     )
     .await?;
     Ok(())
-}
-
-fn failed_result(call: &ToolCall, error: &ToolError) -> ToolResult {
-    ToolResult {
-        id: call.id.clone(),
-        ok: false,
-        content: error.message().to_owned(),
-    }
 }
 
 fn handle_command(
@@ -811,7 +806,13 @@ fn handle_command(
 
 fn append_results(batch: &mut [BatchCall<'_>], history: &mut Vec<Message>) {
     history.extend(batch.iter_mut().map(|entry| {
-        Message::ToolResult(entry.result.take().expect("resolved call has a result"))
+        Message::ToolResult(
+            entry
+                .result
+                .take()
+                .expect("resolved call has a result")
+                .into_result(),
+        )
     }));
 }
 
@@ -842,12 +843,12 @@ fn interrupt_batch(
                 }),
             });
             if let Some(result) = completed {
-                entry.result = Some(result);
+                entry.result = Some(result.into());
                 entry.state = CallState::Resolved;
             }
         }
         if !matches!(entry.state, CallState::Resolved) {
-            entry.result = Some(interrupted_result(&entry.call));
+            entry.result = Some(interrupted_result(&entry.call).into());
             entry.state = CallState::Resolved;
         }
     }

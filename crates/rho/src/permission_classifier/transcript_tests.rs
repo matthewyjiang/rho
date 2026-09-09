@@ -116,6 +116,23 @@ fn transcript_keeps_user_text_and_tool_calls_only() {
     );
     let transcript = render_classifier_transcript(&sample_history(), &pending).unwrap();
 
+    let mut with_tool_image = sample_history();
+    with_tool_image.push(
+        Message::tool_image_supplement(
+            "computer",
+            "capture",
+            vec![ImageContent {
+                data: "untrusted-screen".into(),
+                mime_type: "image/png".into(),
+            }],
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        render_classifier_transcript(&with_tool_image, &pending).unwrap(),
+        transcript
+    );
+
     assert!(transcript.contains("please update the config"));
     assert!(transcript.contains("read_file"));
     assert!(transcript.contains(r#""path":"config.toml""#));

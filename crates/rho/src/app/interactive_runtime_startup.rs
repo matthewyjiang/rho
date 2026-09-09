@@ -94,6 +94,18 @@ pub(super) async fn initialize(
         agent: &agent,
     })
     .await?;
+    // Desktop authority belongs to this interactive host, not agent definitions
+    // or cloned config. Automation, side chats and subagents never get this handle.
+    let tools = if !no_tools && agent.rho_capabilities().is_some() {
+        let computer = crate::tools::computer_use::ComputerUseSession::new(
+            /*driver*/ None,
+            config.max_output_bytes,
+            cwd.clone(),
+        );
+        tools.with_computer_use(computer)
+    } else {
+        tools
+    };
     let mcp_report = inventory.mcp;
     let plugins_report = inventory.plugins;
     let context_window = configured_context_window(config);
@@ -175,7 +187,12 @@ pub(super) async fn initialize(
     let pending_catalog_names = may_rewrite_startup_prompt
         .then(|| tokio::spawn(async { rho_providers::model::ensure_model_catalog_names().await }));
     let cached_tool_specs = tools.specs();
-    Ok(InteractiveRuntime {
+    let computer_preference_source = if storage.is_some() {
+        super::computer::ComputerPreferenceSource::SavedSession
+    } else {
+        super::computer::ComputerPreferenceSource::NewSession
+    };
+    let mut runtime = InteractiveRuntime {
         runtime,
         hooks,
         runs: InteractiveRunController::default(),
@@ -212,10 +229,16 @@ pub(super) async fn initialize(
         pending_persistence_error: None,
         pending_persistence_checkpoint: None,
         live_context_warm: false,
+        computer_context: None,
+        computer_runtime_dirty: false,
         cached_tool_specs,
         tool_list_changed: false,
         completed_runs: 0,
-    })
+    };
+    runtime
+        .restore_computer_preference(computer_preference_source)
+        .await;
+    Ok(runtime)
 }
 
 /// Hand the live model to MCP sampling.

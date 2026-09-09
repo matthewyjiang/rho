@@ -254,7 +254,7 @@ async fn fresh_session_options_seed_a_prompt_cache_key() {
     assert_eq!(snapshot.prompt_cache_key(), Some(expected.as_str()));
 }
 
-async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
+pub(super) async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
     let provider = Arc::new(ScriptedProvider::new(
         ModelIdentity::new("test", "test", "test"),
         turns,
@@ -307,6 +307,8 @@ async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime {
         experimental_workspace_rewind: false,
         session_writes: Default::default(),
         live_context_warm: false,
+        computer_context: None,
+        computer_runtime_dirty: false,
         cached_tool_specs,
         tool_list_changed: false,
     }

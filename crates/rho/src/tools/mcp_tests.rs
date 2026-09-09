@@ -14,7 +14,8 @@ use super::{
     session::prepare_server_filesystem,
     tool::{call_remote_tool, CallBudget, McpCall, MCP_TOOL_CALL_BUDGET},
     validate::McpHttpSecurity,
-    McpBundle, McpRoots, McpServerStatus, McpSessionOptions, MCP_RUNTIME_CONSTRUCTIONS,
+    McpBundle, McpImageDelivery, McpRoots, McpServerStatus, McpSessionOptions,
+    MCP_RUNTIME_CONSTRUCTIONS,
 };
 use crate::tools::sdk_registry::ToolBundle;
 use rho_sdk::{
@@ -563,6 +564,7 @@ open(sys.argv[1], "w").close()
         remote_name: "echo/value".into(),
         arguments: serde_json::Map::new(),
         expectation: ResultExpectation::default(),
+        image_delivery: McpImageDelivery::PresentationOnly,
     };
     let cancellation = CancellationToken::new();
     let rendered = call_remote_tool(echo_call(), &cancellation, None, 12_000)

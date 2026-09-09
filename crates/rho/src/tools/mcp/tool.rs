@@ -155,6 +155,7 @@ pub(super) struct McpTool {
     pub(super) calls: McpInFlightCalls,
     pub(super) transport: McpTransport,
     pub(super) max_output_bytes: usize,
+    pub(super) image_delivery: super::McpImageDelivery,
 }
 
 impl Tool for McpTool {
@@ -216,6 +217,7 @@ impl Tool for McpTool {
                                 remote_name: self.remote_name.clone(),
                                 arguments,
                                 expectation: definition.expectation,
+                                image_delivery: self.image_delivery,
                             },
                             context.cancellation(),
                             Some(context.progress().clone()),
@@ -231,13 +233,15 @@ impl Tool for McpTool {
                             result = &mut call => result?,
                             never = &mut service => match never {},
                         };
-                        // Binary content the server returned rides on the card
-                        // as an asset; the model reads the descriptor instead.
+                        // Semantic model images and card assets were selected
+                        // independently while interpreting the MCP result.
                         let mut metadata = metadata;
                         for asset in rendered.assets {
                             metadata = metadata.asset(asset);
                         }
-                        Ok(ToolOutput::text(rendered.text).metadata(metadata))
+                        Ok(ToolOutput::text(rendered.text)
+                            .metadata(metadata)
+                            .with_images(rendered.images))
                     })
                 },
             ))
@@ -280,6 +284,7 @@ pub(super) struct McpCall<'a> {
     pub(super) arguments: serde_json::Map<String, serde_json::Value>,
     /// What the tool's declaration says the result must contain.
     pub(super) expectation: super::result::ResultExpectation,
+    pub(super) image_delivery: super::McpImageDelivery,
 }
 
 /// Issue one `tools/call` and return the serialized MCP result.
@@ -301,6 +306,7 @@ pub(super) async fn call_remote_tool(
         remote_name,
         arguments,
         expectation,
+        image_delivery,
     } = call;
     let params = CallToolRequestParams::new(remote_name).with_arguments(arguments);
     let mut handle = peer
@@ -341,7 +347,7 @@ pub(super) async fn call_remote_tool(
     };
     match response {
         Ok(Ok(ServerResult::CallToolResult(result))) => {
-            result::render(&result, &expectation, max_output_bytes)
+            result::render(&result, &expectation, max_output_bytes, image_delivery)
         }
         Ok(Ok(_)) => Err(ToolError::new(
             ToolErrorKind::Execution,

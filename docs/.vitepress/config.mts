@@ -120,6 +120,7 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
           { text: 'Herdr', link: '/integrations/herdr' },
           { text: 'RTK', link: '/integrations/rtk' },
           { text: 'Model Context Protocol', link: '/integrations/mcp' },
+          { text: 'Computer use', link: '/integrations/computer-use' },
           { text: 'Agent Client Protocol', link: '/integrations/acp' },
           { text: 'Agent Plugins', link: '/integrations/plugins' },
           { text: 'Community', link: '/integrations/community' },

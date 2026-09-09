@@ -22,6 +22,11 @@ use crate::CancellationToken;
 
 pub mod context;
 pub mod handoff;
+mod semantic;
+mod tool_image_supplement;
+
+pub use semantic::SemanticMessage;
+pub use tool_image_supplement::ToolImageSupplement;
 
 /// Provider-neutral specification for a tool available during a model turn.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -46,6 +51,14 @@ impl ToolCall {
 }
 
 /// Result returned to a model after a tool call.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): put tool images directly on ToolResult and remove supplemental user-role image messages.
+///
+/// Adding fields would break downstream struct literals. Until the next major,
+/// use [`Message::tool_image_supplement`] and [`Message::semantic`]
+/// to construct and classify the separate image entry.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolResult {
     pub id: String,
@@ -295,6 +308,14 @@ impl<'de> Deserialize<'de> for AssistantMessage {
 }
 
 /// One provider-neutral history entry.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): put tool images directly on ToolResult and remove supplemental user-role image messages.
+///
+/// For minor compatibility tool-owned images use `User` entries. Prefer
+/// [`Self::semantic`] for exhaustive classification that distinguishes tool data
+/// from human submissions without changing the serialized variants.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Message {
     System(String),

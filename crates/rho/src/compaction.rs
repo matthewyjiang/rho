@@ -2,6 +2,7 @@ use rho_providers::model::{
     context::{estimate_context_tokens, estimate_message_tokens},
     ContentBlock, Message,
 };
+use rho_sdk::model::SemanticMessage;
 use rho_tools::tool::{ToolResult, ToolSpec};
 
 const SUMMARY_RESERVE_MIN_TOKENS: u64 = 512;
@@ -202,11 +203,22 @@ fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize>
         let Some(last_result_offset) = messages[end..]
             .iter()
             .enumerate()
-            .filter_map(|(offset, message)| match message {
-                Message::ToolResult(result) if call_ids.contains(result.id.as_str()) => {
+            .filter_map(|(offset, message)| match message.semantic() {
+                SemanticMessage::ToolResult(result) if call_ids.contains(result.id.as_str()) => {
                     Some(offset)
                 }
-                _ => None,
+                SemanticMessage::ToolImageSupplement(images)
+                    if call_ids.contains(images.tool_call_id()) =>
+                {
+                    Some(offset)
+                }
+                SemanticMessage::System(_)
+                | SemanticMessage::User(_)
+                | SemanticMessage::Assistant(_)
+                | SemanticMessage::EnrichedAssistant(_)
+                | SemanticMessage::AbortedAssistant(_)
+                | SemanticMessage::ToolResult(_)
+                | SemanticMessage::ToolImageSupplement(_) => None,
             })
             .next_back()
         else {
@@ -252,21 +264,31 @@ fn render_messages_for_summary(messages: &[Message]) -> String {
 }
 
 fn render_message_for_summary(message: &Message) -> String {
-    match message {
-        Message::System(text) => format!("system:\n{text}"),
-        Message::User(blocks) => format!("user:\n{}", render_blocks(blocks)),
-        Message::Assistant(blocks) => format!("assistant:\n{}", render_blocks(blocks)),
-        Message::EnrichedAssistant(message) => {
+    match message.semantic() {
+        SemanticMessage::System(text) => format!("system:\n{text}"),
+        SemanticMessage::ToolImageSupplement(images) => {
+            format!(
+                "tool output images for {} ({}):\n{}",
+                images.tool_name(),
+                images.tool_call_id(),
+                render_blocks(images.content())
+            )
+        }
+        SemanticMessage::User(blocks) => format!("user:\n{}", render_blocks(blocks)),
+        SemanticMessage::Assistant(blocks) => format!("assistant:\n{}", render_blocks(blocks)),
+        SemanticMessage::EnrichedAssistant(message) => {
             let mut rendered = render_blocks(&message.content);
             if let Some(summary) = &message.reasoning_summary {
                 rendered.push_str(&format!("\nreasoning summary:\n{summary}"));
             }
             format!("assistant:\n{rendered}")
         }
-        Message::AbortedAssistant(message) => {
+        SemanticMessage::AbortedAssistant(message) => {
             format!("assistant [aborted]:\n{}", render_blocks(&message.content))
         }
-        Message::ToolResult(result) => format!("tool result:\n{}", render_tool_result(result)),
+        SemanticMessage::ToolResult(result) => {
+            format!("tool result:\n{}", render_tool_result(result))
+        }
     }
 }
 
