@@ -318,9 +318,9 @@ impl ComputerUseSession {
         let session = self.clone();
         let task = retained_task(async move {
             let connection = match previous {
-                State::Connecting { task, .. } => {
-                    Some(task.await.map_err(|error| anyhow!(error.to_string()))?)
-                }
+                // Revoking activation normally cancels before a connection is
+                // produced. That is completed cleanup, not a lifecycle failure.
+                State::Connecting { task, .. } => task.await.ok(),
                 State::Connected { connection, .. } => Some(connection),
                 State::Off { .. } | State::Closing { .. } => unreachable!(),
             };

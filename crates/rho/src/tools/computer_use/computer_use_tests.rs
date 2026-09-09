@@ -49,6 +49,7 @@ async fn disconnect_stops_pending_activation() {
         .unwrap();
     session.disconnect().await;
     assert_eq!(session.status(), ComputerUseStatus::Off);
+    assert_eq!(session.terminal_error(), None);
     let mut buffer = Vec::new();
     tokio::time::timeout(
         Duration::from_secs(10),

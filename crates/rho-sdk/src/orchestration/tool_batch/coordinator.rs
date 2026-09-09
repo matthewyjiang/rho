@@ -336,14 +336,7 @@ async fn resolve_without_work(
 ) -> Result<(), Error> {
     for entry in batch {
         let completion = match &entry.state {
-            CallState::Unavailable => Some((
-                ToolCompletion::Unavailable,
-                ToolResult {
-                    id: entry.call.id.clone(),
-                    ok: false,
-                    content: format!("tool '{}' is unavailable", entry.call.name),
-                },
-            )),
+            CallState::Unavailable => Some(ToolCompletion::Unavailable),
             CallState::PreparationFailed(error) => {
                 emit(
                     control.events,
@@ -355,20 +348,21 @@ async fn resolve_without_work(
                     },
                 )
                 .await?;
-                Some((
-                    ToolCompletion::Failure(ToolFailure::new(
-                        error.kind(),
-                        error.message().to_owned(),
-                    )),
-                    failed_result(&entry.call, error),
-                ))
+                Some(ToolCompletion::Failure(ToolFailure::new(
+                    error.kind(),
+                    error.message().to_owned(),
+                )))
             }
             _ => None,
         };
-        let Some((completion, result)) = completion else {
+        let Some(completion) = completion else {
             continue;
         };
-        entry.result = Some(result);
+        entry.result = Some(control.pending_outputs.record_completion(
+            &entry.call.name,
+            &entry.call.id,
+            &completion,
+        ));
         entry.state = CallState::Resolved;
         control.hooks.after_tool_use(
             &entry.call.name,
@@ -763,14 +757,6 @@ async fn finish_call(
     )
     .await?;
     Ok(())
-}
-
-fn failed_result(call: &ToolCall, error: &ToolError) -> ToolResult {
-    ToolResult {
-        id: call.id.clone(),
-        ok: false,
-        content: error.message().to_owned(),
-    }
 }
 
 fn handle_command(

@@ -39,6 +39,7 @@ impl PendingToolOutputs {
             content: match completion {
                 ToolCompletion::Success(output) => output.content().to_owned(),
                 ToolCompletion::Failure(failure) => failure.message().to_owned(),
+                ToolCompletion::Unavailable => format!("tool '{name}' is unavailable"),
             },
         }
     }
