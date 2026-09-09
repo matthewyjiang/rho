@@ -56,6 +56,12 @@ impl App {
         &mut self,
         invocation: &CommandInvocation,
     ) -> anyhow::Result<()> {
+        if self.info.session.no_save {
+            self.set_status(
+                "session export unavailable with --no-save; use /copy to copy an answer",
+            );
+            return Ok(());
+        }
         let Some(session_id) = self.info.session.session_id.clone() else {
             self.set_status("no active session to export; send a message first");
             return Ok(());
@@ -84,6 +90,10 @@ impl App {
         &mut self,
         invocation: &CommandInvocation,
     ) -> anyhow::Result<()> {
+        if self.info.session.no_save {
+            self.set_status("session titles unavailable with --no-save");
+            return Ok(());
+        }
         let title = invocation.args.trim();
         if title.is_empty() {
             self.set_status("usage: /title <name>");

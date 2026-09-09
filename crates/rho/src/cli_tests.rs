@@ -161,6 +161,29 @@ fn parses_interactive_prompt_flag() {
     assert!(cli.command.is_none());
 }
 
+// Covers: unsaved startup must not accept either resume form, in either order.
+// Owner: CLI parser.
+#[test]
+fn no_save_conflicts_with_resume() {
+    for args in [
+        vec!["rho", "--no-save", "--resume"],
+        vec!["rho", "--resume", "--no-save"],
+        vec!["rho", "--no-save", "--resume", "abc123"],
+        vec!["rho", "--resume", "abc123", "--no-save"],
+        vec!["rho", "--no-save", "-R"],
+        vec!["rho", "-R", "--no-save"],
+        vec!["rho", "--no-save", "-R", "abc123"],
+        vec!["rho", "-R", "abc123", "--no-save"],
+    ] {
+        let error = Cli::try_parse_from(&args).unwrap_err();
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::ArgumentConflict,
+            "{args:?}"
+        );
+    }
+}
+
 #[test]
 fn parses_permission_mode_override() {
     for (flag, expected) in [

@@ -45,6 +45,33 @@ For those legacy files, web-access blobs use a sibling companion directory named
 
 Starting `rho` opens the [interactive TUI](/interactive-tui). Rho creates a new session folder only after you send the first message.
 
+### Sessions without saving
+
+For a throwaway conversation, start Rho with:
+
+```bash
+rho --no-save
+rho --no-save --prompt "explain this function"
+```
+
+The conversation stays in memory. Rho never creates a session folder or writes
+these prompts to shared prompt history. You can still recall prompts within the
+running session. The statusline shows `not saved`, and both `/new` and `Ctrl+R`
+keep this mode.
+Exiting or crashing loses the conversation; it won't appear in session history
+and cannot be resumed.
+
+`--no-save` is interactive-only and cannot be combined with `--resume` or `-R`.
+Inside the TUI, `/resume`, `/tree`, `/title`, `/export`, and experimental `/rewind`
+are unavailable.
+Use `/copy` to copy an answer, or start Rho without the flag to resume saved work.
+
+This is not a privacy or sandbox mode. Providers still receive requests, and
+tools can modify files. Cached web content and usage records may still be saved;
+hooks, logs, delegated agents, and workflows can retain their own data.
+`--save` controls configuration overrides separately; it does not turn session
+saving back on.
+
 ## Resuming a session
 
 ```mermaid

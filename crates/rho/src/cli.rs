@@ -94,6 +94,9 @@ pub struct Cli {
     /// Without this flag, those overrides apply only to the current invocation.
     #[arg(long)]
     pub save: bool,
+    /// Keep this interactive session in memory without saving its transcript or prompt history.
+    #[arg(long, conflicts_with = "resume")]
+    pub no_save: bool,
     /// Resume an existing session by UUID or UUID prefix. Omit the ID to choose from a picker.
     #[arg(short = 'R', long, value_name = "ID", num_args = 0..=1)]
     pub resume: Option<Option<String>>,

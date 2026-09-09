@@ -68,6 +68,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             prompt_templates: Default::default(),
         },
         session: SessionBootstrap {
+            no_save: false,
             session_id: None,
             recovered_messages: Vec::new(),
             open_resume_picker: false,

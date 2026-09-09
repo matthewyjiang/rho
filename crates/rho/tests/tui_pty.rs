@@ -106,6 +106,13 @@ fn smoke_startup_prompt_stream_exit() {
     assert_pass("startup_prompt_stream_exit");
 }
 
+// Covers: unsaved conversations never persist, including after /new and exit.
+// Owner: interactive session lifecycle and filesystem effects.
+#[test]
+fn no_save_session() {
+    assert_pass("no_save_session");
+}
+
 // Covers: first session chrome must paint without waiting on MCP, catalog, or keyring tails.
 // Owner: interactive TUI
 #[test]

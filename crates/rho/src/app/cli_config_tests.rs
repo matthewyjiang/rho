@@ -77,6 +77,7 @@ fn test_cli() -> Cli {
         reasoning: None,
         permission_mode: None,
         save: false,
+        no_save: false,
         resume: None,
         prompt: None,
         command: None,
@@ -134,6 +135,34 @@ fn validate_cli_rejects_prompt_outside_interactive_session() {
     };
     let error = validate(&blank).unwrap_err();
     assert!(error.to_string().contains("--prompt requires non-empty"));
+}
+
+// Covers: --no-save must not silently run a subcommand that ignores its persistence policy.
+// Owner: CLI config validation, after successful parsing.
+#[test]
+fn validate_cli_rejects_no_save_with_subcommands() {
+    for command in [
+        vec!["run", "ship it"],
+        vec!["doctor"],
+        vec!["acp"],
+        vec!["attach", "abc123"],
+        vec!["sessions", "list"],
+        vec!["update"],
+    ] {
+        let args = [vec!["rho", "--no-save"], command].concat();
+        let mut cli = Cli::try_parse_from(&args).unwrap();
+        assert!(validate(&cli).is_err(), "{args:?}");
+        cli.no_save = false;
+        assert!(validate(&cli).is_ok(), "{args:?} without --no-save");
+    }
+    for args in [
+        vec!["rho", "--no-save"],
+        vec!["rho", "--no-save", "--prompt", "ship it"],
+    ] {
+        let cli = Cli::try_parse_from(&args).unwrap();
+        assert!(cli.no_save);
+        assert!(validate(&cli).is_ok(), "{args:?}");
+    }
 }
 
 #[test]
