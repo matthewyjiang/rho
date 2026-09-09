@@ -23,6 +23,10 @@ impl App {
         invocation: CommandInvocation,
         agent: &InteractiveRuntime,
     ) -> anyhow::Result<()> {
+        if self.info.session.no_save {
+            self.set_status("workspace rewind unavailable with --no-save");
+            return Ok(());
+        }
         if !agent.workspace_rewind_enabled() {
             self.set_status(
                 "workspace rewind is experimental; set behavior.experimental_workspace_rewind = true and restart Rho",
