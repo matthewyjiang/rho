@@ -41,7 +41,10 @@ fn number_input_accepts_only_ascii_digits() {
 
 #[test]
 fn text_input_strips_line_breaks_and_edits_at_character_cursor() {
-    let mut input = TextInput::config_api_key(ConfigTextKey::Exa, Some("aé".into()));
+    let mut input = TextInput::config_api_key(
+        rho_providers::credentials::WebSearchCredential::Exa,
+        Some("aé".into()),
+    );
     input.editor.cursor = 1;
 
     input.editor.insert_text("x\ny\r");
@@ -51,7 +54,7 @@ fn text_input_strips_line_breaks_and_edits_at_character_cursor() {
     assert_eq!(input.editor.cursor, 3);
     assert!(matches!(
         input.target,
-        TextInputTarget::ConfigApiKey(ConfigTextKey::Exa)
+        TextInputTarget::ConfigApiKey(rho_providers::credentials::WebSearchCredential::Exa)
     ));
 }
 

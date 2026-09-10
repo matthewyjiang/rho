@@ -297,17 +297,8 @@ impl AgentBinder {
                     host_config,
                     store,
                 )?);
-                let available_tools =
-                    available_tools_for_bound_config(&invocation.available_tools, config.as_ref());
                 BoundRuntime::Rho {
-                    capabilities: bind_rho_capabilities(
-                        &definition,
-                        tools,
-                        &AgentInvocation {
-                            role: invocation.role,
-                            available_tools,
-                        },
-                    )?,
+                    capabilities: bind_rho_capabilities(&definition, tools, &invocation)?,
                     config,
                 }
             }
@@ -367,8 +358,7 @@ impl AgentBinder {
                     config.auth.clone_from(auth);
                 }
                 config.permission_mode = permission_mode;
-                let available_tools = available_tools_for_bound_config(current_tools, &config);
-                let capabilities = frozen_capabilities(frozen, &available_tools);
+                let capabilities = frozen_capabilities(frozen, current_tools);
                 BoundRuntime::Rho {
                     config: Box::new(config),
                     capabilities,
@@ -560,22 +550,6 @@ fn may_omit_unavailable_tool(tool: &ToolCapability, role: AgentRole) -> bool {
         ToolCapability::Rho | ToolCapability::Workflow => matches!(role, AgentRole::Workflow),
         _ => false,
     }
-}
-
-/// Drop `web_search` when the bound provider/model cannot use hosted or backup search.
-///
-/// Host available tools are the ceiling. Callers should leave `web_search` in that
-/// set when host tools are enabled; bind removes it if the bound config cannot
-/// run search.
-fn available_tools_for_bound_config(
-    host_tools: &AgentCapabilities,
-    bound_config: &Config,
-) -> AgentCapabilities {
-    let mut tools = host_tools.clone();
-    if !crate::tools::web::web_search_available(bound_config) {
-        tools.remove(&ToolCapability::WebSearch);
-    }
-    tools
 }
 
 fn bind_rho_config(

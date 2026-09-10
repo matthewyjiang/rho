@@ -288,21 +288,28 @@ impl App {
         let target = input.target.clone();
         let value = input.editor.value.clone();
         match target {
-            super::text_input::TextInputTarget::ConfigApiKey(key) => {
-                let save_result = save_config_api_key(self.credential_store.as_ref(), key, &value);
+            super::text_input::TextInputTarget::ConfigApiKey(credential) => {
+                let save_result =
+                    save_config_api_key(self.credential_store.as_ref(), credential, &value);
                 match save_result {
                     Ok(()) => {
-                        self.refresh_web_search_config_picker(key.picker_value())?;
-                        self.set_status(format!("{} saved", key.label()));
+                        self.web_search_reload_pending = true;
+                        self.refresh_web_search_config_picker(
+                            super::web_search_config::web_search_key_value(credential),
+                        )?;
+                        self.set_status(format!("{} saved; applies next turn", credential.label()));
                     }
                     Err(err) => {
                         self.insert_entry(&Entry::Error(format!(
                             "could not save {}: {err}",
-                            key.label()
+                            credential.label()
                         )));
                         self.set_status("config save failed");
                     }
                 }
+            }
+            super::text_input::TextInputTarget::ConfigUrl(field) => {
+                self.save_web_search_url(field, &value)?;
             }
             super::text_input::TextInputTarget::AgentField(field) => {
                 self.commit_agent_text_input(field, value)?;
@@ -320,8 +327,14 @@ impl App {
         };
         let target = input.target.clone();
         match target {
-            super::text_input::TextInputTarget::ConfigApiKey(key) => {
-                self.refresh_web_search_config_picker(key.picker_value())?;
+            super::text_input::TextInputTarget::ConfigApiKey(credential) => {
+                self.refresh_web_search_config_picker(
+                    super::web_search_config::web_search_key_value(credential),
+                )?;
+                self.set_status("web search config");
+            }
+            super::text_input::TextInputTarget::ConfigUrl(field) => {
+                self.refresh_web_search_config_picker(field.value())?;
                 self.set_status("web search config");
             }
             super::text_input::TextInputTarget::AgentField(field) => {
@@ -391,12 +404,11 @@ enum SecretKeyResult {
 
 fn save_config_api_key(
     credential_store: &dyn rho_providers::credentials::CredentialStore,
-    key: super::config_editor::ConfigTextKey,
+    credential: rho_providers::credentials::WebSearchCredential,
     value: &str,
 ) -> rho_providers::credentials::CredentialResult<()> {
     use rho_providers::credentials::{delete_web_search_api_key, save_web_search_api_key};
     let value = value.trim();
-    let credential = key.web_search_credential();
     if value.is_empty() {
         delete_web_search_api_key(credential_store, credential).map(|_| ())
     } else {

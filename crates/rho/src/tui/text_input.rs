@@ -2,18 +2,21 @@
 
 use ratatui::text::Line;
 
+use rho_providers::credentials::WebSearchCredential;
+
 use super::{
-    config_editor::ConfigTextKey,
     line_editor::LineEditor,
     picker::UiPicker,
     render::{styled_line, truncate_one_line, LineFill},
     theme::Theme,
+    web_search_config::WebSearchUrlField,
 };
 
 /// Which overlay owns a [`TextInput`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum TextInputTarget {
-    ConfigApiKey(ConfigTextKey),
+    ConfigApiKey(WebSearchCredential),
+    ConfigUrl(WebSearchUrlField),
     AgentField(AgentField),
     /// One step of the `/login` endpoint wizard, which owns its own state.
     CustomHost(super::custom_provider_login::CustomHostStep),
@@ -57,10 +60,17 @@ pub(super) struct TextInput {
 }
 
 impl TextInput {
-    pub(super) fn config_api_key(key: ConfigTextKey, value: Option<String>) -> Self {
+    pub(super) fn config_api_key(credential: WebSearchCredential, value: Option<String>) -> Self {
         Self {
-            target: TextInputTarget::ConfigApiKey(key),
+            target: TextInputTarget::ConfigApiKey(credential),
             editor: LineEditor::new(value.unwrap_or_default()),
+        }
+    }
+
+    pub(super) fn config_url(field: WebSearchUrlField, value: impl Into<String>) -> Self {
+        Self {
+            target: TextInputTarget::ConfigUrl(field),
+            editor: LineEditor::new(value),
         }
     }
 
@@ -97,7 +107,8 @@ impl TextInput {
 
     pub(super) fn label(&self) -> &str {
         match &self.target {
-            TextInputTarget::ConfigApiKey(key) => key.label(),
+            TextInputTarget::ConfigApiKey(credential) => credential.label(),
+            TextInputTarget::ConfigUrl(field) => field.label(),
             TextInputTarget::AgentField(field) => field.label(),
             TextInputTarget::CustomHost(step) => step.label(),
         }
@@ -107,7 +118,9 @@ impl TextInput {
     fn confirm_verb(&self) -> &'static str {
         match &self.target {
             TextInputTarget::CustomHost(_) => "Enter continue",
-            TextInputTarget::ConfigApiKey(_) | TextInputTarget::AgentField(_) => "Enter save",
+            TextInputTarget::ConfigApiKey(_)
+            | TextInputTarget::ConfigUrl(_)
+            | TextInputTarget::AgentField(_) => "Enter save",
         }
     }
 

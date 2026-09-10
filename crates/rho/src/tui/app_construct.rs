@@ -119,6 +119,8 @@ impl App {
             pending_doctor_probes: Vec::new(),
             usage_limits_live: std::collections::BTreeMap::new(),
             pending_changelog: None,
+            web_search_reload_pending: false,
+            pending_web_search_test: None,
             usage_limits_client: std::sync::OnceLock::new(),
             usage: UsageUi::default(),
             model_metadata: None,

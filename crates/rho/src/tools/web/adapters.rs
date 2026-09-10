@@ -2,7 +2,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use {
-    crate::config::{Config, SearchProvider},
+    crate::config::{Config, WebSearchMode},
     rho_tools::tool::{
         truncate, AppToolFuture, Tool, ToolContext, ToolError, ToolResult, ToolSpec,
     },
@@ -43,19 +43,9 @@ impl WebSearch {
         }
     }
 
-    /// Client-side backup backends only. Hosted provider search is separate.
-    pub fn backup_available(&self) -> bool {
-        match self.config.provider {
-            SearchProvider::Disabled => false,
-            SearchProvider::OpenAi => search::openai_available(&self.config),
-            SearchProvider::Brave => search::brave_available(&self.config),
-            SearchProvider::Auto
-            | SearchProvider::Exa
-            | SearchProvider::Parallel
-            | SearchProvider::Tavily
-            | SearchProvider::Perplexity
-            | SearchProvider::Gemini => true,
-        }
+    /// Client-side backend when mode is not Off and the selected backend is ready.
+    pub fn client_available(&self) -> bool {
+        self.config.settings.mode != WebSearchMode::Off && search::backend_available(&self.config)
     }
 }
 
@@ -67,7 +57,6 @@ struct WebSearchArgs {
     num_results: Option<usize>,
     recency_filter: Option<String>,
     domain_filter: Option<Vec<String>>,
-    provider: Option<SearchProvider>,
     include_content: Option<bool>,
     workflow: Option<String>,
 }
@@ -86,7 +75,7 @@ impl Tool for WebSearch {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "web_search".into(),
-            description: "Search the web through a zero-config interface with optional provider credentials. Returns a concise summary, stores snippets by default under a responseId, and stores full source pages only when includeContent succeeds. Use get_search_content with that responseId when you need stored snippets or source pages.".into(),
+            description: "Search the web through the backend selected in user configuration. Returns a concise summary, stores snippets by default under a responseId, and stores full source pages only when includeContent succeeds. Use get_search_content with that responseId when you need stored snippets or source pages.".into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -94,8 +83,7 @@ impl Tool for WebSearch {
                     "numResults": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Results per query."},
                     "recencyFilter": {"type": "string", "enum": ["day", "week", "month", "year"]},
                     "domainFilter": {"type": "array", "items": {"type": "string"}},
-                    "provider": {"type": "string", "enum": ["auto", "openai", "brave", "parallel", "tavily", "exa", "perplexity", "gemini"]},
-                    "includeContent": {"type": "boolean", "description": "Try to fetch and store result pages when the selected provider returns URLs."},
+                    "includeContent": {"type": "boolean", "description": "Try to fetch and store result pages when the selected backend returns URLs."},
                     "workflow": {"type": "string", "enum": ["none", "summary-review", "auto-summary"]}
                 },
                 "required": ["queries"]
@@ -106,14 +94,14 @@ impl Tool for WebSearch {
     fn call<'a>(&'a self, args: Value, ctx: ToolContext, id: String) -> AppToolFuture<'a> {
         Box::pin(async move {
             let args: WebSearchArgs = serde_json::from_value(args)?;
-            if !self.backup_available() {
+            if !self.client_available() {
                 return Err(ToolError::Message(
-                    "client web search backup is disabled; hosted search should handle web_search when the chat provider supports it".into(),
+                    "web search is disabled or the selected backend is unavailable".into(),
                 ));
             }
             let queries = collect_values(args.query, args.queries, "query", "queries")?;
             let num_results = args.num_results.unwrap_or(5).clamp(1, 20);
-            let provider = args.provider.unwrap_or(self.config.provider);
+            let backend = self.config.backend();
             let workflow = args.workflow.unwrap_or_else(|| "summary-review".into());
             let include_content = args.include_content.unwrap_or(false);
             let response_id = storage::new_response_id();
@@ -125,7 +113,6 @@ impl Tool for WebSearch {
                     &self.client,
                     &query,
                     num_results,
-                    provider,
                     args.recency_filter.as_deref(),
                     args.domain_filter.as_deref(),
                     &self.config,
@@ -151,21 +138,22 @@ impl Tool for WebSearch {
                                 query: Some(query.clone()),
                                 title: item.title,
                                 content,
-                                metadata: json!({"provider": provider, "workflow": workflow, "contentKind": content_kind}),
+                                metadata: json!({"backend": backend, "workflow": workflow, "contentKind": content_kind}),
                             });
                         }
                     }
-                    Ok(_) | Err(_) => {
+                    Err(error) => return Err(error),
+                    Ok(_) => {
                         let message = format!(
-                            "No configured search provider returned live results for '{query}'. Set a provider API key or use fetch_content on known URLs."
+                            "The selected search backend returned no results for '{query}'."
                         );
                         summaries.push(message.clone());
                         items.push(StoredItem {
                             url: None,
                             query: Some(query),
-                            title: Some("search unavailable".into()),
+                            title: Some("no search results".into()),
                             content: message,
-                            metadata: json!({"provider": provider, "workflow": workflow, "status": "unavailable", "contentKind": "provider_unavailable"}),
+                            metadata: json!({"backend": backend, "workflow": workflow, "status": "empty", "contentKind": "snippet"}),
                         });
                     }
                 }

@@ -2,9 +2,6 @@ use super::{provider_picker, App, Entry, PickerBadge, PickerBadgeTone, PickerIte
 use {
     crate::config::{Config, EditTool},
     crate::permission::PermissionMode,
-    rho_providers::credentials::{
-        load_web_search_api_key, CredentialResult, CredentialStore, WebSearchCredential,
-    },
 };
 pub(super) const MODELS_CATEGORY_VALUE: &str = "config_category:models";
 pub(super) const APPEARANCE_CATEGORY_VALUE: &str = "config_category:appearance";
@@ -46,11 +43,6 @@ pub(super) const INLINE_SHELL_VALUE: &str = "inline_shell";
 pub(super) const INLINE_SHELL_PREFIX: &str = "inline_shell:";
 pub(super) const EDIT_TOOL_VALUE: &str = "edit_tool";
 pub(super) const EDIT_TOOL_PREFIX: &str = "edit_tool:";
-pub(super) const WEB_SEARCH_HOSTED_VALUE: &str = "web_search_hosted";
-pub(super) const WEB_SEARCH_PROVIDER_VALUE: &str = "web_search_provider";
-pub(super) const WEB_SEARCH_OPENAI_KEY_VALUE: &str = "web_search_openai_api_key";
-pub(super) const WEB_SEARCH_EXA_KEY_VALUE: &str = "web_search_exa_api_key";
-pub(super) const WEB_SEARCH_BRAVE_KEY_VALUE: &str = "web_search_brave_api_key";
 pub(super) const XAI_IMAGE_GENERATION_VALUE: &str = "xai_image_generation";
 
 fn xai_image_generation_visible(provider: &str) -> bool {
@@ -221,7 +213,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Tools",
-                "Inline shell, edit tool, and web search (hosted + backup).",
+                "Inline shell, edit tool, and web search.",
                 Some(tools_summary(info, config)),
                 TOOLS_CATEGORY_VALUE,
             ),
@@ -241,7 +233,7 @@ fn tools_summary(info: &super::RuntimeModelView, config: &Config) -> String {
         "{} shell · {} · {}",
         config.inline_shell,
         config.edit_tool_display_label_for_provider(&info.provider),
-        web_search_summary(config)
+        web_search_summary(info, config)
     );
     if xai_image_generation_visible(&info.provider) {
         format!(
@@ -455,8 +447,8 @@ pub(super) fn category_picker(
                 ),
                 item(
                     "Web search",
-                    "Hosted search when supported; backup client backend and API keys.",
-                    Some(web_search_summary(config)),
+                    "Mode, selected backend, endpoints, and API keys. Opening a backend page does not select it.",
+                    Some(web_search_summary(info, config)),
                     WEB_SEARCH_VALUE,
                 ),
             ];
@@ -652,146 +644,12 @@ pub(super) fn edit_tool_picker(selected: EditTool) -> UiPicker {
     )
 }
 
-pub(super) fn web_search_config_picker(
-    config: &Config,
-    credential_store: &dyn CredentialStore,
-) -> UiPicker {
-    UiPicker::config(
-        "Web search config",
-        vec![
-            PickerItem {
-                section: None,
-                label: "Hosted search".into(),
-                detail: Some(
-                    "Use the chat provider's native web_search when supported. Space or Enter toggles."
-                        .into(),
-                ),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: on_off(config.web_search_hosted),
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: WEB_SEARCH_HOSTED_VALUE.into(),
-                selection_verb: None,
-                allow_filter_completion: true,
-            },
-            PickerItem {
-                section: None,
-                label: "Backup provider".into(),
-                detail: Some(format!(
-                    "Client web_search backend when hosted search is off or unsupported. Current: {}; Enter cycles to {}.",
-                    config.web_search_provider,
-                    config.web_search_provider.next_configurable()
-                )),
-                preview: None,
-                badge: Some(PickerBadge {
-                    text: config.web_search_provider.to_string(),
-                    tone: PickerBadgeTone::Selected,
-                }),
-                value: WEB_SEARCH_PROVIDER_VALUE.into(),
-                selection_verb: None,
-                allow_filter_completion: true,
-            },
-            PickerItem {
-                section: None,
-                label: "OpenAI API key".into(),
-                detail: Some("Optional key for the OpenAI backup search backend.".into()),
-                preview: None,
-                badge: Some(credential_badge(
-                    config,
-                    credential_store,
-                    WebSearchCredential::OpenAi,
-                )),
-                value: WEB_SEARCH_OPENAI_KEY_VALUE.into(),
-                selection_verb: None,
-                allow_filter_completion: true,
-            },
-            PickerItem {
-                section: None,
-                label: "Exa API key".into(),
-                detail: Some("Optional Exa API key. Without one, Exa hosted MCP is used.".into()),
-                preview: None,
-                badge: Some(credential_badge(
-                    config,
-                    credential_store,
-                    WebSearchCredential::Exa,
-                )),
-                value: WEB_SEARCH_EXA_KEY_VALUE.into(),
-                selection_verb: None,
-                allow_filter_completion: true,
-            },
-            PickerItem {
-                section: None,
-                label: "Brave API key".into(),
-                detail: Some("Optional Brave Search API key used by the brave backup backend.".into()),
-                preview: None,
-                badge: Some(credential_badge(
-                    config,
-                    credential_store,
-                    WebSearchCredential::Brave,
-                )),
-                value: WEB_SEARCH_BRAVE_KEY_VALUE.into(),
-                selection_verb: None,
-                allow_filter_completion: true,
-            },
-        ],
-    )
+pub(super) fn web_search_config_picker(config: &Config, provider: &str, model: &str) -> UiPicker {
+    super::web_search_config::main_picker(config, provider, model)
 }
 
-fn web_search_summary(config: &Config) -> String {
-    if !crate::tools::web::web_search_available(config) {
-        return if config.web_search_hosted
-            && !crate::tools::web::supports_hosted_web_search(&config.provider, &config.model)
-        {
-            format!(
-                "unavailable (hosted unsupported, backup {})",
-                config.web_search_provider
-            )
-        } else {
-            format!(
-                "unavailable (hosted off, backup {})",
-                config.web_search_provider
-            )
-        };
-    }
-    let hosted = if crate::tools::web::hosted_web_search_active(config) {
-        "hosted active"
-    } else if config.web_search_hosted {
-        "hosted unsupported"
-    } else {
-        "hosted off"
-    };
-    format!("{hosted}, backup {}", config.web_search_provider)
-}
-
-fn credential_badge(
-    config: &Config,
-    credential_store: &dyn CredentialStore,
-    credential: WebSearchCredential,
-) -> PickerBadge {
-    let configured = web_search_api_key_is_set(
-        load_web_search_api_key(credential_store, credential),
-        config.legacy_web_search_api_key(credential),
-    );
-    PickerBadge {
-        text: if configured {
-            "set".into()
-        } else {
-            "unset".into()
-        },
-        tone: PickerBadgeTone::Selected,
-    }
-}
-
-fn web_search_api_key_is_set(
-    stored: CredentialResult<Option<String>>,
-    legacy: Option<&str>,
-) -> bool {
-    let stored = stored.ok().flatten();
-    stored
-        .as_deref()
-        .or(legacy)
-        .is_some_and(|value| !value.trim().is_empty())
+fn web_search_summary(info: &super::RuntimeModelView, config: &Config) -> String {
+    super::web_search_config::summary(config, &info.provider, &info.model)
 }
 
 impl App {

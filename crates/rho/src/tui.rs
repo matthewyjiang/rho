@@ -62,6 +62,7 @@ mod line_editor;
 mod subagent_inbox;
 mod subagent_questionnaires;
 mod text_input;
+mod web_search_config;
 
 fn plural_suffix(count: usize) -> &'static str {
     if count == 1 {
@@ -219,7 +220,7 @@ use chat_media::{
 use clipboard::Clipboard;
 use config_editor::{
     config_number_input_lines, resolve_web_search_editor_value, ConfigNumberInput, ConfigNumberKey,
-    ConfigTextKey, ConfigToggle,
+    ConfigToggle,
 };
 use copy_interaction::CodeBlockCopyTarget;
 use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
@@ -541,6 +542,9 @@ struct App {
         limits_command::LiveUsage,
     >,
     pending_changelog: Option<tokio::task::JoinHandle<changelog_command::ChangelogFetchResult>>,
+    web_search_reload_pending: bool,
+    pending_web_search_test:
+        Option<tokio::task::JoinHandle<Result<usize, rho_tools::tool::ToolError>>>,
     /// Built on first `/limits` use; constructing a client loads TLS roots,
     /// which startup should not pay for a feature that may never run.
     usage_limits_client: std::sync::OnceLock<reqwest::Client>,

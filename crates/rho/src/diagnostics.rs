@@ -69,8 +69,8 @@ pub struct SanitizedConfig {
     pub auto_compact: bool,
     pub compact_threshold_percent: u8,
     pub compact_target_percent: u8,
-    pub web_search_hosted: bool,
-    pub web_search_provider: String,
+    pub web_search_mode: String,
+    pub web_search_backend: String,
     pub xai_image_generation: bool,
     pub edit_tool: String,
     pub check_for_updates: bool,
@@ -89,8 +89,8 @@ impl From<&Config> for SanitizedConfig {
             auto_compact: config.auto_compact,
             compact_threshold_percent: config.compact_threshold_percent,
             compact_target_percent: config.compact_target_percent,
-            web_search_hosted: config.web_search_hosted,
-            web_search_provider: config.web_search_provider.as_str().into(),
+            web_search_mode: config.web_search.mode.as_str().into(),
+            web_search_backend: config.web_search.backend.as_str().into(),
             xai_image_generation: config.xai_image_generation,
             edit_tool: config.edit_tool.as_str().into(),
             check_for_updates: config.check_for_updates,
@@ -157,6 +157,12 @@ impl RuntimeDiagnostics {
 
     pub fn record_context(&self, context: ContextUsage) {
         self.write().context = Some(context);
+    }
+
+    pub(crate) fn update_web_search(&self, settings: &crate::config::WebSearchSettings) {
+        let mut state = self.write();
+        state.config.web_search_mode = settings.mode.as_str().into();
+        state.config.web_search_backend = settings.backend.as_str().into();
     }
 
     pub fn update_compaction_config(&self, config: &CompactionConfig) {

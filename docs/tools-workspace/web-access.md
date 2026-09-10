@@ -35,10 +35,12 @@ flowchart TD
 
 ### `web_search`
 
-- Prefers [provider-hosted search](/configuration#web-search) when the active
-  chat path supports it and hosted search is on.
-- Otherwise uses the configured client backup (`auto`, `openai`, `exa`,
-  `brave`, or `disabled`).
+- Follows the user's [search mode](/configuration#web-search): `auto` prefers
+  native search when the active chat path supports it; `backend` always uses
+  the selected backend; `off` disables web search.
+- Uses one configured backend (`openai`, `exa`, `brave`, or `firecrawl`) when
+  native search is not selected. A failed request does not switch services.
+- Backend selection belongs to configuration, not model-supplied tool arguments.
 - Stores snippets by default under the returned `responseId`.
 - Stores full source pages only when `includeContent` succeeds and the provider
   returned fetchable URLs.
@@ -131,6 +133,6 @@ These are not web-access tools, but older notes mixed them into this page:
 
 - [Documents and images](/tools-workspace/documents-and-images) - PDF and Office
   extraction used by `fetch_content`
-- [Web search config](/configuration#web-search) - hosted vs backup backends
+- [Web search config](/configuration#web-search) - modes, backends, and endpoints
 - [Tool output limit](/configuration#tool-output-limit) - inline size before
   collapse or `responseId` handoff

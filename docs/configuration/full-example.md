@@ -54,8 +54,24 @@ compact_target_percent = 50
 # reasoning = "low"
 
 [web_search]
-hosted = true # provider-hosted search when the chat path supports it
-provider = "auto" # backup only: auto, openai, exa, brave, or disabled
+mode = "auto" # auto, backend, or off
+backend = "openai" # openai, exa, brave, or firecrawl
+
+[web_search.openai]
+connection = "api" # api or codex (fixed ChatGPT endpoint)
+# api_base_url = "https://api.openai.com/v1"
+
+[web_search.exa]
+connection = "api" # api or mcp; missing API credentials do not switch transports
+# api_base_url = "https://api.exa.ai"
+# mcp_url = "https://mcp.exa.ai/mcp"
+
+[web_search.brave]
+# api_base_url = "https://api.search.brave.com"
+
+[web_search.firecrawl]
+# api_base_url = "http://localhost:3002" # omit for Firecrawl Cloud
+# Configure keys through /config or environment, not this file.
 
 # MCP stays inert while this table has no enabled server entries.
 # See /integrations/mcp for stdio and Streamable HTTP examples.

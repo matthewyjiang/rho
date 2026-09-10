@@ -185,6 +185,7 @@ pub struct AppToolSet {
     workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
     checkpoint_tracker: Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker>,
     web_access: super::web::WebAccessStore,
+    web_search_capable: bool,
     mcp_report: super::mcp::McpSessionReport,
     mcp_catalog: super::mcp::McpCatalog,
     file_view: rho_tools::FileViewPolicy,
@@ -204,6 +205,7 @@ impl AppToolSet {
                 crate::session::workspace_checkpoint::WorkspaceCheckpointTracker::new(false),
             ),
             web_access: super::web::WebAccessStore::new(),
+            web_search_capable: false,
             mcp_report: super::mcp::McpSessionReport::default(),
             mcp_catalog: super::mcp::McpCatalog::default(),
             file_view: rho_tools::FileViewPolicy::default(),
@@ -286,6 +288,7 @@ impl AppToolSet {
                 tool_set.add_bundle(bundle);
             }
         }
+        tool_set.web_search_capable = capabilities.contains(&ToolCapability::WebSearch);
         let web_access = tool_set.web_access.clone();
         tool_set.add_bundle(super::web::sdk_bundle(
             config,
@@ -473,6 +476,28 @@ impl AppToolSet {
         &self,
     ) -> &Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker> {
         &self.checkpoint_tracker
+    }
+
+    /// Replace only search, retaining content storage and all other live tools.
+    pub(crate) fn replace_web_search(&mut self, config: &Config) -> Option<Arc<dyn Tool>> {
+        let previous = self
+            .tools
+            .iter()
+            .position(|tool| tool.spec().name == super::web::WEB_SEARCH_TOOL_NAME)
+            .map(|index| self.tools.remove(index));
+        if self.web_search_capable && super::web::web_search_available(config) {
+            self.tools.push(Arc::new(super::web::SdkWebSearch::new(
+                super::web::access_tools_with_store(config, self.web_access.clone()),
+                config.max_output_bytes,
+            )));
+        }
+        previous
+    }
+
+    pub(crate) fn restore_web_search(&mut self, previous: Option<Arc<dyn Tool>>) {
+        self.tools
+            .retain(|tool| tool.spec().name != super::web::WEB_SEARCH_TOOL_NAME);
+        self.tools.extend(previous);
     }
 
     pub fn web_access(&self) -> &super::web::WebAccessStore {

@@ -150,6 +150,10 @@ impl SubagentManager {
             .update_selection(provider, model, reasoning, auth);
     }
 
+    pub(crate) fn update_web_search(&self, settings: &crate::config::WebSearchSettings) {
+        self.executor.update_web_search(settings);
+    }
+
     /// Updates the policy snapshot used by future launches. Already-spawned
     /// agents retain the mode captured when they were launched.
     pub(crate) fn update_permission_mode(&self, mode: crate::permission::PermissionMode) {

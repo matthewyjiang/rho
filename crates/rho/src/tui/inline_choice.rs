@@ -110,6 +110,7 @@ pub(super) enum InlineChoicePending {
         new_limit: usize,
     },
     ClearPromptHistory,
+    TestWebSearch,
 }
 
 impl InlineChoiceModal {

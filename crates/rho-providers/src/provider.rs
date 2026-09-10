@@ -762,6 +762,12 @@ pub(crate) fn credential_env_vars_from(
         .filter_map(|mode| mode.auth_kind.env_var())
         .map(str::to_owned)
         .collect();
+    vars.extend(
+        crate::credentials::WebSearchCredential::ALL
+            .iter()
+            .flat_map(|credential| credential.env_vars().iter().copied())
+            .map(str::to_owned),
+    );
     vars.extend(env.into_iter().filter_map(|name| {
         let name = name.as_ref();
         custom_openai_compatible::is_provider_api_key_env_var(name).then(|| name.to_owned())

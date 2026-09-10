@@ -1,4 +1,7 @@
-use super::{Config, EffectiveModelSource, LegacyWebSearchCredentials};
+use super::{
+    Config, EffectiveModelSource, LegacyWebSearchCredentials, SearchBackend, WebSearchMode,
+    WebSearchSettings,
+};
 
 #[test]
 fn unknown_permission_mode_is_a_config_error() {
@@ -136,13 +139,102 @@ fn loads_and_normalizes_compaction_percentages() {
 }
 
 #[test]
-fn unsupported_web_search_config_providers_fall_back_to_auto() {
-    for provider in ["parallel", "tavily", "perplexity", "gemini", "unknown"] {
+fn grouped_web_search_load_table() {
+    let cases = [
+        (
+            r#"
+[web_search]
+hosted = false
+provider = "brave"
+"#,
+            WebSearchMode::Backend,
+            SearchBackend::Brave,
+        ),
+        (
+            r#"
+[web_search]
+provider = "exa"
+"#,
+            WebSearchMode::Auto,
+            SearchBackend::Exa,
+        ),
+        (
+            r#"
+[web_search]
+hosted = false
+provider = "disabled"
+"#,
+            WebSearchMode::Off,
+            SearchBackend::OpenAi,
+        ),
+        (
+            r#"
+[web_search]
+mode = "backend"
+backend = "firecrawl"
+"#,
+            WebSearchMode::Backend,
+            SearchBackend::Firecrawl,
+        ),
+    ];
+
+    for (toml, mode, backend) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, toml).unwrap();
+        let config = Config::load(Some(path)).unwrap();
         assert_eq!(
-            super::SearchProvider::parse_config_value(provider),
-            (super::SearchProvider::Auto, true)
+            (config.web_search.mode, config.web_search.backend),
+            (mode, backend),
+            "{toml}"
         );
     }
+}
+
+#[test]
+fn grouped_web_search_native_only_legacy_is_a_load_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[web_search]
+hosted = true
+provider = "disabled"
+"#,
+    )
+    .unwrap();
+
+    assert!(Config::load(Some(path)).is_err());
+}
+
+#[test]
+fn web_search_round_trips_mode_backend_endpoints_and_connections() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let mut config = Config {
+        rtk: false,
+        web_search: WebSearchSettings {
+            mode: WebSearchMode::Backend,
+            backend: SearchBackend::Exa,
+            ..WebSearchSettings::default()
+        },
+        ..Config::default()
+    };
+    config.web_search.exa.connection = super::ExaSearchConnection::Mcp;
+    config.web_search.exa.api_base_url = Some("https://exa.example/v1".into());
+    config.web_search.exa.mcp_url = Some("https://mcp.exa.example/mcp".into());
+    config.web_search.openai.connection = super::OpenAiSearchConnection::Codex;
+    config.web_search.firecrawl.api_base_url = Some("http://127.0.0.1:3002/firecrawl".into());
+
+    config
+        .save_with_store(
+            path.clone(),
+            &rho_providers::credentials::MemoryCredentialStore::default(),
+        )
+        .unwrap();
+    let loaded = Config::load(Some(path)).unwrap();
+    assert_eq!(loaded.web_search, config.web_search);
 }
 
 // Covers: display.cache_miss_notices loads from grouped config and defaults off.
@@ -164,45 +256,6 @@ cache_miss_notices = true
 
     assert!(config.cache_miss_notices);
     assert!(!Config::default().cache_miss_notices);
-}
-
-#[test]
-fn grouped_web_search_loads_hosted_flag() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-[web_search]
-hosted = false
-provider = "brave"
-"#,
-    )
-    .unwrap();
-
-    let config = Config::load(Some(path)).unwrap();
-
-    assert!(!config.web_search_hosted);
-    assert_eq!(config.web_search_provider, super::SearchProvider::Brave);
-}
-
-#[test]
-fn grouped_web_search_defaults_hosted_on_when_omitted() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-[web_search]
-provider = "exa"
-"#,
-    )
-    .unwrap();
-
-    let config = Config::load(Some(path)).unwrap();
-
-    assert!(config.web_search_hosted);
-    assert_eq!(config.web_search_provider, super::SearchProvider::Exa);
 }
 
 // Covers: omitted [xai] stays on; explicit image_generation = false disables it.
@@ -251,7 +304,7 @@ brave_api_key = "grouped-brave"
 
     let config = Config::load_with_store(path, &store).unwrap();
 
-    assert_eq!(config.web_search_provider, super::SearchProvider::Brave);
+    assert_eq!(config.web_search.backend, SearchBackend::Brave);
     for (credential, expected) in [
         (
             rho_providers::credentials::WebSearchCredential::OpenAi,

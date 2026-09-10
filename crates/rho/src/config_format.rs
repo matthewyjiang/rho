@@ -9,8 +9,9 @@ use {
 };
 
 use super::{
-    provider_config::PersistedProviderConfigs, Config, EditTool, InternalAgentModelConfig,
-    InternalAgentTarget, SearchProvider,
+    provider_config::PersistedProviderConfigs, Config, EditTool, ExaSearchConnection,
+    InternalAgentModelConfig, InternalAgentTarget, OpenAiSearchConnection, SearchBackend,
+    WebSearchMode,
 };
 
 pub(super) fn write_config(path: &Path, config: &Config) -> anyhow::Result<()> {
@@ -155,14 +156,58 @@ fn xai_config_is_default(config: &XaiConfig) -> bool {
 
 #[derive(Serialize)]
 struct WebSearchConfig<'a> {
-    hosted: bool,
-    provider: SearchProvider,
+    mode: WebSearchMode,
+    backend: SearchBackend,
+    #[serde(skip_serializing_if = "openai_search_is_default")]
+    openai: OpenAiSearchConfig<'a>,
+    #[serde(skip_serializing_if = "exa_search_is_default")]
+    exa: ExaSearchConfig<'a>,
+    #[serde(skip_serializing_if = "endpoint_is_default")]
+    brave: EndpointConfig<'a>,
+    #[serde(skip_serializing_if = "endpoint_is_default")]
+    firecrawl: EndpointConfig<'a>,
     #[serde(skip_serializing_if = "Option::is_none")]
     openai_api_key: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     exa_api_key: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     brave_api_key: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct OpenAiSearchConfig<'a> {
+    connection: OpenAiSearchConnection,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_base_url: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct ExaSearchConfig<'a> {
+    connection: ExaSearchConnection,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_base_url: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mcp_url: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct EndpointConfig<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_base_url: Option<&'a str>,
+}
+
+fn openai_search_is_default(config: &OpenAiSearchConfig<'_>) -> bool {
+    config.connection == OpenAiSearchConnection::Api && config.api_base_url.is_none()
+}
+
+fn exa_search_is_default(config: &ExaSearchConfig<'_>) -> bool {
+    config.connection == ExaSearchConnection::Api
+        && config.api_base_url.is_none()
+        && config.mcp_url.is_none()
+}
+
+fn endpoint_is_default(config: &EndpointConfig<'_>) -> bool {
+    config.api_base_url.is_none()
 }
 
 #[derive(Serialize)]
@@ -220,8 +265,23 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
                 compact_target_percent: config.compact_target_percent,
             },
             web_search: WebSearchConfig {
-                hosted: config.web_search_hosted,
-                provider: config.web_search_provider,
+                mode: config.web_search.mode,
+                backend: config.web_search.backend,
+                openai: OpenAiSearchConfig {
+                    connection: config.web_search.openai.connection,
+                    api_base_url: config.web_search.openai.api_base_url.as_deref(),
+                },
+                exa: ExaSearchConfig {
+                    connection: config.web_search.exa.connection,
+                    api_base_url: config.web_search.exa.api_base_url.as_deref(),
+                    mcp_url: config.web_search.exa.mcp_url.as_deref(),
+                },
+                brave: EndpointConfig {
+                    api_base_url: config.web_search.brave.api_base_url.as_deref(),
+                },
+                firecrawl: EndpointConfig {
+                    api_base_url: config.web_search.firecrawl.api_base_url.as_deref(),
+                },
                 openai_api_key: config.legacy_web_search_credentials.openai.as_deref(),
                 exa_api_key: config.legacy_web_search_credentials.exa.as_deref(),
                 brave_api_key: config.legacy_web_search_credentials.brave.as_deref(),

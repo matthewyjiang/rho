@@ -297,37 +297,20 @@ fn frozen_claude_cli_bypass_ceiling_narrows_to_current_auto() {
     }
 }
 
+// Covers: bind keeps the host web_search ceiling; registration, not bind, gates
+// current readiness so interactive rebind can enable search later.
+// Owner: delegated agent binding
 #[test]
-fn bind_drops_web_search_when_bound_path_cannot_search() {
-    let host = Config {
+fn bind_keeps_web_search_ceiling_when_search_is_currently_off() {
+    let mut host = Config {
         provider: "openai".into(),
         model: "gpt-5.5".into(),
-        web_search_hosted: true,
-        web_search_provider: crate::config::SearchProvider::Disabled,
         ..Config::default()
     };
+    host.web_search.mode = crate::config::WebSearchMode::Off;
     let available = capability_set(&["read_file", "web_search"]);
-
-    let openai = AgentBinder::bind(
+    let bound = AgentBinder::bind(
         definition(ToolPolicy::All),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: available.clone(),
-        },
-        &host,
-    )
-    .unwrap();
-    assert!(openai
-        .rho_capabilities()
-        .unwrap()
-        .contains(&ToolCapability::WebSearch));
-
-    let anthropic = AgentBinder::bind(
-        definition_with_model(ModelPolicy::Select(ModelSelection {
-            provider: Some("anthropic".into()),
-            model: "claude-opus-4-8".into(),
-            auth: None,
-        })),
         AgentInvocation {
             role: AgentRole::Delegated,
             available_tools: available,
@@ -335,7 +318,7 @@ fn bind_drops_web_search_when_bound_path_cannot_search() {
         &host,
     )
     .unwrap();
-    assert!(!anthropic
+    assert!(bound
         .rho_capabilities()
         .unwrap()
         .contains(&ToolCapability::WebSearch));

@@ -2,7 +2,7 @@ use ratatui::text::Line;
 
 use {
     crate::app::config_repository::ConfigRepository,
-    rho_providers::credentials::{CredentialError, CredentialResult, WebSearchCredential},
+    rho_providers::credentials::{CredentialError, CredentialResult},
 };
 
 use super::{
@@ -30,13 +30,6 @@ pub(super) enum ConfigNumberKey {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ConfigTextKey {
-    OpenAiSearch,
-    Exa,
-    Brave,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ConfigToggle {
     CheckForUpdates,
     EnableSubagents,
@@ -44,7 +37,6 @@ pub(super) enum ConfigToggle {
     CacheMissNotices,
     ShowReasoningOutput,
     ZenMode,
-    WebSearchHosted,
     XaiImageGeneration,
 }
 
@@ -88,23 +80,10 @@ pub(super) fn toggle(
             config.zen_mode = !config.zen_mode;
             config.zen_mode
         }
-        ConfigToggle::WebSearchHosted => {
-            config.web_search_hosted = !config.web_search_hosted;
-            config.web_search_hosted
-        }
         ConfigToggle::XaiImageGeneration => {
             config.xai_image_generation = !config.xai_image_generation;
             config.xai_image_generation
         }
-    })
-}
-
-pub(super) fn cycle_web_search_provider(
-    config_repository: &ConfigRepository,
-) -> anyhow::Result<String> {
-    config_repository.update(|config| {
-        config.web_search_provider = config.web_search_provider.next_configurable();
-        config.web_search_provider.to_string()
     })
 }
 
@@ -221,32 +200,6 @@ impl ConfigNumberKey {
             ConfigNumberKey::PromptHistoryLimit => Some(crate::config::MAX_PROMPT_HISTORY_LIMIT),
             ConfigNumberKey::AgentConcurrency => Some(crate::config::MAX_AGENT_CONCURRENCY),
             _ => None,
-        }
-    }
-}
-
-impl ConfigTextKey {
-    pub(super) fn label(self) -> &'static str {
-        match self {
-            ConfigTextKey::OpenAiSearch => "OpenAI web search API key",
-            ConfigTextKey::Exa => "Exa API key",
-            ConfigTextKey::Brave => "Brave Search API key",
-        }
-    }
-
-    pub(super) fn picker_value(self) -> &'static str {
-        match self {
-            ConfigTextKey::OpenAiSearch => config_picker::WEB_SEARCH_OPENAI_KEY_VALUE,
-            ConfigTextKey::Exa => config_picker::WEB_SEARCH_EXA_KEY_VALUE,
-            ConfigTextKey::Brave => config_picker::WEB_SEARCH_BRAVE_KEY_VALUE,
-        }
-    }
-
-    pub(super) fn web_search_credential(self) -> WebSearchCredential {
-        match self {
-            ConfigTextKey::OpenAiSearch => WebSearchCredential::OpenAi,
-            ConfigTextKey::Exa => WebSearchCredential::Exa,
-            ConfigTextKey::Brave => WebSearchCredential::Brave,
         }
     }
 }
