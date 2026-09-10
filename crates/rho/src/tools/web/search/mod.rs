@@ -6,8 +6,7 @@ pub(super) mod openai;
 use {
     crate::{
         config::{
-            firecrawl_uses_cloud_default, Config, ExaSearchConnection, OpenAiSearchConnection,
-            SearchBackend, WebSearchSettings,
+            Config, ExaSearchConnection, OpenAiSearchConnection, SearchBackend, WebSearchSettings,
         },
         credential_store::AppCredentialStore,
     },
@@ -68,6 +67,10 @@ impl SearchBackendConfig {
             .map(|url| url.to_string())
             .map_err(|error| ToolError::Message(error.to_string()))
     }
+
+    pub(super) fn is_ready(&self) -> bool {
+        self.ready.is_ok()
+    }
 }
 
 fn resolve_ready_backend(config: &Config) -> Result<ReadyBackend, String> {
@@ -84,12 +87,17 @@ fn resolve_ready_backend(config: &Config) -> Result<ReadyBackend, String> {
             ExaSearchConnection::Mcp => Ok(ReadyBackend::ExaMcp),
         },
         SearchBackend::Brave => Ok(ReadyBackend::Brave {
-            key: require_key(load_brave_key(config), "BRAVE_SEARCH_API_KEY")?,
+            key: require_key(
+                load_search_key(config, WebSearchCredential::Brave),
+                "BRAVE_SEARCH_API_KEY",
+            )?,
         }),
         SearchBackend::Firecrawl => {
             let key = load_search_key(config, WebSearchCredential::Firecrawl);
             if key.is_none()
-                && firecrawl_uses_cloud_default(settings.firecrawl.api_base_url.as_deref())
+                && settings
+                    .destination(SearchBackend::Firecrawl)
+                    .is_default_origin()
             {
                 return Err("FIRECRAWL_API_KEY is not set".into());
             }
@@ -147,11 +155,6 @@ fn load_openai_api_key(config: &Config) -> Option<String> {
         })
 }
 
-fn load_brave_key(config: &Config) -> Option<String> {
-    env_search_key(WebSearchCredential::Brave)
-        .or_else(|| stored_or_legacy(config, WebSearchCredential::Brave))
-}
-
 fn stored_or_legacy(config: &Config, credential: WebSearchCredential) -> Option<String> {
     load_web_search_api_key(&AppCredentialStore, credential)
         .ok()
@@ -186,14 +189,6 @@ fn resolve_codex_tokens() -> (Option<CodexTokens>, CodexAuthSource) {
         }
         _ => (None, CodexAuthSource::Store),
     }
-}
-
-pub(super) fn backend_available(config: &SearchBackendConfig) -> bool {
-    config.ready.is_ok()
-}
-
-pub(crate) fn client_backend_ready(config: &Config) -> bool {
-    resolve_ready_backend(config).is_ok()
 }
 
 pub(super) async fn run_search_query(

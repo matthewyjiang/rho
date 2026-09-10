@@ -2,15 +2,17 @@
 //!
 //! Generic picker rendering stays in the shared picker. This module owns the
 //! Mode / backend / endpoint rows and must not treat configuring a backend as
-//! selecting it.
+//! selecting it. Mode, backend, and connection rows open choice pickers.
+//! OpenAI and Exa pages always show both connection settings.
 
 use rho_providers::credentials::{
     load_web_search_api_key, CredentialResult, CredentialStore, WebSearchCredential,
 };
 
 use crate::config::{
-    parse_search_endpoint_url, web_search_route, Config, OpenAiSearchConnection, SearchBackend,
-    WebSearchRoute, WebSearchSettings, OPENAI_CODEX_RESPONSES_URL,
+    parse_search_endpoint_url, web_search_route, Config, ExaSearchConnection,
+    OpenAiSearchConnection, SearchBackend, WebSearchMode, WebSearchRoute, WebSearchSettings,
+    OPENAI_CODEX_RESPONSES_URL,
 };
 
 use super::{
@@ -20,18 +22,21 @@ use super::{
     InlineChoicePending,
 };
 
-pub(super) const WEB_SEARCH_CODEX_ENDPOINT_VALUE: &str = "web_search_openai_codex_endpoint";
-
 pub(super) const WEB_SEARCH_MODE_VALUE: &str = "web_search_mode";
+pub(super) const WEB_SEARCH_MODE_PREFIX: &str = "web_search_mode:";
 pub(super) const WEB_SEARCH_BACKEND_VALUE: &str = "web_search_backend";
+pub(super) const WEB_SEARCH_BACKEND_PREFIX: &str = "web_search_backend:";
 pub(super) const WEB_SEARCH_ROUTE_VALUE: &str = "web_search_route";
 pub(super) const WEB_SEARCH_TEST_VALUE: &str = "web_search_test";
 pub(super) const WEB_SEARCH_OPENAI_PAGE_VALUE: &str = "web_search_openai";
 pub(super) const WEB_SEARCH_EXA_PAGE_VALUE: &str = "web_search_exa";
 pub(super) const WEB_SEARCH_BRAVE_PAGE_VALUE: &str = "web_search_brave";
 pub(super) const WEB_SEARCH_FIRECRAWL_PAGE_VALUE: &str = "web_search_firecrawl";
+pub(super) const WEB_SEARCH_CODEX_ENDPOINT_VALUE: &str = "web_search_openai_codex_endpoint";
 pub(super) const WEB_SEARCH_OPENAI_CONNECTION_VALUE: &str = "web_search_openai_connection";
+pub(super) const WEB_SEARCH_OPENAI_CONNECTION_PREFIX: &str = "web_search_openai_connection:";
 pub(super) const WEB_SEARCH_EXA_CONNECTION_VALUE: &str = "web_search_exa_connection";
+pub(super) const WEB_SEARCH_EXA_CONNECTION_PREFIX: &str = "web_search_exa_connection:";
 pub(super) const WEB_SEARCH_OPENAI_KEY_VALUE: &str = "web_search_openai_api_key";
 pub(super) const WEB_SEARCH_EXA_KEY_VALUE: &str = "web_search_exa_api_key";
 pub(super) const WEB_SEARCH_BRAVE_KEY_VALUE: &str = "web_search_brave_api_key";
@@ -39,7 +44,7 @@ pub(super) const WEB_SEARCH_FIRECRAWL_KEY_VALUE: &str = "web_search_firecrawl_ap
 
 const TEST_CONFIRM_VALUE: &str = "confirm";
 
-pub(super) use fields::{WebSearchAction, WebSearchUrlField};
+pub(super) use fields::{WebSearchAction, WebSearchChoice, WebSearchChoiceKind, WebSearchUrlField};
 #[path = "web_search_config_fields.rs"]
 mod fields;
 
@@ -60,23 +65,16 @@ fn route_summary(route: WebSearchRoute, settings: &WebSearchSettings) -> String 
         WebSearchRoute::Native => "native selected for current model".into(),
         WebSearchRoute::Backend(backend) => {
             let destination = settings.destination(backend);
-            match destination.resolve_all() {
-                Ok(urls) => {
-                    let urls = urls
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(" or ");
-                    format!(
-                        "{} · {urls} · {}",
-                        destination.label(),
-                        if destination.configured().is_some() {
-                            "custom"
-                        } else {
-                            "default"
-                        }
-                    )
-                }
+            match destination.resolve_path("") {
+                Ok(url) => format!(
+                    "{} · {url} · {}",
+                    destination.label(),
+                    if destination.configured().is_some() {
+                        "custom"
+                    } else {
+                        "default"
+                    }
+                ),
                 Err(error) => format!("{}: {error}", destination.label()),
             }
         }
@@ -96,8 +94,18 @@ fn item(
     badge_text: Option<String>,
     value: &str,
 ) -> PickerItem {
+    sectioned_item(None, label, detail, badge_text, value)
+}
+
+fn sectioned_item(
+    section: Option<&str>,
+    label: &str,
+    detail: impl Into<String>,
+    badge_text: Option<String>,
+    value: &str,
+) -> PickerItem {
     PickerItem {
-        section: None,
+        section: section.map(str::to_string),
         label: label.into(),
         detail: Some(detail.into()),
         preview: None,
@@ -147,19 +155,13 @@ pub(super) fn main_picker(config: &Config, provider: &str, model: &str) -> UiPic
         vec![
             item(
                 "Mode",
-                format!(
-                    "Auto uses native search when the current model supports it, otherwise the selected backend. Backend always uses that backend. Off disables search. Enter cycles to {}.",
-                    settings.mode.next().label()
-                ),
+                "Auto uses native search when the current model supports it, otherwise the selected backend. Backend always uses that backend. Off disables search. Enter opens a picker.",
                 Some(settings.mode.label().into()),
                 WEB_SEARCH_MODE_VALUE,
             ),
             item(
                 "Search backend",
-                format!(
-                    "Client backend used when Mode is Backend, or when Mode is Auto and native search is not selected. Configuring a backend does not select it. Enter cycles to {}.",
-                    settings.backend.next().label()
-                ),
+                "Client backend used when Mode is Backend, or when Mode is Auto and native search is not selected. Configuring a backend does not select it. Enter opens a picker.",
                 Some(settings.backend.label().into()),
                 WEB_SEARCH_BACKEND_VALUE,
             ),
@@ -172,13 +174,13 @@ pub(super) fn main_picker(config: &Config, provider: &str, model: &str) -> UiPic
             item(
                 "OpenAI",
                 "API or Codex connection, endpoint, and API key. Opening this page does not select OpenAI.",
-                Some(openai_page_badge(settings)),
+                Some(settings.openai.connection.label().into()),
                 WEB_SEARCH_OPENAI_PAGE_VALUE,
             ),
             item(
                 "Exa",
                 "API or MCP connection, endpoints, and API key. Opening this page does not select Exa.",
-                Some(exa_page_badge(settings)),
+                Some(settings.exa.connection.label().into()),
                 WEB_SEARCH_EXA_PAGE_VALUE,
             ),
             item(
@@ -201,14 +203,6 @@ pub(super) fn main_picker(config: &Config, provider: &str, model: &str) -> UiPic
             ),
         ],
     )
-}
-
-fn openai_page_badge(settings: &WebSearchSettings) -> String {
-    settings.openai.connection.label().into()
-}
-
-fn exa_page_badge(settings: &WebSearchSettings) -> String {
-    settings.exa.connection.label().into()
 }
 
 pub(super) fn backend_picker(
@@ -244,41 +238,146 @@ fn backend_page_title(backend: SearchBackend) -> &'static str {
     }
 }
 
+fn choice_item(label: &str, detail: &str, value: String, selected: bool) -> PickerItem {
+    item(label, detail, selected.then(|| "selected".into()), &value)
+}
+
+fn with_current_selection(mut picker: UiPicker, value: &str) -> UiPicker {
+    if let Some(index) = picker.items.iter().position(|item| item.value == value) {
+        picker.selected = index;
+    }
+    picker
+}
+
+fn choice_picker<T: Copy + PartialEq>(
+    kind: WebSearchChoiceKind,
+    current: T,
+    options: impl IntoIterator<Item = T>,
+    label: impl Fn(T) -> &'static str,
+    detail: impl Fn(T) -> &'static str,
+    as_str: impl Fn(T) -> &'static str,
+) -> UiPicker {
+    let current_value = format!("{}{}", kind.prefix(), as_str(current));
+    with_current_selection(
+        UiPicker::config(
+            kind.title(),
+            options
+                .into_iter()
+                .map(|option| {
+                    choice_item(
+                        label(option),
+                        detail(option),
+                        format!("{}{}", kind.prefix(), as_str(option)),
+                        option == current,
+                    )
+                })
+                .collect(),
+        ),
+        &current_value,
+    )
+}
+
+fn picker_for_choice(kind: WebSearchChoiceKind, settings: &WebSearchSettings) -> UiPicker {
+    match kind {
+        WebSearchChoiceKind::Mode => choice_picker(
+            kind,
+            settings.mode,
+            WebSearchMode::ALL,
+            WebSearchMode::label,
+            |mode| {
+                match mode {
+                WebSearchMode::Auto => {
+                    "Native search when the current model supports it, otherwise the selected backend."
+                }
+                WebSearchMode::Backend => {
+                    "Always the selected backend, even when native search is supported."
+                }
+                WebSearchMode::Off => "Do not search.",
+            }
+            },
+            WebSearchMode::as_str,
+        ),
+        WebSearchChoiceKind::Backend => choice_picker(
+            kind,
+            settings.backend,
+            SearchBackend::ALL,
+            SearchBackend::label,
+            |backend| {
+                match backend {
+                SearchBackend::OpenAi => {
+                    "OpenAI API or Codex. Configuring OpenAI does not select it."
+                }
+                SearchBackend::Exa => "Exa API or Exa MCP. Configuring Exa does not select it.",
+                SearchBackend::Brave => {
+                    "Brave Search API. Configuring Brave does not select it."
+                }
+                SearchBackend::Firecrawl => {
+                    "Firecrawl Search API, including self-hosted deployments. Configuring Firecrawl does not select it."
+                }
+            }
+            },
+            SearchBackend::as_str,
+        ),
+        WebSearchChoiceKind::OpenAiConnection => choice_picker(
+            kind,
+            settings.openai.connection,
+            OpenAiSearchConnection::ALL,
+            OpenAiSearchConnection::label,
+            |connection| match connection {
+                OpenAiSearchConnection::Api => {
+                    "Uses the OpenAI API base URL and API key on this page."
+                }
+                OpenAiSearchConnection::Codex => {
+                    "Uses the Codex endpoint on this page and ChatGPT login."
+                }
+            },
+            OpenAiSearchConnection::as_str,
+        ),
+        WebSearchChoiceKind::ExaConnection => choice_picker(
+            kind,
+            settings.exa.connection,
+            ExaSearchConnection::ALL,
+            ExaSearchConnection::label,
+            |connection| match connection {
+                ExaSearchConnection::Api => "Uses the Exa API base URL and API key on this page.",
+                ExaSearchConnection::Mcp => {
+                    "Uses the Exa MCP URL on this page. A stored API key does not select MCP."
+                }
+            },
+            ExaSearchConnection::as_str,
+        ),
+    }
+}
+
 fn openai_items(config: &Config, credential_store: &dyn CredentialStore) -> Vec<PickerItem> {
     let settings = &config.web_search;
     let mut items = vec![item(
         "Connection",
-        format!(
-            "OpenAI API or Codex. Codex uses a fixed endpoint and does not take a custom URL. Enter cycles to {}.",
-            settings.openai.connection.next().label()
-        ),
+        "Chooses Codex or OpenAI API. Both stay on this page. Enter opens a picker.",
         Some(settings.openai.connection.label().into()),
         WEB_SEARCH_OPENAI_CONNECTION_VALUE,
     )];
-    match settings.openai.connection {
-        OpenAiSearchConnection::Api => {
-            items.extend(url_rows(
-                WebSearchUrlField::OpenAiApiBase,
-                "Origin and reverse-proxy prefix for OpenAI search. Empty uses the default.",
-                settings,
-            ));
-            items.push(api_key_item(
-                "OpenAI API key",
-                "API key for OpenAI search.",
-                WebSearchCredential::OpenAi,
-                config,
-                credential_store,
-            ));
-        }
-        OpenAiSearchConnection::Codex => {
-            items.push(item(
-                "Endpoint",
-                "Codex search uses this fixed endpoint. Custom URLs and OAuth host overrides are not used.",
-                Some(OPENAI_CODEX_RESPONSES_URL.into()),
-                WEB_SEARCH_CODEX_ENDPOINT_VALUE,
-            ));
-        }
-    }
+    items.push(sectioned_item(
+        Some("Codex"),
+        "Endpoint",
+        "Used when Connection is Codex. Fixed ChatGPT endpoint; custom URLs never receive Codex tokens.",
+        Some(OPENAI_CODEX_RESPONSES_URL.into()),
+        WEB_SEARCH_CODEX_ENDPOINT_VALUE,
+    ));
+    items.extend(url_rows(
+        WebSearchUrlField::OpenAiApiBase,
+        "Used when Connection is OpenAI API. Origin and reverse-proxy prefix. Empty uses the default.",
+        settings,
+        Some("OpenAI API"),
+    ));
+    items.push(api_key_item(
+        "OpenAI API key",
+        "Used when Connection is OpenAI API.",
+        WebSearchCredential::OpenAi,
+        config,
+        credential_store,
+        Some("OpenAI API"),
+    ));
     items
 }
 
@@ -286,29 +385,29 @@ fn exa_items(config: &Config, credential_store: &dyn CredentialStore) -> Vec<Pic
     let settings = &config.web_search;
     let mut items = vec![item(
         "Connection",
-        format!(
-            "Exa API or Exa MCP. A stored API key does not select MCP. Enter cycles to {}.",
-            settings.exa.connection.next().label()
-        ),
+        "Chooses Exa API or Exa MCP. Both stay on this page. Enter opens a picker.",
         Some(settings.exa.connection.label().into()),
         WEB_SEARCH_EXA_CONNECTION_VALUE,
     )];
     items.extend(url_rows(
         WebSearchUrlField::ExaApiBase,
-        "Origin and reverse-proxy prefix for Exa API search. Empty uses the default.",
+        "Used when Connection is Exa API. Origin and reverse-proxy prefix. Empty uses the default.",
         settings,
-    ));
-    items.extend(url_rows(
-        WebSearchUrlField::ExaMcp,
-        "Distinct MCP URL for Exa MCP search. Empty uses the default. Editing this does not select MCP.",
-        settings,
+        Some("Exa API"),
     ));
     items.push(api_key_item(
         "Exa API key",
-        "API key for Exa API search. Unused when Connection is Exa MCP.",
+        "Used when Connection is Exa API. A stored API key does not select MCP.",
         WebSearchCredential::Exa,
         config,
         credential_store,
+        Some("Exa API"),
+    ));
+    items.extend(url_rows(
+        WebSearchUrlField::ExaMcp,
+        "Used when Connection is Exa MCP. Distinct from the Exa HTTP API. Empty uses the default. Editing this does not select MCP.",
+        settings,
+        Some("Exa MCP"),
     ));
     items
 }
@@ -324,6 +423,7 @@ fn endpoint_items(
         field,
         "Origin and reverse-proxy prefix. Empty uses the default.",
         &config.web_search,
+        None,
     );
     items.push(api_key_item(
         key.label(),
@@ -331,6 +431,7 @@ fn endpoint_items(
         key,
         config,
         credential_store,
+        None,
     ));
     items
 }
@@ -339,15 +440,18 @@ fn url_rows(
     field: WebSearchUrlField,
     detail: &str,
     settings: &WebSearchSettings,
+    section: Option<&str>,
 ) -> Vec<PickerItem> {
     vec![
-        item(
+        sectioned_item(
+            section,
             field.label(),
             detail,
             Some(url_badge(field, settings)),
             field.value(),
         ),
-        item(
+        sectioned_item(
+            section,
             &format!("Reset {}", field.label()),
             "Restore the default URL. Does not select this backend.",
             Some(if field.configured(settings).is_some() {
@@ -366,17 +470,17 @@ fn api_key_item(
     credential: WebSearchCredential,
     config: &Config,
     credential_store: &dyn CredentialStore,
+    section: Option<&str>,
 ) -> PickerItem {
-    PickerItem {
-        section: None,
-        label: label.into(),
-        detail: Some(detail.into()),
-        preview: None,
-        badge: Some(credential_badge(config, credential_store, credential)),
-        value: web_search_key_value(credential).into(),
-        selection_verb: None,
-        allow_filter_completion: true,
-    }
+    let mut item = sectioned_item(
+        section,
+        label,
+        detail,
+        None,
+        web_search_key_value(credential),
+    );
+    item.badge = Some(credential_badge(config, credential_store, credential));
+    item
 }
 
 pub(super) fn web_search_key_value(credential: WebSearchCredential) -> &'static str {
@@ -393,3 +497,7 @@ mod actions;
 
 #[path = "web_search_config_test.rs"]
 mod connection_test;
+
+#[cfg(test)]
+#[path = "web_search_config_picker_tests.rs"]
+mod picker_tests;

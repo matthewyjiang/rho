@@ -1,4 +1,5 @@
-use super::{parse_settings, ConfigWarning};
+use super::super::ConfigWarning;
+use super::parse_settings;
 use pretty_assertions::assert_eq;
 
 // Covers: a typo or zero duration must fail closed, not enable auto answers.

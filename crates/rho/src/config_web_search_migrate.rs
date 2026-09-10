@@ -1,15 +1,18 @@
 use super::{
-    parse_search_endpoint_url, ExaSearchConnection, OpenAiSearchConnection, SearchBackend,
-    WebSearchMode, WebSearchSettings,
+    super::ConfigWarning, parse_search_endpoint_url, ExaSearchConnection, OpenAiSearchConnection,
+    SearchBackend, WebSearchMode, WebSearchSettings,
 };
 
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::config) struct WebSearchPartial {
+pub(in crate::config) struct PartialWebSearchConfig {
     pub hosted: Option<bool>,
     pub provider: Option<String>,
     pub mode: Option<WebSearchMode>,
     pub backend: Option<SearchBackend>,
+    pub openai_api_key: Option<String>,
+    pub exa_api_key: Option<String>,
+    pub brave_api_key: Option<String>,
     pub openai: Option<OpenAiSearchPartial>,
     pub exa: Option<ExaSearchPartial>,
     pub brave: Option<EndpointPartial>,
@@ -37,22 +40,9 @@ pub(in crate::config) struct EndpointPartial {
     pub api_base_url: Option<String>,
 }
 
-pub(in crate::config) enum WebSearchLoadWarning {
-    Normalized {
-        key: &'static str,
-        from: String,
-        to: String,
-    },
-    Migrated {
-        key: &'static str,
-        from: String,
-        to: String,
-    },
-}
-
 pub(in crate::config) fn resolve_web_search_settings(
-    partial: WebSearchPartial,
-    warnings: &mut Vec<WebSearchLoadWarning>,
+    partial: PartialWebSearchConfig,
+    warnings: &mut Vec<ConfigWarning>,
 ) -> anyhow::Result<WebSearchSettings> {
     let mut settings = WebSearchSettings::default();
     apply_backend_partials(&mut settings, &partial)?;
@@ -78,7 +68,7 @@ pub(in crate::config) fn resolve_web_search_settings(
 
 fn apply_backend_partials(
     settings: &mut WebSearchSettings,
-    partial: &WebSearchPartial,
+    partial: &PartialWebSearchConfig,
 ) -> anyhow::Result<()> {
     if let Some(openai) = &partial.openai {
         if let Some(connection) = openai.connection {
@@ -123,8 +113,8 @@ fn parse_optional_endpoint(field: &str, value: Option<&str>) -> anyhow::Result<O
 
 fn warn_if_implicit_connection(
     settings: &WebSearchSettings,
-    partial: &WebSearchPartial,
-    warnings: &mut Vec<WebSearchLoadWarning>,
+    partial: &PartialWebSearchConfig,
+    warnings: &mut Vec<ConfigWarning>,
 ) {
     let openai_connection_set = partial
         .openai
@@ -137,7 +127,7 @@ fn warn_if_implicit_connection(
         .and_then(|exa| exa.connection)
         .is_some();
     if matches!(settings.backend, SearchBackend::OpenAi) && !openai_connection_set {
-        warnings.push(WebSearchLoadWarning::Migrated {
+        warnings.push(ConfigWarning::Migrated {
             key: "web_search.openai.connection",
             from: "implicit OpenAI transport".into(),
             to: format!(
@@ -147,7 +137,7 @@ fn warn_if_implicit_connection(
         });
     }
     if matches!(settings.backend, SearchBackend::Exa) && !exa_connection_set {
-        warnings.push(WebSearchLoadWarning::Migrated {
+        warnings.push(ConfigWarning::Migrated {
             key: "web_search.exa.connection",
             from: "implicit Exa transport".into(),
             to: format!(
@@ -167,7 +157,7 @@ fn warn_if_implicit_connection(
 pub(in crate::config) fn migrate_legacy_web_search(
     hosted: Option<bool>,
     provider: Option<&str>,
-) -> anyhow::Result<(WebSearchMode, SearchBackend, Vec<WebSearchLoadWarning>)> {
+) -> anyhow::Result<(WebSearchMode, SearchBackend, Vec<ConfigWarning>)> {
     let hosted = hosted.unwrap_or(true);
     let normalized = provider.map(|value| value.trim().to_ascii_lowercase());
     let trimmed = normalized.as_deref();
@@ -189,7 +179,7 @@ pub(in crate::config) fn migrate_legacy_web_search(
     };
     let backend = match trimmed {
         None | Some("") | Some("auto") => {
-            warnings.push(WebSearchLoadWarning::Migrated {
+            warnings.push(ConfigWarning::Migrated {
                 key: "web_search",
                 from: format!("hosted={}, provider={}", hosted, provider.unwrap_or("auto")),
                 to: format!(
@@ -202,7 +192,7 @@ pub(in crate::config) fn migrate_legacy_web_search(
         Some("exa") => SearchBackend::Exa,
         Some("brave") => SearchBackend::Brave,
         Some(other) => {
-            warnings.push(WebSearchLoadWarning::Normalized {
+            warnings.push(ConfigWarning::Normalized {
                 key: "web_search.provider",
                 from: format!("\"{other}\""),
                 to: format!("mode={}, backend={}", mode.as_str(), SearchBackend::OpenAi),

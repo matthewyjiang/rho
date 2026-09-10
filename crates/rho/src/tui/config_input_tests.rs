@@ -143,7 +143,7 @@ fn cancel_login_overlay(app: &mut crate::tui::App, overlay: CancelOverlay) {
             app.apply_secret_key(esc);
         }
         CancelOverlay::CustomHost => {
-            app.handle_text_input_key(esc).unwrap();
+            app.cancel_text_input().unwrap();
         }
     }
 }

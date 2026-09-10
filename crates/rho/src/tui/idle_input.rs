@@ -6,7 +6,9 @@ use ratatui::DefaultTerminal;
 use super::{
     command_actions::CommandSubmission,
     command_palette::{slash_command_args, CommandPaletteKeyOutcome},
-    commands, goal_command,
+    commands,
+    config_row::ConfigCommitCtx,
+    goal_command,
     send_confirm::{SendAuthorization, SendPayload, SendSubmission},
     skill_actions, ActivityPhase, App, ChatMedia, ComposerMode, GoalState, HistoryDirection,
     InputSubmissionMode, InteractiveRuntime, PasteSegment, QueuedPrompt, TurnOutcome, TurnPrompt,
@@ -53,11 +55,8 @@ impl App {
             ComposerMode::SecretInput(_) => self.handle_secret_key(key, terminal, agent).await,
             ComposerMode::ConfigNumberInput(_) => self.handle_config_number_key(key, terminal),
             ComposerMode::TextInput(_) => {
-                let handled = self.handle_text_input_key(key)?;
-                if self.web_search_reload_pending {
-                    self.apply_pending_web_search(agent).await?;
-                }
-                Ok(handled)
+                self.handle_text_input_key(key, ConfigCommitCtx::Idle { agent, terminal })
+                    .await
             }
             ComposerMode::Picker(_) => self.handle_picker_key(key, terminal, agent).await,
             ComposerMode::Limits(_) => Ok(self.handle_limits_overlay_key(key, terminal)),

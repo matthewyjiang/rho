@@ -485,11 +485,12 @@ impl AppToolSet {
             .iter()
             .position(|tool| tool.spec().name == super::web::WEB_SEARCH_TOOL_NAME)
             .map(|index| self.tools.remove(index));
-        if self.web_search_capable && super::web::web_search_available(config) {
-            self.tools.push(Arc::new(super::web::SdkWebSearch::new(
-                super::web::access_tools_with_store(config, self.web_access.clone()),
-                config.max_output_bytes,
-            )));
+        if self.web_search_capable {
+            if let Some(tool) =
+                super::web::sdk_web_search(config, self.web_access.clone(), config.max_output_bytes)
+            {
+                self.tools.push(Arc::new(tool));
+            }
         }
         previous
     }

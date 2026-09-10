@@ -12,45 +12,9 @@ use {
 };
 
 use super::{
-    inferred_provider_auth, provider_config::PartialProviderConfigs, Config, EditTool,
-    InternalAgentModelConfig, LegacyWebSearchCredentials,
+    inferred_provider_auth, provider_config::PartialProviderConfigs, web_search, Config,
+    ConfigWarning, EditTool, InternalAgentModelConfig, LegacyWebSearchCredentials,
 };
-
-/// Non-fatal issue found while loading config.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum ConfigWarning {
-    Clamped {
-        key: &'static str,
-        from: String,
-        to: String,
-    },
-    Normalized {
-        key: &'static str,
-        from: String,
-        to: String,
-    },
-    Migrated {
-        key: &'static str,
-        from: String,
-        to: String,
-    },
-}
-
-impl ConfigWarning {
-    pub(crate) fn message(&self) -> String {
-        match self {
-            Self::Clamped { key, from, to } => {
-                format!("config `{key}` value {from} is out of range; using {to}")
-            }
-            Self::Normalized { key, from, to } => {
-                format!("config `{key}` value {from} is unsupported; using {to}")
-            }
-            Self::Migrated { key, from, to } => {
-                format!("config `{key}` {from} now maps to {to}")
-            }
-        }
-    }
-}
 
 pub(super) fn emit_warnings(path_display: &str, warnings: &[ConfigWarning]) {
     for warning in warnings {
@@ -212,35 +176,12 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
     cfg.resolve_internal_agent_model_aliases()?;
     cfg.normalize_provider_profiles()?;
     if let Some(group) = file.web_search {
-        let mut search_warnings = Vec::new();
-        cfg.web_search = super::web_search::resolve_web_search_settings(
-            super::web_search::WebSearchPartial {
-                hosted: group.hosted,
-                provider: group.provider,
-                mode: group.mode,
-                backend: group.backend,
-                openai: group.openai,
-                exa: group.exa,
-                brave: group.brave,
-                firecrawl: group.firecrawl,
-            },
-            &mut search_warnings,
-        )?;
-        for warning in search_warnings {
-            warnings.push(match warning {
-                super::web_search::WebSearchLoadWarning::Normalized { key, from, to } => {
-                    ConfigWarning::Normalized { key, from, to }
-                }
-                super::web_search::WebSearchLoadWarning::Migrated { key, from, to } => {
-                    ConfigWarning::Migrated { key, from, to }
-                }
-            });
-        }
         cfg.legacy_web_search_credentials = LegacyWebSearchCredentials {
-            openai: group.openai_api_key.and_then(non_empty_secret),
-            exa: group.exa_api_key.and_then(non_empty_secret),
-            brave: group.brave_api_key.and_then(non_empty_secret),
+            openai: group.openai_api_key.clone().and_then(non_empty_secret),
+            exa: group.exa_api_key.clone().and_then(non_empty_secret),
+            brave: group.brave_api_key.clone().and_then(non_empty_secret),
         };
+        cfg.web_search = web_search::resolve_web_search_settings(group, &mut warnings)?;
     }
     if let Some(group) = file.xai {
         if let Some(image_generation) = group.image_generation {
@@ -359,7 +300,7 @@ struct PartialConfig {
     compaction: Option<PartialCompactionConfig>,
     title: Option<PartialTitleConfig>,
     internal_agents: Option<BTreeMap<String, PartialInternalAgentModelConfig>>,
-    web_search: Option<PartialWebSearchConfig>,
+    web_search: Option<web_search::PartialWebSearchConfig>,
     xai: Option<PartialXaiConfig>,
     behavior: Option<PartialBehaviorConfig>,
     keybindings: Option<Keybindings>,
@@ -489,7 +430,7 @@ impl PartialConfig {
             || self.web_search.is_some()
         {
             let group = self.web_search.take().unwrap_or_default();
-            self.web_search = Some(PartialWebSearchConfig {
+            self.web_search = Some(web_search::PartialWebSearchConfig {
                 hosted: group.hosted,
                 provider: group.provider.or(web_search_provider),
                 mode: group.mode,
@@ -721,22 +662,6 @@ struct PartialTitleConfig {
     provider: Option<String>,
     model: Option<String>,
     auth: Option<String>,
-}
-
-#[derive(Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PartialWebSearchConfig {
-    hosted: Option<bool>,
-    provider: Option<String>,
-    mode: Option<super::WebSearchMode>,
-    backend: Option<super::SearchBackend>,
-    openai_api_key: Option<String>,
-    exa_api_key: Option<String>,
-    brave_api_key: Option<String>,
-    openai: Option<super::web_search::OpenAiSearchPartial>,
-    exa: Option<super::web_search::ExaSearchPartial>,
-    brave: Option<super::web_search::EndpointPartial>,
-    firecrawl: Option<super::web_search::EndpointPartial>,
 }
 
 #[derive(Deserialize)]
