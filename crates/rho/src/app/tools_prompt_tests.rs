@@ -89,7 +89,7 @@ async fn assemble_awaiting_catalog(
     .await
     .unwrap();
     let tools = assembled.tools;
-    let prompt = assembled.system_prompt;
+    let prompt = assembled.prompt.system;
     let registered = tools.advisor_registered();
     let text = match prompt {
         SystemPrompt::Custom(text) => text,
@@ -158,7 +158,7 @@ async fn the_advisor_receives_the_executor_system_prompt() {
     .await
     .unwrap();
     let tools = assembled.tools;
-    let prompt = assembled.system_prompt;
+    let prompt = assembled.prompt.system;
 
     let SystemPrompt::Custom(text) = prompt else {
         panic!("expected a custom system prompt");
@@ -199,7 +199,8 @@ async fn system_prompt_stays_advisor_agnostic() {
         })
         .await
         .unwrap()
-        .system_prompt;
+        .prompt
+        .system;
 
         let text = match prompt {
             SystemPrompt::Custom(text) => text,

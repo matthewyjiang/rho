@@ -81,7 +81,7 @@ async fn built_session(
         hooks: None,
         approval_receiver: None,
         prompt_template: None,
-        model_prompt: None,
+        prompt: Default::default(),
         diagnostics: crate::diagnostics::RuntimeDiagnostics::new(&test_config()),
     }
 }

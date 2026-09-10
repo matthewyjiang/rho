@@ -19,7 +19,9 @@ use super::{
 impl InteractiveRuntime {
     pub(crate) fn model_prompt_notice(&self) -> Option<String> {
         self.prompt_template.as_ref().map(|_| {
-            crate::app::model_prompt_metadata::selection_notice(self.model_prompt.as_ref())
+            crate::app::model_prompt_metadata::provenance_notice(
+                self.sessions.prompt.provenance.as_ref(),
+            )
         })
     }
 
@@ -40,8 +42,16 @@ impl InteractiveRuntime {
         }
         let prepared_prompt = self.prepare_model_prompt(&provider)?;
         self.runs.begin_provider_switch()?;
+        let previous_prompt = self.sessions.prompt.clone();
+        let previous_hydration = self.may_rewrite_startup_prompt;
+        // The notice persists the switched history. Stage the same typed prompt
+        // before that save, and roll it back with the conversation on failure.
         if let Some(prompt) = prepared_prompt.as_ref() {
-            self.sessions.set_model_prompt(prompt.model_prompt.as_ref());
+            self.adopt_prompt(crate::app::active_prompt::ActivePrompt::new(
+                rho_sdk::SystemPrompt::Custom(prompt.text.clone()),
+                prompt.model_prompt.clone(),
+                prompt.sources.clone(),
+            ));
         }
         let previous_provider = Arc::clone(self.provider.provider());
         let context_window = self.context_window;
@@ -69,9 +79,6 @@ impl InteractiveRuntime {
         );
         match result {
             Ok(report) => {
-                if let Some(prompt) = prepared_prompt {
-                    self.adopt_model_prompt(prompt);
-                }
                 self.provider.adopt(provider, reasoning);
                 self.refresh_context_usage();
                 startup::bind_mcp_sampling(
@@ -85,7 +92,8 @@ impl InteractiveRuntime {
                 Ok(report)
             }
             Err(error) => {
-                self.sessions.set_model_prompt(self.model_prompt.as_ref());
+                self.adopt_prompt(previous_prompt);
+                self.may_rewrite_startup_prompt = previous_hydration;
                 self.runs.finish_transition();
                 Err(error)
             }
@@ -110,18 +118,17 @@ impl InteractiveRuntime {
     }
 
     pub(super) fn adopt_model_prompt(&mut self, prompt: crate::prompt::SystemPrompt) {
-        self.diagnostics.update_prompt_sources(prompt.sources);
-        if let Some(model_prompt) = &prompt.model_prompt {
-            tracing::debug!(path = %model_prompt.path.display(), mode = model_prompt.mode.as_str(), sha256 = %model_prompt.sha256, "applied model prompt");
-        }
-        self.system_prompt = rho_sdk::SystemPrompt::Custom(prompt.text);
-        self.model_prompt = prompt.model_prompt;
-        self.sessions.set_model_prompt(self.model_prompt.as_ref());
-        if let Some(store) = self.tools.advisor() {
-            store.bind_system_prompt(match &self.system_prompt {
-                rho_sdk::SystemPrompt::Custom(text) => Some(text.clone()),
-                _ => None,
-            });
-        }
+        self.adopt_prompt(crate::app::active_prompt::ActivePrompt::from_prepared(
+            prompt,
+        ));
+    }
+
+    pub(super) fn adopt_prompt(&mut self, prompt: crate::app::active_prompt::ActivePrompt) {
+        self.sessions
+            .prompt
+            .adopt(prompt, &self.diagnostics, self.tools.advisor());
+        // A resume, switch or recovery ends startup hydration's authority to
+        // rewrite history. In particular, restored provenance has no file body.
+        self.may_rewrite_startup_prompt = false;
     }
 }

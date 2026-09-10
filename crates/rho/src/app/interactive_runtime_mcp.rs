@@ -115,24 +115,21 @@ impl InteractiveRuntime {
         // Catalog hydration changes display names, not the selected file. Keep
         // startup AGENTS/skills and the loaded model prompt without filesystem IO.
         let running = PromptModel::from_sdk_identity(&self.provider.provider().identity());
-        let built = template.render(&running, self.model_prompt.as_ref());
-        let next = SystemPrompt::Custom(built.text);
-        if next == self.system_prompt {
+        let built = template.render(&running, self.sessions.prompt.loaded.as_ref());
+        if self.sessions.prompt.system == SystemPrompt::Custom(built.text.clone()) {
             return Ok(false);
         }
-        self.diagnostics.update_prompt_sources(built.sources);
-        self.system_prompt = next;
-        if let Some(store) = self.tools.advisor() {
-            store.bind_system_prompt(match &self.system_prompt {
-                SystemPrompt::Custom(text) => Some(text.clone()),
-                _ => None,
-            });
-        }
+        // Hydration retains its startup lifetime until an explicit transition.
+        self.sessions.prompt.adopt(
+            crate::app::active_prompt::ActivePrompt::from_prepared(built),
+            &self.diagnostics,
+            self.tools.advisor(),
+        );
         Ok(true)
     }
 
     fn replace_history_system_prompt(&mut self) -> anyhow::Result<()> {
-        let SystemPrompt::Custom(prompt) = &self.system_prompt else {
+        let SystemPrompt::Custom(prompt) = &self.sessions.prompt.system else {
             return Ok(());
         };
         crate::app::conversation_switch::replace_system_prompt(self.sessions.session(), prompt)?;

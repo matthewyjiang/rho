@@ -62,9 +62,8 @@ pub(super) async fn initialize(
     let workspace = sdk_options.workspace.build_workspace()?;
     let ToolsAndPrompt {
         tools,
-        system_prompt,
+        prompt,
         prompt_template,
-        model_prompt,
         inventory,
         pending_mcp,
         mcp_sampling,
@@ -139,7 +138,7 @@ pub(super) async fn initialize(
                 .handler
                 .clone()
                 .map(rho_sdk::ApprovalSession::from_shared),
-            system_prompt: system_prompt.clone(),
+            system_prompt: prompt.system.clone(),
             reasoning: sdk_options.runtime.reasoning,
             service_tier: sdk_options.runtime.service_tier,
             compaction: compaction.clone(),
@@ -170,7 +169,7 @@ pub(super) async fn initialize(
             }
         };
         if prompt_template.is_some() {
-            if let rho_sdk::SystemPrompt::Custom(text) = &system_prompt {
+            if let rho_sdk::SystemPrompt::Custom(text) = &prompt.system {
                 if let Err(error) =
                     crate::app::conversation_switch::replace_system_prompt(&session, text)
                 {
@@ -195,7 +194,7 @@ pub(super) async fn initialize(
     bind_subagent_parent(&tools, session.id(), storage.as_ref());
     bind_mcp_sampling(&mcp_sampling, &provider, session.id(), &cwd);
     let may_rewrite_startup_prompt =
-        storage.is_none() && !matches!(system_prompt, rho_sdk::SystemPrompt::None);
+        storage.is_none() && !matches!(prompt.system, rho_sdk::SystemPrompt::None);
     let pending_catalog_names = may_rewrite_startup_prompt
         .then(|| tokio::spawn(async { rho_providers::model::ensure_model_catalog_names().await }));
     let cached_tool_specs = tools.specs();
@@ -223,9 +222,7 @@ pub(super) async fn initialize(
         may_rewrite_startup_prompt,
         plugins_report,
         workspace,
-        system_prompt,
         prompt_template,
-        model_prompt,
         compaction,
         diagnostics,
         pending_compact: None,
@@ -250,13 +247,11 @@ pub(super) async fn initialize(
         tool_list_changed: false,
         completed_runs: 0,
     };
-    runtime
-        .sessions
-        .set_model_prompt(runtime.model_prompt.as_ref());
+    runtime.sessions.prompt = prompt;
     if runtime.prompt_template.is_some() {
         if let Some(notice) = crate::app::model_prompt_metadata::change_notice(
             &runtime.sessions.session().snapshot(),
-            runtime.model_prompt.as_ref(),
+            runtime.sessions.prompt.loaded.as_ref(),
         ) {
             runtime.sessions.queue_notice(notice);
         }

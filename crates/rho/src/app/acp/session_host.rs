@@ -198,7 +198,7 @@ impl SessionHost {
         if built.prompt_template.is_some() {
             if let Some(notice) = crate::app::model_prompt_metadata::change_notice(
                 &built.session.snapshot(),
-                built.model_prompt.as_ref(),
+                built.prompt.loaded.as_ref(),
             ) {
                 if let Err(error) = replay_display_history(
                     &request.session_id,
@@ -306,12 +306,25 @@ impl SessionHost {
         config.model = selection.model.clone();
         config.auth = selection.auth.clone();
         config.reasoning = reasoning;
-        let previous_context_window = model_context_window(&current.provider, &current.model);
-        let context_window = model_context_window(&selection.provider, &selection.model);
         let provider =
             build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore))
                 .await
                 .map_err(host_apply_error)?;
+        self.switch_provider(provider, &config)?;
+        Ok(self.config_options(process_config))
+    }
+
+    /// Installs an already-resolved provider while the ACP host slot is held.
+    /// Kept separate from credential discovery so the session transaction can
+    /// be exercised with a scripted provider.
+    fn switch_provider(
+        &mut self,
+        provider: Arc<dyn rho_sdk::provider::ModelProvider>,
+        config: &Config,
+    ) -> Result<(), AcpError> {
+        let current = self.current_model();
+        let previous_context_window = model_context_window(&current.provider, &current.model);
+        let context_window = model_context_window(&config.provider, &config.model);
         let prepared_prompt = self
             .built
             .prompt_template
@@ -331,9 +344,9 @@ impl SessionHost {
                 tools: &self.built.tools,
                 previous_provider: Arc::clone(&self.built.provider),
                 new_provider: Arc::clone(&provider),
-                new_reasoning: reasoning,
-                auth: &selection.auth,
-                compaction: CompactionConfig::from(process_config),
+                new_reasoning: config.reasoning,
+                auth: &config.auth,
+                compaction: CompactionConfig::from(config),
                 context_window,
                 previous_context_window,
                 usage_recording: self.built.runtime.usage_recording(),
@@ -343,11 +356,14 @@ impl SessionHost {
         .map_err(host_apply_error)?;
         self.built.provider = provider;
         if let Some(prompt) = prepared_prompt {
-            self.built.diagnostics.update_prompt_sources(prompt.sources);
-            self.built.model_prompt = prompt.model_prompt;
+            self.built.prompt.adopt(
+                crate::app::active_prompt::ActivePrompt::from_prepared(prompt),
+                &self.built.diagnostics,
+                self.built.tools.advisor(),
+            );
         }
-        self.auth = selection.auth;
-        Ok(self.config_options(process_config))
+        self.auth = config.auth.clone();
+        Ok(())
     }
 
     pub(super) async fn shutdown(self) {
@@ -475,10 +491,7 @@ impl SessionHost {
             display_tail.push(Message::assistant_text(text));
         }
         self.stored.save_snapshot(
-            &crate::app::model_prompt_metadata::decorate(
-                self.built.session.snapshot(),
-                self.built.model_prompt.as_ref(),
-            ),
+            &self.built.prompt.decorate(self.built.session.snapshot()),
             &display_tail,
         )
     }
@@ -698,3 +711,7 @@ async fn answer_approval(
 #[cfg(test)]
 #[path = "session_host_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "session_host_model_prompt_tests.rs"]
+mod model_prompt_tests;

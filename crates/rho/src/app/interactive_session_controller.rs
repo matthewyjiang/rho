@@ -33,7 +33,7 @@ pub(crate) struct InteractiveSessionController {
     persisted_turn_display: usize,
     web_access: WebAccessStore,
     advisor: Option<AdvisorSessionStore>,
-    model_prompt_metadata: String,
+    pub(super) prompt: super::active_prompt::ActivePrompt,
 }
 
 impl InteractiveSessionController {
@@ -52,7 +52,7 @@ impl InteractiveSessionController {
             persisted_turn_display: 0,
             web_access,
             advisor,
-            model_prompt_metadata: super::model_prompt_metadata::encode(None),
+            prompt: super::active_prompt::ActivePrompt::default(),
         };
         controller.sync_web_access();
         controller.sync_advisor_session();
@@ -76,18 +76,8 @@ impl InteractiveSessionController {
         &self.session
     }
 
-    pub(crate) fn set_model_prompt(
-        &mut self,
-        prompt: Option<&crate::prompt::model_prompts::ModelPrompt>,
-    ) {
-        self.model_prompt_metadata = super::model_prompt_metadata::encode(prompt);
-    }
-
     pub(crate) fn snapshot(&self) -> rho_sdk::SessionSnapshot {
-        super::model_prompt_metadata::decorate_encoded(
-            self.session.snapshot(),
-            &self.model_prompt_metadata,
-        )
+        self.prompt.decorate(self.session.snapshot())
     }
 
     pub(crate) fn replace_session(&mut self, session: Session, omission: Option<HandoffReport>) {
@@ -214,10 +204,7 @@ impl InteractiveSessionController {
             let display_tail = display.get(persisted..).ok_or_else(|| {
                 anyhow::anyhow!("compaction display checkpoint exceeds accumulated history: persisted {}, accumulated {}", persisted, display.len())
             })?;
-            let snapshot = super::model_prompt_metadata::decorate_encoded(
-                snapshot.clone(),
-                &self.model_prompt_metadata,
-            );
+            let snapshot = self.prompt.decorate(snapshot.clone());
             storage.save_compaction_snapshot(&snapshot, display_tail, outcome)?;
             self.persisted_turn_display = display.len();
         }

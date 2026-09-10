@@ -3,39 +3,40 @@
 use crate::prompt::model_prompts::ModelPrompt;
 use rho_sdk::SessionSnapshot;
 
-const KEY: &str = "rho.model_prompt";
+pub(super) const KEY: &str = "rho.model_prompt";
+
+/// Persisted identity is not a loaded file: it contains no body and must never
+/// be used to render an overlay. Paths are display strings, including on Unix.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct ModelPromptProvenance {
+    pub path: String,
+    pub mode: crate::prompt::model_prompts::ModelPromptMode,
+    pub sha256: String,
+}
+
+impl From<&ModelPrompt> for ModelPromptProvenance {
+    fn from(prompt: &ModelPrompt) -> Self {
+        Self {
+            path: prompt.path.display().to_string(),
+            mode: prompt.mode,
+            sha256: prompt.sha256.clone(),
+        }
+    }
+}
 
 pub(super) fn selection_notice(prompt: Option<&ModelPrompt>) -> String {
+    provenance_notice(prompt.map(ModelPromptProvenance::from).as_ref())
+}
+
+pub(super) fn provenance_notice(prompt: Option<&ModelPromptProvenance>) -> String {
     match prompt {
-        Some(prompt) => format!(
-            "model prompt: {} ({})",
-            prompt.path.display(),
-            prompt.mode.as_str(),
-        ),
+        Some(prompt) => format!("model prompt: {} ({})", prompt.path, prompt.mode.as_str(),),
         None => "model prompt: default".into(),
     }
 }
 
 pub(super) fn encode(prompt: Option<&ModelPrompt>) -> String {
-    prompt.map_or_else(
-        || "null".into(),
-        |prompt| {
-            serde_json::json!({
-                "path": prompt.path,
-                "mode": prompt.mode.as_str(),
-                "sha256": prompt.sha256,
-            })
-            .to_string()
-        },
-    )
-}
-
-pub(super) fn decorate(snapshot: SessionSnapshot, prompt: Option<&ModelPrompt>) -> SessionSnapshot {
-    snapshot.with_metadata(KEY, encode(prompt))
-}
-
-pub(super) fn decorate_encoded(snapshot: SessionSnapshot, encoded: &str) -> SessionSnapshot {
-    snapshot.with_metadata(KEY, encoded)
+    serde_json::json!(prompt.map(ModelPromptProvenance::from)).to_string()
 }
 
 /// Old sessions without provenance have no known fingerprint to compare.
@@ -55,3 +56,7 @@ pub(super) fn change_notice(
         }
     })
 }
+
+#[cfg(all(test, unix))]
+#[path = "model_prompt_metadata_tests.rs"]
+mod tests;

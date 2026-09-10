@@ -64,7 +64,7 @@ impl InteractiveRuntime {
                 source,
                 ReplacementLifecycle::AfterReset,
                 SessionWriteRetention::Keep,
-                None,
+                crate::app::active_prompt::PromptTransition::Keep,
             )
             .await
             .map_err(|error| Error::Persistence {

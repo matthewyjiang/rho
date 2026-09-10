@@ -291,9 +291,7 @@ pub(super) async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime
         may_rewrite_startup_prompt: false,
         plugins_report: Default::default(),
         workspace,
-        system_prompt: SystemPrompt::None,
         prompt_template: None,
-        model_prompt: None,
         diagnostics: RuntimeDiagnostics::new(&Config::default()),
         compaction: CompactionConfig::default(),
         pending_compact: None,
@@ -996,7 +994,7 @@ async fn advisor_mode_changes_the_tool_list_without_replacing_the_session() {
     let mut interactive = advisor_test_runtime().await;
     let session_id = interactive.sessions.session().id().clone();
     let history_before = interactive.history().len();
-    let system_before = interactive.system_prompt.clone();
+    let system_before = interactive.active_system_prompt();
     let advertised = |interactive: &InteractiveRuntime| {
         interactive
             .runtime
@@ -1016,7 +1014,7 @@ async fn advisor_mode_changes_the_tool_list_without_replacing_the_session() {
     assert!(interactive.tools.advisor_registered());
     assert!(advertised(&interactive));
     assert_eq!(interactive.sessions.session().id(), &session_id);
-    assert_eq!(interactive.system_prompt, system_before);
+    assert_eq!(interactive.active_system_prompt(), system_before);
     assert_eq!(interactive.history().len(), history_before + 1);
     let enabled_notice = interactive.history().last().expect("enable notice").clone();
     let Message::User(blocks) = &enabled_notice else {
@@ -1039,7 +1037,7 @@ async fn advisor_mode_changes_the_tool_list_without_replacing_the_session() {
     assert!(!interactive.tools.advisor_registered());
     assert!(!advertised(&interactive));
     assert_eq!(interactive.sessions.session().id(), &session_id);
-    assert_eq!(interactive.system_prompt, system_before);
+    assert_eq!(interactive.active_system_prompt(), system_before);
     assert_eq!(interactive.history().len(), history_before + 2);
     let disabled_notice = interactive
         .history()
@@ -1189,7 +1187,7 @@ async fn edit_tool_switch_rebuilds_tools_and_appends_schema_notice() {
     let mut interactive = edit_tool_test_runtime().await;
     let session_id = interactive.sessions.session().id().clone();
     let history_before = interactive.history().len();
-    let system_before = interactive.system_prompt.clone();
+    let system_before = interactive.active_system_prompt();
     let advertised = |interactive: &InteractiveRuntime, name: &str| {
         interactive
             .runtime
@@ -1212,7 +1210,7 @@ async fn edit_tool_switch_rebuilds_tools_and_appends_schema_notice() {
         .expect("edit tool should change");
     assert_eq!(change.previous, rho_tools::EditFormat::Hashline);
     assert_eq!(change.display, "edit tool switched to str_replace");
-    assert_eq!(interactive.system_prompt, system_before);
+    assert_eq!(interactive.active_system_prompt(), system_before);
     assert!(interactive.tools.contains("str_replace"));
     assert!(!interactive.tools.contains("edit"));
     assert!(advertised(&interactive, "str_replace"));

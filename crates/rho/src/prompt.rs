@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use {crate::model_identity::PromptModel, crate::skills, rho_tools::tool::ToolSpec};
 
@@ -18,7 +18,7 @@ During substantial work, give concise progress updates. Preserve existing work a
 /// Label for the absolute session cwd line injected into the base system prompt.
 const CWD_PROMPT_LABEL: &str = "Your current working directory: ";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptSourceKind {
     Base,
@@ -28,7 +28,7 @@ pub enum PromptSourceKind {
     Skills,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct PromptSource {
     pub kind: PromptSourceKind,
     pub path: Option<String>,

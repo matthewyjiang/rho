@@ -91,7 +91,7 @@ pub(super) struct BuiltSession {
     pub hooks: Option<crate::hooks::HookPipeline>,
     pub approval_receiver: Option<ApprovalRequestReceiver>,
     pub prompt_template: Option<crate::prompt::ModelPromptTemplate>,
-    pub model_prompt: Option<crate::prompt::model_prompts::ModelPrompt>,
+    pub prompt: super::active_prompt::ActivePrompt,
     pub diagnostics: RuntimeDiagnostics,
 }
 
@@ -172,9 +172,8 @@ where
     let workspace = sdk_options.workspace.build_workspace()?;
     let ToolsAndPrompt {
         tools: tool_set,
-        mut system_prompt,
+        mut prompt,
         mut prompt_template,
-        model_prompt,
         ..
     } = assemble_tools_and_prompt(ToolsAndPromptOptions {
         config,
@@ -198,16 +197,14 @@ where
     })
     .await?;
     let tool_set = extend_tools(tool_set);
-    if let (Some(suffix), rho_sdk::SystemPrompt::Custom(text)) =
-        (system_prompt_suffix, &mut system_prompt)
-    {
+    if let Some(suffix) = system_prompt_suffix {
         let retained = format!("\n\n{suffix}");
-        text.push_str(&retained);
+        prompt.append_retained(&retained);
         if let Some(template) = prompt_template.as_mut() {
             template.append_retained(&retained);
         }
     }
-    let resumed_prompt = prompt_template.as_ref().and_then(|_| match &system_prompt {
+    let resumed_prompt = prompt_template.as_ref().and_then(|_| match &prompt.system {
         rho_sdk::SystemPrompt::Custom(text) => Some(text.clone()),
         _ => None,
     });
@@ -245,7 +242,7 @@ where
                 workspace,
                 workspace_policy: AppPolicy::for_mode(config.permission_mode, session_writes),
                 approval_session,
-                system_prompt,
+                system_prompt: prompt.system.clone(),
                 reasoning: sdk_options.runtime.reasoning,
                 service_tier: sdk_options.runtime.service_tier,
                 compaction,
@@ -284,6 +281,9 @@ where
     if let Some(advisor) = tool_set.advisor() {
         advisor.bind_session(session.clone());
     }
+    // Host suffixes are appended after tool assembly. Reinstall the complete
+    // prompt so the advisor sees the same retained host instructions.
+    prompt.install(diagnostics, tool_set.advisor());
     Ok(SessionAssembly {
         built: BuiltSession {
             runtime,
@@ -293,7 +293,7 @@ where
             hooks,
             approval_receiver,
             prompt_template,
-            model_prompt,
+            prompt,
             diagnostics: diagnostics.clone(),
         },
         workspace_root,

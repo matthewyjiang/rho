@@ -75,9 +75,8 @@ pub(crate) struct StartupInventory {
 pub(crate) struct ToolsAndPrompt {
     pub(crate) tools: AppToolSet,
     /// Stable across tool-list changes, rebuilt when the conversation model changes.
-    pub(crate) system_prompt: SystemPrompt,
+    pub(super) prompt: super::active_prompt::ActivePrompt,
     pub(crate) prompt_template: Option<prompt::ModelPromptTemplate>,
-    pub(crate) model_prompt: Option<prompt::model_prompts::ModelPrompt>,
     pub(crate) inventory: StartupInventory,
     /// In-flight MCP connect when the interactive host deferred it off the
     /// first frame. `None` when connect was awaited or skipped.
@@ -217,8 +216,8 @@ pub(crate) async fn assemble_tools_and_prompt(
     let specs = tools.specs();
     let mut prompt_template = None;
     let mut model_prompt = None;
+    let mut sources = Vec::new();
     let system_prompt = if options.no_system_prompt {
-        options.diagnostics.update_prompt_sources(Vec::new());
         SystemPrompt::None
     } else {
         let mut text = match options.agent.prompt() {
@@ -268,7 +267,7 @@ pub(crate) async fn assemble_tools_and_prompt(
                         return Err(error);
                     }
                 };
-                options.diagnostics.update_prompt_sources(built.sources);
+                sources = built.sources;
                 prompt_template = Some(template);
                 model_prompt = built.model_prompt;
                 built.text
@@ -281,20 +280,13 @@ pub(crate) async fn assemble_tools_and_prompt(
         // here, so mid-session /advisor toggles never require a prompt rewrite.
         SystemPrompt::Custom(text)
     };
-    if let Some(store) = tools.advisor() {
-        // The advisor reviews what the executor was told.
-        store.bind_system_prompt(match &system_prompt {
-            SystemPrompt::Custom(text) => Some(text.clone()),
-            // `SystemPrompt` is non-exhaustive; only custom text is reviewable.
-            _ => None,
-        });
-    }
+    let prompt = super::active_prompt::ActivePrompt::new(system_prompt, model_prompt, sources);
+    prompt.install(options.diagnostics, tools.advisor());
     options.diagnostics.update_tools(&specs);
     Ok(ToolsAndPrompt {
         tools,
-        system_prompt,
+        prompt,
         prompt_template,
-        model_prompt,
         inventory: StartupInventory {
             mcp: mcp_report,
             plugins: plugins_report,

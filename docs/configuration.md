@@ -108,7 +108,9 @@ Rho reads model prompt files at startup, `/new`, session resume, conversation-tr
 
 The next request uses the target model's prompt. Rho removes the previous model's custom system instructions rather than appending another patch. Conversation messages and tool results remain, so a switch is not a clean behavioral reset. Switching back reads that model's file again. There is no file watcher or separate reload command.
 
-Prompt-source diagnostics identify the selected file and whether it appends or replaces. Session snapshots record its path, mode, and SHA-256 fingerprint. Resume uses current file contents and reports changes from a recorded fingerprint.
+Prompt-source diagnostics identify the selected file and whether it appends or replaces. Session snapshots record its display path, mode, SHA-256 fingerprint, and source byte accounting. Paths with non-UTF-8 bytes use the same replacement characters as diagnostics. Resume uses current file contents and reports changes from a recorded fingerprint.
+
+Failed-save recovery restores the assembled system text from saved history, together with its recorded provenance and source accounting. It also rebinds the advisor's executor prompt, so advisor context agrees with the restored conversation. Recovery does not need the original prompt file or its overlay body. Older snapshots without source accounting clear that diagnostic list rather than showing sources from the abandoned prompt. Launch-owned whole-prompt replacements and `--no-system-prompt` remain in force for new conversations after recovery.
 
 These rules apply to interactive, headless, ACP, and native Rho subagent sessions that use normal prompt assembly. Each subagent matches its own resolved model. `--no-system-prompt` and agent definitions with an explicit whole-prompt replacement bypass model prompt files. Dedicated internal requests such as summarization and title generation, and delegated external CLI runtimes, keep their own prompt behavior.
 

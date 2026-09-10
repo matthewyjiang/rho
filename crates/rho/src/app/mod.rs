@@ -1,4 +1,5 @@
 mod acp;
+mod active_prompt;
 mod agent_binding;
 pub(crate) mod agent_concurrency;
 pub(crate) mod agent_executor;
