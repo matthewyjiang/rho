@@ -193,7 +193,7 @@ fn legacy_xai_provider_override_normalizes_to_oauth_mode() {
 fn cli_model_override_with_provider_selects_matching_auth() {
     let mut cfg = Config::default();
     let cli = Cli {
-        model: Some("openai-codex/gpt-5.4-mini".into()),
+        model: Some("openai-codex/gpt-5.5".into()),
         ..test_cli()
     };
 
@@ -201,7 +201,7 @@ fn cli_model_override_with_provider_selects_matching_auth() {
 
     assert!(changed);
     assert_eq!(cfg.provider, "openai-codex");
-    assert_eq!(cfg.model, "gpt-5.4-mini");
+    assert_eq!(cfg.model, "gpt-5.5");
     assert_eq!(cfg.auth, "codex");
 }
 
@@ -369,14 +369,14 @@ fn cli_unqualified_model_override_keeps_provider_for_allowlisted_model() {
         ..Config::default()
     };
     let cli = Cli {
-        model: Some("gpt-5.4-mini".into()),
+        model: Some("gpt-5.5".into()),
         ..test_cli()
     };
 
     apply_overrides(&mut cfg, &cli).unwrap();
 
     assert_eq!(cfg.provider, "openai-codex");
-    assert_eq!(cfg.model, "gpt-5.4-mini");
+    assert_eq!(cfg.model, "gpt-5.5");
     assert_eq!(cfg.auth, "codex");
 }
 
@@ -384,7 +384,7 @@ fn cli_unqualified_model_override_keeps_provider_for_allowlisted_model() {
 fn cli_auth_override_wins_after_model_provider_auth() {
     let mut cfg = Config::default();
     let cli = Cli {
-        model: Some("openai-codex/gpt-5.4-mini".into()),
+        model: Some("openai-codex/gpt-5.5".into()),
         auth: Some("api-key".into()),
         ..test_cli()
     };
@@ -392,7 +392,7 @@ fn cli_auth_override_wins_after_model_provider_auth() {
     apply_overrides(&mut cfg, &cli).unwrap();
 
     assert_eq!(cfg.provider, "openai");
-    assert_eq!(cfg.model, "gpt-5.4-mini");
+    assert_eq!(cfg.model, "gpt-5.5");
     assert_eq!(cfg.auth, "api-key");
 }
 
