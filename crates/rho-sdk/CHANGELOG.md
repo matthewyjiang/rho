@@ -1,5 +1,18 @@
 # Changelog
 
+## [5.4.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.3.0...rho-sdk-v5.4.0) (2026-09-10)
+
+
+### Features
+
+* **computer:** add opt-in desktop control through Cua Driver ([#1200](https://github.com/matthewyjiang/rho/issues/1200)) ([8fb622a](https://github.com/matthewyjiang/rho/commit/8fb622a7b3f5db7b756ee27892bad8723fbb4827))
+
+
+### Bug Fixes
+
+* **codex:** preserve encrypted reasoning across model switches ([#1198](https://github.com/matthewyjiang/rho/issues/1198)) ([2a37242](https://github.com/matthewyjiang/rho/commit/2a3724211531c6d7aedb09c5253ee0759cde983c))
+* **sdk:** keep tool history paired when cancelling agents ([#1199](https://github.com/matthewyjiang/rho/issues/1199)) ([d8a2e87](https://github.com/matthewyjiang/rho/commit/d8a2e87e1bbc76d3c0769f0f369a443368c83a57))
+
 ## [5.3.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.2.1...rho-sdk-v5.3.0) (2026-09-06)
 
 

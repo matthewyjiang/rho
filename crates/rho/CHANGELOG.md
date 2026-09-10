@@ -1,5 +1,31 @@
 # Changelog
 
+## [2.10.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.9.1...rho-coding-agent-v2.10.0) (2026-09-10)
+
+
+### Features
+
+* **cli:** add confirmed uninstall with optional data purge ([#1201](https://github.com/matthewyjiang/rho/issues/1201)) ([61e0108](https://github.com/matthewyjiang/rho/commit/61e0108e9ffc9a628d01ff39f3435b4dd49c26fc))
+* **computer:** add opt-in desktop control through Cua Driver ([#1200](https://github.com/matthewyjiang/rho/issues/1200)) ([8fb622a](https://github.com/matthewyjiang/rho/commit/8fb622a7b3f5db7b756ee27892bad8723fbb4827))
+* **prompts:** support model-scoped system instructions ([#1205](https://github.com/matthewyjiang/rho/issues/1205)) ([242668c](https://github.com/matthewyjiang/rho/commit/242668c00038498db3ed5effca91ebca91041315))
+* **sessions:** add unsaved interactive sessions ([#1202](https://github.com/matthewyjiang/rho/issues/1202)) ([34ee5db](https://github.com/matthewyjiang/rho/commit/34ee5dbe041f7f57dff969f9d7cdd3434291cf6f))
+* **web:** add firecrawl and explicit search routing ([#1206](https://github.com/matthewyjiang/rho/issues/1206)) ([8428898](https://github.com/matthewyjiang/rho/commit/84288982b1cc0e94b1fbb57e392f6331820a566c))
+* **web:** select search settings with explicit pickers ([#1208](https://github.com/matthewyjiang/rho/issues/1208)) ([98b06b3](https://github.com/matthewyjiang/rho/commit/98b06b32fa03cee39f5a2e78c29385e1097cb085))
+
+
+### Bug Fixes
+
+* **codex:** remove retired gpt-5.4 models ([#1207](https://github.com/matthewyjiang/rho/issues/1207)) ([349e4df](https://github.com/matthewyjiang/rho/commit/349e4df645960d3b356e252b6abf5232d780b6a8))
+* **startup:** explain waits for desktop keyring access ([#1203](https://github.com/matthewyjiang/rho/issues/1203)) ([2613377](https://github.com/matthewyjiang/rho/commit/261337783bfdbf43f7ccc28c6bc2b6507c18cc80))
+* **tui:** resize generated images before rendering previews ([#1196](https://github.com/matthewyjiang/rho/issues/1196)) ([abe2ebd](https://github.com/matthewyjiang/rho/commit/abe2ebd3d6541ada1576e53ebcaee7e7039dc12d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.5.1 to 2.6.0
+
 ## [2.9.1](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.9.0...rho-coding-agent-v2.9.1) (2026-09-07)
 
 
