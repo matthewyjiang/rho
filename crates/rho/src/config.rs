@@ -34,11 +34,46 @@ use format::write_config;
 pub use format::{EffectiveModelConfig, EffectiveModelSource};
 pub(crate) use format::{CLAUDE_CLI_RUNTIME_KEY, CURSOR_RUNTIME_KEY, RHO_RUNTIME_KEY};
 
+/// Non-fatal issue found while loading config.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ConfigWarning {
+    Clamped {
+        key: &'static str,
+        from: String,
+        to: String,
+    },
+    Normalized {
+        key: &'static str,
+        from: String,
+        to: String,
+    },
+    Migrated {
+        key: &'static str,
+        from: String,
+        to: String,
+    },
+}
+
+impl ConfigWarning {
+    pub(crate) fn message(&self) -> String {
+        match self {
+            Self::Clamped { key, from, to } => {
+                format!("config `{key}` value {from} is out of range; using {to}")
+            }
+            Self::Normalized { key, from, to } => {
+                format!("config `{key}` value {from} is unsupported; using {to}")
+            }
+            Self::Migrated { key, from, to } => {
+                format!("config `{key}` {from} now maps to {to}")
+            }
+        }
+    }
+}
+
 #[path = "config_web_search.rs"]
 mod web_search;
 pub(crate) use web_search::{
-    firecrawl_uses_cloud_default, parse_search_endpoint_url, web_search_route, EXA_MCP_DEFAULT_URL,
-    OPENAI_CODEX_RESPONSES_URL,
+    parse_search_endpoint_url, web_search_route, EXA_MCP_DEFAULT_URL, OPENAI_CODEX_RESPONSES_URL,
 };
 pub use web_search::{
     ExaSearchConnection, OpenAiSearchConnection, SearchBackend, WebSearchMode, WebSearchRoute,
@@ -47,7 +82,6 @@ pub use web_search::{
 
 #[path = "config_load.rs"]
 mod load;
-pub(crate) use load::ConfigWarning;
 
 pub(crate) use provider_config::ProviderConfigs;
 

@@ -92,7 +92,7 @@ impl App {
         if self.handle_running_config_number_key(key, terminal)? {
             return Ok(false);
         }
-        if self.handle_running_text_input_key(key)? {
+        if self.handle_running_text_input_key(key).await? {
             return Ok(false);
         }
         if self.handle_running_picker_key(key, terminal).await? {
@@ -443,11 +443,15 @@ impl App {
         self.handle_config_number_key(key, terminal)
     }
 
-    pub(super) fn handle_running_text_input_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
+    pub(super) async fn handle_running_text_input_key(
+        &mut self,
+        key: KeyEvent,
+    ) -> anyhow::Result<bool> {
         if !matches!(self.input_ui.composer(), ComposerMode::TextInput(_)) {
             return Ok(false);
         }
-        self.handle_text_input_key(key)
+        self.handle_text_input_key(key, super::config_row::ConfigCommitCtx::DuringTurn)
+            .await
     }
 
     pub(super) fn next_running_frame_deadline(

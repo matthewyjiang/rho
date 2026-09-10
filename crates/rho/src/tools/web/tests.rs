@@ -172,8 +172,9 @@ fn web_search_route_follows_mode_and_hosted_support() {
         pretty_assertions::assert_eq!(
             (
                 super::hosted_web_search_active(&config),
-                super::client_web_search_available(&config),
-                super::web_search_available(&config),
+                super::access_tools(&config).client_available(),
+                super::hosted_web_search_active(&config)
+                    || super::access_tools(&config).client_available(),
             ),
             (native, backup, available),
             "{name}"

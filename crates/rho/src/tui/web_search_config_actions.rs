@@ -49,13 +49,14 @@ impl App {
         ctx: ConfigCommitCtx<'_>,
     ) -> anyhow::Result<()> {
         match action {
-            WebSearchAction::Mode => self.cycle_web_search_mode(ctx).await,
-            WebSearchAction::Backend => self.cycle_web_search_backend(ctx).await,
+            WebSearchAction::OpenChoice(kind) => self.open_web_search_choice_picker(kind, ctx),
+            WebSearchAction::SelectChoice(choice) => {
+                self.select_web_search_choice(choice, ctx).await
+            }
             WebSearchAction::Route => {
                 self.set_status("saved search route applies before the next turn");
                 Ok(())
             }
-            WebSearchAction::Info => Ok(()),
             WebSearchAction::Test => self.prompt_web_search_test(),
             WebSearchAction::OpenBackend(backend) => {
                 let config = self.info.services.config_repository.load()?;
@@ -69,8 +70,10 @@ impl App {
                 }
                 Ok(())
             }
-            WebSearchAction::OpenAiConnection => self.cycle_openai_search_connection(ctx).await,
-            WebSearchAction::ExaConnection => self.cycle_exa_search_connection(ctx).await,
+            WebSearchAction::CodexEndpoint => {
+                self.set_status("Codex endpoint is fixed");
+                Ok(())
+            }
             WebSearchAction::EditUrl(field) => self.open_web_search_url_editor(field),
             WebSearchAction::ResetUrl(field) => self.reset_web_search_url(field, ctx).await,
             WebSearchAction::EditKey(credential) => self.open_web_search_api_key_editor(credential),
@@ -116,7 +119,7 @@ impl App {
         Ok(())
     }
 
-    async fn persist_web_search(
+    pub(in crate::tui) async fn persist_web_search(
         &mut self,
         ctx: ConfigCommitCtx<'_>,
         selected_value: &str,
@@ -134,64 +137,44 @@ impl App {
         }
     }
 
-    async fn cycle_web_search_mode(&mut self, ctx: ConfigCommitCtx<'_>) -> anyhow::Result<()> {
-        let mode = self.info.services.config_repository.update(|config| {
-            config.web_search.mode = config.web_search.mode.next();
-            config.web_search.mode
-        })?;
-        self.persist_web_search(
-            ctx,
-            WEB_SEARCH_MODE_VALUE,
-            None,
-            format!("web search mode: {}", mode.label()),
-        )
-        .await
-    }
-
-    async fn cycle_web_search_backend(&mut self, ctx: ConfigCommitCtx<'_>) -> anyhow::Result<()> {
-        let backend = self.info.services.config_repository.update(|config| {
-            config.web_search.backend = config.web_search.backend.next();
-            config.web_search.backend
-        })?;
-        self.persist_web_search(
-            ctx,
-            WEB_SEARCH_BACKEND_VALUE,
-            None,
-            format!("web search backend: {}", backend.label()),
-        )
-        .await
-    }
-
-    async fn cycle_openai_search_connection(
+    fn open_web_search_choice_picker(
         &mut self,
+        kind: WebSearchChoiceKind,
         ctx: ConfigCommitCtx<'_>,
     ) -> anyhow::Result<()> {
-        let connection = self.info.services.config_repository.update(|config| {
-            config.web_search.openai.connection = config.web_search.openai.connection.next();
-            config.web_search.openai.connection
-        })?;
-        self.persist_web_search(
-            ctx,
-            WEB_SEARCH_OPENAI_CONNECTION_VALUE,
-            Some(SearchBackend::OpenAi),
-            format!("OpenAI search connection: {}", connection.label()),
-        )
-        .await
+        let config = self.info.services.config_repository.load()?;
+        self.open_child_picker(picker_for_choice(kind, &config.web_search));
+        if matches!(ctx, ConfigCommitCtx::DuringTurn) {
+            self.set_status(kind.open_status());
+        }
+        Ok(())
     }
 
-    async fn cycle_exa_search_connection(
+    async fn apply_web_search_choice(
         &mut self,
         ctx: ConfigCommitCtx<'_>,
+        selected_value: &str,
+        page: Option<SearchBackend>,
+        during_turn_status: String,
     ) -> anyhow::Result<()> {
-        let connection = self.info.services.config_repository.update(|config| {
-            config.web_search.exa.connection = config.web_search.exa.connection.next();
-            config.web_search.exa.connection
+        let _ = self.pop_picker_level();
+        self.persist_web_search(ctx, selected_value, page, during_turn_status)
+            .await
+    }
+
+    async fn select_web_search_choice(
+        &mut self,
+        choice: WebSearchChoice,
+        ctx: ConfigCommitCtx<'_>,
+    ) -> anyhow::Result<()> {
+        self.info.services.config_repository.update(|config| {
+            choice.apply(&mut config.web_search);
         })?;
-        self.persist_web_search(
+        self.apply_web_search_choice(
             ctx,
-            WEB_SEARCH_EXA_CONNECTION_VALUE,
-            Some(SearchBackend::Exa),
-            format!("Exa search connection: {}", connection.label()),
+            choice.kind().parent_value(),
+            choice.kind().page(),
+            choice.status(),
         )
         .await
     }
@@ -218,10 +201,11 @@ impl App {
         Ok(())
     }
 
-    pub(in crate::tui) fn save_web_search_url(
+    pub(in crate::tui) async fn save_web_search_url(
         &mut self,
         field: WebSearchUrlField,
         value: &str,
+        ctx: ConfigCommitCtx<'_>,
     ) -> anyhow::Result<()> {
         let trimmed = value.trim();
         let parsed = if trimmed.is_empty() {
@@ -249,14 +233,17 @@ impl App {
             self.set_status("config save failed");
             return Ok(());
         }
-        self.web_search_reload_pending = true;
-        self.refresh_web_search_picker(field.value(), Some(field.page()))?;
-        self.set_status(if parsed.is_some() {
-            format!("{} saved; applies next turn", field.label())
-        } else {
-            format!("{} reset to default; applies next turn", field.label())
-        });
-        Ok(())
+        self.persist_web_search(
+            ctx,
+            field.value(),
+            Some(field.page()),
+            if parsed.is_some() {
+                format!("{} saved", field.label())
+            } else {
+                format!("{} reset to default", field.label())
+            },
+        )
+        .await
     }
 
     async fn reset_web_search_url(

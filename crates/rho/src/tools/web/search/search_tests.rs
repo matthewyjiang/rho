@@ -297,7 +297,7 @@ async fn exa_mcp_uses_explicit_endpoint_without_api_auth() {
 #[test]
 fn explicit_connections_require_their_own_credentials() {
     let mut config = config(SearchBackend::OpenAi, "http://localhost:3002".into());
-    assert!(!backend_available(&config));
+    assert!(!config.is_ready());
     config.settings.openai.connection = OpenAiSearchConnection::Codex;
     config.ready = Ok(ReadyBackend::OpenAi(openai::OpenAiSearchAuth::Codex {
         tokens: CodexTokens {
@@ -308,23 +308,23 @@ fn explicit_connections_require_their_own_credentials() {
         },
         source: CodexAuthSource::Env,
     }));
-    assert!(backend_available(&config));
+    assert!(config.is_ready());
     assert_eq!(
         config.destination_url("responses").unwrap(),
         OPENAI_CODEX_RESPONSES_URL
     );
     config.settings.backend = SearchBackend::Exa;
     config.ready = Err("EXA_API_KEY is not set".into());
-    assert!(!backend_available(&config));
+    assert!(!config.is_ready());
     config.settings.exa.connection = ExaSearchConnection::Mcp;
     config.ready = Ok(ReadyBackend::ExaMcp);
-    assert!(backend_available(&config));
+    assert!(config.is_ready());
     config.settings.backend = SearchBackend::Firecrawl;
     config.ready = Err("FIRECRAWL_API_KEY is not set".into());
-    assert!(!backend_available(&config));
+    assert!(!config.is_ready());
     config.settings.firecrawl.api_base_url = Some("http://localhost:3002".into());
     config.ready = Ok(ReadyBackend::Firecrawl { key: None });
-    assert!(backend_available(&config));
+    assert!(config.is_ready());
 }
 
 // Covers: blank keys cannot mark cloud ready or produce an empty bearer header;

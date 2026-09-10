@@ -1,12 +1,12 @@
 use pretty_assertions::assert_eq;
 use url::Url;
 
+use super::super::{Config, ConfigWarning};
 use super::{
-    firecrawl_uses_cloud_default, join_api_path, migrate_legacy_web_search,
-    parse_search_endpoint_url, resolve_web_search_settings, resolved_endpoint_url,
-    web_search_route, ExaSearchPartial, OpenAiSearchPartial, SearchBackend, WebSearchLoadWarning,
-    WebSearchMode, WebSearchPartial, WebSearchRoute, WebSearchSettings, FIRECRAWL_API_DEFAULT_BASE,
-    OPENAI_API_DEFAULT_BASE,
+    join_api_path, migrate_legacy_web_search, parse_search_endpoint_url,
+    resolve_web_search_settings, resolved_endpoint_url, web_search_route, ExaSearchPartial,
+    OpenAiSearchPartial, PartialWebSearchConfig, SearchBackend, WebSearchMode, WebSearchRoute,
+    WebSearchSettings, FIRECRAWL_API_DEFAULT_BASE, OPENAI_API_DEFAULT_BASE,
 };
 
 // Covers: old off and concrete backends keep their intent; auto cannot keep
@@ -93,11 +93,11 @@ fn web_search_partial_routing_preserves_legacy_intent() {
             for hosted in [false, true] {
                 let mut warnings = Vec::new();
                 let result = resolve_web_search_settings(
-                    WebSearchPartial {
+                    PartialWebSearchConfig {
                         hosted: Some(hosted),
                         provider: Some(provider.into()),
                         backend,
-                        ..WebSearchPartial::default()
+                        ..PartialWebSearchConfig::default()
                     },
                     &mut warnings,
                 );
@@ -122,10 +122,10 @@ fn web_search_partial_routing_preserves_legacy_intent() {
         }
     }
     for partial in [
-        WebSearchPartial::default(),
-        WebSearchPartial {
+        PartialWebSearchConfig::default(),
+        PartialWebSearchConfig {
             backend: Some(SearchBackend::Firecrawl),
-            ..WebSearchPartial::default()
+            ..PartialWebSearchConfig::default()
         },
     ] {
         let mut warnings = Vec::new();
@@ -141,10 +141,10 @@ fn web_search_partial_routing_preserves_legacy_intent() {
 fn legacy_openai_exa_transport_warns_until_connection_is_set() {
     let mut warnings = Vec::new();
     let settings = resolve_web_search_settings(
-        WebSearchPartial {
+        PartialWebSearchConfig {
             hosted: Some(false),
             provider: Some("openai".into()),
-            ..WebSearchPartial::default()
+            ..PartialWebSearchConfig::default()
         },
         &mut warnings,
     )
@@ -153,7 +153,7 @@ fn legacy_openai_exa_transport_warns_until_connection_is_set() {
     assert_eq!(settings.backend, SearchBackend::OpenAi);
     assert!(warnings.iter().any(|warning| matches!(
         warning,
-        WebSearchLoadWarning::Migrated {
+        ConfigWarning::Migrated {
             key: "web_search.openai.connection",
             ..
         }
@@ -161,7 +161,7 @@ fn legacy_openai_exa_transport_warns_until_connection_is_set() {
 
     warnings.clear();
     let settings = resolve_web_search_settings(
-        WebSearchPartial {
+        PartialWebSearchConfig {
             hosted: Some(true),
             provider: Some("exa".into()),
             openai: None,
@@ -169,7 +169,7 @@ fn legacy_openai_exa_transport_warns_until_connection_is_set() {
                 connection: Some(super::ExaSearchConnection::Mcp),
                 ..ExaSearchPartial::default()
             }),
-            ..WebSearchPartial::default()
+            ..PartialWebSearchConfig::default()
         },
         &mut warnings,
     )
@@ -177,7 +177,7 @@ fn legacy_openai_exa_transport_warns_until_connection_is_set() {
     assert_eq!(settings.exa.connection, super::ExaSearchConnection::Mcp);
     assert!(!warnings.iter().any(|warning| matches!(
         warning,
-        WebSearchLoadWarning::Migrated {
+        ConfigWarning::Migrated {
             key: "web_search.exa.connection",
             ..
         }
@@ -185,14 +185,14 @@ fn legacy_openai_exa_transport_warns_until_connection_is_set() {
 
     warnings.clear();
     let settings = resolve_web_search_settings(
-        WebSearchPartial {
+        PartialWebSearchConfig {
             mode: Some(WebSearchMode::Backend),
             backend: Some(SearchBackend::OpenAi),
             openai: Some(OpenAiSearchPartial {
                 connection: Some(super::OpenAiSearchConnection::Codex),
                 api_base_url: None,
             }),
-            ..WebSearchPartial::default()
+            ..PartialWebSearchConfig::default()
         },
         &mut warnings,
     )
@@ -259,18 +259,131 @@ fn search_endpoint_validation_and_prefix_join() {
             .as_str(),
         "https://api.openai.com/v1/responses"
     );
-    assert!(firecrawl_uses_cloud_default(None));
-    assert!(firecrawl_uses_cloud_default(Some(
-        FIRECRAWL_API_DEFAULT_BASE
-    )));
-    assert!(firecrawl_uses_cloud_default(Some(
-        "https://api.firecrawl.dev/"
-    )));
-    assert!(firecrawl_uses_cloud_default(Some(
-        "https://api.firecrawl.dev:443"
-    )));
-    assert!(!firecrawl_uses_cloud_default(Some("http://127.0.0.1:3002")));
-    assert!(!firecrawl_uses_cloud_default(Some(
-        "https://api.firecrawl.dev:8443"
-    )));
+    let default = WebSearchSettings::default();
+    assert!(default
+        .destination(SearchBackend::Firecrawl)
+        .is_default_origin());
+    for configured in [
+        FIRECRAWL_API_DEFAULT_BASE,
+        "https://api.firecrawl.dev/",
+        "https://api.firecrawl.dev:443",
+    ] {
+        let mut settings = WebSearchSettings::default();
+        settings.firecrawl.api_base_url = Some(configured.into());
+        assert!(
+            settings
+                .destination(SearchBackend::Firecrawl)
+                .is_default_origin(),
+            "{configured}"
+        );
+    }
+    for configured in ["http://127.0.0.1:3002", "https://api.firecrawl.dev:8443"] {
+        let mut settings = WebSearchSettings::default();
+        settings.firecrawl.api_base_url = Some(configured.into());
+        assert!(
+            !settings
+                .destination(SearchBackend::Firecrawl)
+                .is_default_origin(),
+            "{configured}"
+        );
+    }
+}
+
+#[test]
+fn grouped_web_search_load_table() {
+    let cases = [
+        (
+            r#"
+[web_search]
+hosted = false
+provider = "brave"
+"#,
+            WebSearchMode::Backend,
+            SearchBackend::Brave,
+        ),
+        (
+            r#"
+[web_search]
+provider = "exa"
+"#,
+            WebSearchMode::Auto,
+            SearchBackend::Exa,
+        ),
+        (
+            r#"
+[web_search]
+hosted = false
+provider = "disabled"
+"#,
+            WebSearchMode::Off,
+            SearchBackend::OpenAi,
+        ),
+        (
+            r#"
+[web_search]
+mode = "backend"
+backend = "firecrawl"
+"#,
+            WebSearchMode::Backend,
+            SearchBackend::Firecrawl,
+        ),
+    ];
+
+    for (toml, mode, backend) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, toml).unwrap();
+        let config = Config::load(Some(path)).unwrap();
+        assert_eq!(
+            (config.web_search.mode, config.web_search.backend),
+            (mode, backend),
+            "{toml}"
+        );
+    }
+}
+
+#[test]
+fn grouped_web_search_native_only_legacy_is_a_load_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        r#"
+[web_search]
+hosted = true
+provider = "disabled"
+"#,
+    )
+    .unwrap();
+
+    assert!(Config::load(Some(path)).is_err());
+}
+
+#[test]
+fn web_search_round_trips_mode_backend_endpoints_and_connections() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let mut config = Config {
+        rtk: false,
+        web_search: WebSearchSettings {
+            mode: WebSearchMode::Backend,
+            backend: SearchBackend::Exa,
+            ..WebSearchSettings::default()
+        },
+        ..Config::default()
+    };
+    config.web_search.exa.connection = super::ExaSearchConnection::Mcp;
+    config.web_search.exa.api_base_url = Some("https://exa.example/v1".into());
+    config.web_search.exa.mcp_url = Some("https://mcp.exa.example/mcp".into());
+    config.web_search.openai.connection = super::OpenAiSearchConnection::Codex;
+    config.web_search.firecrawl.api_base_url = Some("http://127.0.0.1:3002/firecrawl".into());
+
+    config
+        .save_with_store(
+            path.clone(),
+            &rho_providers::credentials::MemoryCredentialStore::default(),
+        )
+        .unwrap();
+    let loaded = Config::load(Some(path)).unwrap();
+    assert_eq!(loaded.web_search, config.web_search);
 }

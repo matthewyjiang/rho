@@ -1,7 +1,4 @@
-use super::{
-    Config, EffectiveModelSource, LegacyWebSearchCredentials, SearchBackend, WebSearchMode,
-    WebSearchSettings,
-};
+use super::{Config, EffectiveModelSource, LegacyWebSearchCredentials, SearchBackend};
 
 #[test]
 fn unknown_permission_mode_is_a_config_error() {
@@ -136,105 +133,6 @@ fn loads_and_normalizes_compaction_percentages() {
     assert!(config.auto_compact);
     assert_eq!(config.compact_threshold_percent, 80);
     assert_eq!(config.compact_target_percent, 79);
-}
-
-#[test]
-fn grouped_web_search_load_table() {
-    let cases = [
-        (
-            r#"
-[web_search]
-hosted = false
-provider = "brave"
-"#,
-            WebSearchMode::Backend,
-            SearchBackend::Brave,
-        ),
-        (
-            r#"
-[web_search]
-provider = "exa"
-"#,
-            WebSearchMode::Auto,
-            SearchBackend::Exa,
-        ),
-        (
-            r#"
-[web_search]
-hosted = false
-provider = "disabled"
-"#,
-            WebSearchMode::Off,
-            SearchBackend::OpenAi,
-        ),
-        (
-            r#"
-[web_search]
-mode = "backend"
-backend = "firecrawl"
-"#,
-            WebSearchMode::Backend,
-            SearchBackend::Firecrawl,
-        ),
-    ];
-
-    for (toml, mode, backend) in cases {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(&path, toml).unwrap();
-        let config = Config::load(Some(path)).unwrap();
-        assert_eq!(
-            (config.web_search.mode, config.web_search.backend),
-            (mode, backend),
-            "{toml}"
-        );
-    }
-}
-
-#[test]
-fn grouped_web_search_native_only_legacy_is_a_load_error() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-[web_search]
-hosted = true
-provider = "disabled"
-"#,
-    )
-    .unwrap();
-
-    assert!(Config::load(Some(path)).is_err());
-}
-
-#[test]
-fn web_search_round_trips_mode_backend_endpoints_and_connections() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    let mut config = Config {
-        rtk: false,
-        web_search: WebSearchSettings {
-            mode: WebSearchMode::Backend,
-            backend: SearchBackend::Exa,
-            ..WebSearchSettings::default()
-        },
-        ..Config::default()
-    };
-    config.web_search.exa.connection = super::ExaSearchConnection::Mcp;
-    config.web_search.exa.api_base_url = Some("https://exa.example/v1".into());
-    config.web_search.exa.mcp_url = Some("https://mcp.exa.example/mcp".into());
-    config.web_search.openai.connection = super::OpenAiSearchConnection::Codex;
-    config.web_search.firecrawl.api_base_url = Some("http://127.0.0.1:3002/firecrawl".into());
-
-    config
-        .save_with_store(
-            path.clone(),
-            &rho_providers::credentials::MemoryCredentialStore::default(),
-        )
-        .unwrap();
-    let loaded = Config::load(Some(path)).unwrap();
-    assert_eq!(loaded.web_search, config.web_search);
 }
 
 // Covers: display.cache_miss_notices loads from grouped config and defaults off.

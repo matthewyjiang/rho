@@ -45,7 +45,7 @@ impl WebSearch {
 
     /// Client-side backend when mode is not Off and the selected backend is ready.
     pub fn client_available(&self) -> bool {
-        self.config.settings.mode != WebSearchMode::Off && search::backend_available(&self.config)
+        self.config.settings.mode != WebSearchMode::Off && self.config.is_ready()
     }
 }
 

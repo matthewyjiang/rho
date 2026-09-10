@@ -40,16 +40,16 @@ pub(crate) fn hosted_web_search_active(config: &crate::config::Config) -> bool {
     )
 }
 
-/// Client backend can run for this config. Mode Off always gates this off.
-/// Does not construct an HTTP client or load unselected backend credentials.
-pub(crate) fn client_web_search_available(config: &crate::config::Config) -> bool {
-    config.web_search.mode != crate::config::WebSearchMode::Off
-        && search::client_backend_ready(config)
-}
-
-/// `web_search` capability is on when native search is the route or a backend is ready.
-pub(crate) fn web_search_available(config: &crate::config::Config) -> bool {
-    hosted_web_search_active(config) || client_web_search_available(config)
+/// Client `web_search` tool for this config, if native search or a ready backend
+/// should expose it.
+pub(super) fn sdk_web_search(
+    config: &crate::config::Config,
+    store: WebAccessStore,
+    max_output_bytes: usize,
+) -> Option<SdkWebSearch> {
+    let tool = access_tools_with_store(config, store);
+    (hosted_web_search_active(config) || tool.client_available())
+        .then(|| SdkWebSearch::new(tool, max_output_bytes))
 }
 
 pub(crate) const WEB_SEARCH_TOOL_NAME: &str = "web_search";
@@ -91,11 +91,10 @@ pub(super) fn sdk_bundle(
     use crate::agent::ToolCapability;
 
     let mut tools = Vec::<Arc<dyn SdkTool>>::new();
-    if capabilities.contains(&ToolCapability::WebSearch) && web_search_available(config) {
-        tools.push(Arc::new(SdkWebSearch::new(
-            access_tools_with_store(config, store.clone()),
-            config.max_output_bytes,
-        )));
+    if capabilities.contains(&ToolCapability::WebSearch) {
+        if let Some(tool) = sdk_web_search(config, store.clone(), config.max_output_bytes) {
+            tools.push(Arc::new(tool));
+        }
     }
     if capabilities.contains(&ToolCapability::FetchContent) {
         tools.push(Arc::new(SdkFetchContent::new(

@@ -302,7 +302,9 @@ Pinned values (`hashline`, `apply_patch`, `str_replace`) stay fixed across provi
 
 ## Web search
 
-Choose **Tools → Web search** in `/config`. Search mode controls where queries go:
+Choose **Tools → Web search** in `/config`. Mode, backend, and connection settings open a picker so you can select a value directly. Backend pages stay available in every mode, and OpenAI and Exa pages show settings for both connections. Editing a backend does not select it. Changes made during a turn apply to the next turn.
+
+Search mode controls where queries go:
 
 | Mode | Routing |
 | --- | --- |

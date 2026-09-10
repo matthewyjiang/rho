@@ -5,7 +5,9 @@ use ratatui::DefaultTerminal;
 
 use super::{
     config_editor::{ConfigNumberInput, ConfigNumberSave},
-    config_picker, App, ComposerMode, Entry, InteractiveRuntime,
+    config_picker,
+    config_row::ConfigCommitCtx,
+    App, ComposerMode, Entry, InteractiveRuntime,
 };
 
 impl App {
@@ -241,13 +243,17 @@ impl App {
         }
     }
 
-    pub(super) fn handle_text_input_key(&mut self, key: KeyEvent) -> anyhow::Result<bool> {
+    pub(super) async fn handle_text_input_key(
+        &mut self,
+        key: KeyEvent,
+        ctx: ConfigCommitCtx<'_>,
+    ) -> anyhow::Result<bool> {
         if !matches!(self.input_ui.composer(), ComposerMode::TextInput(_)) {
             return Ok(false);
         }
 
         match (key.modifiers, key.code) {
-            (KeyModifiers::NONE, KeyCode::Enter) => self.commit_text_input(),
+            (KeyModifiers::NONE, KeyCode::Enter) => self.commit_text_input(ctx).await,
             (KeyModifiers::NONE, KeyCode::Backspace) => {
                 self.with_text_input_mut(|input| input.editor.backspace());
                 Ok(true)
@@ -281,7 +287,7 @@ impl App {
         }
     }
 
-    fn commit_text_input(&mut self) -> anyhow::Result<bool> {
+    async fn commit_text_input(&mut self, ctx: ConfigCommitCtx<'_>) -> anyhow::Result<bool> {
         let ComposerMode::TextInput(input) = self.input_ui.composer() else {
             return Ok(true);
         };
@@ -293,11 +299,13 @@ impl App {
                     save_config_api_key(self.credential_store.as_ref(), credential, &value);
                 match save_result {
                     Ok(()) => {
-                        self.web_search_reload_pending = true;
-                        self.refresh_web_search_config_picker(
+                        self.persist_web_search(
+                            ctx,
                             super::web_search_config::web_search_key_value(credential),
-                        )?;
-                        self.set_status(format!("{} saved; applies next turn", credential.label()));
+                            Some(crate::config::SearchBackend::from_credential(credential)),
+                            format!("{} saved", credential.label()),
+                        )
+                        .await?;
                     }
                     Err(err) => {
                         self.insert_entry(&Entry::Error(format!(
@@ -309,7 +317,7 @@ impl App {
                 }
             }
             super::text_input::TextInputTarget::ConfigUrl(field) => {
-                self.save_web_search_url(field, &value)?;
+                self.save_web_search_url(field, &value, ctx).await?;
             }
             super::text_input::TextInputTarget::AgentField(field) => {
                 self.commit_agent_text_input(field, value)?;

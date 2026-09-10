@@ -30,13 +30,25 @@ pub(super) const WEB_SEARCH_CONFIG_SCENARIO: Scenario = Scenario::new(
             timeout: SETTLE,
         },
         Step::Phase("force_backend"),
-        // Isolated matrix config begins Off. Cycle to Auto, then Backend.
+        // Isolated matrix config begins Off. Pick Backend, then Firecrawl.
         Step::Key(Key::Enter),
+        Step::WaitText {
+            text: "Web search mode",
+            timeout: SETTLE,
+        },
+        Step::TypeText("web_search_mode:backend"),
         Step::Key(Key::Enter),
+        Step::WaitText {
+            text: "Next turn route",
+            timeout: SETTLE,
+        },
         Step::Key(Key::Down),
-        // OpenAI -> Exa -> Brave -> Firecrawl.
         Step::Key(Key::Enter),
-        Step::Key(Key::Enter),
+        Step::WaitText {
+            text: "Web search backend",
+            timeout: SETTLE,
+        },
+        Step::TypeText("web_search_backend:firecrawl"),
         Step::Key(Key::Enter),
         Step::WaitText {
             text: "Firecrawl API",
@@ -192,6 +204,8 @@ fn test_connection_lifecycle(harness: &mut crate::harness::PtyHarness) -> Result
     harness.wait_for_text("partial assistant before cancellation", STREAM)?;
     open_search_config(harness)?;
     select(harness, "web_search_mode")?;
+    harness.wait_for_text("Web search mode", SETTLE)?;
+    select(harness, "web_search_mode:off")?;
     harness.wait_for_text("web search mode: Off; applies next turn", SETTLE)?;
     close_search_config(harness)?;
     harness.inject_key(&Key::Esc)?;

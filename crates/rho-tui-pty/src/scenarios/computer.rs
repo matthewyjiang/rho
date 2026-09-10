@@ -36,6 +36,10 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
             Ok(())
         }),
         Step::Key(Key::Esc),
+        Step::WaitTextGone {
+            text: "No desktop access granted",
+            timeout: SETTLE,
+        },
         Step::Resize { rows: 24, cols: 60 },
         Step::SubmitText("/computer setup"),
         Step::WaitText {
@@ -53,17 +57,30 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
         },
         // Enter chooses the safe default, without starting a connection.
         Step::Key(Key::Enter),
+        Step::WaitTextGone {
+            text: "Grant desktop access?",
+            timeout: SETTLE,
+        },
         Step::SubmitText("/computer status"),
         Step::WaitText {
             text: "No desktop access granted",
             timeout: SETTLE,
         },
         Step::Key(Key::Esc),
-        // A short split pane clips consent; its hidden grant shortcut must fail closed.
-        Step::Resize { rows: 8, cols: 60 },
+        Step::WaitTextGone {
+            text: "No desktop access granted",
+            timeout: SETTLE,
+        },
         Step::SubmitText("/computer on"),
         Step::WaitText {
             text: "Grant desktop access?",
+            timeout: SETTLE,
+        },
+        // Resize the open consent overlay and wait for its clipped layout before
+        // testing the hidden grant shortcut. Command submission must not race resize.
+        Step::Resize { rows: 8, cols: 60 },
+        Step::WaitTextGone {
+            text: "history.",
             timeout: SETTLE,
         },
         Step::Key(Key::Char('g')),
@@ -72,6 +89,10 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
             timeout: SETTLE,
         },
         Step::Key(Key::Esc),
+        Step::WaitTextGone {
+            text: "Grant desktop access?",
+            timeout: SETTLE,
+        },
         Step::Resize {
             rows: 40,
             cols: 120,
