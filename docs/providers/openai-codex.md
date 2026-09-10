@@ -56,9 +56,9 @@ Codex OAuth uses this static model allowlist rather than a refreshable API list:
 - `gpt-5.6-terra`
 - `gpt-5.6-luna`
 - `gpt-5.5`
-- `gpt-5.4`
-- `gpt-5.4-mini`
 - `gpt-5.3-codex-spark`
+
+GPT-5.4 and GPT-5.4 mini [retired from Codex](https://learn.chatgpt.com/docs/models#deprecated-codex-models) on August 31, 2026. If your saved Codex configuration uses either model, switch to `gpt-5.6-terra` or `gpt-5.6-luna`, respectively. OpenAI API access is unaffected.
 
 Switch to a Codex model with:
 
@@ -74,7 +74,7 @@ rho --provider openai-codex --auth codex --model gpt-5.6-sol run "hello"
 
 Run `rho login openai-codex` first or provide `CODEX_ACCESS_TOKEN` in the automation environment.
 
-Supported GPT-5.4, GPT-5.5, GPT-5.6, and GPT-6 Astra Codex models can use OpenAI's faster priority tier at a higher credit rate. In the TUI, use `/fast on` or `/fast off`. Running `/fast` with no argument toggles the mode. Rho saves the choice as `model.fast_mode`, shows `(fast)` after the active model name, and sends `service_tier: "priority"` on later supported Codex turns.
+Supported GPT-5.5, GPT-5.6, and GPT-6 Astra Codex models can use OpenAI's faster priority tier at a higher credit rate. In the TUI, use `/fast on` or `/fast off`. Running `/fast` with no argument toggles the mode. Rho saves the choice as `model.fast_mode`, shows `(fast)` after the active model name, and sends `service_tier: "priority"` on later supported Codex turns.
 
 ## Notes
 
