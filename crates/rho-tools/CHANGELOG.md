@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.2.0...rho-agent-tools-v1.3.0) (2026-09-10)
+
+
+### Features
+
+* **computer:** add opt-in desktop control through Cua Driver ([#1200](https://github.com/matthewyjiang/rho/issues/1200)) ([8fb622a](https://github.com/matthewyjiang/rho/commit/8fb622a7b3f5db7b756ee27892bad8723fbb4827))
+
+
+### Bug Fixes
+
+* **tui:** resize generated images before rendering previews ([#1196](https://github.com/matthewyjiang/rho/issues/1196)) ([abe2ebd](https://github.com/matthewyjiang/rho/commit/abe2ebd3d6541ada1576e53ebcaee7e7039dc12d))
+
 ## [1.2.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.1.1...rho-agent-tools-v1.2.0) (2026-09-06)
 
 

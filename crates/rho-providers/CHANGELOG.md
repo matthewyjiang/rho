@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.6.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.5.1...rho-providers-v2.6.0) (2026-09-10)
+
+
+### Features
+
+* **computer:** add opt-in desktop control through Cua Driver ([#1200](https://github.com/matthewyjiang/rho/issues/1200)) ([8fb622a](https://github.com/matthewyjiang/rho/commit/8fb622a7b3f5db7b756ee27892bad8723fbb4827))
+* **web:** add firecrawl and explicit search routing ([#1206](https://github.com/matthewyjiang/rho/issues/1206)) ([8428898](https://github.com/matthewyjiang/rho/commit/84288982b1cc0e94b1fbb57e392f6331820a566c))
+
+
+### Bug Fixes
+
+* **codex:** preserve encrypted reasoning across model switches ([#1198](https://github.com/matthewyjiang/rho/issues/1198)) ([2a37242](https://github.com/matthewyjiang/rho/commit/2a3724211531c6d7aedb09c5253ee0759cde983c))
+* **codex:** remove retired gpt-5.4 models ([#1207](https://github.com/matthewyjiang/rho/issues/1207)) ([349e4df](https://github.com/matthewyjiang/rho/commit/349e4df645960d3b356e252b6abf5232d780b6a8))
+* **providers:** prevent opencode-go missing session errors ([#1204](https://github.com/matthewyjiang/rho/issues/1204)) ([ecac1e6](https://github.com/matthewyjiang/rho/commit/ecac1e6dd28598b868725c146496117ab96e536a))
+
 ## [2.5.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.5.0...rho-providers-v2.5.1) (2026-09-07)
 
 
