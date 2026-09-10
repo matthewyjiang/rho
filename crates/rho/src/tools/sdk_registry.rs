@@ -483,7 +483,7 @@ impl AppToolSet {
         let previous = self
             .tools
             .iter()
-            .position(|tool| tool.spec().name == "web_search")
+            .position(|tool| tool.spec().name == super::web::WEB_SEARCH_TOOL_NAME)
             .map(|index| self.tools.remove(index));
         if self.web_search_capable && super::web::web_search_available(config) {
             self.tools.push(Arc::new(super::web::SdkWebSearch::new(
@@ -495,7 +495,8 @@ impl AppToolSet {
     }
 
     pub(crate) fn restore_web_search(&mut self, previous: Option<Arc<dyn Tool>>) {
-        self.tools.retain(|tool| tool.spec().name != "web_search");
+        self.tools
+            .retain(|tool| tool.spec().name != super::web::WEB_SEARCH_TOOL_NAME);
         self.tools.extend(previous);
     }
 

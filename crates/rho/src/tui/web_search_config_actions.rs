@@ -9,34 +9,53 @@ impl App {
         if !self.web_search_reload_pending {
             return Ok(());
         }
+        self.apply_saved_web_search(agent).await?;
+        self.web_search_reload_pending = false;
+        Ok(())
+    }
+
+    async fn apply_saved_web_search(
+        &mut self,
+        agent: &mut crate::app::interactive_runtime::InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         let mut config = self.info.services.config_repository.load()?;
         config.provider.clone_from(&self.info.runtime.provider);
         config.model.clone_from(&self.info.runtime.model);
         config.auth.clone_from(&self.info.runtime.auth);
         config.reasoning = self.info.runtime.reasoning;
-        let provider = crate::credential_store::build_provider_from_config_ensuring_catalog(
-            &config,
-            std::sync::Arc::clone(&self.credential_store),
-        )
-        .await?;
+        let hosted_changed = agent.hosted_web_search_active()
+            != crate::tools::web::hosted_web_search_active(&config);
+        let provider = if hosted_changed {
+            Some(
+                self.build_provider_for_selection(
+                    &config.provider,
+                    &config.model,
+                    config.reasoning,
+                    &config.auth,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
         agent.apply_web_search(config, provider).await?;
-        self.web_search_reload_pending = false;
         self.set_status("web search settings applied");
         Ok(())
     }
 
-    pub(in crate::tui) fn handle_web_search_action(
+    pub(in crate::tui) async fn handle_web_search_action(
         &mut self,
         action: WebSearchAction,
         ctx: ConfigCommitCtx<'_>,
     ) -> anyhow::Result<()> {
         match action {
-            WebSearchAction::Mode => self.cycle_web_search_mode(),
-            WebSearchAction::Backend => self.cycle_web_search_backend(),
+            WebSearchAction::Mode => self.cycle_web_search_mode(ctx).await,
+            WebSearchAction::Backend => self.cycle_web_search_backend(ctx).await,
             WebSearchAction::Route => {
                 self.set_status("saved search route applies before the next turn");
                 Ok(())
             }
+            WebSearchAction::Info => Ok(()),
             WebSearchAction::Test => self.prompt_web_search_test(),
             WebSearchAction::OpenBackend(backend) => {
                 let config = self.info.services.config_repository.load()?;
@@ -50,11 +69,11 @@ impl App {
                 }
                 Ok(())
             }
-            WebSearchAction::OpenAiConnection => self.cycle_openai_search_connection(),
-            WebSearchAction::ExaConnection => self.cycle_exa_search_connection(),
+            WebSearchAction::OpenAiConnection => self.cycle_openai_search_connection(ctx).await,
+            WebSearchAction::ExaConnection => self.cycle_exa_search_connection(ctx).await,
             WebSearchAction::EditUrl(field) => self.open_web_search_url_editor(field),
-            WebSearchAction::ResetUrl(field) => self.reset_web_search_url(field),
-            WebSearchAction::EditKey(key) => self.open_web_search_api_key_editor(key),
+            WebSearchAction::ResetUrl(field) => self.reset_web_search_url(field, ctx).await,
+            WebSearchAction::EditKey(credential) => self.open_web_search_api_key_editor(credential),
         }
     }
 
@@ -85,7 +104,6 @@ impl App {
             Some(backend) => backend_picker(backend, &config, self.credential_store.as_ref()),
             None => main_picker(
                 &config,
-                self.credential_store.as_ref(),
                 &self.info.runtime.provider,
                 &self.info.runtime.model,
             ),
@@ -98,63 +116,84 @@ impl App {
         Ok(())
     }
 
-    fn cycle_web_search_mode(&mut self) -> anyhow::Result<()> {
+    async fn persist_web_search(
+        &mut self,
+        ctx: ConfigCommitCtx<'_>,
+        selected_value: &str,
+        page: Option<SearchBackend>,
+        during_turn_status: String,
+    ) -> anyhow::Result<()> {
+        self.refresh_web_search_picker(selected_value, page)?;
+        match ctx {
+            ConfigCommitCtx::Idle { agent, .. } => self.apply_saved_web_search(agent).await,
+            ConfigCommitCtx::DuringTurn => {
+                self.web_search_reload_pending = true;
+                self.set_status(format!("{during_turn_status}; applies next turn"));
+                Ok(())
+            }
+        }
+    }
+
+    async fn cycle_web_search_mode(&mut self, ctx: ConfigCommitCtx<'_>) -> anyhow::Result<()> {
         let mode = self.info.services.config_repository.update(|config| {
             config.web_search.mode = config.web_search.mode.next();
             config.web_search.mode
         })?;
-        self.web_search_reload_pending = true;
-        self.refresh_web_search_picker(WEB_SEARCH_MODE_VALUE, None)?;
-        self.set_status(format!(
-            "web search mode: {}; applies next turn",
-            mode.label()
-        ));
-        Ok(())
+        self.persist_web_search(
+            ctx,
+            WEB_SEARCH_MODE_VALUE,
+            None,
+            format!("web search mode: {}", mode.label()),
+        )
+        .await
     }
 
-    fn cycle_web_search_backend(&mut self) -> anyhow::Result<()> {
+    async fn cycle_web_search_backend(&mut self, ctx: ConfigCommitCtx<'_>) -> anyhow::Result<()> {
         let backend = self.info.services.config_repository.update(|config| {
             config.web_search.backend = config.web_search.backend.next();
             config.web_search.backend
         })?;
-        self.web_search_reload_pending = true;
-        self.refresh_web_search_picker(WEB_SEARCH_BACKEND_VALUE, None)?;
-        self.set_status(format!(
-            "web search backend: {}; applies next turn",
-            backend.label()
-        ));
-        Ok(())
+        self.persist_web_search(
+            ctx,
+            WEB_SEARCH_BACKEND_VALUE,
+            None,
+            format!("web search backend: {}", backend.label()),
+        )
+        .await
     }
 
-    fn cycle_openai_search_connection(&mut self) -> anyhow::Result<()> {
+    async fn cycle_openai_search_connection(
+        &mut self,
+        ctx: ConfigCommitCtx<'_>,
+    ) -> anyhow::Result<()> {
         let connection = self.info.services.config_repository.update(|config| {
             config.web_search.openai.connection = config.web_search.openai.connection.next();
             config.web_search.openai.connection
         })?;
-        self.web_search_reload_pending = true;
-        self.refresh_web_search_picker(
+        self.persist_web_search(
+            ctx,
             WEB_SEARCH_OPENAI_CONNECTION_VALUE,
             Some(SearchBackend::OpenAi),
-        )?;
-        self.set_status(format!(
-            "OpenAI search connection: {}; applies next turn",
-            connection.label()
-        ));
-        Ok(())
+            format!("OpenAI search connection: {}", connection.label()),
+        )
+        .await
     }
 
-    fn cycle_exa_search_connection(&mut self) -> anyhow::Result<()> {
+    async fn cycle_exa_search_connection(
+        &mut self,
+        ctx: ConfigCommitCtx<'_>,
+    ) -> anyhow::Result<()> {
         let connection = self.info.services.config_repository.update(|config| {
             config.web_search.exa.connection = config.web_search.exa.connection.next();
             config.web_search.exa.connection
         })?;
-        self.web_search_reload_pending = true;
-        self.refresh_web_search_picker(WEB_SEARCH_EXA_CONNECTION_VALUE, Some(SearchBackend::Exa))?;
-        self.set_status(format!(
-            "Exa search connection: {}; applies next turn",
-            connection.label()
-        ));
-        Ok(())
+        self.persist_web_search(
+            ctx,
+            WEB_SEARCH_EXA_CONNECTION_VALUE,
+            Some(SearchBackend::Exa),
+            format!("Exa search connection: {}", connection.label()),
+        )
+        .await
     }
 
     fn open_web_search_url_editor(&mut self, field: WebSearchUrlField) -> anyhow::Result<()> {
@@ -220,16 +259,20 @@ impl App {
         Ok(())
     }
 
-    fn reset_web_search_url(&mut self, field: WebSearchUrlField) -> anyhow::Result<()> {
+    async fn reset_web_search_url(
+        &mut self,
+        field: WebSearchUrlField,
+        ctx: ConfigCommitCtx<'_>,
+    ) -> anyhow::Result<()> {
         self.info.services.config_repository.update(|config| {
             field.set(&mut config.web_search, None);
         })?;
-        self.web_search_reload_pending = true;
-        self.refresh_web_search_picker(field.reset_value(), Some(field.page()))?;
-        self.set_status(format!(
-            "{} reset to default; applies next turn",
-            field.label()
-        ));
-        Ok(())
+        self.persist_web_search(
+            ctx,
+            field.reset_value(),
+            Some(field.page()),
+            format!("{} reset to default", field.label()),
+        )
+        .await
     }
 }

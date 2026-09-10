@@ -54,18 +54,8 @@ pub fn resolved_endpoint_url(
     join_api_path(&base, relative)
 }
 
-pub fn firecrawl_uses_cloud_default(configured: Option<&str>) -> bool {
-    let Some(configured) = configured.map(str::trim).filter(|value| !value.is_empty()) else {
-        return true;
-    };
-    let Ok(parsed) = parse_search_endpoint_url("web_search.firecrawl.api_base_url", configured)
-    else {
-        return false;
-    };
-    let Ok(default) = Url::parse(FIRECRAWL_API_DEFAULT_BASE) else {
-        return false;
-    };
-    origin_and_prefix(&parsed) == origin_and_prefix(&default)
+pub(super) fn same_origin_and_prefix(left: &Url, right: &Url) -> bool {
+    origin_and_prefix(left) == origin_and_prefix(right)
 }
 
 /// Scheme, host, explicit port, and path prefix. Default ports stay implicit so

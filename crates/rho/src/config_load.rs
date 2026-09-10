@@ -219,25 +219,10 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
                 provider: group.provider,
                 mode: group.mode,
                 backend: group.backend,
-                openai: group
-                    .openai
-                    .map(|openai| super::web_search::OpenAiSearchPartial {
-                        connection: openai.connection,
-                        api_base_url: openai.api_base_url,
-                    }),
-                exa: group.exa.map(|exa| super::web_search::ExaSearchPartial {
-                    connection: exa.connection,
-                    api_base_url: exa.api_base_url,
-                    mcp_url: exa.mcp_url,
-                }),
-                brave: group.brave.map(|brave| super::web_search::EndpointPartial {
-                    api_base_url: brave.api_base_url,
-                }),
-                firecrawl: group
-                    .firecrawl
-                    .map(|firecrawl| super::web_search::EndpointPartial {
-                        api_base_url: firecrawl.api_base_url,
-                    }),
+                openai: group.openai,
+                exa: group.exa,
+                brave: group.brave,
+                firecrawl: group.firecrawl,
             },
             &mut search_warnings,
         )?;
@@ -743,36 +728,15 @@ struct PartialTitleConfig {
 struct PartialWebSearchConfig {
     hosted: Option<bool>,
     provider: Option<String>,
-    mode: Option<String>,
-    backend: Option<String>,
+    mode: Option<super::WebSearchMode>,
+    backend: Option<super::SearchBackend>,
     openai_api_key: Option<String>,
     exa_api_key: Option<String>,
     brave_api_key: Option<String>,
-    openai: Option<PartialOpenAiSearchConfig>,
-    exa: Option<PartialExaSearchConfig>,
-    brave: Option<PartialSearchEndpointConfig>,
-    firecrawl: Option<PartialSearchEndpointConfig>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PartialOpenAiSearchConfig {
-    connection: Option<String>,
-    api_base_url: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PartialExaSearchConfig {
-    connection: Option<String>,
-    api_base_url: Option<String>,
-    mcp_url: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PartialSearchEndpointConfig {
-    api_base_url: Option<String>,
+    openai: Option<super::web_search::OpenAiSearchPartial>,
+    exa: Option<super::web_search::ExaSearchPartial>,
+    brave: Option<super::web_search::EndpointPartial>,
+    firecrawl: Option<super::web_search::EndpointPartial>,
 }
 
 #[derive(Deserialize)]

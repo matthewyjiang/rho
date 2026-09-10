@@ -7,7 +7,9 @@
 
 use std::{fmt, str::FromStr};
 
+use rho_providers::credentials::WebSearchCredential;
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 #[path = "config_web_search_endpoint.rs"]
 mod endpoint;
@@ -17,9 +19,9 @@ mod migrate;
 #[cfg(test)]
 use endpoint::join_api_path;
 pub use endpoint::{
-    firecrawl_uses_cloud_default, parse_search_endpoint_url, resolved_endpoint_url,
-    BRAVE_API_DEFAULT_BASE, EXA_API_DEFAULT_BASE, EXA_MCP_DEFAULT_URL, FIRECRAWL_API_DEFAULT_BASE,
-    OPENAI_API_DEFAULT_BASE, OPENAI_CODEX_RESPONSES_URL,
+    parse_search_endpoint_url, resolved_endpoint_url, BRAVE_API_DEFAULT_BASE, EXA_API_DEFAULT_BASE,
+    EXA_MCP_DEFAULT_URL, FIRECRAWL_API_DEFAULT_BASE, OPENAI_API_DEFAULT_BASE,
+    OPENAI_CODEX_RESPONSES_URL,
 };
 #[cfg(test)]
 use migrate::migrate_legacy_web_search;
@@ -131,6 +133,15 @@ impl SearchBackend {
             Self::Exa => EXA_API_DEFAULT_BASE,
             Self::Brave => BRAVE_API_DEFAULT_BASE,
             Self::Firecrawl => FIRECRAWL_API_DEFAULT_BASE,
+        }
+    }
+
+    pub(crate) const fn credential(self) -> WebSearchCredential {
+        match self {
+            Self::OpenAi => WebSearchCredential::OpenAi,
+            Self::Exa => WebSearchCredential::Exa,
+            Self::Brave => WebSearchCredential::Brave,
+            Self::Firecrawl => WebSearchCredential::Firecrawl,
         }
     }
 }
@@ -303,6 +314,115 @@ impl WebSearchSettings {
             SearchBackend::Firecrawl => self.firecrawl.api_base_url = url,
         }
     }
+
+    /// Canonical destination for the selected connection of `backend`.
+    pub(crate) fn destination(&self, backend: SearchBackend) -> SearchDestination<'_> {
+        match backend {
+            SearchBackend::OpenAi => match self.openai.connection {
+                OpenAiSearchConnection::Codex => SearchDestination::Fixed {
+                    label: "Codex",
+                    url: OPENAI_CODEX_RESPONSES_URL,
+                },
+                OpenAiSearchConnection::Api => SearchDestination::Resolved {
+                    label: "OpenAI API",
+                    configured: self.openai.api_base_url.as_deref(),
+                    default_base: OPENAI_API_DEFAULT_BASE,
+                    paths: &["responses"],
+                },
+            },
+            SearchBackend::Exa => match self.exa.connection {
+                ExaSearchConnection::Api => SearchDestination::Resolved {
+                    label: "Exa API",
+                    configured: self.exa.api_base_url.as_deref(),
+                    default_base: EXA_API_DEFAULT_BASE,
+                    paths: &["search", "answer"],
+                },
+                ExaSearchConnection::Mcp => SearchDestination::Resolved {
+                    label: "Exa MCP",
+                    configured: self.exa.mcp_url.as_deref(),
+                    default_base: EXA_MCP_DEFAULT_URL,
+                    paths: &[""],
+                },
+            },
+            SearchBackend::Brave => SearchDestination::Resolved {
+                label: "Brave API",
+                configured: self.brave.api_base_url.as_deref(),
+                default_base: BRAVE_API_DEFAULT_BASE,
+                paths: &["res/v1/web/search"],
+            },
+            SearchBackend::Firecrawl => SearchDestination::Resolved {
+                label: "Firecrawl API",
+                configured: self.firecrawl.api_base_url.as_deref(),
+                default_base: FIRECRAWL_API_DEFAULT_BASE,
+                paths: &["v2/search"],
+            },
+        }
+    }
+}
+
+/// Where a client backend actually sends queries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SearchDestination<'a> {
+    Fixed {
+        label: &'static str,
+        url: &'static str,
+    },
+    Resolved {
+        label: &'static str,
+        configured: Option<&'a str>,
+        default_base: &'static str,
+        paths: &'static [&'static str],
+    },
+}
+
+impl<'a> SearchDestination<'a> {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Fixed { label, .. } | Self::Resolved { label, .. } => label,
+        }
+    }
+
+    pub(crate) fn configured(self) -> Option<&'a str> {
+        match self {
+            Self::Fixed { .. } => None,
+            Self::Resolved { configured, .. } => configured,
+        }
+    }
+
+    pub(crate) fn resolve_path(self, path: &str) -> anyhow::Result<Url> {
+        match self {
+            Self::Fixed { url, .. } => Url::parse(url).map_err(anyhow::Error::from),
+            Self::Resolved {
+                configured,
+                default_base,
+                ..
+            } => resolved_endpoint_url(configured, default_base, path),
+        }
+    }
+
+    pub(crate) fn resolve_all(self) -> anyhow::Result<Vec<Url>> {
+        match self {
+            Self::Fixed { url, .. } => Ok(vec![Url::parse(url)?]),
+            Self::Resolved { paths, .. } => {
+                paths.iter().map(|path| self.resolve_path(path)).collect()
+            }
+        }
+    }
+}
+
+/// Cloud Firecrawl requires a key; any other origin may omit auth.
+pub fn firecrawl_uses_cloud_default(configured: Option<&str>) -> bool {
+    let Some(configured) = configured.map(str::trim).filter(|value| !value.is_empty()) else {
+        return true;
+    };
+    let Ok(parsed) = parse_search_endpoint_url("web_search.firecrawl.api_base_url", configured)
+    else {
+        return false;
+    };
+    let Ok(default) = Url::parse(FIRECRAWL_API_DEFAULT_BASE) else {
+        return false;
+    };
+    endpoint::same_origin_and_prefix(&parsed, &default)
 }
 
 /// Effective search path after applying mode to the active chat provider.

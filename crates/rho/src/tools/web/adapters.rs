@@ -44,7 +44,7 @@ impl WebSearch {
     }
 
     /// Client-side backend when mode is not Off and the selected backend is ready.
-    pub fn backup_available(&self) -> bool {
+    pub fn client_available(&self) -> bool {
         self.config.settings.mode != WebSearchMode::Off && search::backend_available(&self.config)
     }
 }
@@ -94,7 +94,7 @@ impl Tool for WebSearch {
     fn call<'a>(&'a self, args: Value, ctx: ToolContext, id: String) -> AppToolFuture<'a> {
         Box::pin(async move {
             let args: WebSearchArgs = serde_json::from_value(args)?;
-            if !self.backup_available() {
+            if !self.client_available() {
                 return Err(ToolError::Message(
                     "web search is disabled or the selected backend is unavailable".into(),
                 ));

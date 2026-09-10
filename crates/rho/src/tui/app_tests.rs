@@ -737,7 +737,6 @@ fn esc_from_nested_web_search_config_returns_to_tools_category() {
     app.input_ui.set_composer(ComposerMode::Picker(parent));
     let child = config_picker::web_search_config_picker(
         &config,
-        app.credential_store.as_ref(),
         &app.info.runtime.provider,
         &app.info.runtime.model,
     );

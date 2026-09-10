@@ -41,14 +41,18 @@ pub(crate) fn hosted_web_search_active(config: &crate::config::Config) -> bool {
 }
 
 /// Client backend can run for this config. Mode Off always gates this off.
-pub(crate) fn backup_web_search_available(config: &crate::config::Config) -> bool {
-    access_tools(config).backup_available()
+/// Does not construct an HTTP client or load unselected backend credentials.
+pub(crate) fn client_web_search_available(config: &crate::config::Config) -> bool {
+    config.web_search.mode != crate::config::WebSearchMode::Off
+        && search::client_backend_ready(config)
 }
 
 /// `web_search` capability is on when native search is the route or a backend is ready.
 pub(crate) fn web_search_available(config: &crate::config::Config) -> bool {
-    hosted_web_search_active(config) || backup_web_search_available(config)
+    hosted_web_search_active(config) || client_web_search_available(config)
 }
+
+pub(crate) const WEB_SEARCH_TOOL_NAME: &str = "web_search";
 
 /// Hits the selected backend with a fixed query, independent of mode.
 pub(crate) async fn test_search_backend(
@@ -66,6 +70,7 @@ pub(crate) async fn test_search_backend(
     Ok(items.len())
 }
 
+#[cfg(test)]
 pub(crate) fn access_tools(config: &crate::config::Config) -> WebSearch {
     access_tools_with_store(config, WebAccessStore::new())
 }

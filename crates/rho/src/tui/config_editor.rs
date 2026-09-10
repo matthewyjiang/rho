@@ -2,7 +2,7 @@ use ratatui::text::Line;
 
 use {
     crate::app::config_repository::ConfigRepository,
-    rho_providers::credentials::{CredentialError, CredentialResult, WebSearchCredential},
+    rho_providers::credentials::{CredentialError, CredentialResult},
 };
 
 use super::{
@@ -27,14 +27,6 @@ pub(super) enum ConfigNumberKey {
     CompactTargetPercent,
     PromptHistoryLimit,
     AgentConcurrency,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ConfigTextKey {
-    OpenAiSearch,
-    Exa,
-    Brave,
-    Firecrawl,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -208,35 +200,6 @@ impl ConfigNumberKey {
             ConfigNumberKey::PromptHistoryLimit => Some(crate::config::MAX_PROMPT_HISTORY_LIMIT),
             ConfigNumberKey::AgentConcurrency => Some(crate::config::MAX_AGENT_CONCURRENCY),
             _ => None,
-        }
-    }
-}
-
-impl ConfigTextKey {
-    pub(super) fn label(self) -> &'static str {
-        match self {
-            ConfigTextKey::OpenAiSearch => "OpenAI web search API key",
-            ConfigTextKey::Exa => "Exa API key",
-            ConfigTextKey::Brave => "Brave Search API key",
-            ConfigTextKey::Firecrawl => "Firecrawl API key",
-        }
-    }
-
-    pub(super) fn picker_value(self) -> &'static str {
-        match self {
-            ConfigTextKey::OpenAiSearch => config_picker::WEB_SEARCH_OPENAI_KEY_VALUE,
-            ConfigTextKey::Exa => config_picker::WEB_SEARCH_EXA_KEY_VALUE,
-            ConfigTextKey::Brave => config_picker::WEB_SEARCH_BRAVE_KEY_VALUE,
-            ConfigTextKey::Firecrawl => config_picker::WEB_SEARCH_FIRECRAWL_KEY_VALUE,
-        }
-    }
-
-    pub(super) fn web_search_credential(self) -> WebSearchCredential {
-        match self {
-            ConfigTextKey::OpenAiSearch => WebSearchCredential::OpenAi,
-            ConfigTextKey::Exa => WebSearchCredential::Exa,
-            ConfigTextKey::Brave => WebSearchCredential::Brave,
-            ConfigTextKey::Firecrawl => WebSearchCredential::Firecrawl,
         }
     }
 }

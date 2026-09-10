@@ -12,14 +12,15 @@ use {
 };
 
 use super::{
-    openai_responses_url, read_bounded_text, search_error, SearchBackendConfig, SearchItem,
+    normalize_domain_filters, read_bounded_text, recency_label, search_error, SearchBackendConfig,
+    SearchItem,
 };
 
 const OPENAI_SEARCH_MODEL: &str = "gpt-5.6-luna";
 const CODEX_SEARCH_MODEL: &str = "gpt-5.6-terra";
 
 #[derive(Clone)]
-enum OpenAiSearchAuth {
+pub(super) enum OpenAiSearchAuth {
     Codex {
         tokens: CodexTokens,
         source: CodexAuthSource,
@@ -59,34 +60,6 @@ impl OpenAiSearchAuth {
     }
 }
 
-pub(super) fn is_available(config: &SearchBackendConfig) -> bool {
-    resolve_auth(config).is_ok()
-}
-
-fn resolve_auth(config: &SearchBackendConfig) -> Result<OpenAiSearchAuth, ToolError> {
-    match config.settings.openai.connection {
-        crate::config::OpenAiSearchConnection::Codex => {
-            let tokens = config.openai_codex_tokens.clone().ok_or_else(|| {
-                ToolError::Message(
-                    "OpenAI Codex web search unavailable: sign in with /login openai-codex".into(),
-                )
-            })?;
-            Ok(OpenAiSearchAuth::Codex {
-                tokens,
-                source: config.openai_codex_source,
-            })
-        }
-        crate::config::OpenAiSearchConnection::Api => {
-            let key = config.openai_api_key.clone().ok_or_else(|| {
-                ToolError::Message(
-                    "OpenAI web search unavailable: /login openai or set OPENAI_API_KEY".into(),
-                )
-            })?;
-            Ok(OpenAiSearchAuth::ApiKey(key))
-        }
-    }
-}
-
 pub(super) async fn search(
     client: &reqwest::Client,
     query: &str,
@@ -94,8 +67,9 @@ pub(super) async fn search(
     recency_filter: Option<&str>,
     domain_filter: Option<&[String]>,
     config: &SearchBackendConfig,
+    auth: &OpenAiSearchAuth,
 ) -> Result<Vec<SearchItem>, ToolError> {
-    let mut auth = resolve_auth(config)?;
+    let mut auth = auth.clone();
     let mut secrets = vec![auth.bearer_token().to_string()];
     if let OpenAiSearchAuth::Codex { tokens, .. } = &auth {
         secrets.extend(
@@ -107,14 +81,8 @@ pub(super) async fn search(
         );
     }
     let body = openai_search_body(&auth, query, num_results, recency_filter, domain_filter);
-    let (mut status, mut text) = send_openai_search_request(
-        client,
-        config,
-        &auth,
-        &body,
-        &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
-    )
-    .await?;
+    let (mut status, mut text) =
+        send_openai_search_request(client, config, &auth, &body, &secret_refs(&secrets)).await?;
     if status == reqwest::StatusCode::UNAUTHORIZED {
         if let OpenAiSearchAuth::Codex {
             tokens,
@@ -134,7 +102,7 @@ pub(super) async fn search(
                 .map_err(|err| {
                     search_error(
                         format!("OpenAI web search token refresh failed: {err}"),
-                        &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
+                        secret_refs(&secrets).as_slice(),
                     )
                 })?;
                 secrets.push(refreshed.access_token.clone());
@@ -149,7 +117,7 @@ pub(super) async fn search(
                     config,
                     &auth,
                     &body,
-                    &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
+                    &secret_refs(&secrets),
                 )
                 .await?;
                 status = retried.0;
@@ -161,27 +129,21 @@ pub(super) async fn search(
         return Err(search_error(
             format!(
                 "OpenAI web search failed: HTTP {status}: {}",
-                super::redact_secrets(
-                    &text,
-                    &secrets.iter().map(String::as_str).collect::<Vec<_>>()
-                )
-                .chars()
-                .take(300)
-                .collect::<String>()
+                super::redact_secrets(&text, &secret_refs(&secrets))
+                    .chars()
+                    .take(300)
+                    .collect::<String>()
             ),
-            &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
+            &secret_refs(&secrets),
         ));
     }
 
     let output = parse_openai_search_output(&text)?;
-    let results = extract_openai_search_results(&output, num_results);
-    if results.is_empty() {
-        Err(ToolError::Message(
-            "OpenAI web_search returned no sources".into(),
-        ))
-    } else {
-        Ok(results)
-    }
+    Ok(extract_openai_search_results(&output, num_results))
+}
+
+fn secret_refs(secrets: &[String]) -> Vec<&str> {
+    secrets.iter().map(String::as_str).collect()
 }
 
 fn openai_search_body(
@@ -212,7 +174,7 @@ async fn send_openai_search_request(
     secrets: &[&str],
 ) -> Result<(reqwest::StatusCode, String), ToolError> {
     let mut request = client
-        .post(openai_responses_url(config)?)
+        .post(config.destination_url("responses")?)
         .bearer_auth(auth.bearer_token())
         .header("Content-Type", "application/json");
     if let OpenAiSearchAuth::Codex { tokens, .. } = auth {
@@ -241,7 +203,7 @@ fn openai_search_instructions(
         "Prefer clickable source citations when possible.".to_string(),
         format!("Prefer around {} distinct sources.", num_results.min(20)),
     ];
-    if let Some(recency) = recency_filter.and_then(openai_recency_label) {
+    if let Some(recency) = recency_filter.and_then(recency_label) {
         lines.push(format!("Prefer sources from the {recency}."));
     }
     let filters = normalize_domain_filters(domain_filter);
@@ -260,16 +222,6 @@ fn openai_search_instructions(
     lines.join(" ")
 }
 
-pub(super) fn openai_recency_label(recency_filter: &str) -> Option<&'static str> {
-    match recency_filter {
-        "day" => Some("past 24 hours"),
-        "week" => Some("past week"),
-        "month" => Some("past month"),
-        "year" => Some("past year"),
-        _ => None,
-    }
-}
-
 fn openai_web_search_tool(domain_filter: Option<&[String]>) -> Value {
     let filters = normalize_domain_filters(domain_filter);
     let mut tool = serde_json::Map::from_iter([("type".into(), json!("web_search"))]);
@@ -283,50 +235,6 @@ fn openai_web_search_tool(domain_filter: Option<&[String]>) -> Value {
         );
     }
     Value::Object(tool)
-}
-
-#[derive(Default)]
-pub(super) struct DomainFilters {
-    pub(super) allowed: Vec<String>,
-    pub(super) blocked: Vec<String>,
-}
-
-pub(super) fn normalize_domain_filters(domain_filter: Option<&[String]>) -> DomainFilters {
-    let mut filters = DomainFilters::default();
-    for raw in domain_filter.into_iter().flatten() {
-        let Some(domain) = normalize_domain(raw) else {
-            continue;
-        };
-        let target = if raw.trim().starts_with('-') {
-            &mut filters.blocked
-        } else {
-            &mut filters.allowed
-        };
-        if !target.contains(&domain) {
-            target.push(domain);
-        }
-    }
-    filters.allowed.truncate(100);
-    filters.blocked.truncate(100);
-    filters
-}
-
-fn normalize_domain(raw: &str) -> Option<String> {
-    let mut input = raw
-        .trim()
-        .trim_start_matches('-')
-        .trim()
-        .to_ascii_lowercase();
-    if input.is_empty() {
-        return None;
-    }
-    if let Ok(url) = Url::parse(&input).or_else(|_| Url::parse(&format!("https://{input}"))) {
-        input = url.host_str()?.to_string();
-    } else {
-        input = input.split('/').next()?.split(':').next()?.to_string();
-    }
-    let input = input.trim_matches('.').to_string();
-    crate::tools::web::util::is_valid_domain(&input).then_some(input)
 }
 
 fn parse_openai_search_output(text: &str) -> Result<Vec<Value>, ToolError> {

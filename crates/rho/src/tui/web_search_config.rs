@@ -10,16 +10,17 @@ use rho_providers::credentials::{
 
 use crate::config::{
     parse_search_endpoint_url, web_search_route, Config, OpenAiSearchConnection, SearchBackend,
-    WebSearchRoute, WebSearchSettings, EXA_MCP_DEFAULT_URL, OPENAI_CODEX_RESPONSES_URL,
+    WebSearchRoute, WebSearchSettings, OPENAI_CODEX_RESPONSES_URL,
 };
 
 use super::{
-    config_editor::ConfigTextKey,
     config_row::ConfigCommitCtx,
     picker::{PickerBadge, PickerBadgeTone, PickerItem, UiPicker},
     App, ComposerMode, Entry, InlineChoice, InlineChoiceModal, InlineChoiceOption,
     InlineChoicePending,
 };
+
+pub(super) const WEB_SEARCH_CODEX_ENDPOINT_VALUE: &str = "web_search_openai_codex_endpoint";
 
 pub(super) const WEB_SEARCH_MODE_VALUE: &str = "web_search_mode";
 pub(super) const WEB_SEARCH_BACKEND_VALUE: &str = "web_search_backend";
@@ -58,67 +59,25 @@ fn route_summary(route: WebSearchRoute, settings: &WebSearchSettings) -> String 
         WebSearchRoute::Off => "off".into(),
         WebSearchRoute::Native => "native selected for current model".into(),
         WebSearchRoute::Backend(backend) => {
-            let (connection, configured, default, path) = match backend {
-                SearchBackend::OpenAi => match settings.openai.connection {
-                    OpenAiSearchConnection::Codex => {
-                        return format!("Codex · {OPENAI_CODEX_RESPONSES_URL} · fixed")
-                    }
-                    OpenAiSearchConnection::Api => (
-                        "OpenAI API",
-                        settings.openai.api_base_url.as_deref(),
-                        backend.default_api_base(),
-                        "responses",
-                    ),
-                },
-                SearchBackend::Exa => match settings.exa.connection {
-                    crate::config::ExaSearchConnection::Api => (
-                        "Exa API",
-                        settings.exa.api_base_url.as_deref(),
-                        backend.default_api_base(),
-                        "search",
-                    ),
-                    crate::config::ExaSearchConnection::Mcp => (
-                        "Exa MCP",
-                        settings.exa.mcp_url.as_deref(),
-                        EXA_MCP_DEFAULT_URL,
-                        "",
-                    ),
-                },
-                SearchBackend::Brave => (
-                    "Brave API",
-                    settings.brave.api_base_url.as_deref(),
-                    backend.default_api_base(),
-                    "res/v1/web/search",
-                ),
-                SearchBackend::Firecrawl => (
-                    "Firecrawl API",
-                    settings.firecrawl.api_base_url.as_deref(),
-                    backend.default_api_base(),
-                    "v2/search",
-                ),
-            };
-            match crate::config::resolved_endpoint_url(configured, default, path) {
-                Ok(url) => {
-                    let destination = if backend == SearchBackend::Exa
-                        && settings.exa.connection == crate::config::ExaSearchConnection::Api
-                    {
-                        let answer =
-                            crate::config::resolved_endpoint_url(configured, default, "answer")
-                                .expect("validated Exa base URL");
-                        format!("{url} or {answer}")
-                    } else {
-                        url.to_string()
-                    };
+            let destination = settings.destination(backend);
+            match destination.resolve_all() {
+                Ok(urls) => {
+                    let urls = urls
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" or ");
                     format!(
-                        "{connection} · {destination} · {}",
-                        if configured.is_some() {
+                        "{} · {urls} · {}",
+                        destination.label(),
+                        if destination.configured().is_some() {
                             "custom"
                         } else {
                             "default"
                         }
                     )
                 }
-                Err(error) => format!("{connection}: {error}"),
+                Err(error) => format!("{}: {error}", destination.label()),
             }
         }
     }
@@ -180,12 +139,7 @@ fn web_search_api_key_is_set(
         .is_some_and(|value| !value.trim().is_empty())
 }
 
-pub(super) fn main_picker(
-    config: &Config,
-    _credential_store: &dyn CredentialStore,
-    provider: &str,
-    model: &str,
-) -> UiPicker {
+pub(super) fn main_picker(config: &Config, provider: &str, model: &str) -> UiPicker {
     let settings = &config.web_search;
     let route = effective_route(config, provider, model);
     UiPicker::config(
@@ -268,14 +222,12 @@ pub(super) fn backend_picker(
         SearchBackend::Brave => endpoint_items(
             "Brave Search API key used by the Brave backend.",
             WebSearchUrlField::BraveApiBase,
-            ConfigTextKey::Brave,
             config,
             credential_store,
         ),
         SearchBackend::Firecrawl => endpoint_items(
             "Firecrawl API key used by the Firecrawl backend.",
             WebSearchUrlField::FirecrawlApiBase,
-            ConfigTextKey::Firecrawl,
             config,
             credential_store,
         ),
@@ -313,7 +265,7 @@ fn openai_items(config: &Config, credential_store: &dyn CredentialStore) -> Vec<
             items.push(api_key_item(
                 "OpenAI API key",
                 "API key for OpenAI search.",
-                ConfigTextKey::OpenAiSearch,
+                WebSearchCredential::OpenAi,
                 config,
                 credential_store,
             ));
@@ -323,7 +275,7 @@ fn openai_items(config: &Config, credential_store: &dyn CredentialStore) -> Vec<
                 "Endpoint",
                 "Codex search uses this fixed endpoint. Custom URLs and OAuth host overrides are not used.",
                 Some(OPENAI_CODEX_RESPONSES_URL.into()),
-                WEB_SEARCH_ROUTE_VALUE,
+                WEB_SEARCH_CODEX_ENDPOINT_VALUE,
             ));
         }
     }
@@ -354,7 +306,7 @@ fn exa_items(config: &Config, credential_store: &dyn CredentialStore) -> Vec<Pic
     items.push(api_key_item(
         "Exa API key",
         "API key for Exa API search. Unused when Connection is Exa MCP.",
-        ConfigTextKey::Exa,
+        WebSearchCredential::Exa,
         config,
         credential_store,
     ));
@@ -364,10 +316,10 @@ fn exa_items(config: &Config, credential_store: &dyn CredentialStore) -> Vec<Pic
 fn endpoint_items(
     key_detail: &str,
     field: WebSearchUrlField,
-    key: ConfigTextKey,
     config: &Config,
     credential_store: &dyn CredentialStore,
 ) -> Vec<PickerItem> {
+    let key = field.page().credential();
     let mut items = url_rows(
         field,
         "Origin and reverse-proxy prefix. Empty uses the default.",
@@ -411,7 +363,7 @@ fn url_rows(
 fn api_key_item(
     label: &str,
     detail: &str,
-    key: ConfigTextKey,
+    credential: WebSearchCredential,
     config: &Config,
     credential_store: &dyn CredentialStore,
 ) -> PickerItem {
@@ -420,14 +372,19 @@ fn api_key_item(
         label: label.into(),
         detail: Some(detail.into()),
         preview: None,
-        badge: Some(credential_badge(
-            config,
-            credential_store,
-            key.web_search_credential(),
-        )),
-        value: key.picker_value().into(),
+        badge: Some(credential_badge(config, credential_store, credential)),
+        value: web_search_key_value(credential).into(),
         selection_verb: None,
         allow_filter_completion: true,
+    }
+}
+
+pub(super) fn web_search_key_value(credential: WebSearchCredential) -> &'static str {
+    match credential {
+        WebSearchCredential::OpenAi => WEB_SEARCH_OPENAI_KEY_VALUE,
+        WebSearchCredential::Exa => WEB_SEARCH_EXA_KEY_VALUE,
+        WebSearchCredential::Brave => WEB_SEARCH_BRAVE_KEY_VALUE,
+        WebSearchCredential::Firecrawl => WEB_SEARCH_FIRECRAWL_KEY_VALUE,
     }
 }
 

@@ -5,7 +5,7 @@ use super::{
     config_editor, config_picker,
     config_row::{ConfigCommitCtx, ConfigRow},
     resolve_web_search_editor_value, App, ComposerMode, ConfigNumberInput, ConfigNumberKey,
-    ConfigTextKey, ConfigToggle, Entry, InteractiveRuntime,
+    ConfigToggle, Entry, InteractiveRuntime,
 };
 
 /// Static description of one boolean `/config` row.
@@ -210,7 +210,6 @@ impl App {
                 let config = self.info.services.config_repository.load()?;
                 self.open_child_picker(config_picker::web_search_config_picker(
                     &config,
-                    self.credential_store.as_ref(),
                     &self.info.runtime.provider,
                     &self.info.runtime.model,
                 ));
@@ -219,7 +218,9 @@ impl App {
                 }
                 Ok(())
             }
-            (ConfigRow::WebSearchAction(action), ctx) => self.handle_web_search_action(action, ctx),
+            (ConfigRow::WebSearchAction(action), ctx) => {
+                self.handle_web_search_action(action, ctx).await
+            }
             (ConfigRow::XaiImageGeneration, _) => self.toggle_xai_image_generation(),
         }
     }
@@ -255,9 +256,8 @@ impl App {
 
     pub(super) fn open_web_search_api_key_editor(
         &mut self,
-        key: ConfigTextKey,
+        credential: rho_providers::credentials::WebSearchCredential,
     ) -> anyhow::Result<()> {
-        let credential = key.web_search_credential();
         let config = self.info.services.config_repository.load()?;
         let (value, load_error) = resolve_web_search_editor_value(
             load_web_search_api_key(self.credential_store.as_ref(), credential),
@@ -266,7 +266,7 @@ impl App {
         if let Some(err) = load_error {
             self.insert_entry(&Entry::Error(format!(
                 "could not access {}: {err}",
-                key.label()
+                credential.label()
             )));
         }
         let return_picker = match self.input_ui.take_composer() {
@@ -276,12 +276,12 @@ impl App {
                 None
             }
         };
-        let mut input = super::text_input::TextInput::config_api_key(key, value);
+        let mut input = super::text_input::TextInput::config_api_key(credential, value);
         if let Some(picker) = return_picker {
             input = input.with_return_picker(picker);
         }
         self.input_ui.set_composer(ComposerMode::TextInput(input));
-        self.set_status(format!("edit {}", key.label()));
+        self.set_status(format!("edit {}", credential.label()));
         Ok(())
     }
 

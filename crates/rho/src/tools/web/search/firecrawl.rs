@@ -3,11 +3,8 @@ use serde_json::{json, Value};
 use rho_tools::tool::ToolError;
 
 use super::{
-    firecrawl_search_url, openai::normalize_domain_filters, read_bounded_text, search_error,
-    SearchBackendConfig, SearchItem,
+    normalize_domain_filters, read_bounded_text, search_error, SearchBackendConfig, SearchItem,
 };
-
-use crate::config::firecrawl_uses_cloud_default;
 
 pub(super) async fn search(
     client: &reqwest::Client,
@@ -15,17 +12,11 @@ pub(super) async fn search(
     num_results: usize,
     recency_filter: Option<&str>,
     domain_filter: Option<&[String]>,
+    key: Option<&str>,
     config: &SearchBackendConfig,
 ) -> Result<Vec<SearchItem>, ToolError> {
-    let url = firecrawl_search_url(config)?;
-    let key = config.firecrawl_api_key.as_deref();
+    let url = config.destination_url("v2/search")?;
     let secrets: Vec<&str> = key.into_iter().collect();
-    if firecrawl_uses_cloud_default(config.settings.firecrawl.api_base_url.as_deref())
-        && key.is_none()
-    {
-        return Err(ToolError::Message("FIRECRAWL_API_KEY is not set".into()));
-    }
-
     let filters = normalize_domain_filters(domain_filter);
     // Firecrawl cannot combine includeDomains and excludeDomains. Preserve
     // mixed filters with explicit exclusions in the query and an allowlist.

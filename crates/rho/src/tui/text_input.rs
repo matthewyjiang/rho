@@ -2,8 +2,9 @@
 
 use ratatui::text::Line;
 
+use rho_providers::credentials::WebSearchCredential;
+
 use super::{
-    config_editor::ConfigTextKey,
     line_editor::LineEditor,
     picker::UiPicker,
     render::{styled_line, truncate_one_line, LineFill},
@@ -14,7 +15,7 @@ use super::{
 /// Which overlay owns a [`TextInput`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum TextInputTarget {
-    ConfigApiKey(ConfigTextKey),
+    ConfigApiKey(WebSearchCredential),
     ConfigUrl(WebSearchUrlField),
     AgentField(AgentField),
     /// One step of the `/login` endpoint wizard, which owns its own state.
@@ -59,9 +60,9 @@ pub(super) struct TextInput {
 }
 
 impl TextInput {
-    pub(super) fn config_api_key(key: ConfigTextKey, value: Option<String>) -> Self {
+    pub(super) fn config_api_key(credential: WebSearchCredential, value: Option<String>) -> Self {
         Self {
-            target: TextInputTarget::ConfigApiKey(key),
+            target: TextInputTarget::ConfigApiKey(credential),
             editor: LineEditor::new(value.unwrap_or_default()),
         }
     }
@@ -106,7 +107,7 @@ impl TextInput {
 
     pub(super) fn label(&self) -> &str {
         match &self.target {
-            TextInputTarget::ConfigApiKey(key) => key.label(),
+            TextInputTarget::ConfigApiKey(credential) => credential.label(),
             TextInputTarget::ConfigUrl(field) => field.label(),
             TextInputTarget::AgentField(field) => field.label(),
             TextInputTarget::CustomHost(step) => step.label(),

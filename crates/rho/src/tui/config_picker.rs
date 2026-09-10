@@ -1,12 +1,7 @@
-pub(super) use super::web_search_config::{
-    WEB_SEARCH_BRAVE_KEY_VALUE, WEB_SEARCH_EXA_KEY_VALUE, WEB_SEARCH_FIRECRAWL_KEY_VALUE,
-    WEB_SEARCH_OPENAI_KEY_VALUE,
-};
 use super::{provider_picker, App, Entry, PickerBadge, PickerBadgeTone, PickerItem, UiPicker};
 use {
     crate::config::{Config, EditTool},
     crate::permission::PermissionMode,
-    rho_providers::credentials::CredentialStore,
 };
 pub(super) const MODELS_CATEGORY_VALUE: &str = "config_category:models";
 pub(super) const APPEARANCE_CATEGORY_VALUE: &str = "config_category:appearance";
@@ -649,13 +644,8 @@ pub(super) fn edit_tool_picker(selected: EditTool) -> UiPicker {
     )
 }
 
-pub(super) fn web_search_config_picker(
-    config: &Config,
-    credential_store: &dyn CredentialStore,
-    provider: &str,
-    model: &str,
-) -> UiPicker {
-    super::web_search_config::main_picker(config, credential_store, provider, model)
+pub(super) fn web_search_config_picker(config: &Config, provider: &str, model: &str) -> UiPicker {
+    super::web_search_config::main_picker(config, provider, model)
 }
 
 fn web_search_summary(info: &super::RuntimeModelView, config: &Config) -> String {

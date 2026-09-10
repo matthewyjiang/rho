@@ -52,7 +52,13 @@ impl App {
             ComposerMode::Questionnaire(_) => self.handle_questionnaire_key(key),
             ComposerMode::SecretInput(_) => self.handle_secret_key(key, terminal, agent).await,
             ComposerMode::ConfigNumberInput(_) => self.handle_config_number_key(key, terminal),
-            ComposerMode::TextInput(_) => self.handle_text_input_key(key),
+            ComposerMode::TextInput(_) => {
+                let handled = self.handle_text_input_key(key)?;
+                if self.web_search_reload_pending {
+                    self.apply_pending_web_search(agent).await?;
+                }
+                Ok(handled)
+            }
             ComposerMode::Picker(_) => self.handle_picker_key(key, terminal, agent).await,
             ComposerMode::Limits(_) => Ok(self.handle_limits_overlay_key(key, terminal)),
             ComposerMode::Doctor(_) => Ok(self.handle_doctor_overlay_key(key, terminal)),

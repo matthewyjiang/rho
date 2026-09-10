@@ -89,14 +89,14 @@ fn legacy_web_search_migration_table() {
 #[test]
 fn web_search_partial_routing_preserves_legacy_intent() {
     for provider in ["disabled", "Disabled", " DISABLED "] {
-        for backend in [None, Some("firecrawl")] {
+        for backend in [None, Some(SearchBackend::Firecrawl)] {
             for hosted in [false, true] {
                 let mut warnings = Vec::new();
                 let result = resolve_web_search_settings(
                     WebSearchPartial {
                         hosted: Some(hosted),
                         provider: Some(provider.into()),
-                        backend: backend.map(str::to_owned),
+                        backend,
                         ..WebSearchPartial::default()
                     },
                     &mut warnings,
@@ -124,7 +124,7 @@ fn web_search_partial_routing_preserves_legacy_intent() {
     for partial in [
         WebSearchPartial::default(),
         WebSearchPartial {
-            backend: Some("firecrawl".into()),
+            backend: Some(SearchBackend::Firecrawl),
             ..WebSearchPartial::default()
         },
     ] {
@@ -166,7 +166,7 @@ fn legacy_openai_exa_transport_warns_until_connection_is_set() {
             provider: Some("exa".into()),
             openai: None,
             exa: Some(ExaSearchPartial {
-                connection: Some("mcp".into()),
+                connection: Some(super::ExaSearchConnection::Mcp),
                 ..ExaSearchPartial::default()
             }),
             ..WebSearchPartial::default()
@@ -186,10 +186,10 @@ fn legacy_openai_exa_transport_warns_until_connection_is_set() {
     warnings.clear();
     let settings = resolve_web_search_settings(
         WebSearchPartial {
-            mode: Some("backend".into()),
-            backend: Some("openai".into()),
+            mode: Some(WebSearchMode::Backend),
+            backend: Some(SearchBackend::OpenAi),
             openai: Some(OpenAiSearchPartial {
-                connection: Some("codex".into()),
+                connection: Some(super::OpenAiSearchConnection::Codex),
                 api_base_url: None,
             }),
             ..WebSearchPartial::default()

@@ -37,9 +37,8 @@ pub(crate) use format::{CLAUDE_CLI_RUNTIME_KEY, CURSOR_RUNTIME_KEY, RHO_RUNTIME_
 #[path = "config_web_search.rs"]
 mod web_search;
 pub(crate) use web_search::{
-    firecrawl_uses_cloud_default, parse_search_endpoint_url, resolved_endpoint_url,
-    web_search_route, BRAVE_API_DEFAULT_BASE, EXA_API_DEFAULT_BASE, EXA_MCP_DEFAULT_URL,
-    FIRECRAWL_API_DEFAULT_BASE, OPENAI_API_DEFAULT_BASE, OPENAI_CODEX_RESPONSES_URL,
+    firecrawl_uses_cloud_default, parse_search_endpoint_url, web_search_route, EXA_MCP_DEFAULT_URL,
+    OPENAI_CODEX_RESPONSES_URL,
 };
 pub use web_search::{
     ExaSearchConnection, OpenAiSearchConnection, SearchBackend, WebSearchMode, WebSearchRoute,

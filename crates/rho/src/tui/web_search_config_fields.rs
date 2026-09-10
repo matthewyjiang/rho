@@ -1,4 +1,8 @@
 //! Search URL fields and picker actions.
+use rho_providers::credentials::WebSearchCredential;
+
+use crate::config::EXA_MCP_DEFAULT_URL;
+
 use super::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,13 +112,14 @@ pub(in crate::tui) enum WebSearchAction {
     Mode,
     Backend,
     Route,
+    Info,
     Test,
     OpenBackend(SearchBackend),
     OpenAiConnection,
     ExaConnection,
     EditUrl(WebSearchUrlField),
     ResetUrl(WebSearchUrlField),
-    EditKey(ConfigTextKey),
+    EditKey(WebSearchCredential),
 }
 
 impl WebSearchAction {
@@ -129,6 +134,7 @@ impl WebSearchAction {
             WEB_SEARCH_MODE_VALUE => Self::Mode,
             WEB_SEARCH_BACKEND_VALUE => Self::Backend,
             WEB_SEARCH_ROUTE_VALUE => Self::Route,
+            WEB_SEARCH_CODEX_ENDPOINT_VALUE => Self::Info,
             WEB_SEARCH_TEST_VALUE => Self::Test,
             WEB_SEARCH_OPENAI_PAGE_VALUE => Self::OpenBackend(SearchBackend::OpenAi),
             WEB_SEARCH_EXA_PAGE_VALUE => Self::OpenBackend(SearchBackend::Exa),
@@ -136,21 +142,26 @@ impl WebSearchAction {
             WEB_SEARCH_FIRECRAWL_PAGE_VALUE => Self::OpenBackend(SearchBackend::Firecrawl),
             WEB_SEARCH_OPENAI_CONNECTION_VALUE => Self::OpenAiConnection,
             WEB_SEARCH_EXA_CONNECTION_VALUE => Self::ExaConnection,
-            WEB_SEARCH_OPENAI_KEY_VALUE => Self::EditKey(ConfigTextKey::OpenAiSearch),
-            WEB_SEARCH_EXA_KEY_VALUE => Self::EditKey(ConfigTextKey::Exa),
-            WEB_SEARCH_BRAVE_KEY_VALUE => Self::EditKey(ConfigTextKey::Brave),
-            WEB_SEARCH_FIRECRAWL_KEY_VALUE => Self::EditKey(ConfigTextKey::Firecrawl),
+            WEB_SEARCH_OPENAI_KEY_VALUE => Self::EditKey(WebSearchCredential::OpenAi),
+            WEB_SEARCH_EXA_KEY_VALUE => Self::EditKey(WebSearchCredential::Exa),
+            WEB_SEARCH_BRAVE_KEY_VALUE => Self::EditKey(WebSearchCredential::Brave),
+            WEB_SEARCH_FIRECRAWL_KEY_VALUE => Self::EditKey(WebSearchCredential::Firecrawl),
             _ => return None,
         })
     }
 
     pub(super) fn refresh_page(self) -> Option<SearchBackend> {
         match self {
-            Self::Mode | Self::Backend | Self::Route | Self::Test | Self::OpenBackend(_) => None,
+            Self::Mode
+            | Self::Backend
+            | Self::Route
+            | Self::Info
+            | Self::Test
+            | Self::OpenBackend(_) => None,
             Self::OpenAiConnection => Some(SearchBackend::OpenAi),
             Self::ExaConnection => Some(SearchBackend::Exa),
             Self::EditUrl(field) | Self::ResetUrl(field) => Some(field.page()),
-            Self::EditKey(key) => Some(backend_for_credential(key.web_search_credential())),
+            Self::EditKey(credential) => Some(backend_for_credential(credential)),
         }
     }
 }

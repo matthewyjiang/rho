@@ -297,54 +297,19 @@ fn frozen_claude_cli_bypass_ceiling_narrows_to_current_auto() {
     }
 }
 
-// Covers: bind keeps web_search only when the bound path can run native or backend search.
+// Covers: bind keeps the host web_search ceiling; registration, not bind, gates
+// current readiness so interactive rebind can enable search later.
 // Owner: delegated agent binding
 #[test]
-fn bind_drops_web_search_when_bound_path_cannot_search() {
+fn bind_keeps_web_search_ceiling_when_search_is_currently_off() {
     let mut host = Config {
         provider: "openai".into(),
         model: "gpt-5.5".into(),
         ..Config::default()
     };
-    host.web_search.mode = crate::config::WebSearchMode::Auto;
-    host.web_search.backend = crate::config::SearchBackend::Exa;
-    host.web_search.exa.connection = crate::config::ExaSearchConnection::Mcp;
-    let available = capability_set(&["read_file", "web_search"]);
-
-    let openai = AgentBinder::bind(
-        definition(ToolPolicy::All),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: available.clone(),
-        },
-        &host,
-    )
-    .unwrap();
-    assert!(openai
-        .rho_capabilities()
-        .unwrap()
-        .contains(&ToolCapability::WebSearch));
-
-    let anthropic = AgentBinder::bind(
-        definition_with_model(ModelPolicy::Select(ModelSelection {
-            provider: Some("anthropic".into()),
-            model: "claude-opus-4-8".into(),
-            auth: None,
-        })),
-        AgentInvocation {
-            role: AgentRole::Delegated,
-            available_tools: available.clone(),
-        },
-        &host,
-    )
-    .unwrap();
-    assert!(anthropic
-        .rho_capabilities()
-        .unwrap()
-        .contains(&ToolCapability::WebSearch));
-
     host.web_search.mode = crate::config::WebSearchMode::Off;
-    let openai_off = AgentBinder::bind(
+    let available = capability_set(&["read_file", "web_search"]);
+    let bound = AgentBinder::bind(
         definition(ToolPolicy::All),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -353,7 +318,7 @@ fn bind_drops_web_search_when_bound_path_cannot_search() {
         &host,
     )
     .unwrap();
-    assert!(!openai_off
+    assert!(bound
         .rho_capabilities()
         .unwrap()
         .contains(&ToolCapability::WebSearch));

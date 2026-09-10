@@ -167,6 +167,24 @@ impl WebSearchCredential {
             Self::Firecrawl => WEB_SEARCH_FIRECRAWL_API_KEY_ACCOUNT,
         }
     }
+
+    pub const fn env_vars(self) -> &'static [&'static str] {
+        match self {
+            Self::OpenAi => &["OPENAI_API_KEY"],
+            Self::Exa => &["EXA_API_KEY"],
+            Self::Brave => &["BRAVE_SEARCH_API_KEY", "BRAVE_API_KEY"],
+            Self::Firecrawl => &["FIRECRAWL_API_KEY"],
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::OpenAi => "OpenAI web search API key",
+            Self::Exa => "Exa API key",
+            Self::Brave => "Brave Search API key",
+            Self::Firecrawl => "Firecrawl API key",
+        }
+    }
 }
 
 pub fn load_web_search_api_key(

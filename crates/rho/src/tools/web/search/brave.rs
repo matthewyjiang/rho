@@ -2,10 +2,7 @@ use serde_json::Value;
 
 use rho_tools::tool::ToolError;
 
-use super::{
-    apply_site_filters, brave_search_url, read_bounded_text, search_error, SearchBackendConfig,
-    SearchItem,
-};
+use super::{apply_site_filters, read_bounded_text, search_error, SearchBackendConfig, SearchItem};
 
 pub(super) async fn search(
     client: &reqwest::Client,
@@ -13,24 +10,21 @@ pub(super) async fn search(
     num_results: usize,
     recency_filter: Option<&str>,
     domain_filter: Option<&[String]>,
+    key: &str,
     config: &SearchBackendConfig,
 ) -> Result<Vec<SearchItem>, ToolError> {
-    let key = config
-        .brave_api_key
-        .clone()
-        .ok_or_else(|| ToolError::Message("BRAVE_SEARCH_API_KEY is not set".into()))?;
-    let secrets = [key.as_str()];
+    let secrets = [key];
     let filtered_query = apply_site_filters(query, domain_filter);
     let count = num_results.to_string();
     let mut request = client
-        .get(brave_search_url(config)?)
+        .get(config.destination_url("res/v1/web/search")?)
         .query(&[("q", filtered_query.as_str()), ("count", count.as_str())]);
     if let Some(freshness) = brave_freshness(recency_filter) {
         request = request.query(&[("freshness", freshness)]);
     }
     let response = request
         .header("Accept", "application/json")
-        .header("X-Subscription-Token", &key)
+        .header("X-Subscription-Token", key)
         .send()
         .await
         .map_err(|err| search_error(format!("Brave search request failed: {err}"), &secrets))?;

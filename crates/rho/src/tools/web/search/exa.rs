@@ -3,51 +3,11 @@ use serde_json::{json, Value};
 use rho_tools::tool::ToolError;
 
 use super::{
-    exa_api_url, exa_mcp_url, openai::normalize_domain_filters, openai::openai_recency_label,
-    read_bounded_text, search_error, SearchBackendConfig, SearchItem,
+    normalize_domain_filters, read_bounded_text, recency_label, search_error, SearchBackendConfig,
+    SearchItem,
 };
-use crate::config::ExaSearchConnection;
 
-pub(super) async fn search(
-    client: &reqwest::Client,
-    query: &str,
-    num_results: usize,
-    recency_filter: Option<&str>,
-    domain_filter: Option<&[String]>,
-    config: &SearchBackendConfig,
-) -> Result<Vec<SearchItem>, ToolError> {
-    match config.settings.exa.connection {
-        ExaSearchConnection::Api => {
-            let key = config
-                .exa_api_key
-                .as_deref()
-                .ok_or_else(|| ToolError::Message("EXA_API_KEY is not set".into()))?;
-            exa_api_search(
-                client,
-                query,
-                num_results,
-                recency_filter,
-                domain_filter,
-                key,
-                config,
-            )
-            .await
-        }
-        ExaSearchConnection::Mcp => {
-            exa_mcp_search(
-                client,
-                query,
-                num_results,
-                recency_filter,
-                domain_filter,
-                config,
-            )
-            .await
-        }
-    }
-}
-
-async fn exa_api_search(
+pub(super) async fn search_api(
     client: &reqwest::Client,
     query: &str,
     num_results: usize,
@@ -79,7 +39,7 @@ async fn exa_api_search(
     }
 
     let secrets = [key];
-    let url = exa_api_url(config, if use_search { "search" } else { "answer" })?;
+    let url = config.destination_url(if use_search { "search" } else { "answer" })?;
     let response = client
         .post(url)
         .header("x-api-key", key)
@@ -124,7 +84,7 @@ async fn exa_api_search(
         .collect())
 }
 
-async fn exa_mcp_search(
+pub(super) async fn search_mcp(
     client: &reqwest::Client,
     query: &str,
     num_results: usize,
@@ -133,7 +93,7 @@ async fn exa_mcp_search(
     config: &SearchBackendConfig,
 ) -> Result<Vec<SearchItem>, ToolError> {
     let response = client
-        .post(exa_mcp_url(config)?)
+        .post(config.destination_url("")?)
         .header("Accept", "application/json, text/event-stream")
         .json(&json!({
             "jsonrpc": "2.0",
@@ -241,7 +201,7 @@ fn exa_mcp_query(
             }
         }));
     }
-    if let Some(recency) = recency_filter.and_then(openai_recency_label) {
+    if let Some(recency) = recency_filter.and_then(recency_label) {
         parts.push(recency.to_string());
     }
     parts.join(" ")

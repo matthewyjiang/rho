@@ -3,32 +3,36 @@ use super::{
     WebSearchMode, WebSearchSettings,
 };
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::config) struct WebSearchPartial {
     pub hosted: Option<bool>,
     pub provider: Option<String>,
-    pub mode: Option<String>,
-    pub backend: Option<String>,
+    pub mode: Option<WebSearchMode>,
+    pub backend: Option<SearchBackend>,
     pub openai: Option<OpenAiSearchPartial>,
     pub exa: Option<ExaSearchPartial>,
     pub brave: Option<EndpointPartial>,
     pub firecrawl: Option<EndpointPartial>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::config) struct OpenAiSearchPartial {
-    pub connection: Option<String>,
+    pub connection: Option<OpenAiSearchConnection>,
     pub api_base_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::config) struct ExaSearchPartial {
-    pub connection: Option<String>,
+    pub connection: Option<ExaSearchConnection>,
     pub api_base_url: Option<String>,
     pub mcp_url: Option<String>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(in crate::config) struct EndpointPartial {
     pub api_base_url: Option<String>,
 }
@@ -54,8 +58,8 @@ pub(in crate::config) fn resolve_web_search_settings(
     apply_backend_partials(&mut settings, &partial)?;
 
     let has_legacy = partial.hosted.is_some() || partial.provider.is_some();
-    if let Some(mode) = partial.mode.as_deref() {
-        settings.mode = mode.parse().map_err(anyhow::Error::msg)?;
+    if let Some(mode) = partial.mode {
+        settings.mode = mode;
     } else if has_legacy {
         let (mode, backend, mut migrated) =
             migrate_legacy_web_search(partial.hosted, partial.provider.as_deref())?;
@@ -63,8 +67,8 @@ pub(in crate::config) fn resolve_web_search_settings(
         settings.backend = backend;
         warnings.append(&mut migrated);
     }
-    if let Some(backend) = partial.backend.as_deref() {
-        settings.backend = backend.parse().map_err(anyhow::Error::msg)?;
+    if let Some(backend) = partial.backend {
+        settings.backend = backend;
     }
     if has_legacy && partial.mode.is_none() && settings.mode != WebSearchMode::Off {
         warn_if_implicit_connection(&settings, &partial, warnings);
@@ -77,8 +81,8 @@ fn apply_backend_partials(
     partial: &WebSearchPartial,
 ) -> anyhow::Result<()> {
     if let Some(openai) = &partial.openai {
-        if let Some(connection) = openai.connection.as_deref() {
-            settings.openai.connection = connection.parse().map_err(anyhow::Error::msg)?;
+        if let Some(connection) = openai.connection {
+            settings.openai.connection = connection;
         }
         settings.openai.api_base_url = parse_optional_endpoint(
             "web_search.openai.api_base_url",
@@ -86,8 +90,8 @@ fn apply_backend_partials(
         )?;
     }
     if let Some(exa) = &partial.exa {
-        if let Some(connection) = exa.connection.as_deref() {
-            settings.exa.connection = connection.parse().map_err(anyhow::Error::msg)?;
+        if let Some(connection) = exa.connection {
+            settings.exa.connection = connection;
         }
         settings.exa.api_base_url =
             parse_optional_endpoint("web_search.exa.api_base_url", exa.api_base_url.as_deref())?;
@@ -125,12 +129,12 @@ fn warn_if_implicit_connection(
     let openai_connection_set = partial
         .openai
         .as_ref()
-        .and_then(|openai| openai.connection.as_deref())
+        .and_then(|openai| openai.connection)
         .is_some();
     let exa_connection_set = partial
         .exa
         .as_ref()
-        .and_then(|exa| exa.connection.as_deref())
+        .and_then(|exa| exa.connection)
         .is_some();
     if matches!(settings.backend, SearchBackend::OpenAi) && !openai_connection_set {
         warnings.push(WebSearchLoadWarning::Migrated {
@@ -174,41 +178,6 @@ pub(in crate::config) fn migrate_legacy_web_search(
     }
 
     let mut warnings = Vec::new();
-    let backend = match trimmed {
-        None | Some("") | Some("auto") => {
-            warnings.push(WebSearchLoadWarning::Migrated {
-                key: "web_search",
-                from: format!("hosted={}, provider={}", hosted, provider.unwrap_or("auto")),
-                to: format!(
-                    "mode={}, backend=openai (Auto no longer tries Exa or Brave after a failure)",
-                    if hosted {
-                        WebSearchMode::Auto
-                    } else {
-                        WebSearchMode::Backend
-                    }
-                ),
-            });
-            SearchBackend::OpenAi
-        }
-        Some("openai") => SearchBackend::OpenAi,
-        Some("exa") => SearchBackend::Exa,
-        Some("brave") => SearchBackend::Brave,
-        Some("disabled") => SearchBackend::OpenAi,
-        Some(other) => {
-            let mode = if hosted {
-                WebSearchMode::Auto
-            } else {
-                WebSearchMode::Backend
-            };
-            warnings.push(WebSearchLoadWarning::Normalized {
-                key: "web_search.provider",
-                from: format!("\"{other}\""),
-                to: format!("mode={}, backend={}", mode.as_str(), SearchBackend::OpenAi),
-            });
-            SearchBackend::OpenAi
-        }
-    };
-
     if trimmed == Some("disabled") {
         return Ok((WebSearchMode::Off, SearchBackend::OpenAi, warnings));
     }
@@ -217,6 +186,29 @@ pub(in crate::config) fn migrate_legacy_web_search(
         WebSearchMode::Auto
     } else {
         WebSearchMode::Backend
+    };
+    let backend = match trimmed {
+        None | Some("") | Some("auto") => {
+            warnings.push(WebSearchLoadWarning::Migrated {
+                key: "web_search",
+                from: format!("hosted={}, provider={}", hosted, provider.unwrap_or("auto")),
+                to: format!(
+                    "mode={mode}, backend=openai (Auto no longer tries Exa or Brave after a failure)"
+                ),
+            });
+            SearchBackend::OpenAi
+        }
+        Some("openai") => SearchBackend::OpenAi,
+        Some("exa") => SearchBackend::Exa,
+        Some("brave") => SearchBackend::Brave,
+        Some(other) => {
+            warnings.push(WebSearchLoadWarning::Normalized {
+                key: "web_search.provider",
+                from: format!("\"{other}\""),
+                to: format!("mode={}, backend={}", mode.as_str(), SearchBackend::OpenAi),
+            });
+            SearchBackend::OpenAi
+        }
     };
     Ok((mode, backend, warnings))
 }

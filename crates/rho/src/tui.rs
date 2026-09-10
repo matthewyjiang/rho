@@ -220,7 +220,7 @@ use chat_media::{
 use clipboard::Clipboard;
 use config_editor::{
     config_number_input_lines, resolve_web_search_editor_value, ConfigNumberInput, ConfigNumberKey,
-    ConfigTextKey, ConfigToggle,
+    ConfigToggle,
 };
 use copy_interaction::CodeBlockCopyTarget;
 use event_adapter::{SdkEventAdapter, ViewEvent, ViewModelEvent};
