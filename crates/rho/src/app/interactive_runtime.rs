@@ -549,6 +549,10 @@ impl InteractiveRuntime {
                 &prompt.text,
             )?;
             self.adopt_model_prompt(prompt);
+            // /new is a new session, not resume/switch/recovery. Keep the
+            // startup hydration window so pending catalog names and MCP
+            // instructions can still rewrite the freshly loaded overlay.
+            self.may_rewrite_startup_prompt = true;
         }
         bind_subagent_parent(&self.tools, &session_id, None);
         self.session_writes.clear();

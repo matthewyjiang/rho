@@ -147,7 +147,43 @@ async fn durable_recovery_preserves_launch_owned_prompt_policy() {
             _ => unreachable!("test cases use known prompt policies"),
         };
         assert_eq!(runtime.history(), expected);
+        assert!(!runtime.may_rewrite_startup_prompt);
     }
+}
+
+// Covers: /new is a new session, so pending catalog/MCP hydrates still rewrite
+// the freshly loaded overlay instead of becoming a user notice.
+// Owner: interactive lifecycle reset
+#[tokio::test]
+async fn new_session_keeps_startup_prompt_hydration() {
+    let (mut runtime, _home, _path, _stored) = configured_runtime().await;
+    runtime.reset().await.unwrap();
+    runtime
+        .prompt_template
+        .as_mut()
+        .unwrap()
+        .append_retained("\nMCP: late instructions");
+    let handle = tokio::spawn(async { 0usize });
+    while !handle.is_finished() {
+        tokio::task::yield_now().await;
+    }
+    runtime.pending_catalog_names = Some(handle);
+    assert!(runtime.poll_startup_hydrates().await.unwrap());
+    let running = PromptModel::from_sdk_identity(&runtime.provider.provider().identity());
+    let expected = runtime
+        .prompt_template
+        .as_ref()
+        .unwrap()
+        .render(&running, runtime.sessions.prompt.loaded.as_ref());
+    assert_eq!(
+        runtime.history(),
+        vec![Message::System(expected.text.clone())]
+    );
+    assert_eq!(
+        runtime.active_system_prompt(),
+        SystemPrompt::Custom(expected.text)
+    );
+    assert!(runtime.may_rewrite_startup_prompt);
 }
 
 // Covers: a model-switch notice save can fail after prompt replacement. Its
