@@ -34,6 +34,7 @@ pub(super) enum ConfigTextKey {
     OpenAiSearch,
     Exa,
     Brave,
+    Firecrawl,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,7 +45,6 @@ pub(super) enum ConfigToggle {
     CacheMissNotices,
     ShowReasoningOutput,
     ZenMode,
-    WebSearchHosted,
     XaiImageGeneration,
 }
 
@@ -88,23 +88,10 @@ pub(super) fn toggle(
             config.zen_mode = !config.zen_mode;
             config.zen_mode
         }
-        ConfigToggle::WebSearchHosted => {
-            config.web_search_hosted = !config.web_search_hosted;
-            config.web_search_hosted
-        }
         ConfigToggle::XaiImageGeneration => {
             config.xai_image_generation = !config.xai_image_generation;
             config.xai_image_generation
         }
-    })
-}
-
-pub(super) fn cycle_web_search_provider(
-    config_repository: &ConfigRepository,
-) -> anyhow::Result<String> {
-    config_repository.update(|config| {
-        config.web_search_provider = config.web_search_provider.next_configurable();
-        config.web_search_provider.to_string()
     })
 }
 
@@ -231,6 +218,7 @@ impl ConfigTextKey {
             ConfigTextKey::OpenAiSearch => "OpenAI web search API key",
             ConfigTextKey::Exa => "Exa API key",
             ConfigTextKey::Brave => "Brave Search API key",
+            ConfigTextKey::Firecrawl => "Firecrawl API key",
         }
     }
 
@@ -239,6 +227,7 @@ impl ConfigTextKey {
             ConfigTextKey::OpenAiSearch => config_picker::WEB_SEARCH_OPENAI_KEY_VALUE,
             ConfigTextKey::Exa => config_picker::WEB_SEARCH_EXA_KEY_VALUE,
             ConfigTextKey::Brave => config_picker::WEB_SEARCH_BRAVE_KEY_VALUE,
+            ConfigTextKey::Firecrawl => config_picker::WEB_SEARCH_FIRECRAWL_KEY_VALUE,
         }
     }
 
@@ -247,6 +236,7 @@ impl ConfigTextKey {
             ConfigTextKey::OpenAiSearch => WebSearchCredential::OpenAi,
             ConfigTextKey::Exa => WebSearchCredential::Exa,
             ConfigTextKey::Brave => WebSearchCredential::Brave,
+            ConfigTextKey::Firecrawl => WebSearchCredential::Firecrawl,
         }
     }
 }

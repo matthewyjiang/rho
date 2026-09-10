@@ -41,7 +41,7 @@ pub(super) fn run_resume_scrollback(runner: &ScenarioRunner) -> Result<ScenarioO
 model = "gpt-5.5"
 auth = "api-key"
 check_for_updates = false
-web_search_provider = "disabled"
+web_search.mode = "off"
 permission_mode = "bypass"
 
 [behavior]

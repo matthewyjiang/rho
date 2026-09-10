@@ -52,6 +52,7 @@ const XAI_TOKENS_ACCOUNT: &str = provider::XAI_TOKENS_ACCOUNT;
 const WEB_SEARCH_OPENAI_API_KEY_ACCOUNT: &str = "web-search:openai:api-key";
 const WEB_SEARCH_EXA_API_KEY_ACCOUNT: &str = "web-search:exa:api-key";
 const WEB_SEARCH_BRAVE_API_KEY_ACCOUNT: &str = "web-search:brave:api-key";
+const WEB_SEARCH_FIRECRAWL_API_KEY_ACCOUNT: &str = "web-search:firecrawl:api-key";
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct CodexTokens {
@@ -152,16 +153,18 @@ pub enum WebSearchCredential {
     OpenAi,
     Exa,
     Brave,
+    Firecrawl,
 }
 
 impl WebSearchCredential {
-    pub const ALL: [Self; 3] = [Self::OpenAi, Self::Exa, Self::Brave];
+    pub const ALL: [Self; 4] = [Self::OpenAi, Self::Exa, Self::Brave, Self::Firecrawl];
 
     pub const fn account(self) -> &'static str {
         match self {
             Self::OpenAi => WEB_SEARCH_OPENAI_API_KEY_ACCOUNT,
             Self::Exa => WEB_SEARCH_EXA_API_KEY_ACCOUNT,
             Self::Brave => WEB_SEARCH_BRAVE_API_KEY_ACCOUNT,
+            Self::Firecrawl => WEB_SEARCH_FIRECRAWL_API_KEY_ACCOUNT,
         }
     }
 }

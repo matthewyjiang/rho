@@ -6,8 +6,8 @@
 use ratatui::DefaultTerminal;
 
 use super::{
-    config_editor::{ConfigNumberKey, ConfigTextKey},
-    config_picker, InteractiveRuntime,
+    config_editor::ConfigNumberKey, config_picker, web_search_config::WebSearchAction,
+    InteractiveRuntime,
 };
 
 /// Idle vs during-turn commit context for one config row.
@@ -51,9 +51,7 @@ pub(super) enum ConfigRow {
     EditToolChoice(String),
     InlineShellChoice(String),
     WebSearch,
-    WebSearchHosted,
-    WebSearchProvider,
-    WebSearchApiKey(ConfigTextKey),
+    WebSearchAction(WebSearchAction),
     XaiImageGeneration,
 }
 
@@ -70,6 +68,9 @@ impl ConfigRow {
         }
         if let Some(shell) = value.strip_prefix(config_picker::INLINE_SHELL_PREFIX) {
             return Some(Self::InlineShellChoice(shell.to_string()));
+        }
+        if let Some(action) = WebSearchAction::parse(value) {
+            return Some(Self::WebSearchAction(action));
         }
         Some(match value {
             config_picker::QUESTIONNAIRE_TIMEOUT_VALUE => {
@@ -117,15 +118,6 @@ impl ConfigRow {
             config_picker::INLINE_SHELL_VALUE => Self::InlineShell,
             config_picker::EDIT_TOOL_VALUE => Self::EditTool,
             config_picker::WEB_SEARCH_VALUE => Self::WebSearch,
-            config_picker::WEB_SEARCH_HOSTED_VALUE => Self::WebSearchHosted,
-            config_picker::WEB_SEARCH_PROVIDER_VALUE => Self::WebSearchProvider,
-            config_picker::WEB_SEARCH_OPENAI_KEY_VALUE => {
-                Self::WebSearchApiKey(ConfigTextKey::OpenAiSearch)
-            }
-            config_picker::WEB_SEARCH_EXA_KEY_VALUE => Self::WebSearchApiKey(ConfigTextKey::Exa),
-            config_picker::WEB_SEARCH_BRAVE_KEY_VALUE => {
-                Self::WebSearchApiKey(ConfigTextKey::Brave)
-            }
             config_picker::XAI_IMAGE_GENERATION_VALUE => Self::XaiImageGeneration,
             _ => return None,
         })

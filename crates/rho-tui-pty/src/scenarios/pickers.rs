@@ -42,7 +42,7 @@ pub(super) fn setup_pinned_models(home: &IsolatedHome) -> Result<()> {
 model = "gpt-5.5"
 auth = "api-key"
 check_for_updates = false
-web_search_provider = "disabled"
+web_search.mode = "off"
 favorite_models = ["openai/gpt-5.5", "xai/grok-4.6"]
 
 [behavior]

@@ -34,6 +34,18 @@ use format::write_config;
 pub use format::{EffectiveModelConfig, EffectiveModelSource};
 pub(crate) use format::{CLAUDE_CLI_RUNTIME_KEY, CURSOR_RUNTIME_KEY, RHO_RUNTIME_KEY};
 
+#[path = "config_web_search.rs"]
+mod web_search;
+pub(crate) use web_search::{
+    firecrawl_uses_cloud_default, parse_search_endpoint_url, resolved_endpoint_url,
+    web_search_route, BRAVE_API_DEFAULT_BASE, EXA_API_DEFAULT_BASE, EXA_MCP_DEFAULT_URL,
+    FIRECRAWL_API_DEFAULT_BASE, OPENAI_API_DEFAULT_BASE, OPENAI_CODEX_RESPONSES_URL,
+};
+pub use web_search::{
+    ExaSearchConnection, OpenAiSearchConnection, SearchBackend, WebSearchMode, WebSearchRoute,
+    WebSearchSettings,
+};
+
 #[path = "config_load.rs"]
 mod load;
 pub(crate) use load::ConfigWarning;
@@ -96,10 +108,8 @@ pub struct Config {
     /// Optional model selections for reserved internal agents, keyed by stable agent ID.
     pub internal_agents: BTreeMap<String, InternalAgentModelConfig>,
     pub favorite_models: Vec<String>,
-    /// Use the chat provider's hosted web search when the transport supports it.
-    pub web_search_hosted: bool,
-    /// Client-side backup backend used when hosted search is off or unsupported.
-    pub web_search_provider: SearchProvider,
+    /// Web-search mode, selected backend, and per-backend endpoints.
+    pub web_search: WebSearchSettings,
     /// Attach xAI's hosted image generation tool on xAI create turns.
     pub xai_image_generation: bool,
     /// Selects the preferred built-in file edit tool exposed to models.
@@ -167,8 +177,7 @@ impl Default for Config {
             cache_miss_notices: false,
             internal_agents: BTreeMap::new(),
             favorite_models: Vec::new(),
-            web_search_hosted: true,
-            web_search_provider: SearchProvider::Auto,
+            web_search: WebSearchSettings::default(),
             xai_image_generation: true,
             edit_tool: EditTool::default(),
             check_for_updates: true,
@@ -200,107 +209,6 @@ pub struct QuestionnaireConfig {
 impl QuestionnaireConfig {
     pub(crate) fn is_disabled(&self) -> bool {
         self.timeout_seconds.is_none()
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SearchProvider {
-    #[default]
-    Auto,
-    OpenAi,
-    Exa,
-    Brave,
-    Parallel,
-    Tavily,
-    Perplexity,
-    Gemini,
-    Disabled,
-}
-
-impl SearchProvider {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::OpenAi => "openai",
-            Self::Exa => "exa",
-            Self::Brave => "brave",
-            Self::Parallel => "parallel",
-            Self::Tavily => "tavily",
-            Self::Perplexity => "perplexity",
-            Self::Gemini => "gemini",
-            Self::Disabled => "disabled",
-        }
-    }
-
-    /// Parse a configured web-search provider.
-    ///
-    /// Returns the resolved provider and whether the input was normalized to a
-    /// different value (unsupported names become `auto`).
-    pub fn parse_config_value(value: &str) -> (Self, bool) {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "auto" => (Self::Auto, false),
-            "openai" => (Self::OpenAi, false),
-            "exa" => (Self::Exa, false),
-            "brave" => (Self::Brave, false),
-            "disabled" => (Self::Disabled, false),
-            _ => (Self::Auto, true),
-        }
-    }
-
-    pub const fn next_configurable(self) -> Self {
-        match self {
-            Self::Auto => Self::OpenAi,
-            Self::OpenAi => Self::Exa,
-            Self::Exa => Self::Brave,
-            Self::Brave => Self::Disabled,
-            Self::Disabled | Self::Parallel | Self::Tavily | Self::Perplexity | Self::Gemini => {
-                Self::Auto
-            }
-        }
-    }
-}
-
-impl fmt::Display for SearchProvider {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-impl FromStr for SearchProvider {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "auto" => Ok(Self::Auto),
-            "openai" => Ok(Self::OpenAi),
-            "exa" => Ok(Self::Exa),
-            "brave" => Ok(Self::Brave),
-            "parallel" => Ok(Self::Parallel),
-            "tavily" => Ok(Self::Tavily),
-            "perplexity" => Ok(Self::Perplexity),
-            "gemini" => Ok(Self::Gemini),
-            "disabled" => Ok(Self::Disabled),
-            other => Err(format!("unknown search provider: {other}")),
-        }
-    }
-}
-
-impl Serialize for SearchProvider {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for SearchProvider {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        value.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -502,6 +410,8 @@ impl LegacyWebSearchCredentials {
             WebSearchCredential::OpenAi => self.openai.as_deref(),
             WebSearchCredential::Exa => self.exa.as_deref(),
             WebSearchCredential::Brave => self.brave.as_deref(),
+            // Firecrawl never had a plaintext config key.
+            WebSearchCredential::Firecrawl => None,
         }
     }
 
@@ -510,6 +420,7 @@ impl LegacyWebSearchCredentials {
             WebSearchCredential::OpenAi => self.openai = None,
             WebSearchCredential::Exa => self.exa = None,
             WebSearchCredential::Brave => self.brave = None,
+            WebSearchCredential::Firecrawl => {}
         }
     }
 }

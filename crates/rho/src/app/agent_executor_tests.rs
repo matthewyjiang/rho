@@ -15,7 +15,7 @@ fn delegated_questionnaire_requires_parent_bridge_not_background() {
 }
 
 #[test]
-fn provider_selection_updates_are_shared_with_executor_clones() {
+fn parent_selection_updates_are_shared_with_executor_clones() {
     let executor = AgentExecutor::new(
         Config::default(),
         PathBuf::new(),
@@ -32,7 +32,17 @@ fn provider_selection_updates_are_shared_with_executor_clones() {
         "codex",
     );
 
+    let previous = cloned.config.read().expect("delegated config lock").clone();
+    let settings = crate::config::WebSearchSettings {
+        mode: crate::config::WebSearchMode::Off,
+        backend: crate::config::SearchBackend::Firecrawl,
+        ..crate::config::WebSearchSettings::default()
+    };
+    executor.update_web_search(&settings);
+
     let config = cloned.config.read().expect("delegated config lock");
+    assert_eq!(config.web_search, settings);
+    assert_eq!(previous.web_search.mode, crate::config::WebSearchMode::Auto);
     assert_eq!(config.provider, "openai-codex");
     assert_eq!(config.model, "gpt-5.6-luna");
     assert_eq!(config.auth, "codex");

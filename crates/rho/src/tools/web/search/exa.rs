@@ -1,14 +1,12 @@
 use serde_json::{json, Value};
 
-use {rho_providers::credentials::WebSearchCredential, rho_tools::tool::ToolError};
+use rho_tools::tool::ToolError;
 
 use super::{
-    openai::normalize_domain_filters, openai::openai_recency_label, SearchBackendConfig, SearchItem,
+    exa_api_url, exa_mcp_url, openai::normalize_domain_filters, openai::openai_recency_label,
+    read_bounded_text, search_error, SearchBackendConfig, SearchItem,
 };
-
-const EXA_ANSWER_URL: &str = "https://api.exa.ai/answer";
-const EXA_SEARCH_URL: &str = "https://api.exa.ai/search";
-const EXA_MCP_URL: &str = "https://mcp.exa.ai/mcp";
+use crate::config::ExaSearchConnection;
 
 pub(super) async fn search(
     client: &reqwest::Client,
@@ -18,21 +16,34 @@ pub(super) async fn search(
     domain_filter: Option<&[String]>,
     config: &SearchBackendConfig,
 ) -> Result<Vec<SearchItem>, ToolError> {
-    if let Some(key) = std::env::var("EXA_API_KEY")
-        .ok()
-        .or_else(|| config.credential(WebSearchCredential::Exa))
-    {
-        exa_api_search(
-            client,
-            query,
-            num_results,
-            recency_filter,
-            domain_filter,
-            &key,
-        )
-        .await
-    } else {
-        exa_mcp_search(client, query, num_results, recency_filter, domain_filter).await
+    match config.settings.exa.connection {
+        ExaSearchConnection::Api => {
+            let key = config
+                .exa_api_key
+                .as_deref()
+                .ok_or_else(|| ToolError::Message("EXA_API_KEY is not set".into()))?;
+            exa_api_search(
+                client,
+                query,
+                num_results,
+                recency_filter,
+                domain_filter,
+                key,
+                config,
+            )
+            .await
+        }
+        ExaSearchConnection::Mcp => {
+            exa_mcp_search(
+                client,
+                query,
+                num_results,
+                recency_filter,
+                domain_filter,
+                config,
+            )
+            .await
+        }
     }
 }
 
@@ -43,6 +54,7 @@ async fn exa_api_search(
     recency_filter: Option<&str>,
     domain_filter: Option<&[String]>,
     key: &str,
+    config: &SearchBackendConfig,
 ) -> Result<Vec<SearchItem>, ToolError> {
     let use_search = recency_filter.is_some() || domain_filter.is_some() || num_results != 5;
     let domain_filters = exa_domain_filters(domain_filter);
@@ -66,26 +78,23 @@ async fn exa_api_search(
         body["excludeDomains"] = exclude.clone();
     }
 
+    let secrets = [key];
+    let url = exa_api_url(config, if use_search { "search" } else { "answer" })?;
     let response = client
-        .post(if use_search {
-            EXA_SEARCH_URL
-        } else {
-            EXA_ANSWER_URL
-        })
+        .post(url)
         .header("x-api-key", key)
         .json(&body)
         .send()
         .await
-        .map_err(|err| ToolError::Message(format!("Exa request failed: {err}")))?;
-    let status = response.status();
-    let value: Value = response
-        .json()
-        .await
-        .map_err(|err| ToolError::Message(format!("Exa response was not JSON: {err}")))?;
+        .map_err(|err| search_error(format!("Exa request failed: {err}"), &secrets))?;
+    let (status, text) = read_bounded_text(response, &secrets).await?;
+    let value: Value = serde_json::from_str(&text)
+        .map_err(|err| search_error(format!("Exa response was not JSON: {err}"), &secrets))?;
     if !status.is_success() {
-        return Err(ToolError::Message(format!(
-            "Exa search failed: HTTP {status}: {value}"
-        )));
+        return Err(search_error(
+            format!("Exa search failed: HTTP {status}: {value}"),
+            &secrets,
+        ));
     }
     Ok(value
         .get(if use_search { "results" } else { "citations" })
@@ -121,9 +130,10 @@ async fn exa_mcp_search(
     num_results: usize,
     recency_filter: Option<&str>,
     domain_filter: Option<&[String]>,
+    config: &SearchBackendConfig,
 ) -> Result<Vec<SearchItem>, ToolError> {
     let response = client
-        .post(EXA_MCP_URL)
+        .post(exa_mcp_url(config)?)
         .header("Accept", "application/json, text/event-stream")
         .json(&json!({
             "jsonrpc": "2.0",
@@ -143,11 +153,7 @@ async fn exa_mcp_search(
         .send()
         .await
         .map_err(|err| ToolError::Message(format!("Exa MCP request failed: {err}")))?;
-    let status = response.status();
-    let text = response
-        .text()
-        .await
-        .map_err(|err| ToolError::Message(format!("Exa MCP response failed: {err}")))?;
+    let (status, text) = read_bounded_text(response, &[]).await?;
     if !status.is_success() {
         return Err(ToolError::Message(format!(
             "Exa MCP failed: HTTP {status}: {}",

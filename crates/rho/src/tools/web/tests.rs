@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use {
-    crate::config::Config,
+    crate::config::{Config, ExaSearchConnection, SearchBackend, WebSearchMode},
     rho_tools::tool::{Tool, ToolContext},
 };
 
@@ -89,67 +89,96 @@ fn rejects_github_urls_whose_segments_could_inject_git_arguments() {
     }
 }
 
+fn search_config(provider: &str, model: &str, mode: WebSearchMode) -> Config {
+    let mut config = Config {
+        provider: provider.into(),
+        model: model.into(),
+        ..Config::default()
+    };
+    config.web_search.mode = mode;
+    config.web_search.backend = SearchBackend::Exa;
+    config.web_search.exa.connection = ExaSearchConnection::Mcp;
+    config
+}
+
+// Covers: Off rejects the tool even if the model names a provider.
+// Owner: web search tool
 #[tokio::test]
-async fn web_search_stores_stub_content_when_provider_is_unavailable() {
-    let args = json!({"query": "rho web access", "provider": "tavily", "includeContent": true});
-    let ctx = test_context();
-    let store = WebAccessStore::new();
-    let web_search = super::access_tools_with_store(&Config::default(), store.clone());
-    let result = web_search.call(args, ctx, "call_1".into()).await.unwrap();
-    let response_id = result
-        .content
-        .strip_prefix("responseId: ")
-        .and_then(|rest| rest.lines().next())
-        .expect("search result starts with responseId");
-
-    let retrieved = GetSearchContent::new(store)
-        .call(
-            json!({"responseId": response_id, "queryIndex": 0}),
-            test_context(),
-            "call_2".into(),
-        )
+async fn web_search_off_ignores_supplied_provider() {
+    let args = json!({"query": "rho web access", "provider": "openai", "includeContent": true});
+    let err = super::access_tools(&search_config("openai", "gpt-5.5", WebSearchMode::Off))
+        .call(args, test_context(), "call_1".into())
         .await
-        .unwrap();
-    assert!(retrieved.content.contains("No configured search provider"));
+        .unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "web search is disabled or the selected backend is unavailable"
+    );
 }
 
+// Covers: models cannot pick a backend through tool args.
+// Owner: web search tool
 #[test]
-fn web_search_available_with_hosted_only_backup_disabled() {
-    let config = Config {
-        provider: "openai-codex".into(),
-        model: "gpt-5.5".into(),
-        web_search_hosted: true,
-        web_search_provider: crate::config::SearchProvider::Disabled,
-        ..Config::default()
-    };
-    assert!(super::web_search_available(&config));
-    assert!(super::hosted_web_search_active(&config));
-    assert!(!super::backup_web_search_available(&config));
+fn web_search_schema_omits_provider() {
+    let spec = super::access_tools(&Config::default()).spec();
+    assert!(spec.input_schema["properties"].get("provider").is_none());
+    assert!(spec.input_schema["properties"]
+        .get("includeContent")
+        .is_some());
 }
 
+// Covers: Auto uses native when supported, Backend never uses native, Off has no search.
+// Owner: web search routing
 #[test]
-fn web_search_unavailable_when_hosted_and_backup_disabled() {
-    let config = Config {
-        provider: "openai-codex".into(),
-        model: "gpt-5.5".into(),
-        web_search_hosted: false,
-        web_search_provider: crate::config::SearchProvider::Disabled,
-        ..Config::default()
-    };
-    assert!(!super::web_search_available(&config));
-}
-
-#[test]
-fn codex_lite_uses_backup_not_hosted() {
-    let config = Config {
-        provider: "openai-codex".into(),
-        model: "gpt-5.6-luna".into(),
-        web_search_hosted: true,
-        web_search_provider: crate::config::SearchProvider::Disabled,
-        ..Config::default()
-    };
-    assert!(!super::hosted_web_search_active(&config));
-    assert!(!super::web_search_available(&config));
+fn web_search_route_follows_mode_and_hosted_support() {
+    let cases = [
+        (
+            "auto openai-codex uses native",
+            search_config("openai-codex", "gpt-5.5", WebSearchMode::Auto),
+            true,
+            true,
+            true,
+        ),
+        (
+            "backend openai-codex never uses native",
+            search_config("openai-codex", "gpt-5.5", WebSearchMode::Backend),
+            false,
+            true,
+            true,
+        ),
+        (
+            "off has no search even with a ready backend",
+            search_config("openai-codex", "gpt-5.5", WebSearchMode::Off),
+            false,
+            false,
+            false,
+        ),
+        (
+            "auto anthropic uses selected backend",
+            search_config("anthropic", "claude-opus-4-8", WebSearchMode::Auto),
+            false,
+            true,
+            true,
+        ),
+        (
+            "auto codex lite uses selected backend",
+            search_config("openai-codex", "gpt-5.6-luna", WebSearchMode::Auto),
+            false,
+            true,
+            true,
+        ),
+    ];
+    for (name, config, native, backup, available) in cases {
+        pretty_assertions::assert_eq!(
+            (
+                super::hosted_web_search_active(&config),
+                super::backup_web_search_available(&config),
+                super::web_search_available(&config),
+            ),
+            (native, backup, available),
+            "{name}"
+        );
+    }
 }
 
 #[test]

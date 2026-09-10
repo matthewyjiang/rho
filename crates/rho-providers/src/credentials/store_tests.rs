@@ -38,6 +38,7 @@ fn web_search_api_keys_use_dedicated_accounts() {
         (WebSearchCredential::OpenAi, "openai-search"),
         (WebSearchCredential::Exa, "exa-search"),
         (WebSearchCredential::Brave, "brave-search"),
+        (WebSearchCredential::Firecrawl, "firecrawl-search"),
     ] {
         save_web_search_api_key(&store, credential, key).unwrap();
         assert_eq!(

@@ -104,7 +104,7 @@ pub(super) fn setup_auto_without_classifier(home: &crate::env::IsolatedHome) -> 
 model = "gpt-5.5"
 auth = "api-key"
 check_for_updates = false
-web_search_provider = "disabled"
+web_search.mode = "off"
 permission_mode = "auto"
 
 [behavior]
@@ -177,7 +177,7 @@ pub(super) fn run_auto_recovered_handoff(
 model = "gpt-5.5"
 auth = "api-key"
 check_for_updates = false
-web_search_provider = "disabled"
+web_search.mode = "off"
 permission_mode = "bypass"
 
 [behavior]
@@ -440,7 +440,15 @@ fn rewrite_message_value(value: &mut serde_json::Value) -> bool {
     true
 }
 
-pub(super) const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
+pub(super) const OPEN_CONFIG_PICKER_SCENARIO: Scenario = Scenario::new(
+    "open_config_picker",
+    "Open model and provider settings and browse model refresh options",
+    DEFAULT_SIZE,
+    OPEN_CONFIG_PICKER_STEPS,
+    /*smoke*/ false,
+);
+
+const OPEN_CONFIG_PICKER_STEPS: &[Step] = &[
     Step::Phase("open_config"),
     Step::WaitText {
         text: "gpt-5.5",

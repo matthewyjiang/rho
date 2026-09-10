@@ -8,12 +8,14 @@ use super::{
     picker::UiPicker,
     render::{styled_line, truncate_one_line, LineFill},
     theme::Theme,
+    web_search_config::WebSearchUrlField,
 };
 
 /// Which overlay owns a [`TextInput`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum TextInputTarget {
     ConfigApiKey(ConfigTextKey),
+    ConfigUrl(WebSearchUrlField),
     AgentField(AgentField),
     /// One step of the `/login` endpoint wizard, which owns its own state.
     CustomHost(super::custom_provider_login::CustomHostStep),
@@ -64,6 +66,13 @@ impl TextInput {
         }
     }
 
+    pub(super) fn config_url(field: WebSearchUrlField, value: impl Into<String>) -> Self {
+        Self {
+            target: TextInputTarget::ConfigUrl(field),
+            editor: LineEditor::new(value),
+        }
+    }
+
     pub(super) fn agent_field(field: AgentField, value: impl Into<String>) -> Self {
         Self {
             target: TextInputTarget::AgentField(field),
@@ -98,6 +107,7 @@ impl TextInput {
     pub(super) fn label(&self) -> &str {
         match &self.target {
             TextInputTarget::ConfigApiKey(key) => key.label(),
+            TextInputTarget::ConfigUrl(field) => field.label(),
             TextInputTarget::AgentField(field) => field.label(),
             TextInputTarget::CustomHost(step) => step.label(),
         }
@@ -107,7 +117,9 @@ impl TextInput {
     fn confirm_verb(&self) -> &'static str {
         match &self.target {
             TextInputTarget::CustomHost(_) => "Enter continue",
-            TextInputTarget::ConfigApiKey(_) | TextInputTarget::AgentField(_) => "Enter save",
+            TextInputTarget::ConfigApiKey(_)
+            | TextInputTarget::ConfigUrl(_)
+            | TextInputTarget::AgentField(_) => "Enter save",
         }
     }
 

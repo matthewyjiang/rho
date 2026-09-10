@@ -34,7 +34,7 @@ fn setup_supervised(home: &IsolatedHome) -> anyhow::Result<()> {
 model = "gpt-5.5"
 auth = "api-key"
 check_for_updates = false
-web_search_provider = "disabled"
+web_search.mode = "off"
 permission_mode = "supervised"
 
 [behavior]

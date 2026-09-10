@@ -84,6 +84,9 @@ impl App {
                     InlineChoicePending::ClearPromptHistory => {
                         self.submit_clear_prompt_history_choice(&value)?;
                     }
+                    InlineChoicePending::TestWebSearch => {
+                        self.submit_web_search_test_choice(&value, modal.parent_picker)?;
+                    }
                 }
             }
             InlineChoiceKeyOutcome::Cancelled => {
@@ -129,6 +132,9 @@ impl App {
                         self.open_main_config_picker_selected(
                             super::config_picker::CLEAR_PROMPT_HISTORY_VALUE,
                         )?;
+                    }
+                    InlineChoicePending::TestWebSearch => {
+                        self.submit_web_search_test_choice("cancel", modal.parent_picker)?;
                     }
                 }
             }

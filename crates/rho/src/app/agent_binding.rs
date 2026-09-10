@@ -297,8 +297,13 @@ impl AgentBinder {
                     host_config,
                     store,
                 )?);
-                let available_tools =
-                    available_tools_for_bound_config(&invocation.available_tools, config.as_ref());
+                // Interactive configuration can enable search at the next idle boundary.
+                // Preserve its policy ceiling; registration applies current readiness.
+                let available_tools = if invocation.role == AgentRole::InteractiveRoot {
+                    invocation.available_tools.clone()
+                } else {
+                    available_tools_for_bound_config(&invocation.available_tools, config.as_ref())
+                };
                 BoundRuntime::Rho {
                     capabilities: bind_rho_capabilities(
                         &definition,

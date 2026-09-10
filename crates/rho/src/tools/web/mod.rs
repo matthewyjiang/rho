@@ -29,19 +29,41 @@ pub(crate) fn supports_hosted_web_search(provider: &str, model: &str) -> bool {
     }
 }
 
-/// Hosted search is configured on and the active chat path can run it.
+/// Native chat-provider search is the selected route for this config.
 pub(crate) fn hosted_web_search_active(config: &crate::config::Config) -> bool {
-    config.web_search_hosted && supports_hosted_web_search(&config.provider, &config.model)
+    matches!(
+        crate::config::web_search_route(
+            &config.web_search,
+            supports_hosted_web_search(&config.provider, &config.model),
+        ),
+        crate::config::WebSearchRoute::Native
+    )
 }
 
-/// Client backup backend can run for this config.
+/// Client backend can run for this config. Mode Off always gates this off.
 pub(crate) fn backup_web_search_available(config: &crate::config::Config) -> bool {
     access_tools(config).backup_available()
 }
 
-/// `web_search` capability is on when hosted search can run or a backup backend is ready.
+/// `web_search` capability is on when native search is the route or a backend is ready.
 pub(crate) fn web_search_available(config: &crate::config::Config) -> bool {
     hosted_web_search_active(config) || backup_web_search_available(config)
+}
+
+/// Hits the selected backend with a fixed query, independent of mode.
+pub(crate) async fn test_search_backend(
+    config: &crate::config::Config,
+) -> Result<usize, rho_tools::tool::ToolError> {
+    let items = search::run_search_query(
+        &util::http_client(),
+        "rho web search connection test",
+        1,
+        None,
+        None,
+        &search::SearchBackendConfig::from_config(config),
+    )
+    .await?;
+    Ok(items.len())
 }
 
 pub(crate) fn access_tools(config: &crate::config::Config) -> WebSearch {
@@ -64,7 +86,7 @@ pub(super) fn sdk_bundle(
     use crate::agent::ToolCapability;
 
     let mut tools = Vec::<Arc<dyn SdkTool>>::new();
-    if capabilities.contains(&ToolCapability::WebSearch) {
+    if capabilities.contains(&ToolCapability::WebSearch) && web_search_available(config) {
         tools.push(Arc::new(SdkWebSearch::new(
             access_tools_with_store(config, store.clone()),
             config.max_output_bytes,

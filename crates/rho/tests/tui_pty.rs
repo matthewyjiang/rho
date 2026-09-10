@@ -265,7 +265,7 @@ fn fast_mode_appears_beside_the_active_model() {
 model = "gpt-5.5"
 auth = "codex"
 check_for_updates = false
-web_search_provider = "disabled"
+web_search.mode = "off"
 
 [behavior]
 credential_store = "file"
@@ -306,7 +306,7 @@ fn claude_code_login_hands_terminal_to_fake_claude() {
 model = "gpt-5.5"
 auth = "api-key"
 check_for_updates = false
-web_search_provider = "disabled"
+web_search.mode = "off"
 
 [behavior]
 credential_store = "file"
@@ -356,7 +356,7 @@ fn login_shows_provider_picker_before_credential_store_choice() {
 model = "gpt-5.5"
 auth = "api-key"
 check_for_updates = false
-web_search_provider = "disabled"
+web_search.mode = "off"
 "#,
     )
     .unwrap();
@@ -494,7 +494,7 @@ fn login_claude_code_skips_credential_store_when_unset() {
 model = "gpt-5.5"
 auth = "api-key"
 check_for_updates = false
-web_search_provider = "disabled"
+web_search.mode = "off"
 "#,
     )
     .unwrap();
@@ -550,7 +550,7 @@ fn login_claude_code_cancel_stays_in_rho() {
 model = "gpt-5.5"
 auth = "api-key"
 check_for_updates = false
-web_search_provider = "disabled"
+web_search.mode = "off"
 
 [behavior]
 credential_store = "file"
@@ -602,7 +602,7 @@ fn model_command_resolves_configured_alias() {
     std::fs::write(
         &home.config_path,
         r#"check_for_updates = false
-web_search_provider = "disabled"
+web_search.mode = "off"
 
 [model]
 provider = "openai"
@@ -1573,7 +1573,7 @@ fn fake_claude_advisor_reviews_the_session() {
 model = "gpt-5.5"
 auth = "api-key"
 check_for_updates = false
-web_search_provider = "disabled"
+web_search.mode = "off"
 
 [behavior]
 credential_store = "file"

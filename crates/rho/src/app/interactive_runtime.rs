@@ -966,3 +966,6 @@ pub(crate) async fn test_edit_tool_runtime(
 ) -> InteractiveRuntime {
     tests::edit_tool_runtime(edit_tool).await
 }
+
+#[path = "interactive_runtime_web_search.rs"]
+mod web_search;

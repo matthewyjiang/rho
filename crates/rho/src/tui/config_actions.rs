@@ -211,15 +211,15 @@ impl App {
                 self.open_child_picker(config_picker::web_search_config_picker(
                     &config,
                     self.credential_store.as_ref(),
+                    &self.info.runtime.provider,
+                    &self.info.runtime.model,
                 ));
                 if matches!(ctx, ConfigCommitCtx::DuringTurn) {
                     self.set_status("web search config");
                 }
                 Ok(())
             }
-            (ConfigRow::WebSearchHosted, _) => self.toggle_web_search_hosted(),
-            (ConfigRow::WebSearchProvider, _) => self.cycle_web_search_provider(),
-            (ConfigRow::WebSearchApiKey(key), _) => self.open_web_search_api_key_editor(key),
+            (ConfigRow::WebSearchAction(action), ctx) => self.handle_web_search_action(action, ctx),
             (ConfigRow::XaiImageGeneration, _) => self.toggle_xai_image_generation(),
         }
     }
@@ -345,29 +345,6 @@ impl App {
             return Ok(());
         };
         self.open_child_picker(picker);
-        Ok(())
-    }
-
-    pub(super) fn refresh_web_search_config_picker(
-        &mut self,
-        selected_value: &str,
-    ) -> anyhow::Result<()> {
-        let config = self.info.services.config_repository.load()?;
-        let (filter, parent) = match self.input_ui.composer_mut() {
-            ComposerMode::Picker(picker) => (picker.filter.clone(), picker.take_parent()),
-            ComposerMode::TextInput(input) => match input.take_return_picker() {
-                Some(mut picker) => (picker.filter.clone(), picker.take_parent()),
-                None => (String::new(), None),
-            },
-            _ => (String::new(), None),
-        };
-        let mut picker =
-            config_picker::web_search_config_picker(&config, self.credential_store.as_ref());
-        Self::restore_picker_position(&mut picker, selected_value, filter);
-        if let Some(parent) = parent {
-            picker = picker.with_parent(parent);
-        }
-        self.input_ui.set_composer(ComposerMode::Picker(picker));
         Ok(())
     }
 
@@ -602,37 +579,6 @@ impl App {
             },
             |_, _| {},
         )
-    }
-
-    pub(super) fn toggle_web_search_hosted(&mut self) -> anyhow::Result<()> {
-        match config_editor::toggle(
-            &self.info.services.config_repository,
-            ConfigToggle::WebSearchHosted,
-        ) {
-            Ok(hosted) => {
-                self.set_status(if hosted {
-                    "hosted web search: on next session"
-                } else {
-                    "hosted web search: off next session"
-                });
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "could not save hosted web search setting: {err}"
-                )));
-                self.set_status("config save failed");
-            }
-        }
-        self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_HOSTED_VALUE)?;
-        Ok(())
-    }
-
-    pub(super) fn cycle_web_search_provider(&mut self) -> anyhow::Result<()> {
-        let provider =
-            config_editor::cycle_web_search_provider(&self.info.services.config_repository)?;
-        self.refresh_web_search_config_picker(config_picker::WEB_SEARCH_PROVIDER_VALUE)?;
-        self.set_status(format!("backup web search: {provider}"));
-        Ok(())
     }
 
     pub(super) fn save_current_config(&self) -> anyhow::Result<()> {

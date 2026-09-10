@@ -762,6 +762,17 @@ pub(crate) fn credential_env_vars_from(
         .filter_map(|mode| mode.auth_kind.env_var())
         .map(str::to_owned)
         .collect();
+    // App-owned search credentials must not leak into agent subprocesses.
+    vars.extend(
+        [
+            "EXA_API_KEY",
+            "BRAVE_SEARCH_API_KEY",
+            "BRAVE_API_KEY",
+            "FIRECRAWL_API_KEY",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
     vars.extend(env.into_iter().filter_map(|name| {
         let name = name.as_ref();
         custom_openai_compatible::is_provider_api_key_env_var(name).then(|| name.to_owned())

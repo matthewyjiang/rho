@@ -302,20 +302,59 @@ Pinned values (`hashline`, `apply_patch`, `str_replace`) stay fixed across provi
 
 ## Web search
 
-Hosted search is on by default when both are true:
+Choose **Tools → Web search** in `/config`. Search mode controls where queries go:
 
-1. `hosted = true` under `[web_search]`
-2. the active chat path supports a native `web_search` tool (OpenAI Responses, Codex standard Responses, and xAI)
+| Mode | Routing |
+| --- | --- |
+| `auto` | Prefer native search when the active chat path supports it; otherwise use the selected backend. |
+| `backend` | Always use the selected backend, even when the chat provider supports native search. |
+| `off` | Disable web search. |
 
-When either condition fails, Rho uses the client backup backend if one is configured.
+`backend` selects one of `openai`, `exa`, `brave`, or `firecrawl`. A failed request does not fall through to another service. The model cannot override this selection with tool arguments. Native search means the chat provider's own search tool, not Firecrawl Cloud.
 
-`hosted` under `[web_search]` turns provider-hosted search on or off. It defaults to `true`. Set `hosted = false` to force the client backup tool even on providers that support hosted search.
+For example, force a self-hosted Firecrawl deployment:
 
-`provider` under `[web_search]` chooses only the **backup** client backend used when hosted search is off or the active chat path cannot host search. Supported values are `auto`, `openai`, `exa`, `brave`, and `disabled`. Unknown values are normalized back to `auto` when config is loaded. Set `provider = "disabled"` to turn the client backup off while keeping hosted search available on supported chat paths.
+```toml
+[web_search]
+mode = "backend"
+backend = "firecrawl"
 
-To disable search entirely, set both `hosted = false` and `provider = "disabled"`. On a chat path that cannot host search, `provider = "disabled"` alone is enough to remove the tool.
+[web_search.firecrawl]
+api_base_url = "http://localhost:3002"
+```
 
-Legacy flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values are migrated to the configured credential store when loaded. Empty strings are ignored.
+Omit `api_base_url` to use Firecrawl Cloud at `https://api.firecrawl.dev`. Cloud requires a key; a self-hosted endpoint may omit authentication. Save keys through the TUI credential editor or set `FIRECRAWL_API_KEY`. Keys are not written into backend configuration tables.
+
+### Backend connections
+
+Each backend has its own settings page. Editing an endpoint or key does not select that backend. API base URLs accept HTTP or HTTPS and preserve reverse-proxy path prefixes. Do not include the operation path: Firecrawl appends `v2/search`, for example. URLs must not contain embedded credentials, query strings, or fragments. Clear the URL or choose its reset row to restore the default.
+
+| Backend | API base URL default | Connection |
+| --- | --- | --- |
+| OpenAI | `https://api.openai.com/v1` | `api` or `codex` |
+| Exa | `https://api.exa.ai` | `api` or `mcp` |
+| Brave | `https://api.search.brave.com` | API |
+| Firecrawl | `https://api.firecrawl.dev` | API, including self-hosted deployments |
+
+Set `web_search.openai.connection` explicitly to `codex` to use a Codex login. Codex uses its fixed ChatGPT endpoint; custom API URLs never receive Codex OAuth tokens. API mode uses API-key authentication.
+
+Set `web_search.exa.connection` to `mcp` to use Exa MCP. Its separate `web_search.exa.mcp_url` defaults to `https://mcp.exa.ai/mcp`. Exa API mode does not switch to MCP when its key is missing. Both OpenAI and Exa default to API connections.
+
+TUI changes to mode, backend, endpoint, connection, and credentials apply before the next turn. An active turn keeps its existing route and credential snapshot. Future delegated agents inherit the applied settings; already-started agents keep their bound settings. **Next turn route** shows the saved connection and resolved URL, including whether it is default or custom. If applying settings fails, the next turn does not start. Direct `config.toml` edits require a restart.
+
+**Test connection** asks before sending a test query through the selected backend; the request may incur charges. It tests the backend even when the search mode is Auto or Off. A successful server health check alone does not prove that a self-hosted deployment can search.
+
+Firecrawl uses the [v2 search API](https://docs.firecrawl.dev/api-reference/endpoint/search). Self-hosted support depends on the deployed version and its search infrastructure. This integration does not enable Firecrawl scraping: `includeContent` retains Rho's existing page-fetch behavior.
+
+### Migrating older search settings
+
+- Legacy `hosted = false` plus `provider = "disabled"` becomes `mode = "off"`. Legacy provider names remain case-insensitive. A backend-only or endpoint edit preserves that mode; only an explicit `mode` overrides legacy routing.
+- A concrete legacy provider becomes the selected backend. `hosted` determines Auto versus Backend mode.
+- Legacy `provider = "auto"` becomes the OpenAI backend with a warning. The old OpenAI → Exa → Brave failure chain is removed.
+- Legacy native-only configuration (`hosted = true`, `provider = "disabled"`) requires an explicit mode choice. Rho rejects that ambiguous migration rather than silently enabling a client backend. Set `mode = "off"` to prevent search, or explicitly choose Auto and its backend.
+- Legacy OpenAI and Exa users receive a warning to select their connection. Choose `codex` or `mcp` if that was the previously implicit transport.
+
+Existing flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values still migrate to the configured credential store. Empty strings are ignored.
 
 `advisor_mode` controls whether the [`advisor`](/configuration/advisor-mode) tool is available. It defaults to `false`.
 

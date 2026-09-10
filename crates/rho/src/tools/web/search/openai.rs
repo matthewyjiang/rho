@@ -6,21 +6,19 @@ use url::Url;
 use {
     crate::credential_store::AppCredentialStore,
     rho_providers::auth::codex_oauth::{chatgpt_plan_from_id_token, ChatGptPlan},
-    rho_providers::credentials::{
-        load_codex_tokens, load_provider_api_key, CodexTokens, WebSearchCredential,
-    },
+    rho_providers::credentials::CodexTokens,
     rho_providers::providers::openai::auth::{refresh_codex_token, CodexAuthSource},
     rho_tools::tool::ToolError,
 };
 
-use super::{SearchBackendConfig, SearchItem};
+use super::{
+    openai_responses_url, read_bounded_text, search_error, SearchBackendConfig, SearchItem,
+};
 
-const OPENAI_RESPONSES_URL: &str = "https://api.openai.com/v1/responses";
-const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
 const OPENAI_SEARCH_MODEL: &str = "gpt-5.6-luna";
 const CODEX_SEARCH_MODEL: &str = "gpt-5.6-terra";
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 enum OpenAiSearchAuth {
     Codex {
         tokens: CodexTokens,
@@ -30,13 +28,6 @@ enum OpenAiSearchAuth {
 }
 
 impl OpenAiSearchAuth {
-    fn endpoint(&self) -> &'static str {
-        match self {
-            Self::Codex { .. } => CODEX_RESPONSES_URL,
-            Self::ApiKey(_) => OPENAI_RESPONSES_URL,
-        }
-    }
-
     fn model(&self) -> &'static str {
         match self {
             Self::Codex { tokens, .. } => match tokens
@@ -73,36 +64,27 @@ pub(super) fn is_available(config: &SearchBackendConfig) -> bool {
 }
 
 fn resolve_auth(config: &SearchBackendConfig) -> Result<OpenAiSearchAuth, ToolError> {
-    if let Ok(access_token) = std::env::var("CODEX_ACCESS_TOKEN") {
-        return Ok(OpenAiSearchAuth::Codex {
-            tokens: CodexTokens {
-                access_token,
-                refresh_token: None,
-                id_token: None,
-                account_id: std::env::var("CODEX_ACCOUNT_ID").ok(),
-            },
-            source: CodexAuthSource::Env,
-        });
+    match config.settings.openai.connection {
+        crate::config::OpenAiSearchConnection::Codex => {
+            let tokens = config.openai_codex_tokens.clone().ok_or_else(|| {
+                ToolError::Message(
+                    "OpenAI Codex web search unavailable: sign in with /login openai-codex".into(),
+                )
+            })?;
+            Ok(OpenAiSearchAuth::Codex {
+                tokens,
+                source: config.openai_codex_source,
+            })
+        }
+        crate::config::OpenAiSearchConnection::Api => {
+            let key = config.openai_api_key.clone().ok_or_else(|| {
+                ToolError::Message(
+                    "OpenAI web search unavailable: /login openai or set OPENAI_API_KEY".into(),
+                )
+            })?;
+            Ok(OpenAiSearchAuth::ApiKey(key))
+        }
     }
-    if let Ok(Some(tokens)) = load_codex_tokens(&AppCredentialStore) {
-        return Ok(OpenAiSearchAuth::Codex {
-            tokens,
-            source: CodexAuthSource::Store,
-        });
-    }
-    if let Ok(key) = std::env::var("OPENAI_API_KEY") {
-        return Ok(OpenAiSearchAuth::ApiKey(key));
-    }
-    if let Some(key) = config.credential(WebSearchCredential::OpenAi) {
-        return Ok(OpenAiSearchAuth::ApiKey(key));
-    }
-    if let Ok(Some(key)) = load_provider_api_key(&AppCredentialStore, "openai") {
-        return Ok(OpenAiSearchAuth::ApiKey(key));
-    }
-    Err(ToolError::Message(
-        "OpenAI web search unavailable: sign in with /login openai-codex, /login openai, or set OPENAI_API_KEY"
-            .into(),
-    ))
 }
 
 pub(super) async fn search(
@@ -114,8 +96,25 @@ pub(super) async fn search(
     config: &SearchBackendConfig,
 ) -> Result<Vec<SearchItem>, ToolError> {
     let mut auth = resolve_auth(config)?;
+    let mut secrets = vec![auth.bearer_token().to_string()];
+    if let OpenAiSearchAuth::Codex { tokens, .. } = &auth {
+        secrets.extend(
+            tokens
+                .refresh_token
+                .iter()
+                .chain(tokens.id_token.iter())
+                .cloned(),
+        );
+    }
     let body = openai_search_body(&auth, query, num_results, recency_filter, domain_filter);
-    let (mut status, mut text) = send_openai_search_request(client, &auth, &body).await?;
+    let (mut status, mut text) = send_openai_search_request(
+        client,
+        config,
+        &auth,
+        &body,
+        &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
+    )
+    .await?;
     if status == reqwest::StatusCode::UNAUTHORIZED {
         if let OpenAiSearchAuth::Codex {
             tokens,
@@ -133,25 +132,45 @@ pub(super) async fn search(
                 )
                 .await
                 .map_err(|err| {
-                    ToolError::Message(format!("OpenAI web search token refresh failed: {err}"))
+                    search_error(
+                        format!("OpenAI web search token refresh failed: {err}"),
+                        &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
+                    )
                 })?;
+                secrets.push(refreshed.access_token.clone());
                 auth = OpenAiSearchAuth::Codex {
                     tokens: refreshed,
                     source: CodexAuthSource::Store,
                 };
                 let body =
                     openai_search_body(&auth, query, num_results, recency_filter, domain_filter);
-                let retried = send_openai_search_request(client, &auth, &body).await?;
+                let retried = send_openai_search_request(
+                    client,
+                    config,
+                    &auth,
+                    &body,
+                    &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
+                )
+                .await?;
                 status = retried.0;
                 text = retried.1;
             }
         }
     }
     if !status.is_success() {
-        return Err(ToolError::Message(format!(
-            "OpenAI web search failed: HTTP {status}: {}",
-            text.chars().take(300).collect::<String>()
-        )));
+        return Err(search_error(
+            format!(
+                "OpenAI web search failed: HTTP {status}: {}",
+                super::redact_secrets(
+                    &text,
+                    &secrets.iter().map(String::as_str).collect::<Vec<_>>()
+                )
+                .chars()
+                .take(300)
+                .collect::<String>()
+            ),
+            &secrets.iter().map(String::as_str).collect::<Vec<_>>(),
+        ));
     }
 
     let output = parse_openai_search_output(&text)?;
@@ -187,11 +206,13 @@ fn openai_search_body(
 
 async fn send_openai_search_request(
     client: &reqwest::Client,
+    config: &SearchBackendConfig,
     auth: &OpenAiSearchAuth,
     body: &Value,
+    secrets: &[&str],
 ) -> Result<(reqwest::StatusCode, String), ToolError> {
     let mut request = client
-        .post(auth.endpoint())
+        .post(openai_responses_url(config)?)
         .bearer_auth(auth.bearer_token())
         .header("Content-Type", "application/json");
     if let OpenAiSearchAuth::Codex { tokens, .. } = auth {
@@ -205,14 +226,9 @@ async fn send_openai_search_request(
 
     let response =
         request.json(body).send().await.map_err(|err| {
-            ToolError::Message(format!("OpenAI web search request failed: {err}"))
+            search_error(format!("OpenAI web search request failed: {err}"), secrets)
         })?;
-    let status = response.status();
-    let text = response
-        .text()
-        .await
-        .map_err(|err| ToolError::Message(format!("OpenAI web search response failed: {err}")))?;
-    Ok((status, text))
+    read_bounded_text(response, secrets).await
 }
 
 fn openai_search_instructions(

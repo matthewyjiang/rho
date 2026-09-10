@@ -76,7 +76,7 @@ impl IsolatedHome {
 model = "gpt-5.5"
 auth = "api-key"
 check_for_updates = false
-web_search_provider = "disabled"
+web_search.mode = "off"
 
 [behavior]
 # Keep matrix runs on the isolated file store so /login never prompts and

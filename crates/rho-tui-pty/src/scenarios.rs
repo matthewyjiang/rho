@@ -54,6 +54,7 @@ mod supervised_approval;
 mod text_selection;
 mod tool_card_hover;
 mod type_during_stream;
+mod web_search;
 mod workflow;
 mod workspace_rewind;
 
@@ -81,7 +82,7 @@ use command_palette::{
 use computer::{COMPUTER_FAILURE_SCENARIO, COMPUTER_PLAN_SCENARIO, COMPUTER_USE_SCENARIO};
 use config::{
     setup_auto_without_classifier, AUTO_PERMISSION_MODE_CONFIG_STEPS,
-    AUTO_PERMISSION_MODE_STARTUP_STEPS, OPEN_CONFIG_PICKER_STEPS,
+    AUTO_PERMISSION_MODE_STARTUP_STEPS, OPEN_CONFIG_PICKER_SCENARIO,
 };
 use conversation_tree::CONVERSATION_TREE_STEPS;
 use doctor::DOCTOR_OVERLAY_SCENARIO;
@@ -739,6 +740,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     .with_setup(setup_pinned_models)
     .with_env(OPENAI_AND_XAI_KEY_ENV),
     model_prompts::MODEL_PROMPTS_SCENARIO,
+    web_search::WEB_SEARCH_CONFIG_SCENARIO,
     Scenario::new(
         "open_workflow_hub_empty",
         "Open the workflows hub when the workspace has no workflows yet",
@@ -746,13 +748,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         OPEN_WORKFLOW_HUB_EMPTY_STEPS,
         false,
     ),
-    Scenario::new(
-        "open_config_picker",
-        "Open model and provider settings and browse model refresh options",
-        DEFAULT_SIZE,
-        OPEN_CONFIG_PICKER_STEPS,
-        false,
-    ),
+    OPEN_CONFIG_PICKER_SCENARIO,
     Scenario::new(
         "open_agents_picker",
         "Browse agent metadata in a navigable popup and scroll hidden detail into view",

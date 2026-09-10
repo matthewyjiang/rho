@@ -257,6 +257,15 @@ impl AgentExecutor {
         config.auth = auth.to_string();
     }
 
+    /// Future delegated runs inherit the parent's applied search settings.
+    /// Already-bound runs keep their owned configuration and tool snapshots.
+    pub(crate) fn update_web_search(&self, settings: &crate::config::WebSearchSettings) {
+        self.config
+            .write()
+            .expect("delegated config lock")
+            .web_search = settings.clone();
+    }
+
     pub(crate) fn update_permission_mode(&self, mode: crate::permission::PermissionMode) {
         self.config
             .write()

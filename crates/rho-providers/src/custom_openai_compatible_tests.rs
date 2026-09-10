@@ -418,6 +418,17 @@ fn credential_env_vars_include_live_rho_api_key_overrides() {
         "PATH",
         "RHO_AUDIT_API_KEY_7f3a",
     ]);
+    for search_key in [
+        "EXA_API_KEY",
+        "BRAVE_SEARCH_API_KEY",
+        "BRAVE_API_KEY",
+        "FIRECRAWL_API_KEY",
+    ] {
+        assert!(
+            vars.iter().any(|name| name == search_key),
+            "search credentials must be stripped from subprocesses"
+        );
+    }
     assert!(
         vars.iter()
             .any(|name| name == "RHO_UNINTERNED_LIVE_API_KEY"),

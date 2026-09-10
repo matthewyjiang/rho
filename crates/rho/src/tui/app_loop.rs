@@ -15,6 +15,7 @@ impl App {
         changed |= self.poll_doctor_command().await?;
         changed |= self.poll_side_chat();
         changed |= self.poll_changelog_command().await?;
+        changed |= self.poll_web_search_test().await?;
         Ok(changed)
     }
 
@@ -74,6 +75,10 @@ impl App {
                     .any(super::doctor_overlay::PendingDoctorProbe::is_finished)
                 || self
                     .pending_changelog
+                    .as_ref()
+                    .is_some_and(|handle| handle.is_finished())
+                || self
+                    .pending_web_search_test
                     .as_ref()
                     .is_some_and(|handle| handle.is_finished())
                 || self
@@ -178,6 +183,7 @@ impl App {
                 || !self.pending_usage_limits.is_empty()
                 || !self.pending_doctor_probes.is_empty()
                 || self.pending_changelog.is_some()
+                || self.pending_web_search_test.is_some()
                 || self.mcp_argument_completions.is_pending()
                 || self.exclusive.wants_fast_ticks()
                 || !self.pending_inline_shells.is_empty()
@@ -233,6 +239,7 @@ impl App {
         self.cancel_limits_command().await;
         self.cancel_doctor_command().await;
         self.cancel_changelog_command().await;
+        self.cancel_web_search_test().await;
         if let Some(handle) = self.pending_cursor_models.take() {
             handle.abort();
         }

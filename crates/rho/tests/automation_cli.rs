@@ -145,7 +145,7 @@ fn applies_configured_tool_output_limit() {
     std::fs::write(root.path().join("large.txt"), "abcdefgh").unwrap();
     std::fs::write(
         root.path().join("config.toml"),
-        "max_output_bytes = 5\nweb_search_provider = \"disabled\"\n",
+        "max_output_bytes = 5\nweb_search.mode = \"off\"\n",
     )
     .unwrap();
 

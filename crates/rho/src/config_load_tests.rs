@@ -171,17 +171,25 @@ provider = "unknown"
     )
     .unwrap();
 
+    assert_eq!(config.web_search.mode, super::super::WebSearchMode::Auto);
     assert_eq!(
-        config.web_search_provider,
-        super::super::SearchProvider::Auto
+        config.web_search.backend,
+        super::super::SearchBackend::OpenAi
     );
     assert_eq!(
         warnings,
-        vec![ConfigWarning::Normalized {
-            key: "web_search.provider",
-            from: "\"unknown\"".into(),
-            to: "\"auto\"".into(),
-        }]
+        vec![
+            ConfigWarning::Normalized {
+                key: "web_search.provider",
+                from: "\"unknown\"".into(),
+                to: "mode=auto, backend=openai".into(),
+            },
+            ConfigWarning::Migrated {
+                key: "web_search.openai.connection",
+                from: "implicit OpenAI transport".into(),
+                to: "api (set web_search.openai.connection to \"api\" or \"codex\")".into(),
+            },
+        ]
     );
 }
 

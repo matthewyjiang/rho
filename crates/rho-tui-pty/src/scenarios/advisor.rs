@@ -34,7 +34,7 @@ fn write_config(home: &IsolatedHome, advisor_mode: bool, with_model: bool) -> Re
 model = "gpt-5.5"
 auth = "api-key"
 check_for_updates = false
-web_search_provider = "disabled"
+web_search.mode = "off"
 
 [behavior]
 credential_store = "file"
