@@ -21,6 +21,7 @@ mod display_transcript;
 mod doctor;
 mod executable;
 mod export;
+mod external_editor;
 mod herdr;
 mod hooks;
 mod installation;

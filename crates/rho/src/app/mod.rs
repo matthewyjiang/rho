@@ -1,4 +1,5 @@
 mod acp;
+mod active_prompt;
 mod agent_binding;
 pub(crate) mod agent_concurrency;
 pub(crate) mod agent_executor;
@@ -19,6 +20,8 @@ mod interactive_session_controller;
 mod interactive_state;
 mod login;
 mod mcp_cli;
+mod model_prompt_cli;
+mod model_prompt_metadata;
 pub(crate) mod notification_delivery;
 mod parent_bridge;
 mod parent_steering;

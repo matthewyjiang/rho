@@ -195,6 +195,23 @@ impl SessionHost {
             built.teardown().await;
             return Err(error);
         }
+        if built.prompt_template.is_some() {
+            if let Some(notice) = crate::app::model_prompt_metadata::change_notice(
+                &built.session.snapshot(),
+                built.prompt.loaded.as_ref(),
+            ) {
+                if let Err(error) = replay_display_history(
+                    &request.session_id,
+                    &[Message::assistant_text(notice)],
+                    client,
+                )
+                .await
+                {
+                    built.teardown().await;
+                    return Err(error);
+                }
+            }
+        }
         let host = Self::from_built(
             request.session_id,
             built,
@@ -289,22 +306,47 @@ impl SessionHost {
         config.model = selection.model.clone();
         config.auth = selection.auth.clone();
         config.reasoning = reasoning;
-        let previous_context_window = model_context_window(&current.provider, &current.model);
-        let context_window = model_context_window(&selection.provider, &selection.model);
         let provider =
             build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore))
                 .await
                 .map_err(host_apply_error)?;
+        self.switch_provider(provider, &config)?;
+        Ok(self.config_options(process_config))
+    }
+
+    /// Installs an already-resolved provider while the ACP host slot is held.
+    /// Kept separate from credential discovery so the session transaction can
+    /// be exercised with a scripted provider.
+    fn switch_provider(
+        &mut self,
+        provider: Arc<dyn rho_sdk::provider::ModelProvider>,
+        config: &Config,
+    ) -> Result<(), AcpError> {
+        let current = self.current_model();
+        let previous_context_window = model_context_window(&current.provider, &current.model);
+        let context_window = model_context_window(&config.provider, &config.model);
+        let prepared_prompt = self
+            .built
+            .prompt_template
+            .as_ref()
+            .map(|template| {
+                template.build(&crate::model_identity::PromptModel::from_sdk_identity(
+                    &provider.identity(),
+                ))
+            })
+            .transpose()
+            .map_err(host_apply_error)?;
         // HandoffReport could ride along in `_meta` later; ACP has no place for it yet.
         let _handoff = apply_conversation_switch(
             ConversationSwitch {
+                prepared_prompt: prepared_prompt.as_ref(),
                 session: &self.built.session,
                 tools: &self.built.tools,
                 previous_provider: Arc::clone(&self.built.provider),
                 new_provider: Arc::clone(&provider),
-                new_reasoning: reasoning,
-                auth: &selection.auth,
-                compaction: CompactionConfig::from(process_config),
+                new_reasoning: config.reasoning,
+                auth: &config.auth,
+                compaction: CompactionConfig::from(config),
                 context_window,
                 previous_context_window,
                 usage_recording: self.built.runtime.usage_recording(),
@@ -313,8 +355,15 @@ impl SessionHost {
         )
         .map_err(host_apply_error)?;
         self.built.provider = provider;
-        self.auth = selection.auth;
-        Ok(self.config_options(process_config))
+        if let Some(prompt) = prepared_prompt {
+            self.built.prompt.adopt(
+                crate::app::active_prompt::ActivePrompt::from_prepared(prompt),
+                &self.built.diagnostics,
+                self.built.tools.advisor(),
+            );
+        }
+        self.auth = config.auth.clone();
+        Ok(())
     }
 
     pub(super) async fn shutdown(self) {
@@ -441,8 +490,10 @@ impl SessionHost {
         if let Some(text) = assistant_text.filter(|text| !text.is_empty()) {
             display_tail.push(Message::assistant_text(text));
         }
-        self.stored
-            .save_snapshot(&self.built.session.snapshot(), &display_tail)
+        self.stored.save_snapshot(
+            &self.built.prompt.decorate(self.built.session.snapshot()),
+            &display_tail,
+        )
     }
 
     fn dispatch_failed(&self, message: &str) {
@@ -660,3 +711,7 @@ async fn answer_approval(
 #[cfg(test)]
 #[path = "session_host_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "session_host_model_prompt_tests.rs"]
+mod model_prompt_tests;

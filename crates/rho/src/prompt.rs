@@ -1,8 +1,13 @@
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use {crate::model_identity::PromptModel, crate::skills, rho_tools::tool::ToolSpec};
+
+pub(crate) mod model_prompt_edit;
+mod model_prompt_template;
+pub(crate) mod model_prompts;
+pub(crate) use model_prompt_template::ModelPromptTemplate;
 
 pub const BASE_SYSTEM_PROMPT: &str = r#"You are a coding agent in the rho coding-agent harness, working with the user in a shared workspace. Use available tools to inspect files, run commands, and edit or create files.
 
@@ -13,15 +18,17 @@ During substantial work, give concise progress updates. Preserve existing work a
 /// Label for the absolute session cwd line injected into the base system prompt.
 const CWD_PROMPT_LABEL: &str = "Your current working directory: ";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptSourceKind {
     Base,
+    ModelAppend,
+    ModelReplace,
     Agents,
     Skills,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub struct PromptSource {
     pub kind: PromptSourceKind,
     pub path: Option<String>,
@@ -31,6 +38,7 @@ pub struct PromptSource {
 pub struct SystemPrompt {
     pub text: String,
     pub sources: Vec<PromptSource>,
+    pub(crate) model_prompt: Option<model_prompts::ModelPrompt>,
 }
 
 /// How plugin skills are supplied to system prompt assembly.
@@ -47,6 +55,7 @@ pub(crate) enum PluginSkills {
 /// `advisor` is `None` unless advisor mode is on with a model chosen. It is
 /// stated here because the `advisor` tool description must stay fixed once
 /// written, while `/advisor` can swap the reviewer at any time.
+#[cfg(test)]
 pub(crate) struct PromptModels<'a> {
     pub(crate) running: &'a PromptModel,
     pub(crate) advisor: Option<&'a PromptModel>,
@@ -67,39 +76,58 @@ fn system_prompt_with_home(tools: &[ToolSpec], cwd: &Path, home: Option<&Path>) 
 }
 
 #[cfg(test)]
-fn system_prompt_with_home_and_models(
+pub(crate) fn system_prompt_with_home_and_models(
     tools: &[ToolSpec],
     cwd: &Path,
     home: Option<&Path>,
     models: PromptModels<'_>,
 ) -> SystemPrompt {
-    system_prompt_with_home_and_plugin_skills(tools, cwd, home, models, PluginSkills::Discover)
+    let running = models.running;
+    system_prompt_template_with_home_and_models(tools, cwd, home, models)
+        .build(running)
+        .expect("test prompt files are valid")
 }
 
-pub(crate) fn system_prompt_with_plugin_skills(
+#[cfg(test)]
+pub(crate) fn system_prompt_template_with_home_and_models(
     tools: &[ToolSpec],
     cwd: &Path,
+    home: Option<&Path>,
     models: PromptModels<'_>,
+) -> ModelPromptTemplate {
+    system_prompt_template_with_home_and_plugin_skills(
+        tools,
+        cwd,
+        home,
+        models.advisor,
+        PluginSkills::Discover,
+    )
+}
+
+pub(crate) fn system_prompt_template_with_plugin_skills(
+    tools: &[ToolSpec],
+    cwd: &Path,
+    advisor: Option<&PromptModel>,
     plugin_skills: Vec<skills::Skill>,
-) -> SystemPrompt {
+) -> ModelPromptTemplate {
     let home = crate::paths::home_dir();
-    system_prompt_with_home_and_plugin_skills(
+    system_prompt_template_with_home_and_plugin_skills(
         tools,
         cwd,
         home.as_deref(),
-        models,
+        advisor,
         PluginSkills::Provided(plugin_skills),
     )
 }
 
-fn system_prompt_with_home_and_plugin_skills(
+fn system_prompt_template_with_home_and_plugin_skills(
     tools: &[ToolSpec],
     cwd: &Path,
     home: Option<&Path>,
-    PromptModels { running, advisor }: PromptModels<'_>,
+    advisor: Option<&PromptModel>,
     plugin_skills: PluginSkills,
-) -> SystemPrompt {
-    let mut text = BASE_SYSTEM_PROMPT.to_string();
+) -> ModelPromptTemplate {
+    let mut text = String::new();
     // Absolute path so the model need not probe with `pwd`.
     // Encoded as JSON string path data so control characters cannot split the
     // system prompt into extra instruction lines.
@@ -107,12 +135,7 @@ fn system_prompt_with_home_and_plugin_skills(
     text.push_str(CWD_PROMPT_LABEL);
     text.push_str(&crate::paths::prompt_data(cwd));
     text.push('\n');
-    // The running model is a fact about this session that the model cannot read
-    // off its own weights: the user chose it, and Rho can change it mid-session.
-    text.push_str(&format!(
-        "You are running on {}. Rho can switch this mid-session and tells you when it does.\n",
-        running.describe(),
-    ));
+    let before_model = std::mem::take(&mut text);
     // The advisor's model belongs here rather than on the `advisor` tool
     // description, which must stay fixed once written: `/advisor` can change the
     // reviewer without rebuilding the tool list.
@@ -232,7 +255,7 @@ Do not delegate simple questions, routine codebase inspection, or small/local ch
         });
     }
 
-    SystemPrompt { text, sources }
+    ModelPromptTemplate::new(home, before_model, text, sources)
 }
 
 pub fn append_subagents_disabled_instruction(text: &mut String) {
@@ -292,10 +315,8 @@ pub(crate) enum ModelSwitchKind {
 
 /// Model and display text for a mid-session model notice.
 ///
-/// Everything already written stays as it was: the system prompt names the model
-/// this session started on, and the tool list keeps whatever it said. A switch
-/// only appends this line. It names the new model alone, because the old one is
-/// still readable earlier in the transcript or system prompt.
+/// Conversation switches also rebuild the system prompt. This line preserves
+/// the switch in conversation history without repeating the previous identity.
 pub(crate) fn model_switch_context(
     kind: ModelSwitchKind,
     current: &PromptModel,

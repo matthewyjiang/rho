@@ -196,6 +196,11 @@ impl RuntimeDiagnostics {
         self.write().prompt_sources = sources;
     }
 
+    #[cfg(test)]
+    pub(crate) fn prompt_sources(&self) -> Vec<crate::prompt::PromptSource> {
+        self.read().prompt_sources.clone()
+    }
+
     /// Publishes the hook runtime so `rho(action="hooks")` can read live state.
     pub fn attach_hooks(&self, hooks: &crate::hooks::HookPipeline) {
         self.write().hooks = Some(crate::hooks::HookInspector::new(hooks));

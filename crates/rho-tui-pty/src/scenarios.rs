@@ -30,6 +30,7 @@ mod login;
 mod markdown_stream;
 mod mcp;
 mod mermaid;
+mod model_prompts;
 mod no_save;
 mod paste;
 mod pickers;
@@ -737,6 +738,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     )
     .with_setup(setup_pinned_models)
     .with_env(OPENAI_AND_XAI_KEY_ENV),
+    model_prompts::MODEL_PROMPTS_SCENARIO,
     Scenario::new(
         "open_workflow_hub_empty",
         "Open the workflows hub when the workspace has no workflows yet",

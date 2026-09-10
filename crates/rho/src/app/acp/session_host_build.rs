@@ -44,7 +44,8 @@ pub(super) async fn build_session(
         usage_purpose: "agent",
         usage_parent_session_id: None,
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-        extend_tools_and_prompt: |tool_set, _prompt: &mut rho_sdk::SystemPrompt| tool_set,
+        extend_tools: std::convert::identity,
+        system_prompt_suffix: None,
         approval: |inputs: ApprovalInputs| {
             let ApprovalChannel {
                 handler, receiver, ..

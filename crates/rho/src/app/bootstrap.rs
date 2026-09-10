@@ -147,6 +147,11 @@ enum EarlyDispatch {
 }
 
 async fn dispatch_early_command(cli: &Cli) -> anyhow::Result<EarlyDispatch> {
+    if let Some(Command::ModelPrompt { command }) = &cli.command {
+        return Ok(EarlyDispatch::Handled(
+            super::model_prompt_cli::run(command, cli).await,
+        ));
+    }
     if let Some(Command::Uninstall { purge, dry_run }) = &cli.command {
         return Ok(EarlyDispatch::Handled(crate::uninstall::run(
             *purge, *dry_run,
