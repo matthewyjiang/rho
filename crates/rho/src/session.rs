@@ -22,8 +22,6 @@ mod layout;
 mod performance_benchmarks;
 mod persistence;
 pub(crate) mod search;
-#[cfg(test)]
-mod search_benchmarks;
 mod search_evidence;
 mod search_index;
 mod search_journal;
