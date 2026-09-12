@@ -1,7 +1,5 @@
 //! Offline model selection for editing global model instructions.
 
-use std::io::IsTerminal;
-
 use anyhow::{ensure, Context};
 use rho_providers::{
     model::{catalog, favorites},
@@ -15,19 +13,8 @@ pub(crate) async fn select(
     config: &Config,
     provider_filter: Option<&str>,
 ) -> anyhow::Result<Option<catalog::ModelCatalogEntry>> {
-    ensure!(
-        std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
-        "model selection requires an interactive terminal; pass --model <MODEL> to edit directly"
-    );
     config.providers.activate()?;
-    // Editing instructions needs no credentials. Include every registered auth
-    // mode so the shared catalog also supplies cached and keyless providers.
-    let auths = provider::providers()
-        .iter()
-        .flat_map(|descriptor| descriptor.auth_modes())
-        .map(|mode| mode.id.to_owned())
-        .collect::<Vec<_>>();
-    let mut entries = catalog::available_models_for_auths(&auths);
+    let mut entries = catalog::locally_known_models();
     let current = config.model_aliases.resolve(&config.model)?;
     let current_provider = current.provider.as_deref().unwrap_or(&config.provider);
     let current_provider = provider::legacy_provider_alias(current_provider)

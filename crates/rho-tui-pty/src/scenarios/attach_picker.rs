@@ -84,13 +84,14 @@ pub(super) const ATTACH_CLI_EMPTY_STEPS: &[Step] = &[
     },
     Step::AssertText("SUBAGENTS"),
     Step::AssertText("0/0"),
-    Step::Key(Key::Esc),
+    // Submitting an empty standalone attach picker exits, unlike /attach.
+    Step::Key(Key::Enter),
     Step::WaitExit { timeout: SETTLE },
 ];
 
 pub(super) const ATTACH_CLI_EMPTY_SCENARIO: Scenario = Scenario::new(
     "attach_cli_empty",
-    "Open rho attach with no running subagents and keep the empty overlay",
+    "Submit rho attach with no running subagents and exit cleanly",
     DEFAULT_SIZE,
     ATTACH_CLI_EMPTY_STEPS,
     /*smoke*/ false,

@@ -77,6 +77,10 @@ local = "ollama/team/model:q8"
 
     fn picker(&self, args: &[&str]) -> PtyHarness {
         let command = self.command_with_args(args);
+        self.picker_command(&command)
+    }
+
+    fn picker_command(&self, command: &Command) -> PtyHarness {
         let plan = RhoLaunchPlan {
             binary: PathBuf::from(env!("CARGO_BIN_EXE_rho")),
             size: PtySize {
@@ -231,6 +235,25 @@ fn nonterminal_missing_model_does_not_start_editing() {
         assert!(!fixture.root.path().join("draft-path").exists());
         assert!(!fixture.directory().exists());
         assert_eq!(fixture.config(), config);
+    }
+}
+
+// Covers: invalid editor settings fail before entering the interactive picker.
+// Owner: CLI startup through a real terminal; nonterminal dispatch is covered above.
+#[test]
+fn invalid_editor_fails_before_picker() {
+    for visual in [None, Some("   "), Some("'unterminated")] {
+        let fixture = Fixture::new("exit 0");
+        let mut command = fixture.command();
+        command.env_remove("VISUAL").env_remove("EDITOR");
+        if let Some(visual) = visual {
+            command.env("VISUAL", visual);
+        }
+        let mut harness = fixture.picker_command(&command);
+        assert_ne!(harness.wait_for_exit(PICKER_WAIT).unwrap(), 0);
+        assert_eq!(harness.raw_sequence_occurrences(b"\x1b[?1049h"), 0);
+        assert!(!fixture.root.path().join("draft-path").exists());
+        assert!(!fixture.directory().exists());
     }
 }
 

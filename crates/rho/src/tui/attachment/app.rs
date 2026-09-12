@@ -159,9 +159,10 @@ pub(crate) async fn run(
     };
     Theme::initialize_from_terminal();
     Theme::apply_committed(theme);
+    let mut events = TerminalEvents::new();
     let id = match id {
         Some(id) => subagent::normalize_id(id)?,
-        None => match super::select::select_running_run(&mut terminal).await? {
+        None => match super::select::select_running_run(&mut terminal, &mut events).await? {
             Some(id) => id,
             None => return Ok(()),
         },
@@ -174,7 +175,7 @@ pub(crate) async fn run(
         .report_state(HerdrState::Working, Some(&message), Some(&id))
         .await;
     let result = AttachmentApp::new(&id, directory, display)
-        .run(&mut terminal, &herdr)
+        .run(&mut terminal, &mut events, &herdr)
         .await;
     herdr.release().await;
     result
@@ -283,9 +284,9 @@ impl AttachmentApp {
     async fn run(
         &mut self,
         terminal: &mut DefaultTerminal,
+        terminal_events: &mut TerminalEvents,
         herdr: &HerdrReporter,
     ) -> anyhow::Result<()> {
-        let mut terminal_events = TerminalEvents::new();
         let mut refresh = tokio::time::interval(REFRESH_INTERVAL);
         refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut reported_state = None;
