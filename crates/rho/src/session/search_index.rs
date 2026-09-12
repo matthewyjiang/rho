@@ -135,6 +135,24 @@ impl Stamp {
     }
 }
 
+struct IndexedFile {
+    stamp: Stamp,
+    cwd: PathBuf,
+    workspace: Workspace,
+}
+
+/// Retain known scope when the original cwd cannot be resolved. Walking its
+/// surviving ancestors could otherwise assign a deleted worktree to another repo.
+fn resolve_workspace(cwd: &Path, indexed: Option<&IndexedFile>) -> Workspace {
+    if let Some(existing) = cwd.canonicalize().ok().filter(|path| path.is_dir()) {
+        return Workspace::resolve(&existing);
+    }
+    if let Some(indexed) = indexed.filter(|indexed| indexed.cwd == cwd) {
+        return indexed.workspace.clone();
+    }
+    Workspace::resolve(cwd)
+}
+
 /// Reconcile changes in one transaction so a failed/cancelled refresh cannot
 /// expose a half-built session. Missing files are removed, including FTS rows.
 pub(super) fn refresh(
@@ -190,27 +208,33 @@ pub(super) fn refresh(
         }
         let indexed = transaction
             .query_row(
-                "select size,stamp,cwd from files where path=?1",
+                "select size,stamp,cwd,worktree,repo from files where path=?1",
                 [&path_string],
                 |row| {
-                    Ok((
-                        row.get::<_, u64>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, String>(2)?,
-                    ))
+                    Ok(IndexedFile {
+                        stamp: Stamp {
+                            size: row.get(0)?,
+                            modified: row.get(1)?,
+                        },
+                        cwd: PathBuf::from(row.get::<_, String>(2)?),
+                        workspace: Workspace {
+                            worktree: PathBuf::from(row.get::<_, String>(3)?),
+                            repo: PathBuf::from(row.get::<_, String>(4)?),
+                        },
+                    })
                 },
             )
             .optional()?;
         let stamp = Stamp::read(&path);
         if stamp.as_ref().is_ok_and(|stamp| {
-            indexed.as_ref().is_some_and(|(size, modified, _)| {
-                *size == stamp.size && *modified == stamp.modified
+            indexed.as_ref().is_some_and(|indexed| {
+                indexed.stamp.size == stamp.size && indexed.stamp.modified == stamp.modified
             })
         }) {
             // Git metadata can change independently of the transcript. Refresh
             // scope from the cached cwd without rebuilding evidence or anchors.
-            if let Some((_, _, cwd)) = indexed {
-                let workspace = Workspace::resolve(Path::new(&cwd));
+            if let Some(indexed) = &indexed {
+                let workspace = resolve_workspace(&indexed.cwd, Some(indexed));
                 transaction.execute(
                     "update files set worktree=?1,repo=?2 where path=?3",
                     params![
@@ -242,7 +266,15 @@ pub(super) fn refresh(
             let id = SessionUnit::from_path(&path)
                 .and_then(|unit| unit.id())
                 .ok_or_else(|| anyhow::anyhow!("invalid session unit"))?;
-            index_file(&transaction, root, &path, &id, &stamp?, cancellation)
+            index_file(
+                &transaction,
+                root,
+                &path,
+                &id,
+                &stamp?,
+                indexed.as_ref(),
+                cancellation,
+            )
         })();
         match result {
             Ok(bytes) => {
@@ -300,6 +332,7 @@ fn index_file(
     path: &Path,
     id: &str,
     stamp: &Stamp,
+    indexed: Option<&IndexedFile>,
     cancellation: &CancellationToken,
 ) -> anyhow::Result<u64> {
     let mut reader = BufReader::new(File::open(path)?);
@@ -325,7 +358,7 @@ fn index_file(
         path.starts_with(layout::session_dir_in_root(root, &cwd)),
         "session workspace mismatch"
     );
-    let workspace = Workspace::resolve(&cwd);
+    let workspace = resolve_workspace(&cwd, indexed);
     let path_string = path.to_string_lossy();
     let key = format!("{:x}", Sha256::digest(path_string.as_bytes()));
     connection.execute(

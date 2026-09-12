@@ -331,6 +331,65 @@ fn refresh_resolves_scope_again_for_unchanged_transcripts() {
     }
 }
 
+// Covers: refresh and transcript reindexing must retain known scope after a
+// worktree disappears, including when an unrelated parent repo survives.
+// Owner: session storage/search integration.
+#[test]
+fn refresh_preserves_scope_for_deleted_workspaces() {
+    for nested in [false, true] {
+        let root = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        let parent = TempDir::new().unwrap();
+        fs::create_dir(project.path().join(".git")).unwrap();
+        if nested {
+            fs::create_dir(parent.path().join(".git")).unwrap();
+        }
+        let linked = parent.path().join("linked");
+        let cwd = linked.join("nested");
+        fs::create_dir_all(&cwd).unwrap();
+        let admin = project.path().join(".git/worktrees/linked");
+        fs::create_dir_all(&admin).unwrap();
+        fs::write(admin.join("commondir"), "../..").unwrap();
+        fs::write(linked.join(".git"), format!("gitdir: {}", admin.display())).unwrap();
+        let session = Session::create_in_root(root.path(), &cwd).unwrap();
+        session
+            .append_message(&Message::user_text("deletedscope"))
+            .unwrap();
+        let args = json!({"action":"search","query":"deletedscope","refresh":true});
+        let original = run(root.path(), project.path(), "current", args.clone());
+        assert_eq!(ids(&original), vec![session.id()]);
+        let expected_scope = (
+            linked.canonicalize().unwrap(),
+            project.path().join(".git").canonicalize().unwrap(),
+        );
+        fs::remove_dir_all(&linked).unwrap();
+        for changed in [false, true] {
+            if changed {
+                session
+                    .append_message(&Message::assistant_text("appended evidence"))
+                    .unwrap();
+            }
+            let result = run(root.path(), project.path(), "current", args.clone());
+            assert_eq!(result["sessions"], original["sessions"]);
+            assert_eq!(result["index"]["files_updated"], usize::from(changed));
+            if !changed {
+                assert_eq!(result["index"]["bytes_read"], 0);
+            }
+            let connection = Connection::open(root.path().join("search.sqlite3")).unwrap();
+            let stored = connection
+                .query_row("select worktree,repo from files", [], |row| {
+                    Ok((
+                        std::path::PathBuf::from(row.get::<_, String>(0)?),
+                        std::path::PathBuf::from(row.get::<_, String>(1)?),
+                    ))
+                })
+                .unwrap();
+            assert_eq!(stored, expected_scope);
+            assert!(ids(&run(root.path(), parent.path(), "current", args.clone())).is_empty());
+        }
+    }
+}
+
 // Covers: default repo isolation, explicit expansion, same-worktree ordering and
 // current-session exclusion must also apply to focused reads.
 #[test]
