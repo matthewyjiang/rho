@@ -99,6 +99,10 @@ grouping, evidence windows, JSON output and focused read. It copies transcripts
 into a private temporary root, leaving real transcripts and indexes untouched.
 These measurements use a debug build, not an optimized release binary.
 
+The product measurements below are the initial implementation baseline. They
+predate content-bound anchors, the shared SQLite lifecycle and budget-aware page
+assembly. Use the reproduction command below to measure the current implementation.
+
 | Measurement | Result |
 | --- | ---: |
 | Initial extraction and index, 641 files | 24.686 s |

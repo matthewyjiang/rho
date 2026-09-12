@@ -1,8 +1,9 @@
 //! Display evidence only: snapshots, provider envelopes and token accounting
-//! never enter the retrieval index. Offsets address the original JSONL record.
+//! never enter the retrieval index. Anchors bind a JSONL position to its evidence.
 
 use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub(super) struct Evidence {
@@ -10,6 +11,24 @@ pub(super) struct Evidence {
     pub role: String,
     pub text: String,
     pub omitted_blocks: usize,
+}
+
+impl Evidence {
+    /// Appends preserve anchors; replacement evidence at the same position does
+    /// not. Hash field boundaries explicitly, including a fixed-width count.
+    fn new(position: String, role: &str, text: String, omitted_blocks: usize) -> Self {
+        let mut digest = Sha256::new();
+        digest.update(role.as_bytes());
+        digest.update([0]);
+        digest.update(text.as_bytes());
+        digest.update((omitted_blocks as u64).to_le_bytes());
+        Self {
+            anchor: format!("{position}:{:x}", digest.finalize()),
+            role: role.into(),
+            text,
+            omitted_blocks,
+        }
+    }
 }
 
 /// Extract one record without replaying model snapshots or inventing summaries.
@@ -36,17 +55,16 @@ pub(super) fn extract(record: &Value, offset: u64) -> Vec<Evidence> {
             let (kind, body) = message.as_object()?.iter().next()?;
             let anchor = format!("{offset:x}:{index}");
             if kind == "ToolResult" {
-                return Some(Evidence {
+                return Some(Evidence::new(
                     anchor,
-                    role: if body["ok"].as_bool() == Some(false) {
+                    if body["ok"].as_bool() == Some(false) {
                         "tool_error"
                     } else {
                         "tool_result"
-                    }
-                    .into(),
-                    text: body["content"].as_str()?.to_owned(),
-                    omitted_blocks: 0,
-                });
+                    },
+                    body["content"].as_str()?.to_owned(),
+                    /*omitted_blocks*/ 0,
+                ));
             }
             let (role, blocks) = match kind.as_str() {
                 "User" => ("user", body.as_array()?),
@@ -81,12 +99,12 @@ pub(super) fn extract(record: &Value, offset: u64) -> Vec<Evidence> {
                     ));
                 }
             }
-            Some(Evidence {
+            Some(Evidence::new(
                 anchor,
-                role: role.into(),
-                text: parts.join("\n"),
+                role,
+                parts.join("\n"),
                 omitted_blocks,
-            })
+            ))
         })
         .collect()
 }

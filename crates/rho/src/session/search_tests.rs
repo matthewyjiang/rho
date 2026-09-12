@@ -2,6 +2,7 @@ use std::{fs, io::Write, path::Path};
 
 use pretty_assertions::assert_eq;
 use rho_providers::model::Message;
+use serde_json::{json, Value};
 use tempfile::TempDir;
 
 use super::*;
@@ -93,7 +94,8 @@ fn paginated_groups_keep_total_and_budget_omissions_visible() {
 }
 
 // Covers: a prior transcript must become searchable after append, replacement,
-// partial-tail recovery and deletion without scanning unchanged content.
+// partial-tail recovery and deletion without scanning unchanged content. Anchors
+// survive appends but reject replacement evidence at the same position.
 // Owner: session storage/search integration, not rendering.
 #[test]
 fn indexed_evidence_tracks_source_changes_without_mutating_transcripts() {
@@ -115,6 +117,8 @@ fn indexed_evidence_tracks_source_changes_without_mutating_transcripts() {
     );
     assert_eq!(ids(&first), vec![session.id()]);
     assert_eq!(first["index"]["files_updated"], 1);
+    let original_read = json!({"action":"read","session":first["sessions"][0]["session"],
+        "anchor":first["sessions"][0]["excerpts"][0]["anchor"]});
     let second = run(
         root.path(),
         cwd.path(),
@@ -158,7 +162,16 @@ fn indexed_evidence_tracks_source_changes_without_mutating_transcripts() {
         )),
         vec![session.id()]
     );
-    fs::write(session.path(), &original).unwrap();
+    // Appending must keep existing anchors valid, but rewriting the message at
+    // the same byte offset must not let an old anchor return different evidence.
+    assert_eq!(
+        run(root.path(), cwd.path(), "current", original_read.clone())["text"],
+        "cancellation evidence"
+    );
+    let replacement = String::from_utf8(original.clone())
+        .unwrap()
+        .replace("cancellation evidence", "replacement evidence");
+    fs::write(session.path(), replacement).unwrap();
     assert_eq!(
         ids(&run(
             root.path(),
@@ -167,6 +180,28 @@ fn indexed_evidence_tracks_source_changes_without_mutating_transcripts() {
             json!({"action":"search","query":"E0308","refresh":true})
         )),
         Vec::<&str>::new()
+    );
+    assert!(execute(
+        root.path(),
+        cwd.path(),
+        "current",
+        serde_json::from_value(original_read).unwrap(),
+        rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
+        &CancellationToken::new(),
+    )
+    .is_err());
+    let replaced = run(
+        root.path(),
+        cwd.path(),
+        "current",
+        json!({"action":"search","query":"replacement"}),
+    );
+    assert_eq!(ids(&replaced), vec![session.id()]);
+    let replacement_read = json!({"action":"read","session":replaced["sessions"][0]["session"],
+        "anchor":replaced["sessions"][0]["excerpts"][0]["anchor"]});
+    assert_eq!(
+        run(root.path(), cwd.path(), "current", replacement_read)["text"],
+        "replacement evidence"
     );
 
     let tail = serde_json::to_string(
@@ -208,6 +243,35 @@ fn indexed_evidence_tracks_source_changes_without_mutating_transcripts() {
         )),
         Vec::<&str>::new()
     );
+}
+
+// Covers: an existing derived cache must rebuild positional anchors once rather
+// than preserve unsafe handles through the unchanged-file shortcut.
+// Owner: session search cache migration.
+#[test]
+fn positional_anchor_cache_rebuilds_once() {
+    let root = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+    session
+        .append_message(&Message::user_text("migrationneedle"))
+        .unwrap();
+    let args = json!({"action":"search","query":"migrationneedle"});
+    let original = run(root.path(), cwd.path(), "current", args.clone());
+    {
+        let connection = Connection::open(root.path().join("search.sqlite3")).unwrap();
+        // The table layout is unchanged; v1 differs in its cached anchor format.
+        connection
+            .execute_batch("update evidence set anchor='10:0'; pragma user_version=1;")
+            .unwrap();
+    }
+    let migrated = run(root.path(), cwd.path(), "current", args.clone());
+    assert_eq!(migrated["sessions"], original["sessions"]);
+    assert_eq!(migrated["index"]["files_updated"], 1);
+    assert_eq!(migrated["index"]["reconciled"], true);
+    let warm = run(root.path(), cwd.path(), "current", args);
+    assert_eq!(warm["index"]["files_checked"], 0);
+    assert_eq!(warm["index"]["bytes_read"], 0);
 }
 
 // Covers: default repo isolation, explicit expansion, same-worktree ordering and
@@ -357,13 +421,11 @@ fn display_record_formats_preserve_roles_and_visible_omissions() {
         let record = json!({"type":kind,"display_messages":[{"message":{"EnrichedAssistant":{
             "content":[{"Text":"answer"},{"Thinking":"secret"}],"provider_context":["secret"]}}}]});
         assert_eq!(
-            search_evidence::extract(&record, 16),
-            vec![search_evidence::Evidence {
-                anchor: "10:0".into(),
-                role: "assistant".into(),
-                text: "answer".into(),
-                omitted_blocks: 1
-            }]
+            search_evidence::extract(&record, 16)
+                .into_iter()
+                .map(|evidence| (evidence.role, evidence.text, evidence.omitted_blocks))
+                .collect::<Vec<_>>(),
+            vec![("assistant".into(), "answer".into(), 1)]
         );
     }
     for kind in ["session", "replace_history", "set_leaf", "upgrade"] {

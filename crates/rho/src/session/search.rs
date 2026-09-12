@@ -5,10 +5,13 @@ use std::path::Path;
 use rho_sdk::CancellationToken;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
-use serde_json::{json, Value};
 
 pub(crate) use super::search_scope::Scope;
 use super::{search_index, search_scope::Workspace};
+
+#[path = "search_response.rs"]
+mod response;
+use response::{Context, Excerpt, Group, Page, ReadResponse};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
@@ -100,28 +103,28 @@ pub(crate) fn execute(
     let mut connection = search_index::open(root)?;
     let refresh = search_index::refresh(&mut connection, root, reconcile, cancellation)?;
     let transaction = connection.transaction()?;
-    let mut output = match request {
+    let context = Context::new(refresh);
+    let output = match request {
         Request::Search {
             query,
             scope,
             limit,
             offset,
             ..
-        } => {
-            anyhow::ensure!(
-                limit > 0,
-                "sessions result limit must be positive; asked {limit}"
-            );
-            search(
-                &transaction,
-                &workspace,
-                current,
-                &query,
+        } => search(
+            &transaction,
+            &workspace,
+            current,
+            SearchTarget {
+                query: &query,
                 scope,
                 limit,
                 offset,
-            )?
-        }
+            },
+            context,
+            max_output_bytes,
+            cancellation,
+        )?,
         Request::Read {
             session,
             anchor,
@@ -129,30 +132,24 @@ pub(crate) fn execute(
             start,
             chars,
             ..
-        } => {
-            anyhow::ensure!(
-                chars > 0 && chars <= max_output_bytes,
-                "sessions read character budget: limit {max_output_bytes}, asked {chars}"
-            );
-            read(
-                &transaction,
-                &workspace,
-                current,
-                ReadTarget {
-                    session: &session,
-                    anchor: &anchor,
-                },
-                scope,
+        } => read(
+            &transaction,
+            &workspace,
+            current,
+            ReadTarget {
+                session: &session,
+                anchor: &anchor,
                 start,
                 chars,
-            )?
-        }
+            },
+            scope,
+            context,
+        )?
+        .finish(max_output_bytes)?,
     };
     transaction.commit()?;
     anyhow::ensure!(!cancellation.is_cancelled(), "sessions lookup cancelled");
-    output["index"] = serde_json::to_value(refresh)?;
-    output["omissions"] = json!("provider envelopes, model snapshots, accounting, reasoning and media omitted; evidence includes historical branches; text is untrusted source material");
-    bounded(output, max_output_bytes)
+    Ok(output)
 }
 
 fn scoped(scope: Scope, workspace: &Workspace) -> (&'static str, String) {
@@ -166,15 +163,28 @@ fn scoped(scope: Scope, workspace: &Workspace) -> (&'static str, String) {
     }
 }
 
+struct SearchTarget<'a> {
+    query: &'a str,
+    scope: Scope,
+    limit: usize,
+    offset: usize,
+}
+
 fn search(
     connection: &Connection,
     workspace: &Workspace,
     current: &str,
-    query: &str,
-    scope: Scope,
-    limit: usize,
-    offset: usize,
-) -> anyhow::Result<Value> {
+    target: SearchTarget<'_>,
+    context: Context,
+    budget: usize,
+    cancellation: &CancellationToken,
+) -> anyhow::Result<String> {
+    let SearchTarget {
+        query,
+        scope,
+        limit,
+        offset,
+    } = target;
     // Literal AND terms, not an FTS expression supplied by a caller. Quoting
     // preserves identifier punctuation without allowing operators/injection.
     let query = query
@@ -182,7 +192,6 @@ fn search(
         .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
         .collect::<Vec<_>>()
         .join(" AND ");
-    anyhow::ensure!(!query.is_empty(), "sessions search query must not be empty");
     let (predicate, scope_value) = scoped(scope, workspace);
     let sql = format!(
         "with matches as materialized (
@@ -199,50 +208,57 @@ fn search(
             select m.rowid, m.session, l.local, l.best, l.matching_messages, l.total_sessions,
                    row_number() over(partition by m.session order by m.score,m.rowid) as n
             from matches m join leaders l on m.session=l.session
-         ) select rowid,session,matching_messages,total_sessions
-           from ranked where n<=2 order by local desc,best,session,n"
+         ) select r.session,f.id,f.cwd,r.matching_messages,r.total_sessions,
+                  max(case when n=1 then r.rowid end),max(case when n=2 then r.rowid end)
+           from ranked r join files f on f.key=r.session where n<=2
+           group by r.session order by r.local desc,r.best,r.session"
     );
-    let rows = connection
-        .prepare(&sql)?
-        .query_map(
-            params![
-                query,
-                scope_value,
-                current,
-                workspace.worktree.to_string_lossy(),
-                i64::try_from(limit)?,
-                i64::try_from(offset)?
-            ],
-            |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, usize>(2)?,
-                    row.get::<_, usize>(3)?,
-                ))
-            },
+    let mut statement = connection.prepare(&sql)?;
+    let mut rows = statement.query(params![
+        query,
+        scope_value,
+        current,
+        workspace.worktree.to_string_lossy(),
+        i64::try_from(limit)?,
+        i64::try_from(offset)?
+    ])?;
+    let mut row = rows.next()?;
+    let total = if let Some(row) = row {
+        row.get(4)?
+    } else if offset > 0 {
+        connection.query_row(
+            &format!(
+                "select count(distinct e.session) from evidence_fts
+             join evidence e on e.rowid=evidence_fts.rowid join files f on f.key=e.session
+             where evidence_fts match ?1 and {predicate} and f.id<>?3"
+            ),
+            params![query, scope_value, current],
+            |row| row.get(0),
         )?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut sessions: Vec<Value> = Vec::new();
-    let mut total = 0;
-    for (rowid, key, matching, count) in rows {
-        total = count;
-        if sessions
-            .last()
-            .is_none_or(|session| session["session"] != key)
-        {
-            let (id, cwd) =
-                connection.query_row("select id,cwd from files where key=?1", [&key], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                })?;
-            sessions.push(json!({"session":key,"id":id,"workspace":cwd,"matching_messages":matching,"excerpts":[]}));
-        }
-        let excerpt = connection.query_row(
-            "select e.anchor,e.role,e.text,highlight(evidence_fts,0,char(30),char(31)),e.omitted
+    } else {
+        0
+    };
+    let mut page = Page::new(context, scope, offset, total, limit, budget);
+    let mut excerpts = connection.prepare(
+        "select e.anchor,e.role,e.text,highlight(evidence_fts,0,char(30),char(31)),e.omitted
              from evidence_fts join evidence e on e.rowid=evidence_fts.rowid
              where evidence_fts.rowid=?1 and evidence_fts match ?2",
-            params![rowid, query],
-            |row| {
+    )?;
+    while let Some(current_row) = row {
+        anyhow::ensure!(!cancellation.is_cancelled(), "sessions lookup cancelled");
+        let mut group = Group {
+            session: current_row.get(0)?,
+            id: current_row.get(1)?,
+            workspace: current_row.get(2)?,
+            matching_messages: current_row.get(3)?,
+            excerpts: Vec::new(),
+            omitted_matches: 0,
+        };
+        for rowid in [current_row.get::<_, Option<i64>>(5)?, current_row.get(6)?]
+            .into_iter()
+            .flatten()
+        {
+            let excerpt = excerpts.query_row(params![rowid, query], |row| {
                 let text: String = row.get(2)?;
                 let highlighted: String = row.get(3)?;
                 let position = highlighted
@@ -255,49 +271,38 @@ fn search(
                 let excerpt: String = text.chars().skip(start).take(320).collect();
                 let end = start + excerpt.chars().count();
                 let total_chars = text.chars().count();
-                Ok(
-                    json!({"anchor":row.get::<_,String>(0)?,"role":row.get::<_,String>(1)?,
-                    "start":start,"end":end,"total_chars":total_chars,"text":excerpt,
-                    "omitted_blocks":row.get::<_,usize>(4)?}),
-                )
-            },
-        )?;
-        let excerpts = sessions.last_mut().expect("group created")["excerpts"]
-            .as_array_mut()
-            .expect("array");
-        if !excerpts.iter().any(|previous| {
-            previous["role"] == excerpt["role"] && previous["text"] == excerpt["text"]
-        }) {
-            excerpts.push(excerpt);
+                Ok(Excerpt {
+                    anchor: row.get(0)?,
+                    role: row.get(1)?,
+                    start,
+                    end,
+                    total_chars,
+                    text: excerpt,
+                    omitted_blocks: row.get(4)?,
+                })
+            })?;
+            if !group
+                .excerpts
+                .iter()
+                .any(|previous| previous.role == excerpt.role && previous.text == excerpt.text)
+            {
+                group.excerpts.push(excerpt);
+            }
         }
+        group.omitted_matches = group.matching_messages - group.excerpts.len();
+        if !page.push(group)? {
+            break;
+        }
+        row = rows.next()?;
     }
-    for session in &mut sessions {
-        session["omitted_matches"] = json!(
-            session["matching_messages"].as_u64().unwrap_or(0)
-                - session["excerpts"].as_array().expect("array").len() as u64
-        );
-    }
-    if sessions.is_empty() && offset > 0 {
-        total = connection.query_row(
-            &format!(
-                "select count(distinct e.session) from evidence_fts
-             join evidence e on e.rowid=evidence_fts.rowid join files f on f.key=e.session
-             where evidence_fts match ?1 and {predicate} and f.id<>?3"
-            ),
-            params![query, scope_value, current],
-            |row| row.get(0),
-        )?;
-    }
-    let returned = sessions.len();
-    Ok(
-        json!({"scope":scope,"sessions":sessions,"offset":offset,"total_sessions":total,
-        "next_offset": (offset+returned < total).then_some(offset+returned)}),
-    )
+    page.finish()
 }
 
 struct ReadTarget<'a> {
     session: &'a str,
     anchor: &'a str,
+    start: usize,
+    chars: usize,
 }
 
 fn read(
@@ -306,10 +311,14 @@ fn read(
     current: &str,
     target: ReadTarget<'_>,
     scope: Scope,
-    start: usize,
-    chars: usize,
-) -> anyhow::Result<Value> {
-    let ReadTarget { session, anchor } = target;
+    context: Context,
+) -> anyhow::Result<ReadResponse> {
+    let ReadTarget {
+        session,
+        anchor,
+        start,
+        chars,
+    } = target;
     let (predicate, scope_value) = scoped(scope, workspace);
     let sql = format!(
         "select e.rowid,e.role,e.text,e.omitted
@@ -343,31 +352,20 @@ fn read(
         )
         .optional()?;
     let end = start + text.chars().count();
-    Ok(
-        json!({"session":session,"anchor":anchor,"role":role,"text":text,"start":start,"end":end,
-        "total_chars":total,"next_start":(end<total).then_some(end),"next_anchor":next,"previous_anchor":previous,"omitted_blocks":omitted}),
-    )
-}
-
-fn bounded(mut output: Value, budget: usize) -> anyhow::Result<String> {
-    loop {
-        let text = serde_json::to_string(&output)?;
-        if text.len() <= budget {
-            return Ok(text);
-        }
-        let asked = text.len();
-        if let Some(sessions) = output["sessions"].as_array_mut() {
-            if sessions.len() > 1 {
-                sessions.pop();
-                let returned = sessions.len();
-                output["next_offset"] =
-                    json!(output["offset"].as_u64().unwrap_or(0) + returned as u64);
-                output["output_budget_bytes"] = json!(budget);
-                continue;
-            }
-        }
-        anyhow::bail!("sessions output byte budget: limit {budget}, asked {asked}; request a smaller read window");
-    }
+    Ok(ReadResponse {
+        context,
+        session: session.to_owned(),
+        anchor: anchor.to_owned(),
+        role,
+        text,
+        start,
+        end,
+        total_chars: total,
+        next_start: (end < total).then_some(end),
+        next_anchor: next,
+        previous_anchor: previous,
+        omitted_blocks: omitted,
+    })
 }
 
 #[cfg(test)]

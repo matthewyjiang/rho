@@ -100,7 +100,10 @@ excerpts each. Every excerpt includes its original role, an evidence anchor, a
 character offset, and the full evidence length. Tool failures remain
 `tool_error`; incomplete assistant output remains `assistant_aborted`.
 `omitted_matches` and `next_offset` make undisplayed matches visible. Pass
-`limit` and `offset` to page through session groups.
+`limit` and `offset` to page through session groups. The tool stops assembling
+groups when its byte budget is full, even if `limit` requests more; follow
+`next_offset` for the remaining groups. Budget-limited pages include
+`output_budget_bytes`.
 
 Copy the returned `session`, `anchor`, and excerpt `start` into a focused read:
 
@@ -111,7 +114,11 @@ Copy the returned `session`, `anchor`, and excerpt `start` into a focused read:
 Use the same explicit scope when reading a cross-project result. Reads return
 one evidence message, not the entire conversation. Follow `next_start` to page
 through a long message, or `previous_anchor` / `next_anchor` to inspect adjacent
-evidence. Offsets count Unicode characters, not bytes. Output obeys the configured
+evidence. Anchors bind the evidence's position and contents: appending messages
+keeps existing anchors valid, but replacing their evidence invalidates them.
+Search again if a read rejects a stale anchor.
+
+Offsets count Unicode characters, not bytes. Output obeys the configured
 tool byte budget; a too-large read reports the budget and requested size instead
 of silently dropping text.
 
@@ -132,6 +139,8 @@ sessions are reindexed individually. Imports, manual edits/deletes, or writes
 from an older Rho that does not update the catalog require `"refresh":true` to
 reconcile the filesystem. The response reports reconciliation, files checked,
 bytes read, skipped files and incomplete/malformed records.
+
+Older caches with position-only anchors rebuild automatically on first use.
 
 The cache contains conversation text and has owner-only permissions. It is
 derived data; deleting `search.sqlite3` causes a rebuild on next use. Search does

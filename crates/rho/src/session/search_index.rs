@@ -15,6 +15,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+use crate::sqlite_support::{OwnerOnlySqlite, ParentDirectoryPrivacy};
+
 use super::{
     layout::{self, SessionUnit},
     search_evidence::extract,
@@ -32,8 +34,6 @@ pub(super) struct Refresh {
 }
 
 pub(super) fn open(root: &Path) -> anyhow::Result<Connection> {
-    fs::create_dir_all(root)?;
-    layout::set_private_dir_permissions(root)?;
     let path = root.join("search.sqlite3");
     for database in [&path, &root.join("index.sqlite3")] {
         anyhow::ensure!(
@@ -41,22 +41,37 @@ pub(super) fn open(root: &Path) -> anyhow::Result<Connection> {
             "refusing a symlinked sessions index"
         );
     }
-    let file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)?;
-    layout::set_private_file_permissions(&file)?;
-    let connection = Connection::open(path)?;
-    connection.busy_timeout(crate::sqlite_support::BUSY_TIMEOUT)?;
+    let database = OwnerOnlySqlite::open(path, ParentDirectoryPrivacy::EnforcePrivate, migrate)?;
+    let connection = database.open_write_connection()?;
+    // This is connection-local, not persisted by the migration connection.
+    connection.pragma_update(None, "foreign_keys", true)?;
+    Ok(connection)
+}
+
+const SCHEMA_VERSION: u32 = 2;
+
+#[derive(Debug, thiserror::Error)]
+enum OpenError {
+    #[error("sessions search I/O failed: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("sessions search SQLite operation failed: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("unsupported sessions search schema {0}; this build supports schema {SCHEMA_VERSION}")]
+    UnsupportedSchema(u32),
+}
+
+fn migrate(connection: &mut Connection) -> Result<(), OpenError> {
     let version: u32 = connection.query_row("pragma user_version", [], |row| row.get(0))?;
-    anyhow::ensure!(
-        version <= 1,
-        "unsupported sessions search schema {version}; this build supports schema 1"
-    );
-    connection.execute_batch(
-        "pragma foreign_keys=on;
-         create table if not exists files (
+    if version > SCHEMA_VERSION {
+        return Err(OpenError::UnsupportedSchema(version));
+    }
+    if version == SCHEMA_VERSION {
+        return Ok(());
+    }
+    connection.pragma_update(None, "foreign_keys", true)?;
+    let transaction = connection.transaction()?;
+    transaction.execute_batch(
+        "create table if not exists files (
              key text primary key, path text not null, id text not null,
              cwd text not null, worktree text not null, repo text not null,
              size integer not null, stamp text not null, omitted integer not null);
@@ -77,10 +92,16 @@ pub(super) fn open(root: &Path) -> anyhow::Result<Connection> {
          end;
          create trigger if not exists evidence_delete after delete on evidence begin
              insert into evidence_fts(evidence_fts,rowid,text) values('delete',old.rowid,old.text);
-         end;
-         pragma user_version=1;",
+         end;",
     )?;
-    Ok(connection)
+    if version == 1 {
+        // Version 1 anchors identified positions without binding their contents.
+        // Discard the derived evidence and cursor to rebuild content-bound anchors.
+        transaction.execute_batch("delete from files; delete from cursor; delete from pending;")?;
+    }
+    transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    transaction.commit()?;
+    Ok(())
 }
 
 #[derive(Debug)]
