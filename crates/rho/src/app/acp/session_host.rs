@@ -254,8 +254,9 @@ impl SessionHost {
             manager.shutdown().await;
             // Cancellation, errors, and exhausted step budgets end this
             // prompt's automatic delivery. Keep snapshots for explicit status
-            // queries, but do not inject stale results into the next prompt.
-            let _ = manager.take_notifications(self.built.session.id().as_str());
+            // queries, but do not wait on or inject leftover children into the
+            // next prompt, including runs still alive after shutdown timed out.
+            manager.end_automatic_delivery(self.built.session.id().as_str());
         }
         self.herdr
             .report_state(HerdrState::Idle, None, Some(self.acp_session_id.0.as_ref()))
