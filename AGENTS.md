@@ -32,7 +32,7 @@ For PRs:
 - Update documentation for important user-visible changes.
 - When the diff adds or materially expands tests, follow the `rho-test-selection` skill and fill the test-gate section in the pull request template.
 - When the diff ships a minor-only API compromise, follow the `rho-next-major-debt` skill, leave a `NEXT_MAJOR(...)` marker, and fill the next-major debt section in the pull request template (or delete it if none).
-- When the diff changes Interactive TUI layout, chrome, tool cards, statusline, version display, matrix fixtures used by the proof plate, or `rho-pty-demo` itself, run `bash scripts/check_docs_ui_demo.sh --check` before opening or updating the PR. If it drifts, regenerate with `bash scripts/check_docs_ui_demo.sh --write` and commit the dark SVGs (`docs/assets/rho-ui-demo.svg`, `docs/public/assets/rho-ui-demo.svg`) and the site light SVG (`docs/public/assets/rho-ui-demo-light.svg`). CI quality job enforces this.
+- Follow `rho-rust-change-validation` for check selection, result reuse, and the final gate, including the TUI proof plate. PR title/body-only updates do not require rebuilding or rerunning tests.
 
 ## Rust code
 
@@ -44,14 +44,7 @@ For PRs:
 - For async traits, return an explicit future with a `Send` bound. Do not use `#[async_trait]` or `#[allow(async_fn_in_trait)]`.
 - Avoid one-use helpers unless they materially improve readability or isolate a clear invariant.
 - Follow Clippy and rustfmt style: collapse nested `if` statements when possible, inline format arguments (`format!("hello {name}")`), and prefer method references to redundant closures.
-- After Rust changes, run the local checks that match CI quality gates when practical:
-  - `cargo fmt --all` (CI enforces `cargo fmt --all -- --check`, including via `python3 scripts/check_sdk_compatibility.py --test-downstream`)
-  - `python3 scripts/check_architecture.py`
-  - the narrowest relevant tests
-  - when touching `rho-sdk`, fixtures, or SDK packaging: `python3 scripts/check_sdk_compatibility.py --test-features` and `python3 scripts/check_sdk_compatibility.py --test-downstream`
-  - when touching Interactive TUI rendering or the docs proof plate: `bash scripts/check_docs_ui_demo.sh --check` (or `--write` if regenerating)
-  - before opening or updating a PR: `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` when the change is broad enough to warrant it
-- Use the `rho-rust-change-validation` skill for the full workflow.
+- After Rust changes, use `rho-rust-change-validation` as the source of truth for formatting, architecture, tests, SDK compatibility, and final validation.
 
 ## Next-major debt
 
@@ -59,8 +52,10 @@ When a change must ship a worse API shape only to stay **minor-compatible**
 (semver field adds, dual variants, dual-emits, temporary indirection), mark it
 so the next major can clean it up in one pass.
 
-**On every issue and PR**, load the `rho-next-major-debt` skill and run its gate
-before finishing implementation or review. That skill is the source of truth for:
+Load `rho-next-major-debt` when changing or reviewing public contracts, choosing
+a compatibility compromise, or auditing a major release. Skip it for changes
+unrelated to those concerns. Run its gate before finishing relevant implementation
+or review. That skill is the source of truth for:
 
 - when debt counts vs ordinary TODOs
 - the greppable `NEXT_MAJOR(<surface>): <cleanup>` marker

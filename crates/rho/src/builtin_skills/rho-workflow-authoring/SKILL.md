@@ -1,9 +1,13 @@
 ---
 name: rho-workflow-authoring
-description: Write, validate, plan, run, inspect, cancel, and resume deterministic Rho workflows in Starlark. Use when a task needs a fixed multi-step graph, parallel nodes, typed outputs, or durable resume.
+description: Author and operate durable Rho workflows in Starlark. Use when the user requests a Rho workflow or execution needs persisted dependencies and resumable state. Do not load merely because a task has multiple steps or parallel work.
 ---
 
 # Author Rho workflows
+
+Use ordinary tools or subagents for ad-hoc multi-step and parallel work. Choose
+a workflow when requested or when the task needs persisted dependency state and
+durable resume. Do not create a workflow just to formalize an ordinary task.
 
 Use this skill to write a `.star` file and operate it with `rho workflow` or the
 `workflow` tool. CLI and tool help are the source of truth. This skill helps you

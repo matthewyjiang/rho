@@ -1,6 +1,6 @@
 ---
 name: rho-next-major-debt
-description: Mark and inventory minor-compatible API compromises that must collapse on the next major release. Use when implementing an issue or PR that hits a semver wall, choosing dual variants or dual-emits over the ideal shape, reviewing public SDK/event/error surface changes, or preparing a major cutover. Grep NEXT_MAJOR( to list open debt.
+description: Mark and inventory API compromises kept for minor compatibility. Use for public-contract changes or reviews, compatibility compromises, or major-release audits. Do not load for unrelated issue or PR work.
 compatibility: Applies to the Rho monorepo, especially rho-sdk public contracts.
 ---
 
@@ -19,9 +19,12 @@ Load this skill when:
 - reviewing SDK/event/error diffs for un-marked compromises
 - cutting a major release (inventory + land cleanups)
 
-## Gate on every issue / PR
+Skip this skill for changes unrelated to public contracts, compatibility
+compromises, or major releases.
 
-Before finishing implementation, answer:
+## Gate for relevant changes
+
+Before finishing implementation or review of a relevant change, answer:
 
 1. Did this change choose a **worse shape only to stay minor-compatible**?
 2. If yes, is there a greppable `NEXT_MAJOR(...)` marker on the compromised API?

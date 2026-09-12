@@ -65,17 +65,10 @@ Useful flags:
 
 ## Regenerate the docs TUI proof plate
 
-The CI quality job and `python3 scripts/validate.py full` both run this check. Before opening or updating a PR that changes Interactive TUI layout/chrome or the proof-plate fixture, run it locally:
-
-```bash
-# fail on drift
-bash scripts/check_docs_ui_demo.sh --check
-
-# rewrite both asset paths after a layout or chrome change
-bash scripts/check_docs_ui_demo.sh --write
-```
-
-Needs a Unix PTY and a debug build (`RHO_TUI_TEST_MODE=matrix`). Commit both `docs/assets/rho-ui-demo.svg` and `docs/public/assets/rho-ui-demo.svg` after `--write`.
+Follow the **TUI proof plate** section in `rho-rust-change-validation` for check
+selection, regeneration, and the generated assets to commit. A successful full
+validation run already covers the proof plate; do not repeat it on unchanged
+inputs. It requires a Unix PTY and a debug build (`RHO_TUI_TEST_MODE=matrix`).
 
 ## Fixture matrix prompts
 
