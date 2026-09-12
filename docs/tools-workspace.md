@@ -44,6 +44,7 @@ Additional tools:
 | `skill` | Load a skill into the session |
 | `save_agent` | Validate, canonicalize, and save a user agent definition |
 | `rho` | Read-only harness diagnostics |
+| `sessions` | Search and read prior session evidence without resuming it |
 | `advisor` | Second-model review when [advisor mode](/configuration/advisor-mode) is on |
 
 The `bash` tool and the [inline shell](/inline-shell) (bash or zsh) run a login shell (`-lc`), so `~/.profile` installs (cargo, nvm, pyenv) are available. Login init on Debian/Ubuntu (`/etc/profile`) and macOS (`path_helper`) resets or reorders `PATH` before user dotfiles run, so Rho re-prepends the `PATH` it inherited from the launching terminal after login init. Tools activated only in `~/.zshrc` or `~/.bashrc` (mise, nix, direnv, conda) keep working, with the parent entries taking precedence. The child sees the parent value as `RHO_PARENT_PATH`.

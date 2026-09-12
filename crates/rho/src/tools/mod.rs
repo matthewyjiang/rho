@@ -18,6 +18,7 @@ pub(crate) mod process;
 pub mod rho;
 mod save_agent;
 mod sdk_features;
+mod sessions;
 pub(crate) use sdk_features::message_parent_bundle;
 pub mod sdk_registry;
 pub mod skill;
@@ -54,6 +55,7 @@ pub(crate) fn canonical_tool_names() -> &'static [&'static str] {
             "request_parent_action",
             "rho",
             "save_agent",
+            "sessions",
             "skill",
             "web_search",
             "workflow",
@@ -90,6 +92,7 @@ pub(crate) fn canonical_tool_is_mutating(name: &str) -> Option<bool> {
         | "read_file"
         | "request_parent_action"
         | "rho"
+        | "sessions"
         | "skill"
         | "web_search" => Some(false),
         _ => None,

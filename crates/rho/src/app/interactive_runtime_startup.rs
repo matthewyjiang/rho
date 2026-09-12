@@ -284,6 +284,7 @@ pub(super) fn bind_subagent_parent(
     session_id: &SessionId,
     storage: Option<&StoredSession>,
 ) {
+    tools.bind_session_search(session_id.as_str());
     if let Some(manager) = tools.subagents() {
         manager.bind_parent_session(crate::subagent::RunPlacement::for_parent_session(
             session_id.to_string(),
