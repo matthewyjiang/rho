@@ -546,6 +546,7 @@ fn resolve_switch_reasoning(
         &capabilities,
         requested,
         ReasoningRequestSource::PersistedOrDefault,
+        crate::app::conversation_switch::ModelSwitchReasoningPolicy::PreserveExplicit,
     ) {
         Ok(resolved) => Ok(resolved.effective),
         Err(level) => Err(AcpError::invalid_params().data(format!(

@@ -99,7 +99,7 @@ impl App {
         Ok(InteractiveModelSelection {
             selection,
             alias,
-            normalize_unsupported_reasoning: false,
+            reasoning_policy: reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
         })
     }
 
@@ -297,7 +297,7 @@ impl App {
         let InteractiveModelSelection {
             selection,
             alias,
-            normalize_unsupported_reasoning,
+            reasoning_policy,
         } = resolved;
         let provider = selection.provider;
         let model = selection.model;
@@ -305,18 +305,11 @@ impl App {
         let provider_model = rho_providers::provider::model_reference(&provider, &model);
         let capabilities =
             rho_providers::model::models_dev::current_reasoning_capabilities(&provider, &model);
-        let reasoning_source = if normalize_unsupported_reasoning {
-            // The pin cycle swaps like a fresh start on the target: an
-            // explicit level it cannot honor rounds to the nearest supported
-            // one, exactly as a persisted value would.
-            rho_providers::model::ReasoningRequestSource::PersistedOrDefault
-        } else {
-            self.info.runtime.reasoning_source
-        };
         let reasoning = match reasoning_metadata::resolve_model_switch_reasoning(
             &capabilities,
             self.info.runtime.reasoning,
-            reasoning_source,
+            self.info.runtime.reasoning_source,
+            reasoning_policy,
         ) {
             Ok(reasoning) => reasoning,
             Err(requested) => {

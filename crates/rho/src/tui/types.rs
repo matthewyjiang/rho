@@ -76,10 +76,8 @@ pub(super) struct SessionHeaderCache {
 pub(super) struct InteractiveModelSelection {
     pub(in crate::tui) selection: ModelSelection,
     pub(in crate::tui) alias: Option<String>,
-    /// Normalize an explicitly chosen reasoning level the target cannot honor
-    /// to its nearest supported level instead of rejecting the switch. The
-    /// pin cycle keys set this: a quick swap should land, not error out.
-    pub(in crate::tui) normalize_unsupported_reasoning: bool,
+    pub(in crate::tui) reasoning_policy:
+        crate::app::conversation_switch::ModelSwitchReasoningPolicy,
 }
 
 /// Live assistant/reasoning stream UI state owned by [`super::App`].

@@ -96,19 +96,21 @@ pub(super) fn seed_matrix_model_cache() {
         use rho_providers::model::provider_models::{
             replace_cached_provider_models_for_tests, ProviderModel,
         };
-        // Exactly the fixture model: extra entries would change scripted
-        // navigation in scenarios that step through model lists.
-        let models = [ProviderModel {
-            provider: "openai".into(),
-            model: "gpt-5.5".into(),
-            display_name: "gpt-5.5".into(),
-            context_window: Some(400_000),
-            max_output_tokens: Some(128_000),
-            reasoning_capabilities: Default::default(),
-        }];
-        // A failed seed only leaves pickers empty; the scenario assertion
-        // reports it, so there is no user to warn here.
-        let _ = replace_cached_provider_models_for_tests("openai", &models);
+        // One model per provider keeps scripted picker navigation stable.
+        // Poolside is visible only in scenarios injecting its credential; its
+        // Off/Max capabilities exercise normalization without network metadata.
+        for (provider, model) in [("openai", "gpt-5.5"), ("poolside", "laguna-m.1")] {
+            let models = [ProviderModel {
+                provider: provider.into(),
+                model: model.into(),
+                display_name: model.into(),
+                context_window: Some(400_000),
+                max_output_tokens: Some(128_000),
+                reasoning_capabilities: Default::default(),
+            }];
+            // A failed seed leaves pickers empty, which scenario assertions report.
+            let _ = replace_cached_provider_models_for_tests(provider, &models);
+        }
     }
 }
 

@@ -28,12 +28,27 @@ pub(crate) struct ModelSwitchReasoningResolution {
     pub(crate) source: ReasoningRequestSource,
 }
 
+/// Whether a model switch may adapt an unsupported explicit preference.
+/// This is operation policy, not the provenance of the user's preference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ModelSwitchReasoningPolicy {
+    PreserveExplicit,
+    NormalizeUnsupported,
+}
+
 pub(crate) fn resolve_model_switch_reasoning(
     capabilities: &ReasoningCapabilities,
     requested: ReasoningLevel,
     source: ReasoningRequestSource,
+    policy: ModelSwitchReasoningPolicy,
 ) -> Result<ModelSwitchReasoningResolution, ReasoningLevel> {
-    let resolution = capabilities.resolve(requested, source);
+    let resolution_source = match policy {
+        ModelSwitchReasoningPolicy::PreserveExplicit => source,
+        ModelSwitchReasoningPolicy::NormalizeUnsupported => {
+            ReasoningRequestSource::PersistedOrDefault
+        }
+    };
+    let resolution = capabilities.resolve(requested, resolution_source);
     match resolution {
         ReasoningResolution::UnsupportedExplicit(requested) => Err(requested),
         ReasoningResolution::Normalized { effective, .. } => Ok(ModelSwitchReasoningResolution {

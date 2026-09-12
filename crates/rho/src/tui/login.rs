@@ -726,6 +726,7 @@ impl App {
             &capabilities,
             self.info.runtime.reasoning,
             self.info.runtime.reasoning_source,
+            reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
         ) {
             Ok(reasoning) => Some(reasoning),
             Err(requested) => {
