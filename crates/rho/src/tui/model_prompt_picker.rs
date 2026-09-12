@@ -14,7 +14,7 @@ pub(crate) async fn select(
     provider_filter: Option<&str>,
 ) -> anyhow::Result<Option<catalog::ModelCatalogEntry>> {
     config.providers.activate()?;
-    let mut entries = catalog::locally_known_models();
+    let mut entries = locally_known_models();
     let current = config.model_aliases.resolve(&config.model)?;
     let current_provider = current.provider.as_deref().unwrap_or(&config.provider);
     let current_provider = provider::legacy_provider_alias(current_provider)
@@ -75,4 +75,17 @@ pub(crate) async fn select(
         .find(|entry| provider::model_reference(&entry.provider, &entry.model) == selected)
         .map(Some)
         .context("selected model is no longer in the picker")
+}
+
+/// Static catalog plus locally cached models, without credential filtering.
+///
+/// Equivalent to `catalog::locally_known_models`, which is not in published
+/// `rho-providers` 2.6.0. Passing every registered auth mode through
+/// [`catalog::available_models_for_auths`] is the published equivalent.
+fn locally_known_models() -> Vec<catalog::ModelCatalogEntry> {
+    let auths = provider::providers()
+        .into_iter()
+        .flat_map(|descriptor| descriptor.auth_modes().map(|mode| mode.id.to_string()))
+        .collect::<Vec<_>>();
+    catalog::available_models_for_auths(&auths)
 }
