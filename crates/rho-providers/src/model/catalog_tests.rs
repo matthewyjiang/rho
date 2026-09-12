@@ -92,6 +92,50 @@ fn provider_model(provider: &str, model: &str) -> ProviderModel {
     }
 }
 
+// Covers: offline enumeration includes cached credentialed and keyless models,
+// while credential-scoped enumeration still excludes unavailable auth modes.
+// Owner: provider catalog, not the model-prompt picker that consumes it.
+#[test]
+fn local_catalog_includes_cached_models_without_credentials() {
+    with_empty_provider_models_cache("local-catalog", || {
+        for provider in ["openai", "ollama"] {
+            replace_cached_provider_models_for_tests(
+                provider,
+                &[provider_model(provider, "local-model")],
+            )
+            .unwrap();
+        }
+        let cached = vec![
+            ModelCatalogEntry {
+                provider: "ollama".into(),
+                model: "local-model".into(),
+                display_name: "local-model".into(),
+                auth_modes: vec!["none".into(), "ollama-api-key".into()],
+            },
+            ModelCatalogEntry {
+                provider: "openai".into(),
+                model: "local-model".into(),
+                display_name: "local-model".into(),
+                auth_modes: vec!["api-key".into()],
+            },
+        ];
+        let mut expected = cached.clone();
+        expected.extend_from_slice(model_catalog());
+        expected.sort_by(|left, right| {
+            (&left.provider, &left.model).cmp(&(&right.provider, &right.model))
+        });
+        assert_eq!(locally_known_models(), expected);
+        assert_eq!(available_models_for_auths(&[]), vec![]);
+        let mut keyless = cached[0].clone();
+        keyless.auth_modes = vec!["none".into()];
+        assert_eq!(available_models_for_auths(&["none".into()]), vec![keyless]);
+        assert_eq!(
+            available_models_for_auths(&["api-key".into()]),
+            vec![cached[1].clone()]
+        );
+    });
+}
+
 #[test]
 fn resolves_legacy_openrouter_model_references_to_canonical_provider() {
     with_cached_provider_models(

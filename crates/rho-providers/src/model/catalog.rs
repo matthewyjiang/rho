@@ -83,6 +83,13 @@ pub fn available_models_for_auths(auths: &[String]) -> Vec<ModelCatalogEntry> {
     available_models_for_auths_from(model_catalog(), auths)
 }
 
+/// Enumerate registered providers' static and locally cached models without
+/// credential filtering or network discovery. Auth modes describe each model's
+/// supported modes, not credentials available to the caller.
+pub fn locally_known_models() -> Vec<ModelCatalogEntry> {
+    enumerate_models(model_catalog(), |_| true)
+}
+
 struct CrossProviderLoginGroup {
     id: &'static str,
     prompt: &'static str,
@@ -376,16 +383,18 @@ fn available_models_for_auths_from(
     catalog: &[ModelCatalogEntry],
     auths: &[String],
 ) -> Vec<ModelCatalogEntry> {
+    enumerate_models(catalog, |mode| auths.iter().any(|auth| auth == mode))
+}
+
+fn enumerate_models(
+    catalog: &[ModelCatalogEntry],
+    include_auth: impl Fn(&str) -> bool,
+) -> Vec<ModelCatalogEntry> {
     let mut models = catalog
         .iter()
         .filter(|entry| implemented_providers().contains(&entry.provider.as_str()))
         .filter(|entry| provider_uses_static_catalog(&entry.provider))
-        .filter(|entry| {
-            entry
-                .auth_modes
-                .iter()
-                .any(|mode| auths.iter().any(|auth| auth == mode))
-        })
+        .filter(|entry| entry.auth_modes.iter().any(|mode| include_auth(mode)))
         .cloned()
         .collect::<Vec<_>>();
     for provider in provider::providers()
@@ -394,7 +403,7 @@ fn available_models_for_auths_from(
     {
         let available_modes = provider
             .auth_modes()
-            .filter(|mode| auths.iter().any(|auth| auth == mode.id))
+            .filter(|mode| include_auth(mode.id))
             .map(|mode| mode.id.to_string())
             .collect::<Vec<_>>();
         if available_modes.is_empty() {
