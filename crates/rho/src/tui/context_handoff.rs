@@ -370,6 +370,7 @@ impl App {
         Some(InteractiveModelSelection {
             selection,
             alias: None,
+            normalize_unsupported_reasoning: false,
         })
     }
 
@@ -605,6 +606,7 @@ fn current_runtime_selection(app: &App) -> InteractiveModelSelection {
             from_catalog: true,
         },
         alias: None,
+        normalize_unsupported_reasoning: false,
     }
 }
 

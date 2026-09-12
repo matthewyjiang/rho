@@ -96,7 +96,11 @@ impl App {
                 &self.available_auths,
             )?,
         };
-        Ok(InteractiveModelSelection { selection, alias })
+        Ok(InteractiveModelSelection {
+            selection,
+            alias,
+            normalize_unsupported_reasoning: false,
+        })
     }
 
     pub(in crate::tui) async fn refresh_model_lists(
@@ -290,17 +294,29 @@ impl App {
         resolved: InteractiveModelSelection,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<Option<rho_sdk::model::handoff::HandoffReport>> {
-        let InteractiveModelSelection { selection, alias } = resolved;
+        let InteractiveModelSelection {
+            selection,
+            alias,
+            normalize_unsupported_reasoning,
+        } = resolved;
         let provider = selection.provider;
         let model = selection.model;
         let auth = selection.auth;
         let provider_model = rho_providers::provider::model_reference(&provider, &model);
         let capabilities =
             rho_providers::model::models_dev::current_reasoning_capabilities(&provider, &model);
+        let reasoning_source = if normalize_unsupported_reasoning {
+            // The pin cycle swaps like a fresh start on the target: an
+            // explicit level it cannot honor rounds to the nearest supported
+            // one, exactly as a persisted value would.
+            rho_providers::model::ReasoningRequestSource::PersistedOrDefault
+        } else {
+            self.info.runtime.reasoning_source
+        };
         let reasoning = match reasoning_metadata::resolve_model_switch_reasoning(
             &capabilities,
             self.info.runtime.reasoning,
-            self.info.runtime.reasoning_source,
+            reasoning_source,
         ) {
             Ok(reasoning) => reasoning,
             Err(requested) => {

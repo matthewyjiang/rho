@@ -79,6 +79,7 @@ fn resolves_alias_before_interactive_model_lookup() {
                 from_catalog: true,
             },
             alias: Some("deep".into()),
+            normalize_unsupported_reasoning: false,
         }
     );
 }
@@ -102,6 +103,7 @@ fn bare_alias_keeps_current_provider() {
                 from_catalog: true,
             },
             alias: Some("fast".into()),
+            normalize_unsupported_reasoning: false,
         }
     );
 }
@@ -219,6 +221,7 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
                     from_catalog: true,
                 },
                 alias: None,
+                normalize_unsupported_reasoning: false,
             },
             agent,
         )
@@ -345,6 +348,7 @@ async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
                     from_catalog: true,
                 },
                 alias: None,
+                normalize_unsupported_reasoning: false,
             },
             agent,
         )
@@ -589,4 +593,83 @@ fn empty_model_picker_during_turn_does_not_split_a_live_stream() {
         assert!(app.streams.pending_notices.is_empty());
         assert!(matches!(app.history.last(), Some(Entry::Notice(text)) if text == "after stream"));
     });
+}
+
+// Covers: an explicitly chosen reasoning level the target cannot honor rejects a
+// deliberate switch, but the pin cycle (Ctrl+P) asks for normalization and must
+// land on the nearest supported level the way a persisted value would.
+// Owner: model switch reasoning resolution
+#[tokio::test]
+async fn select_model_report_normalizes_unsupported_reasoning_only_when_asked() {
+    use std::sync::Arc;
+
+    use rho_providers::{
+        credentials::{save_provider_api_key, MemoryCredentialStore},
+        model::ReasoningRequestSource,
+    };
+
+    use crate::{
+        app::interactive_runtime::test_edit_tool_runtime,
+        config::EditTool,
+        tui::{tests::test_bootstrap, App},
+    };
+
+    // Poolside advertises a fixed Off/Max toggle, so no models.dev cache is needed.
+    fn poolside(normalize_unsupported_reasoning: bool) -> InteractiveModelSelection {
+        InteractiveModelSelection {
+            selection: ModelSelection {
+                provider: "poolside".into(),
+                model: "laguna-m.1".into(),
+                auth: "poolside-api-key".into(),
+                from_catalog: true,
+            },
+            alias: None,
+            normalize_unsupported_reasoning,
+        }
+    }
+
+    let store = Arc::new(MemoryCredentialStore::default());
+    save_provider_api_key(store.as_ref(), "openai", "sk-test").unwrap();
+    save_provider_api_key(store.as_ref(), "poolside", "psk-test").unwrap();
+    let mut app = App::new_with_credentials(
+        test_bootstrap(),
+        store,
+        crate::herdr::HerdrGraphicsCapability::NotHerdr,
+        crate::tools::mcp::McpSessionReport::default(),
+        crate::tools::mcp::McpCatalog::default(),
+        crate::plugins::PluginLoadReport::default(),
+    );
+    app.info.runtime.reasoning = ReasoningLevel::Medium;
+    app.info.runtime.reasoning_source = ReasoningRequestSource::Explicit;
+    let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
+
+    // --- A deliberate switch keeps rejecting the explicit level ---
+    let report = app
+        .select_model_report(poolside(false), &mut agent)
+        .await
+        .unwrap();
+    assert!(
+        report.is_none(),
+        "explicit Medium must reject a plain switch"
+    );
+    assert_eq!(app.status(), "model switch rejected");
+    assert_eq!(app.info.runtime.provider, "openai");
+    assert_eq!(app.info.runtime.reasoning, ReasoningLevel::Medium);
+
+    // --- The pin cycle rounds to the nearest supported level and lands ---
+    let report = app
+        .select_model_report(poolside(true), &mut agent)
+        .await
+        .unwrap();
+    assert!(report.is_some(), "cycle switch must land");
+    assert_eq!(app.info.runtime.provider, "poolside");
+    assert_eq!(app.info.runtime.model, "laguna-m.1");
+    assert_eq!(app.info.runtime.reasoning, ReasoningLevel::Max);
+    assert_eq!(
+        app.info.runtime.reasoning_source,
+        ReasoningRequestSource::PersistedOrDefault
+    );
+    let saved = app.info.services.config_repository.load().unwrap();
+    assert_eq!(saved.provider, "poolside");
+    assert_eq!(saved.reasoning, ReasoningLevel::Max);
 }
