@@ -1,8 +1,8 @@
-//! Path validation and construction of a conflict-free change plan.
+//! Resolve paths through the caller's policy and build a conflict-free change plan.
 
 use std::{
     collections::BTreeMap,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use crate::tool::ToolError;
@@ -64,9 +64,8 @@ async fn plan_hunk(
 ) -> Result<FileChange, ToolError> {
     match hunk {
         Hunk::Add { path, contents } => {
-            let requested = validated_path(path)?;
-            let display = display_path(&requested);
-            let target = resolve_path(&requested)?;
+            let display = display_path(path);
+            let target = resolve_path(path)?;
             // Dangling symlink leaves are invisible to read_optional (NotFound).
             if std::fs::symlink_metadata(&target)
                 .map(|metadata| metadata.file_type().is_symlink())
@@ -88,9 +87,8 @@ async fn plan_hunk(
             })
         }
         Hunk::Delete { path } => {
-            let requested = validated_path(path)?;
-            let display = display_path(&requested);
-            let target = resolve_path(&requested)?;
+            let display = display_path(path);
+            let target = resolve_path(path)?;
             reject_symlink_entry(&target, &display)?;
             let previous_permissions = read_permissions(&target, &display).await?;
             let previous_content = read_required(&target, &display, RequiredRead::Delete).await?;
@@ -106,9 +104,8 @@ async fn plan_hunk(
             move_path,
             chunks,
         } => {
-            let requested = validated_path(path)?;
-            let source_display = display_path(&requested);
-            let source = resolve_path(&requested)?;
+            let source_display = display_path(path);
+            let source = resolve_path(path)?;
             if move_path.is_some() {
                 reject_symlink_entry(&source, &source_display)?;
             }
@@ -116,9 +113,8 @@ async fn plan_hunk(
             let old_content = read_required(&source, &source_display, RequiredRead::Update).await?;
             let new_content = derive_new_contents(&old_content, &source_display, chunks)?;
             if let Some(dest) = move_path {
-                let dest_requested = validated_path(dest)?;
-                let target = resolve_path(&dest_requested)?;
-                let dest_display = display_path(&dest_requested);
+                let target = resolve_path(dest)?;
+                let dest_display = display_path(dest);
                 if read_optional(&target, &dest_display).await?.is_some() {
                     return Err(ToolError::Message(format!(
                         "Refusing to move to '{dest_display}': destination already exists"
@@ -148,41 +144,6 @@ async fn plan_hunk(
             }
         }
     }
-}
-
-fn validated_path(path: &str) -> Result<String, ToolError> {
-    validate_patch_path(path)?;
-    Ok(path.to_string())
-}
-
-pub(crate) fn validate_hunk_paths(hunk: &Hunk) -> Result<(), ToolError> {
-    validate_patch_path(hunk.source_path())?;
-    if let Some(destination) = hunk.move_destination() {
-        validate_patch_path(destination)?;
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_patch_path(path: &str) -> Result<(), ToolError> {
-    let candidate = Path::new(path);
-    if candidate.is_absolute()
-        || candidate
-            .components()
-            .any(|component| matches!(component, Component::RootDir | Component::Prefix(_)))
-    {
-        return Err(ToolError::Message(format!(
-            "patch path must be relative: {path}"
-        )));
-    }
-    if candidate
-        .components()
-        .any(|component| matches!(component, Component::ParentDir))
-    {
-        return Err(ToolError::Message(format!(
-            "patch path must not contain '..': {path}"
-        )));
-    }
-    Ok(())
 }
 
 pub(crate) fn reject_symlink_entry(path: &Path, display: &str) -> Result<(), ToolError> {

@@ -17,6 +17,9 @@ use rho_sdk::{
 
 use super::*;
 
+#[path = "sdk_adapter_patch_tests.rs"]
+mod patch_tests;
+
 fn call_id() -> ToolCallId {
     ToolCallId::from_str("call-1").unwrap()
 }
@@ -561,37 +564,6 @@ PUT 1.=1:
         Err(error) => error,
     };
     assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
-}
-
-// Covers: apply_patch rejects unsafe source and move paths during preparation.
-// Owner: SDK apply_patch argument validation
-#[tokio::test]
-async fn apply_patch_prepare_rejects_unsafe_paths() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("source.txt"), "source\n").unwrap();
-    let tool = coding_tool(
-        CodingToolKind::Edit,
-        CodingToolOptions::default().edit_tool(crate::EditFormat::ApplyPatch),
-    );
-    let cases = [
-        "*** Begin Patch\n*** Add File: ../escape.txt\n+nope\n*** End Patch",
-        "*** Begin Patch\n*** Add File: /absolute.txt\n+nope\n*** End Patch",
-        "*** Begin Patch\n*** Update File: source.txt\n*** Move to: ../escape.txt\n@@\n-source\n+moved\n*** End Patch",
-    ];
-
-    for input in cases {
-        let error = match tool
-            .prepare(
-                invocation(json!({ "input": input })),
-                ToolPreparationContext::new(Some(workspace(&dir)), CancellationToken::new()),
-            )
-            .await
-        {
-            Ok(_) => panic!("unsafe apply_patch path must fail prepare"),
-            Err(error) => error,
-        };
-        assert_eq!(error.kind(), ToolErrorKind::InvalidArguments, "{input}");
-    }
 }
 
 // Covers: edit success path emits diff metadata and progress

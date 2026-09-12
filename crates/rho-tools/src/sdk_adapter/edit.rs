@@ -20,8 +20,7 @@ use rho_sdk::{
 
 use crate::{
     apply_patch::{
-        apply_hunks, parse_patch, patch_paths_lenient, reject_symlink_entry, validate_hunk_paths,
-        ApplyPatch, Hunk,
+        apply_hunks, parse_patch, patch_paths_lenient, reject_symlink_entry, ApplyPatch, Hunk,
     },
     hashline::{
         apply_prepared_sections, claim_unique_path, parse_hashline, proposed_sections, Edit,
@@ -231,7 +230,6 @@ impl Tool for ApplyPatchTool {
             let workspace = preparation_workspace(&context)?.clone();
             let mut path_set = PatchPathSet::default();
             for hunk in &hunks {
-                validate_hunk_paths(hunk).map_err(map_invalid_app_error)?;
                 path_set.collect(
                     &workspace,
                     hunk.source_path(),
