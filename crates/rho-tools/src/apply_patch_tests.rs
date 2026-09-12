@@ -472,24 +472,13 @@ async fn moves_report_both_affected_paths() {
     );
 }
 
-// Covers: workspace escape paths and move clobbers fail without mutation.
-// Owner: apply_patch application policy
+// Covers: move clobbers fail without mutation.
+// Owner: apply_patch transaction
 #[tokio::test]
-async fn rejects_unsafe_paths_and_existing_move_destination() {
+async fn rejects_existing_move_destination() {
     let (_dir, ctx) = test_context();
     std::fs::write(ctx.cwd.join("src.txt"), "source\n").unwrap();
     std::fs::write(ctx.cwd.join("dst.txt"), "existing\n").unwrap();
-
-    let escape = apply(
-        "*** Begin Patch\n*** Add File: ../escape.txt\n+nope\n*** End Patch",
-        &ctx,
-    )
-    .await
-    .unwrap_err();
-    assert_eq!(
-        message(escape),
-        "patch path must not contain '..': ../escape.txt"
-    );
 
     let clobber = apply(
         "*** Begin Patch\n*** Update File: src.txt\n*** Move to: dst.txt\n@@\n-source\n+moved\n*** End Patch",

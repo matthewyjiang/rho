@@ -17,7 +17,7 @@ use serde_json::json;
 
 use crate::tool::*;
 
-pub(crate) use apply::{apply_hunks, reject_symlink_entry, validate_hunk_paths};
+pub(crate) use apply::{apply_hunks, reject_symlink_entry};
 pub use parser::{parse_patch, Hunk, ParseError};
 pub use proposed_diff::{
     proposed_diff_lenient, ProposedDiff, ProposedDiffFile, ProposedDiffOperation,
@@ -56,7 +56,7 @@ Example:
 Rules:
 - Include Begin/End markers and an action header for every file
 - Prefix new file lines with + even when creating a file
-- Paths must be relative and must not contain `..`
+- Paths may be absolute or relative to the working directory; access is governed by permissions
 - Add File fails when the target already exists
 - Prefer about 3 lines of context around each change
 - Use @@ headers when context alone is not unique

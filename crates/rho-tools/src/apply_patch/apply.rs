@@ -26,7 +26,7 @@ use super::{
 };
 
 pub(super) use super::model::FileChange;
-pub(crate) use super::planning::{reject_symlink_entry, validate_hunk_paths};
+pub(crate) use super::planning::reject_symlink_entry;
 #[cfg(test)]
 pub(super) use super::transaction::rollback_one;
 
