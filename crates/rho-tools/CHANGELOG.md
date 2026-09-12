@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.3.0...rho-agent-tools-v1.3.1) (2026-09-12)
+
+
+### Bug Fixes
+
+* **tools:** let permissions govern patch paths ([#1214](https://github.com/matthewyjiang/rho/issues/1214)) ([86fe2cc](https://github.com/matthewyjiang/rho/commit/86fe2cc6f45ba0989299e25c1a2d07f6ae58e794))
+
 ## [1.3.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.2.0...rho-agent-tools-v1.3.0) (2026-09-10)
 
 

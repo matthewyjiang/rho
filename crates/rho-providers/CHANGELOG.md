@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.7.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.6.0...rho-providers-v2.7.0) (2026-09-12)
+
+
+### Features
+
+* **agents:** make delegation background-only ([#1217](https://github.com/matthewyjiang/rho/issues/1217)) ([4e74c0c](https://github.com/matthewyjiang/rho/commit/4e74c0ccdd1ebe29ad3f3b138b67e33d873ad285))
+* **cli:** choose a model before editing its prompt ([#1216](https://github.com/matthewyjiang/rho/issues/1216)) ([d725f93](https://github.com/matthewyjiang/rho/commit/d725f93092aef6eeff1bbeb1bc15b8f203586f3b))
+
 ## [2.6.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.5.1...rho-providers-v2.6.0) (2026-09-10)
 
 
