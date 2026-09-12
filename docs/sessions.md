@@ -148,9 +148,6 @@ not index web sidecars or nested subagent run traces. Symlinked session paths ar
 not read. A deleted Git worktree first encountered after deletion cannot be
 reliably assigned to its former repository; use `scope: all` in that case.
 
-The [search benchmark](/sessions-search-benchmark) compares the selected Porter
-FTS5/BM25 index with scans, Unicode tokenization and trigram indexing.
-
 ## Resuming a session
 
 ```mermaid
