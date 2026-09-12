@@ -33,7 +33,7 @@ fn tools_picker_marks_current_allow_list_per_runtime() {
     struct Case {
         name: &'static str,
         runtime: AgentRuntimeSpec,
-        expected_on: &'static [&'static str],
+        expected_on: Vec<&'static str>,
         expected_len: usize,
     }
     let cases = [
@@ -44,29 +44,9 @@ fn tools_picker_marks_current_allow_list_per_runtime() {
                 model: ModelPolicy::Inherit,
                 reasoning: None,
             },
-            expected_on: &[
-                "all",
-                "advisor",
-                "agent",
-                "agents",
-                "bash",
-                "edit",
-                "fetch_content",
-                "get_search_content",
-                "glob",
-                "grep",
-                "list_dir",
-                "powershell",
-                "process",
-                "questionnaire",
-                "read_file",
-                "rho",
-                "shell",
-                "skill",
-                "web_search",
-                "workflow",
-                "write",
-            ],
+            expected_on: std::iter::once("all")
+                .chain(BUILTIN_TOOL_CAPABILITIES.iter().map(ToolCapability::as_str))
+                .collect(),
             expected_len: BUILTIN_TOOL_CAPABILITIES.len() + 1,
         },
         Case {
@@ -80,7 +60,7 @@ fn tools_picker_marks_current_allow_list_per_runtime() {
                 model: ModelPolicy::Inherit,
                 reasoning: None,
             },
-            expected_on: &["read_file", "shell"],
+            expected_on: vec!["read_file", "shell"],
             expected_len: BUILTIN_TOOL_CAPABILITIES.len() + 1,
         },
         Case {
@@ -91,7 +71,7 @@ fn tools_picker_marks_current_allow_list_per_runtime() {
                 model: None,
                 reasoning: None,
             }),
-            expected_on: &["Read", "Bash(git *)"],
+            expected_on: vec!["Read", "Bash(git *)"],
             expected_len: claude_tools::CLAUDE_TOOLS.len() + 2,
         },
         Case {
@@ -100,7 +80,7 @@ fn tools_picker_marks_current_allow_list_per_runtime() {
                 tools: vec![CursorTool::Grep],
                 model: None,
             }),
-            expected_on: &["grep"],
+            expected_on: vec!["grep"],
             expected_len: CursorTool::ALL.len(),
         },
     ];

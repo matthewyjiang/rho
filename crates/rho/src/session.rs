@@ -21,6 +21,13 @@ mod layout;
 #[cfg(test)]
 mod performance_benchmarks;
 mod persistence;
+pub(crate) mod search;
+#[cfg(test)]
+mod search_benchmarks;
+mod search_evidence;
+mod search_index;
+mod search_journal;
+mod search_scope;
 mod snapshot_delta;
 mod snapshot_store;
 #[cfg(test)]

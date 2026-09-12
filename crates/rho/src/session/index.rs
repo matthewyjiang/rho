@@ -504,7 +504,7 @@ pub(super) fn record_snapshot_record(
     upsert_record(&connection, &session.workspace_key, record)
 }
 
-fn open_index(session_root: &Path) -> anyhow::Result<Arc<Mutex<Connection>>> {
+pub(super) fn open_index(session_root: &Path) -> anyhow::Result<Arc<Mutex<Connection>>> {
     let path = session_root.join("index.sqlite3");
     let connections = INDEX_CONNECTIONS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut connections = connections.lock().expect("session index cache poisoned");
@@ -589,6 +589,7 @@ fn migrate_index_with_hook(
     )?;
     transaction.pragma_update(None, "user_version", INDEX_SCHEMA_VERSION)?;
     before_commit(&transaction)?;
+    super::search_journal::install(&transaction)?;
     transaction.commit()?;
     Ok(())
 }

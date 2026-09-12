@@ -70,6 +70,7 @@ define_tool_capabilities! {
     Questionnaire => "questionnaire" : "Ask the user structured questions.",
     ReadFile => "read_file" : "Read files, documents, and images.",
     Rho => "rho" : "Inspect the running Rho harness.",
+    Sessions => "sessions" : "Search and read prior session evidence.",
     Shell => "shell" : "Run shell commands.",
     Skill => "skill" : "Load skill files.",
     WebSearch => "web_search" : "Search the web.",

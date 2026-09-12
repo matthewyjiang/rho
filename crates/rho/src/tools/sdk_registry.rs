@@ -189,6 +189,7 @@ pub struct AppToolSet {
     mcp_report: super::mcp::McpSessionReport,
     mcp_catalog: super::mcp::McpCatalog,
     file_view: rho_tools::FileViewPolicy,
+    session_search: super::sessions::SessionBinding,
 }
 
 impl AppToolSet {
@@ -209,6 +210,7 @@ impl AppToolSet {
             mcp_report: super::mcp::McpSessionReport::default(),
             mcp_catalog: super::mcp::McpCatalog::default(),
             file_view: rho_tools::FileViewPolicy::default(),
+            session_search: super::sessions::SessionBinding::default(),
         }
     }
 
@@ -256,6 +258,12 @@ impl AppToolSet {
         }
         if capabilities.contains(&ToolCapability::Skill) {
             tool_set.add_bundle(super::sdk_features::skill_bundle(config.max_output_bytes));
+        }
+        if capabilities.contains(&ToolCapability::Sessions) {
+            tool_set.add_bundle(super::sessions::sdk_bundle(
+                tool_set.session_search.clone(),
+                config.max_output_bytes,
+            ));
         }
         if capabilities.contains(&ToolCapability::Rho) {
             tool_set.add_bundle(super::rho::sdk_bundle(diagnostics, config.max_output_bytes));
@@ -335,6 +343,10 @@ impl AppToolSet {
     pub(crate) fn add_bundle(&mut self, bundle: impl ToolBundle + 'static) {
         self.tools.extend(bundle.tools().iter().cloned());
         self.bundles.push(Box::new(bundle));
+    }
+
+    pub(crate) fn bind_session_search(&self, id: &str) {
+        self.session_search.bind(id);
     }
 
     /// Attach the root interactive session's host-controlled desktop grant.
