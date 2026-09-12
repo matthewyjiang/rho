@@ -17,7 +17,6 @@ use crate::{
         tools_prompt::McpSamplingSupport,
     },
     permission::PermissionMode,
-    tools::agent::BackgroundSubagents,
 };
 
 pub(super) async fn build_session(
@@ -37,7 +36,6 @@ pub(super) async fn build_session(
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         mcp_sampling: McpSamplingSupport::Unavailable,
         mcp_attach: crate::app::tools_prompt::McpAttach::Connect,
-        background_subagents: BackgroundSubagents::Disabled,
         diagnostics: &startup.diagnostics,
         agent: &startup.agent,
         max_steps: None,

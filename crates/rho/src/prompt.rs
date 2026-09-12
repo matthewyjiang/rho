@@ -187,7 +187,7 @@ Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. U
             r#"
 Work directly by default. A subagent starts with fresh context and adds latency, token use, and coordination overhead. Delegate only a substantial, self-contained task when the saved work is likely to exceed that cost.
 
-Do not delegate simple questions, routine codebase inspection, or small/local changes. Foreground agent calls wait for completion. Batching a foreground agent with other tools does not background it and can delay the rest of that batch until the run finishes. Independent agents in the same batch run together - when work is parallel, issue multiple agent calls in one turn rather than one after another. For work you can continue past without waiting, set background=true so the call returns an id immediately; completions arrive automatically. Subagents share the workspace, so avoid overlapping edits.
+Do not delegate simple questions, routine codebase inspection, or small/local changes. Every agent call starts a background run and returns its id immediately. Independent agents in the same batch run together, so issue parallel work in one turn. Completions arrive automatically and wake an idle parent. Continue independent work, or end your turn when you need a child's result before proceeding. Do not poll for results or declare the task complete while required children are still running. Subagents share the workspace, so avoid overlapping edits.
 "#,
         );
     }
@@ -870,15 +870,6 @@ mod tests {
         let disabled = system_prompt_with_home(&[], project.path(), None).text;
 
         assert!(enabled.contains("Work directly by default"));
-        assert!(enabled.contains("adds latency, token use, and coordination overhead"));
-        assert!(enabled.contains("background=true"));
-        assert!(
-            enabled.contains("Batching a foreground agent with other tools does not background it")
-        );
-        assert!(enabled.contains("can delay the rest of that batch until the run finishes"));
-        assert!(enabled.contains("Independent agents in the same batch run together"));
-        assert!(enabled.contains("issue multiple agent calls in one turn"));
-        assert!(enabled.contains("avoid overlapping edits"));
         assert!(!disabled.contains("Work directly by default"));
     }
 

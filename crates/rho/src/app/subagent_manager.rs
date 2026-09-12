@@ -52,7 +52,6 @@ pub(crate) struct SubagentTaskIdentity {
 struct AgentEntry {
     agent_id: String,
     task_fallback: Option<String>,
-    background: bool,
     started: Instant,
     handle: AgentRunHandle,
     session_id: Option<String>,
@@ -173,7 +172,6 @@ impl SubagentManager {
         &self,
         definition: &AgentDefinition,
         prompt: &str,
-        background: bool,
         cwd: &Path,
     ) -> anyhow::Result<(String, PathBuf)> {
         let placement = self
@@ -224,7 +222,6 @@ impl SubagentManager {
                     .map(str::trim)
                     .find(|line| !line.is_empty())
                     .map(str::to_owned),
-                background,
                 started: Instant::now(),
                 handle,
                 session_id,
@@ -238,7 +235,7 @@ impl SubagentManager {
 
     /// Fold terminal costs for `session_id` into a parent total once per run.
     ///
-    /// Counts every finished run (background or foreground, success or failure)
+    /// Counts every finished run (success or failure)
     /// the first time the parent claims it. Safe to call from any TUI poll path.
     pub fn claim_terminal_costs_usd_micros(&self, session_id: &str) -> u64 {
         let mut entries = self.inner.lock().expect("delegated registry lock");
@@ -284,15 +281,29 @@ impl SubagentManager {
         session_id: &str,
         status: crate::subagent::RunStatus,
     ) {
+        self.insert_handle_for_test(id, session_id, AgentRunHandle::completed_for_test(status));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn post_notice_for_test(&self, notice: SubagentNotice) {
+        self.executor.notices().post(notice).unwrap();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn insert_handle_for_test(
+        &self,
+        id: &str,
+        session_id: &str,
+        handle: AgentRunHandle,
+    ) {
         let _delivery = super::notification_delivery::lock();
         self.inner.lock().expect("delegated registry lock").insert(
             id.to_string(),
             AgentEntry {
                 agent_id: "fixture".into(),
                 task_fallback: None,
-                background: true,
                 started: Instant::now(),
-                handle: AgentRunHandle::completed_for_test(status),
+                handle,
                 session_id: Some(session_id.into()),
                 observed: false,
                 explicitly_observed: false,
@@ -301,6 +312,7 @@ impl SubagentManager {
         );
     }
 
+    #[cfg(test)]
     pub fn status(&self, id: &str) -> Option<SubagentSnapshot> {
         let id = crate::subagent::normalize_id(id).ok()?;
         self.inner
@@ -373,17 +385,49 @@ impl SubagentManager {
             })
     }
 
+    /// True while this session still has an undelivered child. Observed
+    /// includes still-running rows closed by [`Self::end_automatic_delivery`].
     pub fn has_active_or_pending_notification(&self, session_id: &str) -> bool {
         self.inner
             .lock()
             .expect("delegated registry lock")
             .values()
-            .any(|entry| {
-                !entry.handle.is_complete()
-                    || (entry.session_id.as_deref() == Some(session_id)
-                        && entry.background
-                        && !entry.observed)
-            })
+            .any(|entry| entry.session_id.as_deref() == Some(session_id) && !entry.observed)
+    }
+
+    /// Waits for any current child to finish without marking its result delivered.
+    /// Hosts call this at a provider boundary, after all launches have registered.
+    pub(crate) async fn wait_for_notification(&self, session_id: &str) {
+        let handles = {
+            let entries = self.inner.lock().expect("delegated registry lock");
+            // Include unobserved terminals too: completion can change while
+            // this registry lock is held, and their wait returns immediately.
+            entries
+                .values()
+                .filter(|entry| entry.session_id.as_deref() == Some(session_id) && !entry.observed)
+                .map(|entry| entry.handle.clone())
+                .collect::<Vec<_>>()
+        };
+        let mut waits = handles
+            .into_iter()
+            .map(|mut handle| async move { handle.wait().await })
+            .collect::<futures_util::stream::FuturesUnordered<_>>();
+        if futures_util::StreamExt::next(&mut waits).await.is_none() {
+            std::future::pending::<()>().await;
+        }
+    }
+
+    /// Ends automatic wait and delivery for every run bound to this parent
+    /// session, including children still running after shutdown timed out.
+    /// Snapshots stay queryable through `status` / `stop`.
+    pub fn end_automatic_delivery(&self, session_id: &str) {
+        let mut entries = self.inner.lock().expect("delegated registry lock");
+        for entry in entries.values_mut() {
+            if entry.session_id.as_deref() == Some(session_id) {
+                entry.observed = true;
+                entry.explicitly_observed = true;
+            }
+        }
     }
 
     /// Atomically drains every unobserved terminal background run for the
@@ -394,10 +438,7 @@ impl SubagentManager {
         let mut notifications = entries
             .iter_mut()
             .filter_map(|(id, entry)| {
-                if !entry.background
-                    || entry.observed
-                    || entry.session_id.as_deref() != Some(session_id)
-                {
+                if entry.observed || entry.session_id.as_deref() != Some(session_id) {
                     return None;
                 }
                 let snapshot = entry.snapshot(id);
@@ -430,7 +471,7 @@ impl SubagentManager {
                 continue;
             };
             let snapshot = entry.snapshot(&notification.snapshot.id);
-            if entry.background && snapshot.done && entry.observed && !entry.explicitly_observed {
+            if snapshot.done && entry.observed && !entry.explicitly_observed {
                 entry.observed = false;
             }
         }
@@ -462,6 +503,7 @@ impl SubagentManager {
         Some(snapshot)
     }
 
+    #[cfg(test)]
     pub async fn wait_done(&self, id: &str) -> Option<SubagentSnapshot> {
         let id = crate::subagent::normalize_id(id).ok()?;
         let mut handle = self

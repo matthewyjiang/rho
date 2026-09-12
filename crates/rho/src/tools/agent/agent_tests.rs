@@ -10,7 +10,7 @@ use rho_sdk::{
 };
 
 use super::*;
-use crate::{config::Config, tools::agent_output::MODEL_NOTIFICATION_BYTES};
+use crate::{config::Config, subagent::RunState, tools::agent_output::MODEL_NOTIFICATION_BYTES};
 
 /// Isolates delegated-run storage and agent discovery from the developer's own
 /// home, so these tests see the same catalog everywhere they run.
@@ -177,20 +177,13 @@ fn notification_prompts_bound_many_large_utf8_results_and_keep_run_statuses() {
 }
 
 async fn spawn_background_run(manager: &SubagentManager, root: &Path) -> String {
-    let tool = AgentTool::new(
-        manager.clone(),
-        root,
-        BackgroundSubagents::Enabled,
-        AgentAsyncCalls::Off,
-        /*catalog*/ None,
-    );
+    let tool = AgentTool::new(manager.clone(), root, /*catalog*/ None);
     let output = call_agent(
         &tool,
         root,
         serde_json::json!({
             "agent_id": "default",
             "prompt": "background task",
-            "background": true,
         }),
     )
     .await;
@@ -217,6 +210,7 @@ async fn running_queries_are_scoped_to_the_parent_session() {
     let id = spawn_background_run(&manager, root.path()).await;
 
     assert!(!manager.has_running_for_session("session-2"));
+    assert!(!manager.has_active_or_pending_notification("session-2"));
 
     manager.stop(&id).await.unwrap();
 }
@@ -369,13 +363,7 @@ async fn agent_and_agents_prepare_subagent_manager_resources() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    let agent = AgentTool::new(
-        manager.clone(),
-        root.path(),
-        BackgroundSubagents::Enabled,
-        AgentAsyncCalls::Off,
-        /*catalog*/ None,
-    );
+    let agent = AgentTool::new(manager.clone(), root.path(), /*catalog*/ None);
     let agents = AgentsTool::new(manager);
 
     let launch = agent
@@ -390,22 +378,6 @@ async fn agent_and_agents_prepare_subagent_manager_resources() {
         .unwrap();
     assert_eq!(
         one_access(&launch),
-        (ToolResourceKind::ManagerState, ToolAccessMode::Shared)
-    );
-
-    let background = agent
-        .prepare(
-            invocation(serde_json::json!({
-                "agent_id": "default",
-                "prompt": "task",
-                "background": true,
-            })),
-            preparation_context(root.path()),
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        one_access(&background),
         (ToolResourceKind::ManagerState, ToolAccessMode::Shared)
     );
 
@@ -451,20 +423,13 @@ async fn concurrent_background_launches_register_together() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    let tool = AgentTool::new(
-        manager.clone(),
-        root.path(),
-        BackgroundSubagents::Enabled,
-        AgentAsyncCalls::Off,
-        /*catalog*/ None,
-    );
+    let tool = AgentTool::new(manager.clone(), root.path(), /*catalog*/ None);
     let first = call_agent(
         &tool,
         root.path(),
         serde_json::json!({
             "agent_id": "default",
             "prompt": "first background task",
-            "background": true,
         }),
     );
     let second = call_agent(
@@ -473,7 +438,6 @@ async fn concurrent_background_launches_register_together() {
         serde_json::json!({
             "agent_id": "default",
             "prompt": "second background task",
-            "background": true,
         }),
     );
     let (first, second) = tokio::join!(first, second);
@@ -494,13 +458,7 @@ fn agent_list_never_names_an_agent_model() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
-    let tool = AgentTool::new(
-        manager.clone(),
-        root.path(),
-        BackgroundSubagents::Enabled,
-        AgentAsyncCalls::Off,
-        /*catalog*/ None,
-    );
+    let tool = AgentTool::new(manager.clone(), root.path(), /*catalog*/ None);
     let baseline = tool.spec().description;
 
     let agents = baseline

@@ -88,11 +88,9 @@ pub(super) fn intercept(
         return Some(completed(format!("background agent dispatched: {receipt}")));
     }
     if let Some(result) = tool_result(request, CLAUDE_AGENT_CALL_ID) {
-        // Foreground Claude runs return the full completion snapshot as the tool
-        // result. Echo a short marker so the parent turn ends cleanly after the
-        // user-visible completion text is already on screen.
+        // End the parent turn after the start receipt; completion arrives later.
         let receipt = result.content.lines().next().unwrap_or_default();
-        return Some(completed(format!("claude agent tool finished: {receipt}")));
+        return Some(completed(format!("claude agent dispatched: {receipt}")));
     }
     if let Some(result) = tool_result(request, BACKGROUND_CLAUDE_AGENT_CALL_ID) {
         let receipt = result.content.lines().next().unwrap_or_default();
@@ -101,11 +99,10 @@ pub(super) fn intercept(
         )));
     }
     if let Some(result) = tool_result(request, CLAUDE_AGENT_ERROR_CALL_ID) {
-        // Foreground failures surface as tool errors; the fixture still ends the
-        // parent turn so the PTY can observe the failed agent presentation.
+        // End the parent turn so the PTY can observe the failed completion.
         let receipt = result.content.lines().next().unwrap_or_default();
         return Some(completed(format!(
-            "claude agent tool error observed: {receipt}"
+            "claude error agent dispatched: {receipt}"
         )));
     }
     if let Some(result) = tool_result(request, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID) {
@@ -235,6 +232,8 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
         }
     } else if prompt.contains("(claude-planner): ok") && prompt.contains("rho-claude-e2e-ok") {
         format!("claude-background-delivery-{deliveries}: delegated result received")
+    } else if prompt.contains("(claude-planner): error") && prompt.contains("hit max turns") {
+        format!("claude-background-delivery-{deliveries}: failed result received")
     } else {
         format!("unexpected agent notification payload: {prompt}")
     }

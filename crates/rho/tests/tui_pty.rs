@@ -1261,7 +1261,7 @@ fn fake_claude_runtime_end_to_end_success() {
         .wait_for_text("gpt-5.5", WaitTimeout::secs(20, "startup"))
         .unwrap();
 
-    // Real agent-tool path via matrix fixture prompt (foreground delegation).
+    // Real agent-tool path via matrix fixture prompt, without an execution-mode flag.
     harness.submit_text("fixture claude agent").unwrap();
     harness
         .wait_for_text(
@@ -1274,23 +1274,12 @@ fn fake_claude_runtime_end_to_end_success() {
     let record = fake.read_spawn_record();
     claude_e2e::assert_success_spawn(&record, &home.workspace);
 
-    // Parent UI shows final text and Claude session id from the live fixture.
+    // Wait for the parent's durable response to the completion notification,
+    // not the short-lived launch receipt or a card that can scroll out of view.
     harness
         .wait_for_text(
-            "rho-claude-e2e-ok",
-            WaitTimeout::secs(20, "final assistant text"),
-        )
-        .unwrap();
-    harness
-        .wait_for_text(
-            "11111111-2222-4333-8444-555555555555",
-            WaitTimeout::secs(10, "claude session id"),
-        )
-        .unwrap();
-    harness
-        .wait_for_text(
-            "claude agent tool finished:",
-            WaitTimeout::secs(15, "parent turn closed"),
+            "claude-background-delivery-1: delegated result received",
+            WaitTimeout::secs(20, "parent received delegated result"),
         )
         .unwrap();
 
@@ -1509,9 +1498,12 @@ fn fake_claude_runtime_end_to_end_error() {
 
     claude_e2e::wait_for_spawn(&fake, Duration::from_secs(15));
 
-    // Failed foreground agent should show failed presentation and/or error text.
+    // The parent incorporates a failed child result through automatic delivery.
     harness
-        .wait_for_text("failed", WaitTimeout::secs(20, "failed agent state"))
+        .wait_for_text(
+            "claude-background-delivery-1: failed result received",
+            WaitTimeout::secs(20, "parent received delegated failure"),
+        )
         .unwrap();
 
     let run_dir = claude_e2e::wait_for_single_run_dir(&home.home, Duration::from_secs(10));

@@ -42,7 +42,6 @@ pub(super) async fn intercept(
                 serde_json::json!({
                     "agent_id": "worker",
                     "prompt": COMPLETION_CHILD,
-                    "background": true,
                 }),
             ));
         }
@@ -116,7 +115,6 @@ pub(super) async fn intercept(
                 serde_json::json!({
                     "agent_id": "worker",
                     "prompt": if goal_retry { GOAL_CHILD } else if streaming { STREAMING_CHILD } else if running { RUNNING_CHILD } else { CHILD },
-                    "background": true,
                 }),
             ));
         }

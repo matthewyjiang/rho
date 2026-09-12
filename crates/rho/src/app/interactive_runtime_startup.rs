@@ -25,7 +25,7 @@ use crate::{
     permission::{remember_allowed_workspace_writes, PermissionMode, SessionWriteLog},
     permission_classifier_handler::ClassifierApprovalHandler,
     session::Session as StoredSession,
-    tools::{agent::BackgroundSubagents, sdk_registry::AppToolSet},
+    tools::sdk_registry::AppToolSet,
 };
 use rho_providers::providers::{build_sdk_provider_with_source, UnavailableProvider};
 
@@ -90,7 +90,6 @@ pub(super) async fn initialize(
         mcp_attach: crate::app::tools_prompt::McpAttach::Connect,
         await_catalog_names: false,
         defer_mcp_connect: true,
-        background_subagents: BackgroundSubagents::Enabled,
         diagnostics: &diagnostics,
         agent: &agent,
     })

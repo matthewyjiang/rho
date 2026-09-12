@@ -10,7 +10,6 @@ use {
     crate::prompt,
     crate::tools::{
         advisor::AdvisorSessionStore,
-        agent::BackgroundSubagents,
         sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
     },
 };
@@ -44,7 +43,6 @@ pub(crate) struct ToolsAndPromptOptions<'a> {
     /// Interactive sessions spawn MCP connect and paint a pending inventory so
     /// a slow server cannot stall the first frame. Automation still awaits.
     pub(crate) defer_mcp_connect: bool,
-    pub(crate) background_subagents: BackgroundSubagents,
     pub(crate) diagnostics: &'a RuntimeDiagnostics,
     pub(crate) agent: &'a BoundAgent,
 }
@@ -193,7 +191,6 @@ pub(crate) async fn assemble_tools_and_prompt(
             tool_options = tool_options.delegation(DelegationConfig::new(
                 options.cwd.to_path_buf(),
                 options.config_path.clone(),
-                options.background_subagents,
                 options
                     .catalog
                     .and_then(|discovered| discovered.for_cwd(options.cwd)),

@@ -18,7 +18,6 @@ use {
     crate::permission::{PermissionMode, SessionWriteLog},
     crate::permission_classifier_handler::ClassifierApprovalHandler,
     crate::subagent::{RunState, RunStatus},
-    crate::tools::agent::BackgroundSubagents,
 };
 
 use super::{
@@ -481,7 +480,6 @@ async fn run_session_with_output(
         // capability and rejects any request that arrives anyway.
         mcp_sampling: crate::app::tools_prompt::McpSamplingSupport::Unavailable,
         mcp_attach: crate::app::tools_prompt::McpAttach::Connect,
-        background_subagents: BackgroundSubagents::Disabled,
         diagnostics: &startup.diagnostics,
         agent: &startup.agent,
         max_steps: startup.max_steps,
@@ -512,6 +510,11 @@ async fn run_session_with_output(
     })
     .await?;
     let session = &built.session;
+    let mut delegation = super::headless_delegation::HeadlessDelegation::attach(
+        session,
+        built.tools.subagents(),
+        None,
+    )?;
     if let Some(adapter) = jsonl.as_deref_mut() {
         adapter.set_run_context(session.id(), &workspace_root);
     }
@@ -519,16 +522,19 @@ async fn run_session_with_output(
         .herdr
         .report_state(HerdrState::Working, None, None)
         .await;
-    let result = complete_run(
-        session,
-        prompt_text,
-        HeadlessRunDeps {
-            reporter,
-            external_cancellation: cancellation,
-            jsonl,
-            host_input: startup.host_input.as_deref(),
-        },
-        startup.steering_slot.clone(),
+    let result = super::headless_delegation::HeadlessDelegation::drive(
+        &mut delegation,
+        complete_run(
+            session,
+            prompt_text,
+            HeadlessRunDeps {
+                reporter,
+                external_cancellation: cancellation,
+                jsonl,
+                host_input: startup.host_input.as_deref(),
+            },
+            startup.steering_slot.clone(),
+        ),
     )
     .await;
 

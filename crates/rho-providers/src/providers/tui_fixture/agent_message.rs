@@ -52,7 +52,7 @@ pub(super) async fn intercept(
                 FIRST_CALL,
                 "agent",
                 serde_json::json!({
-                    "agent_id": "worker", "prompt": ATTACH_TASK, "background": true,
+                    "agent_id": "worker", "prompt": ATTACH_TASK,
                 }),
             ));
         }
@@ -96,7 +96,7 @@ pub(super) async fn intercept(
                 id,
                 "agent",
                 serde_json::json!({
-                    "agent_id": "worker", "prompt": task, "background": true,
+                    "agent_id": "worker", "prompt": task,
                 }),
             ));
         }

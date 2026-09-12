@@ -1,7 +1,7 @@
 //! Live-resizable concurrency pools for delegated agents.
 //!
-//! One global pool covers every delegated run (Rho, Claude, and Cursor,
-//! foreground and background). Claude-cli runs also take a nested Claude permit
+//! One global pool covers every delegated run (Rho, Claude, and Cursor).
+//! Claude-cli runs also take a nested Claude permit
 //! first so queued Claude work cannot occupy spare global slots.
 
 use std::sync::{

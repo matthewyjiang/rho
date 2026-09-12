@@ -11,6 +11,7 @@ mod computer_cli;
 pub(crate) mod config_repository;
 pub(crate) mod conversation_switch;
 mod doctor_cli;
+mod headless_delegation;
 pub(crate) mod headless_run;
 mod interactive;
 pub(crate) mod interactive_presenter;

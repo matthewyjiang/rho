@@ -30,11 +30,8 @@ use super::{
     },
 };
 use crate::{
-    config::Config,
-    credential_store::AppCredentialStore,
-    diagnostics::RuntimeDiagnostics,
-    permission::SessionWriteLog,
-    tools::{agent::BackgroundSubagents, sdk_registry::AppToolSet},
+    config::Config, credential_store::AppCredentialStore, diagnostics::RuntimeDiagnostics,
+    permission::SessionWriteLog, tools::sdk_registry::AppToolSet,
 };
 
 /// Everything a caller must supply to assemble a session, including the three
@@ -50,7 +47,6 @@ pub(super) struct SessionAssemblyOptions<'a, ExtendTools, Approval, Options> {
     pub mcp_elicitation: crate::tools::mcp::McpElicitationSupport,
     pub mcp_sampling: McpSamplingSupport,
     pub mcp_attach: super::tools_prompt::McpAttach,
-    pub background_subagents: BackgroundSubagents,
     pub diagnostics: &'a RuntimeDiagnostics,
     pub agent: &'a BoundAgent,
     pub max_steps: Option<NonZeroUsize>,
@@ -146,7 +142,6 @@ where
         mcp_elicitation,
         mcp_sampling,
         mcp_attach,
-        background_subagents,
         diagnostics,
         agent,
         max_steps,
@@ -191,7 +186,6 @@ where
         mcp_attach,
         await_catalog_names: false,
         defer_mcp_connect: false,
-        background_subagents,
         diagnostics,
         agent,
     })

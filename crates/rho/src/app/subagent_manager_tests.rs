@@ -1,5 +1,7 @@
 use pretty_assertions::assert_eq;
 
+use crate::app::agent_executor::AgentRunHandle;
+
 use super::{SubagentManager, SubagentTaskIdentity};
 
 // Covers: terminal status includes unconsumed findings and marks those exact
@@ -101,4 +103,47 @@ fn task_identity_prefers_nonblank_generated_titles() {
         assert!(!manager.inner.lock().unwrap()["abc123"].observed);
     }
     assert_eq!(manager.task_identity("def456"), None);
+}
+
+// Covers: prompt-end close must drop still-running children from automatic
+// wait/delivery so the next ACP prompt cannot inherit them after shutdown
+// times out.
+// Owner: delegated manager delivery predicates.
+#[test]
+fn ending_automatic_delivery_releases_still_running_children() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = SubagentManager::new(
+        crate::config::Config::default(),
+        root.path().join("config.toml"),
+        root.path().to_path_buf(),
+    );
+    let (status, status_rx) = tokio::sync::watch::channel(crate::subagent::RunStatus {
+        state: crate::subagent::RunState::Running,
+        ..Default::default()
+    });
+    let (completion, completion_rx) = tokio::sync::watch::channel(false);
+    manager.insert_handle_for_test(
+        "abc123",
+        "session",
+        AgentRunHandle::controlled_for_test(
+            status_rx,
+            completion_rx,
+            rho_tools::cancellation::RunCancellation::new(),
+        ),
+    );
+    assert!(manager.has_running_for_session("session"));
+    assert!(manager.has_active_or_pending_notification("session"));
+
+    manager.end_automatic_delivery("session");
+
+    assert!(manager.has_running_for_session("session"));
+    assert!(!manager.has_active_or_pending_notification("session"));
+    status.send_replace(crate::subagent::RunStatus {
+        state: crate::subagent::RunState::Ok,
+        result: Some("late result".into()),
+        ..Default::default()
+    });
+    completion.send_replace(true);
+    assert!(manager.take_notifications("session").is_empty());
+    assert!(!manager.has_active_or_pending_notification("session"));
 }
