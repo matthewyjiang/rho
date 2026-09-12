@@ -274,6 +274,63 @@ fn positional_anchor_cache_rebuilds_once() {
     assert_eq!(warm["index"]["bytes_read"], 0);
 }
 
+// Covers: explicit refresh must repair scope after Git metadata changes without
+// rereading unchanged transcripts. Owner: session search integration.
+#[test]
+fn refresh_resolves_scope_again_for_unchanged_transcripts() {
+    let root = TempDir::new().unwrap();
+    let project = TempDir::new().unwrap();
+    let cwd = project.path().join("nested");
+    fs::create_dir(&cwd).unwrap();
+    let session = Session::create_in_root(root.path(), &cwd).unwrap();
+    session
+        .append_message(&Message::user_text("scopechange"))
+        .unwrap();
+    let original = run(
+        root.path(),
+        &cwd,
+        "current",
+        json!({"action":"search","query":"scopechange"}),
+    );
+    assert_eq!(ids(&original), vec![session.id()]);
+    let git = project.path().join(".git");
+    let admin = TempDir::new().unwrap();
+    let metadata = admin.path().join("metadata");
+    let moved_metadata = admin.path().join("moved");
+    for change in ["init", "remove", "link", "move"] {
+        match change {
+            "init" => fs::create_dir(&git).unwrap(),
+            "remove" => fs::remove_dir(&git).unwrap(),
+            "link" => {
+                fs::create_dir(&metadata).unwrap();
+                fs::write(&git, format!("gitdir: {}", metadata.display())).unwrap();
+            }
+            "move" => {
+                fs::rename(&metadata, &moved_metadata).unwrap();
+                fs::write(&git, format!("gitdir: {}", moved_metadata.display())).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        for scope in ["repo", "worktree"] {
+            let result = run(
+                root.path(),
+                &cwd,
+                "current",
+                json!({"action":"search","query":"scopechange","scope":scope,"refresh":true}),
+            );
+            assert_eq!(ids(&result), vec![session.id()]);
+            assert_eq!(result["index"]["bytes_read"], 0);
+            let read = run(
+                root.path(),
+                &cwd,
+                "current",
+                json!({"action":"read","session":original["sessions"][0]["session"],"anchor":original["sessions"][0]["excerpts"][0]["anchor"],"scope":scope}),
+            );
+            assert_eq!(read["text"], "scopechange");
+        }
+    }
+}
+
 // Covers: default repo isolation, explicit expansion, same-worktree ordering and
 // current-session exclusion must also apply to focused reads.
 #[test]

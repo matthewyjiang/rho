@@ -23,6 +23,10 @@ use super::{
     search_scope::Workspace,
 };
 
+#[cfg(test)]
+#[path = "search_index_tests.rs"]
+mod tests;
+
 #[derive(Default, Debug, Serialize)]
 pub(super) struct Refresh {
     pub reconciled: bool,
@@ -61,15 +65,18 @@ enum OpenError {
 }
 
 fn migrate(connection: &mut Connection) -> Result<(), OpenError> {
-    let version: u32 = connection.query_row("pragma user_version", [], |row| row.get(0))?;
+    connection.pragma_update(None, "foreign_keys", true)?;
+    // Serialize the version decision with invalidation. Another opener may have
+    // already migrated and rebuilt the cache while this connection was waiting.
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let version: u32 = transaction.query_row("pragma user_version", [], |row| row.get(0))?;
     if version > SCHEMA_VERSION {
         return Err(OpenError::UnsupportedSchema(version));
     }
     if version == SCHEMA_VERSION {
         return Ok(());
     }
-    connection.pragma_update(None, "foreign_keys", true)?;
-    let transaction = connection.transaction()?;
     transaction.execute_batch(
         "create table if not exists files (
              key text primary key, path text not null, id text not null,
@@ -183,17 +190,36 @@ pub(super) fn refresh(
         }
         let indexed = transaction
             .query_row(
-                "select size,stamp from files where path=?1",
+                "select size,stamp,cwd from files where path=?1",
                 [&path_string],
-                |row| Ok((row.get::<_, u64>(0)?, row.get::<_, String>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, u64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
             .optional()?;
         let stamp = Stamp::read(&path);
         if stamp.as_ref().is_ok_and(|stamp| {
-            indexed
-                .as_ref()
-                .is_some_and(|(size, modified)| *size == stamp.size && *modified == stamp.modified)
+            indexed.as_ref().is_some_and(|(size, modified, _)| {
+                *size == stamp.size && *modified == stamp.modified
+            })
         }) {
+            // Git metadata can change independently of the transcript. Refresh
+            // scope from the cached cwd without rebuilding evidence or anchors.
+            if let Some((_, _, cwd)) = indexed {
+                let workspace = Workspace::resolve(Path::new(&cwd));
+                transaction.execute(
+                    "update files set worktree=?1,repo=?2 where path=?3",
+                    params![
+                        workspace.worktree.to_string_lossy(),
+                        workspace.repo.to_string_lossy(),
+                        path_string,
+                    ],
+                )?;
+            }
             continue;
         }
         transaction.execute("delete from files where path=?1", [&path_string])?;
