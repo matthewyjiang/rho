@@ -69,13 +69,16 @@ rho --config ~/.rho/config.toml
 
 ## Model-scoped system prompts
 
-Use the CLI to edit instructions for the configured model, or select an exact target:
+Use the CLI to choose a model from a picker, or pass an exact target to edit directly:
 
 ```bash
 rho model-prompt edit
+rho model-prompt edit --provider openai-codex
 rho model-prompt edit --provider openai-codex --model gpt-6-astra
 rho model-prompt edit --model @local
 ```
+
+Without `--model`, the command opens a searchable model picker instead of editing the configured model automatically. Type to filter, press Enter to edit, or Esc/Ctrl+C to cancel without opening the editor or changing files. `--provider` narrows the list. The picker uses locally known models, including cached provider models, without requiring login or fetching model lists. The configured model is highlighted when it matches the provider filter. Pass an exact `--model` or `@alias` to skip the picker; non-interactive callers must do this explicitly. Provider and model flags can also go before `model-prompt`, but do not pass the same flag in both places.
 
 The command uses `$VISUAL`, falling back to `$EDITOR`. Editor arguments are supported, for example `EDITOR='code --wait'`. Configure an editor that waits until you finish editing; Rho validates and saves when the process exits. This command works offline and does not start a session, access provider credentials, or change your configured model. Use `rho --config /path/to/config.toml model-prompt edit` to select a different configuration file.
 

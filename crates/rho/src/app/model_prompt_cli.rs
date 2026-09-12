@@ -22,30 +22,38 @@ pub(super) async fn run(command: &ModelPromptCommand, cli: &Cli) -> anyhow::Resu
     );
     let config = super::config_repository::ConfigRepository::new(cli.config.clone()).load()?;
     let explicit_provider = provider.as_deref().or(cli.provider.as_deref());
-    let reference = model
-        .as_deref()
-        .or(cli.model.as_deref())
-        .unwrap_or(&config.model);
-    let resolved = config.model_aliases.resolve(reference)?;
-    if let (Some(explicit), Some(alias_provider)) =
-        (explicit_provider, resolved.provider.as_deref())
-    {
-        ensure!(canonical_provider(explicit) == canonical_provider(alias_provider),
-            "model alias '{reference}' selects provider '{alias_provider}', which conflicts with --provider '{explicit}'");
-    }
-    let provider = canonical_provider(
-        resolved
-            .provider
-            .as_deref()
-            .or(explicit_provider)
-            .unwrap_or(&config.provider),
-    );
-    let model = resolved.model;
+    let (provider, model) = if let Some(reference) = model.as_deref().or(cli.model.as_deref()) {
+        let resolved = config.model_aliases.resolve(reference)?;
+        if let (Some(explicit), Some(alias_provider)) =
+            (explicit_provider, resolved.provider.as_deref())
+        {
+            ensure!(canonical_provider(explicit) == canonical_provider(alias_provider),
+                "model alias '{reference}' selects provider '{alias_provider}', which conflicts with --provider '{explicit}'");
+        }
+        let provider = canonical_provider(
+            resolved
+                .provider
+                .as_deref()
+                .or(explicit_provider)
+                .unwrap_or(&config.provider),
+        );
+        (provider.to_owned(), resolved.model)
+    } else {
+        let Some(selected) = crate::tui::model_prompt_picker::select(
+            &config,
+            explicit_provider.map(canonical_provider),
+        )
+        .await?
+        else {
+            return Ok(());
+        };
+        (selected.provider, selected.model)
+    };
     let editor = resolve_editor(env::var_os("VISUAL"), env::var_os("EDITOR"))
         .context("set VISUAL or EDITOR to edit a model prompt")?;
     let mut command = editor_command(&editor)?;
     let home = crate::paths::home_dir().context("could not locate the home directory")?;
-    let edit = ModelPromptEdit::prepare(&home, provider, &model)?;
+    let edit = ModelPromptEdit::prepare(&home, &provider, &model)?;
     command
         .arg(edit.path())
         .stdin(Stdio::inherit())

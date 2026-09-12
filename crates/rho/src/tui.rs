@@ -119,6 +119,7 @@ mod model_actions;
 mod model_cycle;
 mod model_performance;
 mod model_picker;
+pub(crate) mod model_prompt_picker;
 mod models_dev_actions;
 mod mouse;
 mod mouse_capture;

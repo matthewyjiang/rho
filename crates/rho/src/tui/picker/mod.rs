@@ -18,6 +18,7 @@ mod overlay;
 mod overlay_layout;
 mod overlay_state;
 mod rows;
+pub(in crate::tui) mod standalone;
 
 pub(in crate::tui) use action::{ConfigParentRow, DuringTurnSelect, PickerAction, PickerTurn};
 pub(in crate::tui) use input::{

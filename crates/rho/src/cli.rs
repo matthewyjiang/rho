@@ -112,12 +112,46 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum ModelPromptCommand {
-    /// Edit the matching file, or create one automatically after a valid save.
+    /// Open custom system instructions for a model in $VISUAL or $EDITOR.
+    #[command(after_help = "Examples:
+  rho model-prompt edit
+      Choose a model from a searchable picker, then edit its instructions.
+  rho model-prompt edit --provider openai-codex
+      Choose from locally known models for one provider.
+  rho model-prompt edit --provider openai-codex --model gpt-6-astra
+      Edit instructions for an exact provider/model pair.
+  rho model-prompt edit --model @local
+      Resolve a model alias from your config.
+  VISUAL='code --wait' rho model-prompt edit
+      Use an editor that waits until you close the file.
+  rho --config /path/to/config.toml model-prompt edit
+      Use a different configuration file.
+
+Editing:
+  Without --model, opens a picker. Type to filter, Enter to edit, Esc to cancel.
+  The picker uses local catalogs without requiring login or fetching models.
+  Non-interactive callers must pass --model explicitly.
+  Uses $VISUAL, falling back to $EDITOR. Set one before running this command.
+  Opens a private draft of the matching file in ~/.rho/model-prompts/.
+  If none exists, starts a draft with provider, model, and mode frontmatter.
+  Keep provider/model unchanged and write Markdown instructions below the
+  closing --- line. Save and exit the editor to validate and install the file.
+  Leaving the draft unchanged cancels. Invalid edits preserve a recovery draft.
+
+Modes:
+  mode: append   Add to Rho's default behavioral instructions. This is the default.
+  mode: replace  Replace only that behavioral block, not tool instructions,
+                 AGENTS.md, skills, or permission rules.
+
+Scope:
+  Instructions are global for the exact provider/model pair, not project-local.
+  Editing works offline and does not start a session or change your default model.
+  Sessions load changes at startup, model switch, /new, or resume, not each turn.")]
     Edit {
-        /// Provider ID, defaulting to the configured provider.
+        /// Filter the picker by provider; with --model, override the configured provider.
         #[arg(long)]
         provider: Option<String>,
-        /// Exact model ID or @alias, defaulting to the configured model.
+        /// Exact model ID or @alias. Omit to choose from an interactive picker.
         #[arg(long)]
         model: Option<String>,
     },
@@ -175,7 +209,21 @@ pub enum Command {
         #[command(subcommand)]
         command: CredentialStoreCommand,
     },
-    /// Configure model-scoped system instructions in an external editor.
+    /// Customize system instructions for an exact provider/model pair.
+    #[command(after_help = "Quick start:
+  rho model-prompt edit
+  rho model-prompt edit --provider openai-codex --model gpt-6-astra
+  rho model-prompt edit --model @local
+
+Uses $VISUAL, falling back to $EDITOR, to edit Markdown instructions stored in
+~/.rho/model-prompts/. With no --model, opens a searchable model picker.
+Use --provider to narrow the list, or --model to skip the picker.
+Non-interactive callers must pass --model explicitly.
+New files append to Rho's default behavioral instructions; mode: replace replaces
+only that behavioral block. Instructions apply globally, not just to this project.
+This edits instructions offline; it does not send a prompt or start a session.
+
+Run rho model-prompt edit --help for editor setup, saving, and reload behavior.")]
     ModelPrompt {
         #[command(subcommand)]
         command: ModelPromptCommand,
