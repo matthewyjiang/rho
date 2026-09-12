@@ -15,16 +15,15 @@ use serde_json::{json, Value};
 use {
     crate::agent::AgentCatalog,
     crate::app::subagent_manager::ValidatedMessage,
-    crate::subagent::RunState,
     rho_sdk::tool::{
-        OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolExecutionMode,
-        ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
-        ToolProgress, ToolResource, ToolResourceAccess, ToolSecurity,
+        OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation,
+        ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolResource,
+        ToolResourceAccess, ToolSecurity,
     },
 };
 
 use super::agent_output::{
-    format_background_start, format_list_entry, format_running, format_snapshot, SnapshotFormat,
+    format_background_start, format_list_entry, format_snapshot, SnapshotFormat,
 };
 
 const SUBAGENT_MANAGER: &str = "subagents";
@@ -38,30 +37,10 @@ pub(crate) use super::agent_output::notification_prompt;
 #[cfg(test)]
 pub(crate) use super::agent_output::MODEL_NOTIFICATION_BYTES as NOTIFICATION_CONTEXT_BYTES;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BackgroundSubagents {
-    Disabled,
-    Enabled,
-}
-
-impl BackgroundSubagents {
-    fn is_enabled(&self) -> bool {
-        matches!(self, Self::Enabled)
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum AgentAsyncCalls {
-    Off,
-    On,
-}
-
 pub struct AgentTool {
     manager: SubagentManager,
     catalog: Arc<AgentCatalog>,
     agent_summaries: Vec<(String, String)>,
-    background_subagents: BackgroundSubagents,
-    async_calls: AgentAsyncCalls,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 }
 
@@ -69,8 +48,6 @@ impl AgentTool {
     pub(super) fn new(
         manager: SubagentManager,
         cwd: &Path,
-        background_subagents: BackgroundSubagents,
-        async_calls: AgentAsyncCalls,
         catalog: Option<Arc<AgentCatalog>>,
     ) -> Self {
         let catalog = catalog.unwrap_or_else(|| {
@@ -90,8 +67,6 @@ impl AgentTool {
             manager,
             catalog,
             agent_summaries,
-            background_subagents,
-            async_calls,
             mutation_observer: Arc::new(()),
         }
     }
@@ -109,13 +84,6 @@ impl AgentTool {
         args: AgentArgs,
         context: &rho_sdk::tool::AuthorizedToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        if args.background && !self.background_subagents.is_enabled() {
-            return Err(ToolError::new(
-                ToolErrorKind::InvalidArguments,
-                "background agents are unavailable in non-interactive runs",
-            ));
-        }
-
         let definition = self
             .catalog
             .find(&args.agent_id)
@@ -131,9 +99,7 @@ impl AgentTool {
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_default();
 
-        let spawn = self
-            .manager
-            .spawn(&definition, &args.prompt, args.background, &cwd);
+        let spawn = self.manager.spawn(&definition, &args.prompt, &cwd);
         tokio::pin!(spawn);
         let (run_id, _log_file) = tokio::select! {
             result = &mut spawn => result.map_err(|error| {
@@ -143,51 +109,19 @@ impl AgentTool {
                 )
             })?,
             () = context.cancellation().cancelled() => {
-                if args.background {
-                    // Let an in-flight spawn finish registration so the manager
-                    // retains ownership of the delegated task.
-                    let _ = spawn.await;
-                }
+                // Finish registration so the manager retains ownership and
+                // host shutdown can cancel the delegated task.
+                let _ = spawn.await;
                 return Err(ToolError::cancelled());
             }
         };
 
-        if args.background {
-            // Registration is the start receipt; instant failures still reach
-            // the parent through automatic completion delivery.
-            return Ok(
-                ToolOutput::text(format_background_start(&run_id, &definition_id))
-                    .metadata(agent_metadata()),
-            );
-        }
-
-        let _ = context
-            .progress()
-            .send(ToolProgress::message(format_running(&run_id)))
-            .await;
-
-        let wait = self.manager.wait_done(&run_id);
-        tokio::pin!(wait);
-        let snapshot = tokio::select! {
-            snapshot = &mut wait => snapshot.ok_or_else(|| {
-                ToolError::new(
-                    ToolErrorKind::Execution,
-                    format!("delegated run '{run_id}' disappeared"),
-                )
-            })?,
-            () = context.cancellation().cancelled() => {
-                // This invocation owns run_id for the wait. Stop only that
-                // handle on parent cancellation.
-                let _ = self.manager.stop(&run_id).await;
-                return Err(ToolError::cancelled());
-            }
-        };
-
-        let content = format_snapshot(&snapshot, SnapshotFormat::Completion);
-        if snapshot.status.state != RunState::Ok {
-            return Err(ToolError::new(ToolErrorKind::Execution, content));
-        }
-        Ok(ToolOutput::text(content).metadata(agent_metadata()))
+        // Registration is the start receipt; instant failures still reach
+        // the parent through automatic completion delivery.
+        Ok(
+            ToolOutput::text(format_background_start(&run_id, &definition_id))
+                .metadata(agent_metadata()),
+        )
     }
 }
 
@@ -195,8 +129,6 @@ impl AgentTool {
 struct AgentArgs {
     agent_id: String,
     prompt: String,
-    #[serde(default)]
-    background: bool,
 }
 
 impl Tool for AgentTool {
@@ -216,7 +148,7 @@ impl Tool for AgentTool {
             .map(|(name, description)| format!("{name}: {description}"))
             .collect::<Vec<_>>()
             .join("\n");
-        let mut properties = json!({
+        let properties = json!({
             "agent_id": {
                 "type": "string",
                 "enum": names,
@@ -227,32 +159,9 @@ impl Tool for AgentTool {
                 "description": "Self-contained task and all context the agent needs"
             }
         });
-        if self.background_subagents.is_enabled() {
-            let description = if self.async_calls == AgentAsyncCalls::On {
-                "Starts a separately managed background run and returns an id immediately. Omit or set false to use an async tool call whose final result arrives later. Only background=true uses background notifications; parallel batching does not. Independent agent calls in the same batch run together either way."
-            } else {
-                "Starts the run and returns an id immediately instead of waiting. Omit or set false to wait for the final result. Only background=true backgrounds a run; parallel batching does not. Independent agent calls in the same batch run together either way."
-            };
-            properties["background"] = json!({
-                "type": "boolean",
-                "description": description
-            });
-        }
-        // Parallel batch behavior is always true; background delivery text is
-        // capability-gated so disabled runs do not advertise a missing path.
         let parallel_guidance =
             " Independent agent calls in the same batch run together - issue them in one turn for parallel work.";
-        let background_guidance = if self.async_calls == AgentAsyncCalls::On
-            && self.background_subagents.is_enabled()
-        {
-            " Foreground calls (background omitted or false) return while the agent keeps working, with the final result arriving as a late tool result. Set background=true to use a separately managed run with an id and turn-boundary completion notifications."
-        } else if self.async_calls == AgentAsyncCalls::On {
-            " Calls return while the agent keeps working, with the final result arriving as a late tool result."
-        } else if self.background_subagents.is_enabled() {
-            " Foreground calls (background omitted or false) wait for completion. Issuing a foreground agent beside other tools does not background it and can delay the rest of that batch until the run finishes. Set background=true to start a run and return an id immediately; completions arrive automatically at the next turn boundary (multiple completions are batched in one notification). After starting background runs, end your turn once no other work remains - never sleep or poll for results."
-        } else {
-            " Calls wait for completion. Issuing an agent beside other tools can delay the rest of that batch until the run finishes."
-        };
+        let background_guidance = " Every call starts a background run and returns its id immediately. Completions arrive automatically at safe provider boundaries and wake an idle parent. Continue independent work, or end your turn to wait for required results. Never sleep or poll for results, and do not declare the task complete before required agents finish.";
         rho_sdk::model::ToolSpec {
             name: AGENT_TOOL.into(),
             description: format!(
@@ -271,10 +180,6 @@ impl Tool for AgentTool {
         ToolSecurity::built_in([])
     }
 
-    fn execution_mode(&self) -> ToolExecutionMode {
-        ToolExecutionMode::Async
-    }
-
     fn prepare<'a>(
         &'a self,
         invocation: ToolInvocation,
@@ -284,8 +189,7 @@ impl Tool for AgentTool {
         Box::pin(async move {
             let args = args?;
             // Registry ops are mutex-protected and short. Shared access lets
-            // several launches in one batch overlap; each call still waits
-            // only on its own handle when foreground.
+            // several launches in one batch overlap.
             Ok(PreparedToolInvocation::resource_aware(
                 [ToolResourceAccess::shared(ToolResource::manager_state(
                     SUBAGENT_MANAGER,
@@ -514,7 +418,6 @@ pub(super) struct DelegationBundleOptions {
     pub cwd: PathBuf,
     pub tools: DelegationToolSelection,
     pub config_path: PathBuf,
-    pub background: BackgroundSubagents,
     /// Catalog already discovered for `cwd`; rediscovered when absent.
     pub catalog: Option<Arc<AgentCatalog>>,
 }
@@ -549,21 +452,8 @@ pub(super) fn sdk_bundle(
     let mut tools = Vec::<Arc<dyn rho_sdk::tool::Tool>>::new();
     if options.tools.launches() {
         tools.push(Arc::new(
-            AgentTool::new(
-                manager.clone(),
-                &options.cwd,
-                options.background,
-                if rho_providers::providers::openai::supports_async_tools(
-                    &config.provider,
-                    &config.model,
-                ) {
-                    AgentAsyncCalls::On
-                } else {
-                    AgentAsyncCalls::Off
-                },
-                options.catalog,
-            )
-            .with_mutation_observer(mutation_observer),
+            AgentTool::new(manager.clone(), &options.cwd, options.catalog)
+                .with_mutation_observer(mutation_observer),
         ));
     }
     if options.tools.manages() {

@@ -27,10 +27,6 @@ pub(super) fn format_background_start(id: &str, agent_id: &str) -> String {
     format!("agent {id} ({agent_id}) started in background\nattach: rho attach {id}")
 }
 
-pub(super) fn format_running(id: &str) -> String {
-    format!("agent {id} running\nattach: rho attach {id}")
-}
-
 pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotFormat) -> String {
     let mut lines = vec![format!(
         "agent {} ({}): {}",

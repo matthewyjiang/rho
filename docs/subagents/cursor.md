@@ -81,7 +81,7 @@ flowchart TD
    /info
    ```
 
-5. **Delegate from a Rho root session** through the `agent` tool. Use foreground for a blocking result, or background for a run ID plus later completion notification.
+5. **Delegate from a Rho root session** through the `agent` tool. The call returns a run ID immediately, followed by an automatic completion notification.
 
 6. **Watch and cancel**:
 

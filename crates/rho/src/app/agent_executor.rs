@@ -176,6 +176,20 @@ impl AgentRunHandle {
     }
 
     #[cfg(test)]
+    pub(crate) fn controlled_for_test(
+        status: tokio::sync::watch::Receiver<RunStatus>,
+        completion: tokio::sync::watch::Receiver<bool>,
+        cancellation: RunCancellation,
+    ) -> Self {
+        Self {
+            cancellation,
+            status,
+            completion,
+            messaging: MessagingSupport::Unsupported,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn completed_for_test(status: RunStatus) -> Self {
         let (_status_tx, status_rx) = tokio::sync::watch::channel(status);
         let (_completion_tx, completion_rx) = tokio::sync::watch::channel(true);
@@ -293,9 +307,7 @@ impl AgentExecutor {
         capabilities.remove(&ToolCapability::Bash);
         #[cfg(not(windows))]
         capabilities.remove(&ToolCapability::Powershell);
-        // Delegated questionnaires route through the parent session. The parent
-        // TUI can present them while a turn is running (foreground wait) or after
-        // background dispatch, so availability is the live parent bridge only.
+        // Delegated questionnaires require a live parent host-input bridge.
         let questionnaire_target = if delegated_questionnaire_available(
             request.parent_session_id.as_ref(),
             self.host_input.is_bound(),
@@ -305,7 +317,6 @@ impl AgentExecutor {
             None
         };
         // Notices share the parent-session binding, not the questionnaire one.
-        // They are non-blocking, so foreground and background both qualify.
         let notice_target = request
             .parent_session_id
             .clone()
@@ -517,15 +528,18 @@ impl AgentExecutor {
                 Err(error) if error.is_panic() => Some("delegated agent task panicked".into()),
                 Err(error) => Some(format!("delegated agent task failed to join: {error}")),
             };
-            if let Some(error) = failure {
-                let mut failed = failure_status.borrow().clone();
-                if !failed.state.is_terminal() {
-                    failed.state = RunState::Error;
-                    failed.error = Some(error);
-                    failed.mark_finished_now();
-                    status_tx.send_replace(failed.clone());
-                    let _ = subagent::write_status(&persisted_output, &failed);
-                }
+            // Completion must imply a terminal status, even if a successful
+            // runtime forgot to finalize its status sink. Parent waiters rely
+            // on that invariant to drain this handle rather than wake forever.
+            let mut finished = failure_status.borrow().clone();
+            if !finished.state.is_terminal() {
+                finished.state = RunState::Error;
+                finished.error = Some(failure.unwrap_or_else(|| {
+                    "delegated agent finished without a terminal status".into()
+                }));
+                finished.mark_finished_now();
+                status_tx.send_replace(finished.clone());
+                let _ = subagent::write_status(&persisted_output, &finished);
             }
             // Close the live window so late parent messages fail closed.
             if let Some(slot) = steering_slot {
@@ -812,8 +826,8 @@ impl NoticePoster for DelegatedNoticePoster {
 
 /// Whether a delegated Rho run may expose the questionnaire tool.
 ///
-/// Needs a parent session id and a bound parent host-input bridge. Foreground
-/// and background launches both qualify; headless or parentless launches do not.
+/// Needs a parent session id and a bound parent host-input bridge. Hosts without
+/// questionnaire support and parentless launches do not qualify.
 fn delegated_questionnaire_available(
     parent_session_id: Option<&rho_sdk::SessionId>,
     host_input_bound: bool,

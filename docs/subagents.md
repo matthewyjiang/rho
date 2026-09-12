@@ -24,9 +24,7 @@ Use `/agents create` or `/create-agent` to define an agent through a guided ques
 
 ```mermaid
 flowchart TD
-    root[Root session agent] --> fg[Foreground agent tool]
-    root --> bg[Background agent tool]
-    fg --> result[Final result in same turn]
+    root[Root session agent] --> bg[Agent tool starts background run]
     bg --> id[Run id immediately]
     id --> done[Completion at next safe runtime boundary]
 ```
@@ -81,12 +79,13 @@ For the full value set, constraints, and defaults, see [Agent definition schema]
 
 ## Delegating work
 
-Delegation has two modes:
+Every `agent` call starts a background run and returns a six-character run ID immediately. There is no foreground mode or `background` parameter. Independent calls in the same batch run together.
 
-- Foreground waits for the run and returns its final result. Mixing a foreground agent with other tools does not background it and can delay the rest of that batch until the run finishes. Independent agent calls in the same step run together - issue them in one turn for parallel work.
-- Background returns a six-character run ID immediately and sends a completion notification later. Only `background=true` backgrounds a run; parallel batching does not. Use background when you want to keep working or end the turn without waiting.
+Completions reach the parent automatically at safe provider boundaries. The parent can continue independent work or end its turn to wait for required results, without polling. Interactive sessions wake an idle parent. CLI and ACP runs wait for outstanding children before natural completion and deliver their results back into the same run, preserving its step limit and cancellation handling. Side chats still disable delegation.
 
-Both modes use the same `AgentExecutor`. Rho-runtime agents stay in-process. `runtime: claude-cli` agents spawn the external `claude` binary and still report through the same status and attachment files. The `agents` tool lists, inspects, cancels, or messages handles tracked by `SubagentManager`. Parent shutdown cancels active handles and waits for bounded cleanup. Delegated agents run without their own TUI. Questionnaires raised by delegated Rho agents surface in the parent session (foreground waits and background runs); approvals still cannot.
+Cancellation, errors, and step limits end CLI and ACP runs without waiting for more child results. Remaining children are stopped; their saved status and artifacts remain available for inspection. ACP does not automatically inject these ended runs' results into a later prompt.
+
+Rho-runtime agents stay in-process. `runtime: claude-cli` agents spawn the external `claude` binary and still report through the same status and attachment files. The `agents` tool lists, inspects, cancels, or messages handles tracked by `SubagentManager`. Parent shutdown cancels active handles and waits for bounded cleanup. Delegated agents run without their own TUI. Questionnaires raised by delegated Rho agents surface in an interactive parent session; approvals still cannot.
 
 After `/new`, newly delegated runs belong to the new session, including their
 completion notifications and artifacts. Existing runs keep their original parent

@@ -11,7 +11,6 @@ use crate::{
     app::agent_binding::{AgentBinder, AgentInvocation, AgentRole},
     config::Config,
     diagnostics::RuntimeDiagnostics,
-    tools::agent::BackgroundSubagents,
 };
 
 use super::{assemble_tools_and_prompt, ToolsAndPromptOptions};
@@ -82,7 +81,6 @@ async fn assemble_awaiting_catalog(
         mcp_attach: super::McpAttach::Connect,
         await_catalog_names,
         defer_mcp_connect: false,
-        background_subagents: BackgroundSubagents::Disabled,
         diagnostics: &diagnostics,
         agent: &agent,
     })
@@ -151,7 +149,6 @@ async fn the_advisor_receives_the_executor_system_prompt() {
         mcp_attach: super::McpAttach::Connect,
         await_catalog_names: false,
         defer_mcp_connect: false,
-        background_subagents: BackgroundSubagents::Disabled,
         diagnostics: &diagnostics,
         agent: &agent,
     })
@@ -193,7 +190,6 @@ async fn system_prompt_stays_advisor_agnostic() {
             mcp_attach: super::McpAttach::Connect,
             await_catalog_names: false,
             defer_mcp_connect: false,
-            background_subagents: BackgroundSubagents::Disabled,
             diagnostics: &diagnostics,
             agent: &agent,
         })
@@ -321,7 +317,6 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
             mcp_attach: super::McpAttach::Connect,
             await_catalog_names: false,
             defer_mcp_connect: true,
-            background_subagents: BackgroundSubagents::Disabled,
             diagnostics: &diagnostics,
             agent: &agent,
         }),
@@ -436,7 +431,6 @@ async fn mcp_attach_none_does_not_connect_configured_servers() {
             mcp_attach: McpAttach::None,
             await_catalog_names: false,
             defer_mcp_connect: false,
-            background_subagents: BackgroundSubagents::Disabled,
             diagnostics: &diagnostics,
             agent: &agent,
         }),

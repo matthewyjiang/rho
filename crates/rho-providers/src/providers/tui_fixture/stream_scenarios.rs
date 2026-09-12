@@ -88,7 +88,6 @@ pub(super) async fn intercept(
                 serde_json::json!({
                     "agent_id": "worker",
                     "prompt": "fixture delay",
-                    "background": true,
                 }),
             ))
         }
@@ -96,7 +95,7 @@ pub(super) async fn intercept(
             Some(stream_background_agent(request, events).await)
         }
         "fixture claude agent" if tool_result(request, CLAUDE_AGENT_CALL_ID).is_none() => {
-            // Foreground delegation into a runtime: claude-cli agent definition.
+            // Delegation into a runtime: claude-cli agent definition.
             // The PTY E2E installs that definition and a fake `claude` on PATH.
             Some(completed_tool_call(
                 CLAUDE_AGENT_CALL_ID,
@@ -104,22 +103,19 @@ pub(super) async fn intercept(
                 serde_json::json!({
                     "agent_id": "claude-planner",
                     "prompt": "Say hello in one short sentence.",
-                    "background": false,
                 }),
             ))
         }
         "fixture background claude agent"
             if tool_result(request, BACKGROUND_CLAUDE_AGENT_CALL_ID).is_none() =>
         {
-            // Background Claude run so terminal cost lands through automatic
-            // completion delivery rather than the foreground tool result path.
+            // Terminal cost lands through automatic completion delivery.
             Some(completed_tool_call(
                 BACKGROUND_CLAUDE_AGENT_CALL_ID,
                 "agent",
                 serde_json::json!({
                     "agent_id": "claude-planner",
                     "prompt": "Say hello in one short sentence.",
-                    "background": true,
                 }),
             ))
         }
@@ -132,7 +128,6 @@ pub(super) async fn intercept(
                 serde_json::json!({
                     "agent_id": "claude-planner",
                     "prompt": "Force a deterministic Claude error path.",
-                    "background": false,
                 }),
             ))
         }
@@ -152,7 +147,6 @@ pub(super) async fn intercept(
                 serde_json::json!({
                     "agent_id": "worker",
                     "prompt": "fixture child questionnaire",
-                    "background": true,
                 }),
             ))
         }
@@ -433,7 +427,7 @@ async fn stream_background_agent(
             index: 0,
             id: None,
             name: None,
-            arguments: r#"ker","prompt":"fixture stream","background":true}"#.into(),
+            arguments: r#"ker","prompt":"fixture stream"}"#.into(),
         })
         .await?;
     completed_tool_call(
@@ -442,7 +436,6 @@ async fn stream_background_agent(
         serde_json::json!({
             "agent_id": "worker",
             "prompt": "fixture stream",
-            "background": true,
         }),
     )
 }

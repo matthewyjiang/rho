@@ -85,7 +85,6 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
             .delegation(DelegationConfig::new(
                 root.path().to_owned(),
                 root.path().join("config.toml"),
-                BackgroundSubagents::Enabled,
                 Some(Arc::new(
                     crate::agent::AgentCatalog::from_authorized_sources(Default::default())
                         .unwrap(),

@@ -12,9 +12,7 @@ use crate::{
 
 use super::{
     advisor::AdvisorSessionStore,
-    agent::{
-        BackgroundSubagents, DelegationBundleOptions, DelegationToolSelection, SubagentManager,
-    },
+    agent::{DelegationBundleOptions, DelegationToolSelection, SubagentManager},
 };
 
 /// A feature-owned group of tools and any resources they need.
@@ -50,7 +48,6 @@ impl ToolBundle for StaticToolBundle {
 pub struct DelegationConfig {
     cwd: PathBuf,
     config_path: PathBuf,
-    background: BackgroundSubagents,
     /// Catalog already discovered for `cwd`; the agent tool rediscovers when
     /// absent.
     catalog: Option<Arc<crate::agent::AgentCatalog>>,
@@ -60,13 +57,11 @@ impl DelegationConfig {
     pub fn new(
         cwd: PathBuf,
         config_path: PathBuf,
-        background: BackgroundSubagents,
         catalog: Option<Arc<crate::agent::AgentCatalog>>,
     ) -> Self {
         Self {
             cwd,
             config_path,
-            background,
             catalog,
         }
     }
@@ -313,7 +308,6 @@ impl AppToolSet {
                     cwd: delegation.cwd,
                     tools: selection,
                     config_path: delegation.config_path,
-                    background: delegation.background,
                     catalog: delegation.catalog,
                 },
                 tool_set.checkpoint_tracker.clone(),

@@ -94,7 +94,7 @@ flowchart TD
 
 5. **Delegate from a Rho root session** (interactive or automation parent on `runtime: rho`):
 
-   Ask the parent to call the `agent` tool with `agent_id: claude-planner` and a clear prompt. Use foreground for a blocking result, or background for a run ID plus later completion notification.
+   Ask the parent to call the `agent` tool with `agent_id: claude-planner` and a clear prompt. The call returns a run ID immediately, followed by an automatic completion notification.
 
 6. **Watch, cancel, and resume**:
 

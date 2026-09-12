@@ -89,7 +89,7 @@ pub(crate) use provider_config::ProviderConfigs;
 pub(crate) const DEFAULT_MAX_OUTPUT_BYTES: usize = rho_tools::DEFAULT_MAX_OUTPUT_BYTES;
 pub(crate) const DEFAULT_PROMPT_HISTORY_LIMIT: usize = 1000;
 pub(crate) const MAX_PROMPT_HISTORY_LIMIT: usize = 10_000;
-/// Default live delegated-agent slots (foreground and background).
+/// Default live delegated-agent slots.
 ///
 /// Receipt: 4 serialized a 6-way background fan-out behind a permit queue.
 /// 10 is the asked default; each slot is a full child agent, so this stays a

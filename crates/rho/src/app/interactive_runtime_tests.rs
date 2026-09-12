@@ -28,10 +28,7 @@ use crate::{
     diagnostics::RuntimeDiagnostics,
     permission::{PermissionMode, WriteAuthority},
     session::Session as StoredSession,
-    tools::{
-        agent::BackgroundSubagents,
-        sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
-    },
+    tools::sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
 };
 
 #[tokio::test]
@@ -360,7 +357,6 @@ async fn permission_mode_runtime() -> InteractiveRuntime {
         ToolSetOptions::new(capabilities).delegation(DelegationConfig::new(
             std::env::current_dir().unwrap(),
             std::path::PathBuf::new(),
-            BackgroundSubagents::Disabled,
             Some(Arc::new(
                 crate::agent::AgentCatalog::from_authorized_sources(Default::default()).unwrap(),
             )),

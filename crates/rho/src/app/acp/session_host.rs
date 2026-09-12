@@ -240,7 +240,23 @@ impl SessionHost {
                 Some(self.acp_session_id.0.as_ref()),
             )
             .await;
-        let result = self.drive_prompt(input, client).await;
+        let mut delegation = crate::app::headless_delegation::HeadlessDelegation::attach(
+            &self.built.session,
+            self.built.tools.subagents(),
+            Some(&self.stored),
+        )?;
+        let result = crate::app::headless_delegation::HeadlessDelegation::drive(
+            &mut delegation,
+            self.drive_prompt(input, client),
+        )
+        .await;
+        if let Some(manager) = self.built.tools.subagents() {
+            manager.shutdown().await;
+            // Cancellation, errors, and exhausted step budgets end this
+            // prompt's automatic delivery. Keep snapshots for explicit status
+            // queries, but do not inject stale results into the next prompt.
+            let _ = manager.take_notifications(self.built.session.id().as_str());
+        }
         self.herdr
             .report_state(HerdrState::Idle, None, Some(self.acp_session_id.0.as_ref()))
             .await;

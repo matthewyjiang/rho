@@ -54,7 +54,6 @@ pub(super) async fn intercept(
                     serde_json::json!({
                         "agent_id": "worker",
                         "prompt": "fixture slow stream",
-                        "background": true,
                     }),
                 ));
             }
@@ -77,7 +76,6 @@ pub(super) async fn intercept(
             serde_json::json!({
                 "agent_id": "worker",
                 "prompt": "fixture delayed child questionnaire",
-                "background": true,
             }),
         ));
     }
@@ -90,7 +88,6 @@ pub(super) async fn intercept(
             serde_json::json!({
                 "agent_id": "worker",
                 "prompt": "fixture stream",
-                "background": true,
             }),
         ));
     }

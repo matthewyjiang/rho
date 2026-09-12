@@ -31,7 +31,6 @@ pub(super) async fn intercept(
                     arguments: serde_json::json!({
                         "agent_id": "worker",
                         "prompt": "fixture delay",
-                        "background": true,
                     }),
                 }),
                 ContentBlock::ToolCall(ToolCall {
@@ -40,7 +39,6 @@ pub(super) async fn intercept(
                     arguments: serde_json::json!({
                         "agent_id": "explorer",
                         "prompt": "fixture delay",
-                        "background": true,
                     }),
                 }),
             ])))
@@ -56,7 +54,6 @@ pub(super) async fn intercept(
                     arguments: serde_json::json!({
                         "agent_id": "worker",
                         "prompt": "fixture delay",
-                        "background": true,
                     }),
                 }),
             ])))

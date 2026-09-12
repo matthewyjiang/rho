@@ -23,7 +23,6 @@ use crate::{
     config::Config,
     diagnostics::RuntimeDiagnostics,
     permission::PermissionMode,
-    tools::agent::BackgroundSubagents,
 };
 
 pub(crate) const USAGE_PURPOSE: &str = "side";
@@ -237,7 +236,6 @@ async fn assemble_side_session(launch: &SideChatLaunch) -> anyhow::Result<BuiltS
         mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
         mcp_sampling: McpSamplingSupport::Unavailable,
         mcp_attach: McpAttach::None,
-        background_subagents: BackgroundSubagents::Disabled,
         diagnostics: &diagnostics,
         agent: &agent,
         max_steps: NonZeroUsize::new(SIDE_CHAT_STEP_LIMIT),
