@@ -33,6 +33,14 @@ impl App {
                 return Ok(());
             }
         };
+        if agent.is_session_busy() {
+            if agent.is_compacting() {
+                self.set_status("permission mode cannot change while compaction is active");
+            } else {
+                self.reject_permission_mode_change();
+            }
+            return Ok(());
+        }
         if mode == PermissionMode::Auto && !self.permission_classifier_model_configured() {
             if !self.open_permission_classifier_model_prompt(
                 InternalAgentModelPickerOrigin::PermissionModeCommand,
@@ -43,7 +51,12 @@ impl App {
             }
             return Ok(());
         }
-        self.apply_permission_mode(mode, agent).await
+        if let Err(error) = self.apply_permission_mode(mode, agent).await {
+            self.insert_entry(&super::Entry::Error(format!(
+                "could not change permission mode: {error}"
+            )));
+        }
+        Ok(())
     }
 
     pub(super) async fn select_permission_mode_from_config(

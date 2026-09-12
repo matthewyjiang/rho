@@ -143,3 +143,30 @@ async fn reconcile_applies_pending_startup_demote() {
     assert_eq!(app.info.runtime.permission_mode, PermissionMode::Supervised);
     assert_eq!(agent.permission_mode(), PermissionMode::Supervised);
 }
+
+// Covers: `/permissions` during compaction must not bubble `set_permission_mode`
+// out of the event loop. Compact uses the idle composer, unlike a live turn.
+// Owner: permission mode command
+// PTY cannot hold an in-flight compact job deterministically, so this stays a
+// command-layer unit test.
+#[tokio::test]
+async fn permissions_command_rejects_compaction_without_failing() {
+    use crate::app::interactive_runtime::test_edit_tool_runtime;
+    use crate::commands::parse_command;
+    use crate::config::EditTool;
+
+    let mut app = test_app();
+    let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
+    let previous_agent = agent.permission_mode();
+    let previous_ui = app.info.runtime.permission_mode;
+    agent.begin_compact_task().unwrap();
+
+    let invocation = parse_command("/permissions plan").unwrap().unwrap();
+    app.execute_permissions_command(invocation, &mut agent)
+        .await
+        .unwrap();
+
+    assert_eq!(agent.permission_mode(), previous_agent);
+    assert_eq!(app.info.runtime.permission_mode, previous_ui);
+    let _ = agent.abort_compact_task().await;
+}
