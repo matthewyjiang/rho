@@ -30,6 +30,7 @@ mod login;
 mod markdown_stream;
 mod mcp;
 mod mermaid;
+mod model_cycle_reasoning;
 mod model_prompts;
 mod no_save;
 mod paste;
@@ -740,6 +741,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
     .with_setup(setup_pinned_models)
     .with_env(OPENAI_AND_XAI_KEY_ENV),
     model_prompts::MODEL_PROMPTS_SCENARIO,
+    model_cycle_reasoning::IDLE,
+    model_cycle_reasoning::QUEUED,
     web_search::WEB_SEARCH_CONFIG_SCENARIO,
     Scenario::new(
         "open_workflow_hub_empty",

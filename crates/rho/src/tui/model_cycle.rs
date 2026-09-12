@@ -159,7 +159,14 @@ impl App {
             &self.info.runtime.provider,
             &self.info.runtime.auth,
         ) {
-            Ok(selection) => CycleTarget::Switch(Box::new(selection)),
+            Ok(mut selection) => {
+                // A pin cycle is a quick swap: when the next pin cannot honor
+                // the current reasoning level, round to its nearest supported
+                // level instead of rejecting the switch.
+                selection.reasoning_policy =
+                    super::reasoning_metadata::ModelSwitchReasoningPolicy::NormalizeUnsupported;
+                CycleTarget::Switch(Box::new(selection))
+            }
             Err(err) => CycleTarget::Failed(err.to_string()),
         }
     }

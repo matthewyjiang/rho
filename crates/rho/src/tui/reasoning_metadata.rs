@@ -31,7 +31,7 @@ pub(super) fn cached_metadata(provider: &str, model: &str) -> Option<(ModelMetad
 }
 
 pub(super) use crate::app::conversation_switch::{
-    resolve_model_switch_reasoning, ModelSwitchReasoningResolution,
+    resolve_model_switch_reasoning, ModelSwitchReasoningPolicy, ModelSwitchReasoningResolution,
 };
 
 pub(super) fn resolve_fetched_reasoning(

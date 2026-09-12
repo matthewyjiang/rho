@@ -96,7 +96,11 @@ impl App {
                 &self.available_auths,
             )?,
         };
-        Ok(InteractiveModelSelection { selection, alias })
+        Ok(InteractiveModelSelection {
+            selection,
+            alias,
+            reasoning_policy: reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
+        })
     }
 
     pub(in crate::tui) async fn refresh_model_lists(
@@ -290,7 +294,11 @@ impl App {
         resolved: InteractiveModelSelection,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<Option<rho_sdk::model::handoff::HandoffReport>> {
-        let InteractiveModelSelection { selection, alias } = resolved;
+        let InteractiveModelSelection {
+            selection,
+            alias,
+            reasoning_policy,
+        } = resolved;
         let provider = selection.provider;
         let model = selection.model;
         let auth = selection.auth;
@@ -301,6 +309,7 @@ impl App {
             &capabilities,
             self.info.runtime.reasoning,
             self.info.runtime.reasoning_source,
+            reasoning_policy,
         ) {
             Ok(reasoning) => reasoning,
             Err(requested) => {

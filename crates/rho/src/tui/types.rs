@@ -76,6 +76,8 @@ pub(super) struct SessionHeaderCache {
 pub(super) struct InteractiveModelSelection {
     pub(in crate::tui) selection: ModelSelection,
     pub(in crate::tui) alias: Option<String>,
+    pub(in crate::tui) reasoning_policy:
+        crate::app::conversation_switch::ModelSwitchReasoningPolicy,
 }
 
 /// Live assistant/reasoning stream UI state owned by [`super::App`].

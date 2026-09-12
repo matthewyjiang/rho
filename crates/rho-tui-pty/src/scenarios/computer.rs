@@ -1,6 +1,10 @@
 //! Desktop consent and revocation through the real command path, with no desktop access.
 
-use std::{fs, os::unix::fs::PermissionsExt};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    time::{Duration, Instant},
+};
 
 use anyhow::{ensure, Result};
 
@@ -10,7 +14,28 @@ use crate::{
     keys::Key,
     pty::PtySize,
     scenario::{Scenario, Step},
+    PtyHarness,
 };
+
+// /new is idle-only. Seeing the response is not enough: the provider can still
+// own the turn. Wait for its durable receipt, not an earlier turn's receipt.
+fn wait_for_context_turn_completion(harness: &mut PtyHarness) -> Result<()> {
+    let deadline = Instant::now() + STREAM.duration;
+    loop {
+        harness.poll(Duration::from_millis(25));
+        let screen = harness.screen().contents();
+        if screen
+            .rfind("computer context: enabled")
+            .is_some_and(|start| screen[start..].contains("Worked for"))
+        {
+            return Ok(());
+        }
+        ensure!(
+            harness.is_running() && Instant::now() < deadline,
+            "context turn did not finish before /new:\n{screen}"
+        );
+    }
+}
 
 pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
     "computer_use",
@@ -123,6 +148,7 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
             text: "computer context: enabled",
             timeout: STREAM,
         },
+        Step::Custom(wait_for_context_turn_completion),
         Step::SubmitText("/new"),
         Step::WaitTextGone {
             text: "computer context: enabled",

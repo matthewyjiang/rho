@@ -79,6 +79,8 @@ fn resolves_alias_before_interactive_model_lookup() {
                 from_catalog: true,
             },
             alias: Some("deep".into()),
+            reasoning_policy:
+                super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
         }
     );
 }
@@ -102,6 +104,8 @@ fn bare_alias_keeps_current_provider() {
                 from_catalog: true,
             },
             alias: Some("fast".into()),
+            reasoning_policy:
+                super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
         }
     );
 }
@@ -219,6 +223,8 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
                     from_catalog: true,
                 },
                 alias: None,
+                reasoning_policy:
+                    super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
             },
             agent,
         )
@@ -345,6 +351,8 @@ async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
                     from_catalog: true,
                 },
                 alias: None,
+                reasoning_policy:
+                    super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
             },
             agent,
         )

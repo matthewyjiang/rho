@@ -370,6 +370,8 @@ impl App {
         Some(InteractiveModelSelection {
             selection,
             alias: None,
+            reasoning_policy:
+                super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
         })
     }
 
@@ -605,6 +607,7 @@ fn current_runtime_selection(app: &App) -> InteractiveModelSelection {
             from_catalog: true,
         },
         alias: None,
+        reasoning_policy: super::reasoning_metadata::ModelSwitchReasoningPolicy::PreserveExplicit,
     }
 }
 

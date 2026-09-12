@@ -23,6 +23,85 @@ fn identity(provider: &str, model: &str) -> ModelIdentity {
     ModelIdentity::new(provider, "test", model)
 }
 
+// Covers: switch policy may normalize unsupported levels, but must not erase
+// explicit provenance when the preference is unchanged (including unknown metadata).
+// Owner: conversation model switch policy
+#[test]
+fn model_switch_reasoning_preserves_provenance_unless_normalized() {
+    use super::{
+        resolve_model_switch_reasoning, ModelSwitchReasoningPolicy, ModelSwitchReasoningResolution,
+    };
+    use rho_providers::{
+        model::{ReasoningCapabilities, ReasoningLevelSet, ReasoningRequestSource},
+        reasoning::ReasoningLevel,
+    };
+
+    for policy in [
+        ModelSwitchReasoningPolicy::PreserveExplicit,
+        ModelSwitchReasoningPolicy::NormalizeUnsupported,
+    ] {
+        for source in [
+            ReasoningRequestSource::Explicit,
+            ReasoningRequestSource::PersistedOrDefault,
+        ] {
+            for (capabilities, requested, effective) in [
+                (
+                    ReasoningCapabilities::Unknown,
+                    ReasoningLevel::Off,
+                    ReasoningLevel::Off,
+                ),
+                (
+                    ReasoningCapabilities::NotConfigurable,
+                    ReasoningLevel::High,
+                    ReasoningLevel::High,
+                ),
+                (
+                    ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+                        ReasoningLevel::Low,
+                        ReasoningLevel::High,
+                    ])),
+                    ReasoningLevel::High,
+                    ReasoningLevel::High,
+                ),
+                (
+                    ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+                        ReasoningLevel::Low,
+                        ReasoningLevel::High,
+                    ])),
+                    ReasoningLevel::Medium,
+                    ReasoningLevel::High,
+                ),
+                (
+                    ReasoningCapabilities::Levels(ReasoningLevelSet::new(vec![
+                        ReasoningLevel::Low,
+                        ReasoningLevel::High,
+                    ])),
+                    ReasoningLevel::Off,
+                    ReasoningLevel::Low,
+                ),
+            ] {
+                let expected = if requested == effective {
+                    Ok(ModelSwitchReasoningResolution { effective, source })
+                } else if policy == ModelSwitchReasoningPolicy::PreserveExplicit
+                    && source == ReasoningRequestSource::Explicit
+                {
+                    Err(requested)
+                } else {
+                    Ok(ModelSwitchReasoningResolution {
+                        effective,
+                        source: ReasoningRequestSource::PersistedOrDefault,
+                    })
+                };
+                assert_eq!(
+                    resolve_model_switch_reasoning(&capabilities, requested, source, policy),
+                    expected,
+                    "{capabilities:?}, {requested:?}, {source:?}, {policy:?}",
+                );
+            }
+        }
+    }
+}
+
 async fn switchable_session(
     history: Vec<Message>,
     context_window: Option<u64>,
