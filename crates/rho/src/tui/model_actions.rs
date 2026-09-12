@@ -510,7 +510,8 @@ impl App {
                 self.open_main_config_picker_selected(config_picker::PERMISSION_MODE_VALUE)?;
                 self.set_status(status);
             }
-            InternalAgentModelPickerOrigin::PermissionModeStartup => {
+            InternalAgentModelPickerOrigin::PermissionModeStartup
+            | InternalAgentModelPickerOrigin::PermissionModeCommand => {
                 let origin = target.origin;
                 self.internal_agent_model_target = None;
                 self.finish_permission_classifier_model_selection(selected, origin, agent)

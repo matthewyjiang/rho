@@ -567,6 +567,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         SUPERVISED_APPROVAL_STEPS,
         true,
     ),
+    config::PERMISSIONS_COMMAND_SCENARIO,
     Scenario::new(
         "auto_permission_mode_config",
         "Gate Auto behind a classifier model picker, cancel safely, then enable it",

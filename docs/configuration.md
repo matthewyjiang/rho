@@ -19,7 +19,7 @@ flowchart TD
 | --- | --- |
 | Provider, model, reasoning | `[model]` or `/model`, `/config` → **Models** |
 | Theme, zen, reasoning display | `[display]` or `/config` → **Appearance** |
-| Permission mode | `[behavior].permission_mode` or `/config` → **Agent behavior** |
+| Permission mode | `/permissions <mode>`, `[behavior].permission_mode`, or `/config` → **Agent behavior** |
 | Concurrent agents | `[behavior].agent_concurrency` or `/config` → **Agent behavior** |
 | Questionnaire timeout | `[questionnaire].timeout_seconds` or `/config` → **Agent behavior**, disabled by default |
 | Prompt templates | `~/.rho/prompts/` files or `[prompt_templates]` |
@@ -147,7 +147,9 @@ Auto's classifier sees completed questionnaire answers alongside the questions t
 
 Configure the classifier under **Agent behavior** in `/config`, or in config as `[internal_agents.permission-classifier]`. Rho does not pick a default classifier model. Override the mode for one invocation with `--permission-mode bypass|auto|allow_edits|plan|supervised` (not persisted).
 
-Change the mode from **Agent behavior** > **Permission mode** in `/config`. An interactive mode change applies before the next turn and preserves the current session ID and history, but clears every remembered **Allow for session** approval. Remembered path grants stay bound to the approver that allowed them. A classifier grant in Auto does not skip the human gate after switching to Allow edits; a human grant may. Resetting or resuming a different session starts without inherited path grants. In a supervised approval prompt, the default focus is **Deny**. Choose **Allow once**, **Allow for session**, or **Deny**. A session approval remembers only the exact structured capability request for the current session. Pressing Escape denies the request and cancels the current run; choosing **Deny** with Enter rejects only that operation so the run can continue.
+Use `/permissions` to show the current mode, or `/permissions bypass|auto|allow_edits|plan|supervised` to change it. `allow-edits` also works. Changes save to configuration, just like **Agent behavior** > **Permission mode** in `/config`. `/permissions auto` asks you to choose a classifier model if none is configured; cancelling keeps the previous mode. The command is unavailable while a model turn is running.
+
+An interactive mode change applies before the next turn and preserves the current session ID and history, but clears every remembered **Allow for session** approval. Remembered path grants stay bound to the approver that allowed them. A classifier grant in Auto does not skip the human gate after switching to Allow edits; a human grant may. Resetting or resuming a different session starts without inherited path grants. In a supervised approval prompt, the default focus is **Deny**. Choose **Allow once**, **Allow for session**, or **Deny**. A session approval remembers only the exact structured capability request for the current session. Pressing Escape denies the request and cancels the current run; choosing **Deny** with Enter rejects only that operation so the run can continue.
 
 Non-interactive `rho run` sessions cannot display approval prompts. Supervised and Allow edits operations that require approval therefore fail closed instead of being approved automatically.
 

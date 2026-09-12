@@ -13,6 +13,7 @@ pub enum CommandId {
     Sessions,
     Tree,
     Config,
+    Permissions,
     Info,
     Help,
     Compact,
@@ -150,6 +151,34 @@ const FAST_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
         completion: "/fast off",
         usage: "/fast off",
         description: "use standard Codex response speed",
+    },
+];
+
+const PERMISSIONS_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
+    CommandArgumentChoice {
+        completion: "/permissions bypass",
+        usage: "/permissions bypass",
+        description: "skip permission checks",
+    },
+    CommandArgumentChoice {
+        completion: "/permissions auto",
+        usage: "/permissions auto",
+        description: "let a classifier review gated actions",
+    },
+    CommandArgumentChoice {
+        completion: "/permissions allow_edits",
+        usage: "/permissions allow_edits",
+        description: "allow tracked workspace edits; ask for other gated actions",
+    },
+    CommandArgumentChoice {
+        completion: "/permissions plan",
+        usage: "/permissions plan",
+        description: "investigate without writes or process execution",
+    },
+    CommandArgumentChoice {
+        completion: "/permissions supervised",
+        usage: "/permissions supervised",
+        description: "ask before writes and other gated actions",
     },
 ];
 
@@ -352,6 +381,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         usage: "/new",
         description: "start a new session",
         argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Permissions,
+        name: "permissions",
+        usage: "/permissions [bypass|auto|allow_edits|plan|supervised]",
+        description: "show or change the permission mode",
+        argument_choices: PERMISSIONS_ARGUMENT_CHOICES,
     },
     CommandSpec {
         id: CommandId::RefreshModels,

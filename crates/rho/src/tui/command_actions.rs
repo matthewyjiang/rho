@@ -79,6 +79,7 @@ impl App {
             CommandId::Sessions => self.execute_sessions_command(terminal),
             CommandId::Tree => self.execute_tree_command(agent),
             CommandId::Config => self.execute_config_command(terminal),
+            CommandId::Permissions => self.execute_permissions_command(invocation, agent).await,
             CommandId::Info => self.execute_info_command().await,
             CommandId::Help => self.execute_help_command(),
             CommandId::Compact => {
