@@ -1,5 +1,81 @@
 use super::*;
 
+pub(super) const PERMISSIONS_COMMAND_SCENARIO: Scenario = Scenario::new(
+    "permissions_command",
+    "Change permission modes by slash command without skipping the classifier gate",
+    PtySize {
+        rows: 14,
+        cols: 100,
+    },
+    PERMISSIONS_COMMAND_STEPS,
+    /*smoke*/ false,
+)
+.with_env(OPENAI_KEY_ENV);
+
+// Covers: slash mode changes preserve the Auto classifier gate and reject
+// invalid input without replacing the active policy.
+// Owner: interactive TUI
+const PERMISSIONS_COMMAND_STEPS: &[Step] = &[
+    Step::WaitText {
+        text: "Bypass ·",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/permissions auto"),
+    Step::WaitText {
+        text: "select model for permission-classifier",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Bypass ·"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "permission mode stays bypass",
+        timeout: SETTLE,
+    },
+    Step::SubmitText("/permissions auto"),
+    Step::WaitText {
+        text: "select model for permission-classifier",
+        timeout: SETTLE,
+    },
+    Step::TypeText("gpt-5.5"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Auto ·",
+        timeout: SETTLE,
+    },
+    Step::SubmitText("/permissions plan"),
+    Step::WaitText {
+        text: "Plan ·",
+        timeout: SETTLE,
+    },
+    Step::SubmitText("/permissions bypass extra"),
+    Step::WaitText {
+        text: "could not change permission mode",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Plan ·"),
+    Step::SubmitText("/permissions supervised"),
+    Step::WaitText {
+        text: "Supervised ·",
+        timeout: SETTLE,
+    },
+    Step::SubmitText("/permissions allow_edits"),
+    Step::WaitText {
+        text: "Allow edits ·",
+        timeout: SETTLE,
+    },
+    Step::SubmitText("/permissions bypass"),
+    Step::WaitText {
+        text: "Bypass ·",
+        timeout: SETTLE,
+    },
+    Step::SubmitText("/permissions"),
+    Step::WaitText {
+        text: "permission mode: bypass. usage:",
+        timeout: SETTLE,
+    },
+    Step::ExitCommand,
+];
+
 // Covers: enabling Auto without a classifier model asks for one, Esc keeps the
 // prior mode, and selecting a classifier completes Auto.
 // Owner: interactive TUI

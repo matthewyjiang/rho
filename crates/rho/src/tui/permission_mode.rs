@@ -11,6 +11,41 @@ const SELECT_CLASSIFIER_MODEL_STARTUP_STATUS: &str =
     "select a permission classifier model for Auto mode";
 
 impl App {
+    pub(super) async fn execute_permissions_command(
+        &mut self,
+        invocation: super::CommandInvocation,
+        agent: &mut InteractiveRuntime,
+    ) -> anyhow::Result<()> {
+        let args = invocation.args.trim();
+        if args.is_empty() {
+            self.insert_entry(&super::Entry::Notice(format!(
+                "permission mode: {}. usage: /permissions [bypass|auto|allow_edits|plan|supervised]",
+                agent.permission_mode().as_str()
+            )));
+            return Ok(());
+        }
+        let mode = match args.parse::<PermissionMode>() {
+            Ok(mode) => mode,
+            Err(error) => {
+                self.insert_entry(&super::Entry::Error(format!(
+                    "could not change permission mode: {error}"
+                )));
+                return Ok(());
+            }
+        };
+        if mode == PermissionMode::Auto && !self.permission_classifier_model_configured() {
+            if !self.open_permission_classifier_model_prompt(
+                InternalAgentModelPickerOrigin::PermissionModeCommand,
+            ) {
+                self.set_status(
+                    "could not enable auto: no classifier model available; use /refresh-models",
+                );
+            }
+            return Ok(());
+        }
+        self.apply_permission_mode(mode, agent).await
+    }
+
     pub(super) async fn select_permission_mode_from_config(
         &mut self,
         mode: PermissionMode,
@@ -130,6 +165,7 @@ impl App {
             | InternalAgentModelPickerOrigin::AdvisorCommand
             | InternalAgentModelPickerOrigin::AdvisorConfigRow
             | InternalAgentModelPickerOrigin::AdvisorModelConfigRow
+            | InternalAgentModelPickerOrigin::PermissionModeCommand
             | InternalAgentModelPickerOrigin::PermissionModeConfigRow => {
                 SELECT_CLASSIFIER_MODEL_STATUS
             }
@@ -150,7 +186,8 @@ impl App {
             return Ok(());
         }
         match origin {
-            InternalAgentModelPickerOrigin::PermissionModeConfigRow => {
+            InternalAgentModelPickerOrigin::PermissionModeConfigRow
+            | InternalAgentModelPickerOrigin::PermissionModeCommand => {
                 self.apply_permission_mode(PermissionMode::Auto, agent)
                     .await?;
             }
@@ -190,6 +227,7 @@ impl App {
                     && matches!(
                         target.origin,
                         InternalAgentModelPickerOrigin::PermissionModeConfigRow
+                            | InternalAgentModelPickerOrigin::PermissionModeCommand
                             | InternalAgentModelPickerOrigin::PermissionModeStartup
                     ) =>
             {
@@ -202,7 +240,8 @@ impl App {
             self.input_ui.set_composer(ComposerMode::Input);
         }
         match origin {
-            InternalAgentModelPickerOrigin::PermissionModeConfigRow => {
+            InternalAgentModelPickerOrigin::PermissionModeConfigRow
+            | InternalAgentModelPickerOrigin::PermissionModeCommand => {
                 self.set_status(format!(
                     "permission mode stays {}: no classifier model selected",
                     self.info.runtime.permission_mode.as_str()

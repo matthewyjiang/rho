@@ -32,6 +32,8 @@ pub(super) enum InternalAgentModelPickerOrigin {
     /// without a classifier model; selection also applies Auto and returns to
     /// config.
     PermissionModeConfigRow,
+    /// Opened by `/permissions auto`; selection applies Auto and returns to input.
+    PermissionModeCommand,
     /// Opened from the config picker's classifier model row; returns to config
     /// without forcing Auto on.
     PermissionClassifierModelConfigRow,
@@ -44,7 +46,10 @@ pub(super) enum InternalAgentModelPickerOrigin {
 impl InternalAgentModelPickerOrigin {
     /// True when the picker replaces the composer alone (no parent to return to).
     pub(super) fn opens_standalone(self) -> bool {
-        matches!(self, Self::AdvisorCommand | Self::PermissionModeStartup)
+        matches!(
+            self,
+            Self::AdvisorCommand | Self::PermissionModeStartup | Self::PermissionModeCommand
+        )
     }
 }
 

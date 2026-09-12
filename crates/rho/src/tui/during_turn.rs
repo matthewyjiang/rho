@@ -411,6 +411,7 @@ impl App {
                 Ok(())
             }
             CommandId::Advisor
+            | CommandId::Permissions
             | CommandId::Hooks
             | CommandId::New
             | CommandId::Fast
