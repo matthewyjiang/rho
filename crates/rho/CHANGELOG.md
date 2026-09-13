@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.11.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.10.0...rho-coding-agent-v2.11.0) (2026-09-12)
+
+
+### Features
+
+* **agents:** make delegation background-only ([#1217](https://github.com/matthewyjiang/rho/issues/1217)) ([4e74c0c](https://github.com/matthewyjiang/rho/commit/4e74c0ccdd1ebe29ad3f3b138b67e33d873ad285))
+* **cli:** choose a model before editing its prompt ([#1216](https://github.com/matthewyjiang/rho/issues/1216)) ([d725f93](https://github.com/matthewyjiang/rho/commit/d725f93092aef6eeff1bbeb1bc15b8f203586f3b))
+* **sessions:** search prior work without replaying transcripts ([#1212](https://github.com/matthewyjiang/rho/issues/1212)) ([0b8888a](https://github.com/matthewyjiang/rho/commit/0b8888a527033210df145aedbea654d3a7640acd))
+* **tui:** change permission modes with a slash command ([#1213](https://github.com/matthewyjiang/rho/issues/1213)) ([cad1529](https://github.com/matthewyjiang/rho/commit/cad1529e746c8ddd622e77cfaa7dc3c83b919164))
+
+
+### Bug Fixes
+
+* **tui:** normalize unsupported reasoning when cycling pinned models ([#1210](https://github.com/matthewyjiang/rho/issues/1210)) ([d0dc6ff](https://github.com/matthewyjiang/rho/commit/d0dc6ff32fb6902ac29858df0aabb4c869488e4a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.6.0 to 2.7.0
+
 ## [2.10.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.9.1...rho-coding-agent-v2.10.0) (2026-09-10)
 
 
