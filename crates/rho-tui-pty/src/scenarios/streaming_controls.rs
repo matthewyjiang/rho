@@ -80,7 +80,7 @@ fn cycle_in_menu(harness: &mut PtyHarness, mode: &str) -> Result<()> {
 fn exercise_controls(harness: &mut PtyHarness) -> Result<()> {
     harness.set_phase("load_saved_preference");
     harness.submit_text("fixture streaming controls")?;
-    harness.wait_for_text("11.0K (11.0%)", STREAM)?;
+    harness.wait_for_text("$1.000", STREAM)?;
     ensure!(
         !harness.screen().contains_text("Hidden off prefix"),
         "off leaked partial output after the provider receipt"
@@ -95,7 +95,7 @@ fn exercise_controls(harness: &mut PtyHarness) -> Result<()> {
     harness.set_phase("paragraph_boundary");
     cycle_in_menu(harness, "paragraph")?;
     super::release_fixture(harness, ".rho-fixture-release-streaming-controls")?;
-    harness.wait_for_text("22.0K (22.0%)", STREAM)?;
+    harness.wait_for_text("$2.000", STREAM)?;
     harness.wait_for_text("Paragraph checkpoint visible.", SETTLE)?;
     ensure!(
         !harness.screen().contains_text("Held paragraph suffix"),
@@ -110,12 +110,12 @@ fn exercise_controls(harness: &mut PtyHarness) -> Result<()> {
 
     harness.set_phase("switch_preserves_opening_fence");
     super::release_fixture(harness, ".rho-fixture-release-streaming-controls")?;
-    harness.wait_for_text("33.0K (33.0%)", STREAM)?;
+    harness.wait_for_text("$3.000", STREAM)?;
     harness.inject_key(&Key::Alt('s'))?;
     harness.wait_for_text("output streaming: live", SETTLE)?;
     assert_saved_mode(harness, "live")?;
     super::release_fixture(harness, ".rho-fixture-release-streaming-controls")?;
-    harness.wait_for_text("44.0K (44.0%)", STREAM)?;
+    harness.wait_for_text("$4.000", STREAM)?;
     harness.wait_for_text("Markdown continuation complete.", SETTLE)?;
     let rows = harness.screen().rows_text();
     let code_rows = rows

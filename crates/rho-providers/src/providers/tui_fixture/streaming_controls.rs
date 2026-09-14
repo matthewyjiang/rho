@@ -24,14 +24,16 @@ pub(super) async fn stream(
         events.send(ModelEvent::OutputDelta(delta.into())).await?;
         response.push_str(delta);
         // Usage follows the delta on the same ordered event stream. The PTY
-        // waits for this context count before checking hidden text, so absence
+        // waits for this reported cost before checking hidden text, so absence
         // never depends on how quickly the provider or terminal was scheduled.
         // Unlike reasoning/tool events, usage does not finalize Markdown.
-        // Usage events accumulate, yielding distinct 11/22/33/44K receipts.
+        // Costs accumulate to distinct $1/$2/$3/$4 receipts. Context calibration
+        // intentionally ignores provisional usage until the response succeeds.
         events
             .send(ModelEvent::Usage(ModelUsage {
                 input_tokens: Some(11_000),
                 context_window: Some(100_000),
+                cost_usd_micros: Some(1_000_000),
                 ..ModelUsage::default()
             }))
             .await?;

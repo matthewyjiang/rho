@@ -132,6 +132,12 @@ impl App {
     }
 
     pub(super) async fn poll_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
+        // Applying metadata can rebuild compaction and reasoning. Keep the
+        // completed fetch queued while either a provider turn or compact owns
+        // the session instead of dropping it after a SessionBusy error.
+        if agent.is_session_busy() {
+            return;
+        }
         let Some(handle) = self.pending_model_metadata.as_mut() else {
             return;
         };

@@ -23,6 +23,8 @@ mod cache;
 mod compact;
 #[path = "interactive_runtime_computer.rs"]
 mod computer;
+#[path = "interactive_runtime_context.rs"]
+mod context;
 pub(crate) use computer::{ComputerUseEligibilityError, ComputerUseUpdate};
 #[path = "interactive_runtime_edit_tool.rs"]
 pub(crate) mod edit_tool;
@@ -318,12 +320,11 @@ impl InteractiveRuntime {
     /// Rebuilds compaction against the new window so a failure surfaces instead
     /// of leaving the session compacting for the previous model's limits.
     ///
-    /// Commits `context_window` only after compaction refresh succeeds when the
-    /// runtime is idle. Active runs defer the rebuild and store the value now.
+    /// Commits `context_window` only after compaction refresh succeeds. Metadata
+    /// fetches wait until idle so display and the installed policy cannot diverge.
     pub(crate) fn set_context_window(&mut self, context_window: Option<u64>) -> Result<(), Error> {
-        if self.runs.is_active() {
-            self.context_window = context_window;
-            return Ok(());
+        if self.is_session_busy() {
+            return Err(Error::SessionBusy);
         }
         let previous = self.context_window;
         self.context_window = context_window;
@@ -331,6 +332,7 @@ impl InteractiveRuntime {
             self.context_window = previous;
             return Err(error);
         }
+        self.refresh_context_usage();
         Ok(())
     }
 
@@ -359,7 +361,23 @@ impl InteractiveRuntime {
     }
 
     pub(crate) async fn next_event(&mut self) -> Option<RunEvent> {
-        let event = self.runs.next_event(self.context_window).await;
+        let event = self.runs.next_event().await;
+        if matches!(
+            event,
+            Some(
+                RunEvent::StepStarted { .. }
+                    | RunEvent::UsageUpdated { .. }
+                    | RunEvent::ToolStarted { .. }
+                    | RunEvent::ToolFinished { .. }
+                    | RunEvent::BoundaryInputApplied { .. }
+                    | RunEvent::CompactionCompleted { .. }
+                    | RunEvent::Completed { .. }
+                    | RunEvent::Failed { .. }
+                    | RunEvent::Cancelled { .. }
+            )
+        ) {
+            self.refresh_context_usage();
+        }
         // After a failed write, drain only. Later buffered checkpoints must not
         // advance storage or replace the failure/rollback checkpoint we captured.
         if self.pending_persistence_error.is_some() {
@@ -543,6 +561,7 @@ impl InteractiveRuntime {
             .session_completed(self.sessions.session().id(), self.completed_runs);
         self.completed_runs = 0;
         let session_id = self.sessions.reset()?;
+        self.diagnostics.clear_compaction();
         if let Some(prompt) = prepared_prompt {
             super::conversation_switch::replace_system_prompt(
                 self.sessions.session(),
@@ -559,6 +578,7 @@ impl InteractiveRuntime {
         self.invalidate_live_context();
         self.restore_computer_preference(computer::ComputerPreferenceSource::NewSession)
             .await;
+        self.refresh_context_usage();
         Ok(())
     }
 
@@ -590,6 +610,7 @@ impl InteractiveRuntime {
         self.invalidate_live_context();
         self.restore_computer_preference(computer::ComputerPreferenceSource::SavedSession)
             .await;
+        self.refresh_context_usage();
         Ok(())
     }
 
@@ -607,17 +628,6 @@ impl InteractiveRuntime {
             self.context_window,
             self.usage_recording.clone(),
         )
-    }
-
-    fn refresh_context_usage(&mut self) {
-        self.runs
-            .note_context_usage(rho_sdk::model::ContextUsage::estimated(
-                rho_sdk::model::context::estimate_context_tokens(
-                    &self.sessions.history(),
-                    &self.tools.specs(),
-                ),
-                self.context_window,
-            ));
     }
 
     pub(crate) fn append_user_context_with_display(
@@ -731,11 +741,6 @@ impl InteractiveRuntime {
 
     pub(crate) fn workflow_tracker(&self) -> &crate::tools::workflow_tracker::WorkflowRunTracker {
         self.tools.workflow_tracker()
-    }
-
-    #[cfg(test)]
-    fn observe_event(&mut self, event: &RunEvent) {
-        self.runs.observe_event(event, self.context_window);
     }
 
     /// Loads the current durable snapshot for rollback after a failed save.
@@ -890,6 +895,7 @@ impl InteractiveRuntime {
         let previous_runtime = std::mem::replace(&mut self.runtime, replacement_runtime);
         self.sessions
             .replace_session(replacement_session, resume_omission);
+        self.diagnostics.clear_compaction();
         self.install_rebuilt_permission(permission.pending);
         self.computer_context = None;
         self.computer_runtime_dirty = false;

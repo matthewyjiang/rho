@@ -40,6 +40,9 @@ impl BillingInfo {
     }
 }
 
+#[path = "info_compaction.rs"]
+mod compaction;
+
 #[derive(Clone, Debug)]
 pub(super) struct RuntimeInfo {
     version: String,
@@ -63,6 +66,7 @@ pub(super) struct RuntimeInfo {
     cache_rebilled: super::cache_stats::CacheRebilled,
     model_performance: ModelPerformanceSummary,
     context_usage: Option<ContextUsage>,
+    compaction: Option<crate::diagnostics::CompactionDiagnostics>,
     model_metadata: Option<ModelMetadata>,
     tree: Option<crate::session::tree::SessionTreeFacts>,
     tree_error: Option<String>,
@@ -147,6 +151,7 @@ impl App {
                 .model_performance
                 .summary(&self.info.runtime.model_call_profile()),
             context_usage: self.usage.current_context.clone(),
+            compaction: self.info.services.diagnostics.compaction(),
             model_metadata: self.model_metadata.clone(),
             tree,
             tree_error,
@@ -200,6 +205,10 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
 
     block.push_section("Session usage");
     push_usage_fields(&mut block, info);
+
+    if let Some(diagnostics) = &info.compaction {
+        compaction::push_fields(&mut block, diagnostics);
+    }
 
     if let Some(metrics) = info.model_performance.latest_call {
         block.push_section("Last model call");
