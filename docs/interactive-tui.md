@@ -107,7 +107,7 @@ Open `/config` → **Appearance** → **Output streaming** and press Enter to cy
 - `paragraph` reveals text through blank-line boundaries. Whitespace-only blank lines and CRLF line endings count; this does not parse Markdown structure.
 - `off` holds text until a message boundary, such as reasoning handing off to the answer, a tool handoff, or response completion. It does not wait for the entire agent run.
 
-Switching modes reveals text already received, then applies the new mode to subsequent text. It never hides text already displayed. Model generation, tool execution, tool previews, and cancellation keep running normally; the completed answer is the same. These controls work during a turn without submitting a prompt or restarting the response.
+Switching modes reveals text already received through the normal Markdown renderer, then applies the new mode to subsequent text. Incomplete Markdown stays pending until it can render safely; switching does not end the message or split a code fence. It never hides text already displayed. Model generation, tool execution, tool previews, and cancellation keep running normally; the completed answer is the same. These controls work during a turn without submitting a prompt or restarting the response.
 
 Cancellation and errors reveal held text. A retry discards the failed attempt's pending text.
 

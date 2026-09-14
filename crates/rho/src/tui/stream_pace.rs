@@ -169,7 +169,8 @@ impl StreamUi {
 
     pub(super) fn schedule_tick(&mut self, kind: StreamKind, now: Instant) {
         if self.mode != StreamingMode::Live {
-            self.stream_tick_deadline = None;
+            // Buffered modes do not start pacing, but must preserve a one-shot
+            // presentation tick requested when the user reveals held text.
             return;
         }
         let pending_chars = self.stream(kind).pending_text().chars().count();

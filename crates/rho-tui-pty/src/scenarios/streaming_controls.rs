@@ -11,12 +11,13 @@ use crate::{
 
 use super::{DEFAULT_SIZE, SETTLE, STARTUP, STREAM};
 
-// Covers: startup honors the saved preference; menu and key changes save the
-// same setting during a turn without steering, cancelling, or losing output.
-// Owner: interactive TUI. The provider stays gated until the controls finish.
+// Covers: off leaks partial output, paragraph leaks its unfinished suffix, or
+// switching modes finalizes a split Markdown fence and corrupts continued output.
+// Also retains startup/menu/shortcut persistence coverage in the same turn.
+// Owner: interactive TUI. Ordered usage receipts synchronize hidden-output checks.
 pub(super) const STREAMING_CONTROLS_SCENARIO: Scenario = Scenario::new(
     "streaming_controls",
-    "Persist streaming preferences through the config menu and shortcut during a gated reply",
+    "Hold output by mode and preserve split Markdown across persisted menu and shortcut changes",
     DEFAULT_SIZE,
     &[
         Step::WaitText {
@@ -78,30 +79,75 @@ fn cycle_in_menu(harness: &mut PtyHarness, mode: &str) -> Result<()> {
 
 fn exercise_controls(harness: &mut PtyHarness) -> Result<()> {
     harness.set_phase("load_saved_preference");
-    // Off -> live proves startup loaded the non-default preference.
+    harness.submit_text("fixture streaming controls")?;
+    harness.wait_for_text("11.0K (11.0%)", STREAM)?;
+    ensure!(
+        !harness.screen().contains_text("Hidden off prefix"),
+        "off leaked partial output after the provider receipt"
+    );
+    // Off -> live proves startup loaded the saved preference and reveals held
+    // text without requiring another provider event to drive the preview.
     harness.inject_key(&Key::Alt('s'))?;
     harness.wait_for_text("output streaming: live", SETTLE)?;
     assert_saved_mode(harness, "live")?;
+    harness.wait_for_text("Hidden off prefix", SETTLE)?;
 
-    harness.submit_text("fixture gated reply")?;
-    harness.wait_for_text("reply waiting for release", STREAM)?;
-    harness.set_phase("menu_during_turn");
+    harness.set_phase("paragraph_boundary");
     cycle_in_menu(harness, "paragraph")?;
-    harness.wait_for_text("reply waiting for release", SETTLE)?;
+    super::release_fixture(harness, ".rho-fixture-release-streaming-controls")?;
+    harness.wait_for_text("22.0K (22.0%)", STREAM)?;
+    harness.wait_for_text("Paragraph checkpoint visible.", SETTLE)?;
+    ensure!(
+        !harness.screen().contains_text("Held paragraph suffix"),
+        "paragraph mode leaked its incomplete suffix after the provider receipt"
+    );
 
-    harness.set_phase("key_during_turn");
-    for mode in ["off", "live", "paragraph"] {
-        harness.inject_key(&Key::Alt('s'))?;
-        harness.wait_for_text(&format!("output streaming: {mode}"), SETTLE)?;
-        assert_saved_mode(harness, mode)?;
-        harness.wait_for_text("reply waiting for release", SETTLE)?;
-    }
-    // Reopening the menu must continue from the shortcut's saved preference.
+    harness.set_phase("switch_reveals_held_suffix");
+    harness.inject_key(&Key::Alt('s'))?;
+    harness.wait_for_text("output streaming: off", SETTLE)?;
+    assert_saved_mode(harness, "off")?;
+    harness.wait_for_text("Held paragraph suffix", SETTLE)?;
+
+    harness.set_phase("switch_preserves_opening_fence");
+    super::release_fixture(harness, ".rho-fixture-release-streaming-controls")?;
+    harness.wait_for_text("33.0K (33.0%)", STREAM)?;
+    harness.inject_key(&Key::Alt('s'))?;
+    harness.wait_for_text("output streaming: live", SETTLE)?;
+    assert_saved_mode(harness, "live")?;
+    super::release_fixture(harness, ".rho-fixture-release-streaming-controls")?;
+    harness.wait_for_text("44.0K (44.0%)", STREAM)?;
+    harness.wait_for_text("Markdown continuation complete.", SETTLE)?;
+    let rows = harness.screen().rows_text();
+    let code_rows = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| row.contains("let streamed_value = 7;"))
+        .collect::<Vec<_>>();
+    ensure!(
+        code_rows.len() == 1
+            && code_rows[0].1.trim() == "let streamed_value = 7;"
+            && code_rows[0]
+                .0
+                .checked_sub(1)
+                .is_some_and(|header| { rows[header].split_whitespace().next() == Some("RUST") }),
+        "split opening fence must render one Rust code block, not plain prose:\n{}",
+        harness.screen().contents()
+    );
+    ensure!(
+        !harness.screen().contains_text("```")
+            && !harness
+                .screen()
+                .contains_text("**Markdown continuation complete."),
+        "switching modes corrupted the fence state or rendered the prose preview as code"
+    );
+
+    // The menu resumes from the shortcut's setting; completion flushes off mode.
+    cycle_in_menu(harness, "paragraph")?;
     cycle_in_menu(harness, "off")?;
     harness.set_phase("finish_buffered_response");
-    super::release_fixture(harness, ".rho-fixture-release-reply")?;
-    harness.wait_for_text("reply completed after release", STREAM)?;
-    harness.wait_for_text("reply waiting for release", SETTLE)?;
+    super::release_fixture(harness, ".rho-fixture-release-streaming-controls")?;
+    harness.wait_for_text("Buffered completion delivered.", STREAM)?;
+    harness.wait_for_text("Hidden off prefix continued.", SETTLE)?;
     assert_saved_mode(harness, "off")?;
     Ok(())
 }

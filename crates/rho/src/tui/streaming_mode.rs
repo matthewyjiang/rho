@@ -14,9 +14,17 @@ impl App {
             return;
         }
         if self.streams.mode != mode {
-            // Commit received text once at the switch, never retract visible output.
-            self.finish_current_stream();
+            // Reveal received text through the normal Markdown drain/preview path.
+            // A preference change is not a message boundary: unfinished lines must
+            // remain pending so continued fences and inline markup parse together.
+            if let Some(kind) = self.streams.current_stream_kind {
+                self.streams.flush_hold(kind);
+            }
             self.streams.mode = mode;
+            self.streams.clear_tick_deadline();
+            if self.streams.current_stream_kind.is_some() {
+                self.streams.stream_tick_deadline = Some(std::time::Instant::now());
+            }
         }
         self.set_status(format!("output streaming: {}", mode.label()));
     }
