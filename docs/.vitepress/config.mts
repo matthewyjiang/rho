@@ -52,6 +52,7 @@ function installScriptsPlugin(): VitePlugin {
 const providerItems: DefaultTheme.SidebarItem[] = [
   { text: 'OpenAI', link: '/providers/openai' },
   { text: 'OpenAI (Codex OAuth)', link: '/providers/openai-codex' },
+  { text: 'OpenAI-compatible hosts', link: '/providers/openai-compatible' },
   { text: 'Anthropic', link: '/providers/anthropic' },
   { text: 'Google Gemini', link: '/providers/google-gemini' },
   { text: 'GitHub Copilot', link: '/providers/github-copilot' },
@@ -169,6 +170,7 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
           { text: 'Definition schema', link: '/subagents/definition-schema' },
           { text: 'Binding and security', link: '/subagents/binding-and-security' },
           { text: 'Claude Code runtime', link: '/subagents/claude-cli' },
+          { text: 'Cursor runtime', link: '/subagents/cursor' },
           { text: 'Attachment and artifacts', link: '/subagents/attachment-and-artifacts' },
         ],
       },
@@ -197,6 +199,7 @@ const sdkSidebar: DefaultTheme.SidebarItem[] = [
       { text: 'Hooks', link: '/sdk/hooks' },
       { text: 'Sessions and persistence', link: '/sdk/sessions-and-persistence' },
       { text: 'Events and cancellation', link: '/sdk/events-and-cancellation' },
+      { text: 'Runtime boundary inputs', link: '/sdk/boundary-inputs' },
     ],
   },
   {
@@ -208,15 +211,12 @@ const sdkSidebar: DefaultTheme.SidebarItem[] = [
     ],
   },
   {
-    text: 'Reference and history',
+    text: 'Reference',
     collapsed: true,
     items: [
       { text: 'Compatibility contracts', link: '/sdk/compatibility' },
       { text: 'Performance acceptance', link: '/sdk/performance' },
       { text: 'SDK changelog', link: '/sdk/changelog' },
-      { text: 'Upgrade to 1.0 (historical)', link: '/sdk/upgrade-to-1.0' },
-      { text: '1.0 release notes (historical)', link: '/sdk/release-notes-1.0' },
-      { text: 'Release candidates (historical)', link: '/sdk/release-candidates' },
     ],
   },
   {
