@@ -119,6 +119,10 @@ impl App {
             }
             (ConfigRow::ShowReasoningOutput, _) => self.toggle_reasoning_output(),
             (ConfigRow::ZenMode, _) => self.toggle_zen_mode(),
+            (ConfigRow::OutputStreaming, _) => {
+                self.cycle_streaming_mode();
+                Ok(())
+            }
             (ConfigRow::Theme, _) => self.open_theme_picker_from_config(),
             (ConfigRow::CheckForUpdates, _) => self.toggle_check_for_updates(),
             (ConfigRow::EnableSubagents, _) => self.toggle_enable_subagents(),
@@ -566,6 +570,27 @@ impl App {
                 app.history.invalidate_from(0);
             },
         )
+    }
+
+    /// Menu and shortcut share this durable preference before changing live output.
+    pub(super) fn save_streaming_mode(&mut self, mode: crate::config::StreamingMode) -> bool {
+        if let Err(error) = self.info.services.config_repository.update(|config| {
+            config.output_streaming = mode;
+        }) {
+            self.insert_entry(&Entry::Error(format!(
+                "could not save output streaming setting: {error}"
+            )));
+            self.set_status("config save failed");
+            return false;
+        }
+        if let Err(error) =
+            self.refresh_main_config_picker_if_open(config_picker::OUTPUT_STREAMING_VALUE)
+        {
+            self.insert_entry(&Entry::Error(format!(
+                "could not refresh config picker: {error}"
+            )));
+        }
+        true
     }
 
     pub(super) fn toggle_xai_image_generation(&mut self) -> anyhow::Result<()> {

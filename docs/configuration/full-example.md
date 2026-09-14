@@ -18,6 +18,7 @@ favorite_models = []
 [display]
 show_reasoning_output = true
 zen_mode = false
+output_streaming = "live" # live, paragraph, off; /config → Appearance → Output streaming
 theme = "terminal" # terminal, a built-in id from /theme, or a custom ~/.rho/themes/<id>.json stem
 max_tool_output_lines = 10
 prompt_history_limit = 1000
@@ -107,6 +108,7 @@ reset_conversation = "ctrl+r"
 open_editor = "ctrl+g"
 jump_to_bottom = "ctrl+end"
 toggle_tool_output = "ctrl+o"
+cycle_streaming_mode = "alt+s"
 insert_newline = "ctrl+j"
 queue_prompt = "alt+enter" # ctrl+enter always works as a fallback
 paste_image = "ctrl+v"

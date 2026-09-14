@@ -145,8 +145,11 @@ impl App {
         kind: StreamKind,
         text: &str,
     ) -> Result<bool, B::Error> {
-        self.streams.push_delta(kind, text, Instant::now());
-        self.drain_stream(terminal, kind)
+        if self.streams.push_delta(kind, text, Instant::now()) {
+            self.drain_stream(terminal, kind)
+        } else {
+            Ok(false)
+        }
     }
 
     pub(super) fn drain_stream<B: Backend>(

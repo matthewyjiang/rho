@@ -73,12 +73,12 @@ impl App {
         let pending_update_notice = info.services.pending_update_notice.take();
         let pending_custom_models = info.services.pending_custom_models.take();
         let pending_syntax_warmup = info.services.pending_syntax_warmup.take();
-        let prompt_history_limit = info
+        let (prompt_history_limit, output_streaming) = info
             .services
             .config_repository
             .load()
-            .map(|config| config.prompt_history_limit)
-            .unwrap_or(0);
+            .map(|config| (config.prompt_history_limit, config.output_streaming))
+            .unwrap_or_default();
         let prompt_history = super::prompt_history::PromptHistory::new(
             prompt_history_limit,
             info.services.pending_prompt_history.take(),
@@ -102,7 +102,10 @@ impl App {
             should_quit: false,
             ctrl_c_streak: 0,
             turn_finished_attention: false,
-            streams: StreamUi::default(),
+            streams: StreamUi {
+                mode: output_streaming,
+                ..StreamUi::default()
+            },
             turn: TurnUi::default(),
             image_picker: picker_from_environment(herdr_graphics),
             pending: PendingWorkUi::default(),

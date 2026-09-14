@@ -30,6 +30,14 @@ impl App {
             .info
             .runtime
             .keybindings
+            .cycle_streaming_mode
+            .matches(key)
+        {
+            self.cycle_streaming_mode();
+        } else if self
+            .info
+            .runtime
+            .keybindings
             .reset_conversation
             .matches(key)
         {
@@ -71,6 +79,14 @@ impl App {
             .matches(key)
         {
             self.toggle_latest_tool_output(terminal)?;
+        } else if self
+            .info
+            .runtime
+            .keybindings
+            .cycle_streaming_mode
+            .matches(key)
+        {
+            self.cycle_streaming_mode();
         } else if self
             .info
             .runtime

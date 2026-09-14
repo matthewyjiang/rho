@@ -20,6 +20,7 @@ pub(super) const PERMISSION_MODE_PREFIX: &str = "permission_mode:";
 pub(super) const REASONING_VALUE: &str = "reasoning";
 pub(super) const SHOW_REASONING_OUTPUT_VALUE: &str = "show_reasoning_output";
 pub(super) const ZEN_MODE_VALUE: &str = "zen_mode";
+pub(super) const OUTPUT_STREAMING_VALUE: &str = "output_streaming";
 pub(super) const THEME_VALUE: &str = "theme";
 pub(super) const CHECK_FOR_UPDATES_VALUE: &str = "check_for_updates";
 pub(super) const ENABLE_SUBAGENTS_VALUE: &str = "enable_subagents";
@@ -191,7 +192,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Appearance",
-                "Theme, zen mode, reasoning output, cache miss notices, and collapsed tool output lines.",
+                "Theme, zen mode, output streaming, reasoning output, cache miss notices, and collapsed tool output lines.",
                 Some(theme_badge(config)),
                 APPEARANCE_CATEGORY_VALUE,
             ),
@@ -299,6 +300,15 @@ pub(super) fn category_picker(
                     cache_miss_notices_help(),
                     Some(on_off(config.cache_miss_notices)),
                     CACHE_MISS_NOTICES_VALUE,
+                ),
+                item(
+                    "Output streaming",
+                    format!(
+                        "Reveal text live, by paragraph, or at message boundaries. Enter cycles to {}. Applies immediately and saves automatically.",
+                        config.output_streaming.next().label()
+                    ),
+                    Some(config.output_streaming.label().into()),
+                    OUTPUT_STREAMING_VALUE,
                 ),
                 item(
                     "Show reasoning output",
@@ -529,6 +539,7 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         CONVERSATION_MODEL_VALUE | REASONING_VALUE => Some(MODELS_CATEGORY_VALUE),
         SHOW_REASONING_OUTPUT_VALUE
         | ZEN_MODE_VALUE
+        | OUTPUT_STREAMING_VALUE
         | THEME_VALUE
         | CACHE_MISS_NOTICES_VALUE
         | MAX_TOOL_OUTPUT_LINES_VALUE => Some(APPEARANCE_CATEGORY_VALUE),

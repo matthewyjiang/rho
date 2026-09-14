@@ -22,6 +22,7 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
     let editor = keybindings.open_editor.chrome_label();
     let jump = keybindings.jump_to_bottom.chrome_label();
     let toggle_tools = keybindings.toggle_tool_output.chrome_label();
+    let cycle_streaming = keybindings.cycle_streaming_mode.chrome_label();
     let newline = keybindings.insert_newline.chrome_label();
     let queue_prompt = keybindings.queue_prompt.chrome_label();
     let paste_image = keybindings.paste_image.chrome_label();
@@ -124,6 +125,11 @@ fn help_items(keybindings: &Keybindings) -> Vec<PickerItem> {
             format!(
                 "Expand or collapse the latest tool output block when output is truncated. In a model picker, {toggle_tools} switches the list between all models and pinned models."
             ),
+        ),
+        entry(
+            cycle_streaming,
+            "Cycle streaming",
+            "Cycle and save live → paragraph → off → live text display, including during a turn. Also available in /config → Appearance → Output streaming. Switching reveals held text. Only assistant and reasoning text display changes, not generation or tools.",
         ),
         entry(
             edit_pending,

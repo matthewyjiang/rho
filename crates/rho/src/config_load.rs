@@ -92,6 +92,9 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
         if let Some(value) = group.zen_mode {
             cfg.zen_mode = value;
         }
+        if let Some(value) = group.output_streaming {
+            cfg.output_streaming = value;
+        }
         if let Some(value) = group.theme {
             let trimmed = value.trim();
             cfg.theme = if trimmed.is_empty() {
@@ -334,6 +337,7 @@ impl PartialConfig {
             let group = self.display.take().unwrap_or(PartialDisplayConfig {
                 show_reasoning_output: None,
                 zen_mode: None,
+                output_streaming: None,
                 theme: None,
                 max_tool_output_lines: None,
                 prompt_history_limit: None,
@@ -342,6 +346,7 @@ impl PartialConfig {
             self.display = Some(PartialDisplayConfig {
                 show_reasoning_output: group.show_reasoning_output.or(show_reasoning_output),
                 zen_mode: group.zen_mode.or(zen_mode),
+                output_streaming: group.output_streaming,
                 theme: group.theme,
                 max_tool_output_lines: group.max_tool_output_lines.or(max_tool_output_lines),
                 prompt_history_limit: group.prompt_history_limit,
@@ -518,6 +523,7 @@ struct PartialModelConfig {
 struct PartialDisplayConfig {
     show_reasoning_output: Option<bool>,
     zen_mode: Option<bool>,
+    output_streaming: Option<super::StreamingMode>,
     theme: Option<String>,
     max_tool_output_lines: Option<usize>,
     prompt_history_limit: Option<usize>,

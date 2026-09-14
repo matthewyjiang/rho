@@ -12,8 +12,8 @@
 use std::time::{Duration, Instant};
 
 use super::{
-    markdown::CodeFenceState, stream::AppendOnlyStream, StreamKind, StreamUi,
-    STREAM_PREVIEW_MIN_CHARS, STREAM_UI_TICK,
+    markdown::CodeFenceState, stream::AppendOnlyStream, streaming_mode::StreamingMode, StreamKind,
+    StreamUi, STREAM_PREVIEW_MIN_CHARS, STREAM_UI_TICK,
 };
 
 /// Text kept in reserve, measured as how long it takes to play out.
@@ -116,19 +116,20 @@ impl StreamUi {
         self.invalidate_preview_cache();
     }
 
-    /// Appends provider text into the hold and releases what the pacer allows.
-    pub(super) fn push_delta(&mut self, kind: StreamKind, text: &str, now: Instant) {
+    /// Appends provider text and reports whether the display policy released any.
+    pub(super) fn push_delta(&mut self, kind: StreamKind, text: &str, now: Instant) -> bool {
         if text.is_empty() {
             self.schedule_tick(kind, now);
-            return;
+            return false;
         }
         let was_empty = self.hold.is_empty();
         self.hold.push_str(text);
         if was_empty {
             self.pacer.note_refill(now);
         }
-        self.release_into(kind, now);
+        let released = self.release_into(kind, now);
         self.schedule_tick(kind, now);
+        released
     }
 
     /// Advances a due stream UI tick: release held text, then leave preview to
@@ -157,6 +158,7 @@ impl StreamUi {
 
     /// Dumps every held character into `kind` without pacing.
     pub(super) fn flush_hold(&mut self, kind: StreamKind) {
+        self.paragraph_boundary = Default::default();
         if self.hold.is_empty() {
             return;
         }
@@ -166,6 +168,10 @@ impl StreamUi {
     }
 
     pub(super) fn schedule_tick(&mut self, kind: StreamKind, now: Instant) {
+        if self.mode != StreamingMode::Live {
+            self.stream_tick_deadline = None;
+            return;
+        }
         let pending_chars = self.stream(kind).pending_text().chars().count();
         let needs_tick = !self.hold.is_empty() || pending_chars >= STREAM_PREVIEW_MIN_CHARS;
         if !needs_tick {
@@ -179,10 +185,23 @@ impl StreamUi {
         self.stream_tick_deadline = None;
     }
 
-    /// Moves up to the pacer's allowance from the hold into the stream.
+    /// Releases held text according to the selected display policy.
     ///
     /// Returns whether any text was released.
     fn release_into(&mut self, kind: StreamKind, now: Instant) -> bool {
+        match self.mode {
+            StreamingMode::Off => return false,
+            StreamingMode::Paragraph => {
+                let end = self.paragraph_boundary.release_end(&self.hold);
+                if end == 0 {
+                    return false;
+                }
+                let released: String = self.hold.drain(..end).collect();
+                self.stream_mut(kind).push_delta(&released);
+                return true;
+            }
+            StreamingMode::Live => {}
+        }
         let reserve = self.hold.chars().count();
         let chars = self.pacer.release_allowance(now, reserve);
         if chars == 0 {

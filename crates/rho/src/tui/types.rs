@@ -83,6 +83,8 @@ pub(super) struct InteractiveModelSelection {
 /// Live assistant/reasoning stream UI state owned by [`super::App`].
 #[derive(Default)]
 pub(super) struct StreamUi {
+    pub(in crate::tui) mode: super::streaming_mode::StreamingMode,
+    pub(in crate::tui) paragraph_boundary: super::streaming_mode::ParagraphBoundary,
     pub(in crate::tui) assistant_stream: AppendOnlyStream,
     pub(in crate::tui) assistant_stream_code_fence: CodeFenceState,
     pub(in crate::tui) reasoning_stream: AppendOnlyStream,
@@ -112,6 +114,7 @@ impl StreamUi {
         self.set_live_preview(None);
         self.invalidate_preview_cache();
         self.hold.clear();
+        self.paragraph_boundary = Default::default();
         self.pacer.reset();
     }
 

@@ -23,6 +23,10 @@ use {
 #[path = "provider_config.rs"]
 mod provider_config;
 
+#[path = "config_streaming.rs"]
+mod streaming;
+pub use streaming::StreamingMode;
+
 #[path = "config_internal_agent.rs"]
 mod internal_agent;
 pub use internal_agent::{InternalAgentModelConfig, InternalAgentTarget, RhoInternalAgentModel};
@@ -131,6 +135,8 @@ pub struct Config {
     pub show_reasoning_output: bool,
     /// Hide tool cards, reasoning, and activity chrome so only message text remains.
     pub zen_mode: bool,
+    /// Reveal received text live, by paragraph, or at response completion.
+    pub output_streaming: StreamingMode,
     /// Interactive TUI color theme id (`terminal`, built-in, or custom file stem).
     pub theme: String,
     pub auto_compact: bool,
@@ -203,6 +209,7 @@ impl Default for Config {
             fast_mode: false,
             show_reasoning_output: true,
             zen_mode: false,
+            output_streaming: StreamingMode::default(),
             theme: "terminal".into(),
             auto_compact: false,
             compact_threshold_percent: 85,
