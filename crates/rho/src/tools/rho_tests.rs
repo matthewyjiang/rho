@@ -9,6 +9,7 @@ async fn advertises_valid_actions_and_rejects_unsupported_ones() {
         serde_json::json!([
             "info",
             "context",
+            "compaction",
             "prompt_sources",
             "tools",
             "hooks",

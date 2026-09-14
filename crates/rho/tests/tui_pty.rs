@@ -244,6 +244,14 @@ fn submit_during_compact() {
     assert_pass("submit_during_compact");
 }
 
+// Covers: idle usage calibration must survive into the next prompt's visible
+// auto-compaction, including fresh provider usage after a real session resume.
+// Owner: interactive TUI lifecycle, not SDK estimation policy.
+#[test]
+fn calibrated_context_auto_compacts_after_idle_and_resume() {
+    assert_pass("calibrated_context_auto_compact");
+}
+
 #[test]
 fn smoke_resize_during_stream() {
     assert_pass("resize_during_stream");

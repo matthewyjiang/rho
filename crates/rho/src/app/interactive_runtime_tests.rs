@@ -8,12 +8,12 @@ mod model_prompt;
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
-    model::{ContentBlock, Message, ModelIdentity, ModelResponse, ModelUsage},
+    model::{ContentBlock, Message, ModelIdentity, ModelResponse},
     provider::{ModelProvider, ScriptedProvider, ScriptedTurn},
     ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, CompactionFuture,
     CompactionOutput, CompactionRequest, Compactor, PolicyDecision, ProviderError,
-    ProviderErrorKind, Retryability, RunEvent, RunId, SessionId, SessionOptions, SystemPrompt,
-    UserInput, Workspace, WorkspacePolicy,
+    ProviderErrorKind, Retryability, RunEvent, SessionId, SessionOptions, SystemPrompt, UserInput,
+    Workspace, WorkspacePolicy,
 };
 
 use super::{
@@ -718,79 +718,6 @@ fn stored_session_with_branch(
     .with_prompt_cache_key(format!("rho:{}", storage.id()));
     storage.save_snapshot(&leaf, &leaf.history()[1..]).unwrap();
     (storage, root_id)
-}
-
-#[tokio::test]
-async fn a_new_run_resets_the_context_usage_baseline() {
-    let mut interactive = pending_compaction_runtime("done").await;
-    interactive.context_window = Some(10_000);
-    interactive.observe_event(&RunEvent::UsageUpdated {
-        usage: ModelUsage {
-            input_tokens: Some(50_000),
-            ..ModelUsage::default()
-        },
-    });
-
-    interactive.observe_event(&RunEvent::Started {
-        run_id: RunId::new(),
-        revision: Default::default(),
-    });
-    interactive.observe_event(&RunEvent::StepStarted {
-        step: 1,
-        estimated_context_tokens: 0,
-    });
-    interactive.observe_event(&RunEvent::UsageUpdated {
-        usage: ModelUsage {
-            input_tokens: Some(300),
-            cache_read_tokens: Some(700),
-            ..ModelUsage::default()
-        },
-    });
-
-    assert_eq!(
-        interactive.take_context_usage(),
-        Some(rho_sdk::model::ContextUsage::provider_reported(
-            1_000,
-            Some(10_000)
-        ))
-    );
-}
-
-// Covers: step-start estimates must surface before provider usage arrives
-// Owner: interactive run controller context accounting
-#[tokio::test]
-async fn context_estimated_notes_estimated_context_before_provider_usage() {
-    let mut interactive = pending_compaction_runtime("done").await;
-    interactive.context_window = Some(10_000);
-
-    interactive.observe_event(&RunEvent::Started {
-        run_id: RunId::new(),
-        revision: Default::default(),
-    });
-    interactive.observe_event(&RunEvent::StepStarted {
-        step: 1,
-        estimated_context_tokens: 2_500,
-    });
-
-    assert_eq!(
-        interactive.take_context_usage(),
-        Some(rho_sdk::model::ContextUsage::estimated(2_500, Some(10_000)))
-    );
-
-    interactive.observe_event(&RunEvent::UsageUpdated {
-        usage: ModelUsage {
-            input_tokens: Some(2_400),
-            cache_read_tokens: Some(100),
-            ..ModelUsage::default()
-        },
-    });
-    assert_eq!(
-        interactive.take_context_usage(),
-        Some(rho_sdk::model::ContextUsage::provider_reported(
-            2_500,
-            Some(10_000)
-        ))
-    );
 }
 
 #[tokio::test]

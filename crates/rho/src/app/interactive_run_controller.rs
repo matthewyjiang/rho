@@ -191,8 +191,6 @@ pub(crate) struct InteractiveRunController {
     state: InteractiveState,
     pending_turn: Option<PendingTurn>,
     pending_context_usage: Option<ContextUsage>,
-    cumulative_input_tokens: u64,
-    step_input_token_baseline: u64,
     last_turn_display_commit: DisplayCommit,
 }
 
@@ -263,16 +261,14 @@ impl InteractiveRunController {
         self.active = Some(run);
         self.pending_turn = Some(pending_turn);
         self.pending_context_usage = Some(context_usage);
-        self.cumulative_input_tokens = 0;
-        self.step_input_token_baseline = 0;
         self.state = InteractiveState::Run(RunState::Running(RunPhase::Model));
         Ok(())
     }
 
-    pub(crate) async fn next_event(&mut self, context_window: Option<u64>) -> Option<RunEvent> {
+    pub(crate) async fn next_event(&mut self) -> Option<RunEvent> {
         let event = self.active.as_mut()?.next_event().await;
         if let Some(event) = &event {
-            self.observe_event(event, context_window);
+            self.state = state_after_event(self.state, event);
         }
         event
     }
@@ -354,47 +350,5 @@ impl InteractiveRunController {
 
     pub(crate) fn note_context_usage(&mut self, usage: ContextUsage) {
         self.pending_context_usage = Some(usage);
-    }
-
-    pub(crate) fn note_manual_compaction(&mut self, context_window: Option<u64>) {
-        self.note_context_usage(ContextUsage::unknown_after_compaction(context_window));
-    }
-
-    pub(crate) fn observe_event(&mut self, event: &RunEvent, context_window: Option<u64>) {
-        self.state = state_after_event(self.state, event);
-        match event {
-            RunEvent::Started { .. } => {
-                self.cumulative_input_tokens = 0;
-                self.step_input_token_baseline = 0;
-            }
-            RunEvent::StepStarted {
-                estimated_context_tokens,
-                ..
-            } => {
-                self.step_input_token_baseline = self.cumulative_input_tokens;
-                self.note_context_usage(ContextUsage::estimated(
-                    *estimated_context_tokens,
-                    context_window,
-                ));
-            }
-            RunEvent::UsageUpdated { usage } => {
-                if let Some(cumulative_tokens) = usage.inclusive_prompt_tokens() {
-                    self.cumulative_input_tokens = cumulative_tokens;
-                    let tokens = cumulative_tokens.saturating_sub(self.step_input_token_baseline);
-                    let context_window = match (usage.context_window, context_window) {
-                        (Some(reported), Some(configured)) => Some(reported.min(configured)),
-                        (reported, configured) => reported.or(configured),
-                    };
-                    self.note_context_usage(ContextUsage::provider_reported(
-                        tokens,
-                        context_window,
-                    ));
-                }
-            }
-            RunEvent::CompactionCompleted { .. } => {
-                self.note_context_usage(ContextUsage::unknown_after_compaction(context_window));
-            }
-            _ => {}
-        }
     }
 }

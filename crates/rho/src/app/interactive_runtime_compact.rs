@@ -37,33 +37,44 @@ impl InteractiveRuntime {
         self.can_compact_messages(&self.sessions.history())
     }
 
-    /// Auto-compact should run the same compact task as `/compact`.
+    /// Pre-prompt auto-compaction intentionally uses the same task and
+    /// half-current retention cap as `/compact`. SDK in-run automatic requests
+    /// use the configured window target without that manual cap.
     pub(crate) fn should_auto_compact(&self) -> bool {
-        let Some(window) = self.context_window else {
-            return false;
+        use crate::diagnostics::{CompactionContext, IdleCompactionCheck, IdleCompactionReason};
+
+        let estimate = self.sessions.session().context_estimate();
+        let context = CompactionContext::new(estimate, self.context_window, &self.compaction);
+        let reason = if !self.compaction.auto_compact {
+            IdleCompactionReason::Disabled
+        } else if self.is_session_busy() {
+            IdleCompactionReason::SessionBusy
+        } else if let Some(threshold) = context.threshold_tokens {
+            if estimate.tokens() < threshold {
+                IdleCompactionReason::BelowThreshold
+            } else if !self.can_compact() {
+                IdleCompactionReason::NoCompactableHistory
+            } else {
+                IdleCompactionReason::Ready
+            }
+        } else {
+            IdleCompactionReason::UnknownContextWindow
         };
-        let Some(threshold) = self.compaction.threshold_tokens(window) else {
-            return false;
-        };
-        if !self.can_compact() {
-            return false;
-        }
-        let tokens = rho_sdk::model::context::estimate_context_tokens(
-            &self.sessions.history(),
-            &self.tools.specs(),
-        );
-        tokens >= threshold
+        self.record_context_estimate(estimate);
+        tracing::debug!(?context, ?reason, "idle automatic compaction check");
+        self.diagnostics
+            .record_idle_compaction(IdleCompactionCheck { context, reason });
+        reason == IdleCompactionReason::Ready
     }
 
     /// Mirrors the manual-trigger partition `ModelCompactor` falls back to, so
     /// the TUI only offers `/compact` when it would remove something.
     pub(crate) fn can_compact_messages(&self, messages: &[Message]) -> bool {
         let tools = self.tools.specs();
-        let target_tokens = self.compaction.target_tokens_for_trigger(
+        let target_tokens = self.compaction.target_tokens_for_context(
             self.context_window,
             rho_sdk::CompactionTrigger::Manual,
-            messages,
-            &tools,
+            self.sessions.session().estimate_context(messages),
         );
         crate::compaction::partition_messages_for_compaction(messages, &tools, target_tokens)
             .is_some()
@@ -155,8 +166,8 @@ impl InteractiveRuntime {
                 )),
             };
         }
+        self.refresh_context_usage();
         if crate::compaction::outcome_reduced_context(&outcome) {
-            self.runs.note_manual_compaction(self.context_window);
             self.invalidate_live_context();
             Ok(Some(outcome))
         } else {

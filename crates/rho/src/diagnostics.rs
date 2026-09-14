@@ -2,6 +2,12 @@ use std::sync::{Arc, RwLock};
 
 use serde::Serialize;
 
+#[path = "diagnostics_compaction.rs"]
+mod compaction;
+pub(crate) use compaction::{
+    CompactionContext, CompactionDiagnostics, IdleCompactionCheck, IdleCompactionReason,
+};
+
 use {
     crate::compaction::CompactionConfig, crate::config::Config, rho_providers::model::ContextUsage,
     rho_providers::reasoning::ReasoningLevel,
@@ -10,6 +16,7 @@ use {
 pub(crate) const ACTIONS: &[&str] = &[
     "info",
     "context",
+    "compaction",
     "prompt_sources",
     "tools",
     "hooks",
@@ -108,6 +115,7 @@ impl From<&Config> for SanitizedConfig {
 struct RuntimeState {
     identity: RuntimeIdentity,
     context: Option<ContextUsage>,
+    compaction: Option<CompactionDiagnostics>,
     prompt_sources: Vec<crate::prompt::PromptSource>,
     tools: Vec<String>,
     config: SanitizedConfig,
@@ -127,6 +135,7 @@ impl RuntimeDiagnostics {
             state: Arc::new(RwLock::new(RuntimeState {
                 identity: RuntimeIdentity::new(&config.provider, &config.model, config.reasoning),
                 context: None,
+                compaction: None,
                 prompt_sources: Vec::new(),
                 tools: Vec::new(),
                 config: config.into(),
@@ -147,6 +156,7 @@ impl RuntimeDiagnostics {
         state.identity.agent_id = agent_id;
         state.identity.agent_fingerprint = agent_fingerprint;
         state.context = None;
+        state.compaction = None;
     }
 
     pub fn update_agent(&self, id: &str, fingerprint: &str) {
@@ -157,6 +167,37 @@ impl RuntimeDiagnostics {
 
     pub fn record_context(&self, context: ContextUsage) {
         self.write().context = Some(context);
+    }
+
+    pub(crate) fn compaction(&self) -> Option<CompactionDiagnostics> {
+        self.read().compaction.clone()
+    }
+
+    pub(crate) fn clear_compaction(&self) {
+        self.write().compaction = None;
+    }
+
+    pub(crate) fn record_compaction_context(
+        &self,
+        current: CompactionContext,
+        last_provider_check: Option<rho_sdk::CompactionDecision>,
+    ) {
+        let mut state = self.write();
+        let last_idle_check = state
+            .compaction
+            .as_mut()
+            .and_then(|previous| previous.last_idle_check.take());
+        state.compaction = Some(CompactionDiagnostics {
+            current,
+            last_idle_check,
+            last_provider_check: last_provider_check.map(Into::into),
+        });
+    }
+
+    pub(crate) fn record_idle_compaction(&self, check: IdleCompactionCheck) {
+        if let Some(compaction) = self.write().compaction.as_mut() {
+            compaction.last_idle_check = Some(check);
+        }
     }
 
     pub(crate) fn update_web_search(&self, settings: &crate::config::WebSearchSettings) {
@@ -226,6 +267,7 @@ impl RuntimeDiagnostics {
         let value = match action {
             "info" => serde_json::to_value(&state.identity),
             "context" => serde_json::to_value(&state.context),
+            "compaction" => serde_json::to_value(&state.compaction),
             "prompt_sources" => serde_json::to_value(&state.prompt_sources),
             "tools" => serde_json::to_value(&state.tools),
             "config" => serde_json::to_value(&state.config),

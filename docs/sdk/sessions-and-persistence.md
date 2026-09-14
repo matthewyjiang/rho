@@ -31,7 +31,7 @@ Compaction transport and policy are host supplied:
 - `Compactor` accepts owned provider-neutral history and cancellation, then returns complete replacement history.
 - Host compactors may attach optional `ModelUsage`, including `cost_usd_micros`, when the summary step itself was charged.
 - `CompactionPolicy::after_messages` triggers at or above a nonzero message count.
-- `CompactionPolicy::at_context_tokens` triggers when the SDK's provider-neutral estimate of message and tool-schema context reaches a nonzero token threshold.
+- `CompactionPolicy::at_context_tokens` triggers when the session's calibrated context estimate reaches a nonzero token threshold. Before a successful provider usage report, it falls back to the local estimate of message and tool-schema context.
 - A builder with automatic policy but no compactor is invalid.
 - Automatic compaction is checked before each provider step, emits started/completed events, commits the replacement immediately, updates compaction counters, and then continues.
 - Compaction accounting accumulates completed operations, removed messages, estimated removed context tokens, optional cost, and the latest before/after token estimates.
@@ -39,6 +39,18 @@ Compaction transport and policy are host supplied:
 - A failed or cancelled compactor does not install its replacement history.
 
 A compactor must preserve valid conversation structure and all information the host requires for continuation. The SDK does not prescribe a summarization model. Repeated compaction must remain bounded and should be tested with the host's actual policy.
+
+### Shared context accounting
+
+`Session::context_estimate()` returns the committed estimate while idle and the latest published history-boundary estimate during a run. It is a small snapshot, not a copy of live history. `ContextEstimate::tokens()` uses the last applicable successful request's inclusive prompt usage plus locally estimated appended messages. It never uses accumulated multi-request billing usage. `estimated_tokens()` exposes the uncalibrated estimate; the provider baseline and its corresponding local estimate are available separately.
+
+Calibration applies only when that request is an unchanged prefix with the same provider identity and tool schemas. Reset and explicit history replacement invalidate it. Compaction also invalidates it when the replacement rewrites the measured prefix; unchanged compactor output preserves the baseline. Completed-operation counters retain their existing meaning even when an operation does not reduce history. Failed or cancelled provider attempts do not establish a new baseline; delivered steering invalidates calibration when the exact request cannot be reconstructed. Baselines are not serialized, so resume starts uncalibrated until a fresh successful report. `Session::estimate_context(messages)` lets hosts size proposed history, such as a pending user prompt, against the same accounting without mutating the session.
+
+`CompactionRequest::context_estimate()` supplies optional accounting for the history being compacted. Host compactors that partition history with the local estimator can use `ContextEstimate::estimated_budget(target_tokens)` to convert a model-token target into a conservative local budget. This conversion is approximate and never enlarges the target. Manually constructed requests may omit accounting. When fresh boundary input must remain verbatim, the request's estimate describes only the compactable prefix, while the trigger still checks the full context.
+
+`Session::last_compaction_decision()` exposes the last SDK policy check, including disabled policy, below-threshold, and pending-async-tool skips. A due decision is not a completion event. `StepStarted::estimated_context_tokens` continues to mean the raw local estimate; hosts wanting the calibrated count should query the session. Compaction outcome and snapshot before/after token statistics remain message-only local estimates, not the calibrated trigger or billing totals.
+
+`NEXT_MAJOR(rho-sdk): carry ContextEstimate on StepStarted instead of estimated_context_tokens.` Until that field can change, use the session accessor for the latest accounting snapshot. It can be newer than a buffered event; it is not an event-owned snapshot of that exact step.
 
 ## Snapshot schema
 

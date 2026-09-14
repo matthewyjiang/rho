@@ -228,11 +228,15 @@ impl Compactor for ModelCompactor {
 
             // Clone only after native compact is unavailable or failed and fallback needs ownership.
             let messages = request.messages().to_vec();
-            let target_tokens = self.config.target_tokens_for_trigger(
+            let context = request.context_estimate().unwrap_or_else(|| {
+                rho_sdk::ContextEstimate::from_estimated_tokens(
+                    rho_sdk::model::context::estimate_context_tokens(&messages, &self.tool_specs),
+                )
+            });
+            let target_tokens = self.config.target_tokens_for_context(
                 self.context_window,
                 request.trigger(),
-                &messages,
-                &self.tool_specs,
+                context,
             );
             let Some(partition) =
                 partition_messages_for_compaction(&messages, &self.tool_specs, target_tokens)

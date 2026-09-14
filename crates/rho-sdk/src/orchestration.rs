@@ -14,7 +14,7 @@ use crate::{
         ProviderCancellationMode,
     },
     run::RunCommand,
-    session::{HistoryMetrics, RunStart, SessionCore, SessionState},
+    session::{RunStart, SessionCore, SessionState},
     steering::SteeringQueue,
     CancellationToken, Error, ModelCallProfile, ProviderError, RunEvent, RunId,
 };
@@ -35,6 +35,7 @@ pub(super) const MAX_HONORED_RETRY_AFTER: std::time::Duration = std::time::Durat
 
 mod async_jobs;
 mod boundary_input;
+mod compaction;
 mod model_call_timer;
 mod pending_tool_outputs;
 mod provider_cancellation;
@@ -50,6 +51,7 @@ use async_jobs::{
     await_all_jobs, await_first_job, forward_job_notice, harvest_ready_jobs, split_tool_calls,
     AsyncJobSet, AwaitJobs,
 };
+use compaction::maybe_compact;
 use model_call_timer::ModelCallTimer;
 use provider_cancellation::{
     drain_cancelled_provider_events, drain_cooperative_provider_on_cancellation,
@@ -183,7 +185,7 @@ async fn execute_turn_loop(
             run_id: &run_id,
             step_index: step,
         };
-        let mut compaction_estimate = None;
+        let mut compaction_estimate;
         if !control.async_jobs.has_pending() {
             match maybe_compact(
                 &core,
@@ -201,11 +203,23 @@ async fn execute_turn_loop(
                     return control.terminate(core, history, error).await;
                 }
             }
-        } else if runtime.compaction_policy.is_some() {
-            tracing::warn!(
-                pending = control.async_jobs.pending_count(),
-                "skipping compaction while async tool jobs are pending"
+        } else {
+            if runtime.compaction_policy.is_some() {
+                tracing::warn!(
+                    pending = control.async_jobs.pending_count(),
+                    "skipping compaction while async tool jobs are pending"
+                );
+            }
+            let estimate = core.estimate_context(&history, &tool_specs);
+            core.record_compaction_decision(
+                crate::CompactionDecision::evaluate(
+                    runtime.compaction_policy.as_ref(),
+                    history.len(),
+                    estimate,
+                )
+                .with_pending_tools(),
             );
+            compaction_estimate = Some(estimate);
         }
         if !control.async_jobs.has_pending() {
             match boundary_input::collect(
@@ -249,9 +263,10 @@ async fn execute_turn_loop(
         // Emit before the provider call so quiet hosts still show context fill
         // while thinking and tool-call JSON stream (usage often arrives only at
         // the end of the OpenAI-compatible stream).
-        let estimated_context_tokens = compaction_estimate.unwrap_or_else(|| {
-            crate::model::context::estimate_context_tokens(&history, &tool_specs)
-        });
+        let context_estimate =
+            compaction_estimate.unwrap_or_else(|| core.estimate_context(&history, &tool_specs));
+        core.publish_context_estimate(context_estimate);
+        let estimated_context_tokens = context_estimate.estimated_tokens();
         match emit(
             &events,
             &cancellation,
@@ -294,6 +309,15 @@ async fn execute_turn_loop(
             }
         };
         accumulated_usage = accumulated_usage.saturating_add(capture.usage());
+        // Delivered steering can change the physical request outside this
+        // immutable history slice. Never attach that report to the wrong prefix.
+        if control.steering.has_delivered() {
+            core.invalidate_working_context();
+        } else {
+            // Associate usage with the estimate of this exact immutable request,
+            // not whichever context snapshot was published most recently.
+            core.record_context_usage(&history, &tool_specs, capture.usage(), context_estimate);
+        }
 
         let ModelResponse::Assistant(content) = response;
         let tool_calls = content
@@ -312,6 +336,7 @@ async fn execute_turn_loop(
             provider_context,
         };
         history.push(Message::assistant(assistant));
+        core.append_context_estimate(history.last().expect("assistant was appended"));
         drain_commands(control.commands, control.steering);
         let was_steered = control.steering.has_staged();
         let (async_calls, sync_calls) = split_tool_calls(tool_calls, &async_ids, &runtime.tools);
@@ -468,87 +493,6 @@ async fn execute_turn_loop(
     )
     .await;
     Ok(outcome)
-}
-
-async fn maybe_compact(
-    core: &Arc<SessionCore>,
-    scope: ProviderRequestScope<'_>,
-    tool_specs: &[crate::model::ToolSpec],
-    history: &mut Vec<Message>,
-    preserve_from: Option<usize>,
-    cancellation: &CancellationToken,
-    events: &mpsc::Sender<RunEvent>,
-) -> Result<Option<u64>, Error> {
-    let Some(policy) = &scope.runtime.compaction_policy else {
-        return Ok(None);
-    };
-    let context_tokens = crate::model::context::estimate_context_tokens(history, tool_specs);
-    if !policy.should_compact(history.len(), context_tokens) {
-        return Ok(Some(context_tokens));
-    }
-    let compactor = scope
-        .runtime
-        .compactor
-        .as_ref()
-        .expect("builder requires a compactor for automatic policy");
-    emit(
-        events,
-        cancellation,
-        RunEvent::CompactionStarted {
-            trigger: crate::CompactionTrigger::Automatic,
-            message_count: history.len(),
-        },
-    )
-    .await?;
-    let previous = HistoryMetrics::from_history(history);
-    // Fresh completion input must reach one provider request verbatim. Compact
-    // only the older prefix, but evaluate the policy against the full history
-    // above so consecutive injections cannot indefinitely defer compaction.
-    let compact_end = preserve_from.unwrap_or(history.len());
-    let request =
-        crate::CompactionRequest::new(history[..compact_end].to_vec(), cancellation.clone())
-            .with_trigger(crate::CompactionTrigger::Automatic)
-            .with_request_context(
-                scope.session_id.clone(),
-                scope.runtime.usage_parent_session_id.clone(),
-                scope.run_id.clone(),
-                Some(scope.step_index),
-                scope
-                    .runtime
-                    .workspace
-                    .as_ref()
-                    .map(|workspace| workspace.root().to_path_buf()),
-            );
-    let output = match compactor.cancellation_mode() {
-        crate::CompactorCancellationMode::Cooperative => compactor.compact(request).await?,
-        crate::CompactorCancellationMode::External => {
-            tokio::select! {
-                result = compactor.compact(request) => result?,
-                () = cancellation.cancelled() => return Err(Error::Cancelled),
-            }
-        }
-    };
-    let (mut replacement, usage) = output.into_parts();
-    // Restore the suffix before checkpointing or emitting the committed snapshot.
-    // Keep history intact until success so cancellation cannot lose accepted input.
-    replacement.extend_from_slice(&history[compact_end..]);
-    let outcome = core
-        .commit_compaction(previous, replacement.clone(), usage)?
-        .with_committed_snapshot(core.persistence_snapshot());
-    *history = replacement;
-    // Once committed, hosts must receive this checkpoint even if cancellation
-    // arrives while the event channel is full. Run::outcome drains the channel.
-    events
-        .send(RunEvent::CompactionCompleted {
-            trigger: crate::CompactionTrigger::Automatic,
-            outcome,
-        })
-        .await
-        .map_err(|_| Error::Interrupted {
-            message: "run event consumer was dropped".into(),
-        })?;
-    // Replacement can change content without changing the message count.
-    Ok(None)
 }
 
 pub(super) struct RunControl<'a> {

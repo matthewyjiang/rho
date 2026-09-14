@@ -1244,6 +1244,14 @@ impl ModelProvider for MidTurnSteeringProvider {
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner())
                     .push(offered);
+                // This report includes provider-delivered input absent from the
+                // SDK's original request slice, so it cannot calibrate that prefix.
+                events
+                    .send(ModelEvent::Usage(crate::model::ModelUsage {
+                        input_tokens: Some(100_000),
+                        ..crate::model::ModelUsage::default()
+                    }))
+                    .await?;
                 Ok(ModelResponse::Assistant(vec![ContentBlock::Text(
                     "partial".into(),
                 )]))
@@ -1323,6 +1331,8 @@ async fn delivered_steer_applies_alone_before_late_undelivered() {
         .iter()
         .any(|event| { matches!(event, RunEvent::SteeringDelivered { id } if id == &late_id) }));
     assert_eq!(run.outcome().await.unwrap().text(), "continuation");
+
+    assert_eq!(session.context_estimate().provider_reported_tokens(), None);
 
     let requests = provider
         .requests
