@@ -179,6 +179,7 @@ pub(in crate::tui) use statusline::reasoning_is_configurable;
 mod stream;
 mod stream_pace;
 mod stream_preview;
+mod streaming_mode;
 mod subagent_attach;
 mod subagent_delivery;
 mod subagent_panel;

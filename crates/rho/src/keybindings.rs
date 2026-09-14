@@ -10,6 +10,8 @@ pub struct Keybindings {
     pub open_editor: KeyBinding,
     pub jump_to_bottom: KeyBinding,
     pub toggle_tool_output: KeyBinding,
+    /// Cycles cosmetic text streaming while idle or during a turn.
+    pub cycle_streaming_mode: KeyBinding,
     pub insert_newline: KeyBinding,
     /// Queues the composer contents as a follow-up while a turn is running.
     /// Ctrl+Enter is always accepted as a fallback because Windows Terminal,
@@ -31,6 +33,7 @@ impl Default for Keybindings {
             open_editor: KeyBinding::control('g'),
             jump_to_bottom: KeyBinding::control_code(KeyCode::End),
             toggle_tool_output: KeyBinding::control('o'),
+            cycle_streaming_mode: KeyBinding::alt(KeyCode::Char('s')),
             insert_newline: KeyBinding::control('j'),
             queue_prompt: KeyBinding::alt(KeyCode::Enter),
             paste_image: KeyBinding::control('v'),
@@ -62,6 +65,7 @@ struct PartialKeybindings {
     open_editor: Option<KeyBinding>,
     jump_to_bottom: Option<KeyBinding>,
     toggle_tool_output: Option<KeyBinding>,
+    cycle_streaming_mode: Option<KeyBinding>,
     insert_newline: Option<KeyBinding>,
     queue_prompt: Option<KeyBinding>,
     paste_image: Option<KeyBinding>,
@@ -94,6 +98,9 @@ impl<'de> Deserialize<'de> for Keybindings {
             toggle_tool_output: partial
                 .toggle_tool_output
                 .unwrap_or(defaults.toggle_tool_output),
+            cycle_streaming_mode: partial
+                .cycle_streaming_mode
+                .unwrap_or(defaults.cycle_streaming_mode),
             insert_newline: partial.insert_newline.unwrap_or(defaults.insert_newline),
             queue_prompt: partial.queue_prompt.unwrap_or(defaults.queue_prompt),
             paste_image: partial.paste_image.unwrap_or(defaults.paste_image),

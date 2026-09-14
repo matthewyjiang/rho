@@ -77,6 +77,13 @@ fn smoke_startup_stream_exit() {
     assert_pass("startup_stream_exit");
 }
 
+// Covers: menu and shortcut share a saved streaming preference during a turn.
+// Owner: interactive TUI
+#[test]
+fn streaming_controls_persist_during_turn() {
+    assert_pass("streaming_controls");
+}
+
 // Covers: model-scoped prompt switches are visible and invalid files do not
 // interrupt the interactive session. Owner: interactive TUI lifecycle.
 #[test]

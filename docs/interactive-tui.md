@@ -83,6 +83,7 @@ Most editing keys work the way they do in a normal terminal input. Run `/help` f
 | `up` / `down` | Re-enter previous prompts from this and earlier sessions, or select a command or file while a picker is open |
 | `tab` | Complete the selected command or file path, or complete a workspace path in shell mode |
 | `ctrl-p` | Cycle to the next pinned model. `ctrl-shift-p` cycles backward on terminals that report it. Does nothing when no models are pinned |
+| `Alt+S` | Cycle and save output streaming: live → paragraph → off → live. Works during a turn; configurable as `cycle_streaming_mode` |
 | `enter` | Send a prompt, run a selected slash command, or steer after the current assistant turn while a response is running |
 | `alt-enter` | Queue the composer contents as a follow-up that runs after the current turn ends; while idle, insert a newline. `ctrl-enter` always works as a fallback for terminals that bind `alt-enter` to fullscreen (Windows Terminal, Windows Alacritty, WezTerm). Configurable as `queue_prompt` |
 | `alt-up` | Pull the most recent queued prompt back into the composer for editing |
@@ -97,6 +98,20 @@ Most editing keys work the way they do in a normal terminal input. Run `/help` f
 | `ctrl-c` | Clear input, then quit if pressed again |
 
 `ctrl-g` opens the current composer text in a non-empty `$VISUAL`, falling back to `$EDITOR` only when `VISUAL` is unset or empty, both while idle and while a response is running. Rho temporarily restores the normal terminal before starting the editor and resumes the TUI after the process exits. The editor receives expanded pasted text rather than any collapsed display marker. Rho removes one conventional final line ending from the edited file when it restores the composer. Set `VISUAL` or `EDITOR` to an executable path or a platform-native command line with arguments. Rho does not pick a default editor; if neither variable is set or non-empty, it warns with `EDITOR is not set`.
+
+## Text streaming
+
+Open `/config` → **Appearance** → **Output streaming** and press Enter to cycle how assistant and reasoning text appears. `Alt+S` cycles the same saved preference, including during a turn:
+
+- `live`, the default, reveals text as it arrives.
+- `paragraph` reveals text through blank-line boundaries. Whitespace-only blank lines and CRLF line endings count; this does not parse Markdown structure.
+- `off` holds text until a message boundary, such as reasoning handing off to the answer, a tool handoff, or response completion. It does not wait for the entire agent run.
+
+Switching modes reveals text already received through the normal Markdown renderer, then applies the new mode to subsequent text. Incomplete Markdown stays pending until it can render safely; switching does not end the message or split a code fence. It never hides text already displayed. Model generation, tool execution, tool previews, and cancellation keep running normally; the completed answer is the same. These controls work during a turn without submitting a prompt or restarting the response.
+
+Cancellation and errors reveal held text. A retry discards the failed attempt's pending text.
+
+Both the config menu and shortcut save `[display].output_streaming` in configuration, so the preference applies to later sessions. This does not change provider streaming settings.
 
 ## Commands
 

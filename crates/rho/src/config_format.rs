@@ -73,6 +73,7 @@ struct ModelConfig<'a> {
 struct DisplayConfig {
     show_reasoning_output: bool,
     zen_mode: bool,
+    output_streaming: super::StreamingMode,
     theme: String,
     max_tool_output_lines: usize,
     prompt_history_limit: usize,
@@ -251,6 +252,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
             display: DisplayConfig {
                 show_reasoning_output: config.show_reasoning_output,
                 zen_mode: config.zen_mode,
+                output_streaming: config.output_streaming,
                 theme: config.theme.clone(),
                 max_tool_output_lines: config.max_tool_output_lines,
                 prompt_history_limit: config.prompt_history_limit,

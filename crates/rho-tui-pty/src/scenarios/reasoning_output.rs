@@ -84,6 +84,7 @@ fn toggle_completed_reasoning(harness: &mut PtyHarness) -> Result<()> {
             AppearanceSetting::Reasoning => {
                 harness.inject_key(&Key::Down)?;
                 harness.inject_key(&Key::Down)?;
+                harness.inject_key(&Key::Down)?;
             }
             AppearanceSetting::Zen => {}
         }

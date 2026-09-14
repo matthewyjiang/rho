@@ -50,6 +50,7 @@ mod side_chat;
 mod startup;
 mod statusline;
 mod steering;
+mod streaming_controls;
 mod subagent_rail;
 mod supervised_approval;
 mod text_selection;
@@ -135,6 +136,7 @@ use steering::{
     QUEUE_FOLLOW_UP_DURING_TURN_SCENARIO, RETRACT_STEERING_DURING_TOOL_SCENARIO,
     STEER_APPEARS_IN_TRANSCRIPT_SCENARIO, STEER_DELIVERED_MARKER_SCENARIO,
 };
+use streaming_controls::STREAMING_CONTROLS_SCENARIO;
 use subagent_rail::SUBAGENT_RAIL_MOUSE_SCENARIO;
 use supervised_approval::SUPERVISED_APPROVAL_STEPS;
 use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
@@ -476,6 +478,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     STARTUP_PROMPT_STREAM_EXIT_SCENARIO,
     NO_SAVE_SESSION_SCENARIO,
     REASONING_OUTPUT_RETROACTIVE_SCENARIO,
+    STREAMING_CONTROLS_SCENARIO,
     Scenario::new(
         "cancel_and_resubmit",
         "Cancel a long fixture stream and submit another prompt",
@@ -955,20 +958,8 @@ pub fn smoke_scenario_ids() -> Vec<&'static str> {
         .collect()
 }
 
-/// Release the hanging compact fixture after the follow-up is queued.
-///
-/// Must match `RELEASE_MARKER` in `crates/rho-providers/src/providers/tui_fixture/compact.rs`.
-fn release_compact_fixture(harness: &mut crate::harness::PtyHarness) -> anyhow::Result<()> {
-    release_fixture(harness, ".rho-fixture-release-compact")
-}
-
-fn release_fixture(harness: &mut crate::harness::PtyHarness, marker: &str) -> anyhow::Result<()> {
-    let cwd = harness
-        .working_directory()
-        .ok_or_else(|| anyhow::anyhow!("pty harness has no working directory"))?;
-    std::fs::write(cwd.join(marker), b"")
-        .map_err(|error| anyhow::anyhow!("write fixture release marker {marker}: {error}"))
-}
+mod fixture_release;
+use fixture_release::{release_compact_fixture, release_fixture};
 
 pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome> {
     let scenario = all_scenarios()

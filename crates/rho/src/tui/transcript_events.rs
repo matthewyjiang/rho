@@ -145,8 +145,11 @@ impl App {
         kind: StreamKind,
         text: &str,
     ) -> Result<bool, B::Error> {
-        self.streams.push_delta(kind, text, Instant::now());
-        self.drain_stream(terminal, kind)
+        if self.streams.push_delta(kind, text, Instant::now()) {
+            self.drain_stream(terminal, kind)
+        } else {
+            Ok(false)
+        }
     }
 
     pub(super) fn drain_stream<B: Backend>(
@@ -190,15 +193,13 @@ impl App {
         {
             return Ok(false);
         }
-        let released = self.streams.on_tick(now);
+        self.streams.on_tick(now);
         let Some(kind) = self.streams.current_stream_kind else {
             return Ok(false);
         };
-        let drained = if released {
-            self.drain_stream(terminal, kind)?
-        } else {
-            false
-        };
+        // Mode changes can release text before this tick. Drain pending text
+        // even when the pacer itself had nothing to release.
+        let drained = self.drain_stream(terminal, kind)?;
         let preview_changed = self.refresh_stream_preview(terminal, kind)?;
         Ok(drained || preview_changed)
     }

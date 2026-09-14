@@ -12,6 +12,7 @@ mod quiet_subagent;
 mod release;
 mod response_scenarios;
 mod stream_scenarios;
+mod streaming_controls;
 
 #[cfg(test)]
 #[path = "tui_fixture/semantic_tests.rs"]
@@ -139,6 +140,9 @@ async fn fixture_stream(
     }
     if let Some(response) = goal::intercept(&prompt, &request, &events).await {
         return response;
+    }
+    if prompt == "fixture streaming controls" {
+        return streaming_controls::stream(&request, &events).await;
     }
     if let Some(response) = stream_scenarios::intercept(&prompt, &request, &events).await {
         return response;

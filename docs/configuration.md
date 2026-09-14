@@ -18,7 +18,7 @@ flowchart TD
 | Goal | Where |
 | --- | --- |
 | Provider, model, reasoning | `[model]` or `/model`, `/config` → **Models** |
-| Theme, zen, reasoning display | `[display]` or `/config` → **Appearance** |
+| Theme, zen, reasoning display, output streaming | `[display]` or `/config` → **Appearance** |
 | Permission mode | `/permissions <mode>`, `[behavior].permission_mode`, or `/config` → **Agent behavior** |
 | Concurrent agents | `[behavior].agent_concurrency` or `/config` → **Agent behavior** |
 | Questionnaire timeout | `[questionnaire].timeout_seconds` or `/config` → **Agent behavior**, disabled by default |
@@ -169,6 +169,8 @@ Rho reads each model's available effort values from cached [models.dev](https://
 If a response interleaves answer text and reasoning, Rho keeps those segments in arrival order regardless of visibility. Hidden reasoning therefore leaves its `Thought for …` receipt between answer segments, rather than joining the answer into one block. Zen mode hides that receipt too; toggling either setting does not merge or reorder the stored segments.
 
 `zen_mode` hides tool cards, reasoning blocks, and the `Thinking...` placeholder so the transcript shows only message text. The live activity rail, subagent rows, and background-process rows stay visible so you can still see progress, and the status row displays `zen` while the mode is enabled. It defaults to `false`. Changing it from `/config` applies immediately to the current transcript and live turn UI. Tools and reasoning still run; only their transcript display is suppressed.
+
+`output_streaming` controls when received assistant and reasoning text becomes visible. It defaults to `live`; `paragraph` reveals completed paragraphs, and `off` waits for message boundaries such as a tool handoff or response completion. Change it with `/config` → **Appearance** → **Output streaming** or `Alt+S`. Both controls save the same preference and apply during a turn. Switching reveals held text without hiding earlier output. Provider generation and tools are unaffected. See [Text streaming](/interactive-tui#text-streaming).
 
 `theme` selects the interactive TUI color theme. The default is `terminal` (match the host palette). Named built-ins (Dracula, Nord, One Half, and others) and custom Windows Terminal JSON under `~/.rho/themes/<id>.json` (or `$RHO_HOME/themes/`) are listed in [Theme](/interactive-tui/theme). Change it with `/theme` or `/config` → **Appearance** → **Theme**. The picker previews live; Enter saves.
 
