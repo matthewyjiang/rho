@@ -210,7 +210,7 @@ async fn execute_turn_loop(
                     "skipping compaction while async tool jobs are pending"
                 );
             }
-            let estimate = core.estimate_context(&history, &tool_specs);
+            let estimate = core.advance_context(&history, &tool_specs);
             core.record_compaction_decision(
                 crate::CompactionDecision::evaluate(
                     runtime.compaction_policy.as_ref(),
@@ -264,8 +264,7 @@ async fn execute_turn_loop(
         // while thinking and tool-call JSON stream (usage often arrives only at
         // the end of the OpenAI-compatible stream).
         let context_estimate =
-            compaction_estimate.unwrap_or_else(|| core.estimate_context(&history, &tool_specs));
-        core.publish_context_estimate(context_estimate);
+            compaction_estimate.unwrap_or_else(|| core.advance_context(&history, &tool_specs));
         let estimated_context_tokens = context_estimate.estimated_tokens();
         match emit(
             &events,

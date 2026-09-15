@@ -32,16 +32,7 @@ impl Session {
     pub fn estimate_context(&self, messages: &[Message]) -> ContextEstimate {
         let runtime = self.core.runtime();
         let tools = runtime.tools.specs();
-        let identity = runtime.provider.identity();
-        let data = self
-            .core
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        data.working_context
-            .as_ref()
-            .unwrap_or(&data.context)
-            .estimate(messages, &tools, &identity)
+        self.core.estimate_context(messages, &tools)
     }
 
     /// Latest automatic policy check, including skipped checks. Not persisted.
@@ -55,7 +46,25 @@ impl Session {
 }
 
 impl SessionCore {
+    /// Estimates proposed history without changing the active accounting.
     pub(crate) fn estimate_context(
+        &self,
+        history: &[Message],
+        tools: &[ToolSpec],
+    ) -> ContextEstimate {
+        let identity = self.runtime().provider.identity();
+        let data = self
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        data.working_context
+            .as_ref()
+            .unwrap_or(&data.context)
+            .estimate(history, tools, &identity)
+    }
+
+    /// Advances and publishes accounting for the append-only working history.
+    pub(crate) fn advance_context(
         &self,
         history: &[Message],
         tools: &[ToolSpec],
@@ -66,14 +75,6 @@ impl SessionCore {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         working_context(&mut data).advance(history, tools, &identity)
-    }
-
-    pub(crate) fn publish_context_estimate(&self, estimate: ContextEstimate) {
-        let mut data = self
-            .data
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        working_context(&mut data).publish(estimate);
     }
 
     pub(crate) fn record_context_usage(
