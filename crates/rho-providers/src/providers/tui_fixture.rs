@@ -11,6 +11,7 @@ mod goal;
 mod quiet_subagent;
 mod release;
 mod response_scenarios;
+mod sessions;
 mod stream_scenarios;
 mod streaming_controls;
 
@@ -120,6 +121,9 @@ async fn fixture_stream(
     events: ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
     let prompt = last_user_text(&request).unwrap_or_default();
+    if let Some(response) = sessions::intercept(&prompt, &request) {
+        return response;
+    }
     if let Some(response) = boundary_notifications::intercept(&request) {
         return response;
     }

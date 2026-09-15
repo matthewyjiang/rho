@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Presentation {
     Card(rho_tools::tool_card::ToolCard),
+    /// Facts-only receipt when collapsed; expansion reveals the full body.
+    SummaryCard(rho_tools::tool_card::ToolCard),
     Message(Box<MessageCard>),
 }
 

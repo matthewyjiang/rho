@@ -1,4 +1,8 @@
-use std::{fs, path::Path, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use serde_json::json;
@@ -38,13 +42,13 @@ pub(super) fn setup_sessions_hub(home: &IsolatedHome) -> Result<()> {
     Ok(())
 }
 
-fn write_seed_session(
+pub(super) fn write_seed_session(
     home: &IsolatedHome,
     physical_cwd: &Path,
     recorded_cwd: &Path,
     id: &str,
     text: &str,
-) -> Result<()> {
+) -> Result<PathBuf> {
     let session_dir = home
         .home
         .join(".rho/sessions")
@@ -62,11 +66,10 @@ fn write_seed_session(
         "timestamp": "2",
         "message": {"User": [{"Text": text}]},
     });
-    fs::write(
-        session_dir.join(format!("1_{id}.jsonl")),
-        format!("{header}\n{message}\n"),
-    )
-    .context("write seeded session transcript")
+    let path = session_dir.join(format!("1_{id}.jsonl"));
+    fs::write(&path, format!("{header}\n{message}\n"))
+        .context("write seeded session transcript")?;
+    Ok(path)
 }
 
 fn workspace_key(cwd: &Path) -> String {

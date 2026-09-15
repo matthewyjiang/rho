@@ -80,6 +80,14 @@ capability, including the default agent. Unlike workspace file search, it asks
 for read access to the session storage directory. Checked permission modes may
 ask for approval or deny that outside-workspace read.
 
+In the TUI, search cards show the query, matching-session count, and scope.
+Read cards show the original speaker and character range. Press `Ctrl+O` or
+click the card to expand grouped excerpts or the retrieved passage, including
+full session handles and evidence anchors. Collapse it again to keep only the
+receipt. Expanding reveals already-retrieved evidence; it does not fetch another
+page. Continuation notices indicate when more results or passage text are
+available through another tool call. Tool failures stay visible when collapsed.
+
 ```json
 {"action":"search","query":"cancellation session index"}
 ```

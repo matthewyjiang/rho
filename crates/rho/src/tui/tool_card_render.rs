@@ -11,6 +11,10 @@ use rho_tools::tool_card::{
 };
 use unicode_width::UnicodeWidthStr;
 
+#[path = "tool_card_header.rs"]
+mod header;
+use header::push_header_line;
+
 use super::{
     feed_image::reserve_optional_image_rows,
     render::{
@@ -18,7 +22,7 @@ use super::{
         push_wrapped_text, slice_spans_by_bytes, soft_wrap_visible_ranges, spans_display_width,
         styled_blank_line, wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
     },
-    syntax::{highlight_source_spans, spans_from_segments_with_matches},
+    syntax::spans_from_segments_with_matches,
     theme::Theme,
     tool_diff::{self, DiffSyntax},
     tool_search::SearchSyntax,
@@ -146,9 +150,16 @@ pub(super) fn paint_entry_sections(
         crate::presentation::Presentation::Card(card) => paint_card_sections(
             card,
             width,
-            max_tool_output_lines,
+            max_tool_output_lines.max(1),
             tool.expanded,
             live_shell_elapsed(tool),
+        ),
+        crate::presentation::Presentation::SummaryCard(card) => paint_card_sections(
+            card,
+            width,
+            summary_card_budget(card, width),
+            tool.expanded,
+            None,
         ),
     }
 }
@@ -174,7 +185,13 @@ pub(super) fn push_tool_card(
     expanded: bool,
     live_elapsed: Option<Duration>,
 ) {
-    let sections = paint_card_sections(card, width, max_tool_output_lines, expanded, live_elapsed);
+    let sections = paint_card_sections(
+        card,
+        width,
+        max_tool_output_lines.max(1),
+        expanded,
+        live_elapsed,
+    );
     lines.extend(sections.header);
     lines.extend(sections.facts);
     lines.extend(sections.body);
@@ -194,7 +211,7 @@ pub(super) struct CardSections {
 pub(super) fn paint_card_sections(
     card: &ToolCard,
     width: usize,
-    max_tool_output_lines: usize,
+    collapsed_rows: usize,
     expanded: bool,
     live_elapsed: Option<Duration>,
 ) -> CardSections {
@@ -202,7 +219,7 @@ pub(super) fn paint_card_sections(
     push_header_line(&mut header, card, card.status, width);
     let mut facts = Vec::new();
 
-    let budget = max_tool_output_lines.max(1);
+    let budget = collapsed_rows;
     // Collapsed: paint only the visible budget (syntax is the costly part).
     // Expanded: paint the full body. Toggle checks never full-paint.
     let paint_budget = if expanded { None } else { Some(budget) };
@@ -304,6 +321,14 @@ pub(super) fn paint_card_sections(
         body,
         last_fact_is_end,
     }
+}
+
+/// A receipt keeps all facts, including wrapped notices, but hides its body.
+fn summary_card_budget(card: &ToolCard, width: usize) -> usize {
+    card.facts
+        .iter()
+        .map(|fact| push_wrapped_tree_fact(fact_spans(fact, None), width).len())
+        .sum()
 }
 
 /// Cached header plus rebuilt timeout facts. Used to refresh the live elapsed
@@ -611,92 +636,6 @@ fn apply_trunk_stem(lines: &mut [Line<'static>]) {
         spans.extend(line.spans.iter().skip(1).cloned());
         line.spans = spans;
     }
-}
-
-fn push_header_line(
-    lines: &mut Vec<Line<'static>>,
-    card: &ToolCard,
-    status: ToolStatus,
-    width: usize,
-) {
-    // Marker stays on the first row only. Primary/command/detail may wrap with a
-    // hang under the fixed prefix so long streamed args stay visible (main used
-    // to hard-wrap whole tool lines; a single clipped header hides the tail).
-    let marker = Span::styled(format!("{} ", status.marker()), Theme::tool_marker(status));
-    match &card.header {
-        ToolHeader::Call { verb, primary } => {
-            let mut prefix = vec![
-                marker,
-                Span::styled(verb.clone(), Theme::tool_verb(card.family)),
-            ];
-            match primary.as_ref().filter(|primary| !primary.is_empty()) {
-                Some(primary) => {
-                    prefix.push(Span::styled("(", Theme::tool_primary()));
-                    let wrappable = vec![
-                        Span::styled(primary.clone(), Theme::tool_primary()),
-                        Span::styled(")", Theme::tool_primary()),
-                    ];
-                    push_wrapped_prefixed(
-                        lines,
-                        prefix,
-                        wrappable,
-                        width,
-                        header_wrap_continuation_prefix,
-                    );
-                }
-                None => lines.push(pad_spans_line(prefix, width)),
-            }
-        }
-        ToolHeader::Shell { prompt, command } => {
-            let mut prefix = vec![
-                marker,
-                Span::styled(prompt.clone(), Theme::tool_verb(card.family)),
-            ];
-            match command.as_ref().filter(|command| !command.is_empty()) {
-                Some(command) => {
-                    prefix.push(Span::raw(" "));
-                    let wrappable = shell_command_spans(prompt, command);
-                    push_wrapped_prefixed(
-                        lines,
-                        prefix,
-                        wrappable,
-                        width,
-                        header_wrap_continuation_prefix,
-                    );
-                }
-                None => lines.push(pad_spans_line(prefix, width)),
-            }
-        }
-        ToolHeader::StatusFirst { identity, detail } => {
-            let mut prefix = vec![
-                marker,
-                Span::styled(identity.clone(), Theme::tool_verb(card.family)),
-            ];
-            if detail.is_empty() {
-                lines.push(pad_spans_line(prefix, width));
-            } else {
-                prefix.push(Span::raw("  "));
-                let wrappable = vec![Span::styled(detail.clone(), Theme::text())];
-                push_wrapped_prefixed(
-                    lines,
-                    prefix,
-                    wrappable,
-                    width,
-                    header_wrap_continuation_prefix,
-                );
-            }
-        }
-    }
-}
-
-/// Highlight a shell header while preserving its exact text for styled wrapping.
-fn shell_command_spans(prompt: &str, command: &str) -> Vec<Span<'static>> {
-    let language = if prompt.eq_ignore_ascii_case("PS") {
-        "powershell"
-    } else {
-        "bash"
-    };
-    highlight_source_spans(language, command, Theme::tool_primary())
 }
 
 /// Wrap styled text under a fixed first-line prefix.

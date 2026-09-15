@@ -20,7 +20,7 @@ use results::{
 mod apply_patch_format;
 use apply_patch_format::apply_patch_card;
 
-use super::{agent_format, ToolKind, ToolPresentation, ToolView};
+use super::{agent_format, sessions_format, ToolKind, ToolPresentation, ToolView};
 
 pub(super) fn presentation(view: &ToolView, mut card: ToolCard) -> ToolPresentation {
     card.push_notice_facts(view.metadata.presentation_notices());
@@ -203,6 +203,7 @@ pub(super) fn preview_card(
             }
             kind_card(status, kind, ToolHeader::call(name, None))
         }
+        ToolKind::Sessions => sessions_format::preview_card(arguments, status),
         ToolKind::WebSearch => {
             let primary = search_terms(arguments).or_else(|| Some(name.to_string()));
             kind_card(status, kind, ToolHeader::call("web_search", primary))
@@ -422,6 +423,15 @@ pub(super) fn finished_card(
         }
         ToolKind::Mcp => mcp_result_card(view, content, status),
         ToolKind::Other => generic_card(view, content, status),
+        ToolKind::Sessions => {
+            let mut card = sessions_format::preview_card(&view.arguments, status);
+            if !ok {
+                push_error_output(&mut card, content);
+            } else {
+                card.body = ToolBody::Lines(split_body_lines(content));
+            }
+            card
+        }
     }
 }
 
@@ -555,7 +565,7 @@ pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -
             ToolFamily::Web
         }
         ToolKind::Questionnaire => ToolFamily::Form,
-        ToolKind::Mcp => ToolFamily::Default,
+        ToolKind::Mcp | ToolKind::Sessions => ToolFamily::Default,
         ToolKind::Process | ToolKind::Other => metadata
             .map(family_from_metadata)
             .unwrap_or(ToolFamily::Default),
