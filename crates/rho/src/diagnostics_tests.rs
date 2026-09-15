@@ -47,7 +47,7 @@ fn rejects_unknown_actions_with_valid_choices() {
 
     assert_eq!(
         error,
-        "unknown rho diagnostics action 'everything'; expected one of: info, context, prompt_sources, tools, hooks, config"
+        "unknown rho diagnostics action 'everything'; expected one of: info, context, compaction, prompt_sources, tools, hooks, config"
     );
 }
 

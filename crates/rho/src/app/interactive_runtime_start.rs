@@ -82,10 +82,9 @@ impl InteractiveRuntime {
         let mut request_history = self.sessions.history();
         let pending_turn = PendingTurn::new(model_user, display_user, request_history.len());
         request_history.push(Message::User(input.blocks().to_vec()));
-        let context_usage = rho_sdk::model::ContextUsage::estimated(
-            rho_sdk::model::context::estimate_context_tokens(&request_history, &self.tools.specs()),
-            self.context_window,
-        );
+        let estimate = self.sessions.session().estimate_context(&request_history);
+        let context_usage = self.context_usage(estimate);
+        self.record_context_estimate(estimate);
         self.tools
             .checkpoint_tracker()
             .begin_turn(self.sessions.storage())

@@ -571,6 +571,7 @@ impl App {
         if agent.is_compacting() {
             return self.queue_prompt(turn.model, turn.display, paste_segments, media);
         }
+        self.apply_pending_compaction_config(agent)?;
         if agent.should_auto_compact() {
             self.start_compact(agent, super::compact_work::CompactFollowUp::None)?;
             return self.queue_prompt(turn.model, turn.display, paste_segments, media);

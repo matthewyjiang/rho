@@ -519,11 +519,11 @@ impl App {
             BooleanConfigRow {
                 toggle: ConfigToggle::AutoCompact,
                 picker_value: config_picker::AUTO_COMPACT_VALUE,
-                on_status: "auto compact: on",
-                off_status: "auto compact: off",
+                on_status: "auto compact saved: on; applies when idle",
+                off_status: "auto compact saved: off; applies when idle",
                 error_noun: "auto compact",
             },
-            |_, _| {},
+            |app, _| app.compaction_reload_pending = true,
         )
     }
 

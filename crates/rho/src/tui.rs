@@ -32,6 +32,7 @@ mod command_actions;
 mod command_block;
 mod command_palette;
 mod compact_work;
+mod compaction_config;
 mod compaction_display;
 mod composer;
 mod composer_attachments;
@@ -545,6 +546,7 @@ struct App {
     >,
     pending_changelog: Option<tokio::task::JoinHandle<changelog_command::ChangelogFetchResult>>,
     web_search_reload_pending: bool,
+    compaction_reload_pending: bool,
     pending_web_search_test:
         Option<tokio::task::JoinHandle<Result<usize, rho_tools::tool::ToolError>>>,
     /// Built on first `/limits` use; constructing a client loads TLS roots,

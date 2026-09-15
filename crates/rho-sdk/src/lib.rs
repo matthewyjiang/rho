@@ -132,6 +132,8 @@ mod boundary_input;
 mod cancellation;
 mod client;
 mod compaction;
+mod compaction_decision;
+mod context_estimate;
 mod diagnostics;
 mod error;
 mod event;
@@ -164,6 +166,8 @@ pub use compaction::{
     CompactionState, CompactionThreshold, CompactionTrigger, Compactor, CompactorCancellationMode,
     ScriptedCompactor,
 };
+pub use compaction_decision::{CompactionDecision, CompactionSkipReason};
+pub use context_estimate::ContextEstimate;
 pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind, ToolDiagnostic};
 pub use error::{
     format_retry_after, Error, ProviderDiagnostic, ProviderError, ProviderErrorKind, Retryability,

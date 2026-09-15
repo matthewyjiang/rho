@@ -8,6 +8,7 @@ mod attach_picker;
 mod attach_view;
 mod background_agents;
 mod boundary_notifications;
+mod calibrated_context;
 mod changelog;
 mod command_palette;
 #[cfg(unix)]
@@ -877,6 +878,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     quiet_subagent::COMPLETION_AFTER_NEW_SCENARIO,
     agent_messages::AGENT_MESSAGES_SCENARIO,
     boundary_notifications::SCENARIO,
+    calibrated_context::SCENARIO,
     ATTACH_PICKER_SCENARIO,
     ATTACH_PICKER_EMPTY_SCENARIO,
     ATTACH_CLI_EMPTY_SCENARIO,
@@ -966,6 +968,9 @@ pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome>
         .iter()
         .find(|scenario| scenario.id == name)
         .ok_or_else(|| anyhow::anyhow!("unknown scenario '{name}'"))?;
+    if name == calibrated_context::SCENARIO.id {
+        return calibrated_context::run(runner);
+    }
     #[cfg(unix)]
     if name == computer_preference::COMPUTER_PREFERENCE_SCENARIO.id {
         return computer_preference::run(runner);
