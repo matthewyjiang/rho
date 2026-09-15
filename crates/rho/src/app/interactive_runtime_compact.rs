@@ -25,6 +25,25 @@ impl CompactTask {
 }
 
 impl InteractiveRuntime {
+    /// Replace only compaction policy and its summarizer settings. Provider
+    /// identity, history, and successful context calibration stay unchanged.
+    pub(crate) fn set_compaction_config(
+        &mut self,
+        config: crate::compaction::CompactionConfig,
+    ) -> Result<(), Error> {
+        if self.is_session_busy() {
+            return Err(Error::SessionBusy);
+        }
+        let previous = std::mem::replace(&mut self.compaction, config);
+        if let Err(error) = self.refresh_compaction() {
+            self.compaction = previous;
+            return Err(error);
+        }
+        self.diagnostics.update_compaction_config(&self.compaction);
+        self.refresh_context_usage();
+        Ok(())
+    }
+
     pub(crate) fn is_compacting(&self) -> bool {
         self.pending_compact.is_some()
     }

@@ -69,6 +69,7 @@ impl From<CompactionDecision> for ProviderCompactionCheck {
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct CompactionDiagnostics {
+    pub completed: rho_sdk::CompactionState,
     pub current: CompactionContext,
     pub last_idle_check: Option<IdleCompactionCheck>,
     pub last_provider_check: Option<ProviderCompactionCheck>,

@@ -20,7 +20,8 @@ use crate::{
 use super::{config::find_latest_session, SETTLE, STARTUP, STREAM};
 
 // Covers: idle UI replaces provider calibration with chars/4, preventing the next
-// prompt's automatic compact. Existing compact scenarios exercise only /compact.
+// prompt's automatic compact, or saved compaction settings never reach the live
+// runtime. Existing compact scenarios exercise only /compact.
 // Owner: interactive lifecycle and its saved continuation, not SDK token policy.
 pub(super) const SCENARIO: Scenario = Scenario::new(
     "calibrated_context_auto_compact",
@@ -37,7 +38,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
     let home = IsolatedHome::new()?;
     let mut config = fs::read_to_string(&home.config_path)?;
     config.push_str(
-        "\n[compaction]\nauto_compact = true\ncompact_threshold_percent = 75\ncompact_target_percent = 50\n",
+        "\n[compaction]\nauto_compact = false\ncompact_threshold_percent = 95\ncompact_target_percent = 50\n",
     );
     fs::write(&home.config_path, config)?;
     fs::write(
@@ -80,6 +81,21 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
                 // durable idle footer, never the temporary streaming usage frame.
                 harness.wait_for_text("100.0K (76.3%)", SETTLE)?;
 
+                if phase == "fresh" {
+                    harness.set_phase("apply_live_compaction_settings");
+                    set_compaction_number(&mut harness, "threshold", "75")?;
+                    set_compaction_number(&mut harness, "target", "25")?;
+                    open_compaction_config(&mut harness)?;
+                    harness.inject_key(&crate::keys::Key::Char(' '))?;
+                    harness.wait_for_text("auto compact saved: on", SETTLE)?;
+                    close_compaction_config(&mut harness)?;
+                    // Applying settings must preserve the successful baseline.
+                    harness.wait_for_text("100.0K (76.3%)", SETTLE)?;
+                    harness.submit_text("/info")?;
+                    harness.wait_for_text("98,304", SETTLE)?;
+                    harness.wait_for_text("32,768", SETTLE)?;
+                }
+
                 harness.set_phase(format!("{phase}_automatic_compact"));
                 let prompt = format!("continue calibrated {phase}");
                 harness.submit_text(&prompt)?;
@@ -93,6 +109,8 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
                     "successful compact card with a token reduction is missing:\n{}",
                     harness.screen().contents()
                 );
+                harness.submit_text("/info")?;
+                harness.wait_for_text("local tokens (reduced)", SETTLE)?;
                 ensure!(
                     harness.quit_with_exit_command()? == 0,
                     "{phase} session did not exit cleanly"
@@ -148,6 +166,37 @@ fn wait_for_idle_reply(harness: &mut PtyHarness, reply: &str) -> Result<()> {
         );
         harness.poll(Duration::from_millis(25));
     }
+}
+
+fn open_compaction_config(harness: &mut PtyHarness) -> Result<()> {
+    harness.submit_text("/config")?;
+    harness.wait_for_text("Config · saves automatically", SETTLE)?;
+    harness.type_text("context")?;
+    harness.inject_key(&crate::keys::Key::Enter)?;
+    harness.wait_for_text("Config / Context & limits", SETTLE)
+}
+
+fn close_compaction_config(harness: &mut PtyHarness) -> Result<()> {
+    harness.inject_key(&crate::keys::Key::Esc)?;
+    harness.wait_for_text("Config · saves automatically", SETTLE)?;
+    harness.inject_key(&crate::keys::Key::Esc)?;
+    harness.wait_for_text_gone("Config · saves automatically", SETTLE)
+}
+
+fn set_compaction_number(harness: &mut PtyHarness, filter: &str, value: &str) -> Result<()> {
+    use crate::keys::Key;
+    open_compaction_config(harness)?;
+    harness.type_text(filter)?;
+    harness.inject_key(&Key::Enter)?;
+    harness.wait_for_text("Enter save", SETTLE)?;
+    harness.inject_key(&Key::End)?;
+    // The initial threshold and target are both two-digit percentages.
+    harness.inject_key(&Key::Backspace)?;
+    harness.inject_key(&Key::Backspace)?;
+    harness.type_text(value)?;
+    harness.inject_key(&Key::Enter)?;
+    harness.wait_for_text("Config / Context & limits", SETTLE)?;
+    close_compaction_config(harness)
 }
 
 fn completed_compactions(path: &Path) -> Result<u64> {

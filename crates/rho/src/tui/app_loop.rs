@@ -246,6 +246,7 @@ impl App {
         Box::pin(async move {
             let mut needs_redraw = false;
             self.poll_model_metadata_fetch(agent).await;
+            needs_redraw |= self.apply_pending_compaction_config(agent)?;
             needs_redraw |= self.poll_startup_hydrates(agent).await?;
             needs_redraw |= self.poll_computer_connection(agent).await;
             needs_redraw |= self.poll_compact(agent).await?;

@@ -6,6 +6,19 @@ use crate::{
 use super::{Session, SessionCore, SessionData};
 
 impl Session {
+    /// Committed compaction accounting, including the last local-token result.
+    ///
+    /// Unlike a policy decision, this records completed operations, including
+    /// unchanged results. It survives snapshot restore and does not copy history.
+    pub fn compaction_state(&self) -> crate::CompactionState {
+        self.core
+            .data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .compaction
+            .clone()
+    }
+
     /// Current committed context when idle, or the latest in-flight history boundary.
     ///
     /// Updated before `StepStarted`, after a successful provider response, and at

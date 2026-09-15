@@ -181,6 +181,7 @@ impl RuntimeDiagnostics {
         &self,
         current: CompactionContext,
         last_provider_check: Option<rho_sdk::CompactionDecision>,
+        completed: rho_sdk::CompactionState,
     ) {
         let mut state = self.write();
         let last_idle_check = state
@@ -191,6 +192,7 @@ impl RuntimeDiagnostics {
             current,
             last_idle_check,
             last_provider_check: last_provider_check.map(Into::into),
+            completed,
         });
     }
 
