@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.12.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.11.0...rho-coding-agent-v2.12.0) (2026-09-15)
+
+
+### Features
+
+* **tui:** add configurable output streaming modes ([#1221](https://github.com/matthewyjiang/rho/issues/1221)) ([d50f357](https://github.com/matthewyjiang/rho/commit/d50f357f62bc9a8857add4648cbfffff3f83b234))
+* **tui:** keep session tool cards compact ([#1225](https://github.com/matthewyjiang/rho/issues/1225)) ([678c789](https://github.com/matthewyjiang/rho/commit/678c789f43f2a0a06da9142c45d5535fa493e1cd))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.7.0 to 2.8.0
+
 ## [2.11.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.10.0...rho-coding-agent-v2.11.0) (2026-09-12)
 
 
