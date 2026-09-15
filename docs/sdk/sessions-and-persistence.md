@@ -54,6 +54,8 @@ Calibration applies only when that request is an unchanged prefix with the same 
 
 ## Snapshot schema
 
+`Session::compaction_state()` reads committed compaction counters and the last before/after local-token result without copying history. It includes completed operations that did not reduce context, survives snapshot restore, and is separate from the latest policy decision or any in-flight attempt.
+
 `Session::snapshot` returns `SessionSnapshot`, the stable persistence boundary. Schema version 2 contains:
 
 - schema version

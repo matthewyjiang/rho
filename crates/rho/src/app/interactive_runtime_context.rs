@@ -22,6 +22,7 @@ impl InteractiveRuntime {
         self.diagnostics.record_compaction_context(
             CompactionContext::new(estimate, self.context_window, &self.compaction),
             self.sessions.session().last_compaction_decision(),
+            self.sessions.session().compaction_state(),
         );
     }
 

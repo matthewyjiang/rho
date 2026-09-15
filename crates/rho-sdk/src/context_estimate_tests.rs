@@ -99,6 +99,17 @@ async fn context_unchanged_compaction_preserves_provider_baseline() {
             estimate_context_tokens(&session.history(), &[])
         );
         assert!(estimate.tokens() >= 100_000, "{trigger:?}");
+        let completed = session.compaction_state();
+        assert_eq!(completed.completed_compactions(), 1);
+        assert_eq!(
+            completed.last_previous_tokens(),
+            completed.last_current_tokens()
+        );
+        let restored = runtime
+            .session(SessionOptions::from_snapshot(session.snapshot()))
+            .await
+            .unwrap();
+        assert_eq!(restored.compaction_state(), completed);
     }
 }
 

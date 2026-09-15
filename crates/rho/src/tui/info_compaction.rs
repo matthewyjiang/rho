@@ -8,6 +8,7 @@ pub(super) fn push_fields(block: &mut CommandBlock, diagnostics: &CompactionDiag
     if !current.enabled
         && diagnostics.last_idle_check.is_none()
         && diagnostics.last_provider_check.is_none()
+        && diagnostics.completed.completed_compactions() == 0
     {
         return;
     }
@@ -31,6 +32,25 @@ pub(super) fn push_fields(block: &mut CommandBlock, diagnostics: &CompactionDiag
     push_optional_number(block, "Threshold", current.threshold_tokens);
     push_optional_number(block, "Target", current.target_tokens);
     push_optional_number(block, "Local target", current.estimated_target_tokens);
+    let completed = &diagnostics.completed;
+    block.push_field("Completed", &completed.completed_compactions().to_string());
+    block.push_field("Removed local", &completed.removed_tokens().to_string());
+    if let (Some(before), Some(after)) = (
+        completed.last_previous_tokens(),
+        completed.last_current_tokens(),
+    ) {
+        let result = if after < before {
+            "reduced"
+        } else if after == before {
+            "unchanged"
+        } else {
+            "increased"
+        };
+        block.push_field(
+            "Last completed",
+            &format!("{before} → {after} local tokens ({result})"),
+        );
+    }
     if let Some(check) = &diagnostics.last_idle_check {
         block.push_field(
             "Idle check",
