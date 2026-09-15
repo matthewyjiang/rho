@@ -360,7 +360,8 @@ impl App {
                 image_asset,
             } => {
                 let command = match &presentation {
-                    crate::presentation::Presentation::Card(card) => match &card.header {
+                    crate::presentation::Presentation::Card(card)
+                    | crate::presentation::Presentation::SummaryCard(card) => match &card.header {
                         rho_tools::tool_card::ToolHeader::Shell { command, .. } => {
                             command.as_deref()
                         }
@@ -383,7 +384,8 @@ impl App {
                         .and_then(|asset| match self.load_feed_image(asset) {
                             Ok(image) => image,
                             Err(error) => {
-                                if let crate::presentation::Presentation::Card(card) =
+                                if let crate::presentation::Presentation::Card(card)
+                                | crate::presentation::Presentation::SummaryCard(card) =
                                     &mut presentation
                                 {
                                     card.push_fact(rho_tools::tool_card::ToolFact::Error {

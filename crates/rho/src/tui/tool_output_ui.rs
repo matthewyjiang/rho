@@ -30,6 +30,7 @@ pub(super) fn tool_output_toggleable(
         crate::presentation::Presentation::Card(card) => {
             card_is_toggleable(card, width, max_tool_output_lines, tool.expanded)
         }
+        crate::presentation::Presentation::SummaryCard(card) => !card.body.is_empty(),
     }
 }
 

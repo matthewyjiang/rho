@@ -45,6 +45,7 @@ mod resume_scrollback;
 mod runtime_info;
 mod send_confirm;
 mod sessions_hub;
+mod sessions_tool;
 mod shell_completion;
 mod side_chat;
 mod startup;
@@ -727,6 +728,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     )
     .with_setup(setup_sessions_hub),
+    sessions_tool::SESSIONS_TOOL_SCENARIO,
     Scenario::new(
         "open_model_picker",
         "Open and dismiss the model picker",

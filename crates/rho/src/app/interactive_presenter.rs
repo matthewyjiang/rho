@@ -14,6 +14,8 @@ mod agent_format;
 mod format;
 #[path = "interactive_presenter_message.rs"]
 mod message_format;
+#[path = "interactive_presenter_sessions.rs"]
+mod sessions_format;
 use format::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -54,6 +56,7 @@ enum ToolKind {
     FetchContent,
     GetSearchContent,
     Questionnaire,
+    Sessions,
     Mcp,
     Other,
 }
@@ -92,6 +95,7 @@ impl ToolKind {
             "fetch_content" => Self::FetchContent,
             "get_search_content" => Self::GetSearchContent,
             "questionnaire" => Self::Questionnaire,
+            "sessions" => Self::Sessions,
             _ => Self::Other,
         }
     }
@@ -128,6 +132,7 @@ impl ToolKind {
             | Self::FetchContent
             | Self::GetSearchContent
             | Self::Questionnaire
+            | Self::Sessions
             | Self::Mcp
             | Self::Other => {
                 if arguments_len < PREVIEW_FULL_PARSE_LIMIT {
@@ -378,6 +383,15 @@ impl InteractiveToolPresenter {
                 presentation: crate::presentation::Presentation::Message(message),
                 image_asset: None,
             };
+        }
+        if view.kind == ToolKind::Sessions {
+            if let Some(mut card) = sessions_format::finished_card(&view.arguments, content, ok) {
+                card.push_notice_facts(view.metadata.presentation_notices());
+                return FinishedToolPresentation {
+                    presentation: crate::presentation::Presentation::SummaryCard(card),
+                    image_asset: None,
+                };
+            }
         }
         let presented = presentation(view, finished_card(view, content, ok, &self.cwd));
         FinishedToolPresentation {

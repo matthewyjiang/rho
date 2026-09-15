@@ -90,7 +90,9 @@ impl ToolCallBatch {
         self.live_entries()
             .cloned()
             .map(|mut entry| {
-                if let crate::presentation::Presentation::Card(card) = &mut entry.presentation {
+                if let crate::presentation::Presentation::Card(card)
+                | crate::presentation::Presentation::SummaryCard(card) = &mut entry.presentation
+                {
                     card.status = ToolStatus::Interrupted;
                 }
                 // The clock stops with the call; interrupted rows are retained
