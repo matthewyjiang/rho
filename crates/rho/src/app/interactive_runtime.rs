@@ -968,6 +968,9 @@ pub(crate) use compact::CompactTaskPoll;
 #[path = "interactive_runtime_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use tests::test_runtime;
+
 /// Test factory for TUI seams that need a live edit-capable runtime.
 #[cfg(test)]
 pub(crate) async fn test_edit_tool_runtime(

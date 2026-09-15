@@ -19,8 +19,7 @@ pub(super) async fn maybe_compact(
     cancellation: &CancellationToken,
     events: &mpsc::Sender<RunEvent>,
 ) -> Result<Option<ContextEstimate>, Error> {
-    let estimate = core.estimate_context(history, tool_specs);
-    core.publish_context_estimate(estimate);
+    let estimate = core.advance_context(history, tool_specs);
     let decision = CompactionDecision::evaluate(
         scope.runtime.compaction_policy.as_ref(),
         history.len(),

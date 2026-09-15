@@ -4,7 +4,6 @@ use futures_util::FutureExt;
 use rho_providers::model::models_dev::{
     custom_model_id_catalog_miss, fetch_model_metadata, CatalogLookupMiss,
 };
-use rho_providers::model::ReasoningRequestSource::PersistedOrDefault;
 
 use super::{reasoning_metadata, App, ComposerMode, Entry, InteractiveRuntime, StatusSource};
 
@@ -155,62 +154,12 @@ impl App {
                     // Keep prior metadata until a later fetch can apply cleanly.
                     return;
                 }
-                let capabilities = metadata.reasoning_capabilities();
-                let resolved = reasoning_metadata::resolve_fetched_reasoning(
-                    &capabilities,
-                    self.info.runtime.reasoning,
+                self.apply_fetched_reasoning(
+                    agent,
+                    &metadata.reasoning_capabilities(),
                     reasoning_at_fetch_start,
-                );
-                let reasoning = resolved.effective;
-                if let Some(requested) = resolved.rejected {
-                    self.insert_entry(&Entry::Error(format!(
-                        "reasoning level '{requested}' is not supported by {}/{}; restored '{reasoning}'",
-                        self.info.runtime.provider, self.info.runtime.model
-                    )));
-                }
-                // Catalog hydration is not a provider switch. Replacing an
-                // unchanged provider discards its successful context calibration.
-                if reasoning == self.info.runtime.reasoning {
-                    self.model_metadata = Some(metadata);
-                    return;
-                }
-                let provider_updated = match self
-                    .build_provider_for_selection(
-                        &self.info.runtime.provider,
-                        &self.info.runtime.model,
-                        reasoning,
-                        &self.info.runtime.auth,
-                    )
-                    .await
-                {
-                    Ok(provider) => {
-                        match agent.replace_provider(provider, reasoning, &self.info.runtime.auth) {
-                            Ok(_) => true,
-                            Err(err) => {
-                                self.insert_entry(&Entry::Error(format!(
-                                    "could not apply model reasoning metadata: {err}"
-                                )));
-                                false
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        self.insert_entry(&Entry::Error(format!(
-                            "could not apply model reasoning metadata: {err}"
-                        )));
-                        false
-                    }
-                };
-                if provider_updated && reasoning != self.info.runtime.reasoning {
-                    self.info.set_reasoning(reasoning, PersistedOrDefault);
-                    if let Err(err) = self.info.services.config_repository.update(|config| {
-                        config.reasoning = reasoning;
-                    }) {
-                        self.insert_entry(&Entry::Error(format!(
-                            "could not save normalized reasoning: {err}"
-                        )));
-                    }
-                }
+                )
+                .await;
                 self.model_metadata = Some(metadata);
             } else {
                 self.warn_custom_model_id_catalog_miss();

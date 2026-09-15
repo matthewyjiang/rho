@@ -121,6 +121,7 @@ impl ContextAccounting {
     /// SDK working history is append-only between explicit replacements. Reuse
     /// its measured prefix and count only new messages. Host-proposed histories
     /// must use `estimate` instead; equal length does not prove equal content.
+    /// Shorter or rewritten working histories must use `replace`.
     pub(crate) fn advance(
         &mut self,
         history: &[Message],
@@ -137,14 +138,11 @@ impl ContextAccounting {
             self.invalidate();
         }
         match self.current_messages {
-            Some(count) if history.len() >= count => {
+            Some(count) => {
                 for message in &history[count..] {
                     self.append(message);
                 }
             }
-            // A compactor can inspect a protected prefix without rewinding the
-            // active accounting for the full history.
-            Some(_) => return self.estimate(history, tools, identity),
             None => {
                 self.publish(self.estimate(history, tools, identity));
                 self.current_messages = Some(history.len());
@@ -188,7 +186,7 @@ impl ContextAccounting {
         estimate
     }
 
-    pub(crate) fn publish(&mut self, estimate: ContextEstimate) {
+    fn publish(&mut self, estimate: ContextEstimate) {
         // A mismatched prefix must not become applicable again after a later edit.
         if estimate.provider_reported_tokens.is_none() {
             self.baseline = None;

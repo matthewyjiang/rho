@@ -176,17 +176,6 @@ jobs:
           name: native-pty-${{ matrix.os }}-artifacts
           path: ${{ runner.temp }}/rho-pty-native-artifacts/
           if-no-files-found: ignore
-      - name: Build Windows PR test executable
-        if: runner.os == 'Windows' && github.event_name == 'pull_request'
-        run: cargo build -p rho-coding-agent --bin rho --locked --jobs 8
-      - name: Upload Windows PR test executable
-        if: runner.os == 'Windows' && github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          # checkout tests the PR merge ref; identify the executable by that commit.
-          name: rho-windows-x86_64-pr-${{ github.event.pull_request.number }}-${{ github.sha }}
-          path: target/debug/rho.exe
-          if-no-files-found: error
 
   package:
     name: release package checks
