@@ -8,6 +8,10 @@ use rho_providers::model::ReasoningRequestSource::PersistedOrDefault;
 
 use super::{reasoning_metadata, App, ComposerMode, Entry, InteractiveRuntime, StatusSource};
 
+#[cfg(test)]
+#[path = "background_polls_tests.rs"]
+mod tests;
+
 impl App {
     pub(super) async fn poll_startup_hydrates(
         &mut self,
@@ -163,6 +167,12 @@ impl App {
                         "reasoning level '{requested}' is not supported by {}/{}; restored '{reasoning}'",
                         self.info.runtime.provider, self.info.runtime.model
                     )));
+                }
+                // Catalog hydration is not a provider switch. Replacing an
+                // unchanged provider discards its successful context calibration.
+                if reasoning == self.info.runtime.reasoning {
+                    self.model_metadata = Some(metadata);
+                    return;
                 }
                 let provider_updated = match self
                     .build_provider_for_selection(
