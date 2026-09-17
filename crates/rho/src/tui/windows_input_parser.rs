@@ -64,7 +64,8 @@ impl Parser {
             .into_iter()
             .find(|(sequence, _)| !self.pasting && tail.starts_with(*sequence));
             if let Some((sequence, event)) = focus {
-                self.parse_ansi(&bytes[segment..cursor], /*more*/ true, &mut events);
+                // Focus is an event boundary, not a continuation of an Alt key.
+                self.parse_ansi(&bytes[segment..cursor], /*more*/ false, &mut events);
                 events.push(event);
                 cursor += sequence.len();
                 segment = cursor;

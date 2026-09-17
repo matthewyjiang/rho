@@ -1,6 +1,32 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
+// Covers: a focus report must not turn a preceding Esc into Alt on the next key
+// or emit it after the focus change. Owner: terminal input event ordering.
+#[test]
+fn focus_reports_flush_pending_escape_before_following_keys() {
+    for (report, focus) in [
+        (b"\x1b[I", Event::FocusGained),
+        (b"\x1b[O", Event::FocusLost),
+    ] {
+        let input = [b"\x1b".as_slice(), report, b"x"].concat();
+        for split in 1..input.len() {
+            let mut parser = Parser::default();
+            let mut events = parser.parse(&input[..split], /*more*/ true);
+            events.extend(parser.parse(&input[split..], /*more*/ false));
+            assert_eq!(
+                events,
+                vec![
+                    Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+                    focus.clone(),
+                    Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
+                ],
+                "split {split}"
+            );
+        }
+    }
+}
+
 // Covers: the packaged Windows parser must keep embedded Enter/control bytes
 // and split UTF-16 pairs inside one paste instead of submitting the editor.
 // Owner: terminal input decoding. PTY cannot choose console record boundaries.

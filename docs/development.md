@@ -162,6 +162,8 @@ cargo test -p rho-coding-agent --test tui_pty
 
 Smoke scenarios cover startup/stream/exit, cancel-and-resubmit, resize-during-stream, scroll-during-stream, and terminal restoration.
 
+On Linux, the startup smoke test launches Rho with a 1 MiB main-thread stack, matching the [Windows linker default](https://learn.microsoft.com/en-us/cpp/build/reference/stack-stack-allocations). This catches debug async-frame overflows that Linux's larger default stack would hide.
+
 The native smoke test runs in the Linux, macOS, and Windows workspace CI jobs:
 
 ```bash

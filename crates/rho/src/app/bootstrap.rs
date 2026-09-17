@@ -36,7 +36,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Some(Command::Run { output, .. }) => Some(*output),
         _ => None,
     };
-    let result = Box::pin(run_inner(cli).instrument(tracing::info_span!("startup"))).await;
+    let result = run_inner(cli)
+        .instrument(tracing::info_span!("startup"))
+        .await;
     let Err(error) = result else {
         return Ok(());
     };
@@ -68,7 +70,13 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
     Err(error)
 }
 
-async fn run_inner(cli: Cli) -> anyhow::Result<()> {
+fn run_inner(cli: Cli) -> impl std::future::Future<Output = anyhow::Result<()>> {
+    // Allocate before polling: Box::pin inside `run` alone leaves the large
+    // startup construction temporary on its stack throughout the session.
+    Box::pin(run_startup(cli))
+}
+
+async fn run_startup(cli: Cli) -> anyhow::Result<()> {
     cli_config::validate(&cli)?;
     if let EarlyDispatch::Handled(result) = dispatch_early_command(&cli).await? {
         return result;

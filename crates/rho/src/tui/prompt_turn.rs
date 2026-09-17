@@ -218,7 +218,19 @@ impl App {
         .await
     }
 
-    async fn run_prompt_turn_request(
+    fn run_prompt_turn_request<'a>(
+        &'a mut self,
+        request: PromptTurnRequest,
+        authorization: super::send_confirm::SendAuthorization,
+        terminal: &'a mut DefaultTerminal,
+        agent: &'a mut InteractiveRuntime,
+    ) -> impl std::future::Future<Output = anyhow::Result<TurnOutcome>> + 'a {
+        // Keep the provider turn future out of the input and follow-up futures.
+        // Constructing it here also keeps its debug temporary off their polls.
+        Box::pin(self.run_prompt_turn_request_inner(request, authorization, terminal, agent))
+    }
+
+    async fn run_prompt_turn_request_inner(
         &mut self,
         request: PromptTurnRequest,
         authorization: super::send_confirm::SendAuthorization,

@@ -72,8 +72,35 @@ fn wait_for_claude_code_login_complete(harness: &mut PtyHarness) {
         .unwrap();
 }
 
+// Covers: debug startup and the first turn fit the Windows main-thread stack.
+// Owner: process startup through the interactive TUI.
 #[test]
 fn smoke_startup_stream_exit() {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let wrapper = directory.path().join("rho-windows-stack");
+        let binary = env!("CARGO_BIN_EXE_rho").replace('\'', "'\\''");
+        // Linux normally gives main 8 MiB, hiding overflows of Windows' default
+        // 1 MiB reserve. Limit only the exec'd Rho process, not the test runner.
+        fs::write(
+            &wrapper,
+            format!("#!/bin/sh\nulimit -s 1024 || exit\nexec '{binary}' \"$@\"\n"),
+        )
+        .unwrap();
+        fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+        let runner = ScenarioRunner::new(wrapper)
+            .with_artifacts(std::env::temp_dir().join("rho-pty-test-artifacts"));
+        let outcome = run_named(&runner, "startup_stream_exit").expect("scenario runner error");
+        assert!(
+            outcome.passed,
+            "Windows main-thread stack budget (1024 KiB): {}",
+            outcome.message
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
     assert_pass("startup_stream_exit");
 }
 

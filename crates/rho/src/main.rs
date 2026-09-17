@@ -1,4 +1,4 @@
-// Same startup `Instrumented<run_inner()>` layout as `lib.rs`.
+// Match the startup type-layout recursion limit in `lib.rs`.
 #![recursion_limit = "256"]
 
 use std::process::ExitCode;
