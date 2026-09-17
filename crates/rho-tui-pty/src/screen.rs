@@ -4,7 +4,36 @@ use vt100::Parser;
 
 /// Visible terminal state driven by a VT100 parser.
 pub struct ScreenModel {
-    parser: Parser,
+    parser: Parser<TerminalReplies>,
+}
+
+#[derive(Default)]
+struct TerminalReplies {
+    bytes: Vec<u8>,
+}
+
+impl vt100::Callbacks for TerminalReplies {
+    fn unhandled_csi(
+        &mut self,
+        screen: &mut vt100::Screen,
+        intermediate1: Option<u8>,
+        intermediate2: Option<u8>,
+        params: &[&[u16]],
+        command: char,
+    ) {
+        // DSR 6 requests the current cursor in one-based terminal coordinates.
+        // ConPTY's INHERIT_CURSOR startup waits for this reply before painting.
+        if intermediate1.is_none()
+            && intermediate2.is_none()
+            && command == 'n'
+            && params == [&[6][..]]
+        {
+            let (row, column) = screen.cursor_position();
+            self.bytes.extend_from_slice(
+                format!("\x1b[{};{}R", u32::from(row) + 1, u32::from(column) + 1).as_bytes(),
+            );
+        }
+    }
 }
 
 /// Terminal color as recovered from the VT stream.
@@ -33,7 +62,12 @@ pub(crate) struct ScreenCell {
 impl ScreenModel {
     pub fn new(rows: u16, cols: u16) -> Self {
         Self {
-            parser: Parser::new(rows, cols, 0),
+            parser: Parser::new_with_callbacks(
+                rows,
+                cols,
+                /*scrollback_len*/ 0,
+                TerminalReplies::default(),
+            ),
         }
     }
 
@@ -41,6 +75,10 @@ impl ScreenModel {
         if !bytes.is_empty() {
             self.parser.process(bytes);
         }
+    }
+
+    pub(crate) fn take_terminal_replies(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.parser.callbacks_mut().bytes)
     }
 
     pub fn resize(&mut self, rows: u16, cols: u16) {
@@ -126,6 +164,10 @@ fn map_color(color: vt100::Color) -> CellColor {
         vt100::Color::Rgb(r, g, b) => CellColor::Rgb(r, g, b),
     }
 }
+
+#[cfg(test)]
+#[path = "screen_query_tests.rs"]
+mod query_tests;
 
 #[cfg(test)]
 mod tests {

@@ -50,8 +50,8 @@ Built-in production providers, SQLite, keychain access, web access, and coding t
 Desktop targets are Linux, macOS, and Windows. Current repository CI performs:
 
 - the complete workspace tests, Clippy, formatting, packaging checks, and feature checks on `ubuntu-latest`
-- workspace compile checks on `macos-latest` and `windows-latest`
-- focused Bash behavior tests on macOS
+- workspace tests, including all test targets, on `macos-latest` and `windows-latest`
+- a native TUI smoke test on all three platforms, using ConPTY on Windows
 
 This is the current validation matrix, not a claim that every provider, host tool, credential adapter, or operating-system integration has been exercised on all three systems. Hosts must test their own adapters on every platform they support. No mobile, WebAssembly, or non-Rust binding is part of the supported target set.
 

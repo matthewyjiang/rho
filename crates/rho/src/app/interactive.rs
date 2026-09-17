@@ -40,7 +40,15 @@ fn validate_resume_agent(
     session.validate_agent_definition_identity(agent.definition())
 }
 
-pub(super) async fn run(startup: Startup<'_>) -> anyhow::Result<()> {
+pub(super) fn run(
+    startup: Startup<'_>,
+) -> impl std::future::Future<Output = anyhow::Result<()>> + '_ {
+    // Construct and box outside the caller's poll frame. Boxing inside an async
+    // caller still reserves its large debug move temporary while polling input.
+    Box::pin(run_inner(startup))
+}
+
+async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
     let Startup {
         keyring_notice,
         cli,

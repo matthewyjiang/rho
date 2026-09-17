@@ -1,10 +1,9 @@
 use std::io::Write;
 
+#[cfg(not(windows))]
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::{
-    event::{
-        DisableBracketedPaste, EnableBracketedPaste, KeyboardEnhancementFlags,
-        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
-    },
+    event::{KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
     execute,
 };
 
@@ -18,7 +17,10 @@ const DISABLE_MODIFY_OTHER_KEYS: &[u8] = b"\x1b[>4;0m";
 /// Call [`Enabled::release`] during shutdown (before `ratatui::restore`) so
 /// teardown order stays explicit at the call site.
 pub(super) struct Enabled {
+    #[cfg(not(windows))]
     bracketed_paste: bool,
+    #[cfg(windows)]
+    bracketed_paste: Option<super::terminal_events::PasteMode>,
     modified_keys: bool,
     keyboard_enhancements: bool,
 }
@@ -27,7 +29,10 @@ impl Enabled {
     pub(super) fn acquire() -> Self {
         let extended = should_request_extended_keyboard_protocols();
         Self {
+            #[cfg(not(windows))]
             bracketed_paste: enable_bracketed_paste().is_ok(),
+            #[cfg(windows)]
+            bracketed_paste: super::terminal_events::PasteMode::acquire().ok(),
             // Extended protocols share one Windows/ConPTY policy: see
             // should_request_extended_keyboard_protocols.
             modified_keys: extended && enable_modified_keys().is_ok(),
@@ -47,8 +52,13 @@ impl Enabled {
         if self.modified_keys {
             record_first_error(&mut first_error, disable_modified_keys());
         }
+        #[cfg(not(windows))]
         if self.bracketed_paste {
             record_first_error(&mut first_error, disable_bracketed_paste());
+        }
+        #[cfg(windows)]
+        if let Some(mode) = self.bracketed_paste {
+            record_first_error(&mut first_error, mode.release());
         }
         first_error.map_or(Ok(()), Err)
     }
@@ -60,10 +70,12 @@ fn record_first_error(first_error: &mut Option<std::io::Error>, result: std::io:
     }
 }
 
+#[cfg(not(windows))]
 fn enable_bracketed_paste() -> std::io::Result<()> {
     execute!(std::io::stdout(), EnableBracketedPaste)
 }
 
+#[cfg(not(windows))]
 fn disable_bracketed_paste() -> std::io::Result<()> {
     execute!(std::io::stdout(), DisableBracketedPaste)
 }

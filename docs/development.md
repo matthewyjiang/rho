@@ -146,7 +146,7 @@ flowchart TD
 - **Scenarios** - named action/assertion sequences over `RHO_TUI_TEST_MODE=matrix`
 - **Artifacts** - on failure, keep raw PTY bytes, reconstructed screen, action log, and redacted env
 
-Unix PTYs are supported. Windows is skipped with an explicit error rather than a silent pass. The harness compiles `crates/rho/src/pty.rs` by path instead of depending on `rho-coding-agent`, so the Cargo workspace (and release-please's cargo-workspace plugin) stay acyclic.
+The controller supports Unix PTYs and Windows ConPTY. The broader scenario suite still targets Unix; a shared native smoke test exercises startup, multiline Unicode paste, composer navigation, submission, and exit on Windows as well. The harness compiles `crates/rho/src/pty.rs` by path instead of depending on `rho-coding-agent`, so the Cargo workspace (and release-please's cargo-workspace plugin) stay acyclic.
 
 ### Run harness self-tests
 
@@ -161,6 +161,16 @@ cargo test -p rho-coding-agent --test tui_pty
 ```
 
 Smoke scenarios cover startup/stream/exit, cancel-and-resubmit, resize-during-stream, scroll-during-stream, and terminal restoration.
+
+On Linux, the startup smoke test launches Rho with a 1 MiB main-thread stack, matching the [Windows linker default](https://learn.microsoft.com/en-us/cpp/build/reference/stack-stack-allocations). This catches debug async-frame overflows that Linux's larger default stack would hide.
+
+The native smoke test runs in the Linux, macOS, and Windows workspace CI jobs:
+
+```bash
+cargo test -p rho-coding-agent --test tui_pty_native --jobs 8
+```
+
+Windows uses [ConPTY](https://learn.microsoft.com/en-us/windows/console/createpseudoconsole), which requires Windows 10 version 1809 or later. This focused test does not replace the Unix scenario suite or prove every Windows terminal interaction.
 
 ### Run one scenario locally
 

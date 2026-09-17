@@ -21,6 +21,9 @@ mod path_glob;
 mod paths;
 mod process_env;
 mod process_stream;
+#[cfg(windows)]
+#[doc(hidden)]
+pub mod process_supervision;
 mod search;
 mod shell_process;
 pub use shell_process::{

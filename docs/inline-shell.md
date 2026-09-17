@@ -45,7 +45,7 @@ Completion lists the filesystem as the shell will see it, so untracked and ignor
 
 A workspace entry whose name starts with `~` is inserted with a `./` prefix, so selecting a literal `~` directory cannot redirect the command to your home directory. An explicitly quoted or escaped leading tilde also stays literal; an unquoted `~/` keeps its home-directory meaning.
 
-Rho runs inline commands asynchronously, so you can continue working while a command runs. Press `esc` to cancel a running command. Rho stops commands that run longer than 60 seconds.
+Rho runs inline commands asynchronously, so you can continue working while a command runs. Press `esc` to cancel a running command. Rho stops commands that run longer than 60 seconds. Cancellation and timeout stop the command's process group on Unix or Job Object on Windows, including descendants that remain in that group or job.
 
 ## Choose a shell
 

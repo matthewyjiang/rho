@@ -1,4 +1,50 @@
 use super::*;
+use pretty_assertions::assert_eq;
+
+// Covers: cancellation and timeout must close an inline shell descendant's connection.
+// Owner: OS process lifecycle. A PTY cannot observe descendant ownership directly.
+#[cfg(unix)]
+#[tokio::test]
+async fn cleanup_terminates_inline_shell_descendants() {
+    use tokio::io::AsyncReadExt;
+    enum Cleanup {
+        Cancellation,
+        Timeout,
+    }
+    for cleanup in [Cleanup::Cancellation, Cleanup::Timeout] {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        // The shell waits while its child holds a socket. Accept is the readiness
+        // signal; the existing inline-shell deadline is only a failure bound.
+        let script =
+            format!("import socket; s=socket.create_connection((\"127.0.0.1\",{port})); s.recv(1)");
+        let command = format!("python3 -c '{script}' & wait");
+        let task = tokio::spawn(async move { execute("sh", &command, Path::new(".")).await });
+        let (mut connection, _) = tokio::time::timeout(INLINE_SHELL_TIMEOUT, listener.accept())
+            .await
+            .expect("descendant did not connect")
+            .unwrap();
+        match cleanup {
+            Cleanup::Cancellation => {
+                task.abort();
+                assert!(task.await.unwrap_err().is_cancelled());
+            }
+            Cleanup::Timeout => {
+                // Only advance after the socket proves the descendant is running.
+                tokio::time::pause();
+                tokio::time::advance(INLINE_SHELL_TIMEOUT).await;
+                let result = task.await.unwrap();
+                tokio::time::resume();
+                assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
+            }
+        }
+        let mut byte = [0];
+        let closed = tokio::time::timeout(INLINE_SHELL_TIMEOUT, connection.read(&mut byte)).await;
+        // On failure, dropping the socket also releases the fixture's recv call.
+        drop(connection);
+        assert_eq!(closed.expect("descendant survived cleanup").unwrap(), 0);
+    }
+}
 
 #[test]
 fn parses_context_and_local_prefixes_distinctly() {

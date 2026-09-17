@@ -41,6 +41,8 @@ Or install the manifest directly:
 scoop install https://raw.githubusercontent.com/matthewyjiang/rho/main/bucket/rho.json
 ```
 
+`rho update` recognizes custom Scoop roots from `SCOOP` and `SCOOP_GLOBAL`, as well as the default Scoop layout. It prints the Scoop update command, including `-g` for global installs, rather than replacing a Scoop-managed binary with the standalone installer.
+
 To use a different directory, set `RHO_INSTALL_DIR`:
 
 ```bash

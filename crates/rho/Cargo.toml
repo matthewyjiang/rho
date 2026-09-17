@@ -61,6 +61,7 @@ similar = "2"
 same-file = "1"
 shell-words = "1"
 tempfile = "3"
+portable-pty = "0.9"
 fs2 = "0.4.3"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tracing = "0.1"
@@ -88,16 +89,19 @@ jsonschema = { version = "0.49", default-features = false }
 agent-client-protocol = "=2.0.0"
 
 [target.'cfg(unix)'.dependencies]
-portable-pty = "0.9"
 vt100 = "0.16"
 
 [target.'cfg(windows)'.dependencies]
+termwiz = "0.23.3"
 windows-sys = { version = "0.61", features = [
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_System_Console",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_IO",
     "Win32_System_JobObjects",
     "Win32_System_Threading",
     "Win32_UI_Shell",
@@ -119,6 +123,8 @@ strip = "symbols"
 
 [dev-dependencies]
 pretty_assertions = "1"
+termwiz = "0.23.3"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
 rho-tui-pty = { path = "../rho-tui-pty" }
 tokio = { version = "1", features = ["full", "test-util"] }
 

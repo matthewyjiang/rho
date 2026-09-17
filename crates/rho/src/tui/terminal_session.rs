@@ -28,8 +28,10 @@ impl TerminalSession {
     pub(super) fn acquire() -> Self {
         Self {
             events: Some(TerminalEvents::new()),
-            keyboard: Some(keyboard_modes::Enabled::acquire()),
+            // Released crossterm replaces the Windows console mode when mouse
+            // capture starts. Acquire VT input afterward so it is not cleared.
             mouse_capture_enabled: mouse_capture::enable().is_ok(),
+            keyboard: Some(keyboard_modes::Enabled::acquire()),
             focus_change_enabled: enable_focus_change().is_ok(),
         }
     }
@@ -92,16 +94,18 @@ impl TerminalSession {
             }
             self.focus_change_enabled = false;
         }
+        // Release in reverse acquisition order: mouse capture restores the
+        // full pre-mouse Windows console mode, including its original VT bit.
+        if let Some(keyboard) = self.keyboard.take() {
+            if let Err(error) = keyboard.try_release() {
+                failures.push(format!("disable keyboard modes: {error}"));
+            }
+        }
         if self.mouse_capture_enabled {
             if let Err(error) = mouse_capture::disable() {
                 failures.push(format!("disable mouse capture: {error}"));
             }
             self.mouse_capture_enabled = false;
-        }
-        if let Some(keyboard) = self.keyboard.take() {
-            if let Err(error) = keyboard.try_release() {
-                failures.push(format!("disable keyboard modes: {error}"));
-            }
         }
         // Leave the alternate screen, clear the revealed main buffer, and print
         // the caller status in one flush so handoff does not flash scrollback.
@@ -118,8 +122,8 @@ impl TerminalSession {
     fn resume(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
         let resumed = ratatui::try_init().context("initialize terminal")?;
         *terminal = resumed;
-        self.keyboard = Some(keyboard_modes::Enabled::acquire());
         self.mouse_capture_enabled = mouse_capture::enable().is_ok();
+        self.keyboard = Some(keyboard_modes::Enabled::acquire());
         self.focus_change_enabled = enable_focus_change().is_ok();
         self.events = Some(TerminalEvents::new());
         Ok(())
@@ -127,6 +131,8 @@ impl TerminalSession {
 }
 
 fn enable_focus_change() -> io::Result<()> {
+    // ConPTY delivers CSI I/O when VT input is enabled; native FOCUS_EVENT
+    // records are only the legacy path. Both require the appropriate setup.
     execute!(io::stdout(), EnableFocusChange)
 }
 
@@ -152,6 +158,7 @@ fn hand_off_terminal(handoff_status: &str) -> io::Result<()> {
 
 impl Drop for TerminalSession {
     fn drop(&mut self) {
+        self.stop_events();
         if let Some(keyboard) = self.keyboard.take() {
             keyboard.release();
         }

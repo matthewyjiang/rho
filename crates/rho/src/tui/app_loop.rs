@@ -31,7 +31,17 @@ impl App {
         Ok(had_recovered_messages)
     }
 
-    pub(super) async fn run(
+    pub(super) fn run<'a>(
+        self,
+        terminal: &'a mut DefaultTerminal,
+        agent: &'a mut InteractiveRuntime,
+    ) -> impl std::future::Future<Output = anyhow::Result<Option<ExitReceipt>>> + 'a {
+        // Keep the event-loop future and its construction temporary off the
+        // enclosing startup poll frames, which must fit Windows' main stack.
+        Box::pin(self.run_inner(terminal, agent))
+    }
+
+    async fn run_inner(
         mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
@@ -103,34 +113,7 @@ impl App {
                     .is_some_and(|handle| handle.is_finished())
                 || self.prompt_history.load_finished()
                 || agent.startup_hydrate_pending();
-            self.poll_model_metadata_fetch(agent).await;
-            needs_redraw |= self.poll_startup_hydrates(agent).await?;
-            needs_redraw |= self.poll_computer_connection(agent).await;
-            needs_redraw |= self.poll_compact(agent).await?;
-            needs_redraw |= self.release_pending_held_turn(terminal, agent).await?;
-            needs_redraw |= self.start_next_follow_up(terminal, agent).await?;
-            if !first_frame {
-                needs_redraw |= self.start_startup_prompt(terminal, agent).await?;
-            }
-            self.poll_update_notice();
-            self.poll_custom_provider_models();
-            self.poll_cursor_model_refresh().await;
-            needs_redraw |= self.poll_syntax_warmup();
-            self.poll_herdr_graphics();
-            needs_redraw |= self.poll_prompt_history();
-            needs_redraw |= self.poll_pending_session_title()?;
-            self.poll_pending_interactive_login(terminal, agent).await?;
-            needs_redraw |= self.poll_overlay_tasks().await?;
-            // Runs on every pass because the composer is what decides whether
-            // there is anything to ask about, and it changes on key events
-            // rather than on a schedule of its own.
-            needs_redraw |= self.poll_mcp_argument_completion().await;
-            needs_redraw |= self.poll_markdown_images();
-            let shell_changed = self.finish_completed_inline_shells().await?;
-            if !self.is_ui_busy() {
-                self.insert_deferred_inline_shell_context(agent)?;
-            }
-            needs_redraw |= shell_changed;
+            needs_redraw |= self.poll_background(terminal, agent, first_frame).await?;
             needs_redraw |= background_ready;
             needs_redraw |= self.update_activity_panels(agent)?;
             needs_redraw |= self
@@ -250,6 +233,46 @@ impl App {
             let _ = (&mut pending).await;
         }
         Ok(self.exit_receipt())
+    }
+
+    fn poll_background<'a>(
+        &'a mut self,
+        terminal: &'a mut DefaultTerminal,
+        agent: &'a mut InteractiveRuntime,
+        first_frame: bool,
+    ) -> impl std::future::Future<Output = anyhow::Result<bool>> + 'a {
+        // Background work and input dispatch are separate phases. Do not keep
+        // background future temporaries on the stack while handling input.
+        Box::pin(async move {
+            let mut needs_redraw = false;
+            self.poll_model_metadata_fetch(agent).await;
+            needs_redraw |= self.poll_startup_hydrates(agent).await?;
+            needs_redraw |= self.poll_computer_connection(agent).await;
+            needs_redraw |= self.poll_compact(agent).await?;
+            needs_redraw |= self.release_pending_held_turn(terminal, agent).await?;
+            needs_redraw |= self.start_next_follow_up(terminal, agent).await?;
+            if !first_frame {
+                needs_redraw |= self.start_startup_prompt(terminal, agent).await?;
+            }
+            self.poll_update_notice();
+            self.poll_custom_provider_models();
+            self.poll_cursor_model_refresh().await;
+            needs_redraw |= self.poll_syntax_warmup();
+            self.poll_herdr_graphics();
+            needs_redraw |= self.poll_prompt_history();
+            needs_redraw |= self.poll_pending_session_title()?;
+            self.poll_pending_interactive_login(terminal, agent).await?;
+            needs_redraw |= self.poll_overlay_tasks().await?;
+            // The composer decides what to ask about and changes on key events.
+            needs_redraw |= self.poll_mcp_argument_completion().await;
+            needs_redraw |= self.poll_markdown_images();
+            let shell_changed = self.finish_completed_inline_shells().await?;
+            if !self.is_ui_busy() {
+                self.insert_deferred_inline_shell_context(agent)?;
+            }
+            needs_redraw |= shell_changed;
+            Ok(needs_redraw)
+        })
     }
 
     pub(super) async fn handle_terminal_event(
