@@ -34,27 +34,42 @@ impl Parser {
 
     pub(super) fn parse(&mut self, bytes: &[u8], more: bool) -> Vec<Event> {
         self.bytes.extend_from_slice(bytes);
+        let mut bytes = std::mem::take(&mut self.bytes);
         // termwiz recognizes SGR mouse reports as complete CSI sequences but
         // does not retain an incomplete SGR report. Keep a trailing partial
         // CSI here so console batch boundaries cannot turn mouse into text.
         // Keep its leading ESC too when more input is known to follow, or
         // while pasting, so our paste state and termwiz see the same markers.
-        let end = self
-            .bytes
+        let end = bytes
             .iter()
             .rposition(|byte| *byte == 0x1b)
             .filter(|&start| {
-                let tail = &self.bytes[start..];
+                let tail = &bytes[start..];
                 (tail == b"\x1b" && (more || self.pasting))
                     || (tail.starts_with(b"\x1b[")
                         && !tail[2..].iter().any(|byte| (0x40..=0x7e).contains(byte)))
             })
-            .unwrap_or(self.bytes.len());
+            .unwrap_or(bytes.len());
         let mut events = Vec::new();
         let mut segment = 0;
         let mut cursor = 0;
         while cursor < end {
-            let tail = &self.bytes[cursor..end];
+            let tail = &bytes[cursor..end];
+            // In VT input mode conhost sends focus as CSI I/O, not native
+            // FOCUS_EVENT records. termwiz has no focus event variant.
+            let focus = [
+                (b"\x1b[I", Event::FocusGained),
+                (b"\x1b[O", Event::FocusLost),
+            ]
+            .into_iter()
+            .find(|(sequence, _)| !self.pasting && tail.starts_with(*sequence));
+            if let Some((sequence, event)) = focus {
+                self.parse_ansi(&bytes[segment..cursor], /*more*/ true, &mut events);
+                events.push(event);
+                cursor += sequence.len();
+                segment = cursor;
+                continue;
+            }
             let marker = if self.pasting {
                 b"\x1b[201~"
             } else {
@@ -62,10 +77,7 @@ impl Parser {
             };
             if tail.starts_with(marker) {
                 cursor += marker.len();
-                events.extend(
-                    self.parser
-                        .parse_as_vec(&self.bytes[segment..cursor], /*maybe_more*/ true),
-                );
+                self.parse_ansi(&bytes[segment..cursor], /*more*/ true, &mut events);
                 segment = cursor;
                 self.pasting = !self.pasting;
                 continue;
@@ -78,7 +90,7 @@ impl Parser {
             let control = if self.pasting {
                 None
             } else {
-                match self.bytes[cursor] {
+                match bytes[cursor] {
                     0 => Some(b' '),
                     8 => Some(b'h'),
                     10 => Some(b'j'),
@@ -87,35 +99,33 @@ impl Parser {
                 }
             };
             if let Some(control) = control {
-                events.extend(
-                    self.parser
-                        .parse_as_vec(&self.bytes[segment..cursor], /*maybe_more*/ true),
-                );
-                events.extend(self.parser.parse_as_vec(
+                self.parse_ansi(&bytes[segment..cursor], /*more*/ true, &mut events);
+                self.parse_ansi(
                     format!("\x1b[{control};5u").as_bytes(),
-                    /*maybe_more*/ true,
-                ));
+                    /*more*/ true,
+                    &mut events,
+                );
                 segment = cursor + 1;
             }
             cursor += 1;
         }
-        events.extend(
-            self.parser
-                .parse_as_vec(&self.bytes[segment..end], more || end < self.bytes.len()),
-        );
-        self.bytes.drain(..end);
+        self.parse_ansi(&bytes[segment..end], more || end < bytes.len(), &mut events);
+        bytes.drain(..end);
+        self.bytes = bytes;
         events
-            .into_iter()
-            .filter_map(|mut event| {
-                if let InputEvent::Mouse(mouse) = &mut event {
-                    // SGR coordinates are one-based; native console records
-                    // already use the zero-based coordinates convert expects.
-                    mouse.x = mouse.x.saturating_sub(1);
-                    mouse.y = mouse.y.saturating_sub(1);
-                }
-                self.convert(event)
-            })
-            .collect()
+    }
+
+    fn parse_ansi(&mut self, bytes: &[u8], more: bool, events: &mut Vec<Event>) {
+        let parsed = self.parser.parse_as_vec(bytes, more);
+        events.extend(parsed.into_iter().filter_map(|mut event| {
+            if let InputEvent::Mouse(mouse) = &mut event {
+                // SGR coordinates are one-based; native console records
+                // already use the zero-based coordinates convert expects.
+                mouse.x = mouse.x.saturating_sub(1);
+                mouse.y = mouse.y.saturating_sub(1);
+            }
+            self.convert(event)
+        }));
     }
 
     pub(super) fn convert(&mut self, event: InputEvent) -> Option<Event> {

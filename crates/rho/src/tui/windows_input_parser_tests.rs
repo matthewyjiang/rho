@@ -6,7 +6,7 @@ use pretty_assertions::assert_eq;
 // Owner: terminal input decoding. PTY cannot choose console record boundaries.
 #[test]
 fn paste_survives_console_batches_and_utf16_pairs() {
-    let payload = "first\r\n東京 🦀\t\x03\x00\x08last";
+    let payload = "first\r\n東京 🦀\t\x03\x00\x08\x1b[I\x1b[Olast";
     let start = b"\x1b[200~";
     let end = b"\x1b[201~";
     for start_split in 1..=start.len() {
@@ -44,6 +44,8 @@ fn paste_survives_console_batches_and_utf16_pairs() {
 #[test]
 fn vt_events_preserve_key_and_mouse_semantics() {
     let cases: &[(&[u8], Event)] = &[
+        (b"\x1b[I", Event::FocusGained),
+        (b"\x1b[O", Event::FocusLost),
         (
             b"\x00",
             Event::Key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::CONTROL)),

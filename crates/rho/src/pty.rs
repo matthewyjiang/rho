@@ -60,6 +60,8 @@ mod native {
         ///
         /// `env` is the complete child environment after clearing the host process
         /// environment. Callers should pass every variable the child needs.
+        /// Callers also emulate terminal replies: ConPTY requests the initial
+        /// cursor with DSR 6 and waits for its response before producing output.
         pub fn spawn(
             binary: &Path,
             size: PtySize,

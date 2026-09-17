@@ -255,6 +255,14 @@ impl PtyHarness {
         if !bytes.is_empty() {
             self.raw_output.extend_from_slice(&bytes);
             self.screen.process(&bytes);
+            let replies = self.screen.take_terminal_replies();
+            if !replies.is_empty() {
+                if let Err(error) = self.pty.inject_bytes(&replies) {
+                    // poll is best-effort; keep the cause in failure artifacts
+                    // if a live child subsequently times out waiting for a reply.
+                    self.log(format!("could not answer terminal query: {error}"));
+                }
+            }
         }
     }
 

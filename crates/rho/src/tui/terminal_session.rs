@@ -1,11 +1,9 @@
 use std::{future::Future, io};
 
 use anyhow::{anyhow, Context};
-#[cfg(not(windows))]
-use crossterm::event::{DisableFocusChange, EnableFocusChange};
 use crossterm::{
     cursor::{MoveTo, Show},
-    event::Event,
+    event::{DisableFocusChange, EnableFocusChange, Event},
     execute,
     style::Print,
     terminal::{disable_raw_mode, Clear, ClearType, LeaveAlternateScreen},
@@ -133,27 +131,13 @@ impl TerminalSession {
 }
 
 fn enable_focus_change() -> io::Result<()> {
-    #[cfg(not(windows))]
-    {
-        execute!(io::stdout(), EnableFocusChange)
-    }
-    // Win32 FOCUS_EVENT records are always enabled. Do not also request ANSI
-    // focus reports; the Windows input adapter consumes the native records.
-    #[cfg(windows)]
-    {
-        Ok(())
-    }
+    // ConPTY delivers CSI I/O when VT input is enabled; native FOCUS_EVENT
+    // records are only the legacy path. Both require the appropriate setup.
+    execute!(io::stdout(), EnableFocusChange)
 }
 
 fn disable_focus_change() -> io::Result<()> {
-    #[cfg(not(windows))]
-    {
-        execute!(io::stdout(), DisableFocusChange)
-    }
-    #[cfg(windows)]
-    {
-        Ok(())
-    }
+    execute!(io::stdout(), DisableFocusChange)
 }
 
 fn hand_off_terminal(handoff_status: &str) -> io::Result<()> {
