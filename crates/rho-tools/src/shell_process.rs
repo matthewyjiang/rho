@@ -105,7 +105,15 @@ pub(crate) async fn run<S: ProcessSupervisor>(
     let mut command = build_command(&execution, tool_name)?;
     S::prepare(&mut command);
     let mut child = command.spawn()?;
-    let mut supervisor = S::attach(&child)?;
+    let mut supervisor = match S::attach(&child) {
+        Ok(supervisor) => supervisor,
+        Err(error) => {
+            // Windows children are still suspended if job assignment fails.
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err(error);
+        }
+    };
 
     let start = Instant::now();
     let max_output_bytes = execution.output_limits().max_output_bytes();

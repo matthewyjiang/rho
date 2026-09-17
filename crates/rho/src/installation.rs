@@ -43,6 +43,12 @@ pub(crate) struct InstallationEvidence {
     pub pacman_owned: bool,
 }
 
+#[derive(Default)]
+struct ScoopRoots {
+    user: Option<String>,
+    global: Option<String>,
+}
+
 pub(crate) fn detect(path: &Path) -> InstallationEvidence {
     let cargo_metadata = cargo_root_from_bin_path(path).is_some_and(|root| {
         root.join(".crates.toml").exists() || root.join(".crates2.json").exists()
@@ -50,7 +56,10 @@ pub(crate) fn detect(path: &Path) -> InstallationEvidence {
     let mut pacman_owned = false;
     let managed = detect_with(
         path,
-        std::env::var("SCOOP_GLOBAL").ok(),
+        &ScoopRoots {
+            user: std::env::var("SCOOP").ok(),
+            global: std::env::var("SCOOP_GLOBAL").ok(),
+        },
         cargo_install_root_contains_crate,
         |path| {
             let owner = pacman_owner(path);
@@ -67,7 +76,7 @@ pub(crate) fn detect(path: &Path) -> InstallationEvidence {
 
 fn detect_with(
     path: &Path,
-    scoop_global: Option<String>,
+    scoop_roots: &ScoopRoots,
     cargo_owns: impl FnOnce(&Path) -> bool,
     pacman_owns: impl FnOnce(&Path) -> bool,
 ) -> Option<ManagedInstallation> {
@@ -82,7 +91,7 @@ fn detect_with(
     if pacman_owns(path) {
         return Some(ManagedInstallation::Pacman);
     }
-    scoop_install_scope_for_path(path, scoop_global).map(ManagedInstallation::Scoop)
+    scoop_install_scope_for_path(path, scoop_roots).map(ManagedInstallation::Scoop)
 }
 
 pub(crate) fn cargo_update_root_for_exe(
@@ -142,34 +151,58 @@ fn pacman_owner(_path: &Path) -> Option<String> {
     None
 }
 
-fn scoop_install_scope_for_path(
-    path: &Path,
-    global_roots: impl IntoIterator<Item = impl AsRef<str>>,
-) -> Option<ScoopInstallScope> {
-    let lower = path
-        .to_string_lossy()
-        .replace('\\', "/")
-        .to_ascii_lowercase();
-    if !(lower.contains("/scoop/apps/rho/")
-        || lower.ends_with("/scoop/shims/rho")
-        || lower.ends_with("/scoop/shims/rho.exe"))
-    {
-        return None;
-    }
-    for root in global_roots {
-        let root = root
-            .as_ref()
-            .replace('\\', "/")
-            .trim_end_matches('/')
-            .to_ascii_lowercase();
-        if !root.is_empty() && (lower == root || lower.starts_with(&format!("{root}/"))) {
-            return Some(ScoopInstallScope::Global);
+fn scoop_install_scope_for_path(path: &Path, roots: &ScoopRoots) -> Option<ScoopInstallScope> {
+    let lower = normalized_scoop_path(&path.to_string_lossy());
+    // Configured roots need not contain a directory literally named `scoop`.
+    // Prefer global when both variables name the same root.
+    for (root, scope) in [
+        (roots.global.as_deref(), ScoopInstallScope::Global),
+        (roots.user.as_deref(), ScoopInstallScope::User),
+    ] {
+        let Some(root) = root else { continue };
+        let root = normalized_scoop_path(root);
+        let root = root.trim_end_matches('/');
+        if !root.is_empty()
+            && lower
+                .strip_prefix(&format!("{root}/"))
+                .is_some_and(is_scoop_rho_entry)
+        {
+            return Some(scope);
         }
     }
-    if lower.contains("/programdata/scoop/") {
-        return Some(ScoopInstallScope::Global);
+    // Retain default-layout detection when the launching shell lacks Scoop's
+    // environment variables, but require the actual package or shim layout.
+    let (root, entry) = lower.rsplit_once("/scoop/")?;
+    if !is_scoop_rho_entry(entry) {
+        return None;
     }
-    Some(ScoopInstallScope::User)
+    Some(if root.ends_with("/programdata") {
+        ScoopInstallScope::Global
+    } else {
+        ScoopInstallScope::User
+    })
+}
+
+fn normalized_scoop_path(value: &str) -> String {
+    let lower = value.replace('\\', "/").to_ascii_lowercase();
+    if let Some(unc) = lower.strip_prefix("//?/unc/") {
+        format!("//{unc}")
+    } else {
+        lower.strip_prefix("//?/").unwrap_or(&lower).to_owned()
+    }
+}
+
+fn is_scoop_rho_entry(entry: &str) -> bool {
+    if matches!(entry, "shims/rho" | "shims/rho.exe") {
+        return true;
+    }
+    let Some((version, binary)) = entry
+        .strip_prefix("apps/rho/")
+        .and_then(|entry| entry.split_once('/'))
+    else {
+        return false;
+    };
+    !matches!(version, "" | "." | "..") && matches!(binary, "rho" | "rho.exe")
 }
 
 #[cfg(test)]

@@ -1,10 +1,20 @@
 #[cfg(unix)]
-use super::secure_fs::{open_beneath_from_file, verified_from_open_file};
+use super::secure_fs::open_beneath_from_file;
+#[cfg(any(unix, windows))]
+use super::secure_fs::verified_from_open_file;
 use super::{
     secure_fs::{identity_drift, inspect_absolute, ContentHash, SecureDirectory, VerifiedPath},
     FrozenPathKind, WorkflowResult,
 };
 use std::{ffi::OsString, fs::File, io, path::Path};
+
+#[cfg(windows)]
+#[path = "secure_fs_directory_windows.rs"]
+mod windows;
+
+#[cfg(all(test, windows))]
+#[path = "secure_fs_directory_windows_tests.rs"]
+mod tests;
 
 impl SecureDirectory {
     pub(crate) fn directory_names(&self, relative: &Path) -> WorkflowResult<Vec<OsString>> {
@@ -31,7 +41,7 @@ pub(crate) fn opened_directory_names(directory: &VerifiedPath) -> WorkflowResult
     Ok(opened_names(&directory.file)?)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) fn open_verified_file_in_directory(
     directory: &VerifiedPath,
     relative: &Path,
@@ -43,12 +53,15 @@ pub(crate) fn open_verified_file_in_directory(
             "expected an opened directory",
         ));
     }
+    #[cfg(unix)]
     let file = open_beneath_from_file(
         directory.file.try_clone()?,
         relative,
         FrozenPathKind::File,
-        false,
+        /*writable*/ false,
     )?;
+    #[cfg(windows)]
+    let file = windows::open_file_beneath(directory.file.try_clone()?, relative)?;
     verified_from_open_file(
         file,
         Path::new(&directory.identity.canonical_path).join(relative),
@@ -57,7 +70,7 @@ pub(crate) fn open_verified_file_in_directory(
     )
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub(crate) fn open_verified_file_in_directory(
     directory: &VerifiedPath,
     relative: &Path,

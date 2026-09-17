@@ -1,9 +1,11 @@
 use std::{future::Future, io};
 
 use anyhow::{anyhow, Context};
+#[cfg(not(windows))]
+use crossterm::event::{DisableFocusChange, EnableFocusChange};
 use crossterm::{
     cursor::{MoveTo, Show},
-    event::{DisableFocusChange, EnableFocusChange, Event},
+    event::Event,
     execute,
     style::Print,
     terminal::{disable_raw_mode, Clear, ClearType, LeaveAlternateScreen},
@@ -28,8 +30,10 @@ impl TerminalSession {
     pub(super) fn acquire() -> Self {
         Self {
             events: Some(TerminalEvents::new()),
-            keyboard: Some(keyboard_modes::Enabled::acquire()),
+            // Released crossterm replaces the Windows console mode when mouse
+            // capture starts. Acquire VT input afterward so it is not cleared.
             mouse_capture_enabled: mouse_capture::enable().is_ok(),
+            keyboard: Some(keyboard_modes::Enabled::acquire()),
             focus_change_enabled: enable_focus_change().is_ok(),
         }
     }
@@ -92,16 +96,18 @@ impl TerminalSession {
             }
             self.focus_change_enabled = false;
         }
+        // Release in reverse acquisition order: mouse capture restores the
+        // full pre-mouse Windows console mode, including its original VT bit.
+        if let Some(keyboard) = self.keyboard.take() {
+            if let Err(error) = keyboard.try_release() {
+                failures.push(format!("disable keyboard modes: {error}"));
+            }
+        }
         if self.mouse_capture_enabled {
             if let Err(error) = mouse_capture::disable() {
                 failures.push(format!("disable mouse capture: {error}"));
             }
             self.mouse_capture_enabled = false;
-        }
-        if let Some(keyboard) = self.keyboard.take() {
-            if let Err(error) = keyboard.try_release() {
-                failures.push(format!("disable keyboard modes: {error}"));
-            }
         }
         // Leave the alternate screen, clear the revealed main buffer, and print
         // the caller status in one flush so handoff does not flash scrollback.
@@ -118,8 +124,8 @@ impl TerminalSession {
     fn resume(&mut self, terminal: &mut DefaultTerminal) -> anyhow::Result<()> {
         let resumed = ratatui::try_init().context("initialize terminal")?;
         *terminal = resumed;
-        self.keyboard = Some(keyboard_modes::Enabled::acquire());
         self.mouse_capture_enabled = mouse_capture::enable().is_ok();
+        self.keyboard = Some(keyboard_modes::Enabled::acquire());
         self.focus_change_enabled = enable_focus_change().is_ok();
         self.events = Some(TerminalEvents::new());
         Ok(())
@@ -127,11 +133,27 @@ impl TerminalSession {
 }
 
 fn enable_focus_change() -> io::Result<()> {
-    execute!(io::stdout(), EnableFocusChange)
+    #[cfg(not(windows))]
+    {
+        execute!(io::stdout(), EnableFocusChange)
+    }
+    // Win32 FOCUS_EVENT records are always enabled. Do not also request ANSI
+    // focus reports; the Windows input adapter consumes the native records.
+    #[cfg(windows)]
+    {
+        Ok(())
+    }
 }
 
 fn disable_focus_change() -> io::Result<()> {
-    execute!(io::stdout(), DisableFocusChange)
+    #[cfg(not(windows))]
+    {
+        execute!(io::stdout(), DisableFocusChange)
+    }
+    #[cfg(windows)]
+    {
+        Ok(())
+    }
 }
 
 fn hand_off_terminal(handoff_status: &str) -> io::Result<()> {
@@ -152,6 +174,7 @@ fn hand_off_terminal(handoff_status: &str) -> io::Result<()> {
 
 impl Drop for TerminalSession {
     fn drop(&mut self) {
+        self.stop_events();
         if let Some(keyboard) = self.keyboard.take() {
             keyboard.release();
         }

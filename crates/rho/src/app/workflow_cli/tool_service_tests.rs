@@ -454,7 +454,7 @@ fn agent_parse_uses_the_authorized_open_file() {
 // Covers: replacing an authorized catalog root must not change which agent
 // files are enumerated or read.
 // Owner: workflow dynamic capability adapter.
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn agent_discovery_stays_on_the_authorized_directory_handle() {
     let parent = tempfile::tempdir().unwrap();

@@ -109,58 +109,21 @@ pub(super) async fn execute_process(
         .await
 }
 
-struct ProcessTreeGuard {
-    job: Option<windows_sys::Win32::Foundation::HANDLE>,
-}
-
-unsafe impl Send for ProcessTreeGuard {}
+struct ProcessTreeGuard(crate::process_supervision::WindowsJob);
 
 impl ProcessSupervisor for ProcessTreeGuard {
-    fn prepare(_command: &mut Command) {}
+    fn prepare(command: &mut Command) {
+        crate::process_supervision::WindowsJob::prepare(command);
+    }
 
     fn attach(child: &tokio::process::Child) -> Result<Self, ToolError> {
-        use windows_sys::Win32::{Foundation::CloseHandle, System::JobObjects::*};
-
-        let process = child
-            .raw_handle()
-            .ok_or_else(|| ToolError::Message("spawned PowerShell process has no handle".into()))?;
-        unsafe {
-            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-            if job.is_null() {
-                return Err(ToolError::Message(
-                    std::io::Error::last_os_error().to_string(),
-                ));
-            }
-            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            let configured = SetInformationJobObject(
-                job,
-                JobObjectExtendedLimitInformation,
-                (&raw const limits).cast(),
-                std::mem::size_of_val(&limits) as u32,
-            );
-            if configured == 0 || AssignProcessToJobObject(job, process as _) == 0 {
-                let error = std::io::Error::last_os_error();
-                CloseHandle(job);
-                return Err(ToolError::Message(error.to_string()));
-            }
-            Ok(Self { job: Some(job) })
-        }
+        crate::process_supervision::WindowsJob::attach(child)
+            .map(Self)
+            .map_err(|error| ToolError::Message(error.to_string()))
     }
 
     fn kill(&mut self) {
-        if let Some(job) = self.job.take() {
-            unsafe {
-                windows_sys::Win32::System::JobObjects::TerminateJobObject(job, 1);
-                windows_sys::Win32::Foundation::CloseHandle(job);
-            }
-        }
-    }
-}
-
-impl Drop for ProcessTreeGuard {
-    fn drop(&mut self) {
-        self.kill();
+        self.0.kill();
     }
 }
 

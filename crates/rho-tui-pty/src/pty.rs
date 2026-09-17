@@ -11,10 +11,10 @@ mod shared;
 
 pub use shared::PtySize;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub use shared::PtyController;
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 mod unsupported {
     use std::{path::Path, time::Duration};
 
@@ -40,50 +40,50 @@ mod unsupported {
             cwd: Option<&Path>,
         ) -> Result<Self> {
             let _ = (binary, size, args, env, cwd);
-            anyhow::bail!("rho-tui-pty requires a Unix PTY; Windows is skipped for now")
+            anyhow::bail!("rho-tui-pty requires a Unix PTY or Windows ConPTY")
         }
 
         pub fn size(&self) -> PtySize {
-            unreachable!("rho-tui-pty requires a Unix PTY")
+            unreachable!("rho-tui-pty requires a Unix PTY or Windows ConPTY")
         }
 
         pub fn inject_bytes(&mut self, bytes: &[u8]) -> Result<()> {
             let _ = bytes;
-            unreachable!("rho-tui-pty requires a Unix PTY")
+            unreachable!("rho-tui-pty requires a Unix PTY or Windows ConPTY")
         }
 
         pub fn resize(&mut self, rows: u16, cols: u16) -> Result<()> {
             let _ = (rows, cols);
-            unreachable!("rho-tui-pty requires a Unix PTY")
+            unreachable!("rho-tui-pty requires a Unix PTY or Windows ConPTY")
         }
 
         /// Receive one output chunk, waiting up to `timeout`.
         pub fn recv_chunk(&self, timeout: Duration) -> Option<Vec<u8>> {
             let _ = timeout;
-            unreachable!("rho-tui-pty requires a Unix PTY")
+            unreachable!("rho-tui-pty requires a Unix PTY or Windows ConPTY")
         }
 
         /// Drain all currently available output for up to `timeout`.
         pub fn drain(&self, timeout: Duration) -> Vec<u8> {
             let _ = timeout;
-            unreachable!("rho-tui-pty requires a Unix PTY")
+            unreachable!("rho-tui-pty requires a Unix PTY or Windows ConPTY")
         }
 
         pub fn is_running(&mut self) -> bool {
-            unreachable!("rho-tui-pty requires a Unix PTY")
+            unreachable!("rho-tui-pty requires a Unix PTY or Windows ConPTY")
         }
 
         /// Wait for the child to exit and return its exit code.
         pub fn wait_exit(&mut self, timeout: Duration) -> Result<Option<u32>> {
             let _ = timeout;
-            unreachable!("rho-tui-pty requires a Unix PTY")
+            unreachable!("rho-tui-pty requires a Unix PTY or Windows ConPTY")
         }
 
         pub fn kill(&mut self) -> Result<()> {
-            unreachable!("rho-tui-pty requires a Unix PTY")
+            unreachable!("rho-tui-pty requires a Unix PTY or Windows ConPTY")
         }
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 pub use unsupported::PtyController;

@@ -17,8 +17,8 @@ impl PtySize {
     }
 }
 
-#[cfg(unix)]
-mod unix {
+#[cfg(any(unix, windows))]
+mod native {
     use std::{
         io::{Read, Write},
         path::Path,
@@ -47,8 +47,10 @@ mod unix {
     pub struct PtyController {
         child: Box<dyn portable_pty::Child + Send + Sync>,
         writer: Box<dyn Write + Send>,
-        reader_rx: mpsc::Receiver<Vec<u8>>,
+        // ClosePseudoConsole can block while flushing output. Drop the master
+        // while the reader and its receiver are still alive to drain that output.
         master: Box<dyn MasterPty + Send>,
+        reader_rx: mpsc::Receiver<Vec<u8>>,
         size: PtySize,
         killed: bool,
     }
@@ -177,6 +179,7 @@ mod unix {
             }
             self.killed = true;
             // portable-pty `setsid`s the child, so the pid is the group leader.
+            #[cfg(unix)]
             if let Some(pid) = self.child.process_id() {
                 if let Ok(pid) = i32::try_from(pid) {
                     // SAFETY: pid is the session leader portable-pty created.
@@ -185,6 +188,9 @@ mod unix {
                     }
                 }
             }
+            // On Windows portable-pty kills the leader; dropping the master
+            // subsequently closes ConPTY. This is not a detached-process tree
+            // supervisor, so scenarios must use Rho's supervised tool paths.
             let _ = self.child.kill();
             let _ = self.child.wait();
             Ok(())
@@ -221,7 +227,9 @@ mod unix {
                     match reader.read(&mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
-                            if tx.send(buf[..n].to_vec()).is_err() {
+                            // ConPTY shutdown waits for its output pipe to drain,
+                            // even after the consumer disappears. Unix can stop.
+                            if tx.send(buf[..n].to_vec()).is_err() && !cfg!(windows) {
                                 break;
                             }
                         }
@@ -234,5 +242,5 @@ mod unix {
     }
 }
 
-#[cfg(unix)]
-pub use unix::PtyController;
+#[cfg(any(unix, windows))]
+pub use native::PtyController;

@@ -113,6 +113,15 @@ impl RhoLaunchPlan {
     pub fn matrix(binary: impl Into<PathBuf>, home: &IsolatedHome, size: PtySize) -> Self {
         let mut env = default_clean_env();
         env.push(("HOME".into(), home.home.display().to_string()));
+        // Windows home/config discovery must not fall back to the real profile.
+        #[cfg(windows)]
+        for (key, path) in [
+            ("USERPROFILE", home.home.clone()),
+            ("APPDATA", home.home.join("AppData/Roaming")),
+            ("LOCALAPPDATA", home.home.join("AppData/Local")),
+        ] {
+            env.push((key.into(), path.display().to_string()));
+        }
         env.push(("RHO_TUI_TEST_MODE".into(), "matrix".into()));
         // Keep keyring/credential side effects out of the developer account.
         env.push(("RUST_BACKTRACE".into(), "1".into()));
@@ -166,6 +175,12 @@ pub fn default_clean_env() -> Vec<(String, String)> {
         "LOGNAME",
         "SHELL",
         "XDG_RUNTIME_DIR",
+        // Windows loader, system tools, and executable lookup essentials. Do
+        // not inherit USERPROFILE or APPDATA: matrix() supplies isolated paths.
+        "SystemRoot",
+        "WINDIR",
+        "COMSPEC",
+        "PATHEXT",
     ] {
         if let Ok(value) = env::var(key) {
             env.push((key.into(), value));

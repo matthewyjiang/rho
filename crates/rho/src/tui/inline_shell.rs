@@ -1,4 +1,5 @@
 use super::inline_shell_config::{resolve_shell, ShellArgv};
+use crate::process_tree::{ProcessTree, SupervisedTree};
 
 use std::{path::Path, process::Stdio};
 
@@ -176,6 +177,7 @@ async fn execute_streaming(
             process.env(rho_tools::PARENT_PATH_VAR, path);
         }
     }
+    SupervisedTree::prepare(&mut process);
     let mut child = process
         .current_dir(cwd)
         .stdin(Stdio::null())
@@ -183,6 +185,14 @@ async fn execute_streaming(
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()?;
+    let mut tree = match SupervisedTree::attach(&child) {
+        Ok(tree) => tree,
+        Err(error) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Err(error);
+        }
+    };
     let stdout = child.stdout.take().expect("stdout configured as piped");
     let stderr = child.stderr.take().expect("stderr configured as piped");
     // One shared deadline for the readers and the wait. A command that leaves a
@@ -206,9 +216,17 @@ async fn execute_streaming(
     );
     let wait = async {
         match tokio::time::timeout_at(deadline, child.wait()).await {
-            Ok(status) => status,
+            Ok(status) => {
+                // Background descendants must not retain the output pipes after
+                // the shell exits. The guard also covers task abortion.
+                tree.kill();
+                status
+            }
             Err(_) => {
-                child.kill().await?;
+                tree.kill();
+                // The job may already have terminated the child. A second kill
+                // must not replace the timeout with an already-exited OS error.
+                let _ = child.kill().await;
                 let _ = child.wait().await;
                 Err(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,

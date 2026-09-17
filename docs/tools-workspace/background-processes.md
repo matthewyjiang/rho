@@ -64,8 +64,8 @@ you do not re-read the same chunks.
 ### `stop`
 
 Requests termination of the managed process tree (process group on Unix, job
-object on Windows), not only the direct child. Rho waits a short grace period,
-then force-kills if needed.
+object on Windows), not only the direct child. On Unix, Rho waits a short grace
+period, then force-kills if needed. Windows terminates the job immediately.
 
 ## Snapshot fields
 

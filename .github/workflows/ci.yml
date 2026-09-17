@@ -164,7 +164,18 @@ jobs:
         with:
           shared-key: platform-${{ matrix.os }}
       - name: Compile and test the workspace
-        run: cargo test --workspace --all-targets --locked
+        # tui_pty_native runs startup, multiline Unicode paste, navigation and
+        # clean exit through portable-pty's ConPTY backend on Windows.
+        env:
+          RHO_PTY_ARTIFACTS: ${{ runner.temp }}/rho-pty-native-artifacts
+        run: cargo test --workspace --all-targets --locked --jobs 8
+      - name: Upload native PTY failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-pty-${{ matrix.os }}-artifacts
+          path: ${{ runner.temp }}/rho-pty-native-artifacts/
+          if-no-files-found: ignore
 
   package:
     name: release package checks
