@@ -129,8 +129,27 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
         },
         Step::Key(Key::Char('g')),
         Step::WaitText {
-            text: "computer use enabled",
+            text: "Bypass · computer on",
             timeout: STARTUP,
+        },
+        // Desktop access stays visible beside permissions in a narrow footer.
+        // The combined label cannot match the /computer on transcript echo.
+        Step::Resize { rows: 40, cols: 24 },
+        Step::WaitTextGone {
+            text: "gpt-5.5",
+            timeout: SETTLE,
+        },
+        Step::WaitText {
+            text: "Bypass · computer on",
+            timeout: SETTLE,
+        },
+        Step::Resize {
+            rows: 40,
+            cols: 120,
+        },
+        Step::WaitText {
+            text: "Bypass · computer on",
+            timeout: SETTLE,
         },
         Step::SubmitText("/computer status"),
         Step::WaitText {
@@ -155,7 +174,7 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
             timeout: SETTLE,
         },
         Step::WaitText {
-            text: "computer use enabled",
+            text: "Bypass · computer on",
             timeout: STARTUP,
         },
         Step::SubmitText("fixture computer context"),
@@ -164,7 +183,7 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
             timeout: STREAM,
         },
         Step::WaitText {
-            text: "computer use enabled",
+            text: "Bypass · computer on",
             timeout: SETTLE,
         },
         Step::SubmitText("fixture delay"),
@@ -200,6 +219,10 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
         Step::WaitText {
             text: "model interrupted",
             timeout: STREAM,
+        },
+        Step::WaitTextGone {
+            text: "Bypass · computer on",
+            timeout: SETTLE,
         },
         // The same session's next request must not advertise the revoked tool.
         // /new would mask registry drift by rebuilding the entire session.

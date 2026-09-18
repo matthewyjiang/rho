@@ -252,6 +252,23 @@ fn bottom_row_drops_fields_by_global_rank() {
         vec![FieldKey::Permission],
         "permission is kept last"
     );
+
+    // Granted desktop access outranks permission when they cannot both fit.
+    // Their combined width is 6 + 3 + 11 = 20 cells; computer alone needs 11.
+    let mut connected = fully_populated_statusline();
+    connected.state.permission_mode = PermissionMode::Bypass;
+    connected.update_computer(ComputerUseStatus::Connected);
+    for (width, expected) in [
+        (20, vec![FieldKey::Permission, FieldKey::Computer]),
+        (18, vec![FieldKey::Computer]),
+        (11, vec![FieldKey::Computer]),
+    ] {
+        assert_eq!(
+            packed_keys(&connected.state, width),
+            expected,
+            "width {width}"
+        );
+    }
 }
 
 #[test]
