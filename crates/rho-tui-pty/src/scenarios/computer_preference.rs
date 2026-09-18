@@ -39,7 +39,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             harness.submit_text("/computer on")?;
             harness.wait_for_text("Grant desktop access?", SETTLE)?;
             harness.inject_key(&Key::Char('g'))?;
-            harness.wait_for_text("computer use enabled", STARTUP)?;
+            harness.wait_for_text("computer on", STARTUP)?;
             harness.submit_text("computer preference session A")?;
             harness.wait_for_text("fixture response: computer preference session A", STREAM)
         })?;
@@ -74,7 +74,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         }
         run_phase(runner, &plan, "restored", &mut timing, |harness| {
             // No command or confirmation before this wait: startup owns restoration.
-            harness.wait_for_text("computer use enabled", STARTUP)?;
+            harness.wait_for_text("computer on", STARTUP)?;
             harness.submit_text("fixture computer context")?;
             harness.wait_for_text("computer context: enabled", STREAM)?;
             harness.submit_text("fixture delay")?;
@@ -103,7 +103,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
         // new-session default. Owner: interactive session lifecycle across processes.
         let resume_a = plan.clone().with_arg("--resume").with_arg(&session_a);
         run_phase(runner, &resume_a, "resume_a", &mut timing, |harness| {
-            harness.wait_for_text("computer use enabled", STARTUP)?;
+            harness.wait_for_text("computer on", STARTUP)?;
             harness.submit_text("fixture tool available computer")?;
             harness.wait_for_text("tool available computer: true", STREAM)?;
             // Resuming A must leave the last explicit choice (B's off) intact.
@@ -114,7 +114,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             harness.submit_text("/computer on")?;
             harness.wait_for_text("Grant desktop access?", SETTLE)?;
             harness.inject_key(&Key::Char('g'))?;
-            harness.wait_for_text("computer use enabled", STARTUP)
+            harness.wait_for_text("computer on", STARTUP)
         })?;
         let resume_b = plan.clone().with_arg("--resume").with_arg(&session_b);
         run_phase(runner, &resume_b, "resume_b", &mut timing, |harness| {
@@ -123,7 +123,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             harness.wait_for_text("computer context: disabled", STREAM)?;
             harness.submit_text("/new")?;
             harness.wait_for_text_gone("computer context: disabled", SETTLE)?;
-            harness.wait_for_text("computer use enabled", STARTUP)?;
+            harness.wait_for_text("computer on", STARTUP)?;
             harness.submit_text("fixture tool available computer")?;
             harness.wait_for_text("tool available computer: true", STREAM)?;
             // The command path must also restore the target's own saved choice.
