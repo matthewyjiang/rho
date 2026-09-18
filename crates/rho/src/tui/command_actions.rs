@@ -45,7 +45,19 @@ impl CommandSubmission {
 }
 
 impl App {
-    pub(super) async fn execute_command(
+    pub(super) fn execute_command<'a>(
+        &'a mut self,
+        submission: CommandSubmission,
+        terminal: &'a mut DefaultTerminal,
+        agent: &'a mut InteractiveRuntime,
+    ) -> impl std::future::Future<Output = anyhow::Result<()>> + 'a {
+        // Even /exit shares the largest command future. Construct it outside
+        // the input poll frames so their debug move temporaries do not exhaust
+        // the Windows main stack before command dispatch.
+        Box::pin(self.execute_command_inner(submission, terminal, agent))
+    }
+
+    async fn execute_command_inner(
         &mut self,
         submission: CommandSubmission,
         terminal: &mut DefaultTerminal,
