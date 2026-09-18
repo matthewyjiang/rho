@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.3.1...rho-agent-tools-v1.3.2) (2026-09-18)
+
+
+### Bug Fixes
+
+* **windows:** repair workflows, process cleanup, and terminal input ([#1226](https://github.com/matthewyjiang/rho/issues/1226)) ([8ec7d1a](https://github.com/matthewyjiang/rho/commit/8ec7d1accd80f3d4c5da3f5ae056a0c3e83cb654))
+
 ## [1.3.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.3.0...rho-agent-tools-v1.3.1) (2026-09-12)
 
 

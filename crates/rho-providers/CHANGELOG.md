@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.8.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.7.0...rho-providers-v2.8.0) (2026-09-18)
+
+
+### Features
+
+* **tui:** add configurable output streaming modes ([#1221](https://github.com/matthewyjiang/rho/issues/1221)) ([d50f357](https://github.com/matthewyjiang/rho/commit/d50f357f62bc9a8857add4648cbfffff3f83b234))
+* **tui:** keep session tool cards compact ([#1225](https://github.com/matthewyjiang/rho/issues/1225)) ([678c789](https://github.com/matthewyjiang/rho/commit/678c789f43f2a0a06da9142c45d5535fa493e1cd))
+
 ## [2.7.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.6.0...rho-providers-v2.7.0) (2026-09-12)
 
 
