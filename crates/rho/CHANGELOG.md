@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.12.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.11.0...rho-coding-agent-v2.12.0) (2026-09-18)
+
+
+### Features
+
+* **tui:** add configurable output streaming modes ([#1221](https://github.com/matthewyjiang/rho/issues/1221)) ([d50f357](https://github.com/matthewyjiang/rho/commit/d50f357f62bc9a8857add4648cbfffff3f83b234))
+* **tui:** keep session tool cards compact ([#1225](https://github.com/matthewyjiang/rho/issues/1225)) ([678c789](https://github.com/matthewyjiang/rho/commit/678c789f43f2a0a06da9142c45d5535fa493e1cd))
+
+
+### Bug Fixes
+
+* **tui:** move computer access status into the footer ([#1227](https://github.com/matthewyjiang/rho/issues/1227)) ([ffbd95a](https://github.com/matthewyjiang/rho/commit/ffbd95ac798a5c54afdd4e199ae96c2149633689))
+* **windows:** repair workflows, process cleanup, and terminal input ([#1226](https://github.com/matthewyjiang/rho/issues/1226)) ([8ec7d1a](https://github.com/matthewyjiang/rho/commit/8ec7d1accd80f3d4c5da3f5ae056a0c3e83cb654))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.7.0 to 2.8.0
+
 ## [2.11.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.10.0...rho-coding-agent-v2.11.0) (2026-09-12)
 
 
