@@ -76,7 +76,7 @@ pub(super) const COMPUTER_SETUP_SCENARIO: Scenario = Scenario::new(
         },
         Step::Key(Key::Char('g')),
         Step::WaitText {
-            text: "computer on",
+            text: "Bypass · computer on",
             timeout: STARTUP,
         },
         Step::SubmitText("fixture tool available computer"),

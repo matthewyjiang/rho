@@ -132,8 +132,8 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
             text: "Bypass · computer on",
             timeout: STARTUP,
         },
-        // Desktop access stays visible beside permissions in a narrow footer,
-        // then survives on its own when even the permission field cannot fit.
+        // Desktop access stays visible beside permissions in a narrow footer.
+        // The combined label cannot match the /computer on transcript echo.
         Step::Resize { rows: 40, cols: 24 },
         Step::WaitTextGone {
             text: "gpt-5.5",
@@ -141,15 +141,6 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
         },
         Step::WaitText {
             text: "Bypass · computer on",
-            timeout: SETTLE,
-        },
-        Step::Resize { rows: 40, cols: 18 },
-        Step::WaitTextGone {
-            text: "Bypass",
-            timeout: SETTLE,
-        },
-        Step::WaitText {
-            text: "computer on",
             timeout: SETTLE,
         },
         Step::Resize {
