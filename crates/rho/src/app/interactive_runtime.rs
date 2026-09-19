@@ -23,7 +23,9 @@ mod cache;
 mod compact;
 #[path = "interactive_runtime_computer.rs"]
 mod computer;
-pub(crate) use computer::{ComputerUseEligibilityError, ComputerUseUpdate};
+pub(crate) use computer::{
+    ComputerNotice, ComputerNoticeState, ComputerUseEligibilityError, ComputerUseUpdate,
+};
 #[path = "interactive_runtime_edit_tool.rs"]
 pub(crate) mod edit_tool;
 #[path = "interactive_runtime_mcp.rs"]
@@ -120,7 +122,8 @@ pub(crate) struct InteractiveRuntime {
     pending_persistence_checkpoint: Option<(StoredSession, rho_sdk::SessionSnapshot)>,
     /// True after the current provider completes a live turn on the current history.
     live_context_warm: bool,
-    computer_context: Option<String>,
+    /// Desktop-access state the model last saw; `None` until a notice is written.
+    computer_context: Option<ComputerNoticeState>,
     /// Registry changes not yet installed in the SDK runtime, including a
     /// revocation whose intended session replacement failed or is still pending.
     computer_runtime_dirty: bool,
@@ -292,6 +295,8 @@ impl InteractiveRuntime {
         self.live_context_warm = true;
     }
 
+    /// The history the model reasons over was replaced: a new or resumed
+    /// session, a rebuilt runtime, or compaction.
     fn invalidate_live_context(&mut self) {
         self.live_context_warm = false;
         self.rehydrate_computer_context();
@@ -442,10 +447,9 @@ impl InteractiveRuntime {
         // checkpoints before outcome() drains the remaining SDK events unseen.
         while self.next_event().await.is_some() {}
         let finished = self.runs.finish().await;
-        if !matches!(&finished, Ok(finished) if finished.outcome.is_ok()) {
-            // Cancellation can acknowledge a boundary without applying it.
-            self.rehydrate_computer_context();
-        }
+        // A boundary acknowledgement may never have been committed (cancellation),
+        // so the run's committed history is the only authority on what the model saw.
+        self.rehydrate_computer_context();
         if let Some(error) = self.pending_persistence_error.take() {
             self.sessions.abandon_turn_display();
             self.tools.checkpoint_tracker().discard_turn();
@@ -587,7 +591,6 @@ impl InteractiveRuntime {
         .await?;
         bind_subagent_parent(&self.tools, self.sessions.session().id(), Some(&storage));
         self.sessions.set_resumed_storage(storage);
-        self.invalidate_live_context();
         self.restore_computer_preference(computer::ComputerPreferenceSource::SavedSession)
             .await;
         Ok(())
@@ -891,7 +894,7 @@ impl InteractiveRuntime {
         self.sessions
             .replace_session(replacement_session, resume_omission);
         self.install_rebuilt_permission(permission.pending);
-        self.rehydrate_computer_context();
+        self.invalidate_live_context();
         self.computer_runtime_dirty = false;
         previous_runtime.shutdown();
         if let Some(prompt) = next_prompt {
