@@ -238,9 +238,9 @@ impl InteractiveRuntime {
     }
 
     /// Reset the acknowledgement to whatever notice the live history records.
-    /// Owned by `invalidate_live_context` (history replacement) and
-    /// `finish_run` (a boundary acknowledgement the run may not have committed).
-    pub(super) fn rehydrate_computer_context(&mut self) {
+    /// Owned by construction, `invalidate_live_context` (history replacement),
+    /// and `finish_run` (a boundary acknowledgement the run may not have committed).
+    pub(crate) fn rehydrate_computer_context(&mut self) {
         self.computer_context = self
             .sessions
             .history()

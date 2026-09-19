@@ -149,63 +149,84 @@ async fn failed_computer_connect_preserves_next_prompt() {
     assert!(runtime.take_notices().is_empty());
 }
 
-// Covers: resuming a transcript rehydrates the acknowledgement from history, so
-// a recorded notice matching live authority is not repeated while a stale one
-// is superseded, including a notice embedded in a turn-boundary batch and a
-// resume onto a host without computer use.
+// Covers: a recorded notice matching live authority is not repeated while a
+// stale one is superseded, including construction with history already loaded
+// and `computer_context` still `None`, a notice embedded in a turn-boundary
+// batch, and a resume onto a host without computer use.
 // Owner: interactive runtime capability context.
 #[tokio::test]
 async fn resumed_history_suppresses_repeated_computer_context() {
     use super::ComputerNoticeState;
     use crate::session::Session as StoredSession;
 
-    for (host_has_computer, recorded, expect_notice) in [
-        (true, ComputerNoticeState::Disabled, false),
-        (true, ComputerNoticeState::Enabled, true),
-        (false, ComputerNoticeState::Enabled, true),
-        (false, ComputerNoticeState::Disabled, false),
-    ] {
-        let mut runtime = super::super::tests::test_runtime(vec![]).await;
-        let root = tempfile::tempdir().unwrap();
-        if host_has_computer {
-            runtime.tools = runtime.tools.with_computer_use(ComputerUseSession::new(
-                None,
-                crate::config::Config::default().max_output_bytes,
-                root.path().into(),
-            ));
+    for construction in [true, false] {
+        for (host_has_computer, recorded, expect_notice) in [
+            (true, ComputerNoticeState::Disabled, false),
+            (true, ComputerNoticeState::Enabled, true),
+            (false, ComputerNoticeState::Enabled, true),
+            (false, ComputerNoticeState::Disabled, false),
+        ] {
+            let mut runtime = super::super::tests::test_runtime(vec![]).await;
+            let root = tempfile::tempdir().unwrap();
+            if host_has_computer {
+                runtime.tools = runtime.tools.with_computer_use(ComputerUseSession::new(
+                    None,
+                    crate::config::Config::default().max_output_bytes,
+                    root.path().into(),
+                ));
+            }
+            let recorded_notice = format!(
+                "[runtime notifications for session x run 1]\nbackground context\n\n{}{}\nsuperseded",
+                super::CONTEXT_PREFIX,
+                recorded.label()
+            );
+            if construction {
+                runtime
+                    .sessions
+                    .session()
+                    .append_message(Message::user_text("hello"))
+                    .unwrap();
+                runtime
+                    .sessions
+                    .session()
+                    .append_message(Message::assistant_text("hi"))
+                    .unwrap();
+                runtime
+                    .sessions
+                    .session()
+                    .append_message(Message::user_text(recorded_notice))
+                    .unwrap();
+                runtime.computer_context = None;
+                runtime.rehydrate_computer_context();
+            } else {
+                let cwd = root.path().join("workspace");
+                std::fs::create_dir(&cwd).unwrap();
+                let storage = StoredSession::create_in_root(root.path(), &cwd).unwrap();
+                let snapshot = rho_sdk::SessionSnapshot::new(
+                    rho_sdk::SessionId::from_string(storage.id()).unwrap(),
+                    rho_sdk::Revision::from_u64(1),
+                    vec![
+                        Message::user_text("hello"),
+                        Message::assistant_text("hi"),
+                        Message::user_text(recorded_notice),
+                    ],
+                    rho_sdk::model::ModelIdentity::new("test", "test", "test"),
+                    rho_sdk::CompactionState::default(),
+                )
+                .with_prompt_cache_key(format!("rho:{}", storage.id()));
+                storage
+                    .save_snapshot(&snapshot, snapshot.history())
+                    .unwrap();
+                runtime.resume(storage).await.unwrap();
+            }
+            assert_eq!(runtime.computer_context, Some(recorded));
+            assert_eq!(
+                runtime
+                    .pending_computer_context()
+                    .map(|notice| notice.state),
+                expect_notice.then_some(ComputerNoticeState::Disabled),
+                "construction={construction} host_has_computer={host_has_computer} recorded={recorded:?}"
+            );
         }
-        let cwd = root.path().join("workspace");
-        std::fs::create_dir(&cwd).unwrap();
-        let storage = StoredSession::create_in_root(root.path(), &cwd).unwrap();
-        let recorded_notice = format!(
-            "[runtime notifications for session x run 1]\nbackground context\n\n{}{}\nsuperseded",
-            super::CONTEXT_PREFIX,
-            recorded.label()
-        );
-        let snapshot = rho_sdk::SessionSnapshot::new(
-            rho_sdk::SessionId::from_string(storage.id()).unwrap(),
-            rho_sdk::Revision::from_u64(1),
-            vec![
-                Message::user_text("hello"),
-                Message::assistant_text("hi"),
-                Message::user_text(recorded_notice),
-            ],
-            rho_sdk::model::ModelIdentity::new("test", "test", "test"),
-            rho_sdk::CompactionState::default(),
-        )
-        .with_prompt_cache_key(format!("rho:{}", storage.id()));
-        storage
-            .save_snapshot(&snapshot, snapshot.history())
-            .unwrap();
-
-        runtime.resume(storage).await.unwrap();
-        assert_eq!(runtime.computer_context, Some(recorded));
-        assert_eq!(
-            runtime
-                .pending_computer_context()
-                .map(|notice| notice.state),
-            expect_notice.then_some(ComputerNoticeState::Disabled),
-            "host_has_computer={host_has_computer} recorded={recorded:?}"
-        );
     }
 }
