@@ -2,7 +2,11 @@
 
 use anyhow::{ensure, Result};
 
-use super::{computer::setup_driver, config::find_latest_session, SETTLE, STARTUP, STREAM};
+use super::{
+    computer::{setup_driver, wait_for_turn_completion_after},
+    config::find_latest_session,
+    SETTLE, STARTUP, STREAM,
+};
 use crate::{
     artifacts::ArtifactWriter,
     env::{IsolatedHome, RhoLaunchPlan},
@@ -106,6 +110,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             harness.wait_for_text("Bypass · computer on", STARTUP)?;
             harness.submit_text("fixture tool available computer")?;
             harness.wait_for_text("tool available computer: true", STREAM)?;
+            wait_for_turn_completion_after(harness, "tool available computer: true")?;
             // Resuming A must leave the last explicit choice (B's off) intact.
             harness.submit_text("/new")?;
             harness.wait_for_text_gone("tool available computer: true", SETTLE)?;
@@ -121,6 +126,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             // B's old history has enabled context, so this cannot match replay.
             harness.submit_text("fixture computer context")?;
             harness.wait_for_text("computer context: disabled", STREAM)?;
+            wait_for_turn_completion_after(harness, "computer context: disabled")?;
             harness.submit_text("/new")?;
             harness.wait_for_text_gone("computer context: disabled", SETTLE)?;
             harness.wait_for_text("Bypass · computer on", STARTUP)?;

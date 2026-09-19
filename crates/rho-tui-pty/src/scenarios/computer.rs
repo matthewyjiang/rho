@@ -18,23 +18,28 @@ use crate::{
 };
 
 // /new is idle-only. Seeing the response is not enough: the provider can still
-// own the turn. Wait for its durable receipt, not an earlier turn's receipt.
-fn wait_for_context_turn_completion(harness: &mut PtyHarness) -> Result<()> {
+// own the turn. Wait for its durable receipt after this marker, not an earlier
+// turn's receipt.
+pub(super) fn wait_for_turn_completion_after(harness: &mut PtyHarness, marker: &str) -> Result<()> {
     let deadline = Instant::now() + STREAM.duration;
     loop {
         harness.poll(Duration::from_millis(25));
         let screen = harness.screen().contents();
         if screen
-            .rfind("computer context: enabled")
+            .rfind(marker)
             .is_some_and(|start| screen[start..].contains("Worked for"))
         {
             return Ok(());
         }
         ensure!(
             harness.is_running() && Instant::now() < deadline,
-            "context turn did not finish before /new:\n{screen}"
+            "turn did not finish before the next idle command:\n{screen}"
         );
     }
+}
+
+fn wait_for_context_turn_completion(harness: &mut PtyHarness) -> Result<()> {
+    wait_for_turn_completion_after(harness, "computer context: enabled")
 }
 
 pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
