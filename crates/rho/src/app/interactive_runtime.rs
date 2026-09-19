@@ -294,7 +294,7 @@ impl InteractiveRuntime {
 
     fn invalidate_live_context(&mut self) {
         self.live_context_warm = false;
-        self.computer_context = None;
+        self.rehydrate_computer_context();
     }
 
     pub(crate) fn take_pending_omission(
@@ -444,7 +444,7 @@ impl InteractiveRuntime {
         let finished = self.runs.finish().await;
         if !matches!(&finished, Ok(finished) if finished.outcome.is_ok()) {
             // Cancellation can acknowledge a boundary without applying it.
-            self.computer_context = None;
+            self.rehydrate_computer_context();
         }
         if let Some(error) = self.pending_persistence_error.take() {
             self.sessions.abandon_turn_display();
@@ -891,7 +891,7 @@ impl InteractiveRuntime {
         self.sessions
             .replace_session(replacement_session, resume_omission);
         self.install_rebuilt_permission(permission.pending);
-        self.computer_context = None;
+        self.rehydrate_computer_context();
         self.computer_runtime_dirty = false;
         previous_runtime.shutdown();
         if let Some(prompt) = next_prompt {

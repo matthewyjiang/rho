@@ -93,7 +93,7 @@ impl InteractiveRuntime {
             && self.sessions.pending_replacement().is_none()
         {
             if let Err(error) = self.refresh_computer_context() {
-                self.computer_context = None;
+                self.rehydrate_computer_context();
                 return Err(error);
             }
         }
@@ -124,7 +124,7 @@ impl InteractiveRuntime {
         self.remember_tool_list();
         // Lifecycle callers must not write a disabled notice into the session
         // they are leaving. A retained session gets fresh context before its next call.
-        self.computer_context = None;
+        self.rehydrate_computer_context();
     }
 
     /// A new conversation gets a fresh grant only from machine-local consent.
@@ -157,17 +157,13 @@ impl InteractiveRuntime {
     }
 
     /// Derive context from live authority, never from the saved preference.
-    /// The acknowledgement resets on session replacement and compaction, so
-    /// resumed history never determines whether desktop authority is available.
+    /// `computer_context` is the notice the model last saw, rehydrated from
+    /// history at every lifecycle boundary, so resuming or switching sessions
+    /// never repeats an identical notice but still supersedes a stale one.
     pub(crate) fn pending_computer_context(&self) -> Option<(String, String)> {
         // Unsupported hosts need no desktop notice unless resumed history
         // contains one to supersede, for example when resuming with --no-tools.
-        if self.computer_use().is_none() && self.computer_context.is_none()
-            && !self.sessions.history().iter().any(|message| {
-                matches!(message, rho_sdk::model::Message::User(blocks) if blocks.iter().any(|block|
-                    matches!(block, rho_sdk::model::ContentBlock::Text(text) if text.contains(CONTEXT_PREFIX))))
-            })
-        {
+        if self.computer_use().is_none() && self.computer_context.is_none() {
             return None;
         }
         let enabled = self
@@ -192,6 +188,26 @@ impl InteractiveRuntime {
             return None;
         }
         Some((context, format!("computer use {state}")))
+    }
+
+    /// Reset the acknowledgement to whatever notice the live history records.
+    /// Call after any history replacement: resume, /new, compaction, cancelled
+    /// boundaries, or a rolled-back notice write.
+    pub(super) fn rehydrate_computer_context(&mut self) {
+        use rho_sdk::model::{ContentBlock, Message};
+        self.computer_context = self.sessions.history().iter().rev().find_map(|message| {
+            let Message::User(blocks) = message else {
+                return None;
+            };
+            blocks.iter().find_map(|block| match block {
+                // Boundary batches append the notice last, so the tail from the
+                // prefix is the exact text the model saw.
+                ContentBlock::Text(text) => text
+                    .find(CONTEXT_PREFIX)
+                    .map(|start| text[start..].to_string()),
+                _ => None,
+            })
+        });
     }
 
     pub(super) fn refresh_computer_context(&mut self) -> anyhow::Result<()> {

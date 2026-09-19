@@ -148,3 +148,36 @@ async fn failed_computer_connect_preserves_next_prompt() {
     assert_eq!(runtime.take_notices().len(), 1);
     assert!(runtime.take_notices().is_empty());
 }
+
+// Covers: history replacement rehydrates the acknowledgement, so a resumed
+// transcript already carrying the current notice gets no duplicate while a
+// stale notice is still superseded.
+// Owner: interactive runtime capability context.
+#[tokio::test]
+async fn resumed_history_suppresses_repeated_computer_context() {
+    for (recorded_state, expect_notice) in [("disabled", false), ("enabled", true)] {
+        let mut runtime = super::super::tests::test_runtime(vec![]).await;
+        let root = tempfile::tempdir().unwrap();
+        runtime.tools = runtime.tools.with_computer_use(ComputerUseSession::new(
+            None,
+            crate::config::Config::default().max_output_bytes,
+            root.path().into(),
+        ));
+        runtime.refresh_computer_context().unwrap();
+        let mut history = runtime.history();
+        let Some(Message::User(blocks)) = history.pop() else {
+            panic!("disabled notice must be recorded");
+        };
+        let ContentBlock::Text(text) = &blocks[0] else {
+            panic!("notice must be text");
+        };
+        history.push(Message::user_text(text.replacen(
+            "disabled",
+            recorded_state,
+            1,
+        )));
+        runtime.sessions.session().replace_history(history).unwrap();
+        runtime.rehydrate_computer_context();
+        assert_eq!(runtime.pending_computer_context().is_some(), expect_notice);
+    }
+}
