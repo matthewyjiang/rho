@@ -87,8 +87,8 @@ impl App {
         ));
         let model_message = rho_sdk::model::Message::User(input.blocks().to_vec());
         if request.respond(Some(input)).await {
-            if let Some((context, _)) = &delivery.batch.runtime_context {
-                agent.acknowledge_computer_context(context.clone());
+            if let Some(notice) = &delivery.batch.runtime_context {
+                agent.acknowledge_computer_context(notice.state);
             }
             let transcript = delivery.transcript;
             agent.record_boundary_display(model_message, transcript.display_message());

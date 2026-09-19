@@ -4,6 +4,7 @@ use crate::{
     permission::PermissionMode,
     tools::computer_use::{ComputerUseSession, ComputerUseStatus},
 };
+use rho_sdk::model::{ContentBlock, Message};
 
 use super::InteractiveRuntime;
 
@@ -23,6 +24,50 @@ pub(crate) enum ComputerUseUpdate {
 pub(super) enum ComputerPreferenceSource {
     NewSession,
     SavedSession,
+}
+
+/// Desktop-access state as last described to the model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ComputerNoticeState {
+    Enabled,
+    Disabled,
+}
+
+impl ComputerNoticeState {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Enabled => "enabled",
+            Self::Disabled => "disabled",
+        }
+    }
+
+    fn parse(label: &str) -> Option<Self> {
+        match label {
+            "enabled" => Some(Self::Enabled),
+            "disabled" => Some(Self::Disabled),
+            _ => None,
+        }
+    }
+
+    /// The state a recorded notice announced, if the message carries one.
+    fn from_message(message: &Message) -> Option<Self> {
+        let Message::User(blocks) = message else {
+            return None;
+        };
+        blocks.iter().find_map(|block| match block {
+            ContentBlock::Text(text) => text
+                .split_once(CONTEXT_PREFIX)
+                .and_then(|(_, rest)| Self::parse(rest.lines().next()?)),
+            _ => None,
+        })
+    }
+}
+
+/// A capability notice the model has not yet seen.
+pub(crate) struct ComputerNotice {
+    pub(crate) state: ComputerNoticeState,
+    pub(crate) model: String,
+    pub(crate) display: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -92,10 +137,7 @@ impl InteractiveRuntime {
         if (registration_changed || self.computer_context.is_none())
             && self.sessions.pending_replacement().is_none()
         {
-            if let Err(error) = self.refresh_computer_context() {
-                self.computer_context = None;
-                return Err(error);
-            }
+            self.refresh_computer_context()?;
         }
         Ok(match connection_result {
             Some(Ok(())) if desired => ComputerUseUpdate::Connected,
@@ -122,9 +164,6 @@ impl InteractiveRuntime {
         }
         self.computer_runtime_dirty |= self.tools.set_computer_use_registered(false);
         self.remember_tool_list();
-        // Lifecycle callers must not write a disabled notice into the session
-        // they are leaving. A retained session gets fresh context before its next call.
-        self.computer_context = None;
     }
 
     /// A new conversation gets a fresh grant only from machine-local consent.
@@ -157,25 +196,28 @@ impl InteractiveRuntime {
     }
 
     /// Derive context from live authority, never from the saved preference.
-    /// The acknowledgement resets on session replacement and compaction, so
-    /// resumed history never determines whether desktop authority is available.
-    pub(crate) fn pending_computer_context(&self) -> Option<(String, String)> {
+    /// `computer_context` is the state the model last saw, rehydrated from
+    /// history whenever it is replaced, so resuming or switching sessions
+    /// never repeats an identical notice but still supersedes a stale one.
+    pub(crate) fn pending_computer_context(&self) -> Option<ComputerNotice> {
         // Unsupported hosts need no desktop notice unless resumed history
         // contains one to supersede, for example when resuming with --no-tools.
-        if self.computer_use().is_none() && self.computer_context.is_none()
-            && !self.sessions.history().iter().any(|message| {
-                matches!(message, rho_sdk::model::Message::User(blocks) if blocks.iter().any(|block|
-                    matches!(block, rho_sdk::model::ContentBlock::Text(text) if text.contains(CONTEXT_PREFIX))))
-            })
-        {
+        if self.computer_use().is_none() && self.computer_context.is_none() {
             return None;
         }
-        let enabled = self
+        let state = if self
             .computer_use()
-            .is_some_and(|session| session.status() == ComputerUseStatus::Connected);
-        let state = if enabled { "enabled" } else { "disabled" };
-        let mut context = format!("{CONTEXT_PREFIX}{state}\nThis is a runtime capability update, not a user request. It supersedes earlier computer-use state.\n");
-        if enabled {
+            .is_some_and(|session| session.status() == ComputerUseStatus::Connected)
+        {
+            ComputerNoticeState::Enabled
+        } else {
+            ComputerNoticeState::Disabled
+        };
+        if self.computer_context == Some(state) {
+            return None;
+        }
+        let mut context = format!("{CONTEXT_PREFIX}{}\nThis is a runtime capability update, not a user request. It supersedes earlier computer-use state.\n", state.label());
+        if state == ComputerNoticeState::Enabled {
             context.push_str("The computer tool is available. First call computer with {\"action\":\"list\"} to discover desktop capabilities and instructions. Desktop access includes signed-in apps; follow the user's task and do not treat access as blanket authorization.\n");
             if let Some(spec) = self
                 .tools
@@ -188,21 +230,34 @@ impl InteractiveRuntime {
         } else {
             context.push_str("Desktop access is off. Do not attempt computer tool calls. Only the user can enable access with /computer on; do not seek another route around disabled desktop access.\n");
         }
-        if self.computer_context.as_deref() == Some(context.as_str()) {
-            return None;
-        }
-        Some((context, format!("computer use {state}")))
+        Some(ComputerNotice {
+            state,
+            model: context,
+            display: format!("computer use {}", state.label()),
+        })
+    }
+
+    /// Reset the acknowledgement to whatever notice the live history records.
+    /// Owned by construction, `invalidate_live_context` (history replacement),
+    /// and `finish_run` (a boundary acknowledgement the run may not have committed).
+    pub(crate) fn rehydrate_computer_context(&mut self) {
+        self.computer_context = self
+            .sessions
+            .history()
+            .iter()
+            .rev()
+            .find_map(ComputerNoticeState::from_message);
     }
 
     pub(super) fn refresh_computer_context(&mut self) -> anyhow::Result<()> {
-        if let Some((model, display)) = self.pending_computer_context() {
-            self.append_user_context_with_display(model.clone(), display)?;
-            self.acknowledge_computer_context(model);
+        if let Some(notice) = self.pending_computer_context() {
+            self.append_user_context_with_display(notice.model, notice.display)?;
+            self.acknowledge_computer_context(notice.state);
         }
         Ok(())
     }
 
-    pub(crate) fn acknowledge_computer_context(&mut self, context: String) {
-        self.computer_context = Some(context);
+    pub(crate) fn acknowledge_computer_context(&mut self, state: ComputerNoticeState) {
+        self.computer_context = Some(state);
     }
 }

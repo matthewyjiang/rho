@@ -1,7 +1,7 @@
 //! Prepare one turn-boundary delivery without coupling display policy to scheduling.
 
 use crate::{
-    app::subagent_messaging::NoticeDelivery,
+    app::{interactive_runtime::ComputerNotice, subagent_messaging::NoticeDelivery},
     display_transcript::{DisplayRow, DisplayTranscript},
     presentation::{MessageCard, MessageDelivery, MessagePreview, MessageTone, MessageVisibility},
     subagent::RunState,
@@ -12,7 +12,7 @@ use super::InteractiveRuntime;
 /// Drained work held until an accepted provider start or runtime checkpoint.
 #[derive(Default)]
 pub(super) struct TurnBoundaryBatch {
-    pub(super) runtime_context: Option<(String, String)>,
+    pub(super) runtime_context: Option<ComputerNotice>,
     pub(super) subagent_notifications: Vec<crate::tools::agent::SubagentNotification>,
     pub(super) notices: Vec<crate::app::subagent_messaging::SubagentNotice>,
     pub(super) workflow_notifications: Vec<crate::tools::workflow_tracker::WorkflowNotification>,
@@ -110,9 +110,9 @@ impl TurnBoundaryBatch {
             model.push(input);
             rows.push(DisplayRow::Notice(display));
         }
-        if let Some((context, display)) = &self.runtime_context {
-            model.push(context.clone());
-            rows.push(DisplayRow::Notice(display.clone()));
+        if let Some(notice) = &self.runtime_context {
+            model.push(notice.model.clone());
+            rows.push(DisplayRow::Notice(notice.display.clone()));
         }
         TurnBoundaryDelivery {
             model: model.join("\n\n"),

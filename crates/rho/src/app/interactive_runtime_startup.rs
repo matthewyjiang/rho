@@ -246,6 +246,7 @@ pub(super) async fn initialize(
         tool_list_changed: false,
         completed_runs: 0,
     };
+    runtime.rehydrate_computer_context();
     runtime.sessions.prompt = prompt;
     if runtime.prompt_template.is_some() {
         if let Some(notice) = crate::app::model_prompt_metadata::change_notice(
