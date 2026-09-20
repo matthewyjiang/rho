@@ -100,6 +100,7 @@ pub(crate) struct ContextAccounting {
     current: ContextEstimate,
     current_messages: Option<usize>,
     tools_fingerprint: u64,
+    request_overhead_tokens: u64,
 }
 
 impl ContextAccounting {
@@ -111,10 +112,38 @@ impl ContextAccounting {
             )),
             current_messages: Some(history.len()),
             tools_fingerprint: fingerprint(&[], tools),
+            request_overhead_tokens: estimate_context_tokens(&[], tools),
         }
     }
 
-    pub(crate) fn current(&self) -> ContextEstimate {
+    /// Revalidate request metadata without scanning or hashing message history.
+    pub(crate) fn current(
+        &mut self,
+        tools: &[ToolSpec],
+        identity: &ModelIdentity,
+    ) -> ContextEstimate {
+        let tools_fingerprint = fingerprint(&[], tools);
+        if tools_fingerprint != self.tools_fingerprint {
+            let request_overhead_tokens = estimate_context_tokens(&[], tools);
+            self.current.estimated_tokens = self
+                .current
+                .estimated_tokens
+                .saturating_sub(self.request_overhead_tokens)
+                .saturating_add(request_overhead_tokens);
+            self.request_overhead_tokens = request_overhead_tokens;
+            self.tools_fingerprint = tools_fingerprint;
+            self.publish(ContextEstimate::from_estimated_tokens(
+                self.current.estimated_tokens,
+            ));
+        } else if self
+            .baseline
+            .as_ref()
+            .is_some_and(|baseline| baseline.identity != *identity)
+        {
+            self.publish(ContextEstimate::from_estimated_tokens(
+                self.current.estimated_tokens,
+            ));
+        }
         self.current
     }
 
@@ -128,15 +157,7 @@ impl ContextAccounting {
         tools: &[ToolSpec],
         identity: &ModelIdentity,
     ) -> ContextEstimate {
-        let tools_fingerprint = fingerprint(&[], tools);
-        if tools_fingerprint != self.tools_fingerprint
-            || self
-                .baseline
-                .as_ref()
-                .is_some_and(|baseline| baseline.identity != *identity)
-        {
-            self.invalidate();
-        }
+        self.current(tools, identity);
         match self.current_messages {
             Some(count) => {
                 for message in &history[count..] {
@@ -148,7 +169,6 @@ impl ContextAccounting {
                 self.current_messages = Some(history.len());
             }
         }
-        self.tools_fingerprint = tools_fingerprint;
         self.current
     }
 
@@ -162,6 +182,7 @@ impl ContextAccounting {
         self.publish(self.estimate(history, tools, identity));
         self.current_messages = Some(history.len());
         self.tools_fingerprint = fingerprint(&[], tools);
+        self.request_overhead_tokens = estimate_context_tokens(&[], tools);
     }
 
     pub(crate) fn estimate(
@@ -220,6 +241,7 @@ impl ContextAccounting {
         self.current = estimate;
         self.current_messages = Some(history.len());
         self.tools_fingerprint = fingerprint(&[], tools);
+        self.request_overhead_tokens = estimate_context_tokens(&[], tools);
     }
 
     pub(crate) fn invalidate(&mut self) {

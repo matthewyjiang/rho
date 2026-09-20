@@ -366,6 +366,97 @@ fn context_estimated_budget_is_conservative() {
     }
 }
 
+// Covers: idle context reads retain stale calibration after dynamic tool or
+// provider identity changes. Owner: SDK session contract. Anchor tests only
+// exercise proposed-history estimates, not the cached session getter.
+#[tokio::test]
+async fn context_snapshot_revalidates_dynamic_request_context() {
+    struct DynamicTool(Arc<Mutex<ToolSpec>>);
+    impl crate::tool::Tool for DynamicTool {
+        fn spec(&self) -> ToolSpec {
+            self.0.lock().unwrap().clone()
+        }
+    }
+    struct DynamicProvider {
+        identity: Arc<Mutex<ModelIdentity>>,
+        scripted: ScriptedProvider,
+    }
+    impl crate::provider::ModelProvider for DynamicProvider {
+        fn identity(&self) -> ModelIdentity {
+            self.identity.lock().unwrap().clone()
+        }
+
+        fn send_turn<'a>(
+            &'a self,
+            request: crate::model::ModelRequest<'a>,
+        ) -> crate::provider::ProviderFuture<'a> {
+            self.scripted.send_turn(request)
+        }
+
+        fn send_turn_stream<'a>(
+            &'a self,
+            request: crate::model::ModelRequest<'a>,
+            events: crate::provider::ProviderEventSender,
+        ) -> crate::provider::ProviderFuture<'a> {
+            self.scripted.send_turn_stream(request, events)
+        }
+    }
+    enum Change {
+        Tool(&'static str),
+        Provider,
+    }
+    for change in [
+        Change::Tool("edit"),
+        Change::Tool("longer description"),
+        Change::Provider,
+    ] {
+        let spec = ToolSpec {
+            name: "read".into(),
+            description: "read".into(),
+            input_schema: json!({"type": "object"}),
+        };
+        let tool = Arc::new(Mutex::new(spec.clone()));
+        let model = Arc::new(Mutex::new(identity()));
+        let runtime = Rho::builder()
+            .provider(DynamicProvider {
+                identity: Arc::clone(&model),
+                scripted: ScriptedProvider::new(
+                    identity(),
+                    [turn(1_000, vec![ContentBlock::Text("done".into())])],
+                ),
+            })
+            .tool(DynamicTool(Arc::clone(&tool)))
+            .build()
+            .unwrap();
+        let session = runtime.session(SessionOptions::default()).await.unwrap();
+        session.complete("first").await.unwrap();
+        assert_eq!(
+            session.context_estimate().provider_reported_tokens(),
+            Some(1_000)
+        );
+
+        match change {
+            Change::Tool(description) => tool.lock().unwrap().description = description.into(),
+            Change::Provider => {
+                *model.lock().unwrap() = ModelIdentity::new("scripted", "test", "other")
+            }
+        }
+        let expected = ContextEstimate::from_estimated_tokens(estimate_context_tokens(
+            &session.history(),
+            &[tool.lock().unwrap().clone()],
+        ));
+        assert_eq!(session.estimate_context(&session.history()), expected);
+        assert_eq!(session.context_estimate(), expected);
+        // Repeated reads and the next append must use the refreshed tool cost.
+        assert_eq!(session.context_estimate(), expected);
+        session.append_message(Message::user_text("next")).unwrap();
+        assert_eq!(
+            session.context_estimate(),
+            session.estimate_context(&session.history())
+        );
+    }
+}
+
 // Covers: changing a tool schema or the request identity reuses an incompatible
 // calibration even when local token counts happen to match. Owner: request anchor.
 #[test]
@@ -377,6 +468,7 @@ fn context_anchor_validates_tools_identity_and_prefix() {
         input_schema: json!({"type": "object"}),
     }];
     let mut accounting = super::ContextAccounting::new(&history, &tools);
+    let request_estimate = accounting.current(&tools, &identity());
     accounting.record(
         &history,
         &tools,
@@ -385,7 +477,7 @@ fn context_anchor_validates_tools_identity_and_prefix() {
             input_tokens: Some(1_000),
             ..ModelUsage::default()
         },
-        accounting.current(),
+        request_estimate,
     );
     let mut changed_tools = tools.clone();
     changed_tools[0].description = "edit".into();

@@ -23,17 +23,22 @@ impl Session {
     ///
     /// Updated before `StepStarted`, after a successful provider response, and at
     /// commit. Stream deltas and provisional usage do not establish a baseline:
-    /// that request may still fail. This reads a small snapshot, not live history.
+    /// that request may still fail. Revalidates provider identity and tool schemas
+    /// on each read, without copying or scanning live history.
     pub fn context_estimate(&self) -> ContextEstimate {
-        let data = self
+        let runtime = self.core.runtime();
+        let tools = runtime.tools.specs();
+        let identity = runtime.provider.identity();
+        let mut data = self
             .core
             .data
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let data = &mut *data;
         data.working_context
-            .as_ref()
-            .unwrap_or(&data.context)
-            .current()
+            .as_mut()
+            .unwrap_or(&mut data.context)
+            .current(&tools, &identity)
     }
 
     /// Estimates proposed history using the current provider and tool schemas.
