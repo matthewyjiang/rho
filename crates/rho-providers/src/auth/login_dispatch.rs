@@ -395,12 +395,8 @@ struct StartedLogin {
 }
 
 fn selects_device_grant(provider_or_auth: &str) -> bool {
-    resolve_login_profile(provider_or_auth).is_ok_and(|profile| {
-        matches!(
-            profile.auth_kind(),
-            ProviderAuthKind::CodexOAuth { .. } | ProviderAuthKind::XaiOAuth { .. }
-        )
-    })
+    resolve_login_profile(provider_or_auth)
+        .is_ok_and(|profile| profile.auth_kind().has_browser_and_device_grants())
 }
 
 fn authorize_prompt(url: impl Into<String>, provider_label: &str) -> LoginPrompt {

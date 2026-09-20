@@ -2,7 +2,12 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::{keys::Key, scenario::Step, PtyHarness};
+use crate::{
+    keys::Key,
+    pty::PtySize,
+    scenario::{Scenario, Step},
+    PtyHarness,
+};
 
 use super::{SETTLE, STARTUP};
 
@@ -174,6 +179,74 @@ pub(super) const LOGIN_CUSTOM_PROVIDER_STEPS: &[Step] = &[
     },
     Step::ExitCommand,
 ];
+
+const LOGIN_OAUTH_FLOW_CHOICE_STEPS: &[Step] = &[
+    Step::Phase("open_typed_codex"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/login openai-codex"),
+    Step::WaitText {
+        text: "Select Codex login flow",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Browser"),
+    Step::AssertText("Device code"),
+    Step::Key(Key::Esc),
+    Step::WaitQuiet {
+        quiet_for: Duration::from_millis(150),
+        timeout: SETTLE,
+    },
+    Step::Phase("open_nested_codex"),
+    Step::SubmitText("/login"),
+    Step::WaitText {
+        text: "Select provider to login",
+        timeout: SETTLE,
+    },
+    Step::TypeText("OpenAI"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Select OpenAI login method",
+        timeout: SETTLE,
+    },
+    Step::TypeText("OAuth"),
+    Step::WaitText {
+        text: "OAuth",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Select Codex login flow",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Esc back"),
+    Step::AssertText("Browser"),
+    Step::AssertText("Device code"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Select OpenAI login method",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Select provider to login",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::ExitCommand,
+];
+
+pub(super) const LOGIN_OAUTH_FLOW_CHOICE_SCENARIO: Scenario = Scenario::new(
+    "login_oauth_flow_choice",
+    "Choose browser or device-code for dual-grant OAuth even with a browser",
+    PtySize {
+        rows: 28,
+        cols: 100,
+    },
+    LOGIN_OAUTH_FLOW_CHOICE_STEPS,
+    false,
+);
 
 pub(super) const LOGIN_OLLAMA_STEPS: &[Step] = &[
     Step::Phase("open_ollama_onboarding"),

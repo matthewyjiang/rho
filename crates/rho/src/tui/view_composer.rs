@@ -190,7 +190,11 @@ impl App {
                 }
             }
             ComposerMode::InlineChoice(modal) => ComposerFrame::new(
-                inline_choice_lines(&modal.choice, width),
+                inline_choice_lines(
+                    &modal.choice,
+                    width,
+                    /*return_to_parent*/ modal.parent_picker.is_some(),
+                ),
                 Position { x: 0, y: 0 },
             ),
             ComposerMode::Questionnaire(questionnaire) => ComposerFrame::new(

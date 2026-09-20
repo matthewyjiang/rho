@@ -110,6 +110,7 @@ impl PickerAction {
                 self,
                 PickerAction::Config
                     | PickerAction::LoginGroup
+                    | PickerAction::LoginProvider
                     | PickerAction::ViewAgent
                     | PickerAction::EditAgent
                     | PickerAction::SelectRewindCheckpoint

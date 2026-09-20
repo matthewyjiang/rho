@@ -421,8 +421,18 @@ impl App {
                 Ok(())
             }
             AuthenticationMethod::Interactive { provider_label } => {
-                self.start_interactive_login_flow(target, provider_label, terminal, agent)
-                    .await
+                if super::login_flow::offers_browser_and_device_login(&target.auth) {
+                    self.open_login_flow_choice(target, provider_label);
+                    return Ok(());
+                }
+                self.start_interactive_login_flow(
+                    target,
+                    provider_label,
+                    InteractiveLoginMode::Browser,
+                    terminal,
+                    agent,
+                )
+                .await
             }
         }
     }
@@ -496,10 +506,11 @@ impl App {
         }
     }
 
-    async fn start_interactive_login_flow(
+    pub(super) async fn start_interactive_login_flow(
         &mut self,
         target: LoginTarget,
         provider_label: &'static str,
+        mode: InteractiveLoginMode,
         terminal: &mut DefaultTerminal,
         _agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
@@ -511,7 +522,6 @@ impl App {
         }
 
         let availability = BrowserAvailability::from_process();
-        let mode = ProviderAuthentication::preferred_mode(&target.auth, availability);
         self.set_status(match mode {
             InteractiveLoginMode::Browser => format!("starting {provider_label} login"),
             InteractiveLoginMode::Device => format!("starting {provider_label} device login"),

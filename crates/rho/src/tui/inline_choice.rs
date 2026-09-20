@@ -111,6 +111,10 @@ pub(super) enum InlineChoicePending {
     },
     ClearPromptHistory,
     TestWebSearch,
+    LoginFlow {
+        target: rho_providers::model::catalog::LoginTarget,
+        provider_label: &'static str,
+    },
 }
 
 impl InlineChoiceModal {
@@ -141,6 +145,17 @@ impl InlineChoice {
             options,
             active,
         })
+    }
+
+    pub(super) fn with_selected_value(mut self, value: &str) -> Self {
+        if let Some(index) = self
+            .options
+            .iter()
+            .position(|option| option.available && option.value == value)
+        {
+            self.active = index;
+        }
+        self
     }
 
     pub(super) fn selected_value(&self) -> &str {
@@ -201,7 +216,11 @@ impl InlineChoice {
     }
 }
 
-pub(super) fn inline_choice_lines(choice: &InlineChoice, width: usize) -> Vec<Line<'static>> {
+pub(super) fn inline_choice_lines(
+    choice: &InlineChoice,
+    width: usize,
+    return_to_parent: bool,
+) -> Vec<Line<'static>> {
     let width = width.max(1);
     let mut lines = vec![styled_line(
         truncate_one_line(&choice.title, width),
@@ -255,7 +274,11 @@ pub(super) fn inline_choice_lines(choice: &InlineChoice, width: usize) -> Vec<Li
                 "Enter/Space choose",
                 "shortcut choose",
                 "arrows move",
-                "Esc cancel",
+                if return_to_parent {
+                    "Esc back"
+                } else {
+                    "Esc cancel"
+                },
             ]),
             width,
         ),
