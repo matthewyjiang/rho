@@ -1,6 +1,7 @@
 //! Compact choice groups with a distinct focus marker and wrapped explanations.
 
 use ratatui::{
+    layout::Position,
     style::Modifier,
     text::{Line, Span},
 };
@@ -11,14 +12,15 @@ use crate::tui::{
     display_width,
     panel_text::indented_wrapped_lines,
     render::{truncate_to_display_width, wrap_line_at_whitespace},
+    view_composer::ComposerFrame,
     Theme,
 };
 
-pub(in crate::tui) fn inline_choice_lines(
+pub(in crate::tui) fn inline_choice_frame(
     choice: &InlineChoice,
     width: usize,
     return_to_parent: bool,
-) -> Vec<Line<'static>> {
+) -> ComposerFrame {
     let width = width.max(1);
     let mut lines = indented_wrapped_lines(
         &choice.title,
@@ -36,6 +38,7 @@ pub(in crate::tui) fn inline_choice_lines(
     }
     lines.push(Line::default());
 
+    let mut focused_row = 0;
     let mut previous_wrapped = false;
     for (index, option) in choice.options.iter().enumerate() {
         let group = option_lines(option, index == choice.active, width);
@@ -43,6 +46,9 @@ pub(in crate::tui) fn inline_choice_lines(
         // Single-line labels/details stay compact; separate multiline groups.
         if index > 0 && (previous_wrapped || wrapped) {
             lines.push(Line::default());
+        }
+        if index == choice.active {
+            focused_row = lines.len();
         }
         lines.extend(group);
         previous_wrapped = wrapped;
@@ -60,7 +66,7 @@ pub(in crate::tui) fn inline_choice_lines(
     for part in wrap_footer_parts(
         [
             "↑↓ move",
-            "Enter choose",
+            "Enter/Space choose",
             &shortcut_hint,
             if return_to_parent {
                 "Esc back"
@@ -77,7 +83,14 @@ pub(in crate::tui) fn inline_choice_lines(
             Theme::dim(),
         ));
     }
-    lines
+    // The composer viewport follows this row even though choices hide the caret.
+    ComposerFrame::new(
+        lines,
+        Position {
+            x: 0,
+            y: u16::try_from(focused_row).unwrap_or(u16::MAX),
+        },
+    )
 }
 
 fn option_lines(option: &InlineChoiceOption, focused: bool, width: usize) -> Vec<Line<'static>> {

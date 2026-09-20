@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[path = "inline_choice_render.rs"]
 mod render;
-pub(super) use render::inline_choice_lines;
+pub(super) use render::inline_choice_frame;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct InlineChoiceOption {

@@ -253,6 +253,7 @@ fn inline_choice_resize_and_focus(harness: &mut PtyHarness) -> Result<()> {
     let explanation = browser_choice_explanation(harness)?;
     // This width wraps the browser explanation while both options still fit vertically.
     harness.resize(28, 32)?;
+    harness.wait_for_text_gone(&explanation, SETTLE)?;
     harness.wait_for_text(
         explanation
             .split_whitespace()
@@ -268,6 +269,16 @@ fn inline_choice_resize_and_focus(harness: &mut PtyHarness) -> Result<()> {
     );
     harness.inject_key(&Key::Up)?;
     harness.wait_for_text("→ 1  Browser", SETTLE)?;
+
+    // At 12 rows, the wrapped second option is below the initial composer viewport.
+    // Moving focus must scroll it into view, then allow returning to the first option.
+    harness.resize(12, 32)?;
+    harness.wait_for_text_gone("Device code", SETTLE)?;
+    harness.inject_key(&Key::Down)?;
+    harness.wait_for_text("→ 2  Device code", SETTLE)?;
+    harness.inject_key(&Key::Up)?;
+    harness.wait_for_text("→ 1  Browser", SETTLE)?;
+
     harness.resize(28, 100)?;
     harness.wait_for_text(&explanation, SETTLE)?;
     harness.wait_for_text("→ 1  Browser", SETTLE)
