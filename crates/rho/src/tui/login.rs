@@ -208,11 +208,15 @@ impl App {
         };
         match credential_store_inline_choice(request) {
             Ok(choice) => {
+                let parent_picker = match self.input_ui.take_composer() {
+                    ComposerMode::Picker(picker) => Some(Box::new(picker)),
+                    _ => None,
+                };
                 self.input_ui
                     .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
                         choice,
                         pending: InlineChoicePending::CredentialStore { next },
-                        parent_picker: None,
+                        parent_picker,
                     }));
                 self.set_status("choose credential store before login");
             }
@@ -422,7 +426,7 @@ impl App {
             }
             AuthenticationMethod::Interactive { provider_label } => {
                 if super::login_flow::offers_browser_and_device_login(&target.auth) {
-                    self.open_login_flow_choice(target, provider_label);
+                    self.open_login_flow_picker(target, provider_label);
                     return Ok(());
                 }
                 self.start_interactive_login_flow(

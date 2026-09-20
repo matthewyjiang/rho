@@ -1,5 +1,7 @@
 use super::*;
-use anyhow::Result;
+use anyhow::{ensure, Context, Result};
+
+use crate::PtyHarness;
 
 // Covers: search configuration must persist endpoint edits and mode/backend
 // selection without selecting a backend merely by opening its settings page.
@@ -93,6 +95,8 @@ pub(super) const WEB_SEARCH_CONFIG_SCENARIO: Scenario = Scenario::new(
             text: "Send test query",
             timeout: SETTLE,
         },
+        Step::Phase("inline_choice_resize_and_focus"),
+        Step::Custom(inline_choice_resize_and_focus),
         Step::Phase("cancel_without_network"),
         Step::Key(Key::Char('n')),
         Step::WaitText {
@@ -108,10 +112,67 @@ pub(super) const WEB_SEARCH_CONFIG_SCENARIO: Scenario = Scenario::new(
 )
 .with_env(OPENAI_KEY_ENV);
 
+// Covers: resizing an inline choice must not lose its explanation or keyboard focus.
+// Owner: interactive TUI. Compare against the wide rendering, not fixed UI prose.
+fn inline_choice_resize_and_focus(harness: &mut PtyHarness) -> Result<()> {
+    // The parent picker also mentions the query; wait for the actual choice.
+    harness.wait_for_text("→ y  Send test query", SETTLE)?;
+    harness.wait_for_text("Don't send", SETTLE)?;
+    let explanation = send_query_explanation(harness)?;
+    // This width wraps the explanation while both options still fit vertically.
+    harness.resize(DEFAULT_SIZE.rows, 32)?;
+    harness.wait_for_text_gone(&explanation, SETTLE)?;
+    harness.wait_for_text(
+        explanation
+            .split_whitespace()
+            .last()
+            .context("empty explanation")?,
+        SETTLE,
+    )?;
+    harness.inject_key(&Key::Down)?;
+    harness.wait_for_text("→ n  Don't send", SETTLE)?;
+    ensure!(
+        send_query_explanation(harness)? == explanation,
+        "narrow inline choice lost explanation text"
+    );
+    harness.inject_key(&Key::Up)?;
+    harness.wait_for_text("→ y  Send test query", SETTLE)?;
+
+    // At 12 rows, the second option is below the initial composer viewport.
+    // Moving focus must scroll it into view, then allow returning to the first option.
+    harness.resize(12, 32)?;
+    harness.wait_for_text_gone("Don't send", SETTLE)?;
+    harness.inject_key(&Key::Down)?;
+    harness.wait_for_text("→ n  Don't send", SETTLE)?;
+    harness.inject_key(&Key::Up)?;
+    harness.wait_for_text("→ y  Send test query", SETTLE)?;
+
+    harness.resize(DEFAULT_SIZE.rows, DEFAULT_SIZE.cols)?;
+    harness.wait_for_text(&explanation, SETTLE)?;
+    harness.wait_for_text("→ y  Send test query", SETTLE)
+}
+
+fn send_query_explanation(harness: &PtyHarness) -> Result<String> {
+    let rows = harness.screen().rows_text();
+    let send = rows
+        .iter()
+        .position(|row| row.trim_end().ends_with("Send test query"))
+        .with_context(|| format!("send option missing:\n{}", harness.screen().contents()))?;
+    let cancel = rows
+        .iter()
+        .position(|row| row.trim_end().ends_with("Don't send"))
+        .with_context(|| format!("cancel option missing:\n{}", harness.screen().contents()))?;
+    ensure!(send < cancel, "choice order changed");
+    Ok(rows[send + 1..cancel]
+        .iter()
+        .flat_map(|row| row.split_whitespace())
+        .collect::<Vec<_>>()
+        .join(" "))
+}
+
 // The server holds each response until the UI has handled input. Channels make
 // pending-state coverage independent of machine speed and external services.
 fn test_connection_lifecycle(harness: &mut crate::harness::PtyHarness) -> Result<()> {
-    use anyhow::{ensure, Context};
     use std::{
         io::{Read, Write},
         net::TcpListener,

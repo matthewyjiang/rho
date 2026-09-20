@@ -32,21 +32,13 @@ impl App {
                         self.confirm_computer_access(&value, agent)
                     }
                     InlineChoicePending::CredentialStore { next } => {
+                        // Resume login with its navigation context, so a subsequent
+                        // flow picker can attach to the original provider picker.
+                        if let Some(parent) = modal.parent_picker {
+                            self.input_ui.set_composer(ComposerMode::Picker(*parent));
+                        }
                         self.submit_credential_store_choice(modal.choice, next, terminal, agent)
                             .await?;
-                    }
-                    InlineChoicePending::LoginFlow {
-                        target,
-                        provider_label,
-                    } => {
-                        self.submit_login_flow_choice(
-                            &value,
-                            target,
-                            provider_label,
-                            terminal,
-                            agent,
-                        )
-                        .await?;
                     }
                     InlineChoicePending::ContextHandoff(pending) => {
                         self.resolve_context_handoff(Some(&value), *pending, terminal, agent)
@@ -113,14 +105,18 @@ impl App {
                     InlineChoicePending::ComputerAccess => {
                         self.confirm_computer_access("cancel", agent)
                     }
-                    InlineChoicePending::CredentialStore { .. }
-                    | InlineChoicePending::ClaudeCodeLogin
+                    InlineChoicePending::CredentialStore { .. } => {
+                        if let Some(parent) = modal.parent_picker {
+                            self.set_status_quiet(parent.title.clone());
+                            self.input_ui.set_composer(ComposerMode::Picker(*parent));
+                        } else {
+                            self.restore_after_cancelled_login();
+                        }
+                    }
+                    InlineChoicePending::ClaudeCodeLogin
                     | InlineChoicePending::ClaudeCodeRelogin
                     | InlineChoicePending::ClaudeCodeLogout => {
                         self.set_status(self.busy_status_label());
-                    }
-                    InlineChoicePending::LoginFlow { .. } => {
-                        self.restore_login_flow_parent(modal.parent_picker);
                     }
                     InlineChoicePending::ContextHandoff(pending) => {
                         self.resolve_context_handoff(None, *pending, terminal, agent)

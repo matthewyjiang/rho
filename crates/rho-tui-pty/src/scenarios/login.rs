@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::Result;
 
 use crate::{
     keys::Key,
@@ -191,7 +191,15 @@ const LOGIN_OAUTH_FLOW_CHOICE_STEPS: &[Step] = &[
         text: "Select Codex login flow",
         timeout: SETTLE,
     },
-    Step::Custom(inline_choice_resize_and_focus),
+    Step::AssertText("Browser"),
+    Step::AssertText("Device code"),
+    Step::Phase("filter_login_flow"),
+    Step::TypeText("dev"),
+    Step::Key(Key::Tab),
+    Step::WaitText {
+        text: "> device",
+        timeout: SETTLE,
+    },
     Step::Key(Key::Esc),
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(150),
@@ -227,6 +235,7 @@ const LOGIN_OAUTH_FLOW_CHOICE_STEPS: &[Step] = &[
         text: "Select OpenAI login method",
         timeout: SETTLE,
     },
+    Step::AssertText("> OAuth"),
     Step::Key(Key::Esc),
     Step::WaitText {
         text: "Select provider to login",
@@ -246,61 +255,6 @@ pub(super) const LOGIN_OAUTH_FLOW_CHOICE_SCENARIO: Scenario = Scenario::new(
     LOGIN_OAUTH_FLOW_CHOICE_STEPS,
     /*smoke*/ true,
 );
-
-// Covers: resizing an inline choice must not lose its explanation or keyboard focus.
-// Owner: interactive TUI. Compare against the wide rendering, not fixed UI prose.
-fn inline_choice_resize_and_focus(harness: &mut PtyHarness) -> Result<()> {
-    let explanation = browser_choice_explanation(harness)?;
-    // This width wraps the browser explanation while both options still fit vertically.
-    harness.resize(28, 32)?;
-    harness.wait_for_text_gone(&explanation, SETTLE)?;
-    harness.wait_for_text(
-        explanation
-            .split_whitespace()
-            .last()
-            .context("empty explanation")?,
-        SETTLE,
-    )?;
-    harness.inject_key(&Key::Down)?;
-    harness.wait_for_text("→ 2  Device code", SETTLE)?;
-    ensure!(
-        browser_choice_explanation(harness)? == explanation,
-        "narrow inline choice lost explanation text"
-    );
-    harness.inject_key(&Key::Up)?;
-    harness.wait_for_text("→ 1  Browser", SETTLE)?;
-
-    // At 12 rows, the wrapped second option is below the initial composer viewport.
-    // Moving focus must scroll it into view, then allow returning to the first option.
-    harness.resize(12, 32)?;
-    harness.wait_for_text_gone("Device code", SETTLE)?;
-    harness.inject_key(&Key::Down)?;
-    harness.wait_for_text("→ 2  Device code", SETTLE)?;
-    harness.inject_key(&Key::Up)?;
-    harness.wait_for_text("→ 1  Browser", SETTLE)?;
-
-    harness.resize(28, 100)?;
-    harness.wait_for_text(&explanation, SETTLE)?;
-    harness.wait_for_text("→ 1  Browser", SETTLE)
-}
-
-fn browser_choice_explanation(harness: &PtyHarness) -> Result<String> {
-    let rows = harness.screen().rows_text();
-    let browser = rows
-        .iter()
-        .position(|row| row.ends_with("Browser"))
-        .context("browser option missing")?;
-    let device = rows
-        .iter()
-        .position(|row| row.ends_with("Device code"))
-        .context("device option missing")?;
-    ensure!(browser < device, "choice order changed");
-    Ok(rows[browser + 1..device]
-        .iter()
-        .flat_map(|row| row.split_whitespace())
-        .collect::<Vec<_>>()
-        .join(" "))
-}
 
 pub(super) const LOGIN_OLLAMA_STEPS: &[Step] = &[
     Step::Phase("open_ollama_onboarding"),
