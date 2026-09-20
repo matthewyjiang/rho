@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use std::{fs, num::NonZeroUsize, os::unix::fs::PermissionsExt, time::Duration};
+use std::{num::NonZeroUsize, os::unix::fs::symlink, time::Duration};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -69,8 +69,14 @@ async fn disconnect_stops_pending_activation() {
 fn fixture() -> (tempfile::TempDir, ComputerUseSession) {
     let root = tempfile::tempdir().unwrap();
     let driver = root.path().join("cua-driver");
-    fs::write(&driver, include_str!("fixture.py")).unwrap();
-    fs::set_permissions(&driver, fs::Permissions::from_mode(0o700)).unwrap();
+    // A concurrent fork can inherit a freshly written script's write descriptor
+    // before it closes, making exec fail with ETXTBSY. Never write the executable
+    // during tests; each isolated driver points to the checked-in fixture.
+    symlink(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/tools/computer_use/fixture.py"),
+        &driver,
+    )
+    .unwrap();
     // Sized from this fixture's three tiny allowed schemas, not a production budget.
     let session = ComputerUseSession::new(Some(driver), 4096, root.path().into());
     (root, session)

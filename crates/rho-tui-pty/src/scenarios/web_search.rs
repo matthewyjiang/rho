@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Result;
 
 // Covers: search configuration must persist endpoint edits and mode/backend
 // selection without selecting a backend merely by opening its settings page.

@@ -183,16 +183,22 @@ impl App {
                         self.set_status(format!("max tool output lines set to {value}"));
                     }
                     ConfigNumberSave::CompactThresholdPercent(value) => {
+                        self.compaction_reload_pending = true;
                         self.open_main_config_picker_selected(
                             config_picker::COMPACT_THRESHOLD_PERCENT_VALUE,
                         )?;
-                        self.set_status(format!("compact threshold set to {value}%"));
+                        self.set_status(format!(
+                            "compact threshold saved: {value}%; applies when idle"
+                        ));
                     }
                     ConfigNumberSave::CompactTargetPercent(value) => {
+                        self.compaction_reload_pending = true;
                         self.open_main_config_picker_selected(
                             config_picker::COMPACT_TARGET_PERCENT_VALUE,
                         )?;
-                        self.set_status(format!("compact target set to {value}%"));
+                        self.set_status(format!(
+                            "compact target saved: {value}%; applies when idle"
+                        ));
                     }
                     ConfigNumberSave::AgentConcurrency(value) => {
                         self.apply_live_agent_concurrency(value);

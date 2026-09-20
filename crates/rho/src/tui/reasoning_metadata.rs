@@ -65,6 +65,61 @@ pub(super) fn resolve_fetched_reasoning(
 }
 
 impl App {
+    /// Apply catalog normalization only when it changes the effective reasoning.
+    pub(super) async fn apply_fetched_reasoning(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+        capabilities: &ReasoningCapabilities,
+        at_fetch_start: Option<(ReasoningLevel, ReasoningRequestSource)>,
+    ) {
+        let resolved =
+            resolve_fetched_reasoning(capabilities, self.info.runtime.reasoning, at_fetch_start);
+        let reasoning = resolved.effective;
+        if let Some(requested) = resolved.rejected {
+            self.insert_entry(&Entry::Error(format!(
+                "reasoning level '{requested}' is not supported by {}/{}; restored '{reasoning}'",
+                self.info.runtime.provider, self.info.runtime.model
+            )));
+        }
+        // A metadata refresh is not a provider switch. Replacing an unchanged
+        // provider discards the session's successful context calibration.
+        if reasoning == self.info.runtime.reasoning {
+            return;
+        }
+        let provider = match self
+            .build_provider_for_selection(
+                &self.info.runtime.provider,
+                &self.info.runtime.model,
+                reasoning,
+                &self.info.runtime.auth,
+            )
+            .await
+        {
+            Ok(provider) => provider,
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not apply model reasoning metadata: {err}"
+                )));
+                return;
+            }
+        };
+        if let Err(err) = agent.replace_provider(provider, reasoning, &self.info.runtime.auth) {
+            self.insert_entry(&Entry::Error(format!(
+                "could not apply model reasoning metadata: {err}"
+            )));
+            return;
+        }
+        self.info
+            .set_reasoning(reasoning, ReasoningRequestSource::PersistedOrDefault);
+        if let Err(err) = self.info.services.config_repository.update(|config| {
+            config.reasoning = reasoning;
+        }) {
+            self.insert_entry(&Entry::Error(format!(
+                "could not save normalized reasoning: {err}"
+            )));
+        }
+    }
+
     pub(super) async fn cycle_reasoning(
         &mut self,
         agent: &mut InteractiveRuntime,

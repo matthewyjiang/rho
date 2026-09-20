@@ -132,7 +132,7 @@ impl CompactionState {
 }
 
 /// Threshold used to decide when automatic compaction is requested.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[non_exhaustive]
 pub enum CompactionThreshold {
     Messages(NonZeroUsize),
@@ -152,8 +152,8 @@ impl CompactionPolicy {
         }
     }
 
-    /// Requests compaction once the SDK's provider-neutral context estimate
-    /// reaches the supplied token threshold.
+    /// Requests compaction once the SDK's shared context estimate reaches the
+    /// supplied threshold. Successful provider prompt usage calibrates the estimate.
     pub fn at_context_tokens(trigger_tokens: NonZeroU64) -> Self {
         Self {
             threshold: CompactionThreshold::ContextTokens(trigger_tokens),
@@ -183,6 +183,7 @@ pub struct CompactionRequest {
     run_id: Option<crate::RunId>,
     step_index: Option<usize>,
     workspace_path: Option<PathBuf>,
+    context_estimate: Option<crate::ContextEstimate>,
 }
 
 impl CompactionRequest {
@@ -198,12 +199,24 @@ impl CompactionRequest {
             run_id: None,
             step_index: None,
             workspace_path: None,
+            context_estimate: None,
         }
     }
 
     pub fn with_trigger(mut self, trigger: CompactionTrigger) -> Self {
         self.trigger = trigger;
         self
+    }
+
+    /// Attaches context accounting for exactly the messages being compacted.
+    /// Use [`crate::ContextEstimate::estimated_budget`] to size locally estimated tails.
+    pub fn with_context_estimate(mut self, estimate: crate::ContextEstimate) -> Self {
+        self.context_estimate = Some(estimate);
+        self
+    }
+
+    pub fn context_estimate(&self) -> Option<crate::ContextEstimate> {
+        self.context_estimate
     }
 
     pub(crate) fn with_request_context(

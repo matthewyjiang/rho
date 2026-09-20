@@ -208,8 +208,15 @@ pub enum RunEvent {
     StepStarted {
         step: usize,
         /// Provider-neutral estimate of request history and tool schemas.
-        /// Hosts should treat this as a display estimate and replace it with
-        /// [`RunEvent::UsageUpdated`] when the provider reports input usage.
+        /// This remains raw; [`crate::Session::context_estimate`] supplies the
+        /// calibrated count at the latest published history boundary.
+        ///
+        /// # Next major
+        ///
+        /// NEXT_MAJOR(rho-sdk): carry ContextEstimate on StepStarted instead of estimated_context_tokens.
+        /// Changing this existing variant's field would break minor-compatible
+        /// hosts. A session query currently exposes the richer latest snapshot;
+        /// an event-owned value would associate it with this exact step.
         estimated_context_tokens: u64,
     },
     AssistantTextDelta {

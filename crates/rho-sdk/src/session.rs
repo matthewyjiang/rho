@@ -16,6 +16,9 @@ use crate::{
     Error, Revision, RunId, SessionId,
 };
 
+#[path = "session_context.rs"]
+mod context;
+
 /// Validated user input accepted by a session run.
 #[derive(Clone, Debug, PartialEq)]
 pub struct UserInput {
@@ -122,6 +125,9 @@ struct SessionData {
     compaction: crate::CompactionState,
     metadata: BTreeMap<String, String>,
     prompt_cache_key: Option<String>,
+    context: crate::context_estimate::ContextAccounting,
+    working_context: Option<crate::context_estimate::ContextAccounting>,
+    last_compaction_decision: Option<crate::CompactionDecision>,
 }
 
 pub(crate) struct HistoryMetrics {
@@ -165,6 +171,8 @@ impl SessionCore {
         runtime: Rho,
     ) -> Arc<Self> {
         let approvals = runtime.approvals.clone().unwrap_or_default();
+        let context =
+            crate::context_estimate::ContextAccounting::new(&history, &runtime.tools.specs());
         Arc::new(Self {
             id,
             data: Mutex::new(SessionData {
@@ -173,6 +181,9 @@ impl SessionCore {
                 compaction,
                 metadata,
                 prompt_cache_key,
+                context,
+                working_context: None,
+                last_compaction_decision: None,
             }),
             runtime: RwLock::new(runtime),
             approvals,
@@ -276,6 +287,9 @@ impl SessionCore {
     }
 
     pub(crate) fn commit(&self, history: Vec<Message>) -> Result<Revision, Error> {
+        let runtime = self.runtime();
+        let tools = runtime.tools.specs();
+        let identity = runtime.provider.identity();
         let mut data = self
             .data
             .lock()
@@ -286,6 +300,7 @@ impl SessionCore {
             .ok_or_else(|| Error::Persistence {
                 message: "session revision is exhausted".into(),
             })?;
+        context::commit_context(&mut data, &history, &tools, &identity);
         data.history = history;
         data.revision = revision;
         Ok(revision)
@@ -297,6 +312,9 @@ impl SessionCore {
         history: Vec<Message>,
         usage: crate::model::ModelUsage,
     ) -> Result<crate::CompactionOutcome, Error> {
+        let runtime = self.runtime();
+        let tools = runtime.tools.specs();
+        let identity = runtime.provider.identity();
         let mut data = self
             .data
             .lock()
@@ -319,6 +337,10 @@ impl SessionCore {
             usage.cost_usd_micros,
             revision,
         );
+        // Validate the measured prefix against the replacement.
+        // An unchanged compactor output must not discard a valid provider count;
+        // rewriting the measured prefix invalidates it through that same check.
+        context::commit_replacement(&mut data, &history, &tools, &identity);
         data.history = history;
         data.revision = revision;
         Ok(crate::CompactionOutcome::new(
@@ -367,6 +389,10 @@ impl SessionCore {
             return;
         }
         *active_run = None;
+        self.data
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .working_context = None;
         *self
             .in_flight
             .write()
@@ -641,16 +667,18 @@ impl Session {
             .register(run_id.clone(), cancellation.clone())?;
         let history = self.history();
         let previous = HistoryMetrics::from_history(&history);
-        let request = crate::CompactionRequest::new(history, cancellation).with_request_context(
-            self.core.id().clone(),
-            runtime.usage_parent_session_id.clone(),
-            run_id,
-            None,
-            runtime
-                .workspace
-                .as_ref()
-                .map(|workspace| workspace.root().to_path_buf()),
-        );
+        let request = crate::CompactionRequest::new(history, cancellation)
+            .with_context_estimate(self.context_estimate())
+            .with_request_context(
+                self.core.id().clone(),
+                runtime.usage_parent_session_id.clone(),
+                run_id,
+                None,
+                runtime
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.root().to_path_buf()),
+            );
         let output = compactor.compact(request).await?;
         let (replacement, usage) = output.into_parts();
         let outcome = self.core.commit_compaction(previous, replacement, usage)?;
@@ -673,12 +701,15 @@ impl Session {
     /// storage instead of remaining one message ahead of a failed snapshot.
     pub fn replace_history(&self, history: Vec<Message>) -> Result<Revision, Error> {
         let _inactive = self.core.lock_inactive()?;
+        self.core.invalidate_context();
         self.core.commit(history)
     }
 
     pub fn reset(&self) -> Result<(), Error> {
         let _inactive = self.core.lock_inactive()?;
-        let system_prompt = match &self.core.runtime().system_prompt {
+        let runtime = self.core.runtime();
+        let tools = runtime.tools.specs();
+        let system_prompt = match &runtime.system_prompt {
             crate::SystemPrompt::Custom(prompt) => Some(Message::System(prompt.clone())),
             crate::SystemPrompt::None => None,
         };
@@ -688,6 +719,9 @@ impl Session {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         data.history = system_prompt.into_iter().collect();
+        data.context = crate::context_estimate::ContextAccounting::new(&data.history, &tools);
+        data.working_context = None;
+        data.last_compaction_decision = None;
         data.compaction = crate::CompactionState::default();
         data.revision = data
             .revision
@@ -710,6 +744,7 @@ impl Session {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .provider = provider;
+        self.core.invalidate_context();
         Ok(report)
     }
 }

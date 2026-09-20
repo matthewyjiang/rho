@@ -38,31 +38,26 @@ impl CompactionConfig {
         )
     }
 
-    /// Retained-tail token budget for one compaction request.
-    ///
-    /// Automatic compaction shrinks to the configured window percentage. An
-    /// explicit user request must always remove something, so its budget is
-    /// capped at half of the current estimated context; otherwise a large
-    /// window (1M tokens at 50% = 524k) makes `/compact` a no-op on any
-    /// session that has not crossed the auto threshold.
-    pub fn target_tokens_for_trigger(
+    /// Translate the model-token target into the local units used to partition
+    /// history. A provider-calibrated trigger must not retain an uncalibrated tail.
+    /// Manual requests additionally cap retention at half the current context,
+    /// so `/compact` can remove history below the automatic threshold.
+    pub(crate) fn target_tokens_for_context(
         &self,
         context_window: Option<u64>,
         trigger: rho_sdk::CompactionTrigger,
-        messages: &[Message],
-        tools: &[ToolSpec],
+        context: rho_sdk::ContextEstimate,
     ) -> u64 {
         let configured = context_window
             .map(|window| self.target_tokens(window))
             .unwrap_or(u64::MAX / 2);
-        match trigger {
-            rho_sdk::CompactionTrigger::Manual => {
-                configured.min(estimate_context_tokens(messages, tools) / 2)
-            }
+        let target = match trigger {
+            rho_sdk::CompactionTrigger::Manual => configured.min(context.tokens() / 2),
             // `CompactionTrigger` is `#[non_exhaustive]`; unknown future
             // triggers keep the configured automatic budget.
             rho_sdk::CompactionTrigger::Automatic | _ => configured,
-        }
+        };
+        context.estimated_budget(target)
     }
 }
 
@@ -384,7 +379,11 @@ mod tests {
 
         for (trigger, expected) in cases {
             assert_eq!(
-                config.target_tokens_for_trigger(Some(1_000_000), trigger, &messages, &[]),
+                config.target_tokens_for_context(
+                    Some(1_000_000),
+                    trigger,
+                    rho_sdk::ContextEstimate::from_estimated_tokens(current),
+                ),
                 expected,
                 "trigger={trigger:?}"
             );

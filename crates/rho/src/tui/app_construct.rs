@@ -123,6 +123,7 @@ impl App {
             usage_limits_live: std::collections::BTreeMap::new(),
             pending_changelog: None,
             web_search_reload_pending: false,
+            compaction_reload_pending: false,
             pending_web_search_test: None,
             usage_limits_client: std::sync::OnceLock::new(),
             usage: UsageUi::default(),
