@@ -504,6 +504,10 @@ impl ProviderAuthKind {
         }
     }
 
+    pub(crate) fn has_browser_and_device_grants(self) -> bool {
+        matches!(self, Self::CodexOAuth { .. } | Self::XaiOAuth { .. })
+    }
+
     /// User-facing guidance when this auth kind has no usable credentials.
     pub fn missing_message(self) -> Option<&'static str> {
         match self {

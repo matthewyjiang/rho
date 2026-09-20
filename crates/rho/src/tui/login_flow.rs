@@ -1,131 +1,120 @@
-//! Nested browser vs device-code choice for dual-grant OAuth.
+//! Browser vs device-code choice for dual-grant OAuth.
 
 use ratatui::DefaultTerminal;
 use rho_providers::{
     auth::{
         browser::BrowserAvailability,
-        login_dispatch::{AuthenticationMethod, InteractiveLoginMode, ProviderAuthentication},
+        login_dispatch::{InteractiveLoginMode, ProviderAuthentication},
     },
-    model::catalog::{self, LoginTarget},
+    model::catalog::LoginTarget,
 };
 
 use super::{
-    picker::{PickerItem, PickerKeyHints},
-    App, ComposerMode, Entry, InteractiveRuntime, UiPicker,
+    App, ComposerMode, InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending,
+    InteractiveRuntime, UiPicker,
 };
 
-pub(super) fn login_flow_picker(
-    target: &LoginTarget,
+const BROWSER_VALUE: &str = "browser";
+const DEVICE_VALUE: &str = "device";
+
+/// Dual-grant profiles are those [`ProviderAuthentication::preferred_mode`]
+/// sends to device-code when headless.
+pub(super) fn offers_browser_and_device_login(auth: &str) -> bool {
+    ProviderAuthentication::preferred_mode(auth, BrowserAvailability::Headless)
+        == InteractiveLoginMode::Device
+}
+
+pub(super) fn login_flow_choice(
     provider_label: &str,
     preferred: InteractiveLoginMode,
-) -> UiPicker {
-    let items = vec![
-        flow_item(
-            &target.auth,
-            InteractiveLoginMode::Browser,
-            "Browser",
-            "Open a local callback in this environment.",
-        ),
-        flow_item(
-            &target.auth,
-            InteractiveLoginMode::Device,
-            "Device code",
-            "Enter a code on any device.",
-        ),
-    ];
-    let selected = match preferred {
-        InteractiveLoginMode::Browser => 0,
-        InteractiveLoginMode::Device => 1,
+) -> InlineChoice {
+    let preferred = match preferred {
+        InteractiveLoginMode::Browser => BROWSER_VALUE,
+        InteractiveLoginMode::Device => DEVICE_VALUE,
     };
-    let mut picker = UiPicker::login_flow(format!("Select {provider_label} login flow"), items)
-        .with_key_hints(PickerKeyHints {
-            tab_complete: true,
-            row_delete: false,
-            ..Default::default()
-        });
-    picker.selected = selected;
-    picker
+    InlineChoice::new(
+        format!("Select {provider_label} login flow"),
+        "Open a local callback, or enter a code on any device.",
+        vec![
+            InlineChoiceOption::available(
+                BROWSER_VALUE,
+                '1',
+                "Browser",
+                "Open a local callback in this environment.",
+            )
+            .with_alternate_shortcut('b'),
+            InlineChoiceOption::available(
+                DEVICE_VALUE,
+                '2',
+                "Device code",
+                "Enter a code on any device.",
+            )
+            .with_alternate_shortcut('d'),
+        ],
+    )
+    .expect("login flow choice has available options")
+    .with_selected_value(preferred)
 }
 
-pub(super) fn parse_login_flow_value(value: &str) -> Option<(String, InteractiveLoginMode)> {
-    let (auth, mode) = value.rsplit_once('/')?;
-    if auth.is_empty() {
-        return None;
-    }
-    let mode = match mode {
-        "browser" => InteractiveLoginMode::Browser,
-        "device" => InteractiveLoginMode::Device,
-        _ => return None,
-    };
-    Some((auth.to_string(), mode))
-}
-
-fn flow_item(auth: &str, mode: InteractiveLoginMode, label: &str, detail: &str) -> PickerItem {
-    PickerItem {
-        section: None,
-        label: label.into(),
-        detail: Some(detail.into()),
-        preview: None,
-        badge: None,
-        value: format!("{auth}/{}", mode.as_str()),
-        selection_verb: None,
-        allow_filter_completion: true,
+fn parse_login_flow_mode(value: &str) -> Option<InteractiveLoginMode> {
+    match value {
+        BROWSER_VALUE => Some(InteractiveLoginMode::Browser),
+        DEVICE_VALUE => Some(InteractiveLoginMode::Device),
+        _ => None,
     }
 }
 
 impl App {
-    pub(super) fn open_login_flow_picker(
+    pub(super) fn open_login_flow_choice(
         &mut self,
         target: LoginTarget,
         provider_label: &'static str,
     ) {
         let availability = BrowserAvailability::from_process();
         let preferred = ProviderAuthentication::preferred_mode(&target.auth, availability);
-        let picker = login_flow_picker(&target, provider_label, preferred);
-        if matches!(self.input_ui.composer(), ComposerMode::Picker(_)) {
-            self.open_child_picker(picker);
-            return;
-        }
-        self.input_ui.set_composer(ComposerMode::Picker(picker));
+        let choice = login_flow_choice(provider_label, preferred);
+        let parent_picker = match self.input_ui.take_composer() {
+            ComposerMode::Picker(picker) => Some(Box::new(picker)),
+            composer => {
+                self.input_ui.set_composer(composer);
+                None
+            }
+        };
+        self.input_ui
+            .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
+                choice,
+                pending: InlineChoicePending::LoginFlow {
+                    target,
+                    provider_label,
+                },
+                parent_picker,
+            }));
         self.set_status(format!("select {provider_label} login flow"));
     }
 
-    pub(super) async fn commit_login_flow(
+    pub(super) async fn submit_login_flow_choice(
         &mut self,
         value: &str,
+        target: LoginTarget,
+        provider_label: &'static str,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let Some((auth, mode)) = parse_login_flow_value(value) else {
-            self.insert_entry(&Entry::Error("unsupported login flow".into()));
-            self.set_status("login failed");
+        let Some(mode) = parse_login_flow_mode(value) else {
+            self.set_status(self.busy_status_label());
             return Ok(());
         };
-        let Some(target) = catalog::login_target_for_auth(&auth) else {
-            self.insert_entry(&Entry::Error(format!(
-                "unsupported login provider '{auth}'"
-            )));
-            self.set_status("login failed");
-            return Ok(());
+        self.start_interactive_login_flow(target, provider_label, mode, terminal, agent)
+            .await
+    }
+
+    pub(super) fn restore_login_flow_parent(&mut self, parent: Option<Box<UiPicker>>) {
+        let Some(parent) = parent else {
+            self.set_status(self.busy_status_label());
+            return;
         };
-        match ProviderAuthentication::method(&target.auth) {
-            Ok(AuthenticationMethod::Interactive { provider_label }) => {
-                self.start_interactive_login_flow(target, provider_label, mode, terminal, agent)
-                    .await
-            }
-            Ok(_) => {
-                self.insert_entry(&Entry::Error(format!(
-                    "provider '{auth}' does not use interactive login"
-                )));
-                self.set_status("login failed");
-                Ok(())
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(err.to_string()));
-                self.set_status("login failed");
-                Ok(())
-            }
-        }
+        self.set_status_quiet(parent.title.clone());
+        self.input_ui.set_composer(ComposerMode::Picker(*parent));
     }
 }
 

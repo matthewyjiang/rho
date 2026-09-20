@@ -191,7 +191,8 @@ const LOGIN_OAUTH_FLOW_CHOICE_STEPS: &[Step] = &[
         text: "Select Codex login flow",
         timeout: SETTLE,
     },
-    Step::AssertText("Esc cancel"),
+    Step::AssertText("Browser"),
+    Step::AssertText("Device code"),
     Step::Key(Key::Esc),
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(150),
@@ -220,6 +221,8 @@ const LOGIN_OAUTH_FLOW_CHOICE_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::AssertText("Esc back"),
+    Step::AssertText("Browser"),
+    Step::AssertText("Device code"),
     Step::Key(Key::Esc),
     Step::WaitText {
         text: "Select OpenAI login method",

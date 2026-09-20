@@ -10,7 +10,6 @@ pub(in crate::tui) enum PickerAction {
     SelectInternalAgentModel,
     LoginGroup,
     LoginProvider,
-    LoginFlow,
     LogoutProvider,
     SwitchAuthMode,
     RefreshModelList,
@@ -84,7 +83,6 @@ impl PickerAction {
             | PickerAction::SelectTheme
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
-            | PickerAction::LoginFlow
             | PickerAction::LogoutProvider
             | PickerAction::SwitchAuthMode
             | PickerAction::InsertSkillCommand
@@ -149,7 +147,6 @@ impl PickerAction {
             ),
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
-            | PickerAction::LoginFlow
             | PickerAction::LogoutProvider
             | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList => DuringTurnSelect::Unavailable(
@@ -168,7 +165,6 @@ impl PickerAction {
             PickerAction::SelectInternalAgentModel
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
-            | PickerAction::LoginFlow
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ViewMcpServers

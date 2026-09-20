@@ -254,7 +254,6 @@ impl UiPicker {
         internal_agent_models => SelectInternalAgentModel,
         login_group => LoginGroup,
         login_provider => LoginProvider,
-        login_flow => LoginFlow,
         logout_provider => LogoutProvider,
         switch_auth_mode => SwitchAuthMode,
         refresh_model_list => RefreshModelList,

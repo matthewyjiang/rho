@@ -421,14 +421,18 @@ impl App {
                 Ok(())
             }
             AuthenticationMethod::Interactive { provider_label } => {
-                if ProviderAuthentication::offers_browser_and_device_login(&target.auth) {
-                    self.open_login_flow_picker(target, provider_label);
+                if super::login_flow::offers_browser_and_device_login(&target.auth) {
+                    self.open_login_flow_choice(target, provider_label);
                     return Ok(());
                 }
-                let availability = BrowserAvailability::from_process();
-                let mode = ProviderAuthentication::preferred_mode(&target.auth, availability);
-                self.start_interactive_login_flow(target, provider_label, mode, terminal, agent)
-                    .await
+                self.start_interactive_login_flow(
+                    target,
+                    provider_label,
+                    InteractiveLoginMode::Browser,
+                    terminal,
+                    agent,
+                )
+                .await
             }
         }
     }

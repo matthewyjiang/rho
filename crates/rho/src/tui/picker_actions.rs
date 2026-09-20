@@ -134,12 +134,6 @@ impl App {
                 self.start_sign_in(SignInTarget::parse(value), terminal, agent)
                     .await
             }
-            PickerAction::LoginFlow => {
-                let PickerCommit::Idle { terminal, agent } = commit else {
-                    unreachable!("login flow commit is idle-only");
-                };
-                self.commit_login_flow(value, terminal, agent).await
-            }
             PickerAction::LogoutProvider => match SignInTarget::parse(value) {
                 SignInTarget::ClaudeCode => self.execute_claude_code_logout().await,
                 SignInTarget::Cursor => {
@@ -384,7 +378,6 @@ impl App {
             | PickerAction::SelectInternalAgentModel
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
-            | PickerAction::LoginFlow
             | PickerAction::LogoutProvider
             | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList
