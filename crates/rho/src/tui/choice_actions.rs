@@ -35,19 +35,6 @@ impl App {
                         self.submit_credential_store_choice(modal.choice, next, terminal, agent)
                             .await?;
                     }
-                    InlineChoicePending::LoginFlow {
-                        target,
-                        provider_label,
-                    } => {
-                        self.submit_login_flow_choice(
-                            &value,
-                            target,
-                            provider_label,
-                            terminal,
-                            agent,
-                        )
-                        .await?;
-                    }
                     InlineChoicePending::ContextHandoff(pending) => {
                         self.resolve_context_handoff(Some(&value), *pending, terminal, agent)
                             .await?;
@@ -118,9 +105,6 @@ impl App {
                     | InlineChoicePending::ClaudeCodeRelogin
                     | InlineChoicePending::ClaudeCodeLogout => {
                         self.set_status(self.busy_status_label());
-                    }
-                    InlineChoicePending::LoginFlow { .. } => {
-                        self.restore_login_flow_parent(modal.parent_picker);
                     }
                     InlineChoicePending::ContextHandoff(pending) => {
                         self.resolve_context_handoff(None, *pending, terminal, agent)

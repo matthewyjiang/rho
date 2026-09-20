@@ -193,6 +193,13 @@ const LOGIN_OAUTH_FLOW_CHOICE_STEPS: &[Step] = &[
     },
     Step::AssertText("Browser"),
     Step::AssertText("Device code"),
+    Step::Phase("filter_login_flow"),
+    Step::TypeText("dev"),
+    Step::Key(Key::Tab),
+    Step::WaitText {
+        text: "> device",
+        timeout: SETTLE,
+    },
     Step::Key(Key::Esc),
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(150),
@@ -228,6 +235,7 @@ const LOGIN_OAUTH_FLOW_CHOICE_STEPS: &[Step] = &[
         text: "Select OpenAI login method",
         timeout: SETTLE,
     },
+    Step::AssertText("> OAuth"),
     Step::Key(Key::Esc),
     Step::WaitText {
         text: "Select provider to login",

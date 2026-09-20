@@ -4,12 +4,13 @@
 //! constructors. Matching on [`PickerAction`] stays in `crate::tui::picker_actions`.
 
 /// What confirming the highlighted row should do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::tui) enum PickerAction {
     SelectModel,
     SelectInternalAgentModel,
     LoginGroup,
     LoginProvider,
+    LoginFlow(Box<crate::tui::login_flow::LoginFlowTarget>),
     LogoutProvider,
     SwitchAuthMode,
     RefreshModelList,
@@ -57,12 +58,12 @@ pub(in crate::tui) enum DuringTurnSelect {
 }
 
 impl PickerAction {
-    pub(in crate::tui) fn space_confirms_selection(self) -> bool {
+    pub(in crate::tui) fn space_confirms_selection(&self) -> bool {
         matches!(self, PickerAction::Config)
     }
 
     /// Whether the filter uses regex matching instead of fuzzy ranking.
-    pub(in crate::tui) fn uses_regex_filter(self) -> bool {
+    pub(in crate::tui) fn uses_regex_filter(&self) -> bool {
         !matches!(
             self,
             PickerAction::SelectModel
@@ -71,7 +72,7 @@ impl PickerAction {
         )
     }
 
-    pub(in crate::tui) fn default_confirm_verb(self) -> &'static str {
+    pub(in crate::tui) fn default_confirm_verb(&self) -> &'static str {
         match self {
             PickerAction::Config => "change",
             PickerAction::Dismiss | PickerAction::ViewMcpServers | PickerAction::ViewAgent => {
@@ -83,6 +84,7 @@ impl PickerAction {
             | PickerAction::SelectTheme
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
+            | PickerAction::LoginFlow(_)
             | PickerAction::LogoutProvider
             | PickerAction::SwitchAuthMode
             | PickerAction::InsertSkillCommand
@@ -97,14 +99,14 @@ impl PickerAction {
         }
     }
 
-    pub(in crate::tui) fn is_model_list(self) -> bool {
+    pub(in crate::tui) fn is_model_list(&self) -> bool {
         matches!(
             self,
             PickerAction::SelectModel | PickerAction::SelectInternalAgentModel
         )
     }
 
-    pub(in crate::tui) fn keeps_composer_open(self, turn: PickerTurn) -> bool {
+    pub(in crate::tui) fn keeps_composer_open(&self, turn: PickerTurn) -> bool {
         match turn {
             PickerTurn::Idle => matches!(
                 self,
@@ -122,7 +124,7 @@ impl PickerAction {
         }
     }
 
-    pub(in crate::tui) fn during_turn_select(self) -> DuringTurnSelect {
+    pub(in crate::tui) fn during_turn_select(&self) -> DuringTurnSelect {
         match self {
             PickerAction::InsertSkillCommand
             | PickerAction::AttachSubagent
@@ -147,6 +149,7 @@ impl PickerAction {
             ),
             PickerAction::LoginGroup
             | PickerAction::LoginProvider
+            | PickerAction::LoginFlow(_)
             | PickerAction::LogoutProvider
             | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList => DuringTurnSelect::Unavailable(
@@ -155,7 +158,7 @@ impl PickerAction {
         }
     }
 
-    pub(in crate::tui) fn config_parent_row(self) -> Option<ConfigParentRow> {
+    pub(in crate::tui) fn config_parent_row(&self) -> Option<ConfigParentRow> {
         match self {
             PickerAction::SelectModel => Some(ConfigParentRow::ConversationModel),
             PickerAction::SelectTheme => Some(ConfigParentRow::Theme),
@@ -165,6 +168,7 @@ impl PickerAction {
             PickerAction::SelectInternalAgentModel
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
+            | PickerAction::LoginFlow(_)
             | PickerAction::InsertSkillCommand
             | PickerAction::ViewAgent
             | PickerAction::ViewMcpServers

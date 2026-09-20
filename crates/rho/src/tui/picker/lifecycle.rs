@@ -94,6 +94,6 @@ impl App {
         };
         picker
             .selected_item()
-            .map(|item| (picker.action, item.value.clone()))
+            .map(|item| (picker.action.clone(), item.value.clone()))
     }
 }

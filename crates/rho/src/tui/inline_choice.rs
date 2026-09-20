@@ -111,10 +111,6 @@ pub(super) enum InlineChoicePending {
     },
     ClearPromptHistory,
     TestWebSearch,
-    LoginFlow {
-        target: rho_providers::model::catalog::LoginTarget,
-        provider_label: &'static str,
-    },
 }
 
 impl InlineChoiceModal {
@@ -145,17 +141,6 @@ impl InlineChoice {
             options,
             active,
         })
-    }
-
-    pub(super) fn with_selected_value(mut self, value: &str) -> Self {
-        if let Some(index) = self
-            .options
-            .iter()
-            .position(|option| option.available && option.value == value)
-        {
-            self.active = index;
-        }
-        self
     }
 
     pub(super) fn selected_value(&self) -> &str {
