@@ -5,43 +5,46 @@ use std::{
     fs,
     io::Write,
     os::unix::fs::symlink,
+    path::Path,
     process::{Command, Stdio},
 };
 
 use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
+fn installation_root() -> TempDir {
+    // Hard links need the built executable's filesystem. Unlike a copy, they
+    // never open an executable for writing where a parallel fork can inherit it.
+    TempDir::new_in(Path::new(env!("CARGO_BIN_EXE_rho")).parent().unwrap()).unwrap()
+}
+
 // Covers: a script override must not permit deleting a package-owned binary,
 // even at the default script location and without a local Cargo receipt.
 // Owner: CLI process / package-manager probe integration.
 #[test]
 fn package_ownership_overrides_script_deletion_hint() {
-    use std::os::unix::fs::PermissionsExt;
     for (owner, package) in [
         ("cargo", "rho-coding-agent"),
         ("pacman", "rho-coding-agent"),
         ("pacman", "other-package"),
     ] {
-        let temp = TempDir::new().unwrap();
+        let temp = installation_root();
         let home = temp.path().canonicalize().unwrap();
         let bin = home.join(".local/bin/rho");
         let tools = home.join("tools");
         fs::create_dir_all(bin.parent().unwrap()).unwrap();
         fs::create_dir(&tools).unwrap();
-        fs::copy(env!("CARGO_BIN_EXE_rho"), &bin).unwrap();
+        fs::hard_link(env!("CARGO_BIN_EXE_rho"), &bin).unwrap();
         for tool in ["cargo", "pacman"] {
-            let script = if tool == owner {
-                if tool == "cargo" {
-                    format!("#!/bin/sh\nprintf '{package} v2.9.1:\\n    rho\\n'\n")
-                } else {
-                    format!("#!/bin/sh\nprintf '{package}\\n'\n")
-                }
-            } else {
-                "#!/bin/sh\nexit 1\n".into()
-            };
-            let path = tools.join(tool);
-            fs::write(&path, script).unwrap();
-            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+            // Keep probe executables read-only during parallel process launches too.
+            symlink(
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/uninstall-package-manager.sh"
+                ),
+                tools.join(tool),
+            )
+            .unwrap();
         }
         // pacman probing is Linux-only, matching production detection.
         if owner == "pacman" && !cfg!(target_os = "linux") {
@@ -52,6 +55,8 @@ fn package_ownership_overrides_script_deletion_hint() {
             .env("HOME", &home)
             .env("PATH", &tools)
             .env("RHO_INSTALL_METHOD", "script")
+            .env("RHO_TEST_PACKAGE_OWNER", owner)
+            .env("RHO_TEST_PACKAGE_NAME", package)
             .env_remove("RHO_HOME")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -83,7 +88,7 @@ fn uninstall_requires_consent_and_preserves_unselected_data() {
         ("maybe\nYeS\n", vec!["--purge"], true, true),
         ("", vec!["--purge", "--dry-run"], false, false),
     ] {
-        let root = TempDir::new().unwrap();
+        let root = installation_root();
         let home = root.path().canonicalize().unwrap().join("home");
         let bin = home.join(".local/bin/rho");
         let data = home.join(".rho");
@@ -97,7 +102,8 @@ fn uninstall_requires_consent_and_preserves_unselected_data() {
         fs::write(project.join("keep"), "project data").unwrap();
         fs::write(data.join("config.toml"), "invalid toml [").unwrap();
         symlink(&project, data.join("linked-project")).unwrap();
-        fs::copy(env!("CARGO_BIN_EXE_rho"), &bin).unwrap();
+        // Uninstall unlinks this path, leaving Cargo's original hard link intact.
+        fs::hard_link(env!("CARGO_BIN_EXE_rho"), &bin).unwrap();
 
         let mut child = Command::new(&bin)
             .arg("uninstall")
@@ -126,6 +132,7 @@ fn uninstall_requires_consent_and_preserves_unselected_data() {
             (!removed_binary, !removed_data),
             "{flags:?} {input:?}"
         );
+        assert!(Path::new(env!("CARGO_BIN_EXE_rho")).is_file());
         assert_eq!(fs::read_to_string(&shared).unwrap(), "shared definitions");
         assert_eq!(
             fs::read_to_string(project.join("keep")).unwrap(),

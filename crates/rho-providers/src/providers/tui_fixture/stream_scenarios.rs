@@ -255,27 +255,26 @@ async fn stream_mermaid(
     request: &ModelRequest<'_>,
     events: &ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
-    // Hold the last open-fence body so PTY can sample live art before
-    // the closing fence arrives.
-    stream_paused_deltas(
-        request,
-        events,
-        [
-            ("```mermaid\nflowchart LR\n", 60),
-            (
-                "  P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
-                60,
-            ),
-            ("  P2 --> P3[\"Phase 3: session delete API + CLI\"]\n", 60),
-            (
-                "  P3 --> P4[\"Phase 4: TUI delete in resume picker\"]\n",
-                60,
-            ),
-            ("  P3 --> P5[\"Phase 5: nest runs under session\"]\n", 500),
-            ("```\ndiagram delivered", 60),
-        ],
-    )
-    .await
+    // Released by rho-tui-pty/src/scenarios/mermaid.rs only after live art
+    // is visible. Clear stale releases before publishing any diagram output.
+    const RELEASE_MARKER: &str = ".rho-fixture-release-mermaid";
+    super::release::consume_release(RELEASE_MARKER)?;
+    let mut response = String::new();
+    for delta in [
+        "```mermaid\nflowchart LR\n",
+        "  P1[\"Phase 1: retention sweep\"] --> P2[\"Phase 2: parent link on disk\"]\n",
+        "  P2 --> P3[\"Phase 3: session delete API + CLI\"]\n",
+        "  P3 --> P4[\"Phase 4: TUI delete in resume picker\"]\n",
+        "  P3 --> P5[\"Phase 5: nest runs under session\"]\n",
+    ] {
+        events.send(ModelEvent::OutputDelta(delta.into())).await?;
+        response.push_str(delta);
+    }
+    super::release::wait_for_release_or_cancel(RELEASE_MARKER, &request.cancellation).await?;
+    let ending = "```\ndiagram delivered";
+    events.send(ModelEvent::OutputDelta(ending.into())).await?;
+    response.push_str(ending);
+    completed(response)
 }
 
 async fn stream_paused_deltas<const N: usize>(

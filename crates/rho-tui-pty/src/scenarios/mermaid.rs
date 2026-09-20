@@ -14,7 +14,7 @@ pub(super) const MERMAID_FLOWCHART_RESIZE_STEPS: &[Step] = &[
     },
     Step::Phase("stream_diagram_live"),
     Step::SubmitText("fixture mermaid flowchart"),
-    // Art must appear from complete-line prefixes before the closing fence.
+    // The fixture holds the fence open until this observes live art and releases it.
     Step::Custom(wait_until_live_streamed_diagram),
     Step::Phase("stream_diagram"),
     Step::WaitText {
@@ -67,7 +67,7 @@ fn wait_until_live_streamed_diagram(harness: &mut PtyHarness) -> Result<()> {
             );
         }
         if diagram_art_visible(harness) {
-            return Ok(());
+            return super::release_fixture(harness, ".rho-fixture-release-mermaid");
         }
         if Instant::now() >= deadline {
             anyhow::bail!(
