@@ -217,6 +217,14 @@ macro_rules! picker_is {
 }
 
 impl UiPicker {
+    pub(in crate::tui) fn login_flow(
+        title: impl Into<String>,
+        items: Vec<PickerItem>,
+        target: crate::tui::login_flow::LoginFlowTarget,
+    ) -> Self {
+        Self::new(title, items, PickerAction::LoginFlow(Box::new(target)))
+    }
+
     pub(in crate::tui::picker) fn new(
         title: impl Into<String>,
         items: Vec<PickerItem>,

@@ -422,7 +422,7 @@ impl App {
             }
             AuthenticationMethod::Interactive { provider_label } => {
                 if super::login_flow::offers_browser_and_device_login(&target.auth) {
-                    self.open_login_flow_choice(target, provider_label);
+                    self.open_login_flow_picker(target, provider_label);
                     return Ok(());
                 }
                 self.start_interactive_login_flow(

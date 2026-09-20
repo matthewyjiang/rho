@@ -58,11 +58,11 @@ impl App {
             return Ok(());
         };
 
-        let return_picker = self.take_picker_parent_after_selection(action);
+        let return_picker = self.take_picker_parent_after_selection(&action);
         // Idle SelectModel restores its config parent inside the model arm
         // (`request_model_selection_from_config_picker`). Every other path
         // restores after the commit, including during-turn SelectModel.
-        let (idle_model_parent, restore_parent) = match (turn, action) {
+        let (idle_model_parent, restore_parent) = match (turn, &action) {
             (PickerTurn::Idle, PickerAction::SelectModel) => (return_picker, None),
             _ => (None, return_picker),
         };
@@ -132,6 +132,13 @@ impl App {
                     unreachable!("login provider commit is idle-only");
                 };
                 self.start_sign_in(SignInTarget::parse(value), terminal, agent)
+                    .await
+            }
+            PickerAction::LoginFlow(target) => {
+                let PickerCommit::Idle { terminal, agent } = commit else {
+                    unreachable!("login flow commit is idle-only");
+                };
+                self.submit_login_flow_selection(value, *target, terminal, agent)
                     .await
             }
             PickerAction::LogoutProvider => match SignInTarget::parse(value) {
@@ -339,7 +346,7 @@ impl App {
 
     fn take_picker_parent_after_selection(
         &mut self,
-        action: PickerAction,
+        action: &PickerAction,
     ) -> Option<(UiPicker, &'static str)> {
         let selected_value = config_parent_value(action.config_parent_row()?);
         match self.input_ui.composer_mut() {
@@ -378,6 +385,7 @@ impl App {
             | PickerAction::SelectInternalAgentModel
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
+            | PickerAction::LoginFlow(_)
             | PickerAction::LogoutProvider
             | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList
