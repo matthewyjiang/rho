@@ -19,6 +19,7 @@ mod computer_preference;
 mod computer_setup;
 mod config;
 mod conversation_tree;
+mod dispatch;
 mod doctor;
 mod document_attachment;
 mod edit_diff;
@@ -151,13 +152,11 @@ use type_during_stream::TYPE_DURING_STREAM_STEPS;
 use workflow::{WORKFLOW_CANCEL_RESUME_ID, WORKFLOW_RUN_ID};
 use workspace_rewind::WORKSPACE_REWIND_SCENARIO;
 
-use anyhow::Result;
-
 use crate::{
     harness::WaitTimeout,
     keys::Key,
     pty::PtySize,
-    scenario::{Scenario, ScenarioOutcome, ScenarioRunner, Step},
+    scenario::{Scenario, Step},
 };
 
 const DEFAULT_SIZE: PtySize = PtySize {
@@ -971,32 +970,7 @@ pub fn smoke_scenario_ids() -> Vec<&'static str> {
 mod fixture_release;
 use fixture_release::{release_compact_fixture, release_fixture};
 
-pub fn run_named(runner: &ScenarioRunner, name: &str) -> Result<ScenarioOutcome> {
-    let scenario = all_scenarios()
-        .iter()
-        .find(|scenario| scenario.id == name)
-        .ok_or_else(|| anyhow::anyhow!("unknown scenario '{name}'"))?;
-    if name == calibrated_context::SCENARIO.id {
-        return calibrated_context::run(runner);
-    }
-    #[cfg(unix)]
-    if name == computer_preference::COMPUTER_PREFERENCE_SCENARIO.id {
-        return computer_preference::run(runner);
-    }
-    if workflow::is_workflow_scenario(name) {
-        return workflow::run(runner, name);
-    }
-    if config::is_auto_recovered_handoff_scenario(name) {
-        return config::run_auto_recovered_handoff(runner);
-    }
-    if send_confirm::is_send_confirm_scenario(name) {
-        return send_confirm::run_send_confirm_handoff(runner);
-    }
-    if resume_scrollback::is_resume_scrollback_scenario(name) {
-        return resume_scrollback::run_resume_scrollback(runner);
-    }
-    runner.run(scenario)
-}
+pub use dispatch::run_named;
 
 use assert_helpers::{
     assert_idle_shell_still_streaming, assert_inline_shell_cancelled, assert_terminal_restored,
