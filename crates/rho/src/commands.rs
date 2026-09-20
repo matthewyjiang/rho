@@ -1,5 +1,8 @@
 use thiserror::Error;
 
+mod availability;
+pub(crate) use availability::CommandContext;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CommandId {
     Advisor,
@@ -462,7 +465,11 @@ pub static COMMANDS: &[CommandSpec] = &[
     },
 ];
 
-pub(crate) fn argument_choices(input: &str, cursor: usize) -> &'static [CommandArgumentChoice] {
+pub(crate) fn argument_choices(
+    input: &str,
+    cursor: usize,
+    context: &CommandContext,
+) -> &'static [CommandArgumentChoice] {
     let cursor_byte = input
         .char_indices()
         .nth(cursor)
@@ -482,7 +489,7 @@ pub(crate) fn argument_choices(input: &str, cursor: usize) -> &'static [CommandA
     else {
         return &[];
     };
-    if args.trim().is_empty() {
+    if args.trim().is_empty() && context.is_discoverable(spec.id) {
         spec.argument_choices
     } else {
         &[]
