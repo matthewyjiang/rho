@@ -1,6 +1,6 @@
 //! Fast-mode discovery follows the active provider and model, not startup state.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{ensure, Result};
 
@@ -101,13 +101,20 @@ fn assert_hidden(harness: &mut PtyHarness) -> Result<()> {
 
 fn assert_discovery(harness: &mut PtyHarness, discovery: Discovery) -> Result<()> {
     // Append to exercise /fas, exact /fast, then the whitespace argument path.
+    let mut draft = String::new();
     for (suffix, suggestions) in [
         ("/fas", &["/fast"][..]),
         ("t", &["/fast on", "/fast off"][..]),
         (" ", &["/fast on", "/fast off"][..]),
     ] {
         harness.type_text(suffix)?;
-        harness.wait_for_quiet(Duration::from_millis(150), SETTLE)?;
+        draft.push_str(suffix);
+        wait_for_draft(harness, &draft)?;
+        if let Discovery::Shown = discovery {
+            for suggestion in suggestions {
+                harness.wait_for_text(suggestion, SETTLE)?;
+            }
+        }
         // The draft itself contains /fast. Exclude its cursor row so assertions
         // inspect suggestions rather than mistaking typed input for discovery.
         let cursor_row = usize::from(harness.screen().cursor().0);
@@ -138,4 +145,32 @@ fn assert_discovery(harness: &mut PtyHarness, discovery: Discovery) -> Result<()
     harness.inject_key(&Key::Esc)?;
     harness.inject_key(&Key::Ctrl('c'))?;
     harness.wait_for_text_gone("/fas", SETTLE)
+}
+
+fn wait_for_draft(harness: &mut PtyHarness, draft: &str) -> Result<()> {
+    // Quiet output can be a stalled child, not a processed key. The composer
+    // text and caret acknowledge each suffix, including the trailing space,
+    // before we inspect discovery or assert that suggestions are absent.
+    let rendered = format!("> {draft}");
+    let deadline = Instant::now() + SETTLE.duration;
+    harness.set_phase(format!("wait_for_fast_draft:{draft:?}"));
+    loop {
+        harness.poll(Duration::from_millis(25));
+        let (row, col) = harness.screen().cursor();
+        if usize::from(col) == rendered.len()
+            && harness
+                .screen()
+                .rows_text()
+                .get(usize::from(row))
+                .is_some_and(|text| text.trim_end() == rendered.trim_end())
+        {
+            return Ok(());
+        }
+        ensure!(
+            harness.is_running() && Instant::now() < deadline,
+            "composer did not acknowledge draft {draft:?} ({}):\n{}",
+            SETTLE.label,
+            harness.screen().debug_dump()
+        );
+    }
 }

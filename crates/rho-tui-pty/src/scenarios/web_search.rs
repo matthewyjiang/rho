@@ -103,6 +103,7 @@ pub(super) const WEB_SEARCH_CONFIG_SCENARIO: Scenario = Scenario::new(
             text: "Test connection",
             timeout: SETTLE,
         },
+        Step::Custom(|harness| harness.wait_for_visible_cursor(SETTLE)),
         Step::Key(Key::Esc),
         Step::Key(Key::Esc),
         Step::Key(Key::Esc),
@@ -112,12 +113,14 @@ pub(super) const WEB_SEARCH_CONFIG_SCENARIO: Scenario = Scenario::new(
 )
 .with_env(OPENAI_KEY_ENV);
 
-// Covers: resizing an inline choice must not lose its explanation or keyboard focus.
+// Covers: resizing an inline choice must preserve its explanation and focus,
+// without a text caret obscuring the focus marker.
 // Owner: interactive TUI. Compare against the wide rendering, not fixed UI prose.
 fn inline_choice_resize_and_focus(harness: &mut PtyHarness) -> Result<()> {
     // The parent picker also mentions the query; wait for the actual choice.
     harness.wait_for_text("→ y  Send test query", SETTLE)?;
     harness.wait_for_text("Don't send", SETTLE)?;
+    harness.wait_for_hidden_cursor(SETTLE)?;
     let explanation = send_query_explanation(harness)?;
     // This width wraps the explanation while both options still fit vertically.
     harness.resize(DEFAULT_SIZE.rows, 32)?;
@@ -149,7 +152,8 @@ fn inline_choice_resize_and_focus(harness: &mut PtyHarness) -> Result<()> {
 
     harness.resize(DEFAULT_SIZE.rows, DEFAULT_SIZE.cols)?;
     harness.wait_for_text(&explanation, SETTLE)?;
-    harness.wait_for_text("→ y  Send test query", SETTLE)
+    harness.wait_for_text("→ y  Send test query", SETTLE)?;
+    harness.wait_for_hidden_cursor(SETTLE)
 }
 
 fn send_query_explanation(harness: &PtyHarness) -> Result<String> {

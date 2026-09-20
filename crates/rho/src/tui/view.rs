@@ -431,8 +431,10 @@ impl App {
             composer_cursor: full_cursor,
         } = surface;
         // Outer None: no overlay, fall through to the composer caret.
-        // Inner None: overlay is open but has no text field; hide the caret.
+        // Inner None: the active surface has no text field; hide the caret.
         let popup_cursor = match self.input_ui.composer() {
+            // The choice cursor tracks scrolling focus, not a text insertion point.
+            ComposerMode::InlineChoice(_) => Some(None),
             ComposerMode::Picker(picker) => picker_overlay_frame(picker, area).map(|overlay| {
                 // Clear punches host defaults; fixed themes must repaint their surface
                 // or light schemes leave dark holes under dark body ink.
