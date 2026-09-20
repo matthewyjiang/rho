@@ -798,7 +798,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         FIRST_RUN_SETUP_STEPS,
         /*smoke*/ false,
     )
-    .with_env(FIRST_RUN_SIGNIN_ENV),
+    .with_env(FIRST_RUN_SIGNIN_ENV)
+    .with_setup(first_run::setup_without_credential_store),
     Scenario::new(
         "first_run_setup_skipped",
         "Leave the first-launch setup screen with Esc and land in a session",

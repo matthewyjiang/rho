@@ -13,6 +13,20 @@ pub(super) const FIRST_RUN_ENV: &[(&str, &str)] = &[("RHO_FIRST_RUN", "1")];
 /// menu is reachable on a machine that could already list models.
 pub(super) const FIRST_RUN_SIGNIN_ENV: &[(&str, &str)] = &[("RHO_FIRST_RUN", "signin")];
 
+/// Exercise the credential-store prompt on a fresh installation.
+pub(super) fn setup_without_credential_store(home: &IsolatedHome) -> Result<()> {
+    std::fs::write(
+        &home.config_path,
+        r#"provider = "openai"
+model = "gpt-5.5"
+auth = "api-key"
+check_for_updates = false
+web_search.mode = "off"
+"#,
+    )?;
+    Ok(())
+}
+
 /// Give the workspace a prompt template, so the signed-out scenario can submit
 /// a prompt that the composer clears while it expands.
 pub(super) fn setup_prompt_template(home: &IsolatedHome) -> Result<()> {
@@ -33,6 +47,8 @@ fn assert_session_chrome_hidden(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
+// Covers: choosing a credential store must not lose login navigation or exit setup.
+// Owner: interactive setup and login lifecycle.
 pub(super) const FIRST_RUN_SETUP_STEPS: &[Step] = &[
     Step::Phase("setup_opens_on_sign_in"),
     Step::WaitText {
@@ -61,9 +77,50 @@ pub(super) const FIRST_RUN_SETUP_STEPS: &[Step] = &[
         text: "Select OpenAI login method",
         timeout: SETTLE,
     },
+    Step::TypeText("OAuth"),
     Step::Key(Key::Enter),
-    // The isolated home already names a credential store, so the API key
-    // prompt follows the method directly.
+    Step::WaitText {
+        text: "Local file",
+        timeout: SETTLE,
+    },
+    Step::Phase("cancel_store_choice"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Select OpenAI login method",
+        timeout: SETTLE,
+    },
+    Step::AssertText("> OAuth"),
+    Step::Custom(assert_session_chrome_hidden),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Local file",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Char('f')),
+    Step::WaitText {
+        text: "Select Codex login flow",
+        timeout: SETTLE,
+    },
+    Step::Phase("back_out_after_store_choice"),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Select OpenAI login method",
+        timeout: SETTLE,
+    },
+    Step::AssertText("> OAuth"),
+    Step::Custom(assert_session_chrome_hidden),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Select provider to login",
+        timeout: SETTLE,
+    },
+    Step::AssertText("> openai"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Select OpenAI login method",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
     Step::WaitText {
         text: "enter OpenAI API key",
         timeout: SETTLE,

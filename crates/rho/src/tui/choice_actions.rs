@@ -32,6 +32,11 @@ impl App {
                         self.confirm_computer_access(&value, agent)
                     }
                     InlineChoicePending::CredentialStore { next } => {
+                        // Resume login with its navigation context, so a subsequent
+                        // flow picker can attach to the original provider picker.
+                        if let Some(parent) = modal.parent_picker {
+                            self.input_ui.set_composer(ComposerMode::Picker(*parent));
+                        }
                         self.submit_credential_store_choice(modal.choice, next, terminal, agent)
                             .await?;
                     }
@@ -100,8 +105,15 @@ impl App {
                     InlineChoicePending::ComputerAccess => {
                         self.confirm_computer_access("cancel", agent)
                     }
-                    InlineChoicePending::CredentialStore { .. }
-                    | InlineChoicePending::ClaudeCodeLogin
+                    InlineChoicePending::CredentialStore { .. } => {
+                        if let Some(parent) = modal.parent_picker {
+                            self.set_status_quiet(parent.title.clone());
+                            self.input_ui.set_composer(ComposerMode::Picker(*parent));
+                        } else {
+                            self.restore_after_cancelled_login();
+                        }
+                    }
+                    InlineChoicePending::ClaudeCodeLogin
                     | InlineChoicePending::ClaudeCodeRelogin
                     | InlineChoicePending::ClaudeCodeLogout => {
                         self.set_status(self.busy_status_label());

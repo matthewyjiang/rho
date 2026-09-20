@@ -208,11 +208,15 @@ impl App {
         };
         match credential_store_inline_choice(request) {
             Ok(choice) => {
+                let parent_picker = match self.input_ui.take_composer() {
+                    ComposerMode::Picker(picker) => Some(Box::new(picker)),
+                    _ => None,
+                };
                 self.input_ui
                     .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
                         choice,
                         pending: InlineChoicePending::CredentialStore { next },
-                        parent_picker: None,
+                        parent_picker,
                     }));
                 self.set_status("choose credential store before login");
             }
