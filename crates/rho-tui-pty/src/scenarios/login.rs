@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{ensure, Context, Result};
 
 use crate::{
     keys::Key,
@@ -191,8 +191,7 @@ const LOGIN_OAUTH_FLOW_CHOICE_STEPS: &[Step] = &[
         text: "Select Codex login flow",
         timeout: SETTLE,
     },
-    Step::AssertText("Browser"),
-    Step::AssertText("Device code"),
+    Step::Custom(inline_choice_resize_and_focus),
     Step::Key(Key::Esc),
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(150),
@@ -245,8 +244,52 @@ pub(super) const LOGIN_OAUTH_FLOW_CHOICE_SCENARIO: Scenario = Scenario::new(
         cols: 100,
     },
     LOGIN_OAUTH_FLOW_CHOICE_STEPS,
-    false,
+    /*smoke*/ true,
 );
+
+// Covers: resizing an inline choice must not lose its explanation or keyboard focus.
+// Owner: interactive TUI. Compare against the wide rendering, not fixed UI prose.
+fn inline_choice_resize_and_focus(harness: &mut PtyHarness) -> Result<()> {
+    let explanation = browser_choice_explanation(harness)?;
+    // This width wraps the browser explanation while both options still fit vertically.
+    harness.resize(28, 32)?;
+    harness.wait_for_text(
+        explanation
+            .split_whitespace()
+            .last()
+            .context("empty explanation")?,
+        SETTLE,
+    )?;
+    harness.inject_key(&Key::Down)?;
+    harness.wait_for_text("→ 2  Device code", SETTLE)?;
+    ensure!(
+        browser_choice_explanation(harness)? == explanation,
+        "narrow inline choice lost explanation text"
+    );
+    harness.inject_key(&Key::Up)?;
+    harness.wait_for_text("→ 1  Browser", SETTLE)?;
+    harness.resize(28, 100)?;
+    harness.wait_for_text(&explanation, SETTLE)?;
+    harness.wait_for_text("→ 1  Browser", SETTLE)
+}
+
+fn browser_choice_explanation(harness: &PtyHarness) -> Result<String> {
+    let rows = harness.screen().rows_text();
+    let browser = rows
+        .iter()
+        .position(|row| row.ends_with("Browser"))
+        .context("browser option missing")?;
+    let device = rows
+        .iter()
+        .position(|row| row.ends_with("Device code"))
+        .context("device option missing")?;
+    ensure!(browser < device, "choice order changed");
+    Ok(rows[browser + 1..device]
+        .iter()
+        .flat_map(|row| row.split_whitespace())
+        .collect::<Vec<_>>()
+        .join(" "))
+}
 
 pub(super) const LOGIN_OLLAMA_STEPS: &[Step] = &[
     Step::Phase("open_ollama_onboarding"),
