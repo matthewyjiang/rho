@@ -117,6 +117,8 @@ Both the config menu and shortcut save `[display].output_streaming` in configura
 
 Type `/` at the start of the message box to open the command palette. Keep typing to filter commands, use `up` and `down` to select, press `tab` to complete the selected command, and press `enter` to run it. Most built-in slash commands run locally. Commands that start agent work say so below.
 
+Suggestions reflect the current model's capabilities. `/fast` and its argument suggestions appear only for models that support fast mode, and switching models updates the suggestions immediately. You can still type a hidden command explicitly: unsupported actions explain why they cannot run. `/fast off` can disable the saved preference even on a model that does not support fast mode.
+
 A single `/` as the first character opens the command palette. Any later `/` characters are treated as normal message text and do not reopen the palette.
 
 | Command | Action |

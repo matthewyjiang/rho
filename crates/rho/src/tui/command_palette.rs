@@ -21,6 +21,15 @@ pub(super) enum CommandPaletteKeyOutcome {
 }
 
 impl App {
+    fn command_context(&self) -> commands::CommandContext {
+        commands::CommandContext {
+            fast_mode_supported: rho_providers::providers::openai::supports_fast_mode(
+                &self.info.runtime.provider,
+                &self.info.runtime.model,
+            ),
+        }
+    }
+
     /// Command matches when the command palette is what the composer shows.
     ///
     /// Callers must already have excluded other composer modes; this owns the
@@ -32,15 +41,20 @@ impl App {
         let matches = self.command_matches();
         (!matches.is_empty()
             && (self.cursor_in_command_token()
-                || !commands::argument_choices(self.input_ui.text(), self.input_ui.cursor())
-                    .is_empty()
+                || !commands::argument_choices(
+                    self.input_ui.text(),
+                    self.input_ui.cursor(),
+                    &self.command_context(),
+                )
+                .is_empty()
                 || !self.mcp_argument_choices().is_empty()))
         .then_some(matches)
     }
 
     pub(super) fn command_matches(&mut self) -> Vec<CommandChoice> {
+        let context = self.command_context();
         let argument_choices =
-            commands::argument_choices(self.input_ui.text(), self.input_ui.cursor());
+            commands::argument_choices(self.input_ui.text(), self.input_ui.cursor(), &context);
         if !argument_choices.is_empty() {
             return argument_choices
                 .iter()
@@ -63,7 +77,8 @@ impl App {
             .strip_prefix('/')
             .unwrap_or(prefix)
             .to_ascii_lowercase();
-        let builtin_matches = commands::matching_commands(&prefix);
+        let mut builtin_matches = commands::matching_commands(&prefix);
+        builtin_matches.retain(|command| context.is_discoverable(command.id));
         let exact_builtin = builtin_matches
             .iter()
             .find(|command| command.name.eq_ignore_ascii_case(&prefix))

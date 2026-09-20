@@ -21,6 +21,7 @@ mod conversation_tree;
 mod doctor;
 mod document_attachment;
 mod edit_diff;
+mod fast_discovery;
 mod file_palette;
 mod first_run;
 mod goal;
@@ -651,6 +652,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     SIDE_BTW_SCENARIO,
     SIDE_DURING_TURN_SCENARIO,
     SLASH_COMMAND_PALETTE_SCENARIO,
+    fast_discovery::FAST_DISCOVERY_SCENARIO,
     CREATE_AGENT_COMMAND_SCENARIO,
     CREATE_AGENT_MISSING_TOOLS_SCENARIO,
     TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO,
