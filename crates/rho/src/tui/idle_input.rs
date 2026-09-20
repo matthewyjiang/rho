@@ -39,7 +39,19 @@ impl App {
     }
 
     /// Route keys owned by modal/overlay composers. Returns true when handled.
-    async fn handle_composer_mode_key(
+    fn handle_composer_mode_key<'a>(
+        &'a mut self,
+        key: KeyEvent,
+        terminal: &'a mut DefaultTerminal,
+        agent: &'a mut InteractiveRuntime,
+    ) -> impl std::future::Future<Output = anyhow::Result<bool>> + 'a {
+        // Keep modal futures out of every idle key's poll frame, including
+        // ordinary Enter and /exit. Allocate in a synchronous frame so debug
+        // construction temporaries are gone before polling the handler.
+        Box::pin(self.handle_composer_mode_key_inner(key, terminal, agent))
+    }
+
+    async fn handle_composer_mode_key_inner(
         &mut self,
         key: crossterm::event::KeyEvent,
         terminal: &mut DefaultTerminal,
@@ -225,7 +237,17 @@ impl App {
         Ok(())
     }
 
-    pub(super) async fn submit(
+    pub(super) fn submit<'a>(
+        &'a mut self,
+        terminal: &'a mut DefaultTerminal,
+        agent: &'a mut InteractiveRuntime,
+    ) -> impl std::future::Future<Output = anyhow::Result<()>> + 'a {
+        // Submission can poll an entire turn or command. Its construction
+        // frame must not stay on the Windows main stack for that whole call.
+        Box::pin(self.submit_inner(terminal, agent))
+    }
+
+    async fn submit_inner(
         &mut self,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
