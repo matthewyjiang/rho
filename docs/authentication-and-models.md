@@ -86,15 +86,16 @@ Outside setup, the session shows whether the active provider resolved to usable 
 flowchart TD
     loginCmd["/login"] --> pick[Provider picker]
     pick --> method[Auth method if needed]
-    method --> creds[Store credentials]
+    method --> flow[Browser or device code if both]
+    flow --> creds[Store credentials]
     creds --> keep[Usually keep current model]
     creds --> bootstrap[If unauthenticated: select default model]
     logoutCmd["/logout"] --> remove[Delete stored credentials]
 ```
 
-`/login` opens a readable provider picker. Providers with multiple authentication methods open a second picker with prompts such as **API Key** and **OAuth**; providers with one method continue directly to that login flow. **Custom · Chat Completions** and **Custom · Responses** each collect a name, a base URL, and an optional API key. Direct args (`/login openai`, `/login anthropic`, and so on) target a single method. See each [provider page](#providers) for the exact flow.
+`/login` opens a readable provider picker. Providers with multiple authentication methods open a second picker with prompts such as **API Key** and **OAuth**; providers with one method continue directly to that login flow. OAuth profiles that have both a local browser callback and device-code, currently Codex and xAI, then open a flow picker so you can choose even when a browser is available. The default row is browser on a graphical session and device-code when headless. **Custom · Chat Completions** and **Custom · Responses** each collect a name, a base URL, and an optional API key. Direct args (`/login openai`, `/login anthropic`, and so on) target a single method. See each [provider page](#providers) for the exact flow.
 
-Interactive logins always show the authorize URL, including when a local browser opened. Headless or remote sessions (SSH, no display, nested harness) skip launching a browser and prefer a device-code flow when the provider has one. In the TUI the URL and any device code stay in the composer, including on first-run setup, so they are visible without the transcript. Press `c` to copy the URL (OSC-52 over SSH), or click **COPY** next to the link. Esc cancels. `rho login` prints the same URL and code; it selects device-code automatically when no browser can appear, so you do not need `--device-auth` after the fact. `--device-auth` still forces device-code on a graphical session.
+Interactive logins always show the authorize URL, including when a local browser opened. Headless or remote sessions (SSH, no display, nested harness) skip launching a browser and prefer a device-code flow when the provider has one. In the TUI the URL and any device code stay in the composer, including on first-run setup, so they are visible without the transcript. Press `c` to copy the URL (OSC-52 over SSH), or click **COPY** next to the link. Esc cancels, or goes back when a parent picker is open. `rho login` prints the same URL and code; it selects device-code automatically when no browser can appear, so you do not need `--device-auth` after the fact. `--device-auth` still forces device-code on a graphical session.
 
 Claude Code login is the exception: `/login claude-code` hands the terminal to `claude auth login` and never sees an authorize URL. `/login cursor` does the same for `cursor-agent login`.
 

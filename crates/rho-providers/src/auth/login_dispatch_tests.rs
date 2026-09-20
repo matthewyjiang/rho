@@ -63,6 +63,28 @@ fn dispatches_registered_providers_to_typed_authentication_methods() {
     ));
 }
 
+// Covers: only dual-grant profiles offer a browser vs device-code choice
+// Owner: login dispatch
+#[test]
+fn offers_browser_and_device_login_only_for_dual_grant_profiles() {
+    let cases = [
+        ("openai-codex", true),
+        ("xai-oauth", true),
+        ("github-copilot", false),
+        ("kimi-code", false),
+        ("ollama-cloud-device", false),
+        ("openrouter-oauth", false),
+        ("openai", false),
+    ];
+    for (provider, expected) in cases {
+        pretty_assertions::assert_eq!(
+            ProviderAuthentication::offers_browser_and_device_login(provider),
+            expected,
+            "{provider}"
+        );
+    }
+}
+
 // Covers: headless prefers device when the provider has one
 // Owner: login dispatch
 #[test]
