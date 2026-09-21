@@ -340,8 +340,8 @@ fn builtin_override_identity(cache_provider: &str, cache_model: &str) -> (String
     (cache_provider.to_string(), cache_model.to_string())
 }
 
-/// models.dev has no row for these ids. Resolve `source` and scale its token
-/// prices. Context, limits, and reasoning stay with that row.
+/// models.dev has no row for these ids. On a direct cache miss, borrow `source`
+/// and scale its token prices. Context, limits, and reasoning stay with that row.
 fn priced_catalog_alias(provider: &str, model: &str) -> Option<(&'static str, u64)> {
     match (provider, model) {
         // Public /v1/models omits this id. It is grok-4.7 at twice the token price.
@@ -375,40 +375,45 @@ fn scale_cost(cost: ModelCost, scale: u64) -> ModelCost {
     }
 }
 
-/// `grok-4.7-build-fast` borrows grok-4.7, then doubles price. A local `catalog`
-/// remap names its own row and stays on the direct path.
-fn aliased_catalog_metadata(
-    provider: &str,
-    model: &str,
-    freshness: CacheFreshness,
-    local: Option<&toml::map::Map<String, toml::Value>>,
-) -> Option<ModelMetadata> {
-    if local.is_some_and(|table| table.contains_key("catalog")) {
-        return None;
-    }
-    let (source_model, scale) = priced_catalog_alias(provider, model)?;
-    let mut metadata = load_model_metadata(provider, source_model, freshness)?;
-    metadata = scale_model_cost(metadata, scale);
-    // The source name belongs to grok-4.7. Keep the fast id unlabeled.
-    metadata.display_name = None;
-    let metadata = apply_provider_capabilities(provider, model, metadata);
-    let metadata = overrides::apply_builtin_overrides(provider, model, metadata);
-    Some(match local {
-        Some(table) => overrides::merge_toml_override(metadata, table),
-        None => metadata,
-    })
-}
-
 fn load_model_metadata(
     provider: &str,
     model: &str,
     freshness: CacheFreshness,
 ) -> Option<ModelMetadata> {
     let local = overrides::local_override_table(provider, model);
-    if let Some(metadata) = aliased_catalog_metadata(provider, model, freshness, local.as_ref()) {
+    if let Some(metadata) = metadata_from_catalog_row(provider, model, local.as_ref(), freshness) {
         return Some(metadata);
     }
-    let (cache_provider, cache_model) = catalog_source_for(provider, model, local.as_ref());
+    // A local `catalog` remap names its own row. Do not borrow a price alias
+    // when that lookup missed.
+    if local
+        .as_ref()
+        .is_some_and(|table| table.contains_key("catalog"))
+    {
+        return None;
+    }
+    let (source_model, scale) = priced_catalog_alias(provider, model)?;
+    let mut metadata = metadata_from_catalog_row(provider, source_model, None, freshness)?;
+    metadata = scale_model_cost(metadata, scale);
+    // The source name belongs to grok-4.7. Keep the fast id unlabeled until
+    // this id's own local table sets one.
+    metadata.display_name = None;
+    Some(match local.as_ref() {
+        Some(table) => overrides::merge_toml_override(metadata, table),
+        None => metadata,
+    })
+}
+
+/// Cache row for `model`, including builtin overrides, provider capabilities,
+/// and `local` when this id has its own table. `local` is `None` when borrowing
+/// another id so that id's user overrides are not inherited.
+fn metadata_from_catalog_row(
+    provider: &str,
+    model: &str,
+    local: Option<&toml::map::Map<String, toml::Value>>,
+    freshness: CacheFreshness,
+) -> Option<ModelMetadata> {
+    let (cache_provider, cache_model) = catalog_source_for(provider, model, local);
     let metadata = match freshness {
         CacheFreshness::CurrentOnly => {
             current_cached_upstream_model_metadata(&cache_provider, &cache_model)
@@ -420,7 +425,7 @@ fn load_model_metadata(
     let metadata =
         overrides::apply_builtin_overrides(&override_provider, &override_model, metadata);
     let metadata = apply_provider_capabilities(provider, model, metadata);
-    Some(match local.as_ref() {
+    Some(match local {
         Some(table) => overrides::merge_toml_override(metadata, table),
         None => metadata,
     })

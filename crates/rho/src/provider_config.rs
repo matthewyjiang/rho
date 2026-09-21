@@ -259,6 +259,11 @@ impl Config {
             &mut self.model,
             None,
         )?;
+        // Repair only the conversation selection. An OAuth-only model saved with
+        // API-key auth must not fail load: in-session saves load first, so an
+        // error here bricks startup and every config update. Internal-agent
+        // pins are explicit and stay unchanged.
+        self.model = model_for_auth(&self.provider, &self.model, &self.auth);
         // Delegating selections have no Rho provider or auth to normalize; the
         // claude binary owns both.
         for (id, selection) in &mut self.internal_agents {
@@ -354,43 +359,32 @@ fn normalize_selection(
     // Collapse legacy wire ids (for example poolside/laguna-m.1) to the
     // internal model id used by cache, config, and display joins.
     *model = profile.provider.canonicalize_model_id(model);
-    // A saved OAuth-only model paired with API-key auth must not fail load.
-    // Later in-session saves call load first, so an error here bricks startup
-    // and every config update.
-    *model = model_for_auth(provider, model, auth);
     Ok(())
 }
 
-/// Keeps `model` when that auth can select it. Otherwise returns the first
-/// static-catalog model for `provider` that can.
+/// True when `model` may be selected with `auth`.
 ///
-/// Models outside the static catalog stay unchanged.
-pub(crate) fn model_for_auth(provider: &str, model: &str, auth: &str) -> String {
-    let catalog = rho_providers::model::catalog::model_catalog();
-    let supports = |candidate: &str| match catalog
+/// Static-catalog entries must list `auth`. Ids outside that catalog stay
+/// allowed so unlisted models remain an escape hatch.
+pub(crate) fn model_allows_auth(provider: &str, model: &str, auth: &str) -> bool {
+    match rho_providers::model::catalog::model_catalog()
         .iter()
-        .find(|entry| entry.provider == provider && entry.model == candidate)
+        .find(|entry| entry.provider == provider && entry.model == model)
     {
         Some(entry) => entry.auth_modes.iter().any(|mode| mode == auth),
         None => true,
-    };
-    if supports(model) {
-        return model.to_string();
     }
-    catalog
-        .iter()
-        .find(|entry| {
-            entry.provider == provider && entry.auth_modes.iter().any(|mode| mode == auth)
-        })
-        .map(|entry| entry.model.clone())
-        .unwrap_or_else(|| model.to_string())
 }
 
-pub(crate) fn align_model(provider: &str, model: &mut String, auth: &str) {
-    let aligned = model_for_auth(provider, model, auth);
-    if *model != aligned {
-        *model = aligned;
+/// Keeps `model` when [`model_allows_auth`] is true. Otherwise returns the
+/// provider default when that default also allows `auth`.
+pub(crate) fn model_for_auth(provider: &str, model: &str, auth: &str) -> String {
+    if model_allows_auth(provider, model, auth) {
+        return model.to_string();
     }
+    rho_providers::model::catalog::default_model_for_provider(provider)
+        .filter(|candidate| model_allows_auth(provider, candidate, auth))
+        .unwrap_or_else(|| model.to_string())
 }
 
 #[derive(Serialize)]

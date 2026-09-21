@@ -135,17 +135,14 @@ impl App {
         self.refresh_available_auths();
         match outcome {
             ProviderActivationOutcome::Saved => {
-                if model == previous_model {
-                    self.set_status(format!(
+                self.set_status(with_replaced_model(
+                    format!(
                         "switched {} to {}",
                         descriptor.display_name, mode.login_label
-                    ));
-                } else {
-                    self.set_status(format!(
-                        "switched {} to {} with model {model}",
-                        descriptor.display_name, mode.login_label
-                    ));
-                }
+                    ),
+                    &previous_model,
+                    &model,
+                ));
             }
             ProviderActivationOutcome::ConfigSaveFailed(err) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -156,4 +153,56 @@ impl App {
         }
         Ok(())
     }
+
+    /// Writes the login target's auth profile so a stored custom key is not
+    /// left behind as `auth = "none"` after restart.
+    ///
+    /// An OAuth-only model is replaced when the new auth cannot select it.
+    pub(super) fn persist_login_auth(&mut self, target: &LoginTarget) {
+        if target.auth == rho_providers::provider::KEYLESS_AUTH {
+            return;
+        }
+        let result = if target.provider == self.info.runtime.provider {
+            self.info.runtime.auth = target.auth.clone();
+            self.info.runtime.model = crate::config::model_for_auth(
+                &self.info.runtime.provider,
+                &self.info.runtime.model,
+                &target.auth,
+            );
+            self.save_current_config()
+        } else {
+            self.info.services.config_repository.update(|config| {
+                if config.provider == target.provider {
+                    config.auth = target.auth.clone();
+                    config.model = crate::config::model_for_auth(
+                        &config.provider,
+                        &config.model,
+                        &config.auth,
+                    );
+                }
+            })
+        };
+        if let Err(err) = result {
+            self.insert_entry(&Entry::Error(format!(
+                "stored credentials, but saving auth mode failed: {err}"
+            )));
+        }
+    }
+}
+
+pub(super) fn with_replaced_model(notice: String, previous_model: &str, model: &str) -> String {
+    if previous_model == model {
+        notice
+    } else {
+        format!("{notice} with model {model}")
+    }
+}
+
+pub(super) fn refreshed_login_status(provider: &str, previous_model: &str, model: &str) -> String {
+    let lead = with_replaced_model(
+        format!("stored credentials for {provider} and refreshed the active provider"),
+        previous_model,
+        model,
+    );
+    format!("{lead}. Switch models with /model when you want to use another provider.")
 }

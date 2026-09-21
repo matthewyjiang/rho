@@ -214,17 +214,15 @@ fn apply_cli_overrides(
         config.permission_mode = permission_mode;
         flags_present = true;
     }
-    if cli.model.is_some() {
-        let compatible =
-            crate::config::model_for_auth(&config.provider, &config.model, &config.auth);
-        if compatible != config.model {
-            anyhow::bail!(
-                "model '{}/{}' is not available for auth '{}'",
-                config.provider,
-                config.model,
-                config.auth
-            );
-        }
+    if cli.model.is_some()
+        && !crate::config::model_allows_auth(&config.provider, &config.model, &config.auth)
+    {
+        anyhow::bail!(
+            "model '{}/{}' is not available for auth '{}'",
+            config.provider,
+            config.model,
+            config.auth
+        );
     }
     config.normalize_provider_profiles()?;
     Ok(flags_present && CliSelection::capture(config) != before)
