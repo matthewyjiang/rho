@@ -9,8 +9,9 @@ use tokio::{
 
 use super::*;
 use crate::{
+    auth::xai_token::XaiAuthSource,
     credentials::{save_xai_tokens, MemoryCredentialStore, XaiTokens},
-    model::{Message, ToolSpec},
+    model::{Message, ModelRequest, ToolSpec},
     reasoning::ReasoningLevel,
 };
 
@@ -533,4 +534,56 @@ async fn native_compact_unauthorized_without_refresh_fails() {
     // No-refresh 401 is the final response; it is not a prior failed attempt.
     assert!(failed_attempts.is_empty());
     server.await.unwrap();
+}
+
+fn empty_request() -> ModelRequest<'static> {
+    ModelRequest {
+        messages: &[],
+        tools: &[],
+        cancellation: Default::default(),
+        reasoning_level: ReasoningLevel::Off,
+        prompt_cache_key: None,
+    }
+}
+
+fn fast_provider(source: XaiAuthSource, fast_serving: bool) -> XaiProvider {
+    XaiProvider::new_with_transport(
+        "xai",
+        "grok-4.7".into(),
+        crate::auth::xai_token::XaiAuthManager::from_tokens(
+            Arc::new(MemoryCredentialStore::default()),
+            source,
+            XaiTokens {
+                access_token: "access-token".into(),
+                refresh_token: None,
+                expires_at_unix: None,
+                id_token: None,
+            },
+        ),
+        crate::provider_backend::stream_timeout::provider_client(),
+        "https://api.x.ai/v1".into(),
+        XaiHostedTools::ALL,
+        fast_serving,
+    )
+}
+
+// Covers: OAuth `/fast` sends grok-4.7-build-fast on create and compact while
+// replay identity stays grok-4.7. API-key login and fast off keep grok-4.7.
+// Owner: xAI request body
+#[test]
+fn oauth_fast_serving_rewrites_only_the_request_model_id() {
+    let cases = [
+        (XaiAuthSource::Store, true, "grok-4.7-build-fast"),
+        (XaiAuthSource::Env, true, "grok-4.7-build-fast"),
+        (XaiAuthSource::ApiKey, true, "grok-4.7"),
+        (XaiAuthSource::Store, false, "grok-4.7"),
+    ];
+    for (source, fast_serving, wire) in cases {
+        let provider = fast_provider(source, fast_serving);
+        let create = provider.stamped_create_body(empty_request()).unwrap();
+        let compact = provider.stamped_compact_body(empty_request()).unwrap();
+        assert_eq!(create["model"], wire, "{source:?} fast {fast_serving}");
+        assert_eq!(compact["model"], wire, "{source:?} fast {fast_serving}");
+        assert_eq!(provider.model_identity().model, "grok-4.7");
+    }
 }

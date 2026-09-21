@@ -131,7 +131,10 @@ pub struct Config {
     pub prompt_history_limit: usize,
     pub auth: String,
     pub reasoning: ReasoningLevel,
-    /// Use the low-latency priority tier for supported Codex models.
+    /// Faster serving for models that support `/fast`.
+    ///
+    /// Codex sends a priority service tier. xAI OAuth `grok-4.7` keeps that
+    /// model selected and sends `grok-4.7-build-fast`.
     pub fast_mode: bool,
     pub show_reasoning_output: bool,
     /// Hide tool cards, reasoning, and activity chrome so only message text remains.

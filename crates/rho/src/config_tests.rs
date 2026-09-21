@@ -57,47 +57,6 @@ fn config_debug_redacts_legacy_credentials() {
     assert!(!debug.contains("brave-search-secret"));
 }
 
-// Covers: a saved OAuth-only xAI model with API-key auth loads as grok-4.7.
-// An explicit internal-agent pin with the same pair stays unchanged. An error
-// on the conversation selection would brick startup and every later config update.
-// Owner: config load
-#[test]
-fn load_replaces_oauth_only_xai_model_when_auth_is_api_key() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-provider = "xai"
-auth = "xai-api-key"
-model = "grok-4.7-build-fast"
-
-[internal_agents.permission-classifier]
-provider = "xai"
-auth = "xai-api-key"
-model = "grok-4.7-build-fast"
-"#,
-    )
-    .unwrap();
-
-    let config = Config::load(Some(path)).unwrap();
-
-    assert_eq!(config.provider, "xai");
-    assert_eq!(config.auth, "xai-api-key");
-    assert_eq!(config.model, "grok-4.7");
-    let pinned = config
-        .internal_agent_model("permission-classifier")
-        .unwrap();
-    assert_eq!(
-        (
-            pinned.expect_rho().provider.as_str(),
-            pinned.expect_rho().model.as_str(),
-            pinned.expect_rho().auth.as_str()
-        ),
-        ("xai", "grok-4.7-build-fast", "xai-api-key")
-    );
-}
-
 #[test]
 fn migrates_the_legacy_ctrl_g_shortcut_conflict() {
     let dir = tempfile::tempdir().unwrap();

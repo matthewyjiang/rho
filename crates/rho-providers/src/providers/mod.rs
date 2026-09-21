@@ -12,6 +12,7 @@ pub mod anthropic;
 mod automation_fixture;
 pub mod builder;
 pub mod factory;
+pub mod fast_mode;
 pub mod github_copilot;
 pub mod google;
 pub(crate) mod native_compaction;

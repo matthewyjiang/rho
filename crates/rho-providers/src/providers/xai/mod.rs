@@ -44,6 +44,9 @@ pub struct XaiProvider {
     api_base: String,
     reasoning: reasoning::XaiReasoningProfile,
     hosted: XaiHostedTools,
+    /// Saved `/fast` preference. OAuth `grok-4.7` sends `grok-4.7-build-fast`.
+    /// Replay identity stays on `model`.
+    fast_serving: bool,
 }
 
 impl XaiProvider {
@@ -54,6 +57,7 @@ impl XaiProvider {
         client: reqwest::Client,
         api_base: String,
         hosted: XaiHostedTools,
+        fast_serving: bool,
     ) -> Self {
         let reasoning = reasoning::XaiReasoningProfile::from_metadata(
             &model,
@@ -67,6 +71,7 @@ impl XaiProvider {
             api_base,
             reasoning,
             hosted,
+            fast_serving,
         }
     }
 
@@ -83,7 +88,49 @@ impl XaiProvider {
             provider_client(),
             api_base,
             XaiHostedTools::ALL,
+            /*fast_serving*/ false,
         ))
+    }
+
+    /// Model id on the JSON body. Replay identity stays [`Self::model_identity`].
+    fn request_body_model(&self) -> &str {
+        let auth = if self.auth.allows_fast_request_model() {
+            "xai-oauth"
+        } else {
+            "xai-api-key"
+        };
+        crate::providers::fast_mode::request_model("xai", &self.model, auth, self.fast_serving)
+    }
+
+    fn stamp_request_model(&self, body: &mut serde_json::Value) {
+        let wire = self.request_body_model();
+        if wire != self.model {
+            body["model"] = serde_json::Value::String(wire.to_string());
+        }
+    }
+
+    fn stamped_create_body(
+        &self,
+        request: crate::model::ModelRequest<'_>,
+    ) -> Result<serde_json::Value, ModelError> {
+        let mut body = build_xai_responses_body(
+            self.provider,
+            &self.model,
+            &self.reasoning,
+            request,
+            self.hosted,
+        )?;
+        self.stamp_request_model(&mut body);
+        Ok(body)
+    }
+
+    pub(super) fn stamped_compact_body(
+        &self,
+        request: crate::model::ModelRequest<'_>,
+    ) -> Result<serde_json::Value, ModelError> {
+        let mut body = bodies::build_xai_compact_body(self.provider, &self.model, request)?;
+        self.stamp_request_model(&mut body);
+        Ok(body)
     }
 
     pub(super) fn http(&self) -> ResponsesHttpTransport<'_> {
@@ -141,13 +188,7 @@ impl XaiProvider {
         >,
     ) -> Result<reqwest::Response, ModelError> {
         let cancellation = request.cancellation.clone();
-        let body = build_xai_responses_body(
-            self.provider,
-            &self.model,
-            &self.reasoning,
-            request,
-            self.hosted,
-        )?;
+        let body = self.stamped_create_body(request)?;
         let mut on_request_event = on_request_event;
         let http_result = self
             .post_responses(

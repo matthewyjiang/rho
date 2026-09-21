@@ -344,7 +344,8 @@ fn builtin_override_identity(cache_provider: &str, cache_model: &str) -> (String
 /// its token prices. A cached row for the alias id is ignored on purpose.
 fn priced_catalog_alias(provider: &str, model: &str) -> Option<(&'static str, u64)> {
     match (provider, model) {
-        // Public /v1/models omits this id. It is grok-4.7 at twice the token price.
+        // `/fast` sends this id for OAuth grok-4.7. It is not a catalog row.
+        // Public /v1/models omits it. Price it as grok-4.7 at twice the token rate.
         ("xai", "grok-4.7-build-fast") => Some(("grok-4.7", 2)),
         _ => None,
     }

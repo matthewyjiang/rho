@@ -76,6 +76,8 @@ Run `rho login openai-codex` first or provide `CODEX_ACCESS_TOKEN` in the automa
 
 Supported GPT-5.5, GPT-5.6, and GPT-6 Astra Codex models can use OpenAI's faster priority tier at a higher credit rate. In the TUI, use `/fast on` or `/fast off`. Running `/fast` with no argument toggles the mode. Rho saves the choice as `model.fast_mode`, shows `(fast)` after the active model name, and sends `service_tier: "priority"` on later supported Codex turns.
 
+`/fast` is the same command for every provider that has a fast mode. Codex implements it as the priority tier above. xAI OAuth `grok-4.7` keeps that model selected and sends `grok-4.7-build-fast` instead of a service-tier header.
+
 ## Notes
 
 - Switching between Codex models preserves encrypted compaction items without changing stored history.

@@ -592,46 +592,6 @@ fn minimax_default_is_minimax_m3() {
     );
 }
 
-// Covers: grok-4.7-build-fast is omitted from API-key login and selects OAuth
-// when that credential is available.
-// Owner: model catalog
-#[test]
-fn grok_4_7_build_fast_is_offered_only_for_xai_oauth() {
-    assert!(available_models_for_auths(&["xai-api-key".into()])
-        .iter()
-        .all(|entry| entry.model != "grok-4.7-build-fast"));
-    assert_eq!(
-        available_models_for_auths(&["xai-oauth".into()])
-            .into_iter()
-            .find(|entry| entry.model == "grok-4.7-build-fast"),
-        Some(ModelCatalogEntry {
-            provider: "xai".into(),
-            model: "grok-4.7-build-fast".into(),
-            display_name: "grok-4.7-build-fast".into(),
-            auth_modes: vec!["xai-oauth".into()],
-        })
-    );
-
-    let available = vec!["xai-api-key".into(), "xai-oauth".into()];
-    assert_eq!(
-        resolve_model_selection_for_provider(
-            "xai",
-            "grok-4.7-build-fast",
-            SelectionAuthContext {
-                current: Some("xai-api-key"),
-                available: &available,
-            },
-        )
-        .unwrap(),
-        ModelSelection {
-            provider: "xai".into(),
-            model: "grok-4.7-build-fast".into(),
-            auth: "xai-oauth".into(),
-            from_catalog: true,
-        }
-    );
-}
-
 // Covers: login groups derive single-provider rows and keep cross-provider merges
 // Owner: model catalog
 #[test]

@@ -1,6 +1,6 @@
 //! xAI native server-side compaction via `POST /v1/responses/compact`.
 
-use super::{bodies::build_xai_compact_body, XaiProvider};
+use super::XaiProvider;
 use crate::model::{ModelError, ModelRequest};
 use crate::protocol::openai_responses::{retained_system_messages, CompactUserRetention};
 use crate::providers::native_compaction::{
@@ -30,7 +30,7 @@ impl XaiProvider {
         let cancellation = request.cancellation.clone();
         let identity = self.model_identity();
         let retained_system_messages = retained_system_messages(request.messages);
-        let body = match build_xai_compact_body(self.provider, &self.model, request) {
+        let body = match self.stamped_compact_body(request) {
             Ok(body) => body,
             Err(error) => return Ok(native_compact_failure(error, Vec::new())),
         };

@@ -364,28 +364,16 @@ fn parse_model_catalog(text: &str) -> Vec<ModelCatalogEntry> {
 }
 
 fn xai_model_entries(models: Vec<String>) -> Vec<ModelCatalogEntry> {
+    let auth_modes = vec!["xai-api-key".to_string(), "xai-oauth".to_string()];
     models
         .into_iter()
-        .map(|model| {
-            let auth_modes = xai_auth_modes(&model);
-            ModelCatalogEntry {
-                provider: "xai".to_string(),
-                display_name: model.clone(),
-                model,
-                auth_modes,
-            }
+        .map(|model| ModelCatalogEntry {
+            provider: "xai".to_string(),
+            display_name: model.clone(),
+            model,
+            auth_modes: auth_modes.clone(),
         })
         .collect()
-}
-
-/// `grok-4.7-build-fast` is served to SuperGrok OAuth on `api.x.ai`.
-/// API-key login does not list it.
-fn xai_auth_modes(model: &str) -> Vec<String> {
-    if model == "grok-4.7-build-fast" {
-        vec!["xai-oauth".to_string()]
-    } else {
-        vec!["xai-api-key".to_string(), "xai-oauth".to_string()]
-    }
 }
 
 fn model_entries(provider: &str, auth: &str, models: Vec<String>) -> Vec<ModelCatalogEntry> {

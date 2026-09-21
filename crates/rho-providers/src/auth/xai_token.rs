@@ -98,6 +98,11 @@ impl XaiAuthManager {
         }
     }
 
+    /// API-key login cannot call `grok-4.7-build-fast`. OAuth store and env can.
+    pub(crate) fn allows_fast_request_model(&self) -> bool {
+        self.source != XaiAuthSource::ApiKey
+    }
+
     pub(crate) async fn auth_material(&self) -> Result<XaiAuthMaterial, ModelError> {
         let tokens = self.tokens.lock().await.clone();
         if self.source == XaiAuthSource::Store && token_is_expiring(&tokens) {
