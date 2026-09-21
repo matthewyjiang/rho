@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.5.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.4.1...rho-sdk-v5.5.0) (2026-09-21)
+
+
+### Features
+
+* **xai:** add grok-4.7 and toggle fast serving with /fast ([#1237](https://github.com/matthewyjiang/rho/issues/1237)) ([b45f01c](https://github.com/matthewyjiang/rho/commit/b45f01c86b6bbdcdfd5e29b2acadcfaf3467d50a))
+
 ## [5.4.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.4.0...rho-sdk-v5.4.1) (2026-09-21)
 
 

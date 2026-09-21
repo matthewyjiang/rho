@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.13.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.12.0...rho-coding-agent-v2.13.0) (2026-09-21)
+
+
+### Features
+
+* **tui:** choose which assistant output to copy ([#1235](https://github.com/matthewyjiang/rho/issues/1235)) ([fdf3404](https://github.com/matthewyjiang/rho/commit/fdf340413dee74bd3c5d3a5e2d0a4f9acb80dc46))
+* **xai:** add grok-4.7 and toggle fast serving with /fast ([#1237](https://github.com/matthewyjiang/rho/issues/1237)) ([b45f01c](https://github.com/matthewyjiang/rho/commit/b45f01c86b6bbdcdfd5e29b2acadcfaf3467d50a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.8.0 to 2.9.0
+
 ## [2.12.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.11.0...rho-coding-agent-v2.12.0) (2026-09-21)
 
 

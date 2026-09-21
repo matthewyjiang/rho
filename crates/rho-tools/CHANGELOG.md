@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.3.2...rho-agent-tools-v1.4.0) (2026-09-21)
+
+
+### Features
+
+* **xai:** add grok-4.7 and toggle fast serving with /fast ([#1237](https://github.com/matthewyjiang/rho/issues/1237)) ([b45f01c](https://github.com/matthewyjiang/rho/commit/b45f01c86b6bbdcdfd5e29b2acadcfaf3467d50a))
+
 ## [1.3.2](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.3.1...rho-agent-tools-v1.3.2) (2026-09-21)
 
 
