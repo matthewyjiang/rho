@@ -63,6 +63,11 @@ When `cache_miss_notices` is on, a completed turn that re-billed a large uncache
 rho --provider openai --auth api-key --model gpt-5.6-sol
 rho --reasoning high
 rho --provider openai --auth api-key --model gpt-5.6-sol --save
+```
+
+`--config` selects the file to load and save. It does not override those keys:
+
+```bash
 rho --config ~/.rho/config.toml
 ```
 
