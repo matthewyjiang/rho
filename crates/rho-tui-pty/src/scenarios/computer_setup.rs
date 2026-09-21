@@ -38,8 +38,9 @@ pub(super) const COMPUTER_SETUP_SCENARIO: Scenario = Scenario::new(
             timeout: SETTLE,
         },
         Step::Resize { rows: 8, cols: 60 },
+        // Focus-following scroll keeps Cancel visible and clips the disclosure's top.
         Step::WaitTextGone {
-            text: "Cancelling cannot undo",
+            text: "Install Cua Driver?",
             timeout: SETTLE,
         },
         Step::Key(Key::Char('i')),

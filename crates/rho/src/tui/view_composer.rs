@@ -15,7 +15,7 @@ use super::{
     display_width,
     divider::{labeled_divider_line, DividerCaption},
     file_picker,
-    inline_choice::inline_choice_lines,
+    inline_choice::inline_choice_frame,
     inline_shell, input_frame,
     login::secret_input_lines,
     login_presentation::login_composer_view,
@@ -26,7 +26,7 @@ use super::{
     MIN_COMMAND_DESCRIPTION_WIDTH,
 };
 
-/// Composer rows plus the caret position for one frame.
+/// Composer rows plus the caret or focused row that the viewport must keep visible.
 #[derive(Debug)]
 pub(super) struct ComposerFrame {
     pub(super) lines: Vec<Line<'static>>,
@@ -42,7 +42,7 @@ fn overlay_editor_caret(value: &str, cursor: usize, width: usize) -> Position {
 }
 
 impl ComposerFrame {
-    fn new(lines: Vec<Line<'static>>, cursor: Position) -> Self {
+    pub(super) fn new(lines: Vec<Line<'static>>, cursor: Position) -> Self {
         Self {
             lines,
             cursor,
@@ -189,13 +189,10 @@ impl App {
                     copy_hit: view.copy_hit,
                 }
             }
-            ComposerMode::InlineChoice(modal) => ComposerFrame::new(
-                inline_choice_lines(
-                    &modal.choice,
-                    width,
-                    /*return_to_parent*/ modal.parent_picker.is_some(),
-                ),
-                Position { x: 0, y: 0 },
+            ComposerMode::InlineChoice(modal) => inline_choice_frame(
+                &modal.choice,
+                width,
+                /*return_to_parent*/ modal.parent_picker.is_some(),
             ),
             ComposerMode::Questionnaire(questionnaire) => ComposerFrame::new(
                 questionnaire_lines(questionnaire, width),

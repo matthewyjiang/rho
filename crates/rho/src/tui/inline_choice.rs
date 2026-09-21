@@ -1,7 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ratatui::text::Line;
 
-use super::{styled_line, truncate_one_line, LineFill, Theme};
+#[path = "inline_choice_render.rs"]
+mod render;
+pub(super) use render::inline_choice_frame;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct InlineChoiceOption {
@@ -199,79 +200,6 @@ impl InlineChoice {
             self.active = index;
         }
     }
-}
-
-pub(super) fn inline_choice_lines(
-    choice: &InlineChoice,
-    width: usize,
-    return_to_parent: bool,
-) -> Vec<Line<'static>> {
-    let width = width.max(1);
-    let mut lines = vec![styled_line(
-        truncate_one_line(&choice.title, width),
-        width,
-        Theme::input_prompt(),
-        LineFill::Natural,
-    )];
-    lines.extend(super::panel_text::indented_wrapped_lines(
-        &choice.description,
-        0,
-        width,
-        Theme::dim(),
-    ));
-
-    for (index, option) in choice.options.iter().enumerate() {
-        let selected = index == choice.active && option.available;
-        let marker = if selected {
-            super::composer_chrome::SELECTION_MARKER_ACTIVE
-        } else if option.available {
-            super::composer_chrome::SELECTION_MARKER_INACTIVE
-        } else {
-            "·"
-        };
-        let style = if selected {
-            Theme::input_prompt()
-        } else if option.available {
-            Theme::text()
-        } else {
-            Theme::dim()
-        };
-        lines.push(styled_line(
-            truncate_one_line(
-                &format!("{marker} [{}] {}", option.shortcut, option.label),
-                width,
-            ),
-            width,
-            style,
-            LineFill::Natural,
-        ));
-        lines.push(styled_line(
-            truncate_one_line(&format!("      {}", option.detail), width),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ));
-    }
-
-    lines.push(styled_line(
-        truncate_one_line(
-            &super::composer_chrome::join_footer_parts([
-                "Enter/Space choose",
-                "shortcut choose",
-                "arrows move",
-                if return_to_parent {
-                    "Esc back"
-                } else {
-                    "Esc cancel"
-                },
-            ]),
-            width,
-        ),
-        width,
-        Theme::dim(),
-        LineFill::Natural,
-    ));
-    lines
 }
 
 #[cfg(test)]

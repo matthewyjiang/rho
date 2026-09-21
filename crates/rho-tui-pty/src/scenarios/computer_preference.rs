@@ -40,6 +40,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             harness.submit_text("/computer")?;
             harness.wait_for_text("No desktop access granted", SETTLE)?;
             harness.inject_key(&Key::Esc)?;
+            harness.wait_for_text_gone("No desktop access granted", SETTLE)?;
             harness.submit_text("/computer on")?;
             harness.wait_for_text("Grant desktop access?", SETTLE)?;
             harness.inject_key(&Key::Char('g'))?;
@@ -60,9 +61,14 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             run_phase(runner, &restricted, name, &mut timing, |harness| {
                 harness.submit_text("fixture tool available computer")?;
                 harness.wait_for_text("tool available computer: false", STREAM)?;
+                // Streamed text is not an idle boundary. During a turn, /computer
+                // on reports Busy instead of checking startup eligibility.
+                wait_for_turn_completion_after(harness, "tool available computer: false")?;
                 harness.submit_text("/computer")?;
                 harness.wait_for_text("No desktop access granted", SETTLE)?;
                 harness.inject_key(&Key::Esc)?;
+                // Confirm the overlay released input before pasting a command.
+                harness.wait_for_text_gone("No desktop access granted", SETTLE)?;
                 // Ineligible hosts must reject before showing impossible consent.
                 harness.submit_text("/computer on")?;
                 harness.wait_for_text(
@@ -101,7 +107,8 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             harness.wait_for_text("computer context: disabled", STREAM)?;
             harness.submit_text("/computer")?;
             harness.wait_for_text("No desktop access granted", SETTLE)?;
-            harness.inject_key(&Key::Esc)
+            harness.inject_key(&Key::Esc)?;
+            harness.wait_for_text_gone("No desktop access granted", SETTLE)
         })?;
         // Covers: resuming an existing session must not borrow or overwrite the
         // new-session default. Owner: interactive session lifecycle across processes.
@@ -133,11 +140,13 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             harness.submit_text("fixture tool available computer")?;
             harness.wait_for_text("tool available computer: true", STREAM)?;
             // The command path must also restore the target's own saved choice.
+            wait_for_turn_completion_after(harness, "tool available computer: true")?;
             harness.submit_text(&format!("/resume {session_b}"))?;
             harness.wait_for_text("resumed session", STARTUP)?;
             harness.submit_text("/computer")?;
             harness.wait_for_text("No desktop access granted", SETTLE)?;
-            harness.inject_key(&Key::Esc)
+            harness.inject_key(&Key::Esc)?;
+            harness.wait_for_text_gone("No desktop access granted", SETTLE)
         })
     })();
     Ok(ScenarioOutcome {

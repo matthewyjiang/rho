@@ -253,7 +253,7 @@ pub(super) const LOGIN_OAUTH_FLOW_CHOICE_SCENARIO: Scenario = Scenario::new(
         cols: 100,
     },
     LOGIN_OAUTH_FLOW_CHOICE_STEPS,
-    false,
+    /*smoke*/ true,
 );
 
 pub(super) const LOGIN_OLLAMA_STEPS: &[Step] = &[
