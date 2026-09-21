@@ -340,8 +340,8 @@ fn builtin_override_identity(cache_provider: &str, cache_model: &str) -> (String
     (cache_provider.to_string(), cache_model.to_string())
 }
 
-/// models.dev has no row for these ids. On a direct cache miss, borrow `source`
-/// and scale its token prices. Context, limits, and reasoning stay with that row.
+/// These ids are not published in models.dev. Always borrow `source` and scale
+/// its token prices. A cached row for the alias id is ignored on purpose.
 fn priced_catalog_alias(provider: &str, model: &str) -> Option<(&'static str, u64)> {
     match (provider, model) {
         // Public /v1/models omits this id. It is grok-4.7 at twice the token price.
@@ -381,27 +381,25 @@ fn load_model_metadata(
     freshness: CacheFreshness,
 ) -> Option<ModelMetadata> {
     let local = overrides::local_override_table(provider, model);
-    if let Some(metadata) = metadata_from_catalog_row(provider, model, local.as_ref(), freshness) {
-        return Some(metadata);
-    }
-    // A local `catalog` remap names its own row. Do not borrow a price alias
-    // when that lookup missed.
+    // A local `catalog` remap names its own row. Otherwise an alias never
+    // reads a cache row for its own id.
     if local
         .as_ref()
-        .is_some_and(|table| table.contains_key("catalog"))
+        .is_none_or(|table| !table.contains_key("catalog"))
     {
-        return None;
+        if let Some((source_model, scale)) = priced_catalog_alias(provider, model) {
+            let mut metadata = metadata_from_catalog_row(provider, source_model, None, freshness)?;
+            metadata = scale_model_cost(metadata, scale);
+            // The source name belongs to grok-4.7. Keep the fast id unlabeled
+            // until this id's own local table sets one.
+            metadata.display_name = None;
+            return Some(match local.as_ref() {
+                Some(table) => overrides::merge_toml_override(metadata, table),
+                None => metadata,
+            });
+        }
     }
-    let (source_model, scale) = priced_catalog_alias(provider, model)?;
-    let mut metadata = metadata_from_catalog_row(provider, source_model, None, freshness)?;
-    metadata = scale_model_cost(metadata, scale);
-    // The source name belongs to grok-4.7. Keep the fast id unlabeled until
-    // this id's own local table sets one.
-    metadata.display_name = None;
-    Some(match local.as_ref() {
-        Some(table) => overrides::merge_toml_override(metadata, table),
-        None => metadata,
-    })
+    metadata_from_catalog_row(provider, model, local.as_ref(), freshness)
 }
 
 /// Cache row for `model`, including builtin overrides, provider capabilities,

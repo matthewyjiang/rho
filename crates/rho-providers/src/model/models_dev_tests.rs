@@ -1679,9 +1679,9 @@ fn local_catalog_ref_parses_slug_and_qualified_ids() {
     assert_eq!(overrides::parse_catalog_ref("/model", "gpt-5.6-sol"), None);
 }
 
-// Covers: grok-4.7-build-fast borrows grok-4.7 at twice the token price only
-// when its own models.dev row is missing, and does not invent a row when
-// grok-4.7 is absent.
+// Covers: grok-4.7-build-fast has no models.dev row, so it reuses the
+// grok-4.7 catalog entry at twice the token price and does not invent a row
+// when grok-4.7 is absent.
 // Owner: models.dev catalog rematch
 #[test]
 fn grok_4_7_build_fast_doubles_grok_4_7_catalog_price() {
@@ -1751,15 +1751,6 @@ fn grok_4_7_build_fast_doubles_grok_4_7_catalog_price() {
             Some(8_000_000)
         );
         assert!(!model_metadata_needs_refresh("xai", "grok-4.7-build-fast"));
-
-        let mut direct = source.clone();
-        direct.display_name = Some("Grok 4.7 Fast".into());
-        direct.cost_default.as_mut().unwrap().input_micros_per_m = Some(9_000_000);
-        write_cached_upstream_model_metadata("xai", "grok-4.7-build-fast", &direct);
-        assert_eq!(
-            current_model_metadata("xai", "grok-4.7-build-fast").as_ref(),
-            Some(&direct)
-        );
     });
 }
 
