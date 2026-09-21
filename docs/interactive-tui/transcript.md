@@ -60,8 +60,12 @@ Heading-like text inside code fences, or invalid heading lines, stays literal.
 
 ## Copy
 
-- `/copy` copies the last assistant message. Rho briefly shows how many
-  characters were copied.
+- `/copy` opens a tree-style picker of assistant outputs in the current
+  conversation, grouped by user prompt. The latest output is selected initially.
+  Use ↑/↓ or type to filter, preview the full text, then press Enter to copy.
+  Esc closes without changing the clipboard or the conversation. The picker
+  also works with `--no-save` and during a response, using the text available
+  when it opened. Rho briefly shows how many characters were copied.
 - Drag-select transcript text to copy it to the terminal clipboard. Rho briefly
   shows how many characters were copied.
 - Code block, Mermaid, and math panel `COPY` actions sit in the top-right border

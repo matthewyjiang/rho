@@ -80,6 +80,7 @@ mod chat_media;
 mod choice_actions;
 mod claude_login;
 mod composer_layout;
+mod copy_actions;
 mod cursor_login;
 mod cursor_model_picker;
 mod custom_provider_login;
