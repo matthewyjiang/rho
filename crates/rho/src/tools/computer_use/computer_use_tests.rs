@@ -161,8 +161,8 @@ async fn explicit_grant_filters_remote_tools_and_revokes_retained_handles() {
     assert!(registry.set_computer_use_registered(false));
 }
 
-// Covers: only audited observation names retain the grant; unknown and input
-// names stay fail-closed. Server hints and error text are not consulted.
+// Covers: only audited observation names stay disarmed on cancel or drop;
+// unknown and input names stay armed. Server hints and error text are not consulted.
 // Owner: computer-use revocation policy
 #[test]
 fn only_audited_observation_names_are_trusted_read_only() {
@@ -246,17 +246,30 @@ async fn observation_failure_and_cancellation_retain_the_grant() {
     session.disconnect().await;
 }
 
-// Covers: an input failure still revokes, and Rho does not reconnect or replay.
+// Covers: answered input failures retain the grant, but a lost response has
+// uncertain effects and must revoke it, even though both errors are Execution.
 // Owner: Cua session lifecycle over a real stdio MCP fixture.
 #[tokio::test]
-async fn action_failure_revokes_the_grant_without_replay() {
-    for name in ["click", "launch_app"] {
+async fn action_failures_retain_grant_only_when_answered() {
+    for (name, arguments, expected) in [
+        ("click", json!({"fail":true}), ComputerUseStatus::Connected),
+        (
+            "launch_app",
+            json!({"fail":true}),
+            ComputerUseStatus::Connected,
+        ),
+        (
+            "click",
+            json!({"disconnect":true}),
+            ComputerUseStatus::Closing,
+        ),
+    ] {
         let (_root, session) = fixture();
         session.connect().await.unwrap();
         let tool = session.tool();
         assert_eq!(
             tool.call(
-                invocation(json!({"action":"call","tool":name,"arguments":{"fail":true}})),
+                invocation(json!({"action":"call","tool":name,"arguments":arguments})),
                 context()
             )
             .await
@@ -264,17 +277,19 @@ async fn action_failure_revokes_the_grant_without_replay() {
             .kind(),
             ToolErrorKind::Execution
         );
-        assert_eq!(session.status(), ComputerUseStatus::Closing);
-        assert!(session.revocation_reason().is_some());
-        assert!(session.take_revocation_notice().is_some());
+        assert_eq!(session.status(), expected);
         assert_eq!(
-            tool.call(invocation(json!({"action":"list"})), context())
-                .await
-                .unwrap_err()
-                .kind(),
-            ToolErrorKind::Execution
+            session.revocation_reason().is_some(),
+            expected == ComputerUseStatus::Closing
         );
-        assert_eq!(session.status(), ComputerUseStatus::Closing);
+        if expected == ComputerUseStatus::Connected {
+            tool.call(
+                invocation(json!({"action":"call","tool":"get_window_state","arguments":{}})),
+                context(),
+            )
+            .await
+            .unwrap();
+        }
         session.disconnect().await;
     }
 }

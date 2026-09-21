@@ -7,11 +7,13 @@ use rho_sdk::CancellationToken;
 use super::{ComputerUseSession, State};
 
 /// Exact audited Cua observation names whose calls cannot post desktop input.
-/// Unknown names and every other allowed tool stay fail-closed.
+/// Unknown names and every other allowed tool stay armed until a result arrives.
 ///
-/// File-output requests remain armed because they can write before failing.
-/// MCP read-only hints, error text, and structured "no action" payloads are not
-/// proof that a call had no effects.
+/// An answered tool failure does not revoke. Cancellation, timeout, lost
+/// responses and drop still do, because the desktop effect is uncertain.
+/// File-output requests stay armed for that reason. MCP read-only hints,
+/// error text, and structured "no action" payloads
+/// are not proof that a call had no effects.
 pub(super) fn is_trusted_read_only(
     tool: &str,
     arguments: &serde_json::Map<String, serde_json::Value>,
@@ -68,14 +70,14 @@ impl ComputerUseSession {
     }
 }
 
-/// Dropped or failed calls have uncertain desktop effects unless the remote
-/// name is an audited observation. A guard belongs to its original grant, so
-/// late cleanup cannot revoke a newly authorized session.
+/// Interrupted calls have uncertain desktop effects unless the remote name is
+/// an audited observation. An answered tool failure leaves the grant in place.
+/// A guard belongs to its original grant, so late cleanup cannot revoke a newly
+/// authorized session.
 pub(super) struct RevokeOnDrop {
     session: ComputerUseSession,
     grant: Arc<CancellationToken>,
     armed: bool,
-    reason: String,
 }
 
 impl RevokeOnDrop {
@@ -84,8 +86,8 @@ impl RevokeOnDrop {
         Self::with_arm(session, grant, /*armed*/ true)
     }
 
-    /// Action and unknown names stay armed. Trusted observation names retain
-    /// the grant on failure, cancellation, or drop.
+    /// Action and unknown names stay armed until a tools/call result arrives.
+    /// Trusted observation names retain the grant even on interruption.
     pub(super) fn for_remote_call(
         session: ComputerUseSession,
         grant: Arc<CancellationToken>,
@@ -104,19 +106,11 @@ impl RevokeOnDrop {
             session,
             grant,
             armed,
-            reason: "computer action was interrupted".into(),
         }
     }
 
     pub(super) fn disarm(&mut self) {
         self.armed = false;
-    }
-
-    pub(super) fn record_error(&mut self, error: &rho_sdk::tool::ToolError) {
-        if !self.armed || error.kind() == rho_sdk::tool::ToolErrorKind::Cancelled {
-            return;
-        }
-        self.reason = format!("computer action failed: {error}");
     }
 }
 
@@ -126,7 +120,7 @@ impl Drop for RevokeOnDrop {
             self.session.revoke_grant(
                 Some(&self.grant),
                 Some(Revocation {
-                    reason: self.reason.clone(),
+                    reason: "computer action was interrupted".into(),
                     reported: false,
                 }),
             );
