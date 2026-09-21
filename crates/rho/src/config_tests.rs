@@ -57,6 +57,26 @@ fn config_debug_redacts_legacy_credentials() {
     assert!(!debug.contains("brave-search-secret"));
 }
 
+// Covers: a saved OAuth-only xAI model with API-key auth must load as grok-4.7.
+// An error here would brick startup and every later config update.
+// Owner: config load
+#[test]
+fn load_replaces_oauth_only_xai_model_when_auth_is_api_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        "provider = \"xai\"\nauth = \"xai-api-key\"\nmodel = \"grok-4.7-build-fast\"\n",
+    )
+    .unwrap();
+
+    let config = Config::load(Some(path)).unwrap();
+
+    assert_eq!(config.provider, "xai");
+    assert_eq!(config.auth, "xai-api-key");
+    assert_eq!(config.model, "grok-4.7");
+}
+
 #[test]
 fn migrates_the_legacy_ctrl_g_shortcut_conflict() {
     let dir = tempfile::tempdir().unwrap();

@@ -806,11 +806,17 @@ impl App {
         }
         let result = if target.provider == self.info.runtime.provider {
             self.info.runtime.auth = target.auth.clone();
+            crate::config::align_model(
+                &self.info.runtime.provider,
+                &mut self.info.runtime.model,
+                &target.auth,
+            );
             self.save_current_config()
         } else {
             self.info.services.config_repository.update(|config| {
                 if config.provider == target.provider {
                     config.auth = target.auth.clone();
+                    crate::config::align_model(&config.provider, &mut config.model, &config.auth);
                 }
             })
         };

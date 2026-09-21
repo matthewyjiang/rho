@@ -103,7 +103,8 @@ impl App {
             return Ok(());
         }
 
-        let model = self.info.runtime.model.clone();
+        let previous_model = self.info.runtime.model.clone();
+        let model = crate::config::model_for_auth(&provider_name, &previous_model, mode.id);
         let reasoning = self.info.runtime.reasoning;
         let new_provider = match self
             .build_provider_for_selection(&provider_name, &model, reasoning, mode.id)
@@ -122,7 +123,7 @@ impl App {
 
         let activation = ProviderActivation {
             provider: provider_name,
-            model,
+            model: model.clone(),
             reasoning: reasoning_metadata::ModelSwitchReasoningResolution {
                 effective: reasoning,
                 source: self.info.runtime.reasoning_source,
@@ -134,10 +135,17 @@ impl App {
         self.refresh_available_auths();
         match outcome {
             ProviderActivationOutcome::Saved => {
-                self.set_status(format!(
-                    "switched {} to {}",
-                    descriptor.display_name, mode.login_label
-                ));
+                if model == previous_model {
+                    self.set_status(format!(
+                        "switched {} to {}",
+                        descriptor.display_name, mode.login_label
+                    ));
+                } else {
+                    self.set_status(format!(
+                        "switched {} to {} with model {model}",
+                        descriptor.display_name, mode.login_label
+                    ));
+                }
             }
             ProviderActivationOutcome::ConfigSaveFailed(err) => {
                 self.insert_entry(&Entry::Error(format!(

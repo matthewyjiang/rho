@@ -354,14 +354,43 @@ fn normalize_selection(
     // Collapse legacy wire ids (for example poolside/laguna-m.1) to the
     // internal model id used by cache, config, and display joins.
     *model = profile.provider.canonicalize_model_id(model);
-    if !rho_providers::model::catalog::model_supports_auth(provider, model, auth) {
-        let message = format!("model '{provider}/{model}' is not available for auth '{auth}'");
-        return Err(match internal_agent {
-            Some(id) => anyhow::anyhow!("internal agent '{id}': {message}"),
-            None => anyhow::anyhow!(message),
-        });
-    }
+    // A saved OAuth-only model paired with API-key auth must not fail load.
+    // Later in-session saves call load first, so an error here bricks startup
+    // and every config update.
+    *model = model_for_auth(provider, model, auth);
     Ok(())
+}
+
+/// Keeps `model` when that auth can select it. Otherwise returns the first
+/// static-catalog model for `provider` that can.
+///
+/// Models outside the static catalog stay unchanged.
+pub(crate) fn model_for_auth(provider: &str, model: &str, auth: &str) -> String {
+    let catalog = rho_providers::model::catalog::model_catalog();
+    let supports = |candidate: &str| match catalog
+        .iter()
+        .find(|entry| entry.provider == provider && entry.model == candidate)
+    {
+        Some(entry) => entry.auth_modes.iter().any(|mode| mode == auth),
+        None => true,
+    };
+    if supports(model) {
+        return model.to_string();
+    }
+    catalog
+        .iter()
+        .find(|entry| {
+            entry.provider == provider && entry.auth_modes.iter().any(|mode| mode == auth)
+        })
+        .map(|entry| entry.model.clone())
+        .unwrap_or_else(|| model.to_string())
+}
+
+pub(crate) fn align_model(provider: &str, model: &mut String, auth: &str) {
+    let aligned = model_for_auth(provider, model, auth);
+    if *model != aligned {
+        *model = aligned;
+    }
 }
 
 #[derive(Serialize)]

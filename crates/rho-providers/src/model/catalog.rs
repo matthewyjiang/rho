@@ -388,20 +388,6 @@ fn xai_auth_modes(model: &str) -> Vec<String> {
     }
 }
 
-/// Static-catalog models declare which auth modes may select them.
-///
-/// Models outside that catalog, including cached provider lists, stay
-/// unrestricted here.
-pub fn model_supports_auth(provider: &str, model: &str, auth: &str) -> bool {
-    let Some(entry) = model_catalog()
-        .iter()
-        .find(|entry| entry.provider == provider && entry.model == model)
-    else {
-        return true;
-    };
-    entry.auth_modes.iter().any(|mode| mode == auth)
-}
-
 fn model_entries(provider: &str, auth: &str, models: Vec<String>) -> Vec<ModelCatalogEntry> {
     models
         .into_iter()

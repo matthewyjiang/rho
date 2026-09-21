@@ -22,6 +22,7 @@ use {
 
 #[path = "provider_config.rs"]
 mod provider_config;
+pub(crate) use provider_config::{align_model, model_for_auth};
 
 #[path = "config_streaming.rs"]
 mod streaming;
