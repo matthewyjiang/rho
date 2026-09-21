@@ -259,11 +259,6 @@ impl Config {
             &mut self.model,
             None,
         )?;
-        // Repair only the conversation selection. An OAuth-only model saved with
-        // API-key auth must not fail load: in-session saves load first, so an
-        // error here bricks startup and every config update. Internal-agent
-        // pins are explicit and stay unchanged.
-        self.model = model_for_auth(&self.provider, &self.model, &self.auth);
         // Delegating selections have no Rho provider or auth to normalize; the
         // claude binary owns both.
         for (id, selection) in &mut self.internal_agents {
@@ -360,31 +355,6 @@ fn normalize_selection(
     // internal model id used by cache, config, and display joins.
     *model = profile.provider.canonicalize_model_id(model);
     Ok(())
-}
-
-/// True when `model` may be selected with `auth`.
-///
-/// Static-catalog entries must list `auth`. Ids outside that catalog stay
-/// allowed so unlisted models remain an escape hatch.
-pub(crate) fn model_allows_auth(provider: &str, model: &str, auth: &str) -> bool {
-    match rho_providers::model::catalog::model_catalog()
-        .iter()
-        .find(|entry| entry.provider == provider && entry.model == model)
-    {
-        Some(entry) => entry.auth_modes.iter().any(|mode| mode == auth),
-        None => true,
-    }
-}
-
-/// Keeps `model` when [`model_allows_auth`] is true. Otherwise returns the
-/// provider default when that default also allows `auth`.
-pub(crate) fn model_for_auth(provider: &str, model: &str, auth: &str) -> String {
-    if model_allows_auth(provider, model, auth) {
-        return model.to_string();
-    }
-    rho_providers::model::catalog::default_model_for_provider(provider)
-        .filter(|candidate| model_allows_auth(provider, candidate, auth))
-        .unwrap_or_else(|| model.to_string())
 }
 
 #[derive(Serialize)]

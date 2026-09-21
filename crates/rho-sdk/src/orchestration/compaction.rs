@@ -68,6 +68,10 @@ pub(super) async fn maybe_compact(
                     .as_ref()
                     .map(|workspace| workspace.root().to_path_buf()),
             );
+    let request = match scope.runtime.service_tier {
+        Some(tier) => request.with_service_tier(tier),
+        None => request,
+    };
     let output = match compactor.cancellation_mode() {
         crate::CompactorCancellationMode::Cooperative => compactor.compact(request).await?,
         crate::CompactorCancellationMode::External => {

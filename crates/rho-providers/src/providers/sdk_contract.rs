@@ -405,6 +405,10 @@ where
 /// Pass `request_options` when the transport also exposes an inherent
 /// `stream_turn_with_options` method with [`rho_sdk::provider::ModelRequestOptions`]
 /// before the event callbacks.
+///
+/// Pass `native_compact_options` instead of `native_compact` when
+/// `native_compact_turn` also takes [`rho_sdk::provider::ModelRequestOptions`].
+/// The generated `native_compact` forwards default options.
 #[macro_export]
 macro_rules! impl_sdk_model_provider {
     ($provider:ty) => {
@@ -418,6 +422,9 @@ macro_rules! impl_sdk_model_provider {
     };
     ($provider:ty, native_compact, request_options) => {
         $crate::impl_sdk_model_provider!(@impl $provider, [@native_compact], [@request_options], []);
+    };
+    ($provider:ty, native_compact_options, request_options) => {
+        $crate::impl_sdk_model_provider!(@impl $provider, [@native_compact_options], [@request_options], []);
     };
     ($provider:ty, native_compact, request_options, steerable) => {
         $crate::impl_sdk_model_provider!(@impl $provider, [@native_compact], [@request_options], [@steerable]);
@@ -563,6 +570,37 @@ macro_rules! impl_sdk_model_provider {
         })
     };
     (@native_compact_method) => {};
+    (@native_compact_method @native_compact_options) => {
+        fn native_compact<'a>(
+            &'a self,
+            request: ::rho_sdk::model::ModelRequest<'a>,
+        ) -> ::std::option::Option<::rho_sdk::provider::NativeCompactionFuture<'a>> {
+            self.native_compact_with_options(
+                request,
+                ::rho_sdk::provider::ModelRequestOptions::default(),
+            )
+        }
+
+        fn native_compact_with_options<'a>(
+            &'a self,
+            request: ::rho_sdk::model::ModelRequest<'a>,
+            options: ::rho_sdk::provider::ModelRequestOptions,
+        ) -> ::std::option::Option<::rho_sdk::provider::NativeCompactionFuture<'a>> {
+            if !self.native_compact_available() {
+                return ::std::option::Option::None;
+            }
+            ::std::option::Option::Some(::std::boxed::Box::pin(async move {
+                match self.native_compact_turn(request, options).await {
+                    ::std::result::Result::Ok(response) => response.into(),
+                    ::std::result::Result::Err(error) => {
+                        ::rho_sdk::provider::NativeCompactionResponse::failure(
+                            $crate::providers::sdk_contract::provider_error_from_model_error(error),
+                        )
+                    }
+                }
+            }))
+        }
+    };
     (@native_compact_method @native_compact) => {
         fn native_compact<'a>(
             &'a self,

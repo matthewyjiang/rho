@@ -1,5 +1,6 @@
 use crate::{
     model::{ModelMetadata, ReasoningCapabilities, ReasoningRequestSource},
+    providers::fast_mode::{GROK_4_7, GROK_4_7_BUILD_FAST},
     reasoning::ReasoningLevel,
 };
 
@@ -27,7 +28,7 @@ impl XaiReasoningProfile {
         let offline_wire_behavior = match model {
             "grok-4.3" => OfflineWireBehavior::Optional,
             // Flagship Grok models require reasoning_effort and do not accept "none".
-            "grok-4.5" | "grok-4.6" | "grok-4.7" | "grok-4.7-build-fast" => {
+            "grok-4.5" | "grok-4.6" | GROK_4_7 | GROK_4_7_BUILD_FAST => {
                 OfflineWireBehavior::Mandatory
             }
             // These agent models do not accept the Responses API reasoning field.

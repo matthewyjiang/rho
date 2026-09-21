@@ -1,5 +1,5 @@
 use super::{
-    provider_actions::{refreshed_login_status, ProviderActivation, ProviderActivationOutcome},
+    provider_actions::{ProviderActivation, ProviderActivationOutcome},
     InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, *,
 };
 use {
@@ -642,7 +642,6 @@ impl App {
     ) -> anyhow::Result<()> {
         // Write the keyed profile once. Later activate/reload failures must not
         // leave a stored custom key behind as `auth = "none"`.
-        let previous_model = self.info.runtime.model.clone();
         self.persist_login_auth(&target);
         self.refresh_available_auths();
         self.refresh_model_list_after_login(&target, terminal)
@@ -663,10 +662,9 @@ impl App {
                 .reload_active_provider_after_login(&target, agent)
                 .await?
             {
-                self.set_status(refreshed_login_status(
-                    &target.provider,
-                    &previous_model,
-                    &self.info.runtime.model,
+                self.set_status(format!(
+                    "stored credentials for {} and refreshed the active provider. Switch models with /model when you want to use another provider.",
+                    target.provider
                 ));
             }
         } else if target.auth == "none" {

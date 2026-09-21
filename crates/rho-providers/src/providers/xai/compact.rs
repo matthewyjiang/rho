@@ -7,6 +7,7 @@ use crate::providers::native_compaction::{
     native_compact_failure, native_compact_from_http, CompactParsePolicy,
 };
 use crate::providers::responses_http::ResponsesEndpoint;
+use rho_sdk::provider::ModelRequestOptions;
 
 /// Portable notice when the encrypted compaction artifact cannot replay.
 ///
@@ -26,11 +27,12 @@ impl XaiProvider {
     pub(super) async fn native_compact_turn(
         &self,
         request: ModelRequest<'_>,
+        options: ModelRequestOptions,
     ) -> Result<rho_sdk::provider::NativeCompactionResponse, ModelError> {
         let cancellation = request.cancellation.clone();
         let identity = self.model_identity();
         let retained_system_messages = retained_system_messages(request.messages);
-        let body = match self.stamped_compact_body(request) {
+        let body = match self.stamped_compact_body(request, options) {
             Ok(body) => body,
             Err(error) => return Ok(native_compact_failure(error, Vec::new())),
         };

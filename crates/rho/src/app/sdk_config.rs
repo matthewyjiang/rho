@@ -111,8 +111,7 @@ fn provider_options_with_transport(
             .with_auth(&config.auth)?
             .hosted_web_search(crate::tools::web::hosted_web_search_active(config))
             .async_tools(crate::tools::async_tool_names(config))
-            .hosted_image_generation(config.xai_image_generation)
-            .fast_serving(config.fast_mode);
+            .hosted_image_generation(config.xai_image_generation);
     if let Some(endpoint) = endpoint {
         provider = provider.endpoint(endpoint)?;
     }

@@ -8,6 +8,8 @@ use tokio::{
 };
 
 use super::*;
+use rho_sdk::{model::ServiceTier, provider::ModelRequestOptions};
+
 use crate::{
     auth::xai_token::XaiAuthSource,
     credentials::{save_xai_tokens, MemoryCredentialStore, XaiTokens},
@@ -546,7 +548,7 @@ fn empty_request() -> ModelRequest<'static> {
     }
 }
 
-fn fast_provider(source: XaiAuthSource, fast_serving: bool) -> XaiProvider {
+fn fast_provider(source: XaiAuthSource) -> XaiProvider {
     XaiProvider::new_with_transport(
         "xai",
         "grok-4.7".into(),
@@ -563,12 +565,20 @@ fn fast_provider(source: XaiAuthSource, fast_serving: bool) -> XaiProvider {
         crate::provider_backend::stream_timeout::provider_client(),
         "https://api.x.ai/v1".into(),
         XaiHostedTools::ALL,
-        fast_serving,
     )
 }
 
-// Covers: OAuth `/fast` sends grok-4.7-build-fast on create and compact while
-// replay identity stays grok-4.7. API-key login and fast off keep grok-4.7.
+fn fast_options(fast: bool) -> ModelRequestOptions {
+    if fast {
+        ModelRequestOptions::default().with_service_tier(ServiceTier::Priority)
+    } else {
+        ModelRequestOptions::default()
+    }
+}
+
+// Covers: a priority service tier sends grok-4.7-build-fast on create and compact
+// for OAuth store and env. API-key login and fast off keep grok-4.7. Replay
+// identity stays grok-4.7.
 // Owner: xAI request body
 #[test]
 fn oauth_fast_serving_rewrites_only_the_request_model_id() {
@@ -578,12 +588,17 @@ fn oauth_fast_serving_rewrites_only_the_request_model_id() {
         (XaiAuthSource::ApiKey, true, "grok-4.7"),
         (XaiAuthSource::Store, false, "grok-4.7"),
     ];
-    for (source, fast_serving, wire) in cases {
-        let provider = fast_provider(source, fast_serving);
-        let create = provider.stamped_create_body(empty_request()).unwrap();
-        let compact = provider.stamped_compact_body(empty_request()).unwrap();
-        assert_eq!(create["model"], wire, "{source:?} fast {fast_serving}");
-        assert_eq!(compact["model"], wire, "{source:?} fast {fast_serving}");
+    for (source, fast, wire) in cases {
+        let provider = fast_provider(source);
+        let options = fast_options(fast);
+        let create = provider
+            .stamped_create_body(empty_request(), options)
+            .unwrap();
+        let compact = provider
+            .stamped_compact_body(empty_request(), options)
+            .unwrap();
+        assert_eq!(create["model"], wire, "{source:?} fast {fast}");
+        assert_eq!(compact["model"], wire, "{source:?} fast {fast}");
         assert_eq!(provider.model_identity().model, "grok-4.7");
     }
 }

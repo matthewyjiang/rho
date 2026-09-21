@@ -359,21 +359,12 @@ fn parse_model_catalog(text: &str) -> Vec<ModelCatalogEntry> {
     let file: ModelCatalogFile =
         toml::from_str(text).expect("embedded model catalog must be valid");
     let mut entries = model_entries("openai-codex", "codex", file.openai_codex_models);
-    entries.extend(xai_model_entries(file.xai_models));
+    let mut xai_models = model_entries("xai", "xai-api-key", file.xai_models);
+    for entry in &mut xai_models {
+        entry.auth_modes.push("xai-oauth".into());
+    }
+    entries.extend(xai_models);
     entries
-}
-
-fn xai_model_entries(models: Vec<String>) -> Vec<ModelCatalogEntry> {
-    let auth_modes = vec!["xai-api-key".to_string(), "xai-oauth".to_string()];
-    models
-        .into_iter()
-        .map(|model| ModelCatalogEntry {
-            provider: "xai".to_string(),
-            display_name: model.clone(),
-            model,
-            auth_modes: auth_modes.clone(),
-        })
-        .collect()
 }
 
 fn model_entries(provider: &str, auth: &str, models: Vec<String>) -> Vec<ModelCatalogEntry> {

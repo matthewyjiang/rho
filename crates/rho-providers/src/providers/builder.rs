@@ -45,9 +45,6 @@ pub struct ProviderBuildOptions {
     async_tools: BTreeSet<String>,
     /// Prefer xAI hosted image generation when the transport supports it.
     hosted_image_generation: bool,
-    /// Saved `/fast` preference. Providers that implement fast mode as a
-    /// different request model id read this at construction.
-    fast_serving: bool,
 }
 
 impl ProviderBuildOptions {
@@ -80,7 +77,6 @@ impl ProviderBuildOptions {
             hosted_web_search: true,
             async_tools: BTreeSet::new(),
             hosted_image_generation: true,
-            fast_serving: false,
         })
     }
 
@@ -129,13 +125,6 @@ impl ProviderBuildOptions {
     /// Prefer xAI's hosted image generation tool when supported.
     pub fn hosted_image_generation(mut self, enabled: bool) -> Self {
         self.hosted_image_generation = enabled;
-        self
-    }
-
-    /// Applies the saved `/fast` preference for providers that encode it as a
-    /// request model id. Codex ignores this and reads `service_tier` per turn.
-    pub fn fast_serving(mut self, enabled: bool) -> Self {
-        self.fast_serving = enabled;
         self
     }
 
@@ -317,7 +306,6 @@ impl ProviderBuilder {
                         web_search: self.options.hosted_web_search,
                         image_generation: self.options.hosted_image_generation,
                     },
-                    /*fast_serving*/ self.options.fast_serving,
                 )))
             }
             _ => Err(ModelError::InvalidResponse(format!(

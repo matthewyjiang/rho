@@ -98,7 +98,7 @@ impl XaiAuthManager {
         }
     }
 
-    /// API-key login cannot call `grok-4.7-build-fast`. OAuth store and env can.
+    /// `grok-4.7-build-fast` is an OAuth serving id. API-key login cannot call it.
     pub(crate) fn allows_fast_request_model(&self) -> bool {
         self.source != XaiAuthSource::ApiKey
     }

@@ -103,8 +103,7 @@ impl App {
             return Ok(());
         }
 
-        let previous_model = self.info.runtime.model.clone();
-        let model = crate::config::model_for_auth(&provider_name, &previous_model, mode.id);
+        let model = self.info.runtime.model.clone();
         let reasoning = self.info.runtime.reasoning;
         let new_provider = match self
             .build_provider_for_selection(&provider_name, &model, reasoning, mode.id)
@@ -123,7 +122,7 @@ impl App {
 
         let activation = ProviderActivation {
             provider: provider_name,
-            model: model.clone(),
+            model,
             reasoning: reasoning_metadata::ModelSwitchReasoningResolution {
                 effective: reasoning,
                 source: self.info.runtime.reasoning_source,
@@ -135,13 +134,9 @@ impl App {
         self.refresh_available_auths();
         match outcome {
             ProviderActivationOutcome::Saved => {
-                self.set_status(with_replaced_model(
-                    format!(
-                        "switched {} to {}",
-                        descriptor.display_name, mode.login_label
-                    ),
-                    &previous_model,
-                    &model,
+                self.set_status(format!(
+                    "switched {} to {}",
+                    descriptor.display_name, mode.login_label
                 ));
             }
             ProviderActivationOutcome::ConfigSaveFailed(err) => {
@@ -156,29 +151,17 @@ impl App {
 
     /// Writes the login target's auth profile so a stored custom key is not
     /// left behind as `auth = "none"` after restart.
-    ///
-    /// An OAuth-only model is replaced when the new auth cannot select it.
     pub(super) fn persist_login_auth(&mut self, target: &LoginTarget) {
         if target.auth == rho_providers::provider::KEYLESS_AUTH {
             return;
         }
         let result = if target.provider == self.info.runtime.provider {
             self.info.runtime.auth = target.auth.clone();
-            self.info.runtime.model = crate::config::model_for_auth(
-                &self.info.runtime.provider,
-                &self.info.runtime.model,
-                &target.auth,
-            );
             self.save_current_config()
         } else {
             self.info.services.config_repository.update(|config| {
                 if config.provider == target.provider {
                     config.auth = target.auth.clone();
-                    config.model = crate::config::model_for_auth(
-                        &config.provider,
-                        &config.model,
-                        &config.auth,
-                    );
                 }
             })
         };
@@ -188,21 +171,4 @@ impl App {
             )));
         }
     }
-}
-
-pub(super) fn with_replaced_model(notice: String, previous_model: &str, model: &str) -> String {
-    if previous_model == model {
-        notice
-    } else {
-        format!("{notice} with model {model}")
-    }
-}
-
-pub(super) fn refreshed_login_status(provider: &str, previous_model: &str, model: &str) -> String {
-    let lead = with_replaced_model(
-        format!("stored credentials for {provider} and refreshed the active provider"),
-        previous_model,
-        model,
-    );
-    format!("{lead}. Switch models with /model when you want to use another provider.")
 }

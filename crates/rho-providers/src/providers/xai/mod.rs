@@ -12,6 +12,7 @@ use crate::protocol::openai_responses::collect_codex_sse_response;
 use crate::providers::responses_http::{
     ResponsesEndpoint, ResponsesHttpAuth, ResponsesHttpResult, ResponsesHttpTransport,
 };
+use rho_sdk::provider::ModelRequestOptions;
 
 use crate::{
     auth::xai_token::XaiAuthManager,
@@ -44,9 +45,6 @@ pub struct XaiProvider {
     api_base: String,
     reasoning: reasoning::XaiReasoningProfile,
     hosted: XaiHostedTools,
-    /// Saved `/fast` preference. OAuth `grok-4.7` sends `grok-4.7-build-fast`.
-    /// Replay identity stays on `model`.
-    fast_serving: bool,
 }
 
 impl XaiProvider {
@@ -57,7 +55,6 @@ impl XaiProvider {
         client: reqwest::Client,
         api_base: String,
         hosted: XaiHostedTools,
-        fast_serving: bool,
     ) -> Self {
         let reasoning = reasoning::XaiReasoningProfile::from_metadata(
             &model,
@@ -71,7 +68,6 @@ impl XaiProvider {
             api_base,
             reasoning,
             hosted,
-            fast_serving,
         }
     }
 
@@ -88,30 +84,27 @@ impl XaiProvider {
             provider_client(),
             api_base,
             XaiHostedTools::ALL,
-            /*fast_serving*/ false,
         ))
     }
 
-    /// Model id on the JSON body. Replay identity stays [`Self::model_identity`].
-    fn request_body_model(&self) -> &str {
-        let auth = if self.auth.allows_fast_request_model() {
-            "xai-oauth"
-        } else {
-            "xai-api-key"
-        };
-        crate::providers::fast_mode::request_model("xai", &self.model, auth, self.fast_serving)
-    }
-
-    fn stamp_request_model(&self, body: &mut serde_json::Value) {
-        let wire = self.request_body_model();
-        if wire != self.model {
-            body["model"] = serde_json::Value::String(wire.to_string());
+    /// Puts `grok-4.7-build-fast` on the body when this turn's service tier is
+    /// priority. Replay identity stays [`Self::model_identity`].
+    fn stamp_request_model(&self, body: &mut serde_json::Value, options: ModelRequestOptions) {
+        let fast = options.service_tier() == Some(rho_sdk::model::ServiceTier::Priority);
+        if fast
+            && self.model == crate::providers::fast_mode::GROK_4_7
+            && self.auth.allows_fast_request_model()
+        {
+            body["model"] = serde_json::Value::String(
+                crate::providers::fast_mode::GROK_4_7_BUILD_FAST.to_string(),
+            );
         }
     }
 
     fn stamped_create_body(
         &self,
         request: crate::model::ModelRequest<'_>,
+        options: ModelRequestOptions,
     ) -> Result<serde_json::Value, ModelError> {
         let mut body = build_xai_responses_body(
             self.provider,
@@ -120,16 +113,17 @@ impl XaiProvider {
             request,
             self.hosted,
         )?;
-        self.stamp_request_model(&mut body);
+        self.stamp_request_model(&mut body, options);
         Ok(body)
     }
 
     pub(super) fn stamped_compact_body(
         &self,
         request: crate::model::ModelRequest<'_>,
+        options: ModelRequestOptions,
     ) -> Result<serde_json::Value, ModelError> {
         let mut body = bodies::build_xai_compact_body(self.provider, &self.model, request)?;
-        self.stamp_request_model(&mut body);
+        self.stamp_request_model(&mut body, options);
         Ok(body)
     }
 
@@ -182,13 +176,14 @@ impl XaiProvider {
     async fn send_request(
         &self,
         request: ModelRequest<'_>,
+        options: ModelRequestOptions,
         on_request_event: Option<
             &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                       + Send),
         >,
     ) -> Result<reqwest::Response, ModelError> {
         let cancellation = request.cancellation.clone();
-        let body = self.stamped_create_body(request)?;
+        let body = self.stamped_create_body(request, options)?;
         let mut on_request_event = on_request_event;
         let http_result = self
             .post_responses(
@@ -214,13 +209,16 @@ impl XaiProvider {
     async fn send_responses_turn(
         &self,
         request: ModelRequest<'_>,
+        options: ModelRequestOptions,
         mut on_event: Option<&mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send)>,
         on_request_event: Option<
             &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                       + Send),
         >,
     ) -> Result<ModelResponse, ModelError> {
-        let response = self.send_request(request, on_request_event).await?;
+        let response = self
+            .send_request(request, options, on_request_event)
+            .await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         collect_codex_sse_response(response, &mut on_event)
             .await
@@ -236,7 +234,9 @@ impl XaiProvider {
         &self,
         request: ModelRequest<'_>,
     ) -> Result<ModelResponse, ModelError> {
-        let response = self.send_request(request, None).await?;
+        let response = self
+            .send_request(request, ModelRequestOptions::default(), None)
+            .await?;
         let response = crate::provider_backend::http_error::error_for_status(response).await?;
         crate::providers::send_stream::collect_codex_model_response_silent(response).await
     }
@@ -249,9 +249,26 @@ impl XaiProvider {
         on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
                   + Send),
     ) -> Result<ModelResponse, ModelError> {
-        self.send_responses_turn(request, Some(on_event), Some(on_request_event))
+        self.stream_turn_with_options(
+            request,
+            ModelRequestOptions::default(),
+            on_event,
+            on_request_event,
+        )
+        .await
+    }
+
+    pub(crate) async fn stream_turn_with_options(
+        &self,
+        request: ModelRequest<'_>,
+        options: ModelRequestOptions,
+        on_event: &mut (dyn FnMut(ModelEvent) -> Result<(), ModelError> + Send),
+        on_request_event: &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                  + Send),
+    ) -> Result<ModelResponse, ModelError> {
+        self.send_responses_turn(request, options, Some(on_event), Some(on_request_event))
             .await
     }
 }
 
-crate::impl_sdk_model_provider!(XaiProvider, native_compact);
+crate::impl_sdk_model_provider!(XaiProvider, native_compact_options, request_options);

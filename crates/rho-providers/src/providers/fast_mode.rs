@@ -1,13 +1,15 @@
 //! How `/fast` changes a supported model.
 //!
 //! The command is shared. Codex sends `service_tier: "priority"` and keeps the
-//! model id. xAI OAuth `grok-4.7` keeps that id in the session and sends
-//! `grok-4.7-build-fast` on the request instead.
+//! model id. xAI OAuth `grok-4.7` keeps that id in the session and, when the
+//! turn's service tier is priority, sends `grok-4.7-build-fast`.
 
 use super::openai;
 
 pub const GROK_4_7: &str = "grok-4.7";
 pub const GROK_4_7_BUILD_FAST: &str = "grok-4.7-build-fast";
+/// Token-price multiplier for [`GROK_4_7_BUILD_FAST`] relative to [`GROK_4_7`].
+pub const GROK_4_7_FAST_PRICE_SCALE: u64 = 2;
 
 /// Provider-specific fast serving for one selected model.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

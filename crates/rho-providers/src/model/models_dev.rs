@@ -343,10 +343,11 @@ fn builtin_override_identity(cache_provider: &str, cache_model: &str) -> (String
 /// These ids are not published in models.dev. Always borrow `source` and scale
 /// its token prices. A cached row for the alias id is ignored on purpose.
 fn priced_catalog_alias(provider: &str, model: &str) -> Option<(&'static str, u64)> {
+    use crate::providers::fast_mode::{GROK_4_7, GROK_4_7_BUILD_FAST, GROK_4_7_FAST_PRICE_SCALE};
     match (provider, model) {
         // `/fast` sends this id for OAuth grok-4.7. It is not a catalog row.
-        // Public /v1/models omits it. Price it as grok-4.7 at twice the token rate.
-        ("xai", "grok-4.7-build-fast") => Some(("grok-4.7", 2)),
+        // Public /v1/models omits it.
+        ("xai", GROK_4_7_BUILD_FAST) => Some((GROK_4_7, GROK_4_7_FAST_PRICE_SCALE)),
         _ => None,
     }
 }
@@ -382,23 +383,16 @@ fn load_model_metadata(
     freshness: CacheFreshness,
 ) -> Option<ModelMetadata> {
     let local = overrides::local_override_table(provider, model);
-    // A local `catalog` remap names its own row. Otherwise an alias never
-    // reads a cache row for its own id.
-    if local
-        .as_ref()
-        .is_none_or(|table| !table.contains_key("catalog"))
-    {
-        if let Some((source_model, scale)) = priced_catalog_alias(provider, model) {
-            let mut metadata = metadata_from_catalog_row(provider, source_model, None, freshness)?;
-            metadata = scale_model_cost(metadata, scale);
-            // The source name belongs to grok-4.7. Keep the fast id unlabeled
-            // until this id's own local table sets one.
-            metadata.display_name = None;
-            return Some(match local.as_ref() {
-                Some(table) => overrides::merge_toml_override(metadata, table),
-                None => metadata,
-            });
-        }
+    if let Some((source_model, scale)) = priced_catalog_alias(provider, model) {
+        let mut metadata = metadata_from_catalog_row(provider, source_model, None, freshness)?;
+        metadata = scale_model_cost(metadata, scale);
+        // The source name belongs to grok-4.7. Keep the fast id unlabeled
+        // until this id's own local table sets one.
+        metadata.display_name = None;
+        return Some(match local.as_ref() {
+            Some(table) => overrides::merge_toml_override(metadata, table),
+            None => metadata,
+        });
     }
     metadata_from_catalog_row(provider, model, local.as_ref(), freshness)
 }
