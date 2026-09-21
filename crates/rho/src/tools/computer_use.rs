@@ -147,7 +147,7 @@ enum State {
 
 struct Connection {
     bundle: mcp::McpBundle,
-    tools: BTreeMap<String, Arc<dyn Tool>>,
+    tools: BTreeMap<String, Arc<mcp::tool::McpTool>>,
     instructions: Option<String>,
 }
 
@@ -334,7 +334,7 @@ impl ComputerUseSession {
             .iter()
             .filter_map(|entry| {
                 bundle
-                    .tools()
+                    .native_tools()
                     .iter()
                     .find(|tool| tool.spec().name == entry.exported_name)
                     .map(|tool| (entry.remote_name.clone(), tool.clone()))

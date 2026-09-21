@@ -148,6 +148,7 @@ impl McpConnectOutcome {
 
 pub(crate) struct McpBundle {
     tools: Vec<Arc<dyn Tool>>,
+    native_tools: Vec<Arc<McpTool>>,
     /// Taken once during shutdown; tools hold independent peer handles.
     sessions: tokio::sync::Mutex<Vec<McpSession>>,
     /// Per-session maintenance tasks, aborted before the sessions close so a
@@ -156,6 +157,10 @@ pub(crate) struct McpBundle {
 }
 
 impl McpBundle {
+    pub(crate) fn native_tools(&self) -> &[Arc<McpTool>] {
+        &self.native_tools
+    }
+
     /// Connect enabled servers in parallel and discover their tools. Always
     /// returns a structured inventory. The no-enabled-server path exits before
     /// allocating a transport, client, task, or bundle.
@@ -299,7 +304,7 @@ impl ToolBundle for McpBundle {
 struct McpBundleBuilder {
     max_output_bytes: usize,
     image_delivery: McpImageDelivery,
-    tools: Vec<Arc<dyn Tool>>,
+    tools: Vec<Arc<McpTool>>,
     sessions: Vec<McpSession>,
     maintenance: Vec<tokio::task::JoinHandle<()>>,
     registered_names: HashSet<String>,
@@ -411,7 +416,12 @@ impl McpBundleBuilder {
             return None;
         }
         Some(McpBundle {
-            tools: self.tools,
+            tools: self
+                .tools
+                .iter()
+                .map(|tool| tool.clone() as Arc<dyn Tool>)
+                .collect(),
+            native_tools: self.tools,
             sessions: tokio::sync::Mutex::new(self.sessions),
             maintenance: tokio::sync::Mutex::new(self.maintenance),
         })

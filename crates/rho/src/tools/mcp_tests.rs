@@ -567,13 +567,13 @@ open(sys.argv[1], "w").close()
         image_delivery: McpImageDelivery::PresentationOnly,
     };
     let cancellation = CancellationToken::new();
-    let rendered = call_remote_tool(echo_call(), &cancellation, None, 12_000)
+    let rendered = call_remote_tool(echo_call(), &cancellation, None, 12_000, None)
         .await
         .unwrap();
     assert_eq!(rendered.text, "ok");
 
     cancellation.cancel();
-    let error = call_remote_tool(echo_call(), &cancellation, None, 12_000)
+    let error = call_remote_tool(echo_call(), &cancellation, None, 12_000, None)
         .await
         .unwrap_err();
     assert_eq!(error.kind(), ToolErrorKind::Cancelled);

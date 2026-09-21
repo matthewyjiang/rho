@@ -40,6 +40,8 @@ for line in sys.stdin:
         assert params["name"] in ["click", "get_window_state", "launch_app"]
         arguments = params.get("arguments") or {}
         assert "session" not in arguments
+        if arguments.get("disconnect"):
+            sys.exit(0)
         if arguments.get("fail"):
             result = {"content": [
                 {"type": "text", "text": "no action taken"},
