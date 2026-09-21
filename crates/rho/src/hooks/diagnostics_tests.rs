@@ -149,15 +149,4 @@ fn a_successful_activity_view_omits_the_absent_fields() {
     );
 }
 
-#[test]
-fn an_untrusted_project_file_names_the_way_to_trust_it() {
-    let mut report = HookReport::disabled();
-    report.skipped_untrusted = Some("/work/.rho/hooks.toml".into());
 
-    assert_eq!(
-        report.skipped_untrusted_notice().as_deref(),
-        Some(
-            "ignoring /work/.rho/hooks.toml because this workspace is not trusted; set RHO_TRUST_PROJECT_HOOKS=1 to load it"
-        )
-    );
-}

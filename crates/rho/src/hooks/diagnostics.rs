@@ -76,16 +76,6 @@ impl HookReport {
             recent_activity: Vec::new(),
         }
     }
-
-    /// How to load a project hooks file that was parsed but not activated.
-    pub(crate) fn skipped_untrusted_notice(&self) -> Option<String> {
-        self.skipped_untrusted.as_deref().map(|skipped| {
-            format!(
-                "ignoring {skipped} because this workspace is not trusted; set {}=1 to load it",
-                super::TRUST_PROJECT_HOOKS_ENV
-            )
-        })
-    }
 }
 
 /// Live hook state a diagnostics surface can read at any time.
