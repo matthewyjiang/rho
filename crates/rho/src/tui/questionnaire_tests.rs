@@ -191,17 +191,24 @@ fn failed_submit_jumps_to_the_offending_question() {
 }
 
 #[test]
-fn arrow_navigation_flows_across_questions() {
+fn arrow_navigation_stays_on_the_active_question() {
     let mut composer = form_composer();
     assert_eq!(composer.active_index, 0);
 
     composer.move_down(); // main -> develop
     composer.move_down(); // develop -> other
     assert_eq!(composer.active_index, 0);
-    composer.move_down(); // other row is last -> next question
-    assert_eq!(composer.active_index, 1);
+    composer.move_down(); // last choice does not open the next question
+    assert_eq!(composer.active_index, 0);
+    assert_eq!(composer.active_field().choice_cursor, 2);
 
-    composer.move_up(); // first choice of q2 -> previous question
+    composer.move_to_next_field();
+    assert_eq!(composer.active_index, 1);
+    composer.move_up(); // first choice does not open the previous question
+    assert_eq!(composer.active_index, 1);
+    assert_eq!(composer.active_field().choice_cursor, 0);
+
+    composer.move_to_previous_field();
     assert_eq!(composer.active_index, 0);
 }
 

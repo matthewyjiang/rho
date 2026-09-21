@@ -169,29 +169,18 @@ impl QuestionnaireComposer {
         self.active_field_mut().move_choice_next(&question);
     }
 
-    /// Move up within the active question's choices, flowing to the previous
-    /// question once the cursor is already on the first choice.
+    /// Move to the previous choice on the active question.
+    ///
+    /// Tab, Shift+Tab, and Enter change questions. Arrows stay on this one.
     pub(super) fn move_up(&mut self) {
-        if self.active_choice_navigable() && self.active_field().choice_cursor > 0 {
-            self.move_active_choice_previous();
-        } else {
-            self.move_to_previous_field();
-        }
+        self.move_active_choice_previous();
     }
 
-    /// Move down within the active question's choices, flowing to the next
-    /// question once the cursor is already on the last choice.
+    /// Move to the next choice on the active question.
+    ///
+    /// Tab, Shift+Tab, and Enter change questions. Arrows stay on this one.
     pub(super) fn move_down(&mut self) {
-        let count = choice_count(self.active_question());
-        if self.active_choice_navigable() && self.active_field().choice_cursor + 1 < count {
-            self.move_active_choice_next();
-        } else {
-            self.move_to_next_field();
-        }
-    }
-
-    fn active_choice_navigable(&self) -> bool {
-        choice_count(self.active_question()) > 0
+        self.move_active_choice_next();
     }
 
     pub(super) fn toggle_active_choice(&mut self) {
