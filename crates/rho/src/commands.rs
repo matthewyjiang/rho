@@ -271,7 +271,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         id: CommandId::Copy,
         name: "copy",
         usage: "/copy",
-        description: "copy the last assistant message to the clipboard",
+        description: "choose an assistant output to copy to the clipboard",
         argument_choices: &[],
     },
     CommandSpec::alias(

@@ -271,6 +271,7 @@ impl UiPicker {
         resume_session => ResumeSession,
         manage_sessions => ManageSessions,
         tree => SelectTreeNode,
+        copy_output => CopyOutput,
         rewind_checkpoint => SelectRewindCheckpoint,
         confirm_rewind => ConfirmRewindCheckpoint,
         config => Config,

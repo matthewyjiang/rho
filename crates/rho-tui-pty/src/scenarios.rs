@@ -19,6 +19,7 @@ mod computer_preference;
 mod computer_setup;
 mod config;
 mod conversation_tree;
+mod copy_output;
 mod dispatch;
 mod doctor;
 mod document_attachment;
@@ -694,6 +695,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     ),
     WORKSPACE_REWIND_SCENARIO,
+    copy_output::COPY_OUTPUT_SCENARIO,
     HOOKS_CONTRACT_SCENARIO,
     #[cfg(unix)]
     COMPUTER_USE_SCENARIO,

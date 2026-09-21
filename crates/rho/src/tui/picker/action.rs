@@ -22,6 +22,7 @@ pub(in crate::tui) enum PickerAction {
     ResumeSession,
     ManageSessions,
     SelectTreeNode,
+    CopyOutput,
     SelectRewindCheckpoint,
     ConfirmRewindCheckpoint,
     Config,
@@ -79,6 +80,7 @@ impl PickerAction {
                 "close"
             }
             PickerAction::RefreshModelList => "refresh",
+            PickerAction::CopyOutput => "copy",
             PickerAction::SelectModel
             | PickerAction::SelectInternalAgentModel
             | PickerAction::SelectTheme
@@ -127,6 +129,7 @@ impl PickerAction {
     pub(in crate::tui) fn during_turn_select(&self) -> DuringTurnSelect {
         match self {
             PickerAction::InsertSkillCommand
+            | PickerAction::CopyOutput
             | PickerAction::AttachSubagent
             | PickerAction::Config
             | PickerAction::SelectModel
@@ -175,6 +178,7 @@ impl PickerAction {
             | PickerAction::ResumeSession
             | PickerAction::ManageSessions
             | PickerAction::SelectTreeNode
+            | PickerAction::CopyOutput
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint
             | PickerAction::Config

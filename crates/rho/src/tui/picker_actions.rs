@@ -196,6 +196,10 @@ impl App {
                 };
                 self.submit_tree_selection(value, terminal, agent).await
             }
+            PickerAction::CopyOutput => {
+                self.copy_text(value, std::time::Instant::now());
+                Ok(())
+            }
             PickerAction::SelectRewindCheckpoint => {
                 let PickerCommit::Idle { agent, .. } = commit else {
                     unreachable!("rewind preview is idle-only");
@@ -393,6 +397,7 @@ impl App {
             | PickerAction::ViewAgent
             | PickerAction::ViewMcpServers
             | PickerAction::SelectTreeNode
+            | PickerAction::CopyOutput
             | PickerAction::SelectRewindCheckpoint
             | PickerAction::ConfirmRewindCheckpoint
             | PickerAction::Config
