@@ -1680,8 +1680,8 @@ fn local_catalog_ref_parses_slug_and_qualified_ids() {
 }
 
 // Covers: grok-4.7-build-fast has no models.dev row, so it reuses the
-// grok-4.7 catalog entry at twice the token price and does not invent a row
-// when grok-4.7 is absent.
+// grok-4.7 catalog entry at twice the token price. A cache row stored under
+// the fast id is ignored, and a missing grok-4.7 row is not invented.
 // Owner: models.dev catalog rematch
 #[test]
 fn grok_4_7_build_fast_doubles_grok_4_7_catalog_price() {
@@ -1729,8 +1729,23 @@ fn grok_4_7_build_fast_doubles_grok_4_7_catalog_price() {
         cache_write_micros_per_m: None,
     });
 
+    let ignored = ModelMetadata {
+        display_name: Some("ignored fast row".into()),
+        advertised_context_window: Some(1),
+        cost_default: Some(ModelCost {
+            input_micros_per_m: Some(1),
+            ..ModelCost::default()
+        }),
+        reasoning_metadata_complete: true,
+        ..ModelMetadata::default()
+    };
+
     let cache = tempfile::tempdir().unwrap();
     with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        assert!(current_model_metadata("xai", "grok-4.7-build-fast").is_none());
+        assert!(model_metadata_needs_refresh("xai", "grok-4.7-build-fast"));
+
+        write_cached_upstream_model_metadata("xai", "grok-4.7-build-fast", &ignored);
         assert!(current_model_metadata("xai", "grok-4.7-build-fast").is_none());
         assert!(model_metadata_needs_refresh("xai", "grok-4.7-build-fast"));
 
