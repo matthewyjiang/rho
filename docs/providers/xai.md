@@ -50,11 +50,14 @@ XAI_ACCESS_TOKEN=...
 
 ## Models
 
-xAI uses a static allowlist rather than a refreshable API list: `grok-4.7`, `grok-4.6`, `grok-4.5`, `grok-build-0.1`, `grok-composer-2.5-fast`, and `grok-4.3`. Both auth modes use the same provider model reference:
+xAI uses a static allowlist rather than a refreshable API list. `grok-4.7`, `grok-4.6`, `grok-4.5`, `grok-build-0.1`, `grok-composer-2.5-fast`, and `grok-4.3` are available to both auth modes. `grok-4.7-build-fast` is listed only when xAI OAuth credentials are available:
 
 ```text
 /model xai/grok-4.7
+/model xai/grok-4.7-build-fast
 ```
+
+`grok-4.7-build-fast` is grok-4.7 on faster serving, billed at twice the grok-4.7 token price. models.dev has no row for that id, so Rho reads the grok-4.7 catalog entry and doubles its input, cached-input, and output rates, including the long-context tier. `GET /v1/models` omits the id. A SuperGrok OAuth token can call it on `https://api.x.ai/v1`. Picking xAI without a model still selects `grok-4.7`.
 
 For a non-interactive run, pass the provider, matching auth mode, and model. These flags also update the persistent default:
 

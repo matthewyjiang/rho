@@ -359,12 +359,47 @@ fn parse_model_catalog(text: &str) -> Vec<ModelCatalogEntry> {
     let file: ModelCatalogFile =
         toml::from_str(text).expect("embedded model catalog must be valid");
     let mut entries = model_entries("openai-codex", "codex", file.openai_codex_models);
-    let mut xai_models = model_entries("xai", "xai-api-key", file.xai_models);
-    for entry in &mut xai_models {
-        entry.auth_modes.push("xai-oauth".into());
-    }
-    entries.extend(xai_models);
+    entries.extend(xai_model_entries(file.xai_models));
     entries
+}
+
+fn xai_model_entries(models: Vec<String>) -> Vec<ModelCatalogEntry> {
+    models
+        .into_iter()
+        .map(|model| {
+            let auth_modes = xai_auth_modes(&model);
+            ModelCatalogEntry {
+                provider: "xai".to_string(),
+                display_name: model.clone(),
+                model,
+                auth_modes,
+            }
+        })
+        .collect()
+}
+
+/// `grok-4.7-build-fast` is served to SuperGrok OAuth on `api.x.ai`.
+/// API-key login does not list it.
+fn xai_auth_modes(model: &str) -> Vec<String> {
+    if model == "grok-4.7-build-fast" {
+        vec!["xai-oauth".to_string()]
+    } else {
+        vec!["xai-api-key".to_string(), "xai-oauth".to_string()]
+    }
+}
+
+/// Static-catalog models declare which auth modes may select them.
+///
+/// Models outside that catalog, including cached provider lists, stay
+/// unrestricted here.
+pub fn model_supports_auth(provider: &str, model: &str, auth: &str) -> bool {
+    let Some(entry) = model_catalog()
+        .iter()
+        .find(|entry| entry.provider == provider && entry.model == model)
+    else {
+        return true;
+    };
+    entry.auth_modes.iter().any(|mode| mode == auth)
 }
 
 fn model_entries(provider: &str, auth: &str, models: Vec<String>) -> Vec<ModelCatalogEntry> {

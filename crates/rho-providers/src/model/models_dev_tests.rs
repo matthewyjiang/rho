@@ -1679,6 +1679,81 @@ fn local_catalog_ref_parses_slug_and_qualified_ids() {
     assert_eq!(overrides::parse_catalog_ref("/model", "gpt-5.6-sol"), None);
 }
 
+// Covers: grok-4.7-build-fast has no models.dev row, so it must reuse the
+// grok-4.7 catalog entry at twice the token price and must not invent a row
+// when grok-4.7 is absent.
+// Owner: models.dev catalog rematch
+#[test]
+fn grok_4_7_build_fast_doubles_grok_4_7_catalog_price() {
+    let source = ModelMetadata {
+        display_name: Some("Grok 4.7".into()),
+        advertised_context_window: Some(500_000),
+        effective_context_window: Some(500_000),
+        long_context_threshold: Some(200_000),
+        max_output_tokens: Some(500_000),
+        cost_default: Some(ModelCost {
+            input_micros_per_m: Some(2_000_000),
+            output_micros_per_m: Some(6_000_000),
+            cache_read_micros_per_m: Some(500_000),
+            cache_write_micros_per_m: None,
+        }),
+        cost_long_context: Some(ModelCost {
+            input_micros_per_m: Some(4_000_000),
+            output_micros_per_m: Some(12_000_000),
+            cache_read_micros_per_m: Some(1_000_000),
+            cache_write_micros_per_m: None,
+        }),
+        supported_reasoning_levels: Some(vec![
+            ReasoningLevel::Low,
+            ReasoningLevel::Medium,
+            ReasoningLevel::High,
+            ReasoningLevel::Xhigh,
+        ]),
+        reasoning_capabilities_known: true,
+        reasoning_metadata_complete: true,
+        sdk_package: Some("@ai-sdk/openai".into()),
+        ..ModelMetadata::default()
+    };
+    let mut doubled = source.clone();
+    doubled.display_name = None;
+    doubled.cost_default = Some(ModelCost {
+        input_micros_per_m: Some(4_000_000),
+        output_micros_per_m: Some(12_000_000),
+        cache_read_micros_per_m: Some(1_000_000),
+        cache_write_micros_per_m: None,
+    });
+    doubled.cost_long_context = Some(ModelCost {
+        input_micros_per_m: Some(8_000_000),
+        output_micros_per_m: Some(24_000_000),
+        cache_read_micros_per_m: Some(2_000_000),
+        cache_write_micros_per_m: None,
+    });
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        assert!(current_model_metadata("xai", "grok-4.7-build-fast").is_none());
+        assert!(model_metadata_needs_refresh("xai", "grok-4.7-build-fast"));
+
+        write_cached_upstream_model_metadata("xai", "grok-4.7", &source);
+
+        assert_eq!(
+            current_model_metadata("xai", "grok-4.7").as_ref(),
+            Some(&source)
+        );
+        assert_eq!(
+            current_model_metadata("xai", "grok-4.7-build-fast").as_ref(),
+            Some(&doubled)
+        );
+        assert_eq!(
+            doubled
+                .cost_for_input_tokens(200_001)
+                .and_then(|cost| cost.input_micros_per_m),
+            Some(8_000_000)
+        );
+        assert!(!model_metadata_needs_refresh("xai", "grok-4.7-build-fast"));
+    });
+}
+
 // Covers: Astra constrains effort before catalog hydration without suppressing
 // the fetch that fills its context, output, and pricing metadata.
 // Owner: models.dev built-in capability overrides

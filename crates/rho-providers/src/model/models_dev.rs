@@ -340,12 +340,74 @@ fn builtin_override_identity(cache_provider: &str, cache_model: &str) -> (String
     (cache_provider.to_string(), cache_model.to_string())
 }
 
+/// models.dev has no row for these ids. Resolve `source` and scale its token
+/// prices. Context, limits, and reasoning stay with that row.
+fn priced_catalog_alias(provider: &str, model: &str) -> Option<(&'static str, u64)> {
+    match (provider, model) {
+        // Public /v1/models omits this id. It is grok-4.7 at twice the token price.
+        ("xai", "grok-4.7-build-fast") => Some(("grok-4.7", 2)),
+        _ => None,
+    }
+}
+
+fn scale_model_cost(mut metadata: ModelMetadata, scale: u64) -> ModelMetadata {
+    metadata.cost_default = metadata.cost_default.map(|cost| scale_cost(cost, scale));
+    metadata.cost_long_context = metadata
+        .cost_long_context
+        .map(|cost| scale_cost(cost, scale));
+    metadata
+}
+
+fn scale_cost(cost: ModelCost, scale: u64) -> ModelCost {
+    ModelCost {
+        input_micros_per_m: cost
+            .input_micros_per_m
+            .map(|value| value.saturating_mul(scale)),
+        output_micros_per_m: cost
+            .output_micros_per_m
+            .map(|value| value.saturating_mul(scale)),
+        cache_read_micros_per_m: cost
+            .cache_read_micros_per_m
+            .map(|value| value.saturating_mul(scale)),
+        cache_write_micros_per_m: cost
+            .cache_write_micros_per_m
+            .map(|value| value.saturating_mul(scale)),
+    }
+}
+
+/// `grok-4.7-build-fast` borrows grok-4.7, then doubles price. A local `catalog`
+/// remap names its own row and stays on the direct path.
+fn aliased_catalog_metadata(
+    provider: &str,
+    model: &str,
+    freshness: CacheFreshness,
+    local: Option<&toml::map::Map<String, toml::Value>>,
+) -> Option<ModelMetadata> {
+    if local.is_some_and(|table| table.contains_key("catalog")) {
+        return None;
+    }
+    let (source_model, scale) = priced_catalog_alias(provider, model)?;
+    let mut metadata = load_model_metadata(provider, source_model, freshness)?;
+    metadata = scale_model_cost(metadata, scale);
+    // The source name belongs to grok-4.7. Keep the fast id unlabeled.
+    metadata.display_name = None;
+    let metadata = apply_provider_capabilities(provider, model, metadata);
+    let metadata = overrides::apply_builtin_overrides(provider, model, metadata);
+    Some(match local {
+        Some(table) => overrides::merge_toml_override(metadata, table),
+        None => metadata,
+    })
+}
+
 fn load_model_metadata(
     provider: &str,
     model: &str,
     freshness: CacheFreshness,
 ) -> Option<ModelMetadata> {
     let local = overrides::local_override_table(provider, model);
+    if let Some(metadata) = aliased_catalog_metadata(provider, model, freshness, local.as_ref()) {
+        return Some(metadata);
+    }
     let (cache_provider, cache_model) = catalog_source_for(provider, model, local.as_ref());
     let metadata = match freshness {
         CacheFreshness::CurrentOnly => {

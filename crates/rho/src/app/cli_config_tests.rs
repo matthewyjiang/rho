@@ -189,6 +189,41 @@ fn legacy_xai_provider_override_normalizes_to_oauth_mode() {
     assert_eq!(config.auth, "xai-oauth");
 }
 
+// Covers: an API-key flag must not keep grok-4.7-build-fast, which is OAuth only.
+// Owner: CLI config normalization
+#[test]
+fn grok_4_7_build_fast_requires_xai_oauth() {
+    let mut rejected = Config::default();
+    let api_key = Cli::try_parse_from([
+        "rho",
+        "--auth",
+        "xai-api-key",
+        "--model",
+        "xai/grok-4.7-build-fast",
+    ])
+    .unwrap();
+    assert_eq!(
+        apply_overrides(&mut rejected, &api_key)
+            .unwrap_err()
+            .to_string(),
+        "model 'xai/grok-4.7-build-fast' is not available for auth 'xai-api-key'"
+    );
+
+    let mut accepted = Config::default();
+    let oauth = Cli::try_parse_from([
+        "rho",
+        "--auth",
+        "xai-oauth",
+        "--model",
+        "xai/grok-4.7-build-fast",
+    ])
+    .unwrap();
+    assert!(apply_overrides(&mut accepted, &oauth).unwrap());
+    assert_eq!(accepted.provider, "xai");
+    assert_eq!(accepted.model, "grok-4.7-build-fast");
+    assert_eq!(accepted.auth, "xai-oauth");
+}
+
 #[test]
 fn cli_model_override_with_provider_selects_matching_auth() {
     let mut cfg = Config::default();

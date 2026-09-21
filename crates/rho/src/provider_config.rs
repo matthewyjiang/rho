@@ -354,6 +354,13 @@ fn normalize_selection(
     // Collapse legacy wire ids (for example poolside/laguna-m.1) to the
     // internal model id used by cache, config, and display joins.
     *model = profile.provider.canonicalize_model_id(model);
+    if !rho_providers::model::catalog::model_supports_auth(provider, model, auth) {
+        let message = format!("model '{provider}/{model}' is not available for auth '{auth}'");
+        return Err(match internal_agent {
+            Some(id) => anyhow::anyhow!("internal agent '{id}': {message}"),
+            None => anyhow::anyhow!(message),
+        });
+    }
     Ok(())
 }
 
