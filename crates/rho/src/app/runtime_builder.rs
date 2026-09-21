@@ -2,7 +2,7 @@ use std::{num::NonZeroU64, sync::Arc};
 
 use rho_sdk::{
     model::{ContentBlock, ModelRequest, ModelResponse},
-    provider::ModelProvider,
+    provider::{ModelProvider, ModelRequestOptions},
     CompactionFuture, CompactionOutput, CompactionPolicy, CompactionRequest, Compactor, Error,
     ProviderRequestOutcome, ProviderRequestUsageContext, ProviderRequestUsageEvent,
     ProviderRequestUsageRecording, Rho, SystemPrompt, Workspace, WorkspacePolicy,
@@ -214,6 +214,7 @@ impl Compactor for ModelCompactor {
             match self
                 .try_native_compaction(
                     request.messages(),
+                    request.service_tier(),
                     cancellation.clone(),
                     usage_context.clone(),
                     &mut next_attempt_index,
@@ -303,6 +304,7 @@ impl ModelCompactor {
     async fn try_native_compaction(
         &self,
         messages: &[rho_sdk::model::Message],
+        service_tier: Option<rho_sdk::model::ServiceTier>,
         cancellation: rho_sdk::CancellationToken,
         usage_context: ProviderRequestUsageContext,
         next_attempt_index: &mut usize,
@@ -316,7 +318,14 @@ impl ModelCompactor {
             // CompactionRequest has no canonical prompt cache key; keep None.
             prompt_cache_key: None,
         };
-        let Some(future) = self.provider.native_compact(model_request) else {
+        let options = match service_tier {
+            Some(tier) => ModelRequestOptions::default().with_service_tier(tier),
+            None => ModelRequestOptions::default(),
+        };
+        let Some(future) = self
+            .provider
+            .native_compact_with_options(model_request, options)
+        else {
             return NativeCompactionResult::Unavailable;
         };
         let response = future.await;

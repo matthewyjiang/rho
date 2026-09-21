@@ -184,6 +184,7 @@ pub struct CompactionRequest {
     step_index: Option<usize>,
     workspace_path: Option<PathBuf>,
     context_estimate: Option<crate::ContextEstimate>,
+    service_tier: Option<crate::model::ServiceTier>,
 }
 
 impl CompactionRequest {
@@ -200,7 +201,22 @@ impl CompactionRequest {
             step_index: None,
             workspace_path: None,
             context_estimate: None,
+            service_tier: None,
         }
+    }
+
+    /// Carries the session service tier into provider-native compaction.
+    ///
+    /// Streaming turns already receive this on [`crate::provider::ModelRequestOptions`].
+    /// Native compaction reads it from the request so a serving preference can
+    /// change the wire model without rebuilding the provider.
+    pub fn with_service_tier(mut self, service_tier: crate::model::ServiceTier) -> Self {
+        self.service_tier = Some(service_tier);
+        self
+    }
+
+    pub fn service_tier(&self) -> Option<crate::model::ServiceTier> {
+        self.service_tier
     }
 
     pub fn with_trigger(mut self, trigger: CompactionTrigger) -> Self {

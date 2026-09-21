@@ -21,17 +21,34 @@ impl App {
         invocation: CommandInvocation,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        self.execute_fast_command_with_runtime(invocation, agent)
+        let provider = self.info.runtime.provider.clone();
+        let model = self.info.runtime.model.clone();
+        let auth = self.info.runtime.auth.clone();
+        // xAI prices the wire id, so a toggle has to reload that metadata.
+        // Codex keeps the same model id and does not.
+        let refresh_metadata = matches!(
+            rho_providers::providers::fast_mode::fast_serving(&provider, &model, &auth),
+            Some(rho_providers::providers::fast_mode::FastServing::RequestModel(_))
+        );
+        let changed = self.execute_fast_command_with_runtime(invocation, agent)?;
+        if changed && refresh_metadata {
+            self.start_model_metadata_fetch(agent);
+        }
+        Ok(())
     }
 
     fn execute_fast_command_with_runtime(
         &mut self,
         invocation: CommandInvocation,
         agent: &impl FastModeRuntime,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<bool> {
         let provider = &self.info.runtime.provider;
         let model = &self.info.runtime.model;
-        let supported = rho_providers::providers::openai::supports_fast_mode(provider, model);
+        let supported = rho_providers::providers::fast_mode::supports_fast_mode(
+            provider,
+            model,
+            &self.info.runtime.auth,
+        );
         let current = agent.fast_mode();
         let requested = match invocation.args.trim().to_ascii_lowercase().as_str() {
             "" => !current,
@@ -40,16 +57,20 @@ impl App {
             _ => {
                 self.insert_entry(&Entry::Error("usage: /fast [on|off]".into()));
                 self.set_status("invalid fast mode");
-                return Ok(());
+                return Ok(false);
             }
         };
 
         if requested && !supported {
-            self.insert_entry(&Entry::Error(format!(
-                "fast mode is not available for {provider}/{model}"
-            )));
+            let message =
+                if provider == "xai" && model == rho_providers::providers::fast_mode::GROK_4_7 {
+                    "fast mode for xai/grok-4.7 requires xAI OAuth".to_string()
+                } else {
+                    format!("fast mode is not available for {provider}/{model}")
+                };
+            self.insert_entry(&Entry::Error(message));
             self.set_status("fast mode unavailable");
-            return Ok(());
+            return Ok(false);
         }
 
         if requested != current {
@@ -63,14 +84,16 @@ impl App {
                 agent.set_fast_mode(current)?;
                 self.insert_entry(&Entry::Error(format!("could not save fast mode: {error}")));
                 self.set_status("config save failed");
-                return Ok(());
+                return Ok(false);
             }
             self.info.runtime.service_tier =
                 requested.then_some(rho_sdk::model::ServiceTier::Priority);
+            self.report_fast_mode(requested, supported);
+            return Ok(true);
         }
 
         self.report_fast_mode(requested, supported);
-        Ok(())
+        Ok(false)
     }
 
     fn report_fast_mode(&mut self, enabled: bool, supported: bool) {

@@ -23,9 +23,10 @@ pub(super) enum CommandPaletteKeyOutcome {
 impl App {
     fn command_context(&self) -> commands::CommandContext {
         commands::CommandContext {
-            fast_mode_supported: rho_providers::providers::openai::supports_fast_mode(
+            fast_mode_supported: rho_providers::providers::fast_mode::supports_fast_mode(
                 &self.info.runtime.provider,
                 &self.info.runtime.model,
+                &self.info.runtime.auth,
             ),
         }
     }

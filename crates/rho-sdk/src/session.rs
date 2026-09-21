@@ -667,6 +667,7 @@ impl Session {
             .register(run_id.clone(), cancellation.clone())?;
         let history = self.history();
         let previous = HistoryMetrics::from_history(&history);
+        let service_tier = runtime.service_tier;
         let request = crate::CompactionRequest::new(history, cancellation)
             .with_context_estimate(self.context_estimate())
             .with_request_context(
@@ -679,6 +680,10 @@ impl Session {
                     .as_ref()
                     .map(|workspace| workspace.root().to_path_buf()),
             );
+        let request = match service_tier {
+            Some(tier) => request.with_service_tier(tier),
+            None => request,
+        };
         let output = compactor.compact(request).await?;
         let (replacement, usage) = output.into_parts();
         let outcome = self.core.commit_compaction(previous, replacement, usage)?;

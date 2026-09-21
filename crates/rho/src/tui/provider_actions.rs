@@ -148,4 +148,27 @@ impl App {
         }
         Ok(())
     }
+
+    /// Writes the login target's auth profile so a stored custom key is not
+    /// left behind as `auth = "none"` after restart.
+    pub(super) fn persist_login_auth(&mut self, target: &LoginTarget) {
+        if target.auth == rho_providers::provider::KEYLESS_AUTH {
+            return;
+        }
+        let result = if target.provider == self.info.runtime.provider {
+            self.info.runtime.auth = target.auth.clone();
+            self.save_current_config()
+        } else {
+            self.info.services.config_repository.update(|config| {
+                if config.provider == target.provider {
+                    config.auth = target.auth.clone();
+                }
+            })
+        };
+        if let Err(err) = result {
+            self.insert_entry(&Entry::Error(format!(
+                "stored credentials, but saving auth mode failed: {err}"
+            )));
+        }
+    }
 }

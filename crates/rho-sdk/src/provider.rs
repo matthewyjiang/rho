@@ -348,11 +348,30 @@ pub trait ModelProvider: Send + Sync {
     /// Returns `None` when the provider has no native compaction path. When
     /// `Some`, the future must return complete replacement history suitable for
     /// session commit, and must cooperate with the request cancellation token.
+    ///
+    /// This is [`Self::native_compact_with_options`] with default options.
+    /// Hosts that have a session service tier should call that method.
     fn native_compact<'a>(
         &'a self,
         _request: ModelRequest<'a>,
     ) -> Option<NativeCompactionFuture<'a>> {
         None
+    }
+
+    /// Provider-native compaction with the same per-turn options as streaming.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): give native_compact a ModelRequestOptions argument and remove native_compact_with_options.
+    ///
+    /// Changing [`Self::native_compact`]'s signature would break 1.x implementors.
+    /// Hosts pass the session service tier here until that collapse.
+    fn native_compact_with_options<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        _options: ModelRequestOptions,
+    ) -> Option<NativeCompactionFuture<'a>> {
+        self.native_compact(request)
     }
 
     /// Completes one model turn while sending semantic events in order.
@@ -548,6 +567,7 @@ impl ScriptedProvider {
     fn take_native_compaction(
         &self,
         request: &ModelRequest<'_>,
+        service_tier: Option<ServiceTier>,
     ) -> Option<NativeCompactionResponse> {
         let mut queue = self
             .native_compactions
@@ -563,7 +583,7 @@ impl ScriptedProvider {
                 messages: request.messages.to_vec(),
                 tools: request.tools.to_vec(),
                 reasoning_level: request.reasoning_level,
-                service_tier: None,
+                service_tier,
                 prompt_cache_key: request.prompt_cache_key.map(str::to_owned),
             });
         queue.pop_front()
@@ -628,7 +648,15 @@ impl ModelProvider for ScriptedProvider {
         &'a self,
         request: ModelRequest<'a>,
     ) -> Option<NativeCompactionFuture<'a>> {
-        let response = self.take_native_compaction(&request)?;
+        self.native_compact_with_options(request, ModelRequestOptions::default())
+    }
+
+    fn native_compact_with_options<'a>(
+        &'a self,
+        request: ModelRequest<'a>,
+        options: ModelRequestOptions,
+    ) -> Option<NativeCompactionFuture<'a>> {
+        let response = self.take_native_compaction(&request, options.service_tier())?;
         Some(Box::pin(async move {
             if request.cancellation.is_cancelled() {
                 return NativeCompactionResponse::failure(ProviderError::interrupted(

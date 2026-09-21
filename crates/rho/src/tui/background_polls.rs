@@ -107,10 +107,17 @@ impl App {
             handle.abort();
         }
         self.pending_model_metadata_reasoning = None;
-        if let Some((metadata, metadata_is_current)) = reasoning_metadata::cached_metadata(
-            &self.info.runtime.provider,
+        let provider = self.info.runtime.provider.clone();
+        let model = rho_providers::providers::fast_mode::request_model(
+            &provider,
             &self.info.runtime.model,
-        ) {
+            &self.info.runtime.auth,
+            self.info.runtime.fast_mode_active(),
+        )
+        .to_string();
+        if let Some((metadata, metadata_is_current)) =
+            reasoning_metadata::cached_metadata(&provider, &model)
+        {
             if self.apply_context_window(agent, metadata.display_context_window()) {
                 let reasoning_metadata_complete = metadata.reasoning_metadata_complete;
                 self.model_metadata = Some(metadata);
@@ -123,8 +130,6 @@ impl App {
             let _ = self.apply_context_window(agent, None);
             self.model_metadata = None;
         }
-        let provider = self.info.runtime.provider.clone();
-        let model = self.info.runtime.model.clone();
         self.pending_model_metadata_reasoning = Some((
             self.info.runtime.reasoning,
             self.info.runtime.reasoning_source,

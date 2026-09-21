@@ -136,7 +136,7 @@ Use `/model provider/model` to switch explicitly, including to another provider:
 /model openrouter/anthropic/claude-sonnet-4
 /model ollama/<installed-model>
 /model ollama-cloud/<hosted-model>
-/model xai/grok-4.6
+/model xai/grok-4.7
 ```
 
 A bare model id works when it uniquely matches the catalog for the active selection rules. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.

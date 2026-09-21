@@ -50,17 +50,21 @@ XAI_ACCESS_TOKEN=...
 
 ## Models
 
-xAI uses a static allowlist rather than a refreshable API list: `grok-4.6`, `grok-4.5`, `grok-build-0.1`, `grok-composer-2.5-fast`, and `grok-4.3`. Both auth modes use the same provider model reference:
+xAI uses a static allowlist rather than a refreshable API list. `grok-4.7`, `grok-4.6`, `grok-4.5`, `grok-build-0.1`, `grok-composer-2.5-fast`, and `grok-4.3` are available to both auth modes. Picking xAI without a model selects `grok-4.7`:
 
 ```text
-/model xai/grok-4.6
+/model xai/grok-4.7
 ```
+
+On xAI OAuth, `/fast` turns on faster serving for `grok-4.7`. Rho still shows `grok-4.7` and sends `grok-4.7-build-fast` on the request. That id is grok-4.7 on faster serving, billed at twice the grok-4.7 token price. models.dev has no row for it, so Rho reads the grok-4.7 catalog entry and doubles its input, cached-input, and output rates, including the long-context tier. `GET /v1/models` omits the id. API-key login cannot use that serving path. `/fast` with no argument toggles. The choice is saved as `model.fast_mode` and shows as `(fast)` after the model name.
+
+Codex uses the same `/fast` command, but Codex sends `service_tier: "priority"` instead of changing the model id.
 
 For a non-interactive run, pass the provider, matching auth mode, and model. These flags also update the persistent default:
 
 ```bash
-rho --provider xai --auth xai-api-key --model grok-4.6 run "hello"
-rho --provider xai --auth xai-oauth --model grok-4.6 run "hello"
+rho --provider xai --auth xai-api-key --model grok-4.7 run "hello"
+rho --provider xai --auth xai-oauth --model grok-4.7 run "hello"
 ```
 
 The retired `xai-oauth` provider value remains a compatibility alias. Config, CLI flags, favorites, and model references normalize it to `provider = "xai"` with `auth = "xai-oauth"`.
