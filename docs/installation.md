@@ -14,9 +14,7 @@ irm https://matthewyjiang.github.io/rho/install.ps1 | iex
 
 The macOS and Linux installer writes to `$HOME/.local/bin` by default. The Windows installer writes to `%LOCALAPPDATA%\Programs\rho\bin` and adds that directory to your user `PATH`.
 
-After installing the binary, Rho leaves the credential backend unset and uses the OS store by default. The first interactive `/login` asks which backend to use. The OS store is recommended when available. You can also opt into a local file protected by filesystem permissions but not encrypted at rest.
-
-Set `RHO_CREDENTIAL_STORE=os|file` during install, or run `rho credential-store set os` or `rho credential-store set file`, to make this choice without the login picker:
+The credential backend stays unset, and Rho uses the OS store until you choose. The first interactive `/login` asks. Set `RHO_CREDENTIAL_STORE=os|file` during install, or later run `rho credential-store set os` or `rho credential-store set file`, to skip that picker. `file` is a local file protected by filesystem permissions, not encrypted at rest. See [where credentials live](/authentication-and-models#where-credentials-live).
 
 ```bash
 curl -fsSL https://matthewyjiang.github.io/rho/install.sh | RHO_CREDENTIAL_STORE=file sh
@@ -25,8 +23,6 @@ curl -fsSL https://matthewyjiang.github.io/rho/install.sh | RHO_CREDENTIAL_STORE
 ```powershell
 $env:RHO_CREDENTIAL_STORE = "file"; irm https://matthewyjiang.github.io/rho/install.ps1 | iex
 ```
-
-For more detail, see [where credentials live](/authentication-and-models#where-credentials-live).
 
 You can also install Rho with [Scoop](https://scoop.sh/) on Windows:
 

@@ -54,34 +54,9 @@ cargo run -p rho-sdk --example simple_completion
 
 The crate [README](https://github.com/matthewyjiang/rho/blob/main/crates/rho-sdk/README.md) mirrors these examples and covers `ToolHost`, retractable steering, and hook labels.
 
-## Documentation map
+## Historical material
 
-### Guide
-
-- [Installation and support](/sdk/installation)
-- [Concepts and ownership](/sdk/concepts)
-- [Providers](/sdk/providers)
-- [Tools, workspaces, and approvals](/sdk/tools)
-- [Hooks](/sdk/hooks)
-- [Sessions, compaction, and persistence](/sdk/sessions-and-persistence)
-- [Events, retries, cancellation, drop, and shutdown](/sdk/events-and-cancellation)
-- [Runtime boundary inputs](/sdk/boundary-inputs)
-
-### Security
-
-- [Security model](/sdk/security)
-- [Threat model](/sdk/threat-model)
-- [Redaction audit procedure](/sdk/redaction-audit)
-
-### Reference
-
-- [Compatibility and public contracts](/sdk/compatibility)
-- [Performance acceptance](/sdk/performance)
-- [SDK changelog](/sdk/changelog)
-
-### Historical material
-
-These pages record the original stable cutover. Prefer the guide and changelog for current behavior.
+These pages record the 1.0 cutover. Prefer the guide and changelog for current behavior.
 
 - [Upgrade guide for 1.0](/sdk/upgrade-to-1.0)
 - [1.0 release notes](/sdk/release-notes-1.0)

@@ -16,6 +16,16 @@ cargo run -- run "summarize this repository"
 
 Use the local binary to test the [interactive TUI](/interactive-tui), [automation mode](/automation-cli), [configuration](/configuration), and [tools](/tools-workspace) behavior while developing.
 
+`RHO_FIRST_RUN` opens the setup screen on a machine that already has config. It does not clear history or credentials.
+
+```bash
+RHO_FIRST_RUN=signin rho
+RHO_FIRST_RUN=model rho
+RHO_FIRST_RUN=1 rho
+```
+
+`signin` opens the provider menu. `model` opens the model list. `1` opens whichever step a real first launch would open. On a configured machine that already lists models, `1` goes to the model step. To see the signed-out session, run `/logout` for the active provider.
+
 Set `RHO_LOG` to a tracing env-filter to print spans on stderr. It is off by default. Examples: `RHO_LOG=rho=info` or `RHO_LOG=rho=debug`.
 
 ```mermaid
@@ -221,6 +231,36 @@ Scenarios launch Rho with:
 ### When to use Herdr instead
 
 Use the Herdr sibling-pane workflow for exploratory checks, novel bugs that are not yet encoded as scenarios, or parity checks against a real terminal renderer. See the [Herdr](/integrations/herdr) page and the `rho-tui-pty-testing` and `rho-tui-herdr-testing` skills.
+
+## Workflow limit receipts
+
+Planning budgets come from a checked-in receipt, not from a guessed constant. The planner reads that receipt. A deterministic generator builds separate stress cases for source modules, evaluator work and heap, values, a 750-node and 7,500-edge graph, schemas and conditions, serialized graph size, runtime output, templates, prompts, argv, inputs, and planner process frames.
+
+The receipt and corpus map are `crates/rho/src/workflow/fixtures/limit_receipt.json` and `crates/rho/src/workflow/fixtures/limit_corpus.json`. The generator is `scripts/workflow_limit_corpus.py`.
+
+Verify after a build:
+
+```bash
+cargo build -p rho-coding-agent -j 12
+python3 scripts/measure_workflow_limits.py --rho target/debug/rho
+```
+
+The command runs each generated case in the product planner worker, reads the worker's evaluator tick and peak-heap counters, derives graph and runtime values from the returned plan, and also runs `workflow validate`. It fails if a deterministic value differs from the receipt, if a process frame differs, or if wall time or address space loses its stated safety margin. Wall time and address space use checked baselines because OS load can change them. The verifier allows at most twice the baseline and still requires the separate minimum margin in the receipt.
+
+On Linux, the address-space value is the highest `/proc/<pid>/status` `VmSize` seen after the supervised child starts the planner worker. That omits the short period before the child applies its limit. The checked debug build used 1,170,087,936 bytes under a 4,294,967,296-byte OS ceiling. That ceiling is a coarse process backstop, `RLIMIT_AS` on Linux and the same value as a Job Object process-memory commit limit on Windows. It is not the product tripwire. Product memory policy lives in the receipt. Virtual size is much larger than resident memory because allocators reserve address space without committing it. If the worker needs more than the checked amount, the check reports the measured value and the hard limit.
+
+`environment_expansion_bytes` is a schema sentinel, not a corpus measurement. Workflow schema v1 forbids source-controlled environment entries and keeps a one-byte accepted floor.
+
+Current measured stress values include 750,000 source bytes, 75 modules at depth 15, 750,019 evaluator ticks, 50,334,528 evaluator heap bytes, 750 nodes, 7,500 edges, a 756,418-byte schema, a 7,515,347-byte graph, 6,291,456 bytes per retained stream, and 50,331,648 total retained bytes. Read the receipt for every value and margin.
+
+Cancellation uses a separate measurement. It starts a real workflow owner, waits on a Unix socket until a compiled command node is active, and starts a second Rho process to run `workflow cancel`. Linux `pidfd_open` checks that the command process has exited. Process completion, not a sleep, ends each wait.
+
+```bash
+python3 scripts/measure_workflow_cancellation.py \
+  --rho target/debug/rho --repeat 5
+```
+
+That command needs Linux with Unix sockets and `pidfd_open`, and `rustc` on `PATH`. It uses a new temporary `RHO_HOME` for each sample. The checked run measured 33 ms for acknowledgement, final command cleanup, and workflow owner completion. The accepted limits are 2,000 ms, 2,000 ms, and 2,500 ms. The cancellation command checks both the accepted limits and twice the checked baseline.
 
 ## Provider identity and auth modes
 

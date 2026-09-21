@@ -2,210 +2,116 @@
 
 Rho stores persistent config at `~/.rho/config.toml` by default.
 
-Most people change settings from the interactive TUI with `/config`, or with `/model`, `/login`, and related commands. Prefer that path for day-to-day changes. Use this page when you want the file layout, CLI overrides, or the meaning of a specific key.
+Change day-to-day settings from the TUI with `/config`, `/model`, `/login`, and the other commands below. Use this page for the file layout, CLI overrides, and keys that do not have their own page. A complete sample is in [Configuration file example](/configuration/full-example).
 
-```mermaid
-flowchart TD
-    file["~/.rho/config.toml"] --> load[Session load]
-    cli[CLI flags] --> load
-    load --> session[Active session]
-    tui["/config and shortcuts"] --> file
-    tui --> session
-```
+Secrets are never stored in config. See [authentication and models](/authentication-and-models).
+
+Unknown keys in `config.toml` are a load error, so typos fail loudly. Values that Rho clamps or normalizes warn at load time. Both `--save` and `/config` rewrite only the known schema and discard unknown keys, comments, and formatting.
 
 ## Common settings
 
 | Goal | Where |
 | --- | --- |
-| Provider, model, reasoning | `[model]` or `/model`, `/config` → **Models** |
-| Theme, zen, reasoning display, output streaming | `[display]` or `/config` → **Appearance** |
-| Permission mode | `/permissions <mode>`, `[behavior].permission_mode`, or `/config` → **Agent behavior** |
-| Concurrent agents | `[behavior].agent_concurrency` or `/config` → **Agent behavior** |
-| Questionnaire timeout | `[questionnaire].timeout_seconds` or `/config` → **Agent behavior**, disabled by default |
-| Prompt templates | `~/.rho/prompts/` files or `[prompt_templates]` |
-| Model-scoped system instructions | `~/.rho/model-prompts/*.md` with provider/model frontmatter |
-| Web search | `[web_search]` or `/config` → **Tools** |
-| xAI image generation | `[xai].image_generation` or `/config` → **Tools** |
-| Edit tool | `[behavior].edit_tool` or `/config` → **Tools** |
-| MCP servers | `[mcp.servers]`; inspect with `/mcp` or `rho mcp list` — see [Model Context Protocol](/integrations/mcp) |
-| Auto compaction | `[compaction]` or `/config` → **Context & limits** |
-| Cache miss notices | `[display].cache_miss_notices` or `/config` → **Appearance** |
-| Per-model context or reasoning | `~/.rho/models.toml` |
-| Keybindings | `[keybindings]` (restart required) |
+| Provider, model, reasoning | `[model]`, `/model`, or `/config` → **Models** |
+| Theme, zen, reasoning display, output streaming | `[display]` or `/config` → **Appearance**. See [Theme](/interactive-tui/theme), [Transcript display](/interactive-tui/transcript), and [Text streaming](/interactive-tui#text-streaming) |
+| Permission mode | [Permission modes](/configuration/permissions) |
+| Concurrent agents, subagents, rewind | [Behavior](#behavior) |
+| Questionnaire timeout | [Questionnaire timeout](#questionnaire-timeout) |
+| Prompt templates | [Prompt templates](#prompt-templates) |
+| Model-scoped system instructions | [Model prompts](/configuration/model-prompts) |
+| Web search | [Web search](/configuration/web-search) |
+| xAI image generation | [xAI](/providers/xai#notes) |
+| Edit tool | [Edit tool](#edit-tool) |
+| MCP servers | `[mcp.servers]`. Inspect with `/mcp` or `rho mcp list`. See [Model Context Protocol](/integrations/mcp) |
+| Auto compaction | [Auto compaction](/configuration/compaction) |
+| Per-model context or reasoning | [Local model metadata](#local-model-metadata) |
+| Model aliases | [Model aliases](#model-aliases) |
+| Internal agent models | [Internal agent models](#internal-agent-models) |
+| Keybindings | `[keybindings]`. Restart required |
+| Update checks | [Update checks](#update-checks) |
+| RTK rewrite | [RTK](/integrations/rtk) |
 
-Secrets are never stored in config. See [authentication and models](/authentication-and-models).
+## Changing settings
 
-Unknown keys in `config.toml` are a load error so typos fail loudly. Values that Rho clamps or normalizes warn at load time. Both `--save` and `/config` rewrite only the known schema and discard unknown keys, comments, and formatting. A complete sample file is in [Configuration file example](/configuration/full-example).
+In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. Type to find a category, Enter to open it, Esc to go back. Space toggles an on/off row in place. Changes save as soon as they change.
 
-## TUI updates
+| Category | Contains |
+| --- | --- |
+| Models | Conversation model and reasoning level |
+| Appearance | Theme, zen mode, reasoning display, cache miss notices, collapsed tool-output lines, output streaming |
+| Agent behavior | Permission mode, Auto classifier, advisor mode, delegation, concurrent agents, questionnaire timeout |
+| Context & limits | Auto compaction, max output bytes, prompt history |
+| Tools | Inline shell, edit tool, web search, and xAI image generation when the conversation provider is xAI |
+| Providers | Login, logout, model-list refresh, models.dev catalog refresh, startup update check |
 
-In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#commands) opens a category browser. **Models** contains the conversation model and reasoning level. **Appearance** contains the color theme, zen mode, reasoning-output toggle, cache miss notices, and collapsed tool-output lines. **Agent behavior** contains permission mode, the Auto classifier, advisor mode, delegation, and concurrent agents. **Context & limits** contains auto compaction, the max output-bytes limit, and prompt history. **Tools** contains the inline shell, edit tool, Web search settings, and xAI hosted image generation when the conversation provider is xAI. **Providers** contains login, logout, model-list refresh, models.dev catalog refresh, and the startup update check. Type in the category browser to find a category by any setting it contains, then press `enter` to open it. Press `esc` to return to the category browser.
+Apply timing:
 
-Settings save as soon as they change. The `permission_mode` row applies the selected policy before the next turn. The `reasoning` row cycles through `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` and applies to the current session. The `show_reasoning_output`, `zen_mode`, `cache_miss_notices`, and `theme` rows apply immediately, including during the current model turn. The `check_for_updates` row controls startup checks against GitHub releases. The `enable_subagents` row applies to the next session. The `agent_concurrency` row applies immediately, including during the current model turn. The `edit_tool` row applies before the next turn; Auto also follows provider changes mid-session. The `advisor_mode` row applies before the next turn; turning it on without an advisor model opens the model picker first. The auto-compaction rows edit its threshold and target percentages. When `cache_miss_notices` is on, a completed turn that re-billed a large uncached prompt (over 20K tokens or $0.10) inserts a transcript notice. `/info` always shows session and latest-request cache hit rates, plus re-billed totals once misses were counted. The `max_output_bytes` row saves for the next session.
+- Before the next turn: permission mode, edit tool, advisor mode, web search.
+- Immediately, including mid-turn: reasoning, theme, zen, reasoning display, cache miss notices, output streaming, concurrent agents.
+- Next session: `enable_subagents`, `max_output_bytes`, xAI image generation.
+- Restart: keybindings, and any direct edit of `config.toml`.
 
-[`/login`](/interactive-tui#commands), [`/logout`](/interactive-tui#commands), and [`/model`](/interactive-tui#commands) remain direct shortcuts for provider credentials and conversation-model selection. The corresponding `/config` rows provide the same picker flows. Use `/agents` to inspect reserved internal agents and configure their optional model overrides. Model pickers show entries from Rho's [model catalog](/authentication-and-models#selecting-models) and cached dynamic provider model lists for providers with available auth, and `/model provider/model` can switch explicitly. See the [provider pages](/authentication-and-models#providers) for per-provider auth and model details.
+When `cache_miss_notices` is on, a completed turn that re-billed a large uncached prompt, over 20K tokens or $0.10, inserts a transcript notice. `/info` always shows session and latest-request cache hit rates, plus re-billed totals once misses were counted.
+
+`/login`, `/logout`, and `/model` remain shortcuts for credentials and the conversation model. The matching `/config` rows open the same pickers. Use `/agents` to inspect reserved internal agents and set their model overrides.
 
 ## CLI overrides
 
-Passing `--provider`, `--model`, `--auth`, or `--reasoning` overrides the loaded config for the current invocation only. Add `--save` to write those choices into the config file as the future default.
+`--provider`, `--model`, `--auth`, and `--reasoning` override the loaded config for the current invocation. Add `--save` to write them as the future default.
 
 ```bash
 rho --provider openai --auth api-key --model gpt-5.6-sol
 rho --reasoning high
 rho --provider openai --auth api-key --model gpt-5.6-sol --save
-```
-
-These values select [authentication and models](/authentication-and-models). For the exact `--provider`/`--auth`/`--model` combination each provider expects, see its [provider page](/authentication-and-models#providers).
-
-Unknown keys in `config.toml` are a load error so typos fail loudly. Values that Rho clamps or normalizes (for example `display.max_tool_output_lines` below 1, or an unsupported `web_search.provider`) warn at load time. Prefer `/config` or a careful hand edit when you want durable settings. Both `--save` and `/config` rewrite only the known schema and discard unknown keys, comments, and formatting.
-
-You can load and save a specific config file with:
-
-```bash
 rho --config ~/.rho/config.toml
 ```
 
-`--no-system-prompt`, `--no-tools`, `--no-subagents`, and `--agent` are only available on the command line and apply only to the current run. `--no-system-prompt` and `--no-tools` must come before a subcommand (`rho --no-tools run "..."`). `--no-subagents` and `--agent` may appear before or after the subcommand. `--no-subagents` has the same tool and prompt behavior as setting `enable_subagents = false`.
+The exact `--provider`, `--auth`, and `--model` combination for each provider is on its [provider page](/authentication-and-models#providers).
 
-## Model-scoped system prompts
-
-Use the CLI to choose a model from a picker, or pass an exact target to edit directly:
-
-```bash
-rho model-prompt edit
-rho model-prompt edit --provider openai-codex
-rho model-prompt edit --provider openai-codex --model gpt-6-astra
-rho model-prompt edit --model @local
-```
-
-Without `--model`, the command opens a searchable model picker instead of editing the configured model automatically. Type to filter, press Enter to edit, or Esc/Ctrl+C to cancel without opening the editor or changing files. `--provider` narrows the list. The picker uses locally known models, including cached provider models, without requiring login or fetching model lists. The configured model is highlighted when it matches the provider filter. Pass an exact `--model` or `@alias` to skip the picker; non-interactive callers must do this explicitly. Provider and model flags can also go before `model-prompt`, but do not pass the same flag in both places.
-
-The command uses `$VISUAL`, falling back to `$EDITOR`. Editor arguments are supported, for example `EDITOR='code --wait'`. Configure an editor that waits until you finish editing; Rho validates and saves when the process exits. This command works offline and does not start a session, access provider credentials, or change your configured model. Use `rho --config /path/to/config.toml model-prompt edit` to select a different configuration file.
-
-Rho first finds an existing file by its frontmatter, even if you renamed it. If none matches, it creates a draft with the resolved provider/model and `mode: append`. It creates the directory as needed and, on a valid save, writes a file named `<provider>_<model>.md`. Filename components preserve ASCII letters, numbers, `.`, `-`, and `_`; other characters become `-`, with consecutive replacements collapsed. A leading `.` gets an `_` prefix. Occupied names receive `-2.md`, `-3.md`, and so on instead of being overwritten.
-
-Edits use a private draft and an atomic save. Leaving the draft unchanged cancels creation or leaves an existing file untouched. Invalid edits, changed provider/model identity, and editor failures preserve the draft and report its recovery path. The command refuses to overwrite a file changed during editing, and refuses read-only or symlink targets. Running sessions keep their loaded instructions until a reload boundary below; there is no TUI configuration command for this feature.
-
-Put Markdown files directly in `~/.rho/model-prompts/` to tune Rho's behavioral instructions for a particular provider and model. Filenames are arbitrary. Identity comes from required YAML frontmatter:
-
-```markdown
----
-provider: openai-codex
-model: gpt-6-astra
-mode: append
----
-Prefer direct implementation over extended planning.
-When a tool fails, inspect the error before retrying.
-```
-
-`provider` and `model` must match the resolved provider and model IDs exactly, not a display name or model alias. The optional `mode` is `append` by default:
-
-- `append` puts the Markdown body after Rho's default behavioral prompt, before runtime and project instructions.
-- `replace` substitutes the body for that default behavioral block. It does **not** remove tool contracts, the working directory and model identity, rendering guidance, `AGENTS.md`, available skills, MCP instructions, or additional agent instructions. It does not change permission enforcement.
-
-This directory is global only. Rho does not load project-local model prompts, recurse into subdirectories, or apply wildcards or provider-wide inheritance. Every `.md` file must have valid frontmatter and a nonempty body. Unknown fields or modes, unreadable files, and duplicate provider/model pairs are errors, including errors in files for other models. A missing directory or no matching file uses the default prompt.
-
-### Switching and resuming
-
-Rho reads model prompt files at startup, `/new`, session resume, conversation-tree branch selection, and model switches, not on every turn. Switching prepares the target prompt before changing the active model. An invalid catalog leaves the previous model and prompt active. An in-progress turn finishes before an interactive switch takes effect. Internal recovery after a failed save restores the saved state without reloading prompt files.
-
-The next request uses the target model's prompt. Rho removes the previous model's custom system instructions rather than appending another patch. Conversation messages and tool results remain, so a switch is not a clean behavioral reset. Switching back reads that model's file again. There is no file watcher or separate reload command.
-
-Prompt-source diagnostics identify the selected file and whether it appends or replaces. Session snapshots record its display path, mode, SHA-256 fingerprint, and source byte accounting. Paths with non-UTF-8 bytes use the same replacement characters as diagnostics. Resume uses current file contents and reports changes from a recorded fingerprint.
-
-Failed-save recovery restores the assembled system text from saved history, together with its recorded provenance and source accounting. It also rebinds the advisor's executor prompt, so advisor context agrees with the restored conversation. Recovery does not need the original prompt file or its overlay body. Older snapshots without source accounting clear that diagnostic list rather than showing sources from the abandoned prompt. Launch-owned whole-prompt replacements and `--no-system-prompt` remain in force for new conversations after recovery.
-
-These rules apply to interactive, headless, ACP, and native Rho subagent sessions that use normal prompt assembly. Each subagent matches its own resolved model. `--no-system-prompt` and agent definitions with an explicit whole-prompt replacement bypass model prompt files. Dedicated internal requests such as summarization and title generation, and delegated external CLI runtimes, keep their own prompt behavior.
-
-Model prompts are separate from [prompt templates](#prompt-templates), which expand reusable user messages.
-
-## Permission modes
-
-`permission_mode` must be `bypass`, `auto`, `allow_edits`, `plan`, or `supervised`. Missing values default to `bypass`; an unrecognized value is a configuration error. The setting controls whether Rho allows, denies, classifies, or asks before security-sensitive tool capabilities. [`rho acp`](/integrations/acp) can ask the editor host for approval. Headless `rho run` cannot prompt.
-
-```mermaid
-flowchart LR
-    bypass[bypass: allow all] --> tools[Sensitive tools]
-    auto[auto: classifier] --> tools
-    allowEdits[allow_edits: tracked edits] --> tools
-    plan[plan: deny writes, process, outside reads] --> tools
-    supervised[supervised: ask first] --> tools
-```
-
-| Mode | Config string | Default? | Behavior |
-| --- | --- | --- | --- |
-| Bypass | `bypass` | yes (new installs / unset) | No policy checks. Every capability allowed. |
-| Auto | `auto` | no | Same gate as Allow edits. A configured classifier model decides allow or deny for the rest. |
-| Allow edits | `allow_edits` | no | In-workspace writes to git-tracked files are allowed. Later writes to a path already allowed this session are also allowed. Human approval for other new files, processes, reads outside the workspace, and unknown capabilities. |
-| Plan | `plan` | no | Investigate the workspace. File writes, process execution, and reads outside the workspace are denied. |
-| Supervised | `supervised` | no | Human approval for writes, processes, reads outside the workspace, and unknown capabilities. |
-
-- `bypass` is the default and preserves unrestricted tool behavior. The status line shows **Bypass** in warning style so the open posture stays visible.
-- `auto` uses the same capability gate as `allow_edits`. A permission-classifier model reviews gated requests instead of opening the approval UI. It runs in two stages: a fast low-reasoning screen answers `allow` or `escalate` in one token, and only an escalation pays for a second review at the configured classifier reasoning level. The stages share a transcript cache breakpoint; raising that reasoning keeps the screen cheap and forgoes a message-cache hit on the review. Denied calls return a tool error and the run continues. After three consecutive or twenty total classifier denials, Rho escalates to the human approval prompt in the TUI or fails closed in headless runs; a human decision clears both counts. Auto requires a configured classifier model; choosing it from `/config` opens the model picker when none is set, starting interactive Auto without one opens the same picker, and headless `rho run` fails at startup without one. Escaping the startup picker falls back to Supervised so gated tools still ask a human.
-- `allow_edits` lets the agent edit git-tracked files in the workspace without a prompt. After a new in-workspace file is allowed once this session, later edits to that path also skip the prompt. Gitignored paths, writes outside the workspace (including the user's global `AGENTS.md`, skill trees, and agent definitions), process execution, and other reads outside the workspace still ask first. Workspace-scoped reads, the user's global `~/.rho/AGENTS.md`, skill trees (`~/.rho/skills`, `~/.agents/skills`), and agent definitions (`~/.rho/agents`, `~/.agents/agents`), network access, skills, and instruction discovery do not prompt. `allow-edits` is accepted as an alias.
-- `plan` allows investigation of the workspace, the user's global `AGENTS.md`, skill trees, and agent definitions, but denies file writes, process execution, and other reads outside the workspace. There is no attach-directory command; switch permission mode to read a path outside the workspace.
-- `supervised` asks for confirmation before file writes, process execution, and reads outside the workspace. Workspace-scoped reads, the user's global `AGENTS.md`, skill trees, and agent definitions, network access, skills, and instruction discovery do not prompt.
-
-Auto's classifier sees completed questionnaire answers alongside the questions they answer. If you approve an action through a questionnaire, you do not need to repeat that approval in a chat message. Approval applies to the action described by the question, not unrelated actions. Unanswered questions and defaults are not consent; ordinary tool output remains excluded from the classifier transcript.
-
-Configure the classifier under **Agent behavior** in `/config`, or in config as `[internal_agents.permission-classifier]`. Rho does not pick a default classifier model. Override the mode for one invocation with `--permission-mode bypass|auto|allow_edits|plan|supervised` (not persisted).
-
-Use `/permissions` to show the current mode, or `/permissions bypass|auto|allow_edits|plan|supervised` to change it. `allow-edits` also works. Changes save to configuration, just like **Agent behavior** > **Permission mode** in `/config`. `/permissions auto` asks you to choose a classifier model if none is configured; cancelling keeps the previous mode. The command is unavailable while a model turn is running.
-
-An interactive mode change applies before the next turn and preserves the current session ID and history, but clears every remembered **Allow for session** approval. Remembered path grants stay bound to the approver that allowed them. A classifier grant in Auto does not skip the human gate after switching to Allow edits; a human grant may. Resetting or resuming a different session starts without inherited path grants. In a supervised approval prompt, the default focus is **Deny**. Choose **Allow once**, **Allow for session**, or **Deny**. A session approval remembers only the exact structured capability request for the current session. Pressing Escape denies the request and cancels the current run; choosing **Deny** with Enter rejects only that operation so the run can continue.
-
-Non-interactive `rho run` sessions cannot display approval prompts. Supervised and Allow edits operations that require approval therefore fail closed instead of being approved automatically.
-
-Permission modes are application policy checks, not an operating-system sandbox. Rho and its tools still run with the current user's permissions, and tools must correctly declare and authorize their capabilities for the policy to cover them. In restricted modes, capability classes that this Rho version does not recognize fail closed: Plan denies them, Supervised and Allow edits require approval, and Auto sends them to the classifier.
+`--no-system-prompt`, `--no-tools`, `--no-subagents`, and `--agent` apply only to the current run and are not saved. `--no-system-prompt` and `--no-tools` must come before a subcommand (`rho --no-tools run "..."`). `--no-subagents` and `--agent` may appear before or after the subcommand. `--no-subagents` matches `enable_subagents = false`.
 
 ## Reasoning options
 
-`reasoning` is the user-facing thinking level. Supported values are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. For supported OpenAI Responses providers, `off` omits the reasoning object and other levels send `reasoning.summary = "auto"` with the matching effort value.
+`reasoning` is the thinking level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`.
 
-Rho reads each model's available effort values from cached [models.dev](https://models.dev/) metadata. The interactive reasoning control skips levels the current model does not advertise, so models without `minimal`, `xhigh`, or `max` do not expose those choices. `off` remains available for every model: Rho omits reasoning by default, or sends `effort: "none"` when the model explicitly advertises that value. Local Ollama and [config-defined OpenAI-compatible hosts](/providers/openai-compatible) send `reasoning_effort`, including `"none"`, when capability metadata is unavailable or the model supports reasoning. Rho omits the field for models whose metadata reports reasoning as not configurable, because those APIs treat a missing field as thinking on. Switching models also normalizes an unavailable selection to the closest lower supported level. When capability metadata is unavailable or uses an unsupported reasoning scheme, Rho preserves the full level list rather than guessing. You can override metadata locally with `supported_reasoning_levels = ["off", "low", "medium", "high"]` in a model entry in `~/.rho/models.toml`. See [Local model metadata](#local-model-metadata).
+Rho reads each model's advertised effort values from cached [models.dev](https://models.dev/) metadata and skips the rest in the TUI. `off` stays available for every model. Rho omits reasoning by default, or sends `effort: "none"` when the model advertises that value. Override the list with `supported_reasoning_levels` in `~/.rho/models.toml`. See [Local model metadata](#local-model-metadata).
 
-`show_reasoning_output` controls whether reasoning text is displayed in the TUI transcript. Rho retains received reasoning text even while it is hidden or zen mode is enabled. Changing the setting from `/config` immediately shows or hides reasoning throughout the current transcript, including earlier turns and the live response. When reasoning text is hidden, the TUI shows `Thinking...` in its place until the reasoning phase finishes, then replaces it with a `Thought for …` summary. When reasoning text is shown, the same summary is appended after the reasoning block. Durations use a compact progressive format such as `3.2s`, `2m 5s`, or `1h 2m`. It defaults to `true`.
+For supported OpenAI Responses providers, `off` omits the reasoning object. Other levels send `reasoning.summary = "auto"` with the matching effort.
 
-If a response interleaves answer text and reasoning, Rho keeps those segments in arrival order regardless of visibility. Hidden reasoning therefore leaves its `Thought for …` receipt between answer segments, rather than joining the answer into one block. Zen mode hides that receipt too; toggling either setting does not merge or reorder the stored segments.
+Local Ollama and [config-defined OpenAI-compatible hosts](/providers/openai-compatible) send `reasoning_effort`, including `"none"`, when capability metadata is missing or the model supports reasoning. Rho omits the field when metadata says reasoning is not configurable, because those APIs treat a missing field as thinking on. Switching models maps an unavailable level to the closest lower supported level. When metadata is missing or uses an unsupported scheme, Rho keeps the full list rather than guessing.
 
-`zen_mode` hides tool cards, reasoning blocks, and the `Thinking...` placeholder so the transcript shows only message text. The live activity rail, subagent rows, and background-process rows stay visible so you can still see progress, and the status row displays `zen` while the mode is enabled. It defaults to `false`. Changing it from `/config` applies immediately to the current transcript and live turn UI. Tools and reasoning still run; only their transcript display is suppressed.
-
-`output_streaming` controls when received assistant and reasoning text becomes visible. It defaults to `live`; `paragraph` reveals completed paragraphs, and `off` waits for message boundaries such as a tool handoff or response completion. Change it with `/config` → **Appearance** → **Output streaming** or `Alt+S`. Both controls save the same preference and apply during a turn. Switching reveals held text without hiding earlier output. Provider generation and tools are unaffected. See [Text streaming](/interactive-tui#text-streaming).
-
-`theme` selects the interactive TUI color theme. The default is `terminal` (match the host palette). Named built-ins (Dracula, Nord, One Half, and others) and custom Windows Terminal JSON under `~/.rho/themes/<id>.json` (or `$RHO_HOME/themes/`) are listed in [Theme](/interactive-tui/theme). Change it with `/theme` or `/config` → **Appearance** → **Theme**. The picker previews live; Enter saves.
+Whether reasoning text is shown, zen mode, and output streaming are display settings. See [Transcript display](/interactive-tui/transcript#display-modes) and [Text streaming](/interactive-tui#text-streaming).
 
 ## Advisor mode
 
-Advisor mode gives the agent an `advisor` tool backed by a second model that reviews the session transcript without tools of its own.
+Advisor mode gives the agent an `advisor` tool backed by a second model. That model reviews the session transcript and has no tools of its own.
 
 Details: [Advisor mode](/configuration/advisor-mode).
 
 ## Prompt templates
 
-The easiest way to add a reusable prompt is to create a Markdown or text file. The filename becomes the slash command and the file contents become its prompt:
+A Markdown or text file becomes a slash command. The filename is the command. The file contents are the prompt.
 
 - `~/.rho/prompts/review.md` makes `/prompt:review` available everywhere.
 - `.rho/prompts/review.md` makes `/prompt:review` available in that project and its subdirectories.
 - A project file overrides a global file with the same name.
 
-For example, `~/.rho/prompts/review.md` could contain:
-
 ```text
 Review this code for correctness, security, and maintainability.
 ```
 
-Templates can also be defined inline in `config.toml` when a separate file would be unnecessary:
+Inline config overrides a file with the same name:
 
 ```toml
 [prompt_templates]
 review = "Review this code for correctness, security, and maintainability."
 ```
 
-Inline config templates override files with the same name. Typing `/prompt:review src/config.rs` expands to `Review this code for correctness, security, and maintainability. src/config.rs`. Press `tab` in the command palette to expand without sending, or press `enter` to expand and send. Template names may contain letters, numbers, `-`, and `_`, and cannot duplicate built-in command names. Restart Rho after adding or editing templates.
+`/prompt:review src/config.rs` expands to the template text plus `src/config.rs`. Tab in the command palette expands without sending. Enter expands and sends. Names may contain letters, numbers, `-`, and `_`, and cannot duplicate built-in command names. Restart Rho after adding or editing templates.
 
 ## Model aliases
 
-`[model.aliases]` defines short names for concrete models so a pinned model id lives in one place instead of being repeated across config and agent definitions. An alias value is either `provider/model` or a bare model id, which keeps whichever provider is otherwise selected. Model ids may contain `/`, as OpenRouter ids commonly do:
+`[model.aliases]` maps a short name to a concrete model so a pinned id lives in one place. A value is `provider/model` or a bare model id, which keeps whichever provider is otherwise selected. Model ids may contain `/`.
 
 ```toml
 [model.aliases]
@@ -214,7 +120,7 @@ fast = "gpt-5.6-luna"
 openrouter-deep = "openrouter/anthropic/claude-sonnet-4"
 ```
 
-Reference an alias with an `@` prefix. The explicit prefix distinguishes aliases from concrete model ids and makes a missing or misspelled alias an immediate configuration error:
+Reference an alias with `@`. The prefix distinguishes aliases from concrete ids, so a missing alias is a configuration error.
 
 ```toml
 [model]
@@ -224,22 +130,20 @@ model = "@deep"
 model = "@fast"
 ```
 
-The same syntax works with `rho --model @deep`, `/model @deep` in the interactive TUI, and `model: @deep` in [agent definition frontmatter](/subagents). Updating a model is then a one-line change to the alias table rather than an edit per file.
-
-Rho resolves aliases to concrete ids before any model-specific behavior, holds no opinion about which model a name should map to, and never rewrites your mapping. A concrete model id is always interpreted literally, even when an alias has the same name. The `/config` category browser shows the active mapping under **Models**, and saving config preserves the `@deep` reference rather than its expansion while the selected concrete model still matches. Alias values must be concrete models and therefore cannot begin with `@`. Every provider-qualified alias is validated when configuration loads, including aliases that are not currently selected.
+The same syntax works with `rho --model @deep`, `/model @deep`, and `model: @deep` in [agent definition frontmatter](/subagents). Rho resolves aliases before any model-specific behavior and never rewrites the mapping. A concrete model id is always literal, even when an alias has the same name. Saving config keeps the `@deep` reference rather than its expansion while the selected concrete model still matches. Alias values must be concrete models, so they cannot begin with `@`. Every provider-qualified alias is validated at load, including aliases that are not selected.
 
 ## Local model metadata
 
 `~/.rho/models.toml` overrides catalog fields for one model. `RHO_HOME` moves this file with the rest of `~/.rho`. `RHO_MODELS_PATH` selects a different file.
 
-Without this file, Rho uses the catalog window. For GPT-5.5 and GPT-5.6 that is the [models.dev](https://models.dev/) input limit. Codex GPT-5.5 keeps a 400k effective window because that is the product limit. Set `usable_context_window` to raise or cap the budget Rho shows and uses for [auto compaction](#auto-compaction):
+Without this file, Rho uses the catalog window. For GPT-5.5 and GPT-5.6 that is the [models.dev](https://models.dev/) input limit. Codex GPT-5.5 keeps a 400k effective window because that is the product limit. Set `usable_context_window` to raise or cap the budget Rho shows and uses for [auto compaction](/configuration/compaction):
 
 ```toml
 [models."openai-codex/gpt-5.6-sol"]
 usable_context_window = 272000
 ```
 
-The key is `provider/model`. `usable_context_window` is the budget Rho displays and compacts against. You can also set `effective_context_window`. The same file can pin `supported_reasoning_levels`. Set `catalog` to a models.dev provider slug, or to `provider/model`, to borrow that catalog row for a custom host. Local values win over catalog data. Restart Rho or switch models after you edit the file.
+The key is `provider/model`. You can also set `effective_context_window` and `supported_reasoning_levels`. Set `catalog` to a models.dev provider slug, or to `provider/model`, to borrow that catalog row for a custom host. Local values win over catalog data. Restart Rho or switch models after you edit the file.
 
 ```toml
 [models."cliproxyapi/claude-sonnet-4-5"]
@@ -253,11 +157,13 @@ The catalog window can sit above a model's long-context price tier. Rho does not
 
 ## Internal agent models
 
-Rho uses reserved internal agents to generate session titles, evaluate `/goal` completion, answer the [`advisor`](/configuration/advisor-mode) tool, and classify permission requests in Auto mode. Most roles follow the active conversation provider, model, and auth by default. Run `/agents`, select the role, and press Enter to choose a separate model. The picker includes **Use conversation model**, which removes that role's override. Changes apply to the next invocation and save at once.
+Rho uses reserved internal agents for session titles, `/goal` completion, the [`advisor`](/configuration/advisor-mode) tool, and Auto permission classification. Most roles follow the active conversation provider, model, and auth. Run `/agents`, select the role, and press Enter to choose a model. **Use conversation model** removes that role's override. Changes apply to the next invocation and save at once.
 
-The `advisor` and `permission-classifier` roles have no default and no conversation-model fallback. The advisor picker omits the **Use conversation model** row, and advisor mode stays inactive until a model is chosen. Auto mode opens the permission-classifier picker when no model is set. Canceling from `/config` keeps the previous mode; canceling the startup picker falls back to Supervised. The permission-classifier role defaults to low reasoning when a model is first selected. The advisor picker also lists `claude-code/…` rows when the `claude` binary is installed; choosing one runs the advisor on [Claude Code](/configuration/advisor-mode#claude-code-as-the-advisor) instead of a Rho provider. When the advisor model supports configurable reasoning, Rho carries the previous level (or the advisor default) onto the new model. `/config` under **Agent behavior** exposes **Advisor model**, **Advisor reasoning**, **Permission classifier model**, and **Permission classifier reasoning** next to **Permission mode** and **Advisor mode**.
+`advisor` and `permission-classifier` have no default and no conversation-model fallback. Advisor mode stays inactive until a model is chosen. Auto opens the classifier picker when no model is set. Cancelling from `/config` keeps the previous mode. Cancelling the startup picker falls back to Supervised. The classifier defaults to low reasoning when a model is first selected.
 
-Overrides are stored by stable internal agent ID:
+The advisor picker also lists `claude-code/…` rows when the `claude` binary is installed. Choosing one runs the advisor on [Claude Code](/configuration/advisor-mode#claude-code-as-the-advisor). When the advisor model supports configurable reasoning, Rho carries the previous level, or the advisor default, onto the new model.
+
+`/config` → **Agent behavior** exposes advisor model, advisor reasoning, permission classifier model, and permission classifier reasoning.
 
 ```toml
 [internal_agents.session-title]
@@ -266,27 +172,25 @@ model = "gpt-5.6-luna"
 auth = "api-key"
 ```
 
-Model aliases work in these entries. Rho keeps reading the old `[title]` section and flat title settings for compatibility, but rewrites them as `[internal_agents.session-title]` on the next save.
+Model aliases work here. Rho still reads the old `[title]` section and flat title settings, and rewrites them as `[internal_agents.session-title]` on the next save.
 
 ## Edit tool
 
-`edit_tool` under `[behavior]` selects the file edit preference exposed to the model. It defaults to `auto`. Supported values are:
+`edit_tool` under `[behavior]` selects the file edit tool exposed to the model. It defaults to `auto`. Only one edit tool is registered at a time.
 
 | Value | Exposed tool | Format |
 | --- | --- | --- |
-| `auto` | preferred for the active provider | Built-in catalog; switches when the provider changes |
-| `hashline` | `edit` | Snapshot-tagged, line-anchored `PUT` and `CUT` operations |
+| `auto` | preferred for the active provider | Built-in catalog. Switches when the provider changes |
+| `hashline` | `edit` | Snapshot-tagged, line-anchored `PUT` and `CUT` |
 | `apply_patch` | `apply_patch` | Codex-style, multi-file patch documents |
 | `str_replace` | `str_replace` | Exact `old_string` to `new_string` replacement in one file |
-
-Only one edit tool is registered at a time. Each concrete format keeps its own model-facing name. Change it from **Tools** > **Edit tool** in `/config`, or set it directly:
 
 ```toml
 [behavior]
 edit_tool = "auto"
 ```
 
-`auto` is a preference, not a tool name. Rho keeps `auto` in config and advertises the preferred concrete format for the active chat provider. Custom providers can override their auto choice with `edit_tool` in the provider table:
+`auto` is a preference, not a tool name. Rho keeps `auto` in config and advertises the concrete format the active provider's models were trained on. Custom providers can override that choice:
 
 ```toml
 [providers.custom.vllm]
@@ -294,160 +198,54 @@ base_url = "http://127.0.0.1:8000/v1"
 edit_tool = "apply_patch"
 ```
 
-Built-in providers have no per-provider override. They always use the table below unless you pin a global `behavior.edit_tool`.
-
-Many models learn to edit files inside a first-party harness that only offers one edit tool. Codex trains with `apply_patch`. Claude Code and several other agent stacks train with exact string replacement. Auto picks that familiar surface so the model uses the format it was trained on. Providers without a clear first-party match fall back to Rho's `hashline` `edit` tool.
+Built-in providers have no per-provider override. They use this table unless you pin a global `behavior.edit_tool`.
 
 | Provider | Preferred format | Why |
 | --- | --- | --- |
-| `openai-codex` | `apply_patch` | Codex harness trains on Codex-style patches |
-| `anthropic` | `str_replace` | Claude Code harness trains on exact string replace |
-| `xai` | `str_replace` | First-party agent tooling favors string replace |
-| all others | `hashline` | Rho default when no first-party match or custom override is known |
+| `openai-codex` | `apply_patch` | Codex trains on Codex-style patches |
+| `anthropic` | `str_replace` | Claude Code trains on exact string replace |
+| `xai` | `str_replace` | First-party agent tooling uses string replace |
+| all others | `hashline` | Rho default when no first-party match is known |
 
-Pinned values (`hashline`, `apply_patch`, `str_replace`) stay fixed across provider changes. From `/config`, the change applies before the next turn: the tool list rebuilds and the session gets a short notice with the new tool schema. Auto mode also applies that live switch when you change providers mid-session. Direct `config.toml` edits still need a restart. Pin a format when you want one surface for every provider.
+Pinned values stay fixed across provider changes. From `/config`, the change applies before the next turn: the tool list rebuilds and the session gets a short notice with the new schema. Auto also switches live when you change providers mid-session. Direct `config.toml` edits need a restart. Format details: [Hash-line edit format](/tools-workspace/edit-format).
 
-## Web search
+## Behavior
 
-Choose **Tools → Web search** in `/config`. Mode, backend, and connection settings open a picker so you can select a value directly. Backend pages stay available in every mode, and OpenAI and Exa pages show settings for both connections. Editing a backend does not select it. Changes made during a turn apply to the next turn.
+`enable_subagents` controls the `agent` and `agents` tools. It defaults to `true`. Set it to `false` to remove both tools and tell the model not to delegate. The change applies to the next session. `--no-subagents` does the same for one run.
 
-Search mode controls where queries go:
+`agent_concurrency` is the maximum number of delegated agents that may run at once, including background runs. It defaults to `10` and must stay between `1` and `64`. `/config` applies immediately: in-flight agents keep their slots, and queued agents start as capacity frees. `RHO_AGENT_CONCURRENCY` is no longer read. Claude-cli runs also take a nested cap of 2 by default (`RHO_CLAUDE_AGENT_CONCURRENCY`), always `min(total, claude_cap)`. Cursor runs take only the global pool. There is no nested Cursor cap yet.
 
-| Mode | Routing |
-| --- | --- |
-| `auto` | Prefer native search when the active chat path supports it; otherwise use the selected backend. |
-| `backend` | Always use the selected backend, even when the chat provider supports native search. |
-| `off` | Disable web search. |
+`inline_shell` selects the shell for `!` and `!!` in the TUI. It defaults to `bash` on macOS and Linux and `powershell` on Windows. See [inline shell](/inline-shell).
 
-`backend` selects one of `openai`, `exa`, `brave`, or `firecrawl`. A failed request does not fall through to another service. The model cannot override this selection with tool arguments. Native search means the chat provider's own search tool, not Firecrawl Cloud.
+`experimental_workspace_rewind` enables native file-tool checkpoints and `/rewind`. It defaults to `false`. Restart after changing it. Checkpoints cover `write` and the selected edit tool. Rho warns when a turn ran a shell command, because shell, Git, process, network, database, and service effects cannot be restored. `/tree` branches conversation state only. `/rewind` branches conversation state and restores captured files. Git commands stay separate.
 
-For example, force a self-hosted Firecrawl deployment:
+`advisor_mode` controls whether the advisor tool is available. It defaults to `false`. See [Advisor mode](/configuration/advisor-mode).
 
-```toml
-[web_search]
-mode = "backend"
-backend = "firecrawl"
+## RTK
 
-[web_search.firecrawl]
-api_base_url = "http://localhost:3002"
-```
-
-Omit `api_base_url` to use Firecrawl Cloud at `https://api.firecrawl.dev`. Cloud requires a key; a self-hosted endpoint may omit authentication. Save keys through the TUI credential editor or set `FIRECRAWL_API_KEY`. Keys are not written into backend configuration tables.
-
-### Backend connections
-
-Each backend has its own settings page. Editing an endpoint or key does not select that backend. API base URLs accept HTTP or HTTPS and preserve reverse-proxy path prefixes. Do not include the operation path: Firecrawl appends `v2/search`, for example. URLs must not contain embedded credentials, query strings, or fragments. Clear the URL or choose its reset row to restore the default.
-
-| Backend | API base URL default | Connection |
-| --- | --- | --- |
-| OpenAI | `https://api.openai.com/v1` | `api` or `codex` |
-| Exa | `https://api.exa.ai` | `api` or `mcp` |
-| Brave | `https://api.search.brave.com` | API |
-| Firecrawl | `https://api.firecrawl.dev` | API, including self-hosted deployments |
-
-Set `web_search.openai.connection` explicitly to `codex` to use a Codex login. Codex uses its fixed ChatGPT endpoint; custom API URLs never receive Codex OAuth tokens. API mode uses API-key authentication.
-
-Set `web_search.exa.connection` to `mcp` to use Exa MCP. Its separate `web_search.exa.mcp_url` defaults to `https://mcp.exa.ai/mcp`. Exa API mode does not switch to MCP when its key is missing. Both OpenAI and Exa default to API connections.
-
-TUI changes to mode, backend, endpoint, connection, and credentials apply before the next turn. An active turn keeps its existing route and credential snapshot. Future delegated agents inherit the applied settings; already-started agents keep their bound settings. **Next turn route** shows the saved connection and resolved URL, including whether it is default or custom. If applying settings fails, the next turn does not start. Direct `config.toml` edits require a restart.
-
-**Test connection** asks before sending a test query through the selected backend; the request may incur charges. It tests the backend even when the search mode is Auto or Off. A successful server health check alone does not prove that a self-hosted deployment can search.
-
-Firecrawl uses the [v2 search API](https://docs.firecrawl.dev/api-reference/endpoint/search). Self-hosted support depends on the deployed version and its search infrastructure. This integration does not enable Firecrawl scraping: `includeContent` retains Rho's existing page-fetch behavior.
-
-### Migrating older search settings
-
-- Legacy `hosted = false` plus `provider = "disabled"` becomes `mode = "off"`. Legacy provider names remain case-insensitive. A backend-only or endpoint edit preserves that mode; only an explicit `mode` overrides legacy routing.
-- A concrete legacy provider becomes the selected backend. `hosted` determines Auto versus Backend mode.
-- Legacy `provider = "auto"` becomes the OpenAI backend with a warning. The old OpenAI → Exa → Brave failure chain is removed.
-- Legacy native-only configuration (`hosted = true`, `provider = "disabled"`) requires an explicit mode choice. Rho rejects that ambiguous migration rather than silently enabling a client backend. Set `mode = "off"` to prevent search, or explicitly choose Auto and its backend.
-- Legacy OpenAI and Exa users receive a warning to select their connection. Choose `codex` or `mcp` if that was the previously implicit transport.
-
-Existing flat `web_search_openai_api_key`, `web_search_exa_api_key`, and `web_search_brave_api_key` values still migrate to the configured credential store. Empty strings are ignored.
-
-`advisor_mode` controls whether the [`advisor`](/configuration/advisor-mode) tool is available. It defaults to `false`.
-
-`enable_subagents` controls whether the `agent` and `agents` tools are available. It defaults to `true`. Set it to `false` to remove both tools and instruct the model not to attempt to use subagents. The change applies to the next session.
-
-`agent_concurrency` is the maximum number of delegated agents that may execute at once, including background runs. It defaults to `10` and must stay between `1` and `64`. Change it from **Agent behavior** > **Concurrent agents** in `/config`, or set `behavior.agent_concurrency` in config. `/config` applies immediately: in-flight agents keep their slots, and queued agents start as capacity frees. `RHO_AGENT_CONCURRENCY` is no longer read; env-only deployments must set `behavior.agent_concurrency` instead. Claude-cli runs also take a nested cap of 2 by default (`RHO_CLAUDE_AGENT_CONCURRENCY`), always `min(total, claude_cap)`. Cursor runs take only the global pool; there is no nested Cursor cap yet.
-
-`inline_shell` selects the shell used for `!` and `!!` commands in the [interactive TUI](/interactive-tui). It defaults to `bash` on macOS and Linux and `powershell` on Windows. Change it from **Tools** > **Inline shell** in `/config`, or set a detected shell name or custom executable path in config. Rho keeps a configured custom path in the picker even when it is not on `PATH`. See [inline shell](/inline-shell).
-
-`experimental_workspace_rewind` enables native file-tool checkpoints and `/rewind`. It defaults to `false`. Restart Rho after changing it. Checkpoints cover `write` and the selected edit tool (`hashline`, `apply_patch`, or `str_replace`). Rho warns when a turn ran a shell command because shell, Git, process, network, database, and service effects cannot be restored. `/tree` branches conversation state only, `/rewind` branches conversation state and restores captured files, and Git commands remain separate operations.
-
-## xAI image generation
-
-When the conversation provider is xAI, Rho attaches the hosted `image_generation` tool on each create turn. It defaults to on. Set `image_generation = false` under `[xai]` to turn it off:
-
-```toml
-[xai]
-image_generation = false
-```
-
-The setting is xAI-only. Other providers ignore it. The omitted key means on, and Rho does not write the `[xai]` table unless the value is off. In the TUI, `/config` → **Tools** shows the same toggle when the conversation provider is xAI. The change applies to the next session. See [xAI](/providers/xai).
-
-Generated-image previews are resized to fit a 1,024 × 768 pixel box without changing the original image. Preview decoding uses the same safety budgets as pasted images: at most 4,096 pixels per dimension and 80 MiB of decoder allocation. Images beyond those budgets can still be returned by the provider, but their previews are unavailable.
-
-## Auto compaction
-
-Changes to these settings through `/config` apply to the active session when it is idle, before the next automatic check or model turn. Edits during a model turn or compaction wait for that operation to finish. Applying settings preserves the current provider-calibrated context estimate. External file edits require restarting Rho.
-
-`auto_compact` enables summarizing older conversation history when the estimated current context approaches the effective model window. It is disabled by default. `compact_threshold_percent` controls the trigger point. `compact_target_percent` controls the post-compaction target as a percent of the effective model window; it must stay below the threshold, so values at or above `compact_threshold_percent` are clamped to one below it when the config is loaded or saved. Rho keeps the recent verbatim tail by token budget and safe tool-call boundaries, not by message count.
-
-The status line and automatic checks before prompts and provider steps share the same context accounting. After a successful response, Rho uses that request's provider-reported prompt tokens, including cache hits, as a baseline and estimates messages added since that request. It does not add prompt usage across requests. The baseline survives ordinary turns and background metadata refreshes that leave the model settings unchanged, but history replacement, compaction, or a model or tool change invalidates it. It is not saved: a resumed session uses the local estimate until its first successful response reports usage. Provisional streaming usage from a failed or cancelled request does not replace the baseline.
-
-Text-summary compaction converts its retained-tail budget into local-estimator units using the observed token ratio. The target is approximate, not a tokenizer guarantee: summary length, fixed instructions, and indivisible tool-call groups can keep the result above it.
-
-`/info` includes compaction counts and decisions. For structured output, ask the agent to call `rho` with `action = "compaction"`. The report includes the current calibrated and local counts, provider request baseline, configured window, threshold, target, and the last idle and SDK checks with skip reasons. A check requesting compaction is not proof that it completed. `Completed` counts committed compactions, including unchanged results; `Last completed` shows the last before/after local token counts and whether they decreased, stayed unchanged, or increased. This accounting survives resume and appears under `completed` in structured output. Failed or cancelled attempts do not replace the last committed result; their `compact` card shows the error or cancellation. These diagnostics contain token counts and configuration, not conversation text.
-
-For `openai-codex` and API-key `openai`, Rho prefers OpenAI server-side compaction via `POST /responses/compact`. Both use the Responses API so the encrypted compaction artifact stays replayable. The threshold still decides when auto compaction runs, but `compact_target_percent` applies only if that path falls back to text-summary compaction. Catalog gateways that reuse the Responses shape (for example `opencode-go`) do not serve that endpoint, so they go straight to text-summary compaction.
-
-Manual `/compact` ignores `compact_target_percent` when it would keep everything: the retained tail is capped at half the current estimated context, so an explicit request can remove history even on large-window models that have not reached the auto threshold. Interactive pre-prompt auto-compaction uses this same task and cap; automatic compaction between SDK provider steps uses the configured window target. An unchanged compactor result preserves any still-valid provider baseline rather than making the context count drop back to the local estimate.
-
-Auto compaction affects only future model context. Session files remain append-only and keep the original transcript entries, then append a replacement-history entry used for resume. It is not a privacy or deletion feature.
-
-Model metadata supplies the context window when available. Override a model's window in `~/.rho/models.toml`. See [Local model metadata](#local-model-metadata).
+`rtk` enables built-in [RTK](/integrations/rtk) command rewriting when the `rtk` binary is available. It defaults to `true`. Set `rtk = false` to leave shell commands unchanged.
 
 ## Tool output limit
 
-`max_output_bytes` controls how much output Rho keeps from [tool](/tools-workspace) calls such as command output, file reads, and loaded skills. It defaults to `64000`.
+`max_output_bytes` is how much output Rho keeps from [tool](/tools-workspace) calls such as command output, file reads, and loaded skills. It defaults to `64000`.
 
-`max_tool_output_lines` controls how many lines of a tool result are shown inline before the TUI collapses the rest. It defaults to `10` and is clamped to at least one line when config is loaded.
+`max_tool_output_lines` is how many lines of a tool result show inline before the TUI collapses the rest. It defaults to `10` and is clamped to at least one line on load.
 
-`prompt_history_limit` controls how many sent composer prompts Rho keeps in `~/.rho/prompt-history.sqlite3` (`$RHO_HOME/prompt-history.sqlite3` when set) for up-arrow recall across sessions. It defaults to `1000`. `0` disables persistence. Values above `10000` clamp to `10000` when config is loaded. In the TUI, `/config` → **Context & limits** edits the cap and can clear the saved history. Lowering the cap below the number of stored prompts asks first, then deletes the oldest extras. Clear also asks first. This is separate from `/new` / `/clear`, which reset the conversation, not composer recall.
+`prompt_history_limit` is how many sent composer prompts Rho keeps in `~/.rho/prompt-history.sqlite3` for up-arrow recall across sessions. `$RHO_HOME` moves that file. It defaults to `1000`. `0` disables persistence. Values above `10000` clamp to `10000` on load. `/config` → **Context & limits** edits the cap and can clear saved history. Lowering the cap below the number of stored prompts asks first, then deletes the oldest extras. Clear also asks first. This is separate from `/new` and `/clear`, which reset the conversation, not composer recall.
 
 ## Update checks
 
-`check_for_updates` controls whether Rho checks the latest GitHub release at TUI startup. It defaults to `true`. When a newer version is available, the session header shows an update notice and points to `rho update`. Change it from **Providers** in `/config`.
+`check_for_updates` controls whether Rho checks the latest GitHub release at TUI startup. It defaults to `true`. A newer version shows an update notice in the session header and points to `rho update`. Change it from **Providers** in `/config`.
 
 ## Questionnaire timeout
 
-Questionnaires wait for your answer by default. To let an untouched form use
-explicit fallback answers, set a positive whole number of seconds:
+Questionnaires wait for an answer by default. To let an untouched form use explicit fallback answers, set a positive whole number of seconds:
 
 ```toml
 [questionnaire]
 timeout_seconds = 60
 ```
 
-The value above is an example, not a default. Omit `timeout_seconds` to disable
-automatic answers. Zero, negative values, fractions, and strings are invalid.
-In `/config` → **Agent behavior** → **Questionnaire timeout**, enter positive
-seconds or clear the field for **Disabled**. Changes apply when the next form
-opens, including forms from delegated agents, not to an already-open form.
+That value is an example, not a default. Omit `timeout_seconds` to disable automatic answers. Zero, negative values, fractions, and strings are invalid. In `/config` → **Agent behavior** → **Questionnaire timeout**, enter positive seconds or clear the field. Changes apply when the next form opens, including forms from delegated agents, not to an already-open form.
 
-Only forms whose tool call supplies explicit `on_timeout` fallback answers can
-time out. A question's `default` merely preselects an answer and never enables a
-timeout. The TUI shows the countdown, proposed answers, and the consequence of
-using them. Keyboard, paste, or mouse interaction pauses the timer for the rest
-of that form; submit or cancel explicitly to continue.
-
-Fallbacks are for safe, reversible decisions, never permissions, purchases,
-destructive actions, or other authorization. The tool result records
-`source: "timeout_fallback"` rather than representing silence as user approval.
-
-## RTK
-
-`rtk` enables built-in [RTK](/integrations/rtk) command rewriting when the `rtk` binary is available. It defaults to `true`; set `rtk = false` to leave shell commands unchanged.
-
-Full behavior, version requirements, analytics paths, and doctor checks are on the [RTK](/integrations/rtk) page.
+What the TUI shows, and what does not count as consent: [Questionnaire fallbacks](/interactive-tui#questionnaire-fallbacks).

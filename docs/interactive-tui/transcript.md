@@ -86,13 +86,13 @@ not bound by the two-minute stream idle rule.
 
 ## Display modes
 
-`zen_mode` (under `/config` → **Appearance**) hides tool cards,
-reasoning blocks, and the `Thinking...` placeholder so the transcript shows
-message text. The live activity rail, subagent rows, and background-process
-rows stay visible. Tools and
-reasoning still run; only their transcript display is suppressed. While enabled,
-the status row displays `zen` so the hidden-card mode remains visible. The
-setting applies immediately, including during the current turn.
+`show_reasoning_output` controls whether reasoning text appears. It defaults to on. Rho keeps received reasoning text when it is hidden. Changing the setting from `/config` shows or hides reasoning through the current transcript, including earlier turns and the live response.
+
+When reasoning is hidden, the TUI shows `Thinking...` until that phase finishes, then a `Thought for …` summary. When reasoning is shown, the same summary follows the reasoning block. Durations use a compact format such as `3.2s`, `2m 5s`, or `1h 2m`.
+
+If a response interleaves answer text and reasoning, Rho keeps those segments in arrival order. Hidden reasoning leaves its `Thought for …` receipt between answer segments. Zen mode hides that receipt too. Toggling either setting does not merge or reorder stored segments.
+
+`zen_mode`, under `/config` → **Appearance**, hides tool cards, reasoning blocks, and the `Thinking...` placeholder so the transcript shows message text. The [activity rail](/interactive-tui/activity) stays visible. Tools and reasoning still run. The status row displays `zen`. The setting applies immediately, including during the current turn.
 
 Image thumbnails from `read_file` paint in supporting terminals. Details:
 [Documents and images](/tools-workspace/documents-and-images).

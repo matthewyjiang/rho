@@ -101,7 +101,7 @@ CUT N.=M
 
 Locator rules:
 
-- Digits then colon for single-line PUT: `PUT 12:` — never `PUT 12.:`
+- Digits then colon for single-line PUT: `PUT 12:`, never `PUT 12.:`
 - A trailing dot such as `PUT 12.=:` is invalid and fails with an explicit error
 - Every body row under a `:` header starts with `+` (use `+` alone for a blank line)
 - `PUT` always needs at least one `+` body row; use `CUT` to delete

@@ -6,7 +6,7 @@ Run `rho` in a terminal to start an interactive coding session in the current di
 rho
 ```
 
-The TUI is the main way to use Rho. Ask it to inspect files, explain code, make changes, run commands, or iterate on a task with you. Rho uses the current directory as its [workspace](/tools-workspace). Tool access and command execution follow the workspace and security behavior described in [tools and workspace](/tools-workspace#security-and-workspace-boundaries).
+Rho uses the current directory as its [workspace](/tools-workspace). Tool access follows [tools and workspace](/tools-workspace#security-and-workspace-boundaries).
 
 ```mermaid
 flowchart TD
@@ -137,7 +137,7 @@ A single `/` as the first character opens the command palette. Any later `/` cha
 | `/workflow` | Open the workflow list. Start a local workflow or saved plan in the background, watch a run as a dependency graph, or press `d` to delete a plan/run. The run id is appended to chat context and completion is delivered automatically. Reopen `/workflow` and press Enter on a run to watch; use arrows or `hjkl` to move between graph nodes. |
 | `/rewind [turn]` | Preview and restore native file-tool changes from a completed turn, then continue from that conversation state on a new branch. This experimental command requires `behavior.experimental_workspace_rewind = true`. It does not reverse shell, Git, process, network, database, or service effects. Conflicting paths stay unchanged. |
 | `/config` | Open the [config](/configuration) category browser for models, appearance, agent behavior, context limits, tools, and providers. |
-| `/permissions [bypass\|auto\|allow_edits\|plan\|supervised]` | Show or change the [permission mode](/configuration#permission-modes), saving it to configuration. Auto prompts for a classifier model if needed. Available between turns. |
+| `/permissions [bypass\|auto\|allow_edits\|plan\|supervised]` | Show or change the [permission mode](/configuration/permissions), saving it to configuration. Auto prompts for a classifier model if needed. Available between turns. |
 | `/info` | Show the running Rho version, provider, model, reasoning level, permission mode, advisor mode, session usage (including session and latest-request cache hit rates, and re-billed cache misses), and external runtime status (including Claude Code and Cursor Agent). |
 | `/changelog [latest]` | Show release notes for this installed version from the bundled changelog. `/changelog latest` fetches notes for the newest published release. |
 | `/compact` | Immediately summarize older conversation history to reduce future model context. This works even when auto-compaction is disabled. Auto-compaction runs the same job before a turn when the context is over the threshold. Both show a compact card; the composer stays usable. Press `esc` to cancel. |
@@ -147,7 +147,7 @@ A single `/` as the first character opens the command palette. Any later `/` cha
 | `/hooks` | Reload [lifecycle hooks](/hooks) and show what each one will run: the resolved argv, working directory, timeout, and environment. Also names any project hooks file ignored because the workspace is not trusted. |
 | `/agents [create]` | With no argument, reload agent definitions and browse their descriptions, sources, runtime (`rho`, `claude-cli`, or `cursor`), model policies, reasoning levels, tools, Claude config inheritance, prompt policies, and prompt previews. `/agents create [request]` starts the guided agent creator when the active agent has `skill`, `questionnaire`, and `save_agent`. Select a reserved internal agent to configure its model. |
 | `/create-agent [request]` | Alias for `/agents create`. |
-| `/attach` | Open a full-screen picker of subagents from this directory. Starts on running runs; Ctrl-R also shows finished transcripts. Rows show the agent role, generated title, and current tool or final state. Enter opens the in-place attach view, the same as clicking the activity rail. |
+| `/attach` | Open a picker of subagents from this directory and watch one in place. See [Activity rail](/interactive-tui/activity). |
 | `/diff` | Show local Git status plus staged and unstaged worktree patches without invoking the model. |
 | `/doctor` | Open a single-pane diagnostics dashboard. Rows are grouped into Authentication, Providers, Runtimes, Workspace, and Extensions, each with a status marker (`✓` ok, `·` info, `!` warning, `✗` failure) and a hint under any issue. The overlay opens immediately with the instant checks; provider endpoints, the Claude Code binary and login, cursor-agent, and rtk are probed in the background and fill in as they answer, so it works during a model turn. Only the active auth mode warns on a missing key; other providers stay informational. Cursor Agent rows stay informational when the binary is missing or signed out. No secrets are displayed. Press `Esc` or `Enter` to close. The same checks run headlessly with `rho doctor [--json]`; see [automation CLI](/automation-cli). |
 | `/mcp` | List configured MCP servers for this session, including in-flight connects. Connecting servers are not treated as failures. `/doctor` includes the same MCP health row. See [Model Context Protocol](/integrations/mcp). |
@@ -173,50 +173,31 @@ Short confirmations and some credential prompts use an inline list instead of a 
 
 `/side` (and `/btw`) uses that same overlay chrome with its own transcript and prompt. `Enter` sends to the aside. `Esc` closes the overlay without cancelling its reply, so you can keep using the main chat while the aside runs in the background. Use `/side` or `/btw` again to return to its transcript and any unsent draft. `Ctrl+C` clears the aside's prompt first; with an empty prompt, it cancels only the running aside and does nothing when the aside is idle. Up and down scroll when the prompt is empty; letter keys always insert.
 
-## Login and logout
+## Login and models
 
-`/login` opens a readable provider picker first. Providers with multiple methods open a second picker such as **API Key** or **OAuth**; providers with one method continue directly to their login flow. Codex and xAI OAuth then open the same searchable picker for **Browser** or **Device code**, including on a machine with a browser. Type to filter, use Tab to complete an option, and Enter to select. The default option follows the same graphical-vs-headless preference as `rho login`. **Custom · Chat Completions** and **Custom · Responses** each ask for a provider name, a base URL, and an optional API key. Passing an internal provider name (for example `/login openai`) targets that method directly. Each flow is documented on the [provider page](/authentication-and-models#providers). Credentials for normal providers are stored in the configured credential backend, not in config or transcripts. When the backend is still unset, Rho asks where to store secrets only after you select a normal provider or enter a custom-host API key. Browser and device-code logins always show the authorize URL in the composer (and on first-run setup). Press `c` to copy it, or click **COPY**. Esc cancels, or goes back when a parent picker is open. Claude Code login still hands off to `claude auth login` and does not show a URL. Cursor login hands off to `cursor-agent login` the same way.
+`/login`, `/logout`, and `/model` behavior, including Claude Code and Cursor handoff, is on [Authentication and models](/authentication-and-models). Logging in does not normally switch the active model. If Rho started without usable auth, a successful login selects that provider's default model.
 
-Under **Anthropic**, the method picker includes **Claude Code (delegation only)** next to the Anthropic API key method. Bare `/login` lists **Cursor** as a top-level row. `/login claude-code` asks you to confirm, then suspends the TUI and hands the terminal to the `claude` binary for `claude auth login --claudeai`. Cancel that confirmation to stay in Rho. `/login cursor` skips the confirm step and hands the terminal to `cursor-agent login`. After either handoff there is no cancel key inside the child prompt; stop the child from another terminal or close that prompt if you need to get out. Those binaries own their sign-in. Rho never sees the token, never writes it to the Rho credential store, and never asks for a Rho store choice on these paths. Install the binaries first if needed ([Claude Code](/installation#claude-code-binary-optional), [cursor-agent](/installation#cursor-agent-binary-optional)).
+Press `ctrl-p` on a highlighted picker row to pin or unpin that model. Pins are stored in `favorite_models` and appear first, in pin order, in conversation and internal-agent pickers. From the composer, `ctrl-p` cycles that list forward, and `ctrl-shift-p` cycles backward on terminals that report it. Both are configurable as `cycle_pinned_model` and `cycle_pinned_model_back` under [`[keybindings]`](/configuration/full-example). The picker's pin toggle follows `cycle_pinned_model`. Its all/pinned toggle follows `toggle_tool_output`.
 
-`/logout` opens a provider picker containing only providers with stored credentials that can be deleted, or targets one directly (for example `/logout openai`). Environment overrides are CI/development hatches and can keep a provider available after logout. `/logout claude-code` asks for explicit confirmation first because it signs out of Claude Code everywhere the `claude` binary is used, not only inside Rho. It does not delete a Rho-stored token. `/logout cursor` is not available from Rho; run `cursor-agent logout`.
+The picker opens on the pinned list when any pin has auth. `ctrl-o` switches between pinned and all authenticated models. That view lasts for the session. Unpinning the last visible pin while the pinned list is open returns the picker to all models. Direct `/model provider/model` and `/model @alias` still resolve against the full catalog.
 
-Logging in does not normally switch provider/model. Use `/model` to switch models and providers. If Rho started without usable auth, a successful login selects that provider's default model so the session can run.
+Cycling pins maps an unsupported reasoning level to a supported one. An ordinary `/model` or picker switch still rejects an incompatible explicit level. A cycle requested during a provider turn applies when the queued switch lands.
 
-## Choose a model
+`/model` stays available during a run. The current run keeps its model through the remaining steps and tool calls. Rho applies the queued change after the agent loop ends, before the next queued message. Selecting another model before then replaces the pending choice. If the finished conversation holds provider-native context the new model cannot use, the switch lands with an omission notice and each queued message is confirmed before it is sent.
 
-The model picker is populated from Rho's static catalog entries and cached dynamic provider model lists for providers that currently have auth available through `/login` or env overrides. Which models each provider exposes, and whether its list is refreshable, is covered on the [provider pages](/authentication-and-models#providers). Run `/refresh-models` to refresh every configured provider list plus the models.dev catalog, or open `/config`, choose **Providers**, then choose **Refresh model lists** to fetch models for one or all refreshable providers when credentials are available. **Refresh models.dev catalog** redownloads the models.dev snapshot used for context windows, prices, and reasoning, including custom hosts with `catalog_mode = "model-id"`. Press `ctrl-p` on a highlighted picker row to pin or unpin that model. Pinned models are stored in `favorite_models` in config and appear at the top of conversation and internal-agent model pickers in the order they were pinned. From the composer, `ctrl-p` cycles that same list forward without opening the picker, and `ctrl-shift-p` cycles backward on terminals that report `ctrl+shift` combinations. Both are configurable as `cycle_pinned_model` and `cycle_pinned_model_back` under [`[keybindings]`](/configuration/full-example); the picker's pin toggle follows `cycle_pinned_model`, and its all/pinned toggle follows `toggle_tool_output`. The picker opens on the pinned list when any pin has auth; press `ctrl-o` to show every authenticated model, or to return to pinned. The last view lasts for the session. Unpinning the last visible pin while the pinned list is open returns the picker to all models. Direct `/model provider/model` and `/model @alias` still resolve against the full catalogue.
+Compaction does not make provider-native blocks sendable, and it does not prove a provider cache is warm. If handoff compaction fails or produces no reduction, Rho keeps the source model active.
 
-When cycling pins, a reasoning level known to be unsupported by the target is normalized to a supported level instead of rejecting the switch. If no normalization is needed, an explicitly chosen reasoning level remains explicit: a later ordinary `/model` or picker switch still rejects an incompatible level. A cycle requested during a provider turn applies the same policy when the queued switch lands after the turn.
+Internal agent overrides: [Internal agent models](/configuration#internal-agent-models).
 
-Use `/model provider/model` to switch explicitly, including to a provider outside the current picker filter:
+## Status line
 
-```text
-/model openai/gpt-5.6-sol
-/model openai-codex/gpt-5.6-sol
-/model anthropic/claude-sonnet-4-5
-/model github-copilot/gpt-4.1
-```
+Approval prompts are documented with [permission modes](/configuration/permissions). `plan`, `auto`, and `supervised` appear dim. `bypass` appears in warning style.
 
-A bare model id works when it uniquely matches the catalog. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
+When the workspace is a Git repository with a GitHub remote and `gh` is on `PATH`, the status line shows the current branch's pull request number next to the path. Ready-to-merge PRs are green. Merge conflicts, failing checks, or requested changes are red.
 
-`/model` remains available while an agent run is active. You can browse the picker or select a model directly, but the current run continues using its existing model through all remaining model steps and tool calls. Rho applies the queued model change only after the full agent loop ends, before the next queued message starts. Selecting another model before then replaces the pending choice. If the finished conversation holds provider-native context the new model cannot use, the switch lands with an omission notice and each queued message is confirmed before it is sent to the new model.
+While [advisor mode](/configuration/advisor-mode) is on, the top composer divider names the reviewing model, for example `advisor: anthropic/claude-fable-5`. It reads `advisor: no model` when the mode is on but no model is set. Nothing reviews the session in that state. Advice arrives as an `advisor` tool card.
 
-Rho does not treat a newly resumed session as proof that a provider cache is warm. Compaction can still miss a provider cache, so the choice does not claim a fixed cost saving. Compaction is salvage into portable text; it does not make provider-native blocks sendable to an incompatible model. If handoff compaction fails or produces no reduction, Rho keeps the source model active.
-
-Run `/agents` to inspect reserved internal agents. The detail pane shows the effective provider/model and whether it follows the conversation or uses an override. Press Enter on `session-title`, `goal-judge`, or `advisor` to choose a model. Select **Use conversation model** to remove that role's override. Each role resolves its own setting when invoked, so changing one does not affect the others.
-
-The `advisor` role has no conversation-model fallback, so its picker omits **Use conversation model** and its detail pane reads `not selected` until you choose a model. See [advisor mode](/configuration/advisor-mode).
-
-For provider and auth details, see [authentication and models](/authentication-and-models).
-
-## Approvals and status line
-
-In supervised mode, a tool that wants to write a file or execute a process opens a dedicated approval prompt in the composer. The prompt opens on the start of the request, leads with the path or command you are approving, and focuses **Deny** by default. Compact context (working directory, environment mode, limits) follows the primary action. Use the arrow keys to choose **Allow once**, **Allow for session**, or **Deny**, then press Enter. **Allow for session** remembers only that exact structured capability request for the current session. Long operation details grow with the terminal height; use Page Up and Page Down to inspect every detail page without hiding the choices. Choosing **Deny** rejects that operation without ending the session. Press Escape to deny and cancel the current run. The active `plan`, `auto`, or `supervised` mode appears in the status line in dim style; `bypass` appears in warning style so the open posture stays visible. When the workspace is a Git repository with a GitHub remote and `gh` is on `PATH`, the status line also shows the current branch's pull request number next to the path. Ready-to-merge PRs are green; merge conflicts, failing checks, or requested changes are red.
-
-While [advisor mode](/configuration/advisor-mode) is on, the top composer divider names the reviewing model on the right, for example `──────── advisor: anthropic/claude-fable-5 ─`. It reads `advisor: no model` when the mode is on but no advisor model is set, which can happen after a hand edit of config; nothing reviews the session in that state. Advisor mode stays off that divider while it is off. Advice arrives as a normal `advisor` tool card, collapsed past the tool output limit and expandable with `ctrl+o`.
-
-While a goal is active, the status line shows an `◎ /goal active` indicator with the evaluated turn count and elapsed time. A goal paused for user action shows `◎ /goal blocked`; sending a new message or running `/goal resume` asks the agent to verify the blocked steps before continuing implementation work.
+While a goal is active, the status line shows `◎ /goal active` with the evaluated turn count and elapsed time. A goal paused for user action shows `◎ /goal blocked`. Sending a new message or running `/goal resume` asks the agent to verify the blocked steps before continuing.
 
 ## Questionnaire fallbacks
 
@@ -232,63 +213,14 @@ permanently for that form. Nothing automatically submits while you edit.
 Mouse movement counts as interaction, even without a click.
 Explicit submit still returns your answers with `source: "user"`. Expiry returns
 the proposed fallback with `source: "timeout_fallback"` and a transcript notice,
-not a user message. Neither fallback answers nor silence grant authorization.
+not a user message. Neither fallback answers nor silence grant authorization. Fallbacks are for safe, reversible decisions, never permissions, purchases, destructive actions, or other authorization.
 
 Timeouts are serviced by the UI event loop, with input taking priority. Heavy
 event traffic can delay a fallback; it never makes it run early.
 
 ## Activity rail
 
-While a model turn, background `agent` run, or `process` job is live, Rho
-keeps a spinner at the bottom of the transcript and hangs rail rows off it
-as one connected tree (`├` / `└`). The rail stays visible in zen mode.
-
-The spinner aggregates parent work and background counts, for example
-`⠙ running tool · 2 agents · 1 job · 1m 12s`. When the parent turn is idle
-but background work remains, the spinner stays up as `⠙ 1 job running`,
-`⠙ 2 agents working`, or `⠙ 2 agents · 1 job`. On narrow widths the label
-drops elapsed first, then compresses.
-
-The rail shows at most two subagent rows and two process rows.
-
-| Row | Shows | Action |
-| --- | --- | --- |
-| Subagent (`◉`) | Role, generated title, current tool or action, elapsed | Click to attach. Hover shows `⏎ attach · elapsed`; the timer stays visible |
-| Process (`⚙`) | Command, freshness, and elapsed. No process id | Click to peek captured output (read-only, no stop). Hover shows `⏎ peek · elapsed`; the timer stays visible |
-| Overflow | `2 more agents · /attach` or `1 more job` | Replaces the last row when more runs are live than fit. The agent summary points at `/attach` |
-
-A process peek replaces the session with that job's captured stdout and
-stderr. The parent session keeps running underneath. Use Up/Down, Page Up/
-Page Down, and Home/End to scroll. Press `q` or Escape to return. There is
-no stop or kill from this view.
-
-Process freshness is `running` while output is recent, then `quiet 4m 12s` after
-60s of silence. Past five minutes of silence the elapsed column tints as a
-warning.
-
-Finished rows linger briefly with a verdict, then the rail shrinks in one
-repaint. Success verdicts hold a few seconds; failures hold longer so a
-failing background process announces itself instead of vanishing.
-
-| Kind | Verdicts |
-| --- | --- |
-| Agent | `✓ done`, `✗ error`, `✗ stopped` |
-| Process | `✓ exit 0`, `✗ exit 101`, `✗ timed out`, `✗ terminated`, `✗ failed to start` |
-
-## Watch a subagent
-
-Run `rho attach` to pick a subagent from the current directory. The picker
-starts on running runs; press Ctrl-R to include finished transcripts. Or run
-`rho attach <id>` to watch one reported by the `agent` tool:
-
-```bash
-rho attach
-rho attach abc123
-```
-
-`/attach` and a rail click swap the current session into a read-only attach view in the same terminal. The parent session keeps running underneath. The view renders the delegated prompt, reasoning, assistant output, tool activity, usage, and final state. It has no message box and cannot submit prompts or change the subagent environment. Use Up/Down, Page Up/Page Down, and Home/End to scroll. Tab, Shift-Tab, Left, and Right cycle other running subagents. Click a truncated tool card, or press Ctrl+O, to expand or collapse it. Press `q` or Escape to return to the composer. Ctrl-C quits Rho. If the parent hits an approval, questionnaire, or turn completion while you are attached, the footer notes it; the view does not yank you back.
-
-`rho attach` and `rho attach <id>` still open the same read-only TUI in a separate process, for another terminal. For Claude-cli runs, attach also surfaces `claude_session_id` when present so you can open the full Claude transcript with `claude --resume <session-id>`. See [subagents](/subagents/attachment-and-artifacts) for lifecycle details.
+Live turns, background agents, and process jobs hang off a spinner at the bottom of the transcript. Click a row to attach or peek. Details: [Activity rail](/interactive-tui/activity).
 
 ## Attachments
 
@@ -307,6 +239,6 @@ The TUI owns the transcript viewport (use its scroll controls, not terminal scro
 
 ## Related
 
-Use [automation and CLI](/automation-cli) when you want a single answer outside the TUI.
-Use [workflows](/workflows) when you need a frozen multi-step graph with durable status, cancellation, and resume. In the interactive TUI, run `/workflow` to browse sources, plans, and runs without leaving the session.
-Under [Herdr](/integrations/herdr), Rho reports agent state. With [RTK](/integrations/rtk) on `PATH`, agent shell commands are rewritten automatically. See [integrations](/integrations).
+- [Automation and CLI](/automation-cli) for one answer and then exit
+- [Sessions](/sessions) for resume and history
+- [Activity rail](/interactive-tui/activity) for background work

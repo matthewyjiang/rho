@@ -35,7 +35,7 @@ flowchart TD
 
 ### `web_search`
 
-- Follows the user's [search mode](/configuration#web-search): `auto` prefers
+- Follows the user's [search mode](/configuration/web-search): `auto` prefers
   native search when the active chat path supports it; `backend` always uses
   the selected backend; `off` disables web search.
 - Uses one configured backend (`openai`, `exa`, `brave`, or `firecrawl`) when
@@ -133,6 +133,6 @@ These are not web-access tools, but older notes mixed them into this page:
 
 - [Documents and images](/tools-workspace/documents-and-images) - PDF and Office
   extraction used by `fetch_content`
-- [Web search config](/configuration#web-search) - modes, backends, and endpoints
+- [Web search config](/configuration/web-search) - modes, backends, and endpoints
 - [Tool output limit](/configuration#tool-output-limit) - inline size before
   collapse or `responseId` handoff

@@ -18,7 +18,7 @@ rho run --agent worker "address the issue"
 
 Agent switching within an active session is intentionally unsupported.
 
-This page covers how to define and run agents. Expansive reference lives on linked subpages: [definition schema](/subagents/definition-schema), [Claude Code runtime](/subagents/claude-cli), [Cursor Agent runtime](/subagents/cursor), and [attachment and artifacts](/subagents/attachment-and-artifacts).
+Unknown frontmatter keys and invalid values fail before execution. The field contract is on [definition schema](/subagents/definition-schema). Runtimes and attachment are on [Claude Code](/subagents/claude-cli), [Cursor](/subagents/cursor), and [attachment and artifacts](/subagents/attachment-and-artifacts).
 
 Use `/agents create` or `/create-agent` to define an agent through a guided questionnaire. Use bare `/agents` to inspect the loaded catalog. Press Enter on an internal agent to set its model override. Press Enter on an agent loaded from `~/.rho/agents` or a trusted project `.agents/agents` directory to edit its definition. Frontmatter fields use structured TUI controls, while the prompt body opens in `$VISUAL` or `$EDITOR`. Review the draft and choose **Save** to validate and write the source file. Agents loaded from `~/.agents/agents` and built-in agents remain read-only.
 
@@ -46,9 +46,6 @@ Review the requested changes. Do not modify files.
 ```
 
 ### Discovery order
-
-Definitions are discovered deterministically. Later sources win on the same ID.
-Project definitions stay inactive until trusted.
 
 ```mermaid
 flowchart TD
@@ -198,9 +195,3 @@ live under the parent session folder when available, otherwise under
 and attach picker can show role and title instead of a run id.
 
 Details: [Attachment and artifacts](/subagents/attachment-and-artifacts).
-
-## Agent definition schema
-
-Unknown frontmatter keys fail. Invalid values fail before execution. The full field contract, runtime-specific model and tool rules, JSON Schema, and examples live on a dedicated page.
-
-Reference: [Agent definition schema](/subagents/definition-schema).
