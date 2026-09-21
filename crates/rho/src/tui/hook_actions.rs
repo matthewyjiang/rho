@@ -8,9 +8,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         match agent.reload_hooks() {
-            Ok(report) => {
-                self.insert_entry(&Entry::Notice(report.render()));
-            }
+            Ok(report) => self.show_hooks_report(report),
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("could not reload hooks: {error}")));
                 self.set_status("hook reload failed");

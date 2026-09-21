@@ -1,8 +1,8 @@
 //! Serializable view of the hook configuration and recent hook activity.
 //!
-//! Kept next to the hook types rather than in the diagnostics module so
-//! rendering follows the hook contract, and diagnostics stays a generic surface
-//! that consumes explicit data.
+//! Kept next to the hook types rather than in the diagnostics module so the
+//! hook contract stays explicit. Diagnostics and the `/hooks` overlay consume
+//! that data; they do not decide which programs run.
 
 use std::sync::Arc;
 
@@ -21,23 +21,6 @@ pub struct HookContractView {
     pub working_directory: String,
     pub timeout: String,
     pub environment: Vec<String>,
-}
-
-impl std::fmt::Display for HookContractView {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "{}{} on {} (tools: {})\n  argv: {}\n  cwd: {}\n  timeout: {}\n  env: {}",
-            if self.active { "" } else { "[inactive] " },
-            self.id,
-            self.event,
-            self.tools,
-            self.command.join(" "),
-            self.working_directory,
-            self.timeout,
-            self.environment.join(", ")
-        )
-    }
 }
 
 /// One recorded hook invocation.
@@ -94,34 +77,14 @@ impl HookReport {
         }
     }
 
-    /// Renders the report for a terminal.
-    ///
-    /// Every field that decides what runs is shown, because trusting a workspace
-    /// means trusting the programs listed here.
-    pub fn render(&self) -> String {
-        let mut lines = Vec::new();
-        if self.files.is_empty() {
-            lines.push("no hooks files found".to_owned());
-        } else {
-            lines.push(format!("hooks files: {}", self.files.join(", ")));
-        }
-        if let Some(skipped) = &self.skipped_untrusted {
-            lines.push(format!(
+    /// How to load a project hooks file that was parsed but not activated.
+    pub(crate) fn skipped_untrusted_notice(&self) -> Option<String> {
+        self.skipped_untrusted.as_deref().map(|skipped| {
+            format!(
                 "ignoring {skipped} because this workspace is not trusted; set {}=1 to load it",
                 super::TRUST_PROJECT_HOOKS_ENV
-            ));
-        }
-        if let Some(error) = &self.skipped_untrusted_error {
-            lines.push(format!("could not inspect untrusted hooks: {error}"));
-        }
-        if self.hooks.is_empty() {
-            lines.push("no hooks are configured".to_owned());
-            return lines.join("\n");
-        }
-        for hook in &self.hooks {
-            lines.push(hook.to_string());
-        }
-        lines.join("\n")
+            )
+        })
     }
 }
 

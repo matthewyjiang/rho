@@ -721,6 +721,14 @@ fn doctor_overlay_opens_and_dismisses() {
     assert_pass("doctor_overlay");
 }
 
+// Covers: /hooks must open a single-pane overlay with the spawn contract, and
+// Esc must dismiss it instead of leaving a transcript notice.
+// Owner: interactive TUI
+#[test]
+fn hooks_overlay_shows_contract_and_dismisses() {
+    assert_pass("hooks_contract");
+}
+
 // Covers: fragile interactive surfaces from issue #711.
 // Owner: interactive TUI
 #[test]

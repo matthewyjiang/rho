@@ -61,8 +61,8 @@ else
 fi
 ```
 
-Run `/hooks` in the interactive TUI to reload hooks and print exactly what each
-one will execute.
+Run `/hooks` in the interactive TUI to reload hooks and open a single-pane
+overlay showing exactly what each one will execute. Press Enter or Esc to close.
 
 ## Fields
 

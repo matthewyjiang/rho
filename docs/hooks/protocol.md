@@ -274,11 +274,12 @@ skipped, the resolved spawn contract for each hook, and recent activity:
 }
 ```
 
-`/hooks` prints the same information and reloads the hooks files first. Reload
-is atomic: a blocking decision already in flight keeps the hook set it started
-with. A session that started with no hooks, or without a whole class of hooks
-(blocking vs observational), needs a restart to pick new ones up, because
-installing a gate or worker rebuilds the runtime.
+`/hooks` opens a single-pane overlay with the resolved spawn contract and
+reloads the hooks files first. `rho(action="hooks")` also includes recent
+activity. Reload is atomic: a blocking decision already in flight keeps the
+hook set it started with. A session that started with no hooks, or without a
+whole class of hooks (blocking vs observational), needs a restart to pick new
+ones up, because installing a gate or worker rebuilds the runtime.
 
 ## Not in this release
 

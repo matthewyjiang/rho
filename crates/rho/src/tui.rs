@@ -92,6 +92,7 @@ mod help_picker;
 mod history_cache;
 mod history_soft_settings;
 mod hook_actions;
+mod hooks_overlay;
 mod info_command;
 mod inline_choice;
 mod inline_shell;

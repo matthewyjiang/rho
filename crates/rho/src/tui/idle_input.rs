@@ -74,6 +74,7 @@ impl App {
             ComposerMode::Limits(_) => Ok(self.handle_limits_overlay_key(key, terminal)),
             ComposerMode::Doctor(_) => Ok(self.handle_doctor_overlay_key(key, terminal)),
             ComposerMode::Computer(_) => Ok(self.handle_computer_overlay_key(key, terminal)),
+            ComposerMode::Hooks(_) => Ok(self.handle_hooks_overlay_key(key, terminal)),
             ComposerMode::Side => Ok(self.handle_side_chat_key(key, terminal)),
             // Approvals are handled on the during-turn path, not idle input.
             ComposerMode::Approval(_) => Ok(false),
