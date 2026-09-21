@@ -148,5 +148,3 @@ fn a_successful_activity_view_omits_the_absent_fields() {
         })
     );
 }
-
-
