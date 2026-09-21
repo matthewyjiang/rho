@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.2](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.3.1...rho-agent-tools-v1.3.2) (2026-09-21)
+
+
+### Bug Fixes
+
+* **compaction:** honor provider usage at automatic thresholds ([#1224](https://github.com/matthewyjiang/rho/issues/1224)) ([2b0fdf5](https://github.com/matthewyjiang/rho/commit/2b0fdf5e6f2fc97c8a00c41994fc7656bdab594e))
+* **windows:** repair workflows, process cleanup, and terminal input ([#1226](https://github.com/matthewyjiang/rho/issues/1226)) ([8ec7d1a](https://github.com/matthewyjiang/rho/commit/8ec7d1accd80f3d4c5da3f5ae056a0c3e83cb654))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.5.0 to 5.4.1
+
 ## [1.3.1](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.3.0...rho-agent-tools-v1.3.1) (2026-09-12)
 
 

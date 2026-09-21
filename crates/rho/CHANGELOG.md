@@ -1,5 +1,34 @@
 # Changelog
 
+## [2.12.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.11.0...rho-coding-agent-v2.12.0) (2026-09-21)
+
+
+### Features
+
+* **tui:** add configurable output streaming modes ([#1221](https://github.com/matthewyjiang/rho/issues/1221)) ([d50f357](https://github.com/matthewyjiang/rho/commit/d50f357f62bc9a8857add4648cbfffff3f83b234))
+* **tui:** choose device-code login even when a browser is available ([#1229](https://github.com/matthewyjiang/rho/issues/1229)) ([d9cef1d](https://github.com/matthewyjiang/rho/commit/d9cef1d9a2faffecfe40756548fcbeb0b76c7f3c))
+* **tui:** clarify inline choice focus and wrap explanations ([#1231](https://github.com/matthewyjiang/rho/issues/1231)) ([62395fe](https://github.com/matthewyjiang/rho/commit/62395fea6da351a86450f714db07c649f6397ff3))
+* **tui:** keep session tool cards compact ([#1225](https://github.com/matthewyjiang/rho/issues/1225)) ([678c789](https://github.com/matthewyjiang/rho/commit/678c789f43f2a0a06da9142c45d5535fa493e1cd))
+* **tui:** make oauth login flow choices searchable ([#1232](https://github.com/matthewyjiang/rho/issues/1232)) ([b718da8](https://github.com/matthewyjiang/rho/commit/b718da8f8403167657e45528f80da15a5337d78e))
+
+
+### Bug Fixes
+
+* **compaction:** honor provider usage at automatic thresholds ([#1224](https://github.com/matthewyjiang/rho/issues/1224)) ([2b0fdf5](https://github.com/matthewyjiang/rho/commit/2b0fdf5e6f2fc97c8a00c41994fc7656bdab594e))
+* **computer:** stop repeating the desktop-access notice on every resume ([#1228](https://github.com/matthewyjiang/rho/issues/1228)) ([74e0120](https://github.com/matthewyjiang/rho/commit/74e0120e33b2f5bd04be422f9d87d855d7dca4b3))
+* **tui:** hide unsupported slash command suggestions ([#1230](https://github.com/matthewyjiang/rho/issues/1230)) ([6aec55a](https://github.com/matthewyjiang/rho/commit/6aec55aa6ce9d7fdeb57632ee30454705e791d9a))
+* **tui:** move computer access status into the footer ([#1227](https://github.com/matthewyjiang/rho/issues/1227)) ([ffbd95a](https://github.com/matthewyjiang/rho/commit/ffbd95ac798a5c54afdd4e199ae96c2149633689))
+* **tui:** preserve login navigation through credential setup ([#1233](https://github.com/matthewyjiang/rho/issues/1233)) ([b289de6](https://github.com/matthewyjiang/rho/commit/b289de6762a9f324072d7887d61d2ded9f4e97e2))
+* **windows:** repair workflows, process cleanup, and terminal input ([#1226](https://github.com/matthewyjiang/rho/issues/1226)) ([8ec7d1a](https://github.com/matthewyjiang/rho/commit/8ec7d1accd80f3d4c5da3f5ae056a0c3e83cb654))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-sdk bumped from 5.5.0 to 5.4.1
+    * rho-providers bumped from 2.7.0 to 2.8.0
+
 ## [2.11.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.10.0...rho-coding-agent-v2.11.0) (2026-09-12)
 
 
