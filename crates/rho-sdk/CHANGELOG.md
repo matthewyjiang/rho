@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.4.1](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.4.0...rho-sdk-v5.4.1) (2026-09-21)
+
+
+### Bug Fixes
+
+* **compaction:** honor provider usage at automatic thresholds ([#1224](https://github.com/matthewyjiang/rho/issues/1224)) ([2b0fdf5](https://github.com/matthewyjiang/rho/commit/2b0fdf5e6f2fc97c8a00c41994fc7656bdab594e))
+
 ## [5.4.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.3.0...rho-sdk-v5.4.0) (2026-09-10)
 
 
