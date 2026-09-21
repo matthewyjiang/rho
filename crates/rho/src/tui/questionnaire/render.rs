@@ -56,12 +56,14 @@ pub(super) fn questionnaire_frame(
     );
 
     lines.push(Line::raw(""));
-    lines.push(styled_line(
-        truncate_one_line(&footer_hint(questionnaire), width),
-        width,
-        Theme::dim(),
-        LineFill::Natural,
-    ));
+    for part in crate::tui::composer_chrome::wrap_footer_parts(footer_parts(questionnaire), width) {
+        lines.push(styled_line(
+            truncate_one_line(&part, width),
+            width,
+            Theme::dim(),
+            LineFill::Natural,
+        ));
+    }
     (lines, cursor)
 }
 
@@ -294,7 +296,7 @@ fn question_number(index: usize, total: usize) -> String {
     }
 }
 
-fn footer_hint(questionnaire: &QuestionnaireComposer) -> String {
+fn footer_parts(questionnaire: &QuestionnaireComposer) -> Vec<&'static str> {
     let question = questionnaire.active_question();
     let mut parts = Vec::new();
     parts.push("↑↓ choose");
@@ -304,13 +306,17 @@ fn footer_hint(questionnaire: &QuestionnaireComposer) -> String {
     if question.permits_other() {
         parts.push("type for other");
     }
+    if questionnaire.fields.len() > 1 {
+        parts.push("Shift+Tab previous");
+        parts.push("Tab next");
+    }
     if questionnaire.on_last_question() {
         parts.push("Enter submit");
     } else {
         parts.push("Enter next");
     }
     parts.push("Esc cancel");
-    crate::tui::composer_chrome::join_footer_parts(parts)
+    parts
 }
 
 fn questionnaire_choice_style(

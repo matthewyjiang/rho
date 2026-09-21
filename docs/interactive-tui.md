@@ -218,6 +218,10 @@ While [advisor mode](/configuration/advisor-mode) is on, the top composer divide
 
 While a goal is active, the status line shows an `◎ /goal active` indicator with the evaluated turn count and elapsed time. A goal paused for user action shows `◎ /goal blocked`; sending a new message or running `/goal resume` asks the agent to verify the blocked steps before continuing implementation work.
 
+## Questionnaires
+
+A form with several questions shows one question at a time. Up and Down move among that question's choices. Tab moves to the next question, and Shift+Tab moves to the previous question. Enter confirms the current question and moves forward, or submits on the last question. Esc cancels the form. The footer under the choices lists the keys that apply.
+
 ## Questionnaire fallbacks
 
 A questionnaire normally blocks until you submit or cancel it. You can opt in
