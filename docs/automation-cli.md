@@ -19,8 +19,6 @@ flowchart LR
     run --> code[Exit code]
 ```
 
-This page starts with `rho run` output and exit behavior, then covers login, updates, and uninstalling. The full flag and subcommand tables are in [CLI reference](#cli-reference).
-
 `rho run` accepts prompt text as arguments and can append stdin with `--stdin`:
 
 ```text

@@ -94,6 +94,7 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
         collapsed: true,
         items: [
           { text: 'Overview', link: '/interactive-tui' },
+          { text: 'Activity rail', link: '/interactive-tui/activity' },
           { text: 'Attachments', link: '/interactive-tui/attachments' },
           { text: 'Transcript display', link: '/interactive-tui/transcript' },
           { text: 'Theme', link: '/interactive-tui/theme' },
@@ -137,7 +138,11 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
         collapsed: true,
         items: [
           { text: 'Overview', link: '/configuration' },
+          { text: 'Permission modes', link: '/configuration/permissions' },
           { text: 'Advisor mode', link: '/configuration/advisor-mode' },
+          { text: 'Model prompts', link: '/configuration/model-prompts' },
+          { text: 'Web search', link: '/configuration/web-search' },
+          { text: 'Auto compaction', link: '/configuration/compaction' },
           { text: 'Full example', link: '/configuration/full-example' },
         ],
       },

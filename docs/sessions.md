@@ -178,7 +178,7 @@ rho -R <session-uuid-prefix>
 rho --resume <session-uuid> --prompt "continue from the last change"
 ```
 
-Resuming by id first looks in the current workspace. If no session matches there, Rho resolves the id across every workspace, so you can resume a session by id from a different directory. A session resumed this way continues under **its own** workspace, not the current directory, because its history refers to that project's files and tools. If that workspace directory no longer exists — for example after it was renamed, moved, or deleted — Rho reports where the session belongs instead of continuing against an unrelated tree; its transcript remains preserved under `~/.rho/sessions`.
+Resuming by id first looks in the current workspace. If no session matches there, Rho resolves the id across every workspace, so you can resume a session by id from a different directory. A session resumed this way continues under **its own** workspace, not the current directory, because its history refers to that project's files and tools. If that workspace directory no longer exists, for example after a rename, move, or delete, Rho reports where the session belongs instead of continuing against an unrelated tree. The transcript remains under `~/.rho/sessions`.
 
 You can also omit the ID to open an interactive picker for saved sessions in the current workspace:
 

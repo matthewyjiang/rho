@@ -71,9 +71,9 @@ RHO_TRUST_PROJECT_PLUGINS=1 rho
 
 This is the same family as `RHO_TRUST_PROJECT_HOOKS` and
 `RHO_TRUST_PROJECT_AGENTS`, so a cloned repository cannot silently run plugin
-commands. Until you grant trust, Rho inventories project plugins — names,
+commands. Until you grant trust, Rho inventories project plugins. Names,
 manifests, skill names, and MCP server definitions stay visible in
-`rho plugins list` and `rho plugins inspect` — but no component activates:
+`rho plugins list` and `rho plugins inspect`, but no component activates:
 plugin skills do not join skill discovery and no MCP server, including stdio
 commands, starts. An untrusted project plugin does not shadow a user plugin
 with the same name; enabling or disabling it still records your policy, and

@@ -38,9 +38,7 @@ Rho's implemented providers are:
 
 User-defined OpenAI-compatible hosts use `[providers.custom.<name>]` with `auth = "none"` or `{name}-api-key`. They speak Chat Completions by default, or Responses when `api = "responses"`. Create one from `/login` by choosing **Custom · Chat Completions** or **Custom · Responses**, or add the table in config. See [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
-OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, Kimi Code, Qwen Token Plan, Meta Model API, MiniMax, OpenCode Go, and user-defined OpenAI-compatible hosts expose refreshable API model lists. Local Ollama is configured through `/login ollama`, which stores the API base and an optional key. Custom hosts can run without a key or store one through `/login`. The other providers refresh after authentication. OpenAI Codex OAuth and xAI OAuth use static allowlists, so their available models are maintained by Rho rather than fetched through **Refresh model lists** in `/config`.
-
-Each provider page documents whether authentication is required, how to select models, and any provider-specific setup.
+Most providers expose a refreshable API model list after authentication. `/login ollama` stores the local API base and an optional key. Custom hosts can run without a key. OpenAI Codex OAuth and xAI OAuth use static allowlists maintained by Rho, so **Refresh model lists** does not fetch them.
 
 ## First run
 
@@ -141,7 +139,7 @@ Use `/model provider/model` to switch explicitly, including to another provider:
 
 A bare model id works when it uniquely matches the catalog for the active selection rules. Uncataloged bare model ids stay on the current provider as an escape hatch for newly released models.
 
-OpenAI, Anthropic, Google Gemini, GitHub Copilot, Ollama, Ollama Cloud, Poolside, OpenRouter, Moonshot, Kimi Code, Qwen Token Plan, Meta Model API, MiniMax, OpenCode Go, and user-defined OpenAI-compatible hosts can refresh their provider model lists through **Refresh model lists** in `/config`. Local Ollama and custom hosts can refresh after `/login` stores their API base; a key is optional. Codex OAuth and xAI OAuth use static allowlists instead. API-backed model lists can change as providers add or remove models; refresh them before selecting a newly released or newly installed model.
+Refresh a provider list with `/refresh-models` or `/config` → **Providers** → **Refresh model lists** before selecting a newly released model. Codex OAuth and xAI OAuth stay on static allowlists.
 
 ## Where credentials live
 
@@ -174,25 +172,9 @@ On macOS, see Apple's [Keychain access prompt](https://support.apple.com/guide/k
 
 For normal interactive setup, prefer `/login`. Environment variables are CI/development escape hatches and override stored credentials; each provider page lists the variables it reads. Command-line flags override values loaded from configuration for the current invocation. Pass `--save` with `--provider`, `--model`, `--auth`, or `--reasoning` to make those choices the saved default.
 
-## Seeing these states without deleting your config
-
-`RHO_FIRST_RUN` opens the setup screen, and its value picks the step:
-
-```bash
-RHO_FIRST_RUN=signin rho   # the provider menu
-RHO_FIRST_RUN=model rho    # the model list
-RHO_FIRST_RUN=1 rho        # whichever step a real first launch would open
-```
-
-Name the step you want to see. A configured machine already lists models, so `RHO_FIRST_RUN=1` there behaves as it would for a user who has signed in and goes straight to the model step, leaving the provider menu unreachable.
-
-Forcing it this way opens setup on a machine that already has history and a chosen model, so setup is the only thing the flag changes; it neither clears state nor creates a fresh config.
-
-To see the signed-out session state, run `/logout <provider>` for the active provider. A successful login clears the signed-out header and statusline; setup ends when you choose a model, or when you leave it with Esc.
-
 ## Model metadata
 
-Rho uses cached model metadata to choose context windows for status display and [auto compaction](/configuration#auto-compaction). The same metadata supplies each model's available [reasoning effort levels](/configuration#reasoning-options), so the TUI can skip unsupported choices without model-name allowlists. Override a window or reasoning list in `~/.rho/models.toml`. A custom OpenAI-compatible host that is not itself in models.dev can set `catalog` to another provider slug and borrow that catalog. See [local model metadata](/configuration#local-model-metadata) and [Custom OpenAI-compatible hosts](/providers/openai-compatible).
+Rho uses cached model metadata to choose context windows for status display and [auto compaction](/configuration/compaction). The same metadata supplies each model's available [reasoning effort levels](/configuration#reasoning-options), so the TUI can skip unsupported choices without model-name allowlists. Override a window or reasoning list in `~/.rho/models.toml`. A custom OpenAI-compatible host that is not itself in models.dev can set `catalog` to another provider slug and borrow that catalog. See [local model metadata](/configuration#local-model-metadata) and [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
 For subscription auth modes such as Codex OAuth and xAI OAuth, the statusline still estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available) and labels it `(sub)`. When a model is seen for the first time, Rho refreshes models.dev so newly added providers are not stuck on a stale local snapshot.
 

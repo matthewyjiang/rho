@@ -230,6 +230,31 @@ Plans and runs remain until you remove the Rho data. The first release has no
 automatic retention policy. Treat source snapshots, inputs, prompts, model
 answers, and command output as sensitive local data.
 
+## Model tool
+
+An agent with the `workflow` capability uses the same service and store as the CLI:
+
+```json
+{"action":"validate","file":".rho/workflows/review.star","inputs":{"target":"src"}}
+{"action":"plan","file":".rho/workflows/review.star","inputs":{"target":"src"}}
+{"action":"run","plan_id":"..."}
+{"action":"status","run_id":"..."}
+{"action":"cancel","run_id":"..."}
+{"action":"resume","run_id":"..."}
+```
+
+`run` and `resume` start in the background and return a run id. Completions arrive at the next turn boundary. Use `status` after delivery, and `cancel` to stop. Do not poll.
+
+Validate and plan authorize the config path, agent catalog, source and loaded modules, planner process facts, command working directories, executable paths, and script interpreters. Paths found during discovery use normal dynamic authorization before Rho reads them. Run and resume ask the host to confirm the exact graph digest and fail closed if host input is not available. Node capabilities are authorized separately.
+
+Cancel returns the same `request_id` and `cancellation_state` as the CLI.
+
+Results are line-oriented summaries under the configured output byte limit. They include diagnostics, IDs, state, and artifact references. They do not return full source or logs. Run, status, and resume return the same summary. A run lifecycle reads as `running`, `completed`, or `needs_recovery`. A node terminal state reads as `success` or `skipped`. An artifact line names the artifact, path, retained bytes, and digest, plus a shortfall note when the retained bytes are not the whole artifact.
+
+A summary over the byte limit keeps whole lines that fit and ends with a notice of dropped lines and sizes. A single line too long to fit is clipped, not dropped.
+
+`workflow_command` is a host-only built-in. The runtime uses it to send one frozen command through normal policy and hooks. Rho never puts `workflow_command` in a model tool list.
+
 ## Planning limits
 
 Planning checks named measured budgets. A limit error names the budget, accepted
@@ -249,85 +274,7 @@ its supervised planning worker.
 - rendered templates, expanded prompts and argv, node timeouts, and retained
   command output
 
-### Receipt and corpus
-
-The checked-in receipt records each corpus measurement, its free margin, and
-the accepted value. The planner reads its limits from that receipt. The corpus
-is not one small example. A deterministic generator creates separate stress
-cases for source modules, evaluator work and heap, values, a 750-node and
-7,500-edge graph, schemas and conditions, serialized graph size, runtime output,
-templates, prompts, argv, inputs, and planner process frames.
-
-### Verify the receipt
-
-Build Rho and verify the receipt with:
-
-```bash
-cargo build -p rho-coding-agent -j 12
-python3 scripts/measure_workflow_limits.py --rho target/debug/rho
-```
-
-The command runs each generated case in the product planner worker, reads the
-worker's evaluator tick and peak-heap counters, derives all graph and runtime
-values from the returned plan, and also runs the public `workflow validate`
-path. It fails if a deterministic value differs from the receipt, if a process
-frame differs, or if wall time or address space loses its stated safety margin.
-Wall time and address space use checked baselines because OS load can change
-them. The verifier allows at most twice the baseline and still requires the
-separate minimum margin recorded in the receipt.
-
-### Address space and environment sentinel
-
-On Linux, the address-space value is the highest `/proc/<pid>/status` `VmSize`
-seen after the supervised child starts the planner worker executable. This omits
-the short period before the child applies its limit. The checked debug build
-used 1,170,087,936 bytes under a 4,294,967,296-byte (4 GiB) OS ceiling. That
-ceiling is a coarse process backstop (`RLIMIT_AS` on Linux; the same accepted
-value is a Job Object process-memory commit limit on Windows), not a tight
-product tripwire. Product memory policy lives in the receipt-backed planning
-budgets. Virtual size is much larger than resident memory because allocators
-reserve address space without committing it. The verifier rejects measurements
-above twice the checked baseline (the live regression gate) and still requires
-the separate minimum free margin recorded in the receipt under the ceiling. If
-the worker needs more than the checked amount, the check reports its measured
-value and the hard limit.
-
-The `environment_expansion_bytes` zero baseline in the receipt is a schema
-sentinel, not a corpus measurement. Workflow schema v1 forbids
-source-controlled environment entries and keeps a one-byte accepted floor.
-
-### Fixture paths and current stress values
-
-The receipt and corpus map are in
-`crates/rho/src/workflow/fixtures/limit_receipt.json` and
-`crates/rho/src/workflow/fixtures/limit_corpus.json`. The generator is
-`scripts/workflow_limit_corpus.py`. The current measured stress values include
-750,000 source bytes, 75 modules at depth 15, 750,019 evaluator ticks,
-50,334,528 evaluator heap bytes, 750 nodes, 7,500 edges, a 756,418-byte schema,
-a 7,515,347-byte graph, 6,291,456 bytes per retained stream, and 50,331,648
-total retained bytes. Read the receipt for every value and margin.
-
-### Cancellation receipt
-
-Cancellation uses a separate cross-process measurement. It starts a real
-workflow owner, waits on a Unix socket until a compiled command node is active,
-and starts a second Rho process to run `workflow cancel`. Linux `pidfd_open`
-checks that the command process has exited. Process completion, not a sleep,
-ends each wait.
-
-Run the five-sample receipt command after the build:
-
-```bash
-python3 scripts/measure_workflow_cancellation.py \
-  --rho target/debug/rho --repeat 5
-```
-
-This command needs Linux with Unix sockets and `pidfd_open`, and `rustc` on
-`PATH`. It uses a new temporary `RHO_HOME` for each sample. The checked run
-measured 33 ms for acknowledgement, final command cleanup, and workflow owner
-completion. The accepted limits are 2,000 ms, 2,000 ms, and 2,500 ms. The
-cancellation command checks both the accepted limits and twice the checked
-baseline.
+The checked-in receipt and how to re-verify it are in [Development](/development#workflow-limit-receipts).
 
 ## First-release limits
 

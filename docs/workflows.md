@@ -106,19 +106,9 @@ render as Markdown, while command streams render as text. Use `PgUp`/`PgDn`,
 Press `d` on a **RUNS** or **SAVED PLANS** row to delete it after confirmation.
 Local `.star` source files are not deleted from disk.
 
-### Model tool and context
-
-The model `workflow` tool also starts `run` and `resume` in the background and
-returns a run id immediately. Completions are delivered automatically to the
-parent session at the next turn boundary (batched with other background
-completions). Use `status` for a live check or after delivery, and `cancel` to
-stop. Do not poll in a loop.
-
-Starting a workflow from `/workflow` appends the run id to the chat context so
-the agent can watch or cancel it, without starting a model turn. When the run
-finishes, Rho kicks a completion message into the parent session the same way.
-
-The right pane explains the highlighted row. Enter runs that action.
+When the run finishes, Rho delivers a completion message to the parent session.
+The model `workflow` tool uses the same background contract. See
+[Model tool](/workflows/runtime#model-tool).
 
 ## CLI reference
 
@@ -251,52 +241,6 @@ pass `--recover-uncertain`. Rho does not guess whether uncertain work completed.
 
 The top-level `rho --resume` flag is for chat sessions. It does not resume a
 workflow.
-
-## Model-facing tool
-
-An agent with the `workflow` tool capability can use these typed operations:
-
-```json
-{"action":"validate","file":".rho/workflows/review.star","inputs":{"target":"src"}}
-{"action":"plan","file":".rho/workflows/review.star","inputs":{"target":"src"}}
-{"action":"run","plan_id":"..."}
-{"action":"status","run_id":"..."}
-{"action":"cancel","run_id":"..."}
-{"action":"resume","run_id":"..."}
-```
-
-The tool uses the same application service and data store as the CLI. Validate
-and plan authorize the exact config path, agent catalog roots and discovered
-agent files, entry source and loaded modules, planner process facts, command
-working directories, executable candidates and resolved paths, and script
-interpreter paths. Paths found during source, catalog, or executable discovery
-use normal dynamic authorization before Rho reads them. Run and resume ask the
-host to confirm the exact graph digest and fail closed if host input is not
-available. Node capabilities are authorized separately.
-
-The tool cancel result has the same `request_id` and typed
-`cancellation_state` as the CLI result.
-
-Results use readable, line-oriented summaries like the `agent` and `agents`
-tools, and remain subject to the configured output byte limit. They contain
-bounded diagnostics, IDs, run and node state, and indented node and artifact
-references. They do not return full source files or logs.
-
-Run, status, and resume return the same run summary. State words match the
-durable and CLI vocabulary. A run lifecycle reads as `running`, `completed`, or
-`needs_recovery`, and a node terminal state reads as `success` or `skipped`, on
-every surface. An artifact line names the artifact, its path, its retained
-bytes, and its digest, and adds a shortfall note only when the retained bytes
-are not the whole artifact.
-
-A summary that exceeds the byte limit keeps as many whole lines as fit and ends
-with a notice naming how many lines it dropped and the sizes involved. A single
-line too long to ever fit is clipped rather than dropped, so an oversized
-diagnostic still says which diagnostic failed.
-
-`workflow_command` is a separate host-only built-in tool. The workflow runtime
-uses it to send one frozen command process request through normal policy and
-hooks. Rho never sends `workflow_command` in a model tool list.
 
 ## Authoring reference
 
