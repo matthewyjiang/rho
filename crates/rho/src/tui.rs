@@ -94,6 +94,7 @@ mod history_soft_settings;
 mod hook_actions;
 mod hooks_overlay;
 mod info_command;
+mod info_overlay;
 mod inline_choice;
 mod inline_shell;
 mod inline_shell_config;
@@ -547,6 +548,9 @@ struct App {
     exclusive: exclusive_screen::ExclusiveOccupant,
     pending_usage_limits: Vec<limits_command::PendingUsageFetch>,
     pending_doctor_probes: Vec<doctor_overlay::PendingDoctorProbe>,
+    pending_info_runtimes: Option<tokio::task::JoinHandle<Vec<String>>>,
+    pending_info_tree:
+        Option<tokio::task::JoinHandle<anyhow::Result<crate::session::tree::SessionTreeFacts>>>,
     usage_limits_live: std::collections::BTreeMap<
         crate::usage_limits::UsageProviderKind,
         limits_command::LiveUsage,

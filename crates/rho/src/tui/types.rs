@@ -9,7 +9,6 @@ use super::{
     config_editor::ConfigNumberInput,
     doctor_overlay,
     feed_image::FeedImage,
-    info_command,
     inline_choice::InlineChoiceModal,
     inline_shell::InlineShellMode,
     limits_command,
@@ -211,6 +210,7 @@ pub(super) enum ComposerMode {
     Doctor(doctor_overlay::DoctorOverlay),
     Computer(super::computer_overlay::ComputerOverlay),
     Hooks(super::hooks_overlay::HooksOverlay),
+    Info(Box<super::info_overlay::InfoOverlay>),
     Side,
 }
 
@@ -234,6 +234,7 @@ impl ComposerMode {
             | Self::Doctor(_)
             | Self::Computer(_)
             | Self::Hooks(_)
+            | Self::Info(_)
             | Self::Side => true,
         }
     }
@@ -261,6 +262,7 @@ impl ComposerMode {
             | Self::Doctor(_)
             | Self::Computer(_)
             | Self::Hooks(_)
+            | Self::Info(_)
             | Self::Side => false,
         }
     }
@@ -268,9 +270,12 @@ impl ComposerMode {
     pub(super) fn is_centered_overlay(&self) -> bool {
         match self {
             Self::Picker(picker) => picker.is_overlay(),
-            Self::Limits(_) | Self::Doctor(_) | Self::Computer(_) | Self::Hooks(_) | Self::Side => {
-                true
-            }
+            Self::Limits(_)
+            | Self::Doctor(_)
+            | Self::Computer(_)
+            | Self::Hooks(_)
+            | Self::Info(_)
+            | Self::Side => true,
             _ => false,
         }
     }
@@ -490,7 +495,6 @@ pub(super) enum Entry {
     Reasoning(ReasoningEntry),
     Tool(ToolEntry),
     Notice(String),
-    RuntimeInfo(Box<info_command::RuntimeInfo>),
     Changelog(Box<crate::changelog::ChangelogDisplay>),
     Error(String),
 }

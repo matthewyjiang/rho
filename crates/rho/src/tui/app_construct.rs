@@ -120,6 +120,8 @@ impl App {
             exclusive: super::exclusive_screen::ExclusiveOccupant::Session,
             pending_usage_limits: Vec::new(),
             pending_doctor_probes: Vec::new(),
+            pending_info_runtimes: None,
+            pending_info_tree: None,
             usage_limits_live: std::collections::BTreeMap::new(),
             pending_changelog: None,
             web_search_reload_pending: false,

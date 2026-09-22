@@ -41,7 +41,6 @@ impl App {
                 | Entry::Reasoning(_)
                 | Entry::Tool(_)
                 | Entry::Notice(_)
-                | Entry::RuntimeInfo(_)
                 | Entry::Changelog(_)
                 | Entry::Error(_) => {}
             }

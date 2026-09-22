@@ -92,7 +92,7 @@ impl App {
             CommandId::Tree => self.execute_tree_command(agent),
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Permissions => self.execute_permissions_command(invocation, agent).await,
-            CommandId::Info => self.execute_info_command().await,
+            CommandId::Info => self.execute_info_command(),
             CommandId::Help => self.execute_help_command(),
             CommandId::Compact => {
                 self.start_compact(agent, super::compact_work::CompactFollowUp::None)

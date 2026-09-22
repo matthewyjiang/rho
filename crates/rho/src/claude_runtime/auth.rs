@@ -151,7 +151,8 @@ impl ClaudeAuthStatus {
     }
 }
 
-/// Snapshot used by `/info` and `/doctor` so turns never block on a probe.
+/// Snapshot used by `/info` and `/doctor`. Callers spawn the probe; they do not
+/// await it on the event loop.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ClaudeProbeSnapshot {
     pub(crate) auth: Result<ClaudeAuthStatus, String>,
@@ -166,15 +167,6 @@ impl ClaudeProbeSnapshot {
         Self {
             auth: auth.map_err(|error| error.to_string()),
             version: version.map_err(|error| error.to_string()),
-        }
-    }
-
-    /// Snapshot for surfaces that skip live probes during a model turn, so a
-    /// child process never blocks stream draining.
-    pub(crate) fn not_refreshed_during_turn() -> Self {
-        Self {
-            auth: Err("claude code: status not refreshed during a model turn".into()),
-            version: Err("claude code: version not refreshed during a model turn".into()),
         }
     }
 

@@ -92,8 +92,13 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
                     // Applying settings must preserve the successful baseline.
                     harness.wait_for_text("100.0K (76.3%)", SETTLE)?;
                     harness.submit_text("/info")?;
+                    // Compaction rows sit below the overlay's first page.
+                    // Close it before the next prompt, or the overlay swallows the keys.
+                    harness.inject_key(&crate::keys::Key::End)?;
                     harness.wait_for_text("98,304", SETTLE)?;
                     harness.wait_for_text("32,768", SETTLE)?;
+                    harness.inject_key(&crate::keys::Key::Esc)?;
+                    harness.wait_for_text_gone("98,304", SETTLE)?;
                 }
 
                 harness.set_phase(format!("{phase}_automatic_compact"));
@@ -110,7 +115,10 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
                     harness.screen().contents()
                 );
                 harness.submit_text("/info")?;
+                harness.inject_key(&crate::keys::Key::End)?;
                 harness.wait_for_text("local tokens (reduced)", SETTLE)?;
+                harness.inject_key(&crate::keys::Key::Esc)?;
+                harness.wait_for_text_gone("local tokens (reduced)", SETTLE)?;
                 ensure!(
                     harness.quit_with_exit_command()? == 0,
                     "{phase} session did not exit cleanly"

@@ -37,7 +37,6 @@ pub(super) fn incremental_entry_source(entry: &Entry) -> Option<(&str, EntryCont
         | Entry::User(_)
         | Entry::Tool(_)
         | Entry::Notice(_)
-        | Entry::RuntimeInfo(_)
         | Entry::Changelog(_)
         | Entry::Error(_) => None,
     }
@@ -99,7 +98,6 @@ impl HistoryRenderSettings {
             Entry::User(_)
             | Entry::Assistant(_)
             | Entry::Notice(_)
-            | Entry::RuntimeInfo(_)
             | Entry::Changelog(_)
             | Entry::Error(_) => false,
         }
@@ -916,7 +914,6 @@ fn prepare_cache_entry_render(
         | Entry::Assistant(_)
         | Entry::Reasoning(_)
         | Entry::Notice(_)
-        | Entry::RuntimeInfo(_)
         | Entry::Changelog(_)
         | Entry::Error(_) => rendered.image_placement.is_some(),
     };

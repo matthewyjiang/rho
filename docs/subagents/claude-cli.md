@@ -90,7 +90,7 @@ flowchart TD
    /info
    ```
 
-   `/doctor` checks binary and auth health. `/agents` shows runtime and Claude tool lists. `/info` shows Claude Code ownership wording when signed in.
+   `/doctor` checks binary and auth health. `/agents` shows runtime and Claude tool lists. `/info` opens an overlay with Claude Code ownership wording when signed in.
 
 5. **Delegate from a Rho root session** (interactive or automation parent on `runtime: rho`):
 

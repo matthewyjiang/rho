@@ -13,6 +13,7 @@ impl App {
     pub(super) async fn poll_overlay_tasks(&mut self) -> anyhow::Result<bool> {
         let mut changed = self.poll_limits_command().await?;
         changed |= self.poll_doctor_command().await?;
+        changed |= self.poll_info_refresh().await?;
         changed |= self.poll_side_chat();
         changed |= self.poll_changelog_command().await?;
         changed |= self.poll_web_search_test().await?;
@@ -83,6 +84,14 @@ impl App {
                     .pending_doctor_probes
                     .iter()
                     .any(super::doctor_overlay::PendingDoctorProbe::is_finished)
+                || self
+                    .pending_info_runtimes
+                    .as_ref()
+                    .is_some_and(|handle| handle.is_finished())
+                || self
+                    .pending_info_tree
+                    .as_ref()
+                    .is_some_and(|handle| handle.is_finished())
                 || self
                     .pending_changelog
                     .as_ref()
@@ -165,6 +174,8 @@ impl App {
                 || self.pending_interactive_login.is_some()
                 || !self.pending_usage_limits.is_empty()
                 || !self.pending_doctor_probes.is_empty()
+                || self.pending_info_runtimes.is_some()
+                || self.pending_info_tree.is_some()
                 || self.pending_changelog.is_some()
                 || self.pending_web_search_test.is_some()
                 || self.mcp_argument_completions.is_pending()
@@ -221,6 +232,7 @@ impl App {
         self.abort_compact(agent).await;
         self.cancel_limits_command().await;
         self.cancel_doctor_command().await;
+        self.cancel_info_refresh().await;
         self.cancel_changelog_command().await;
         self.cancel_web_search_test().await;
         if let Some(handle) = self.pending_cursor_models.take() {
@@ -408,6 +420,7 @@ impl App {
             | ComposerMode::Doctor(_)
             | ComposerMode::Computer(_)
             | ComposerMode::Hooks(_)
+            | ComposerMode::Info(_)
             | ComposerMode::Side
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
@@ -471,6 +484,7 @@ impl App {
         self.clamp_doctor_overlay_scroll(terminal);
         self.clamp_computer_overlay_scroll(terminal);
         self.clamp_hooks_overlay_scroll(terminal);
+        self.clamp_info_overlay_scroll(terminal);
         self.clear_selections();
         self.clear_hovered_copy_buttons();
         self.subagent_panel.clear_pointer_state();

@@ -668,11 +668,15 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     Scenario::new(
         "runtime_info",
-        "Show grouped runtime details and keep them readable after a narrow resize",
-        DEFAULT_SIZE,
+        "Open runtime details immediately, copy the report, and keep fields readable after a narrow resize",
+        PtySize {
+            rows: 40,
+            cols: 100,
+        },
         RUNTIME_INFO_STEPS,
         false,
-    ),
+    )
+    .with_env(&[("SSH_TTY", "rho-pty-clipboard")]),
     Scenario::new(
         "statusline_hierarchy",
         "Keep ranked statusline identity fields as the terminal narrows",
