@@ -17,9 +17,9 @@ use crate::{
     PtyHarness,
 };
 
-// /new is idle-only. Seeing the response is not enough: the provider can still
-// own the turn. Wait for its durable receipt after this marker, not an earlier
-// turn's receipt.
+// /new, /computer on, and /computer setup are idle-only. Seeing the response is
+// not enough: the provider can still own the turn. Wait for its durable receipt
+// after this marker, not an earlier turn's receipt.
 pub(super) fn wait_for_turn_completion_after(harness: &mut PtyHarness, marker: &str) -> Result<()> {
     let deadline = Instant::now() + STREAM.duration;
     loop {

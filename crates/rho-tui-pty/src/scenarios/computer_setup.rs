@@ -1,6 +1,9 @@
 //! Installation consent stays separate from desktop authority. All executables are fixtures.
 
-use super::{computer::setup_driver, SETTLE, STARTUP, STREAM};
+use super::{
+    computer::{setup_driver, wait_for_turn_completion_after},
+    SETTLE, STARTUP, STREAM,
+};
 use crate::{
     env::IsolatedHome,
     keys::Key,
@@ -70,6 +73,10 @@ pub(super) const COMPUTER_SETUP_SCENARIO: Scenario = Scenario::new(
             text: "tool available computer: false",
             timeout: STREAM,
         },
+        // Setup is idle-only; streamed output can arrive before the turn finishes.
+        Step::Custom(|harness| {
+            wait_for_turn_completion_after(harness, "tool available computer: false")
+        }),
         Step::SubmitText("/computer setup"),
         Step::WaitText {
             text: "Grant desktop access?",
@@ -140,6 +147,9 @@ pub(super) const COMPUTER_SETUP_CANCEL_SCENARIO: Scenario = Scenario::new(
             text: "tool available computer: false",
             timeout: STREAM,
         },
+        Step::Custom(|harness| {
+            wait_for_turn_completion_after(harness, "tool available computer: false")
+        }),
         Step::SubmitText("/computer setup"),
         Step::WaitText {
             text: "Install Cua Driver?",
