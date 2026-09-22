@@ -130,6 +130,7 @@ impl WorkflowEventAdapter for RunnerTuiAdapter {
                 WorkflowAction::Cancel => {
                     self.runner.cancellation_request(self.run_id).request()?;
                 }
+                #[cfg(any(test, debug_assertions))]
                 WorkflowAction::ConfirmPlan | WorkflowAction::ConfirmResume => {
                     anyhow::bail!("the workflow plan was already confirmed")
                 }
@@ -225,6 +226,7 @@ impl WorkflowEventAdapter for WatchAdapter {
                     let lifecycle = self.store.read_run_lifecycle(self.run_id)?;
                     super::request_cancellation(&self.rho_home, self.run_id, lifecycle).await?;
                 }
+                #[cfg(any(test, debug_assertions))]
                 WorkflowAction::ConfirmPlan | WorkflowAction::ConfirmResume => {
                     anyhow::bail!("watch mode cannot start or resume a plan")
                 }

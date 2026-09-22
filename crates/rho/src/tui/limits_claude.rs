@@ -137,6 +137,7 @@ impl App {
             id: LimitsSectionId::ClaudeCode,
             handle: tokio::spawn(async {
                 match usage_probe::fetch_usage().await {
+                    #[cfg(unix)]
                     Ok(usage_probe::UsageProbeOutcome::Ready(state)) => {
                         LimitsFetchResult::ClaudeReady {
                             windows: claude_windows_from_state(
@@ -165,6 +166,7 @@ impl App {
     }
 }
 
+#[cfg(unix)]
 pub(super) fn apply_claude_live(app: &mut App, windows: Vec<UsageLimitWindow>) {
     if let Some(overlay) = app.limits_overlay_mut() {
         overlay.apply_live(

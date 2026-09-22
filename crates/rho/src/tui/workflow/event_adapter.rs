@@ -127,7 +127,9 @@ pub(crate) enum WorkflowEvent {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WorkflowAction {
+    #[cfg(any(test, debug_assertions))]
     ConfirmPlan,
+    #[cfg(any(test, debug_assertions))]
     ConfirmResume,
     Cancel,
 }

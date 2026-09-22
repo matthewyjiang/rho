@@ -6,13 +6,11 @@
 
 use super::event_adapter::{PlanApprovalState, WorkflowSession, WorkflowSnapshot};
 
+/// Confirmation belongs to the synthetic matrix; durable runs are already approved.
+#[cfg(any(test, debug_assertions))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ConfirmKind {
-    /// Constructed only by the debug matrix fixture and tests.
-    #[cfg_attr(not(any(test, debug_assertions)), allow(dead_code))]
     StartPlan,
-    /// Constructed only by the debug matrix fixture and tests.
-    #[cfg_attr(not(any(test, debug_assertions)), allow(dead_code))]
     ContinueResume,
 }
 
@@ -23,6 +21,7 @@ pub(super) struct ControlPolicy {
     pub(super) cancel_plain_c: bool,
     /// Esc / Ctrl-C request cancel instead of leave.
     pub(super) cancel_on_interrupt: bool,
+    #[cfg(any(test, debug_assertions))]
     pub(super) confirm: Option<ConfirmKind>,
     /// Match prior footer: leave hint only after the plan is approved (owner)
     /// or always for watchers.
@@ -41,6 +40,7 @@ pub(super) fn control_policy(
             can_leave: true,
             cancel_plain_c: live && approved,
             cancel_on_interrupt: false,
+            #[cfg(any(test, debug_assertions))]
             confirm: None,
             show_leave_hint: true,
         },
@@ -49,10 +49,9 @@ pub(super) fn control_policy(
             can_leave: !live,
             cancel_plain_c: live && approved,
             cancel_on_interrupt: live,
+            #[cfg(any(test, debug_assertions))]
             confirm: match snapshot.approval {
-                #[cfg(any(test, debug_assertions))]
                 PlanApprovalState::AwaitingPlan => Some(ConfirmKind::StartPlan),
-                #[cfg(any(test, debug_assertions))]
                 PlanApprovalState::AwaitingResume => Some(ConfirmKind::ContinueResume),
                 PlanApprovalState::Approved => None,
             },
