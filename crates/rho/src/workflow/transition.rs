@@ -73,25 +73,33 @@ pub(crate) fn validate_reset_transition(
 }
 
 /// Compute closure only after every child has a terminal outcome.
+/// Exports are required even from skipped or allow_failure children: an absent
+/// exported value turns an otherwise successful scope into Blocked.
 pub(crate) fn scope_result(
     workflow: &FrozenWorkflow,
     state: &WorkflowState,
     scope: ScopeInstanceId,
 ) -> WorkflowResult<Option<ScopeResult>> {
-    super::validate_state_shape(workflow, state)?;
     let local = state
         .scope(scope)
         .ok_or_else(|| WorkflowError::Scheduler(format!("unknown scope '{scope}'")))?;
     if local.nodes.values().any(|node| node.terminal().is_none()) {
         return Ok(None);
     }
-    let definition = &workflow.program.root;
+    let definition = workflow.program.scope(local.definition);
     let required = definition.nodes.values().filter(|node| !node.allow_failure);
     let mut outcomes = Vec::new();
     for node in required {
-        let outcome = local.nodes[&node.id]
-            .terminal()
-            .expect("terminal children checked");
+        let outcome = local
+            .nodes
+            .get(&node.id)
+            .and_then(NodeState::terminal)
+            .ok_or_else(|| {
+                WorkflowError::Scheduler(format!(
+                    "scope '{scope}' has no terminal task '{}'",
+                    node.id
+                ))
+            })?;
         outcomes.push(outcome);
     }
     let mut cancellation = local.nodes.values().any(|node| {
@@ -133,12 +141,7 @@ pub(crate) fn scope_result(
             outputs: BTreeMap::new(),
         }));
     }
-    // The root-only runtime retains one scope result. Reuse the frozen retained
-    // output capacity rather than admitting unbounded export alias expansion.
-    let outputs = definition.resolve_exports(
-        &local.outputs,
-        workflow.runtime_limits.retained_output_total_bytes,
-    )?;
+    let outputs = definition.resolve_exports(&local.outputs)?;
     if outputs.is_none() && outcome == WorkflowOutcome::Success {
         outcome = WorkflowOutcome::Blocked;
     }
@@ -148,11 +151,34 @@ pub(crate) fn scope_result(
     }))
 }
 
+pub(crate) enum LifecycleTransition {
+    Advance(RunLifecycle),
+    ReopenCancelledScope,
+}
+
 pub(crate) fn validate_lifecycle_transition(
     state: &WorkflowState,
-    target: RunLifecycle,
+    transition: LifecycleTransition,
 ) -> WorkflowResult<()> {
-    let allowed = state.lifecycle == target
+    let (target, cancelled_reopen) = match transition {
+        LifecycleTransition::Advance(target) => (target, false),
+        LifecycleTransition::ReopenCancelledScope => {
+            if !state
+                .run_result()
+                .is_some_and(|result| result.outcome == WorkflowOutcome::Cancellation)
+            {
+                return Err(WorkflowError::Scheduler(
+                    "only a cancelled closed scope can reopen".to_owned(),
+                ));
+            }
+            (
+                RunLifecycle::Cancelling,
+                state.lifecycle == RunLifecycle::Completed,
+            )
+        }
+    };
+    let allowed = cancelled_reopen
+        || state.lifecycle == target
         || matches!(
             (state.lifecycle, target),
             (RunLifecycle::Planned, RunLifecycle::Running)
@@ -174,7 +200,7 @@ pub(crate) fn validate_lifecycle_transition(
             state.lifecycle
         )));
     }
-    if target == RunLifecycle::Running && state.root_scope().result.is_some() {
+    if target == RunLifecycle::Running && state.run_result().is_some() {
         return Err(WorkflowError::Scheduler(
             "closed root scope must be explicitly reopened before running".to_owned(),
         ));
@@ -183,9 +209,7 @@ pub(crate) fn validate_lifecycle_transition(
         return Ok(());
     }
     state
-        .root_scope()
-        .result
-        .as_ref()
+        .run_result()
         .map(|_| ())
         .ok_or_else(|| WorkflowError::Scheduler("completed workflow has no outcome".to_owned()))
 }

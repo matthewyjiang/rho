@@ -80,13 +80,9 @@ fn journal() -> (FrozenWorkflow, Vec<WorkflowEventRecord>) {
 fn every_snapshot_boundary_replays_identically() {
     let (graph, events) = journal();
     let path = Path::new("state.json");
-    let expected =
-        crate::workflow::store_replay::derive_snapshot(&graph, &events, events.len() as u64, path)
-            .unwrap();
+    let expected = derive_snapshot(&graph, &events, events.len() as u64, path).unwrap();
     for boundary in 0..=events.len() {
-        let snapshot =
-            crate::workflow::store_replay::derive_snapshot(&graph, &events, boundary as u64, path)
-                .unwrap();
+        let snapshot = derive_snapshot(&graph, &events, boundary as u64, path).unwrap();
         let mut restored: WorkflowState =
             serde_json::from_slice(&serde_json::to_vec(&snapshot).unwrap()).unwrap();
         for record in &events[boundary..] {
@@ -135,8 +131,7 @@ fn incremental_replay_rejects_invalid_attempt_pairs() {
             },
         ),
     ] {
-        let state =
-            crate::workflow::store_replay::derive_snapshot(&graph, &events, through, path).unwrap();
+        let state = derive_snapshot(&graph, &events, through, path).unwrap();
         assert!(
             apply_durable_event(&graph, &state, &event, path).is_err(),
             "through {through}: {event:?}"
@@ -155,8 +150,7 @@ fn work_admission_requires_an_active_uncancelled_run() {
         (2, &events[2].event),
         (3, &events[3].event),
     ] {
-        let base =
-            crate::workflow::store_replay::derive_snapshot(&graph, &events, through, path).unwrap();
+        let base = derive_snapshot(&graph, &events, through, path).unwrap();
         for (lifecycle, cancellation_requested) in [
             (RunLifecycle::Planned, false),
             (RunLifecycle::NeedsRecovery, false),
@@ -181,7 +175,7 @@ fn work_admission_requires_an_active_uncancelled_run() {
 fn unstarted_reservation_is_consumed_and_can_be_superseded() {
     let (graph, events) = journal();
     let path = Path::new("state.json");
-    let state = crate::workflow::store_replay::derive_snapshot(&graph, &events, 3, path).unwrap();
+    let state = derive_snapshot(&graph, &events, 3, path).unwrap();
     let attempt = state.next_attempt(&task_id("work")).unwrap();
     assert_eq!(attempt, AttemptNumber::new(2).unwrap());
     let state = apply_durable_event(
@@ -231,18 +225,23 @@ fn unstarted_reservation_is_consumed_and_can_be_superseded() {
 fn synthetic_cancellation_preserves_waiting_state() {
     let (graph, events) = journal();
     let path = Path::new("state.json");
+    let WorkflowEvent::NodeFinished { completion, .. } = &events[5].event else {
+        unreachable!()
+    };
+    let mut synthetic_with_output = completion.as_ref().clone();
+    synthetic_with_output.attempt = None;
+    synthetic_with_output.outcome = NodeTerminalState::Skipped;
     for (through, resume) in [
         (1, CancellationResumeState::Pending),
         (2, CancellationResumeState::Ready),
     ] {
-        let state =
-            crate::workflow::store_replay::derive_snapshot(&graph, &events, through, path).unwrap();
+        let state = derive_snapshot(&graph, &events, through, path).unwrap();
         let next = apply_durable_event(
             &graph,
             &state,
             &WorkflowEvent::NodeFinished {
                 node: task_id("work"),
-                completion: Box::new(NodeCompletion::terminal(NodeTerminalState::Cancellation)),
+                completion: Box::new(NodeCompletion::cancelled(resume)),
             },
             path,
         )
@@ -251,6 +250,28 @@ fn synthetic_cancellation_preserves_waiting_state() {
             next.root_scope().completions[&id("work")],
             NodeCompletion::cancelled(resume)
         );
+        let other_resume = match resume {
+            CancellationResumeState::Pending => CancellationResumeState::Ready,
+            CancellationResumeState::Ready => CancellationResumeState::Pending,
+        };
+        for invalid in [
+            NodeCompletion::cancelled(other_resume),
+            NodeCompletion::terminal(NodeTerminalState::Cancellation),
+            synthetic_with_output.clone(),
+        ] {
+            assert!(matches!(
+                apply_durable_event(
+                    &graph,
+                    &state,
+                    &WorkflowEvent::NodeFinished {
+                        node: task_id("work"),
+                        completion: Box::new(invalid),
+                    },
+                    path,
+                ),
+                Err(WorkflowError::Corrupt { .. })
+            ));
+        }
     }
 }
 
@@ -275,7 +296,7 @@ fn scope_closure_and_cancelled_reopen_preserve_instance_history() {
         },
         WorkflowEvent::NodeFinished {
             node: task_id("cancelled"),
-            completion: Box::new(NodeCompletion::terminal(NodeTerminalState::Cancellation)),
+            completion: Box::new(NodeCompletion::cancelled(CancellationResumeState::Pending)),
         },
     ] {
         state = apply_durable_event(&graph, &state, &event, path).unwrap();
@@ -319,7 +340,17 @@ fn scope_closure_and_cancelled_reopen_preserve_instance_history() {
         node: task_id("cancelled"),
         reason: NodeResetReason::CleanCancellation,
     };
-    assert!(apply_durable_event(&graph, &state, &reset, path).is_err());
+    for event in [
+        reset.clone(),
+        WorkflowEvent::CancellationRequested {
+            request_id: "again".into(),
+        },
+        WorkflowEvent::RunLifecycle {
+            lifecycle: RunLifecycle::Cancelling,
+        },
+    ] {
+        assert!(apply_durable_event(&graph, &state, &event, path).is_err());
+    }
     for lifecycle in [RunLifecycle::Planned, RunLifecycle::NeedsRecovery] {
         let invalid = WorkflowState {
             lifecycle,
@@ -365,13 +396,7 @@ fn scope_closure_and_cancelled_reopen_preserve_instance_history() {
         path
     )
     .is_err());
-    let completed = crate::workflow::store_replay::derive_snapshot(
-        &journal().0,
-        &records,
-        records.len() as u64,
-        path,
-    )
-    .unwrap();
+    let completed = derive_snapshot(&journal().0, &records, records.len() as u64, path).unwrap();
     assert!(apply_durable_event(
         &journal().0,
         &completed,

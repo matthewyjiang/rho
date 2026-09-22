@@ -70,7 +70,7 @@ WORKFLOW = define(inputs = {{}}, build = build)
             assert_eq!(
                 planned.program.root.exports,
                 BTreeMap::from([(
-                    "report title".to_owned(),
+                    "report title".to_owned().try_into().unwrap(),
                     OutputReference {
                         node: NodeId::new("report").unwrap(),
                         path: OutputPath(vec!["field".to_owned()]),

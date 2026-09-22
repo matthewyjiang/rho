@@ -121,12 +121,13 @@ fn runtime_namespace_requires_the_planned_root_membership() {
     let workflow = workflow(vec![agent_node("work", &[], WorkspaceAccess::ReadOnly)]);
     let base = state(&workflow);
     let other = ScopeInstanceId::new(1);
-    assert!(apply_event(
+    assert!(crate::workflow::apply_durable_event(
         &workflow,
         &base,
-        SchedulerEvent::MarkReady {
+        &crate::workflow::WorkflowEvent::NodeReady {
             node: TaskInstanceId::new(other, id("work"))
-        }
+        },
+        std::path::Path::new("journal.jsonl"),
     )
     .is_err());
     let mut missing_root = base.clone();

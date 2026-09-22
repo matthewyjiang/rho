@@ -174,7 +174,7 @@ impl<'a> DriveSession<'a> {
             store.clear_cancellation_request(run_id)?;
         }
         if run.state.state.lifecycle != RunLifecycle::Running
-            && run.state.state.root_scope().result.is_none()
+            && run.state.state.run_result().is_none()
         {
             persist_state_event(
                 &store,
@@ -681,7 +681,7 @@ impl<'a> DriveSession<'a> {
                 },
             )?;
         }
-        if self.run.state.state.root_scope().result.is_none() {
+        if self.run.state.state.run_result().is_none() {
             return Err(RuntimeError::Data(
                 "scheduler stopped before root scope finished".into(),
             ));

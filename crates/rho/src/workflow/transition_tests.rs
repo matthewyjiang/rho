@@ -57,7 +57,11 @@ fn local_required_outcomes_and_cancellation_determine_scope_result() {
             Some(result.clone())
         );
         assert_eq!(state.outcome(), None);
-        assert!(validate_lifecycle_transition(&state, RunLifecycle::Completed).is_err());
+        assert!(validate_lifecycle_transition(
+            &state,
+            LifecycleTransition::Advance(RunLifecycle::Completed)
+        )
+        .is_err());
         state.root_scope_mut().result = Some(result);
         state.lifecycle = RunLifecycle::Completed;
         assert_eq!(state.outcome(), Some(expected));
@@ -74,7 +78,7 @@ fn scope_exports_require_terminal_children_and_available_typed_values() {
     agent.output = Some(OutputSchema::Bool);
     let mut workflow = workflow(vec![node]);
     workflow.program.root.exports.insert(
-        "answer".to_owned(),
+        "answer".to_owned().try_into().unwrap(),
         OutputReference {
             node: id("child"),
             path: OutputPath(vec![]),
@@ -85,19 +89,32 @@ fn scope_exports_require_terminal_children_and_available_typed_values() {
         scope_result(&workflow, &state, ScopeInstanceId::ROOT).unwrap(),
         None
     );
-    state.root_scope_mut().nodes.insert(
-        id("child"),
-        NodeState::Terminal {
-            outcome: NodeTerminalState::Success,
-        },
-    );
-    assert_eq!(
-        scope_result(&workflow, &state, ScopeInstanceId::ROOT).unwrap(),
-        Some(ScopeResult {
-            outcome: WorkflowOutcome::Blocked,
-            outputs: Default::default()
-        })
-    );
+    // Required exports also block when the source was skipped or its failure
+    // was explicitly allowed; allow_failure only relaxes outcome aggregation.
+    for (allow_failure, outcome) in [
+        (false, NodeTerminalState::Success),
+        (false, NodeTerminalState::Skipped),
+        (true, NodeTerminalState::Failure),
+    ] {
+        workflow
+            .program
+            .root
+            .nodes
+            .get_mut(&id("child"))
+            .unwrap()
+            .allow_failure = allow_failure;
+        state
+            .root_scope_mut()
+            .nodes
+            .insert(id("child"), NodeState::Terminal { outcome });
+        assert_eq!(
+            scope_result(&workflow, &state, ScopeInstanceId::ROOT).unwrap(),
+            Some(ScopeResult {
+                outcome: WorkflowOutcome::Blocked,
+                outputs: Default::default()
+            })
+        );
+    }
     state
         .root_scope_mut()
         .outputs

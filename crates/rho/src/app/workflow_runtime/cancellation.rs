@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::workflow::{
-    NodeState, NodeTerminalState, RunId, RunMutationGuard, RunStateRecord, WorkflowEvent,
+    CancellationResumeState, NodeState, RunId, RunMutationGuard, RunStateRecord, WorkflowEvent,
     WorkflowEventRecord, WorkflowStore,
 };
 
@@ -167,10 +167,15 @@ pub(super) fn cancel_waiting_nodes(
         .state
         .tasks()
         .filter_map(|(node, state)| {
-            matches!(state, NodeState::Pending | NodeState::Ready).then_some(node.clone())
+            let resume = match state {
+                NodeState::Pending => CancellationResumeState::Pending,
+                NodeState::Ready => CancellationResumeState::Ready,
+                NodeState::Running { .. } | NodeState::Terminal { .. } => return None,
+            };
+            Some((node, resume))
         })
         .collect::<Vec<_>>();
-    for node in waiting {
+    for (node, resume) in waiting {
         persist_state_event(
             store,
             guard,
@@ -179,9 +184,7 @@ pub(super) fn cancel_waiting_nodes(
             state,
             WorkflowEvent::NodeFinished {
                 node,
-                completion: Box::new(crate::workflow::NodeCompletion::terminal(
-                    NodeTerminalState::Cancellation,
-                )),
+                completion: Box::new(crate::workflow::NodeCompletion::cancelled(resume)),
             },
         )?;
     }

@@ -89,7 +89,7 @@ pub(super) fn recover_state(
             },
         )?;
     }
-    if state.state.root_scope().result.is_some() {
+    if state.state.run_result().is_some() {
         // A late cancellation can arrive after every task completed, so a closed
         // scope need not have a cancellation outcome. Preserve that result and
         // let the driver finish the run instead of reopening successful work.

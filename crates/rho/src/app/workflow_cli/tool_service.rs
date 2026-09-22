@@ -605,7 +605,7 @@ fn run_result(run: StoredRun) -> Result<WorkflowToolResult, ToolError> {
         program_digest,
         state,
         nodes,
-        result: run.state.state.root_scope().result.clone(),
+        result: run.state.state.run_result().cloned(),
     })
 }
 

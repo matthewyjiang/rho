@@ -31,10 +31,47 @@ pub(crate) enum ScopeDefinitionId {
 pub(crate) struct ScopeDefinition {
     pub(crate) parameters: BTreeMap<InputName, InputSchema>,
     pub(crate) nodes: BTreeMap<NodeId, Node>,
-    pub(crate) exports: BTreeMap<String, OutputReference>,
+    pub(crate) exports: BTreeMap<ExportName, OutputReference>,
+}
+
+/// An export label is any nonempty string, not a task identifier.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub(crate) struct ExportName(String);
+
+impl TryFrom<String> for ExportName {
+    type Error = WorkflowError;
+
+    fn try_from(name: String) -> WorkflowResult<Self> {
+        if name.is_empty() {
+            return Err(WorkflowError::Schema {
+                path: "scope.exports".to_owned(),
+                reason: "export name must not be empty".to_owned(),
+            });
+        }
+        Ok(Self(name))
+    }
+}
+
+impl From<ExportName> for String {
+    fn from(name: ExportName) -> Self {
+        name.0
+    }
+}
+
+impl std::fmt::Display for ExportName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
 }
 
 impl WorkflowProgram {
+    pub(crate) fn scope(&self, id: ScopeDefinitionId) -> &ScopeDefinition {
+        match id {
+            ScopeDefinitionId::Root => &self.root,
+        }
+    }
+
     pub(crate) fn validate_bindings(
         &self,
         inputs: &BTreeMap<InputName, WorkflowValue>,
@@ -60,7 +97,7 @@ impl WorkflowProgram {
 impl ScopeDefinition {
     pub(crate) fn validate_exports(&self) -> WorkflowResult<()> {
         for (name, reference) in &self.exports {
-            self.export_schema(name, reference)?;
+            self.export_schema(name, reference)?.validate_definition()?;
         }
         Ok(())
     }
@@ -101,16 +138,13 @@ impl ScopeDefinition {
 
     fn export_schema(
         &self,
-        name: &str,
+        name: &ExportName,
         reference: &OutputReference,
     ) -> WorkflowResult<&OutputSchema> {
         let error = |reason: &str| WorkflowError::Schema {
             path: format!("scope.exports.{name}"),
             reason: reason.to_owned(),
         };
-        if name.is_empty() {
-            return Err(error("object field name must not be empty"));
-        }
         let node = self
             .nodes
             .get(&reference.node)
@@ -118,7 +152,6 @@ impl ScopeDefinition {
         let schema = node
             .output_schema()
             .ok_or_else(|| error("export source node has no output schema"))?;
-        schema.validate_definition()?;
         schema
             .schema_at_path(&reference.path.0)
             .ok_or_else(|| error("export path does not exist in the source output schema"))
@@ -127,13 +160,11 @@ impl ScopeDefinition {
     /// Resolve required bindings without treating an absent value as explicit null.
     /// `None` means a source node or selected field has no value. Invalid contracts
     /// and values remain errors rather than being treated as missing outputs.
-    /// Check the serialized export map before cloning values: aliases can expand
-    /// a small source output into a much larger scope result. Counting stops at
-    /// the first write over budget, before cloning or serializing further aliases.
+    /// Alias expansion is bounded at plan time by validate_export_budget using
+    /// the retained-output capacity and each source's enforced output bound.
     pub(crate) fn resolve_exports(
         &self,
         outputs: &BTreeMap<NodeId, WorkflowValue>,
-        scope_export_bytes_limit: u64,
     ) -> WorkflowResult<Option<BTreeMap<String, WorkflowValue>>> {
         let mut resolved = BTreeMap::new();
         let mut missing = false;
@@ -145,7 +176,7 @@ impl ScopeDefinition {
             {
                 Some(value) => {
                     schema.validate_value(value)?;
-                    resolved.insert(name.as_str(), value);
+                    resolved.insert(name.0.as_str(), value);
                 }
                 None => missing = true,
             }
@@ -153,50 +184,11 @@ impl ScopeDefinition {
         if missing {
             return Ok(None);
         }
-        let mut bytes = SerializedBytes {
-            observed: 0,
-            limit: scope_export_bytes_limit,
-        };
-        let serialized = serde_json::to_writer(&mut bytes, &resolved);
-        if bytes.observed > bytes.limit {
-            return Err(WorkflowError::BudgetExceeded {
-                budget: "scope export bytes",
-                limit: bytes.limit,
-                actual: bytes.observed,
-            });
-        }
-        serialized?;
         Ok(Some(
             resolved
                 .into_iter()
                 .map(|(name, value)| (name.to_owned(), value.clone()))
                 .collect(),
         ))
-    }
-}
-
-/// Count JSON keys, values, and punctuation without retaining bytes. Abort once
-/// the measured prefix exceeds the export-map budget, bounding alias expansion.
-struct SerializedBytes {
-    observed: u64,
-    limit: u64,
-}
-
-impl std::io::Write for SerializedBytes {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.observed = self
-            .observed
-            .checked_add(bytes.len() as u64)
-            .ok_or_else(|| {
-                std::io::Error::other("scope export bytes exceed the representable u64 size")
-            })?;
-        if self.observed > self.limit {
-            return Err(std::io::Error::other("scope export bytes budget exceeded"));
-        }
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
     }
 }

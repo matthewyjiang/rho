@@ -2,10 +2,10 @@ use std::{collections::BTreeMap, path::Path};
 
 use super::corrupt;
 use crate::workflow::{
-    check_schema_version, scope_result, secure_fs::SecureDirectory, store_replay::derive_snapshot,
+    check_schema_version, durable::derive_snapshot, secure_fs::SecureDirectory,
     validate_state_shape, ArtifactObservation, FrozenWorkflow, NodeCompletion, NodeExecution,
-    NodeTerminalState, RunLifecycle, RunStateRecord, ScopeInstanceId, TaskInstanceId,
-    WorkflowError, WorkflowEventRecord, WorkflowResult, RUN_STATE_VERSION,
+    RunLifecycle, RunStateRecord, TaskInstanceId, WorkflowError, WorkflowEventRecord,
+    WorkflowResult, RUN_STATE_VERSION,
 };
 
 #[derive(Clone, Copy)]
@@ -72,7 +72,7 @@ pub(super) fn validate_state_contents(
     let state = &record.state;
     validate_state_shape(graph, state)?;
     let scope = state.root_scope();
-    let scope_definition = &graph.program.root;
+    let scope_definition = graph.program.scope(scope.definition);
     let mut retained_workflow_output = 0_u64;
     let terminal = scope
         .nodes
@@ -85,18 +85,6 @@ pub(super) fn validate_state_contents(
     for (node, completion) in &scope.completions {
         if terminal.get(node).copied() != Some(completion.outcome) {
             return corrupt(path, "completion outcome differs from terminal node state");
-        }
-        if (completion.outcome == NodeTerminalState::Cancellation)
-            != completion.cancellation_resume.is_some()
-        {
-            return corrupt(path, "completion has an invalid cancellation resume state");
-        }
-        if completion.attempt.is_none()
-            && (completion.command_exit.is_some()
-                || completion.structured_output.is_some()
-                || completion.artifacts.iter().next().is_some())
-        {
-            return corrupt(path, "synthetic completion contains attempt-owned data");
         }
         let definition = &scope_definition.nodes[node];
         match &definition.execution {
@@ -222,14 +210,6 @@ pub(super) fn validate_state_contents(
             path,
             "output or command-exit keys differ from durable completions",
         );
-    }
-    if let Some(result) = &scope.result {
-        if scope_result(graph, state, ScopeInstanceId::ROOT)?.as_ref() != Some(result) {
-            return corrupt(
-                path,
-                "scope result differs from its completed tasks and exports",
-            );
-        }
     }
     if state.lifecycle == RunLifecycle::Completed && scope.result.is_none() {
         return corrupt(path, "completed run has no closed root scope");

@@ -67,6 +67,7 @@ impl WorkflowState {
     pub(crate) fn root_scope(&self) -> &ScopeState {
         &self.scopes[&ScopeInstanceId::ROOT]
     }
+    #[cfg(test)]
     pub(crate) fn root_scope_mut(&mut self) -> &mut ScopeState {
         self.scopes
             .get_mut(&ScopeInstanceId::ROOT)
@@ -79,7 +80,30 @@ impl WorkflowState {
         self.scopes.get_mut(&id)
     }
     pub(crate) fn task(&self, id: &TaskInstanceId) -> Option<&NodeState> {
-        self.scope(id.scope())?.nodes.get(id.definition())
+        let (scope, node) = self.local(id).ok()?;
+        scope.nodes.get(node)
+    }
+    /// Resolve an existing task and its local scope without assuming root identity.
+    pub(crate) fn local<'a>(
+        &self,
+        id: &'a TaskInstanceId,
+    ) -> WorkflowResult<(&ScopeState, &'a NodeId)> {
+        self.scope(id.scope())
+            .filter(|scope| scope.nodes.contains_key(id.definition()))
+            .map(|scope| (scope, id.definition()))
+            .ok_or_else(|| WorkflowError::Scheduler(format!("unknown task '{id}'")))
+    }
+    pub(crate) fn local_mut<'a>(
+        &mut self,
+        id: &'a TaskInstanceId,
+    ) -> WorkflowResult<(&mut ScopeState, &'a NodeId)> {
+        self.scope_mut(id.scope())
+            .filter(|scope| scope.nodes.contains_key(id.definition()))
+            .map(|scope| (scope, id.definition()))
+            .ok_or_else(|| WorkflowError::Scheduler(format!("unknown task '{id}'")))
+    }
+    pub(crate) fn run_result(&self) -> Option<&ScopeResult> {
+        self.scope(ScopeInstanceId::ROOT)?.result.as_ref()
     }
     /// Enumerate executable tasks after validating the root-only state shape.
     pub(crate) fn tasks(&self) -> impl Iterator<Item = (TaskInstanceId, &NodeState)> {
@@ -92,28 +116,54 @@ impl WorkflowState {
         if self.lifecycle != RunLifecycle::Completed {
             return None;
         }
-        self.scope(ScopeInstanceId::ROOT)?
-            .result
-            .as_ref()
-            .map(|result| result.outcome)
+        self.run_result().map(|result| result.outcome)
     }
     pub(crate) fn completion(&self, id: &TaskInstanceId) -> Option<&NodeCompletion> {
-        self.scope(id.scope())?.completions.get(id.definition())
+        let (scope, node) = self.local(id).ok()?;
+        scope.completions.get(node)
     }
     pub(crate) fn next_attempt(&self, id: &TaskInstanceId) -> WorkflowResult<AttemptNumber> {
-        self.task(id)
-            .ok_or_else(|| WorkflowError::Scheduler(format!("unknown task '{id}'")))?;
-        self.scopes[&id.scope()]
-            .durable
-            .next_attempt(id.definition())
+        let (scope, node) = self.local(id)?;
+        scope.durable.next_attempt(node)
     }
     pub(crate) fn structured_output(
         &self,
         id: &TaskInstanceId,
         attempt: AttemptNumber,
     ) -> Option<&ValidatedOutputRef> {
-        self.scope(id.scope())?
-            .durable
-            .structured_output(id.definition(), attempt)
+        let (scope, node) = self.local(id).ok()?;
+        scope.durable.structured_output(node, attempt)
     }
+}
+
+/// Current execution admits exactly one root invocation, not dynamic scopes.
+pub(crate) fn validate_state_shape(
+    workflow: &FrozenWorkflow,
+    state: &WorkflowState,
+) -> WorkflowResult<()> {
+    if state.scopes.len() != 1 || !state.scopes.contains_key(&ScopeInstanceId::ROOT) {
+        return Err(WorkflowError::Scheduler(
+            "program requires exactly the root scope instance".to_owned(),
+        ));
+    }
+    let local = state.root_scope();
+    let definition = workflow.program.scope(local.definition);
+    local.durable.validate_membership(&local.nodes)?;
+    if definition.nodes.keys().ne(local.nodes.keys()) {
+        return Err(WorkflowError::Scheduler(
+            "node state keys differ from root scope node keys".to_owned(),
+        ));
+    }
+    if local
+        .outputs
+        .keys()
+        .chain(local.command_exits.keys())
+        .chain(local.completions.keys())
+        .any(|id| !local.nodes.contains_key(id))
+    {
+        return Err(WorkflowError::Scheduler(
+            "scope data references an unknown local task".to_owned(),
+        ));
+    }
+    Ok(())
 }

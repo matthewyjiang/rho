@@ -60,7 +60,7 @@ enum RhoWorkflow {
         name: String,
         nodes: Vec<RhoNode>,
         #[serde(default, deserialize_with = "null_default")]
-        exports: BTreeMap<String, RhoOutputRef>,
+        exports: BTreeMap<crate::workflow::ExportName, RhoOutputRef>,
     },
 }
 

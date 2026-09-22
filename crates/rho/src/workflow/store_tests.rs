@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, fs::OpenOptions, io::Write};
 
 use super::*;
 use crate::workflow::{
+    durable::derive_snapshot,
     program_digest,
-    store_replay::derive_snapshot,
     test_support::{agent_node, id, state, workflow},
     ArtifactObservation, ArtifactRef, AttemptArtifacts, AttemptNumber, CommandExit, CommandNode,
     Digest, ExternalOwner, NodeCompletion, NodeTerminalState, PlanConsent, RunLifecycle,
@@ -458,9 +458,7 @@ fn replay_rejects_cancellation_request_after_completion() {
             4,
             std::path::Path::new("run-state.json"),
         ),
-        Err(WorkflowError::Scheduler(message))
-            if message
-                == "illegal workflow lifecycle transition from Completed to Cancelling"
+        Err(WorkflowError::Corrupt { .. })
     ));
 }
 

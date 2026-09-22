@@ -321,7 +321,7 @@ pub(crate) fn snapshot_from_stored(run: &StoredRun) -> WorkflowFinishedSnapshot 
         })
         .collect();
     let mut outputs = Vec::new();
-    if let Some(result) = &run.state.state.root_scope().result {
+    if let Some(result) = run.state.state.run_result() {
         for (name, value) in &result.outputs {
             if let Some(text) = compact_output(value) {
                 outputs.push((name.clone(), text));

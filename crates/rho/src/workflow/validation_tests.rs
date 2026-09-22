@@ -27,7 +27,7 @@ fn validates_and_resolves_required_scope_exports() {
     }
     let mut frozen = workflow(vec![node]);
     frozen.program.root.exports.insert(
-        "result".to_owned(),
+        "result".to_owned().try_into().unwrap(),
         OutputReference {
             node: id("report"),
             path: OutputPath(vec!["field".to_owned()]),
@@ -49,11 +49,7 @@ fn validates_and_resolves_required_scope_exports() {
         ),
     ] {
         assert_eq!(
-            frozen
-                .program
-                .root
-                .resolve_exports(&outputs, frozen.runtime_limits.retained_output_total_bytes)
-                .unwrap(),
+            frozen.program.root.resolve_exports(&outputs).unwrap(),
             expected
         );
     }
@@ -65,19 +61,15 @@ fn validates_and_resolves_required_scope_exports() {
         )])),
     )]);
     assert!(matches!(
-        frozen.program.root.resolve_exports(
-            &wrong_type,
-            frozen.runtime_limits.retained_output_total_bytes
-        ),
+        frozen.program.root.resolve_exports(&wrong_type),
         Err(WorkflowError::Schema { .. })
     ));
     for (name, node, path) in [
-        ("", "report", vec!["field"]),
         ("result", "unknown", vec![]),
         ("result", "report", vec!["field", "nested"]),
     ] {
         frozen.program.root.exports = BTreeMap::from([(
-            name.to_owned(),
+            name.to_owned().try_into().unwrap(),
             OutputReference {
                 node: id(node),
                 path: OutputPath(path.into_iter().map(str::to_owned).collect()),
@@ -91,7 +83,7 @@ fn validates_and_resolves_required_scope_exports() {
 }
 
 // Covers: aliases cannot amplify a retained source beyond the scope-result byte
-// budget. Owner: scope export materialization; fixture sizes are measured JSON.
+// budget. Owner: plan-time export bounds; fixture sizes are measured JSON.
 #[test]
 fn export_aliases_are_bounded_before_materializing_the_result() {
     use crate::workflow::{
@@ -112,7 +104,7 @@ fn export_aliases_are_bounded_before_materializing_the_result() {
     ]);
     for name in expected.keys() {
         frozen.program.root.exports.insert(
-            name.clone(),
+            name.clone().try_into().unwrap(),
             OutputReference {
                 node: id("report"),
                 path: OutputPath(vec![]),
@@ -136,21 +128,12 @@ fn export_aliases_are_bounded_before_materializing_the_result() {
         },
     );
     state.root_scope_mut().outputs.insert(id("report"), value);
-    for (limit, maximum_observed) in [
-        (measured_source_bytes, measured_result_bytes - 1),
-        (measured_result_bytes - 1, measured_result_bytes),
-    ] {
+    for limit in [measured_source_bytes, measured_result_bytes - 1] {
         frozen.runtime_limits.retained_output_total_bytes = limit;
         assert!(matches!(validate_workflow(&frozen),
             Err(WorkflowError::BudgetExceeded { budget: "scope export bytes", limit: actual_limit, actual })
                 if actual_limit == limit && actual == measured_result_bytes
         ));
-        assert!(
-            matches!(scope_result(&frozen, &state, ScopeInstanceId::ROOT),
-                Err(WorkflowError::BudgetExceeded { budget: "scope export bytes", limit: actual_limit, actual })
-                    if actual_limit == limit && actual > limit && actual <= maximum_observed
-            )
-        );
     }
     frozen.runtime_limits.retained_output_total_bytes = measured_result_bytes;
     validate_workflow(&frozen).unwrap();
@@ -166,7 +149,7 @@ fn export_aliases_are_bounded_before_materializing_the_result() {
         frozen
             .program
             .root
-            .resolve_exports(&BTreeMap::new(), /*scope_export_bytes_limit*/ 0)
+            .resolve_exports(&BTreeMap::new())
             .unwrap(),
         None
     );

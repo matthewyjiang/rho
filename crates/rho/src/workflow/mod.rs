@@ -33,8 +33,6 @@ mod starlark_api;
 mod starlark_diagnostics;
 mod starlark_loader;
 mod store;
-#[path = "store_replay.rs"]
-mod store_replay;
 mod transition;
 mod validation;
 mod value;
@@ -53,10 +51,10 @@ pub(crate) use normalization::normalize_workflow;
 pub(crate) use planning_limits::{
     Budget, FrozenRuntimeLimits, PlanningLimits, PlanningMeasurements,
 };
-pub(crate) use program::{ScopeDefinition, ScopeDefinitionId, WorkflowProgram};
-pub(crate) use scheduler::{apply_event, next_actions, validate_state_shape};
+pub(crate) use program::{ExportName, ScopeDefinition, ScopeDefinitionId, WorkflowProgram};
+pub(crate) use scheduler::next_actions;
 pub(crate) use schema::*;
-pub(crate) use scope_state::{ScopeResult, ScopeState, WorkflowState};
+pub(crate) use scope_state::{validate_state_shape, ScopeResult, ScopeState, WorkflowState};
 pub(crate) use secure_fs::{
     ensure_directory_beneath, freeze_directory_identity, freeze_executable_identity,
     freeze_opened_executable, open_executable, open_executable_candidate,
@@ -79,6 +77,7 @@ pub(crate) use store::{
 };
 pub(crate) use transition::{
     scope_result, validate_lifecycle_transition, validate_reset_transition, validate_transition,
+    LifecycleTransition,
 };
 pub(crate) use validation::{validate_runtime_budgets, validate_workflow};
 pub(crate) use value::WorkflowValue;

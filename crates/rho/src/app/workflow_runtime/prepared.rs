@@ -42,29 +42,20 @@ impl PreparedInvocation {
         node_id: &TaskInstanceId,
         state: &WorkflowState,
     ) -> Result<Self, RuntimeError> {
-        let scope = state
-            .scope(node_id.scope())
-            .ok_or_else(|| RuntimeError::LaunchMetadata {
+        let (scope, _) = state
+            .local(node_id)
+            .map_err(|_| RuntimeError::LaunchMetadata {
                 node: node_id.clone(),
             })?;
-        let node = workflow
-            .program
-            .root
-            .nodes
-            .get(node_id.definition())
-            .ok_or_else(|| RuntimeError::LaunchMetadata {
-                node: node_id.clone(),
-            })?;
-        let resolved = workflow
-            .resolved_nodes
-            .get(node_id.definition())
+        let leaf = workflow
+            .leaf(node_id)
             .ok_or_else(|| RuntimeError::LaunchMetadata {
                 node: node_id.clone(),
             })?;
         Self::prepare_node(
             node_id,
-            node,
-            resolved,
+            leaf.node,
+            leaf.resolved,
             &workflow.runtime_limits,
             &scope.outputs,
         )

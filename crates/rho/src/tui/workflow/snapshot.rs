@@ -20,14 +20,15 @@ pub(crate) fn from_stored_run(run: &StoredRun) -> WorkflowSnapshot {
     let nodes = state
         .tasks()
         .map(|(id, node_state)| {
-            let node = &run.graph.program.root.nodes[id.definition()];
-            let scope = state.scope(id.scope()).expect("task scope exists");
+            let leaf = run.graph.leaf(&id).expect("validated task definition");
+            let node = leaf.node;
+            let (scope, _) = state.local(&id).expect("validated task scope");
             let node_state = node_state.clone();
             let current_attempt = match node_state {
                 NodeState::Running { attempt } => Some(attempt),
                 _ => None,
             };
-            let execution = match &run.graph.resolved_nodes[id.definition()] {
+            let execution = match leaf.resolved {
                 ResolvedNode::Agent(agent) => ExecutionMetadata::Agent {
                     name: agent.agent_id.clone(),
                     runtime: agent.runtime,

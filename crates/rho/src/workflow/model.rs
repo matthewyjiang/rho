@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 
 use super::{
-    AttemptNumber, InputName, NodeCompletion, NodeId, OutputSchema, ScopeInstanceId, ScopeResult,
-    TaskInstanceId, WorkflowValue,
+    AttemptNumber, InputName, NodeId, OutputSchema, ScopeInstanceId, ScopeResult, TaskInstanceId,
+    WorkflowValue,
 };
 
 pub(crate) const FROZEN_WORKFLOW_SCHEMA_VERSION: u32 = 4;
@@ -43,6 +43,29 @@ pub(crate) struct FrozenWorkflow {
     pub(crate) resolved_nodes: BTreeMap<NodeId, ResolvedNode>,
     pub(crate) scheduler: FrozenSchedulerSettings,
     pub(crate) runtime_limits: super::FrozenRuntimeLimits,
+}
+
+pub(crate) struct Leaf<'a> {
+    pub(crate) node: &'a Node,
+    pub(crate) resolved: &'a ResolvedNode,
+}
+
+impl FrozenWorkflow {
+    /// Resolve both halves of a frozen leaf; only root instances execute today.
+    pub(crate) fn leaf(&self, task: &TaskInstanceId) -> Option<Leaf<'_>> {
+        let definition = match task.scope() {
+            ScopeInstanceId::ROOT => super::ScopeDefinitionId::Root,
+            _ => return None,
+        };
+        Some(Leaf {
+            node: self
+                .program
+                .scope(definition)
+                .nodes
+                .get(task.definition())?,
+            resolved: self.resolved_nodes.get(task.definition())?,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -530,26 +553,6 @@ pub(crate) enum SchedulerAction {
     Launch {
         node: TaskInstanceId,
         access: WorkspaceAccess,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum SchedulerEvent {
-    MarkReady {
-        node: TaskInstanceId,
-    },
-    Launched {
-        node: TaskInstanceId,
-        attempt: AttemptNumber,
-    },
-    Finished {
-        node: TaskInstanceId,
-        completion: Box<NodeCompletion>,
-    },
-    CancellationRequested,
-    ResetNode {
-        node: TaskInstanceId,
-        reason: NodeResetReason,
     },
 }
 
