@@ -83,6 +83,22 @@ impl App {
             );
             return Ok(());
         }
+        if matches!(self.input_ui.composer(), ComposerMode::Hooks(_)) {
+            self.clear_selections();
+            self.clear_hovered_copy_buttons();
+            self.clear_rail_pointer_state();
+            self.history.set_scrollbar_drag(None);
+            let delta = match kind {
+                MouseEventKind::ScrollUp => -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
+                MouseEventKind::ScrollDown => super::HISTORY_MOUSE_SCROLL_LINES as isize,
+                _ => 0,
+            };
+            self.scroll_hooks_overlay(
+                screen,
+                super::overlay_panel::PanelScrollTarget::Delta(delta),
+            );
+            return Ok(());
+        }
         // The side overlay owns pointer input while open. Do not let clicks,
         // drags or releases reach transcript controls hidden behind it.
         if matches!(self.input_ui.composer(), ComposerMode::Side) {

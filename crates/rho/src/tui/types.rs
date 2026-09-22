@@ -210,6 +210,7 @@ pub(super) enum ComposerMode {
     Limits(limits_command::LimitsOverlay),
     Doctor(doctor_overlay::DoctorOverlay),
     Computer(super::computer_overlay::ComputerOverlay),
+    Hooks(super::hooks_overlay::HooksOverlay),
     Side,
 }
 
@@ -232,6 +233,7 @@ impl ComposerMode {
             | Self::Limits(_)
             | Self::Doctor(_)
             | Self::Computer(_)
+            | Self::Hooks(_)
             | Self::Side => true,
         }
     }
@@ -258,6 +260,7 @@ impl ComposerMode {
             | Self::Limits(_)
             | Self::Doctor(_)
             | Self::Computer(_)
+            | Self::Hooks(_)
             | Self::Side => false,
         }
     }
@@ -265,7 +268,9 @@ impl ComposerMode {
     pub(super) fn is_centered_overlay(&self) -> bool {
         match self {
             Self::Picker(picker) => picker.is_overlay(),
-            Self::Limits(_) | Self::Doctor(_) | Self::Computer(_) | Self::Side => true,
+            Self::Limits(_) | Self::Doctor(_) | Self::Computer(_) | Self::Hooks(_) | Self::Side => {
+                true
+            }
             _ => false,
         }
     }

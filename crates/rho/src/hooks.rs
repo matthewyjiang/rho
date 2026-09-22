@@ -47,6 +47,7 @@ use std::sync::Arc;
 
 pub use catalog::{HookCatalog, ProjectTrust, TRUST_PROJECT_HOOKS_ENV};
 pub use config::HookConfigError;
+pub(crate) use diagnostics::HookContractView;
 pub use diagnostics::{contract_views, HookInspector, HookReport};
 pub use dispatch::HookEngine;
 pub(crate) use dispatch::WorkflowNodeFinished;

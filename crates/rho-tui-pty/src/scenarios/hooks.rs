@@ -1,8 +1,9 @@
-//! `/hooks` shows the resolved spawn contract for configured hooks.
+//! `/hooks` opens a single-pane overlay with the resolved spawn contract.
 //!
 //! Trusting a workspace means trusting the programs listed here, so the argv,
 //! working directory, and timeout a hook will actually run with have to reach
-//! the screen. That is an interactive guarantee, not a rendering detail.
+//! the screen. That contract belongs in the overlay, not a transcript notice
+//! that stays after dismiss.
 
 use std::fs;
 
@@ -10,6 +11,8 @@ use anyhow::{Context, Result};
 
 use crate::{
     env::IsolatedHome,
+    harness::PtyHarness,
+    keys::Key,
     pty::PtySize,
     scenario::{Scenario, Step},
 };
@@ -18,10 +21,10 @@ use super::{SETTLE, STARTUP};
 
 pub(super) const HOOKS_CONTRACT_SCENARIO: Scenario = Scenario::new(
     "hooks_contract",
-    "Show the resolved spawn contract for a configured hook",
+    "Open the hooks overlay and show the resolved spawn contract",
     PtySize {
-        rows: 30,
-        cols: 120,
+        rows: 32,
+        cols: 140,
     },
     HOOKS_CONTRACT_STEPS,
     /* smoke */ false,
@@ -47,11 +50,55 @@ const HOOKS_CONTRACT_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::WaitText {
-        text: "timeout: 2s",
+        text: "2s",
         timeout: SETTLE,
     },
+    Step::Custom(assert_hooks_overlay_is_single_pane),
+    Step::Phase("dismiss"),
+    Step::Key(Key::Esc),
+    Step::WaitTextGone {
+        text: "user:deny-force-push",
+        timeout: SETTLE,
+    },
+    Step::Custom(assert_hooks_overlay_dismissed),
     Step::ExitCommand,
 ];
+
+fn assert_hooks_overlay_is_single_pane(harness: &mut PtyHarness) -> Result<()> {
+    harness.wait_for_hidden_cursor(SETTLE)?;
+    let screen = harness.screen().contents();
+    if !screen.contains("Hooks") {
+        anyhow::bail!("hooks overlay title missing:\n{screen}");
+    }
+    if screen.contains("Search") || screen.contains("DETAILS") {
+        anyhow::bail!("hooks overlay used picker chrome:\n{screen}");
+    }
+    if !harness.screen().hide_cursor() {
+        anyhow::bail!(
+            "hooks overlay must hide the terminal caret, cursor at {:?}:\n{screen}",
+            harness.screen().cursor()
+        );
+    }
+    Ok(())
+}
+
+fn assert_hooks_overlay_dismissed(harness: &mut PtyHarness) -> Result<()> {
+    harness.wait_for_visible_cursor(SETTLE)?;
+    let screen = harness.screen().contents();
+    if screen.contains("Hooks") {
+        anyhow::bail!("hooks overlay still visible after Esc:\n{screen}");
+    }
+    if screen.contains("deny-force-push.sh") {
+        anyhow::bail!("hook contract stayed in the transcript after Esc:\n{screen}");
+    }
+    if !screen.contains("gpt-5.5") {
+        anyhow::bail!("session chrome missing after dismissing hooks:\n{screen}");
+    }
+    if harness.screen().hide_cursor() {
+        anyhow::bail!("composer caret still hidden after dismissing hooks:\n{screen}");
+    }
+    Ok(())
+}
 
 fn setup_hooks(home: &IsolatedHome) -> Result<()> {
     let rho_dir = home.home.join(".rho");
