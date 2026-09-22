@@ -282,6 +282,7 @@ impl App {
             let shell_changed = self.finish_completed_inline_shells().await?;
             if !self.is_ui_busy() {
                 self.insert_deferred_inline_shell_context(agent)?;
+                needs_redraw |= self.start_deferred_info_tree();
             }
             needs_redraw |= shell_changed;
             Ok(needs_redraw)

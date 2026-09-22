@@ -122,6 +122,7 @@ impl App {
             pending_doctor_probes: Vec::new(),
             pending_info_runtimes: None,
             pending_info_tree: None,
+            info_tree_deferred: false,
             usage_limits_live: std::collections::BTreeMap::new(),
             pending_changelog: None,
             web_search_reload_pending: false,

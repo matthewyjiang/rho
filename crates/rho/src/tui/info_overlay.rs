@@ -183,6 +183,7 @@ impl App {
         if matches!(self.input_ui.composer(), ComposerMode::Info(_)) {
             self.input_ui.set_composer(ComposerMode::Input);
         }
+        self.info_tree_deferred = false;
         self.abort_info_refresh();
     }
 
@@ -228,14 +229,41 @@ impl App {
     }
 
     pub(super) async fn cancel_info_refresh(&mut self) {
+        self.info_tree_deferred = false;
         if let Some(handle) = self.pending_info_runtimes.take() {
             handle.abort();
             let _ = handle.await;
         }
+        // spawn_blocking does not observe abort. Awaiting it stalls the event
+        // loop until the tree read finishes. Drop the handle so the read can
+        // finish in the background without blocking cancel or shutdown.
         if let Some(handle) = self.pending_info_tree.take() {
             handle.abort();
-            let _ = handle.await;
         }
+    }
+
+    /// Start the session-tree read skipped while a turn was writing the tree.
+    pub(super) fn start_deferred_info_tree(&mut self) -> bool {
+        if !self.info_tree_deferred || self.is_ui_busy() {
+            return false;
+        }
+        self.info_tree_deferred = false;
+        if !matches!(self.input_ui.composer(), ComposerMode::Info(_)) {
+            return false;
+        }
+        let Some(session_id) = self.info.session.session_id.clone() else {
+            return false;
+        };
+        self.mark_info_tree_loading();
+        if cfg!(test) {
+            let _ = session_id;
+            return true;
+        }
+        let cwd = self.info.runtime.cwd.clone();
+        self.pending_info_tree = Some(tokio::task::spawn_blocking(move || {
+            crate::session::Session::tree_facts_by_id(&cwd, &session_id)
+        }));
+        true
     }
 
     fn abort_info_refresh(&mut self) {
@@ -299,6 +327,13 @@ impl App {
         };
         overlay.info.set_tree(tree, error);
         overlay.selection = None;
+    }
+
+    fn mark_info_tree_loading(&mut self) {
+        let ComposerMode::Info(overlay) = self.input_ui.composer_mut() else {
+            return;
+        };
+        overlay.info.begin_tree_load();
     }
 
     fn info_tree_loading(&self) -> bool {

@@ -83,6 +83,33 @@ async fn finished_runtime_probe_fills_the_open_overlay() {
     );
 }
 
+// Covers: /info opened mid-turn keeps the unavailable note, then loads the
+// tree once the session is idle again.
+// Owner: interactive TUI (unit seam)
+#[test]
+fn info_opened_during_a_turn_defers_the_tree_read_until_idle() {
+    let mut app = super::super::tests::test_app();
+    app.info.session.session_id = Some("session-1".into());
+    app.begin_provider_turn_ui();
+    app.execute_info_command().unwrap();
+
+    assert!(app.info_tree_deferred);
+    assert!(app.pending_info_tree.is_none());
+    let ComposerMode::Info(overlay) = app.input_ui.composer() else {
+        panic!("overlay did not open");
+    };
+    assert!(!overlay.info.tree_loading());
+
+    assert!(!app.start_deferred_info_tree());
+    app.end_busy_ui();
+    assert!(app.start_deferred_info_tree());
+    assert!(!app.info_tree_deferred);
+    let ComposerMode::Info(overlay) = app.input_ui.composer() else {
+        panic!("overlay closed before the deferred read");
+    };
+    assert!(overlay.info.tree_loading());
+}
+
 // Covers: closing must stop the probe task, not just forget the handle.
 // Owner: interactive TUI (unit seam)
 #[tokio::test]

@@ -103,6 +103,12 @@ impl RuntimeInfo {
         self.tree_error = error;
         self.tree_loading = false;
     }
+
+    pub(super) fn begin_tree_load(&mut self) {
+        self.tree = None;
+        self.tree_error = None;
+        self.tree_loading = true;
+    }
 }
 
 impl App {
@@ -119,6 +125,9 @@ impl App {
             Some(_) => (None, true),
             None => (None, false),
         };
+        // Loading stays false until the turn ends so the unavailable note
+        // remains. The idle poll starts the read if the overlay is still open.
+        self.info_tree_deferred = tree_error.is_some();
         let info = RuntimeInfo {
             version: identity.rho_version.to_string(),
             provider: identity.provider.to_string(),
