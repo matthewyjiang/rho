@@ -41,14 +41,19 @@ pub(crate) fn agent_node(name: &str, needs: &[&str], access: WorkspaceAccess) ->
 }
 
 pub(crate) fn workflow(nodes: Vec<Node>) -> FrozenWorkflow {
-    let graph = WorkflowGraph {
+    let program = WorkflowProgram {
         name: WorkflowName::new("test").unwrap(),
-        nodes: nodes
-            .into_iter()
-            .map(|node| (node.id.clone(), node))
-            .collect(),
+        root: ScopeDefinition {
+            parameters: BTreeMap::new(),
+            nodes: nodes
+                .into_iter()
+                .map(|node| (node.id.clone(), node))
+                .collect(),
+            exports: BTreeMap::new(),
+        },
     };
-    let resolved_nodes = graph
+    let resolved_nodes = program
+        .root
         .nodes
         .keys()
         .cloned()
@@ -98,7 +103,7 @@ pub(crate) fn workflow(nodes: Vec<Node>) -> FrozenWorkflow {
             )]),
         },
         inputs: BTreeMap::new(),
-        program: WorkflowProgram::lower(graph, BTreeMap::new()),
+        program,
         resolved_nodes,
         scheduler: FrozenSchedulerSettings {
             max_parallel_nodes: 8,

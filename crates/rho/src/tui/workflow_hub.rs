@@ -92,6 +92,20 @@ fn run_progress(done: usize, total: usize) -> String {
     format!("{done}/{total} steps done")
 }
 
+fn legacy_run_item(run: &RunInventoryItem) -> PickerItem {
+    let id = run.run_id.to_string();
+    let short = short_id(&id);
+    item(
+        Some("RUNS"),
+        format!("Status  legacy  ·  {short}"),
+        format!("{}\n{} · {} · {}\nRead-only legacy run. Enter shows status. Press d to delete.\nRun id {short}",
+            run.name, lifecycle_label(run.lifecycle), outcome_label(run.outcome), run_progress(run.done_steps, run.total_steps)),
+        format!("{RUN_PREFIX}{id}"),
+        Some(("read-only".into(), PickerBadgeTone::Internal)),
+        Some("status"),
+    )
+}
+
 /// Root list: start workflows, open runs, or reuse a saved plan.
 pub(super) fn hub_picker(
     sources: &[workflow_discover::DiscoveredWorkflow],
@@ -149,6 +163,10 @@ pub(super) fn hub_picker(
         ));
     } else {
         for run in active {
+            if run.read_only {
+                items.push(legacy_run_item(run));
+                continue;
+            }
             let id = run.run_id.to_string();
             let short = short_id(&id);
             let life = lifecycle_label(run.lifecycle);
@@ -166,6 +184,10 @@ pub(super) fn hub_picker(
             ));
         }
         for run in finished {
+            if run.read_only {
+                items.push(legacy_run_item(run));
+                continue;
+            }
             let id = run.run_id.to_string();
             let short = short_id(&id);
             let outcome = outcome_label(run.outcome);
@@ -463,11 +485,21 @@ impl App {
         }
     }
 
-    /// Reports an unreadable run, such as a read-only run saved by an older
-    /// release, in the transcript instead of leaving the TUI.
+    /// Shows legacy status without handing off to an incompatible watch screen.
+    /// Reports unreadable records in the transcript instead of leaving the TUI.
     fn load_run_for_watch(&mut self, run_id: RunId) -> anyhow::Result<Option<StoredRun>> {
-        match self.workflow_ops()?.load_run_id(run_id) {
-            Ok(run) => Ok(Some(run)),
+        match self.workflow_ops()?.load_run_record(&run_id.to_string()) {
+            Ok(crate::workflow::RunRecord::Current(run)) => Ok(Some(*run)),
+            Ok(crate::workflow::RunRecord::Legacy(run)) => {
+                self.input_ui.set_composer(ComposerMode::Input);
+                self.insert_entry(&Entry::Notice(format!(
+                    "legacy run {} · {}\n{} · {}\nread-only: use `rho workflow status {run_id} --output json` for the stored snapshot",
+                    short_id(&run_id.to_string()), run.manifest.name,
+                    lifecycle_label(run.state.state.lifecycle), outcome_label(run.state.state.outcome),
+                )));
+                self.set_status("legacy run status");
+                Ok(None)
+            }
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!("could not load run: {error:#}")));
                 self.set_status("open failed");

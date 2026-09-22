@@ -1,5 +1,5 @@
 //! A run saved by an earlier release is listed in the workflows hub but is
-//! read-only. Opening it must report the error and keep the TUI running.
+//! read-only. Opening it shows status without attempting a watch handoff.
 
 use std::{fs, path::Path, time::Duration};
 
@@ -23,6 +23,10 @@ pub(super) fn setup_workflow_hub_legacy_run(home: &IsolatedHome) -> Result<()> {
     for directory in [&workflows, &workflows.join("runs"), &run] {
         create_private_directory(directory)?;
     }
+    write_private_json(
+        &run.join("graph.json"),
+        &json!({"schema_version": 2, "graph_digest": "sha256:legacy"}),
+    )?;
     write_private_json(
         &run.join("manifest.json"),
         &json!({
@@ -95,11 +99,13 @@ pub(super) const WORKFLOW_HUB_LEGACY_RUN_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Phase("open_legacy_run"),
-    Step::Key(Key::Enter),
-    // The hub stays open over the transcript; close it to read the error row.
-    Step::Key(Key::Esc),
     Step::WaitText {
-        text: "could not load run",
+        text: "Read-only legacy run",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "legacy run 1e9ac700",
         timeout: SETTLE,
     },
     Step::WaitQuiet {

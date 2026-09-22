@@ -106,6 +106,7 @@ fn legacy_records_are_listed_and_read_only() {
         store.list_run_inventory().unwrap(),
         vec![RunInventoryItem {
             run_id,
+            read_only: true,
             created_at_unix_nanos: 8,
             workspace_identity: "workspace-id".to_owned(),
             name: "review".to_owned(),
@@ -116,7 +117,9 @@ fn legacy_records_are_listed_and_read_only() {
         }]
     );
 
-    let legacy = store.load_legacy_run(run_id).unwrap();
+    let RunRecord::Legacy(legacy) = store.load_run_record(run_id).unwrap() else {
+        panic!("expected a read-only legacy record");
+    };
     let inspect = NodeId::new("inspect").unwrap();
     assert_eq!(
         legacy.state.state,

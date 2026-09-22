@@ -75,7 +75,7 @@ pub(crate) use starlark_diagnostics::Diagnostic;
 pub(crate) use starlark_loader::{CollectedSources, SourceBytes, SourceCollector};
 pub(crate) use store::{
     LegacyRun, LegacyWorkflowState, PlanInventoryItem, RunInventoryItem, RunMutationGuard,
-    WorkflowStore,
+    RunRecord, WorkflowStore,
 };
 pub(crate) use transition::{
     scope_result, validate_lifecycle_transition, validate_reset_transition, validate_transition,

@@ -85,7 +85,7 @@ pub(crate) fn scope_result(
     if local.nodes.values().any(|node| node.terminal().is_none()) {
         return Ok(None);
     }
-    let definition = state.scope_definition(workflow, scope)?;
+    let definition = &workflow.program.root;
     let required = definition.nodes.values().filter(|node| !node.allow_failure);
     let mut outcomes = Vec::new();
     for node in required {

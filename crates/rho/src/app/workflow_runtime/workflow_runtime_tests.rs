@@ -166,9 +166,13 @@ fn test_workflow() -> FrozenWorkflow {
         timeout_seconds: 5,
         max_output_bytes: 1024,
     };
-    let graph = WorkflowGraph {
+    let program = WorkflowProgram {
         name: WorkflowName::new("test").unwrap(),
-        nodes: BTreeMap::from([(node.id.clone(), node)]),
+        root: ScopeDefinition {
+            parameters: BTreeMap::new(),
+            nodes: BTreeMap::from([(node.id.clone(), node)]),
+            exports: BTreeMap::new(),
+        },
     };
     let mut workflow = FrozenWorkflow {
         schema_version: FROZEN_WORKFLOW_SCHEMA_VERSION,
@@ -192,7 +196,7 @@ fn test_workflow() -> FrozenWorkflow {
             )]),
         },
         inputs: BTreeMap::new(),
-        program: WorkflowProgram::lower(graph, BTreeMap::new()),
+        program,
         resolved_nodes: BTreeMap::from([(
             node_id("inspect"),
             ResolvedNode::Agent(Box::new(ResolvedAgent {

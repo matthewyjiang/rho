@@ -72,7 +72,7 @@ pub(super) fn validate_state_contents(
     let state = &record.state;
     validate_state_shape(graph, state)?;
     let scope = state.root_scope();
-    let scope_definition = state.scope_definition(graph, ScopeInstanceId::ROOT)?;
+    let scope_definition = &graph.program.root;
     let mut retained_workflow_output = 0_u64;
     let terminal = scope
         .nodes

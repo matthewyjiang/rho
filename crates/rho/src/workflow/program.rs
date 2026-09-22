@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     InputName, InputSchema, Node, NodeId, OutputReference, OutputSchema, WorkflowError,
-    WorkflowGraph, WorkflowName, WorkflowResult, WorkflowValue,
+    WorkflowName, WorkflowResult, WorkflowValue,
 };
 
 /// The executable definition produced by the compiler. This format currently
@@ -35,27 +35,6 @@ pub(crate) struct ScopeDefinition {
 }
 
 impl WorkflowProgram {
-    pub(crate) fn scope_definition(&self, definition: ScopeDefinitionId) -> &ScopeDefinition {
-        match definition {
-            ScopeDefinitionId::Root => &self.root,
-        }
-    }
-
-    /// Lower the source-only graph into the executable root scope.
-    pub(crate) fn lower(
-        graph: WorkflowGraph,
-        parameters: BTreeMap<InputName, InputSchema>,
-    ) -> Self {
-        Self {
-            name: graph.name,
-            root: ScopeDefinition {
-                parameters,
-                nodes: graph.nodes,
-                exports: BTreeMap::new(),
-            },
-        }
-    }
-
     pub(crate) fn validate_bindings(
         &self,
         inputs: &BTreeMap<InputName, WorkflowValue>,

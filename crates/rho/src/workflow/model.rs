@@ -4,7 +4,7 @@ use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 
 use super::{
     AttemptNumber, InputName, NodeCompletion, NodeId, OutputSchema, ScopeInstanceId, ScopeResult,
-    TaskInstanceId, WorkflowName, WorkflowValue,
+    TaskInstanceId, WorkflowValue,
 };
 
 pub(crate) const FROZEN_WORKFLOW_SCHEMA_VERSION: u32 = 4;
@@ -43,14 +43,6 @@ pub(crate) struct FrozenWorkflow {
     pub(crate) resolved_nodes: BTreeMap<NodeId, ResolvedNode>,
     pub(crate) scheduler: FrozenSchedulerSettings,
     pub(crate) runtime_limits: super::FrozenRuntimeLimits,
-}
-
-/// Source-level build result. Lowered into a WorkflowProgram before freezing;
-/// schedulers and replay never execute this authoring representation.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct WorkflowGraph {
-    pub(crate) name: WorkflowName,
-    pub(crate) nodes: BTreeMap<NodeId, Node>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

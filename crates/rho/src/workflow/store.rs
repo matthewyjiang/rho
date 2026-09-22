@@ -115,22 +115,9 @@ impl WorkflowStore {
     }
 
     pub(crate) fn load_plan(&self, id: PlanId) -> WorkflowResult<StoredPlan> {
-        if self.plan_manifest_version(id)? == legacy::LEGACY_MANIFEST_VERSION {
+        let legacy::ManifestRecord::Current(manifest) = self.read_plan_manifest(id)? else {
             return Err(legacy::legacy_record("plan", id));
-        }
-        let manifest: PlanManifest =
-            read_json(&self.root, &plan_relative(id, Path::new("manifest.json")))?;
-        check_schema_version(
-            "plan manifest",
-            manifest.schema_version,
-            PLAN_MANIFEST_VERSION,
-        )?;
-        if manifest.plan_id != id {
-            return corrupt(
-                &self.layout.plan_manifest(id),
-                "plan manifest ID differs from its directory ID",
-            );
-        }
+        };
         let graph: FrozenWorkflow =
             read_json(&self.root, &plan_relative(id, Path::new("graph.json")))?;
         check_schema_version(
@@ -210,22 +197,24 @@ impl WorkflowStore {
     }
 
     pub(crate) fn load_run(&self, id: RunId) -> WorkflowResult<StoredRun> {
-        if self.is_legacy_run(id)? {
+        let legacy::ManifestRecord::Current(manifest) = self.read_run_manifest(id)? else {
             return Err(legacy::legacy_record("run", id));
+        };
+        self.load_current_run(id, manifest)
+    }
+
+    pub(crate) fn load_run_record(&self, id: RunId) -> WorkflowResult<RunRecord> {
+        match self.read_run_manifest(id)? {
+            legacy::ManifestRecord::Current(manifest) => Ok(RunRecord::Current(Box::new(
+                self.load_current_run(id, manifest)?,
+            ))),
+            legacy::ManifestRecord::Legacy(manifest) => Ok(RunRecord::Legacy(Box::new(
+                self.load_legacy_run(id, manifest)?,
+            ))),
         }
-        let manifest: RunManifest =
-            read_json(&self.root, &run_relative(id, Path::new("manifest.json")))?;
-        check_schema_version(
-            "run manifest",
-            manifest.schema_version,
-            RUN_MANIFEST_VERSION,
-        )?;
-        if manifest.run_id != id {
-            return corrupt(
-                &self.layout.run_manifest(id),
-                "run manifest ID differs from its directory ID",
-            );
-        }
+    }
+
+    fn load_current_run(&self, id: RunId, manifest: RunManifest) -> WorkflowResult<StoredRun> {
         let graph: FrozenWorkflow =
             read_json(&self.root, &run_relative(id, Path::new("graph.json")))?;
         check_schema_version(
@@ -438,7 +427,7 @@ mod mutate;
 
 #[path = "store_legacy.rs"]
 mod legacy;
-pub(crate) use legacy::{LegacyRun, LegacyWorkflowState};
+pub(crate) use legacy::{LegacyRun, LegacyWorkflowState, RunRecord};
 
 pub(crate) struct RunMutationGuard {
     id: RunId,

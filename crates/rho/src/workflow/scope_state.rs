@@ -15,7 +15,8 @@ pub(crate) struct WorkflowState {
     pub(crate) scopes: BTreeMap<ScopeInstanceId, ScopeState>,
 }
 
-/// Local execution data for one invocation of a scope definition.
+/// Persisted root execution data. The scope map and definition ID remain part
+/// of the on-disk format; execution currently supports only the root instance.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ScopeState {
@@ -66,7 +67,6 @@ impl WorkflowState {
     pub(crate) fn root_scope(&self) -> &ScopeState {
         &self.scopes[&ScopeInstanceId::ROOT]
     }
-    #[cfg(test)]
     pub(crate) fn root_scope_mut(&mut self) -> &mut ScopeState {
         self.scopes
             .get_mut(&ScopeInstanceId::ROOT)
@@ -75,30 +75,18 @@ impl WorkflowState {
     pub(crate) fn scope(&self, id: ScopeInstanceId) -> Option<&ScopeState> {
         self.scopes.get(&id)
     }
-
-    pub(crate) fn scope_definition<'a>(
-        &self,
-        workflow: &'a FrozenWorkflow,
-        id: ScopeInstanceId,
-    ) -> WorkflowResult<&'a super::ScopeDefinition> {
-        let scope = self
-            .scope(id)
-            .ok_or_else(|| WorkflowError::Scheduler(format!("unknown scope '{id}'")))?;
-        Ok(workflow.program.scope_definition(scope.definition))
-    }
     pub(crate) fn scope_mut(&mut self, id: ScopeInstanceId) -> Option<&mut ScopeState> {
         self.scopes.get_mut(&id)
     }
     pub(crate) fn task(&self, id: &TaskInstanceId) -> Option<&NodeState> {
         self.scope(id.scope())?.nodes.get(id.definition())
     }
+    /// Enumerate executable tasks after validating the root-only state shape.
     pub(crate) fn tasks(&self) -> impl Iterator<Item = (TaskInstanceId, &NodeState)> {
-        self.scopes.iter().flat_map(|(scope, state)| {
-            state
-                .nodes
-                .iter()
-                .map(move |(id, state)| (TaskInstanceId::new(*scope, id.clone()), state))
-        })
+        self.root_scope()
+            .nodes
+            .iter()
+            .map(|(id, state)| (TaskInstanceId::root(id.clone()), state))
     }
     pub(crate) fn outcome(&self) -> Option<WorkflowOutcome> {
         if self.lifecycle != RunLifecycle::Completed {

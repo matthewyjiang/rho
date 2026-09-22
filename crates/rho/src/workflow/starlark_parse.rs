@@ -10,8 +10,8 @@ use serde::{Deserialize, Deserializer};
 use crate::workflow::{
     AgentNode, CommandNode, Condition, ExitCodePredicate, InputName, InputSchema, Node,
     NodeExecution, NodeId, NodeTerminalState, ObjectFieldSchema, OutputPath, OutputReference,
-    OutputSchema, PlanningLimits, Template, TemplatePart, ValuePredicate, WorkflowError,
-    WorkflowGraph, WorkflowName, WorkflowProgram, WorkflowResult, WorkflowValue, WorkspaceAccess,
+    OutputSchema, PlanningLimits, ScopeDefinition, Template, TemplatePart, ValuePredicate,
+    WorkflowError, WorkflowName, WorkflowProgram, WorkflowResult, WorkflowValue, WorkspaceAccess,
 };
 
 pub(super) fn parse_program(
@@ -76,21 +76,18 @@ impl RhoWorkflow {
             exports,
         } = self;
         limits.node_count.check(nodes.len() as u64)?;
-        let mut graph_nodes = BTreeMap::new();
+        let mut root_nodes = BTreeMap::new();
         let mut edges = 0_u64;
         for node in nodes {
             let node = node.into_node(limits)?;
             edges = edges.saturating_add(node.needs.len() as u64);
-            if graph_nodes.insert(node.id.clone(), node).is_some() {
+            if root_nodes.insert(node.id.clone(), node).is_some() {
                 return Err(starlark("workflow contains duplicate node IDs"));
             }
         }
         limits.edge_count.check(edges)?;
-        let graph = WorkflowGraph {
-            name: WorkflowName::new(name)?,
-            nodes: graph_nodes,
-        };
-        for node in graph.nodes.values() {
+        let name = WorkflowName::new(name)?;
+        for node in root_nodes.values() {
             if let Some(condition) = &node.condition {
                 limits.condition_depth.check(condition.depth() as u64)?;
             }
@@ -101,11 +98,17 @@ impl RhoWorkflow {
                     .check(serde_json::to_vec(schema)?.len() as u64)?;
             }
         }
-        let mut program = WorkflowProgram::lower(graph, parameters);
-        program.root.exports = exports
-            .into_iter()
-            .map(|(name, reference)| Ok((name, reference.into_reference()?)))
-            .collect::<WorkflowResult<_>>()?;
+        let program = WorkflowProgram {
+            name,
+            root: ScopeDefinition {
+                parameters,
+                nodes: root_nodes,
+                exports: exports
+                    .into_iter()
+                    .map(|(name, reference)| Ok((name, reference.into_reference()?)))
+                    .collect::<WorkflowResult<_>>()?,
+            },
+        };
         program.root.validate_exports()?;
         Ok(program)
     }

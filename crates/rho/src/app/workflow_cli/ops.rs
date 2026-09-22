@@ -36,12 +36,7 @@ pub(crate) struct PreparedPlan {
     pub(crate) workflow: FrozenWorkflow,
 }
 
-/// A stored run as `workflow status` reads it.
-pub(crate) enum RunRecord {
-    Current(Box<StoredRun>),
-    // NEXT_MAJOR(rho-coding-agent): drop read-only legacy workflow runs from status.
-    Legacy(Box<crate::workflow::LegacyRun>),
-}
+pub(crate) use crate::workflow::RunRecord;
 
 /// Owns validate | plan | run | status | cancel | resume policy for both adapters.
 pub(crate) struct WorkflowOps {
@@ -123,10 +118,7 @@ impl WorkflowOps {
     pub(crate) fn load_run_record(&self, prefix: &str) -> anyhow::Result<RunRecord> {
         let store = self.service.store();
         let run_id = store.resolve_run(prefix)?;
-        if store.is_legacy_run(run_id)? {
-            return Ok(RunRecord::Legacy(Box::new(store.load_legacy_run(run_id)?)));
-        }
-        Ok(RunRecord::Current(Box::new(store.load_run(run_id)?)))
+        Ok(store.load_run_record(run_id)?)
     }
 
     pub(crate) fn load_run_id(&self, run_id: RunId) -> anyhow::Result<StoredRun> {
@@ -169,14 +161,6 @@ impl WorkflowOps {
         let identity = workspace_identity(&self.workspace)?;
         if run.workspace_identity != identity {
             anyhow::bail!("run belongs to another workspace");
-        }
-        // Legacy runs cannot be stopped; the store still refuses a held writer lock.
-        if run.lifecycle.is_live() && !self.service.store().is_legacy_run(run_id)? {
-            anyhow::bail!(
-                "run {} is still {}, stop it before deleting",
-                run_id,
-                run.lifecycle.as_str()
-            );
         }
         Ok(self.service.store().delete_run(run_id)?)
     }

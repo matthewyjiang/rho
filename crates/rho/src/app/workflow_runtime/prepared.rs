@@ -49,7 +49,7 @@ impl PreparedInvocation {
             })?;
         let node = workflow
             .program
-            .scope_definition(scope.definition)
+            .root
             .nodes
             .get(node_id.definition())
             .ok_or_else(|| RuntimeError::LaunchMetadata {

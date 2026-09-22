@@ -538,29 +538,33 @@ fn node_resolution_reuses_the_authorized_executable_identity() {
     replace_opened_file(&path, "replacement executable");
     make_executable(&path);
     let node_id = crate::workflow::test_support::id("command");
-    let graph = crate::workflow::WorkflowGraph {
+    let program = crate::workflow::WorkflowProgram {
         name: crate::workflow::WorkflowName::new("race").unwrap(),
-        nodes: BTreeMap::from([(
-            node_id.clone(),
-            crate::workflow::Node {
-                id: node_id.clone(),
-                display_name: "command".into(),
-                needs: Vec::new(),
-                condition: None,
-                execution: crate::workflow::NodeExecution::Command(
-                    crate::workflow::CommandNode::Direct {
-                        executable: executable.clone(),
-                        arguments: Vec::new(),
-                        cwd: ".".into(),
-                        output: None,
-                    },
-                ),
-                access: crate::workflow::WorkspaceAccess::Mutating,
-                allow_failure: false,
-                timeout_seconds: 5,
-                max_output_bytes: 1024,
-            },
-        )]),
+        root: crate::workflow::ScopeDefinition {
+            parameters: BTreeMap::new(),
+            nodes: BTreeMap::from([(
+                node_id.clone(),
+                crate::workflow::Node {
+                    id: node_id.clone(),
+                    display_name: "command".into(),
+                    needs: Vec::new(),
+                    condition: None,
+                    execution: crate::workflow::NodeExecution::Command(
+                        crate::workflow::CommandNode::Direct {
+                            executable: executable.clone(),
+                            arguments: Vec::new(),
+                            cwd: ".".into(),
+                            output: None,
+                        },
+                    ),
+                    access: crate::workflow::WorkspaceAccess::Mutating,
+                    allow_failure: false,
+                    timeout_seconds: 5,
+                    max_output_bytes: 1024,
+                },
+            )]),
+            exports: BTreeMap::new(),
+        },
     };
     let catalog = crate::agent::AgentCatalog::from_authorized_sources(Default::default()).unwrap();
     let available_tools = crate::agent::AgentCapabilities::all_host_tools();
@@ -573,7 +577,6 @@ fn node_resolution_reuses_the_authorized_executable_identity() {
         &available_tools,
         &executables,
     );
-    let program = crate::workflow::WorkflowProgram::lower(graph, BTreeMap::new());
     let resolved = super::super::resolve_nodes_with_host(&program, &host).unwrap();
 
     let crate::workflow::ResolvedNode::Command(command) = &resolved[&node_id] else {

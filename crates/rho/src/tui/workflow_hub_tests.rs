@@ -33,6 +33,7 @@ fn hub_picker_marks_empty_start_when_no_sources() {
 fn finished_run(id: &str, created_at_unix_nanos: u64) -> RunInventoryItem {
     RunInventoryItem {
         run_id: RunId::from_str(id).unwrap(),
+        read_only: false,
         created_at_unix_nanos,
         workspace_identity: "workspace".into(),
         name: "review".into(),

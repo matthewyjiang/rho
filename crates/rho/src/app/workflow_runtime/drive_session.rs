@@ -225,6 +225,15 @@ impl<'a> DriveSession<'a> {
     async fn run_loop(mut self) -> Result<StoredRun, RuntimeError> {
         loop {
             self.handle_cancellation_edge()?;
+            if self.run.state.state.cancellation_requested {
+                cancel_waiting_nodes(
+                    &self.store,
+                    &mut self.guard,
+                    &self.run_directory,
+                    &self.graph,
+                    &mut self.run.state,
+                )?;
+            }
 
             let capacity = available_capacity(&self.graph, &self.run.state.state);
             let launched = self.handle_scheduler_actions(capacity)?;
@@ -437,14 +446,11 @@ impl<'a> DriveSession<'a> {
             match PreparedInvocation::prepare(&self.graph, &node, &self.run.state.state) {
                 Ok(invocation) => invocation,
                 Err(error) => {
-                    self.tasks.spawn(async move {
-                        Ok(NodeTaskOutput {
-                            node,
-                            attempt,
-                            result: Err(error),
-                        })
+                    return self.complete_node(NodeTaskOutput {
+                        node,
+                        attempt,
+                        result: Err(error),
                     });
-                    return Ok(());
                 }
             };
         let executor = match &invocation.execution {
@@ -662,13 +668,6 @@ impl<'a> DriveSession<'a> {
 
     fn finish(mut self) -> Result<StoredRun, RuntimeError> {
         if self.run.state.state.cancellation_requested {
-            cancel_waiting_nodes(
-                &self.store,
-                &mut self.guard,
-                &self.run_directory,
-                &self.graph,
-                &mut self.run.state,
-            )?;
             persist_state_event(
                 &self.store,
                 &mut self.guard,
@@ -683,25 +682,9 @@ impl<'a> DriveSession<'a> {
             )?;
         }
         if self.run.state.state.root_scope().result.is_none() {
-            let result = crate::workflow::scope_result(
-                &self.graph,
-                &self.run.state.state,
-                crate::workflow::ScopeInstanceId::ROOT,
-            )?
-            .ok_or_else(|| {
-                RuntimeError::Data("scheduler stopped before root scope finished".into())
-            })?;
-            persist_state_event(
-                &self.store,
-                &mut self.guard,
-                &self.run_directory,
-                &self.graph,
-                &mut self.run.state,
-                WorkflowEvent::ScopeFinished {
-                    scope: crate::workflow::ScopeInstanceId::ROOT,
-                    result,
-                },
-            )?;
+            return Err(RuntimeError::Data(
+                "scheduler stopped before root scope finished".into(),
+            ));
         }
         persist_state_event(
             &self.store,

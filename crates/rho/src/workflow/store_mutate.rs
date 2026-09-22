@@ -37,8 +37,7 @@ impl WorkflowStore {
                 reason: format!("run already has an active writer: {error}"),
             })?;
 
-        // Re-check lifecycle under the lock. Ops may have checked earlier, but
-        // a concurrent owner could have advanced state before we took the lock.
+        // The store owns the live-run deletion policy; check it under the lock.
         let lifecycle = self.read_run_lifecycle(id)?;
         // NEXT_MAJOR(rho-coding-agent): drop the legacy exemption with version 1 run support.
         if lifecycle.is_live() && !legacy {

@@ -39,7 +39,7 @@ pub(crate) fn next_actions(
     };
     let mut actions = Vec::new();
     let mut runnable = Vec::new();
-    let definition = state.scope_definition(workflow, ScopeInstanceId::ROOT)?;
+    let definition = &workflow.program.root;
     for node in definition.nodes.values() {
         match state.root_scope().nodes[&node.id] {
             NodeState::Ready => runnable.push(node),
@@ -180,8 +180,9 @@ pub(crate) fn apply_event(
         }
         SchedulerEvent::Finished { node, completion } => {
             ensure_open_task(&next, &node)?;
-            let definition = state
-                .scope_definition(workflow, node.scope())?
+            let definition = workflow
+                .program
+                .root
                 .nodes
                 .get(node.definition())
                 .ok_or_else(|| {
@@ -205,8 +206,7 @@ pub(crate) fn apply_event(
                         ))
                     })?
                     .validate_value(value)?;
-                next.scope_mut(node.scope())
-                    .expect("open task scope checked")
+                next.root_scope_mut()
                     .outputs
                     .insert(node.definition().clone(), value.clone());
             }
@@ -216,8 +216,7 @@ pub(crate) fn apply_event(
                         "agent node '{node}' reported a command exit"
                     )));
                 }
-                next.scope_mut(node.scope())
-                    .expect("open task scope checked")
+                next.root_scope_mut()
                     .command_exits
                     .insert(node.definition().clone(), exit.clone());
             }
@@ -228,8 +227,7 @@ pub(crate) fn apply_event(
                     outcome: completion.outcome,
                 },
             )?;
-            next.scope_mut(node.scope())
-                .expect("open task scope checked")
+            next.root_scope_mut()
                 .completions
                 .insert(node.definition().clone(), *completion);
         }
@@ -259,9 +257,7 @@ pub(crate) fn apply_event(
                 },
             };
             validate_reset_transition(&node, current, reason, &target)?;
-            let local = next
-                .scope_mut(node.scope())
-                .expect("open task scope checked");
+            let local = next.root_scope_mut();
             local.nodes.insert(node.definition().clone(), target);
             local.command_exits.remove(node.definition());
             local.outputs.remove(node.definition());
@@ -286,8 +282,7 @@ fn replace_node(
         .ok_or_else(|| WorkflowError::Scheduler(format!("event targets unknown node '{node}'")))?;
     validate_transition(&node, current, &target)?;
     state
-        .scope_mut(node.scope())
-        .expect("open task scope checked")
+        .root_scope_mut()
         .nodes
         .insert(node.definition().clone(), target);
     Ok(())
@@ -303,7 +298,7 @@ pub(crate) fn validate_state_shape(
         ));
     }
     let local = state.root_scope();
-    let definition = workflow.program.scope_definition(local.definition);
+    let definition = &workflow.program.root;
     local.durable.validate_membership(&local.nodes)?;
     if definition.nodes.len() != local.nodes.len() || definition.nodes.keys().ne(local.nodes.keys())
     {
@@ -326,10 +321,9 @@ pub(crate) fn validate_state_shape(
 }
 
 fn ensure_open_task(state: &WorkflowState, task: &TaskInstanceId) -> WorkflowResult<()> {
-    if state.task(task).is_none()
-        || state
-            .scope(task.scope())
-            .is_none_or(|scope| scope.result.is_some())
+    if task.scope() != ScopeInstanceId::ROOT
+        || state.task(task).is_none()
+        || state.root_scope().result.is_some()
     {
         return Err(WorkflowError::Scheduler(format!(
             "task '{task}' does not belong to an open scope"
