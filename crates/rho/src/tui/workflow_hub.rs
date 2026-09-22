@@ -443,19 +443,36 @@ impl App {
         agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let parsed = RunId::from_str(run_id)?;
-        let run = self.workflow_ops()?.load_run_id(parsed)?;
+        let Some(run) = self.load_run_for_watch(parsed)? else {
+            return Ok(());
+        };
         match run.state.state.lifecycle {
             RunLifecycle::NeedsRecovery => {
                 // Recover in the background, then open the watch screen.
                 self.resume_workflow_run(run_id, /*recover_uncertain*/ true, terminal, agent)
                     .await?;
-                let run = self.workflow_ops()?.load_run_id(parsed)?;
+                let Some(run) = self.load_run_for_watch(parsed)? else {
+                    return Ok(());
+                };
                 self.open_workflow_watch(run, terminal).await
             }
             RunLifecycle::Planned
             | RunLifecycle::Running
             | RunLifecycle::Cancelling
             | RunLifecycle::Completed => self.open_workflow_watch(run, terminal).await,
+        }
+    }
+
+    /// Reports an unreadable run, such as a read-only run saved by an older
+    /// release, in the transcript instead of leaving the TUI.
+    fn load_run_for_watch(&mut self, run_id: RunId) -> anyhow::Result<Option<StoredRun>> {
+        match self.workflow_ops()?.load_run_id(run_id) {
+            Ok(run) => Ok(Some(run)),
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("could not load run: {error:#}")));
+                self.set_status("open failed");
+                Ok(None)
+            }
         }
     }
 

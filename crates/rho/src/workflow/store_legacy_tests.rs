@@ -18,7 +18,7 @@ fn write(store: &WorkflowStore, relative: PathBuf, value: &serde_json::Value) {
 }
 
 /// Writes a plan and a completed run in the version 1 single-graph layout.
-fn write_legacy_records(store: &WorkflowStore) {
+fn write_legacy_records(store: &WorkflowStore, lifecycle: &str) {
     let plan_id: PlanId = PLAN_ID.parse().unwrap();
     let run_id: RunId = RUN_ID.parse().unwrap();
     write(
@@ -69,7 +69,7 @@ fn write_legacy_records(store: &WorkflowStore) {
             "last_event_sequence": 4,
             "state": {
                 "revision": 4,
-                "lifecycle": "completed",
+                "lifecycle": lifecycle,
                 "outcome": "success",
                 "cancellation_requested": false,
                 "nodes": {"inspect": {"state": "terminal", "outcome": "success"}},
@@ -88,7 +88,7 @@ fn write_legacy_records(store: &WorkflowStore) {
 fn legacy_records_are_listed_and_read_only() {
     let home = tempfile::tempdir().unwrap();
     let store = WorkflowStore::new(home.path()).unwrap();
-    write_legacy_records(&store);
+    write_legacy_records(&store, "completed");
     let plan_id: PlanId = PLAN_ID.parse().unwrap();
     let run_id: RunId = RUN_ID.parse().unwrap();
 
@@ -154,4 +154,28 @@ fn legacy_records_are_listed_and_read_only() {
     store.delete_plan(plan_id).unwrap();
     assert_eq!(store.list_run_inventory().unwrap(), vec![]);
     assert_eq!(store.list_plan_inventory().unwrap(), vec![]);
+}
+
+// Covers: a legacy run left running by an older release cannot be cancelled or
+// resumed, so delete must clear it once no process holds its writer lock.
+// Owner: workflow durable store (legacy read-only records).
+#[test]
+fn abandoned_live_legacy_run_is_deletable_only_without_a_writer() {
+    use fs2::FileExt as _;
+
+    let home = tempfile::tempdir().unwrap();
+    let store = WorkflowStore::new(home.path()).unwrap();
+    write_legacy_records(&store, "running");
+    let run_id: RunId = RUN_ID.parse().unwrap();
+
+    let writer = std::fs::File::open(store.layout.run_lock(run_id)).unwrap();
+    writer.try_lock_exclusive().unwrap();
+    assert!(matches!(
+        store.delete_run(run_id).unwrap_err(),
+        WorkflowError::Corrupt { .. }
+    ));
+    writer.unlock().unwrap();
+
+    store.delete_run(run_id).unwrap();
+    assert_eq!(store.list_run_inventory().unwrap(), vec![]);
 }

@@ -22,10 +22,12 @@ impl WorkflowStore {
     ///
     /// Holds the exclusive writer lock across a rename of the run ID path so
     /// another process cannot `lock_run` and drive the tree while it is removed.
-    /// Live (`Running` / `Cancelling`) runs are refused under that lock.
+    /// Live (`Running` / `Cancelling`) runs are refused under that lock, except
+    /// read-only legacy runs: nothing can cancel or resume them, so a free lock
+    /// means no owner remains.
     pub(crate) fn delete_run(&self, id: RunId) -> WorkflowResult<()> {
         // Confirm the run directory is a real store entry before removal.
-        let _ = self.is_legacy_run(id)?;
+        let legacy = self.is_legacy_run(id)?;
         let lock = self
             .root
             .open_private_file(&run_relative(id, Path::new("mutation.lock")), true)?;
@@ -38,7 +40,8 @@ impl WorkflowStore {
         // Re-check lifecycle under the lock. Ops may have checked earlier, but
         // a concurrent owner could have advanced state before we took the lock.
         let lifecycle = self.read_run_lifecycle(id)?;
-        if lifecycle.is_live() {
+        // NEXT_MAJOR(rho-coding-agent): drop the legacy exemption with version 1 run support.
+        if lifecycle.is_live() && !legacy {
             let _ = lock.unlock();
             return Err(WorkflowError::Corrupt {
                 path: self.layout.run(id),

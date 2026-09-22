@@ -170,7 +170,8 @@ impl WorkflowOps {
         if run.workspace_identity != identity {
             anyhow::bail!("run belongs to another workspace");
         }
-        if run.lifecycle.is_live() {
+        // Legacy runs cannot be stopped; the store still refuses a held writer lock.
+        if run.lifecycle.is_live() && !self.service.store().is_legacy_run(run_id)? {
             anyhow::bail!(
                 "run {} is still {}, stop it before deleting",
                 run_id,

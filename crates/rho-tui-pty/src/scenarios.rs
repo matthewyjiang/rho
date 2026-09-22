@@ -63,6 +63,7 @@ mod tool_card_hover;
 mod type_during_stream;
 mod web_search;
 mod workflow;
+mod workflow_hub_legacy;
 mod workspace_rewind;
 
 use activity_anchor::{SPINNER_ACTIVITY_ANCHOR_SCENARIO, SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO};
@@ -151,6 +152,9 @@ use text_selection::{SCREEN_TEXT_SELECTION_STEPS, TEXT_SELECTION_DRAG_STEPS};
 use tool_card_hover::TOOL_CARD_HOVER_STEPS;
 use type_during_stream::TYPE_DURING_STREAM_STEPS;
 use workflow::{WORKFLOW_CANCEL_RESUME_ID, WORKFLOW_RUN_ID};
+use workflow_hub_legacy::{
+    setup_workflow_hub_legacy_run, WORKFLOW_HUB_LEGACY_RUN_ID, WORKFLOW_HUB_LEGACY_RUN_STEPS,
+};
 use workspace_rewind::WORKSPACE_REWIND_SCENARIO;
 
 use crate::{
@@ -768,6 +772,14 @@ const ALL_SCENARIOS: &[Scenario] = &[
         OPEN_WORKFLOW_HUB_EMPTY_STEPS,
         false,
     ),
+    Scenario::new(
+        WORKFLOW_HUB_LEGACY_RUN_ID,
+        "Report a read-only run from an older release in the workflows hub without exiting",
+        DEFAULT_SIZE,
+        WORKFLOW_HUB_LEGACY_RUN_STEPS,
+        false,
+    )
+    .with_setup(setup_workflow_hub_legacy_run),
     OPEN_CONFIG_PICKER_SCENARIO,
     Scenario::new(
         "open_agents_picker",

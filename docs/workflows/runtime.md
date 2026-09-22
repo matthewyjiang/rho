@@ -238,7 +238,9 @@ state. Prefer the program and scope fields in new consumers.
 Plans and runs saved by earlier releases use version 1 manifests. They stay in
 `plans/` and `runs/`, appear in `list` and the workflow hub, and print through
 `status` in their original shape. They are read-only: run, resume, and cancel
-fail and ask you to create a new plan from source. Rho does not migrate them.
+fail and ask you to create a new plan from source. Delete still removes them,
+including a run an older release left `running`, once no process holds that
+run's writer lock. Rho does not migrate them.
 
 Source node names are definition IDs. Runtime events, status rows, selection,
 progress, and artifact paths use task instance IDs. A root-scope task instance
