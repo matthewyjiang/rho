@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.14.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.13.0...rho-coding-agent-v2.14.0) (2026-09-22)
+
+
+### Features
+
+* **tui:** open /hooks in a single-pane overlay ([#1243](https://github.com/matthewyjiang/rho/issues/1243)) ([0b00ef3](https://github.com/matthewyjiang/rho/commit/0b00ef3ab9883865932cf034aa09f88568fa8487))
+* **tui:** open /info in a single-pane overlay ([#1244](https://github.com/matthewyjiang/rho/issues/1244)) ([0c91964](https://github.com/matthewyjiang/rho/commit/0c919640124e6795e7aea9c0d5180687b6316dd3))
+
+
+### Bug Fixes
+
+* **computer:** retain grants only for answered tool failures ([#1242](https://github.com/matthewyjiang/rho/issues/1242)) ([46fa595](https://github.com/matthewyjiang/rho/commit/46fa595c5e4a9044c91ca53c79f0c046bb0a581e))
+* **tui:** keep questionnaire arrows on the current question ([#1240](https://github.com/matthewyjiang/rho/issues/1240)) ([3e85e74](https://github.com/matthewyjiang/rho/commit/3e85e74fa44a6a35a3f1aa93761e2bc05601de3d))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.9.0 to 2.10.0
+
 ## [2.13.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.12.0...rho-coding-agent-v2.13.0) (2026-09-21)
 
 

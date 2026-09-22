@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.10.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.9.0...rho-providers-v2.10.0) (2026-09-22)
+
+
+### Features
+
+* **openai:** support GPT-6 Sol and Luna on Codex OAuth ([#1246](https://github.com/matthewyjiang/rho/issues/1246)) ([8807fdc](https://github.com/matthewyjiang/rho/commit/8807fdc7862f5042a39a0e2c550592fe6135713c))
+
 ## [2.9.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.8.0...rho-providers-v2.9.0) (2026-09-21)
 
 
