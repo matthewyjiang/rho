@@ -123,6 +123,7 @@ pub(super) fn run(runner: &ScenarioRunner) -> Result<ScenarioOutcome> {
             harness.wait_for_text_gone("tool available computer: true", SETTLE)?;
             harness.submit_text("fixture computer context")?;
             harness.wait_for_text("computer context: disabled", STREAM)?;
+            wait_for_turn_completion_after(harness, "computer context: disabled")?;
             harness.submit_text("/computer on")?;
             harness.wait_for_text("Grant desktop access?", SETTLE)?;
             harness.inject_key(&Key::Char('g'))?;
