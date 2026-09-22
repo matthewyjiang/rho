@@ -2,15 +2,19 @@
 
 mod canonical;
 mod condition;
+mod durable;
 mod error;
 mod ids;
+mod instances;
 mod layout;
 mod migration;
 mod model;
 mod normalization;
 mod planning_limits;
+mod program;
 mod scheduler;
 mod schema;
+mod scope_state;
 mod secure_fs;
 mod secure_fs_control;
 mod secure_fs_directory;
@@ -36,19 +40,23 @@ mod validation;
 mod value;
 mod wire;
 
-pub(crate) use canonical::graph_digest;
+pub(crate) use canonical::program_digest;
 pub(crate) use condition::{evaluate_condition, ConditionContext};
+pub(crate) use durable::{apply_durable_event, DurableReplayState};
 pub(crate) use error::{WorkflowError, WorkflowResult};
 pub(crate) use ids::*;
-pub(crate) use layout::WorkflowLayout;
+pub(crate) use instances::{ScopeInstanceId, TaskInstanceId};
+pub(crate) use layout::{attempt_directory, WorkflowLayout};
 pub(crate) use migration::check_schema_version;
 pub(crate) use model::*;
 pub(crate) use normalization::normalize_workflow;
 pub(crate) use planning_limits::{
     Budget, FrozenRuntimeLimits, PlanningLimits, PlanningMeasurements,
 };
-pub(crate) use scheduler::{apply_event, next_actions};
+pub(crate) use program::{ScopeDefinition, ScopeDefinitionId, WorkflowProgram};
+pub(crate) use scheduler::{apply_event, next_actions, validate_state_shape};
 pub(crate) use schema::*;
+pub(crate) use scope_state::{ScopeResult, ScopeState, WorkflowState};
 pub(crate) use secure_fs::{
     ensure_directory_beneath, freeze_directory_identity, freeze_executable_identity,
     freeze_opened_executable, open_executable, open_executable_candidate,
@@ -65,10 +73,12 @@ pub(crate) use service::WorkflowService;
 pub(crate) use starlark::StarlarkPlanner;
 pub(crate) use starlark_diagnostics::Diagnostic;
 pub(crate) use starlark_loader::{CollectedSources, SourceBytes, SourceCollector};
-pub(crate) use store::{PlanInventoryItem, RunInventoryItem, RunMutationGuard, WorkflowStore};
+pub(crate) use store::{
+    LegacyRun, LegacyWorkflowState, PlanInventoryItem, RunInventoryItem, RunMutationGuard,
+    WorkflowStore,
+};
 pub(crate) use transition::{
-    derive_workflow_outcome, validate_lifecycle_transition, validate_reset_transition,
-    validate_transition,
+    scope_result, validate_lifecycle_transition, validate_reset_transition, validate_transition,
 };
 pub(crate) use validation::{validate_runtime_budgets, validate_workflow};
 pub(crate) use value::WorkflowValue;

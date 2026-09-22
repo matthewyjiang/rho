@@ -241,17 +241,19 @@ The receipt and corpus map are `crates/rho/src/workflow/fixtures/limit_receipt.j
 Verify after a build:
 
 ```bash
-cargo build -p rho-coding-agent -j 12
+cargo build -p rho-coding-agent -j 8
 python3 scripts/measure_workflow_limits.py --rho target/debug/rho
 ```
 
-The command runs each generated case in the product planner worker, reads the worker's evaluator tick and peak-heap counters, derives graph and runtime values from the returned plan, and also runs `workflow validate`. It fails if a deterministic value differs from the receipt, if a process frame differs, or if wall time or address space loses its stated safety margin. Wall time and address space use checked baselines because OS load can change them. The verifier allows at most twice the baseline and still requires the separate minimum margin in the receipt.
+The command runs each generated case in the product planner worker, reads the worker's evaluator tick and peak-heap counters, derives program and runtime values from the returned plan, and also runs `workflow validate`. Both paths isolate `HOME` and `RHO_HOME` so local agents and credentials cannot affect the corpus. It fails if a deterministic value differs from the receipt, if a process frame differs, or if wall time or address space loses its stated safety margin. Wall time and address space use checked baselines because OS load can change them. The verifier allows at most twice the baseline and still requires the separate minimum margin in the receipt. Add `--json-output /tmp/workflow-measurements.json` to retain completed measurements even when comparison fails.
+
+The evaluator heap metric matches Starlark's enforced quantity: mutable-heap peak plus frozen-heap allocated bytes. Remeasuring the unchanged corpus found 67,111,744 mutable bytes and 19,176 frozen bytes, totaling 67,130,920 bytes. The old 50,334,528-byte receipt omitted frozen allocations and understated the current mutable peak by 16,777,216 bytes. The accepted heap budget is now 80,796,392 bytes, retaining the existing 13,665,472-byte absolute margin. No corpus workload was reduced. `graph_bytes` measures the entire serialized scoped program, including its root and input schemas, rather than just the root graph.
 
 On Linux, the address-space value is the highest `/proc/<pid>/status` `VmSize` seen after the supervised child starts the planner worker. That omits the short period before the child applies its limit. The checked debug build used 1,170,087,936 bytes under a 4,294,967,296-byte OS ceiling. That ceiling is a coarse process backstop, `RLIMIT_AS` on Linux and the same value as a Job Object process-memory commit limit on Windows. It is not the product tripwire. Product memory policy lives in the receipt. Virtual size is much larger than resident memory because allocators reserve address space without committing it. If the worker needs more than the checked amount, the check reports the measured value and the hard limit.
 
 `environment_expansion_bytes` is a schema sentinel, not a corpus measurement. Workflow schema v1 forbids source-controlled environment entries and keeps a one-byte accepted floor.
 
-Current measured stress values include 750,000 source bytes, 75 modules at depth 15, 750,019 evaluator ticks, 50,334,528 evaluator heap bytes, 750 nodes, 7,500 edges, a 756,418-byte schema, a 7,515,347-byte graph, 6,291,456 bytes per retained stream, and 50,331,648 total retained bytes. Read the receipt for every value and margin.
+Current measured stress values include 750,000 source bytes, 75 modules at depth 15, 750,019 evaluator ticks, 67,130,920 evaluator heap bytes, 750 nodes, 7,500 edges, a 756,418-byte schema, a 7,515,385-byte program, 6,291,456 bytes per retained stream, and 50,331,648 total retained bytes. Read the receipt for every value and margin.
 
 Cancellation uses a separate measurement. It starts a real workflow owner, waits on a Unix socket until a compiled command node is active, and starts a second Rho process to run `workflow cancel`. Linux `pidfd_open` checks that the command process has exited. Process completion, not a sleep, ends each wait.
 

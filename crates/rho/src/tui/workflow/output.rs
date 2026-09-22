@@ -24,7 +24,7 @@ const MAX_DISPLAY_BYTES: usize = 512 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct NodeOutputBody {
-    pub(super) node_id: crate::workflow::NodeId,
+    pub(super) node_id: crate::workflow::TaskInstanceId,
     pub(super) digest: Digest,
     pub(super) kind: ArtifactKind,
     pub(super) relative_path: String,

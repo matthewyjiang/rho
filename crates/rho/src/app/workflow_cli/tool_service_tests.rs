@@ -263,7 +263,7 @@ fn preparation_keeps_exact_durable_and_process_facts() {
     assert!(matches!(
         plan[6].operation(),
         CapabilityOperation::WritePath { path, scope }
-            if path == Path::new("/rho/workflows/plans")
+            if path == &crate::workflow::WorkflowLayout::new(Path::new("/rho")).plans()
                 && *scope == PathScope::UnrestrictedFilesystem
     ));
 
@@ -282,7 +282,8 @@ fn preparation_keeps_exact_durable_and_process_facts() {
     assert!(matches!(
         recovery[1].operation(),
         CapabilityOperation::WritePath { path, .. }
-            if path == Path::new("/rho/workflows/runs/00000000-0000-0000-0000-000000000002")
+            if path == &crate::workflow::WorkflowLayout::new(Path::new("/rho"))
+                .run(run_id("00000000-0000-0000-0000-000000000002"))
     ));
     assert!(service()
         .capabilities_for_paths(
@@ -572,7 +573,8 @@ fn node_resolution_reuses_the_authorized_executable_identity() {
         &available_tools,
         &executables,
     );
-    let resolved = super::super::resolve_nodes_with_host(&graph, &host).unwrap();
+    let program = crate::workflow::WorkflowProgram::lower(graph, BTreeMap::new());
+    let resolved = super::super::resolve_nodes_with_host(&program, &host).unwrap();
 
     let crate::workflow::ResolvedNode::Command(command) = &resolved[&node_id] else {
         panic!("command node resolved as an agent");

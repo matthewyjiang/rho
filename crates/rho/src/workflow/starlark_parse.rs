@@ -8,18 +8,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Deserializer};
 
 use crate::workflow::{
-    AgentNode, CommandNode, Condition, ExitCodePredicate, InputSchema, Node, NodeExecution, NodeId,
-    NodeTerminalState, ObjectFieldSchema, OutputPath, OutputReference, OutputSchema,
-    PlanningLimits, Template, TemplatePart, ValuePredicate, WorkflowError, WorkflowGraph,
-    WorkflowName, WorkflowResult, WorkflowValue, WorkspaceAccess,
+    AgentNode, CommandNode, Condition, ExitCodePredicate, InputName, InputSchema, Node,
+    NodeExecution, NodeId, NodeTerminalState, ObjectFieldSchema, OutputPath, OutputReference,
+    OutputSchema, PlanningLimits, Template, TemplatePart, ValuePredicate, WorkflowError,
+    WorkflowGraph, WorkflowName, WorkflowProgram, WorkflowResult, WorkflowValue, WorkspaceAccess,
 };
 
-pub(super) fn parse_graph(
+pub(super) fn parse_program(
     value: serde_json::Value,
     limits: &PlanningLimits,
-) -> WorkflowResult<WorkflowGraph> {
+    parameters: BTreeMap<InputName, InputSchema>,
+) -> WorkflowResult<WorkflowProgram> {
     let wire: RhoWorkflow = decode(value)?;
-    wire.into_graph(limits)
+    wire.into_program(limits, parameters)
 }
 
 pub(super) fn parse_input_schema(value: &serde_json::Value) -> WorkflowResult<InputSchema> {
@@ -52,15 +53,28 @@ where
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "__rho_type")]
+#[serde(tag = "__rho_type", deny_unknown_fields)]
 enum RhoWorkflow {
     #[serde(rename = "workflow")]
-    Workflow { name: String, nodes: Vec<RhoNode> },
+    Workflow {
+        name: String,
+        nodes: Vec<RhoNode>,
+        #[serde(default, deserialize_with = "null_default")]
+        exports: BTreeMap<String, RhoOutputRef>,
+    },
 }
 
 impl RhoWorkflow {
-    fn into_graph(self, limits: &PlanningLimits) -> WorkflowResult<WorkflowGraph> {
-        let Self::Workflow { name, nodes } = self;
+    fn into_program(
+        self,
+        limits: &PlanningLimits,
+        parameters: BTreeMap<InputName, InputSchema>,
+    ) -> WorkflowResult<WorkflowProgram> {
+        let Self::Workflow {
+            name,
+            nodes,
+            exports,
+        } = self;
         limits.node_count.check(nodes.len() as u64)?;
         let mut graph_nodes = BTreeMap::new();
         let mut edges = 0_u64;
@@ -87,15 +101,18 @@ impl RhoWorkflow {
                     .check(serde_json::to_vec(schema)?.len() as u64)?;
             }
         }
-        limits
-            .graph_bytes
-            .check(serde_json::to_vec(&graph)?.len() as u64)?;
-        Ok(graph)
+        let mut program = WorkflowProgram::lower(graph, parameters);
+        program.root.exports = exports
+            .into_iter()
+            .map(|(name, reference)| Ok((name, reference.into_reference()?)))
+            .collect::<WorkflowResult<_>>()?;
+        program.root.validate_exports()?;
+        Ok(program)
     }
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "__rho_type")]
+#[serde(tag = "__rho_type", deny_unknown_fields)]
 enum RhoNode {
     #[serde(rename = "agent")]
     Agent {
@@ -345,6 +362,7 @@ impl RhoTemplatePart {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RhoOutputRef {
     #[serde(rename = "__rho_type")]
     kind: String,

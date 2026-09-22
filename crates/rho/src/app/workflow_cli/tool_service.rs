@@ -90,8 +90,9 @@ impl AppWorkflowToolService {
         project_agents_trusted: bool,
     ) -> anyhow::Result<Vec<CapabilityRequest>> {
         let source = || CapabilitySource::built_in_tool("workflow");
-        let plans = crate::paths::user_workflows_dir(rho_home).join("plans");
-        let runs = crate::paths::user_workflows_dir(rho_home).join("runs");
+        let layout = crate::workflow::WorkflowLayout::new(rho_home);
+        let plans = layout.plans();
+        let runs = layout.runs();
         let capabilities = match request {
             WorkflowToolRequest::Validate { file, .. } | WorkflowToolRequest::Plan { file, .. } => {
                 let mut requests =
@@ -264,9 +265,9 @@ impl AppWorkflowToolService {
                     .map_err(model_workflow_tool_error)?;
                 Ok(WorkflowToolResult::Plan {
                     plan_id: stored.manifest.plan_id.to_string(),
-                    graph_digest: stored.manifest.graph_digest.0.clone(),
-                    workflow_name: stored.graph.graph.name.as_str().to_owned(),
-                    node_count: stored.graph.graph.nodes.len() as u64,
+                    program_digest: stored.manifest.program_digest.0.clone(),
+                    workflow_name: stored.graph.program.name.as_str().to_owned(),
+                    node_count: stored.graph.program.root.nodes.len() as u64,
                 })
             }
             WorkflowToolRequest::Run { plan_id } => {
@@ -274,14 +275,14 @@ impl AppWorkflowToolService {
                 let plan = ops
                     .prepare_run_id(plan_id)
                     .map_err(model_workflow_tool_error)?;
-                confirm_exact_plan(context, "Run", &plan.manifest.graph_digest.0).await?;
+                confirm_exact_plan(context, "Run", &plan.manifest.program_digest.0).await?;
                 let run = ops
                     .create_confirmed_run(&plan)
                     .map_err(model_workflow_tool_error)?;
                 self.tracker.register_start(
                     run.manifest.run_id.to_string(),
-                    run.graph.graph.name.as_str(),
-                    run.manifest.graph_digest.0.clone(),
+                    run.graph.program.name.as_str(),
+                    run.manifest.program_digest.0.clone(),
                     None,
                 );
                 let started = runtime::spawn_background_run(
@@ -348,11 +349,11 @@ impl AppWorkflowToolService {
                             model_workflow_tool_error(error)
                         }
                     })?;
-                confirm_exact_plan(context, "Resume", &run.manifest.graph_digest.0).await?;
+                confirm_exact_plan(context, "Resume", &run.manifest.program_digest.0).await?;
                 self.tracker.register_start(
                     run.manifest.run_id.to_string(),
-                    run.graph.graph.name.as_str(),
-                    run.manifest.graph_digest.0.clone(),
+                    run.graph.program.name.as_str(),
+                    run.manifest.program_digest.0.clone(),
                     None,
                 );
                 let started = runtime::spawn_background_run(
@@ -392,7 +393,7 @@ impl AppWorkflowToolService {
             super::planner_worker::run_supervised_planner(&sources, supplied_inputs, &limits)
                 .await?;
         let executable_identities = self
-            .authorize_node_resolution_reads(&planned.graph, &catalog, context)
+            .authorize_node_resolution_reads(&planned.program, &catalog, context)
             .await?;
         let available_tools = AgentCapabilities::all_host_tools();
         let host = AuthorizedPlanHost::new(
@@ -402,7 +403,7 @@ impl AppWorkflowToolService {
             &available_tools,
             &executable_identities,
         );
-        let resolved_nodes = super::plan_host::resolve_nodes_with_host(&planned.graph, &host)?;
+        let resolved_nodes = super::plan_host::resolve_nodes_with_host(&planned.program, &host)?;
         super::freeze_planned_workflow(sources, planned, resolved_nodes, &limits)
     }
 
@@ -564,13 +565,12 @@ fn observe_if_terminal(tracker: &WorkflowRunTracker, run: &StoredRun) {
 
 fn run_result(run: StoredRun) -> Result<WorkflowToolResult, ToolError> {
     let run_id = run.manifest.run_id.to_string();
-    let graph_digest = run.manifest.graph_digest.0.clone();
+    let program_digest = run.manifest.program_digest.0.clone();
     let state = run.state.state.lifecycle;
     let nodes = run
         .state
         .state
-        .nodes
-        .iter()
+        .tasks()
         .map(|(node_id, state)| {
             let attempt = match state {
                 NodeState::Running { attempt } => Some(attempt.get()),
@@ -578,8 +578,7 @@ fn run_result(run: StoredRun) -> Result<WorkflowToolResult, ToolError> {
                 NodeState::Terminal { .. } => run
                     .state
                     .state
-                    .completions
-                    .get(node_id)
+                    .completion(&node_id)
                     .and_then(|completion| completion.attempt)
                     .map(crate::workflow::AttemptNumber::get),
             };
@@ -590,8 +589,7 @@ fn run_result(run: StoredRun) -> Result<WorkflowToolResult, ToolError> {
                 artifacts: run
                     .state
                     .state
-                    .completions
-                    .get(node_id)
+                    .completion(&node_id)
                     .into_iter()
                     .flat_map(|completion| completion.artifacts.iter())
                     .map(|(kind, artifact)| WorkflowArtifactSummary {
@@ -604,9 +602,10 @@ fn run_result(run: StoredRun) -> Result<WorkflowToolResult, ToolError> {
         .collect();
     Ok(WorkflowToolResult::Run {
         run_id,
-        graph_digest,
+        program_digest,
         state,
         nodes,
+        result: run.state.state.root_scope().result.clone(),
     })
 }
 

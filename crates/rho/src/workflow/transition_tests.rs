@@ -1,16 +1,17 @@
+use pretty_assertions::assert_eq;
+
 use super::*;
 use crate::workflow::{
     test_support::{agent_node, id, state, workflow},
-    WorkspaceAccess,
+    NodeExecution, OutputPath, OutputReference, OutputSchema, WorkflowValue, WorkspaceAccess,
 };
 
-// Covers: resume could rerun terminal nodes through an illegal state transition.
-// Owner: workflow transition core.
+// Covers: resume cannot rerun a successful terminal task.
 #[test]
 fn terminal_nodes_cannot_return_to_ready() {
     assert!(matches!(
         validate_transition(
-            &id("node"),
+            &TaskInstanceId::root(id("node")),
             &NodeState::Terminal {
                 outcome: NodeTerminalState::Success
             },
@@ -20,98 +21,95 @@ fn terminal_nodes_cannot_return_to_ready() {
     ));
 }
 
-// Covers: allowed failures could incorrectly fail the whole workflow.
-// Owner: workflow outcome core.
+// Covers: scope aggregation respects allow_failure but never suppresses cancellation.
 #[test]
-fn allowed_failure_does_not_change_workflow_outcome() {
-    let mut optional = agent_node("optional", &[], WorkspaceAccess::Mutating);
-    optional.allow_failure = true;
-    let workflow = workflow(vec![
-        agent_node("required", &[], WorkspaceAccess::Mutating),
-        optional,
-    ]);
+fn local_required_outcomes_and_cancellation_determine_scope_result() {
+    for (optional, child, expected) in [
+        (true, NodeTerminalState::Failure, WorkflowOutcome::Success),
+        (false, NodeTerminalState::Failure, WorkflowOutcome::Failure),
+        (
+            true,
+            NodeTerminalState::Cancellation,
+            WorkflowOutcome::Cancellation,
+        ),
+        (
+            false,
+            NodeTerminalState::Cancellation,
+            WorkflowOutcome::Cancellation,
+        ),
+        (false, NodeTerminalState::Denial, WorkflowOutcome::Denial),
+        (false, NodeTerminalState::Blocked, WorkflowOutcome::Blocked),
+    ] {
+        let mut node = agent_node("child", &[], WorkspaceAccess::ReadOnly);
+        node.allow_failure = optional;
+        let workflow = workflow(vec![node]);
+        let mut state = state(&workflow);
+        state
+            .root_scope_mut()
+            .nodes
+            .insert(id("child"), NodeState::Terminal { outcome: child });
+        let result = ScopeResult {
+            outcome: expected,
+            outputs: Default::default(),
+        };
+        assert_eq!(
+            scope_result(&workflow, &state, ScopeInstanceId::ROOT).unwrap(),
+            Some(result.clone())
+        );
+        assert_eq!(state.outcome(), None);
+        assert!(validate_lifecycle_transition(&state, RunLifecycle::Completed).is_err());
+        state.root_scope_mut().result = Some(result);
+        state.lifecycle = RunLifecycle::Completed;
+        assert_eq!(state.outcome(), Some(expected));
+    }
+}
+
+// Covers: missing required exports block success while false is a real value.
+#[test]
+fn scope_exports_require_terminal_children_and_available_typed_values() {
+    let mut node = agent_node("child", &[], WorkspaceAccess::ReadOnly);
+    let NodeExecution::Agent(agent) = &mut node.execution else {
+        unreachable!()
+    };
+    agent.output = Some(OutputSchema::Bool);
+    let mut workflow = workflow(vec![node]);
+    workflow.program.root.exports.insert(
+        "answer".to_owned(),
+        OutputReference {
+            node: id("child"),
+            path: OutputPath(vec![]),
+        },
+    );
     let mut state = state(&workflow);
-    state.lifecycle = RunLifecycle::Completed;
-    state.nodes.insert(
-        id("required"),
+    assert_eq!(
+        scope_result(&workflow, &state, ScopeInstanceId::ROOT).unwrap(),
+        None
+    );
+    state.root_scope_mut().nodes.insert(
+        id("child"),
         NodeState::Terminal {
             outcome: NodeTerminalState::Success,
         },
     );
-    state.nodes.insert(
-        id("optional"),
-        NodeState::Terminal {
-            outcome: NodeTerminalState::Failure,
-        },
-    );
     assert_eq!(
-        derive_workflow_outcome(&workflow, &state),
-        Some(WorkflowOutcome::Success)
+        scope_result(&workflow, &state, ScopeInstanceId::ROOT).unwrap(),
+        Some(ScopeResult {
+            outcome: WorkflowOutcome::Blocked,
+            outputs: Default::default()
+        })
     );
-}
-
-// Covers: a completed lifecycle could make pending work appear durably finished.
-// Owner: workflow transition core.
-#[test]
-fn completed_lifecycle_requires_every_node_to_be_terminal() {
-    let workflow = workflow(vec![agent_node("required", &[], WorkspaceAccess::Mutating)]);
-    let mut state = state(&workflow);
-    state.lifecycle = RunLifecycle::Running;
-
-    assert!(matches!(
-        validate_lifecycle_transition(&workflow, &state, RunLifecycle::Completed),
-        Err(WorkflowError::Scheduler(message))
-            if message == "completed workflow contains non-terminal nodes"
-    ));
-}
-
-// Covers: executor cancellation of optional work must still cancel the workflow.
-// Owner: workflow outcome core.
-#[test]
-fn optional_node_cancellation_derives_cancellation_without_request() {
-    let mut optional = agent_node("optional", &[], WorkspaceAccess::Mutating);
-    optional.allow_failure = true;
-    let workflow = workflow(vec![
-        agent_node("required", &[], WorkspaceAccess::Mutating),
-        optional,
-    ]);
-    let mut state = state(&workflow);
-    state.lifecycle = RunLifecycle::Completed;
-    state.nodes.insert(
-        id("required"),
-        NodeState::Terminal {
-            outcome: NodeTerminalState::Success,
-        },
-    );
-    state.nodes.insert(
-        id("optional"),
-        NodeState::Terminal {
-            outcome: NodeTerminalState::Cancellation,
-        },
-    );
-
+    state
+        .root_scope_mut()
+        .outputs
+        .insert(id("child"), WorkflowValue::Bool(false));
     assert_eq!(
-        derive_workflow_outcome(&workflow, &state),
-        Some(WorkflowOutcome::Cancellation)
-    );
-}
-
-// Covers: an executor cancellation without a request must not look like workflow success.
-// Owner: workflow outcome core.
-#[test]
-fn required_node_cancellation_derives_cancellation() {
-    let workflow = workflow(vec![agent_node("required", &[], WorkspaceAccess::Mutating)]);
-    let mut state = state(&workflow);
-    state.lifecycle = RunLifecycle::Completed;
-    state.nodes.insert(
-        id("required"),
-        NodeState::Terminal {
-            outcome: NodeTerminalState::Cancellation,
-        },
-    );
-
-    assert_eq!(
-        derive_workflow_outcome(&workflow, &state),
-        Some(WorkflowOutcome::Cancellation)
+        scope_result(&workflow, &state, ScopeInstanceId::ROOT).unwrap(),
+        Some(ScopeResult {
+            outcome: WorkflowOutcome::Success,
+            outputs: std::collections::BTreeMap::from([(
+                "answer".to_owned(),
+                WorkflowValue::Bool(false)
+            )])
+        })
     );
 }

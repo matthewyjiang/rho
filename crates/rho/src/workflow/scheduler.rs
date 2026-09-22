@@ -2,9 +2,10 @@ use std::collections::BTreeMap;
 
 use super::{
     evaluate_condition, validate_lifecycle_transition, validate_reset_transition,
-    validate_transition, ConditionContext, FrozenWorkflow, NodeExecution, NodeId, NodeState,
+    validate_transition, ConditionContext, FrozenWorkflow, NodeExecution, NodeState,
     NodeTerminalState, RunLifecycle, SchedulerAction, SchedulerCapacity, SchedulerEvent,
-    TruthValue, WorkflowError, WorkflowResult, WorkflowState, WorkspaceAccess,
+    ScopeInstanceId, TaskInstanceId, TruthValue, WorkflowError, WorkflowResult, WorkflowState,
+    WorkspaceAccess,
 };
 
 pub(crate) fn next_actions(
@@ -13,32 +14,43 @@ pub(crate) fn next_actions(
     capacity: SchedulerCapacity,
 ) -> WorkflowResult<Vec<SchedulerAction>> {
     validate_state_shape(workflow, state)?;
-    if state.cancellation_requested || state.lifecycle == RunLifecycle::NeedsRecovery {
+    if !state.lifecycle.is_live() || state.root_scope().result.is_some() {
+        return Ok(Vec::new());
+    }
+    if let Some(result) = super::scope_result(workflow, state, ScopeInstanceId::ROOT)? {
+        return Ok(vec![SchedulerAction::FinishScope {
+            scope: ScopeInstanceId::ROOT,
+            result,
+        }]);
+    }
+    if state.cancellation_requested || state.lifecycle == RunLifecycle::Cancelling {
         return Ok(Vec::new());
     }
     let statuses = state
+        .root_scope()
         .nodes
         .iter()
         .filter_map(|(id, state)| state.terminal().map(|outcome| (id.clone(), outcome)))
         .collect::<BTreeMap<_, _>>();
     let context = ConditionContext {
         statuses: &statuses,
-        command_exits: &state.command_exits,
-        outputs: &state.outputs,
+        command_exits: &state.root_scope().command_exits,
+        outputs: &state.root_scope().outputs,
     };
     let mut actions = Vec::new();
     let mut runnable = Vec::new();
-    for node in workflow.graph.nodes.values() {
-        match state.nodes[&node.id] {
+    let definition = state.scope_definition(workflow, ScopeInstanceId::ROOT)?;
+    for node in definition.nodes.values() {
+        match state.root_scope().nodes[&node.id] {
             NodeState::Ready => runnable.push(node),
             NodeState::Pending if dependencies_terminal(node, state) => {
                 match node_decision(node, &context) {
                     NodeDecision::Run => actions.push(SchedulerAction::MarkReady {
-                        node: node.id.clone(),
+                        node: TaskInstanceId::root(node.id.clone()),
                     }),
                     NodeDecision::Terminal(outcome) => {
                         actions.push(SchedulerAction::MarkTerminal {
-                            node: node.id.clone(),
+                            node: TaskInstanceId::root(node.id.clone()),
                             outcome,
                         })
                     }
@@ -49,10 +61,11 @@ pub(crate) fn next_actions(
     }
 
     let running = state
+        .root_scope()
         .nodes
         .iter()
         .filter(|(_, node_state)| matches!(node_state, NodeState::Running { .. }))
-        .map(|(id, _)| &workflow.graph.nodes[id]);
+        .map(|(id, _)| &definition.nodes[id]);
     let mut use_total = 0_u32;
     let mut use_agents = 0_u32;
     let mut use_commands = 0_u32;
@@ -93,7 +106,7 @@ pub(crate) fn next_actions(
             break;
         }
         actions.push(SchedulerAction::Launch {
-            node: node.id.clone(),
+            node: TaskInstanceId::root(node.id.clone()),
             access: node.access,
         });
         use_total += 1;
@@ -146,6 +159,7 @@ fn node_decision(node: &super::Node, context: &ConditionContext<'_>) -> NodeDeci
 fn dependencies_terminal(node: &super::Node, state: &WorkflowState) -> bool {
     node.needs.iter().all(|id| {
         state
+            .root_scope()
             .nodes
             .get(id)
             .is_some_and(|state| state.terminal().is_some())
@@ -165,9 +179,14 @@ pub(crate) fn apply_event(
             replace_node(&mut next, node, NodeState::Running { attempt })?
         }
         SchedulerEvent::Finished { node, completion } => {
-            let definition = workflow.graph.nodes.get(&node).ok_or_else(|| {
-                WorkflowError::Scheduler(format!("event targets unknown node '{node}'"))
-            })?;
+            ensure_open_task(&next, &node)?;
+            let definition = state
+                .scope_definition(workflow, node.scope())?
+                .nodes
+                .get(node.definition())
+                .ok_or_else(|| {
+                    WorkflowError::Scheduler(format!("event targets unknown node '{node}'"))
+                })?;
             if let Some(output) = &completion.structured_output {
                 let value = &output.value;
                 let output_bytes = serde_json::to_vec(value)?.len() as u64;
@@ -186,7 +205,10 @@ pub(crate) fn apply_event(
                         ))
                     })?
                     .validate_value(value)?;
-                next.outputs.insert(node.clone(), value.clone());
+                next.scope_mut(node.scope())
+                    .expect("open task scope checked")
+                    .outputs
+                    .insert(node.definition().clone(), value.clone());
             }
             if let Some(exit) = &completion.command_exit {
                 if !matches!(definition.execution, NodeExecution::Command(_)) {
@@ -194,7 +216,10 @@ pub(crate) fn apply_event(
                         "agent node '{node}' reported a command exit"
                     )));
                 }
-                next.command_exits.insert(node.clone(), exit.clone());
+                next.scope_mut(node.scope())
+                    .expect("open task scope checked")
+                    .command_exits
+                    .insert(node.definition().clone(), exit.clone());
             }
             replace_node(
                 &mut next,
@@ -203,22 +228,25 @@ pub(crate) fn apply_event(
                     outcome: completion.outcome,
                 },
             )?;
-            next.completions.insert(node, *completion);
+            next.scope_mut(node.scope())
+                .expect("open task scope checked")
+                .completions
+                .insert(node.definition().clone(), *completion);
         }
         SchedulerEvent::CancellationRequested => {
-            validate_lifecycle_transition(workflow, state, RunLifecycle::Cancelling)?;
+            validate_lifecycle_transition(state, RunLifecycle::Cancelling)?;
             next.cancellation_requested = true;
             next.lifecycle = RunLifecycle::Cancelling;
         }
         SchedulerEvent::ResetNode { node, reason } => {
-            let current = next.nodes.get(&node).ok_or_else(|| {
+            ensure_open_task(&next, &node)?;
+            let current = next.task(&node).ok_or_else(|| {
                 WorkflowError::Scheduler(format!("event targets unknown node '{node}'"))
             })?;
             let target = match reason {
                 super::NodeResetReason::InterruptedRecovery => NodeState::Ready,
                 super::NodeResetReason::CleanCancellation => match next
-                    .completions
-                    .get(&node)
+                    .completion(&node)
                     .and_then(|completion| completion.cancellation_resume)
                 {
                     Some(super::CancellationResumeState::Pending) => NodeState::Pending,
@@ -231,10 +259,13 @@ pub(crate) fn apply_event(
                 },
             };
             validate_reset_transition(&node, current, reason, &target)?;
-            next.nodes.insert(node.clone(), target);
-            next.command_exits.remove(&node);
-            next.outputs.remove(&node);
-            next.completions.remove(&node);
+            let local = next
+                .scope_mut(node.scope())
+                .expect("open task scope checked");
+            local.nodes.insert(node.definition().clone(), target);
+            local.command_exits.remove(node.definition());
+            local.outputs.remove(node.definition());
+            local.completions.remove(node.definition());
         }
     }
     next.revision = next
@@ -244,23 +275,65 @@ pub(crate) fn apply_event(
     Ok(next)
 }
 
-fn replace_node(state: &mut WorkflowState, node: NodeId, target: NodeState) -> WorkflowResult<()> {
+fn replace_node(
+    state: &mut WorkflowState,
+    node: TaskInstanceId,
+    target: NodeState,
+) -> WorkflowResult<()> {
+    ensure_open_task(state, &node)?;
     let current = state
-        .nodes
-        .get(&node)
+        .task(&node)
         .ok_or_else(|| WorkflowError::Scheduler(format!("event targets unknown node '{node}'")))?;
     validate_transition(&node, current, &target)?;
-    state.nodes.insert(node, target);
+    state
+        .scope_mut(node.scope())
+        .expect("open task scope checked")
+        .nodes
+        .insert(node.definition().clone(), target);
     Ok(())
 }
 
-fn validate_state_shape(workflow: &FrozenWorkflow, state: &WorkflowState) -> WorkflowResult<()> {
-    if workflow.graph.nodes.len() != state.nodes.len()
-        || workflow.graph.nodes.keys().ne(state.nodes.keys())
+pub(crate) fn validate_state_shape(
+    workflow: &FrozenWorkflow,
+    state: &WorkflowState,
+) -> WorkflowResult<()> {
+    if state.scopes.len() != 1 || !state.scopes.contains_key(&ScopeInstanceId::ROOT) {
+        return Err(WorkflowError::Scheduler(
+            "program requires exactly the root scope instance".to_owned(),
+        ));
+    }
+    let local = state.root_scope();
+    let definition = workflow.program.scope_definition(local.definition);
+    local.durable.validate_membership(&local.nodes)?;
+    if definition.nodes.len() != local.nodes.len() || definition.nodes.keys().ne(local.nodes.keys())
     {
         return Err(WorkflowError::Scheduler(
-            "node state keys differ from frozen graph keys".to_owned(),
+            "node state keys differ from root scope node keys".to_owned(),
         ));
+    }
+    if local
+        .outputs
+        .keys()
+        .chain(local.command_exits.keys())
+        .chain(local.completions.keys())
+        .any(|id| !local.nodes.contains_key(id))
+    {
+        return Err(WorkflowError::Scheduler(
+            "scope data references an unknown local task".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_open_task(state: &WorkflowState, task: &TaskInstanceId) -> WorkflowResult<()> {
+    if state.task(task).is_none()
+        || state
+            .scope(task.scope())
+            .is_none_or(|scope| scope.result.is_some())
+    {
+        return Err(WorkflowError::Scheduler(format!(
+            "task '{task}' does not belong to an open scope"
+        )));
     }
     Ok(())
 }

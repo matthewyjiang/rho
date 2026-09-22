@@ -18,7 +18,7 @@ fn snapshot(
         workflow_name: "demo".into(),
         plan_id: PlanId::new(),
         run_id: Some(RunId::new()),
-        graph_digest: Digest("sha256:aa".into()),
+        program_digest: Digest("sha256:aa".into()),
         sources: SourceDigestSummary {
             source_count: 1,
             digest: Digest("sha256:bb".into()),

@@ -86,7 +86,8 @@ def measure_once(rho: Path, root: Path, limits: dict) -> dict[str, int]:
     )
     if compiled.returncode != 0:
         raise SystemExit(f"cancellation helper compilation failed:\n{compiled.stderr}")
-    env = {**os.environ, "RHO_HOME": str(home)}
+    # Agent catalogs also read HOME; RHO_HOME alone does not isolate user agents.
+    env = {**os.environ, "HOME": str(home), "RHO_HOME": str(home)}
     planned = subprocess.run(
         [str(rho), "workflow", "plan", "workflow.star", "--output", "json"],
         cwd=workspace,
@@ -108,7 +109,17 @@ def measure_once(rho: Path, root: Path, limits: dict) -> dict[str, int]:
     )
     try:
         wait_for_ready(server, owner)
-        run_ids = [path.name for path in (home / "workflows/runs").iterdir() if path.is_dir()]
+        inventory = subprocess.run(
+            [str(rho), "workflow", "list", "--runs", "--json"],
+            cwd=workspace,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if inventory.returncode != 0:
+            raise SystemExit(f"cancellation fixture inventory failed:\n{inventory.stderr}")
+        run_ids = [run["id"] for run in json.loads(inventory.stdout)["runs"]]
         if len(run_ids) != 1:
             raise SystemExit(f"expected one active run, found {run_ids}")
         command_pid = int((workspace / "process.pid").read_text())

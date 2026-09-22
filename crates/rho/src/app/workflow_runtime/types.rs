@@ -1,11 +1,11 @@
-use std::{collections::BTreeMap, future::Future, path::PathBuf, pin::Pin, sync::Arc};
+use std::{future::Future, path::PathBuf, pin::Pin};
 
 use serde::Serialize;
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::workflow::{
-    AttemptArtifacts, AttemptNumber, CancellationResumeState, CommandExit, FrozenWorkflow,
-    NodeCompletion, NodeId, NodeTerminalState, RunId, ValidatedOutputRef, WorkflowValue,
+    AttemptArtifacts, AttemptNumber, CancellationResumeState, CommandExit, Digest, NodeCompletion,
+    NodeId, NodeTerminalState, RunId, TaskInstanceId, ValidatedOutputRef,
 };
 
 pub(crate) type WorkflowExecutionFuture<'a> =
@@ -27,14 +27,14 @@ pub(crate) struct NodeProgressUpdate {
 
 #[derive(Clone)]
 pub(crate) struct NodeProgressReporter {
-    node: NodeId,
+    node: TaskInstanceId,
     attempt: AttemptNumber,
     sender: UnboundedSender<RuntimeEvent>,
 }
 
 impl NodeProgressReporter {
     pub(crate) fn new(
-        node: NodeId,
+        node: TaskInstanceId,
         attempt: AttemptNumber,
         sender: UnboundedSender<RuntimeEvent>,
     ) -> Self {
@@ -68,13 +68,14 @@ impl NodeProgressReporter {
 
 #[derive(Clone)]
 pub(crate) struct NodeExecutionRequest {
-    pub(crate) workflow: Arc<FrozenWorkflow>,
+    pub(crate) invocation: super::prepared::PreparedInvocation,
+    pub(crate) plan_digest: Digest,
     pub(crate) run_id: RunId,
-    pub(crate) node: NodeId,
+    pub(crate) node: TaskInstanceId,
     pub(crate) attempt: AttemptNumber,
     pub(crate) workspace: PathBuf,
+    pub(crate) run_directory: PathBuf,
     pub(crate) attempt_directory: PathBuf,
-    pub(crate) outputs: BTreeMap<NodeId, WorkflowValue>,
     pub(crate) cancellation: rho_sdk::CancellationToken,
     pub(crate) progress: Option<NodeProgressReporter>,
 }
@@ -123,12 +124,12 @@ pub(crate) enum RuntimeEvent {
         revision: u64,
     },
     NodeStarted {
-        node: NodeId,
+        node: TaskInstanceId,
         attempt: AttemptNumber,
     },
     /// In-flight activity for a launched node. Does not change durable state.
     NodeProgress {
-        node: NodeId,
+        node: TaskInstanceId,
         attempt: AttemptNumber,
         message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -139,11 +140,11 @@ pub(crate) enum RuntimeEvent {
         total: Option<u64>,
     },
     NodeFinished {
-        node: NodeId,
+        node: TaskInstanceId,
         outcome: NodeTerminalState,
     },
     NeedsRecovery {
-        nodes: Vec<NodeId>,
+        nodes: Vec<TaskInstanceId>,
     },
     Completed,
 }
@@ -204,7 +205,7 @@ pub(crate) enum RuntimeError {
     #[error("workflow node '{node}' requires project trust; create a new plan after trusting it")]
     TrustRemoved { node: NodeId },
     #[error("workflow node '{node}' launch metadata is missing or has the wrong kind")]
-    LaunchMetadata { node: NodeId },
+    LaunchMetadata { node: TaskInstanceId },
     #[error("workflow node '{node}' is not enforceably read-only: {capability}")]
     ReadOnlyCapability { node: NodeId, capability: String },
     #[error("workflow run needs explicit recovery for: {nodes}")]

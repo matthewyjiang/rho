@@ -1,10 +1,12 @@
+use std::collections::BTreeMap;
+
 use super::{
-    FrozenWorkflow, NodeId, NodeResetReason, NodeState, NodeTerminalState, RunLifecycle,
-    WorkflowError, WorkflowOutcome, WorkflowResult, WorkflowState,
+    FrozenWorkflow, NodeResetReason, NodeState, NodeTerminalState, RunLifecycle, ScopeInstanceId,
+    ScopeResult, TaskInstanceId, WorkflowError, WorkflowOutcome, WorkflowResult, WorkflowState,
 };
 
 pub(crate) fn validate_transition(
-    node: &NodeId,
+    node: &TaskInstanceId,
     from: &NodeState,
     to: &NodeState,
 ) -> WorkflowResult<()> {
@@ -40,7 +42,7 @@ pub(crate) fn validate_transition(
 }
 
 pub(crate) fn validate_reset_transition(
-    node: &NodeId,
+    node: &TaskInstanceId,
     from: &NodeState,
     reason: NodeResetReason,
     target: &NodeState,
@@ -70,24 +72,29 @@ pub(crate) fn validate_reset_transition(
     }
 }
 
-pub(crate) fn derive_workflow_outcome(
+/// Compute closure only after every child has a terminal outcome.
+pub(crate) fn scope_result(
     workflow: &FrozenWorkflow,
     state: &WorkflowState,
-) -> Option<WorkflowOutcome> {
-    if state.lifecycle != RunLifecycle::Completed {
-        return None;
+    scope: ScopeInstanceId,
+) -> WorkflowResult<Option<ScopeResult>> {
+    super::validate_state_shape(workflow, state)?;
+    let local = state
+        .scope(scope)
+        .ok_or_else(|| WorkflowError::Scheduler(format!("unknown scope '{scope}'")))?;
+    if local.nodes.values().any(|node| node.terminal().is_none()) {
+        return Ok(None);
     }
-    let required = workflow
-        .graph
-        .nodes
-        .values()
-        .filter(|node| !node.allow_failure);
+    let definition = state.scope_definition(workflow, scope)?;
+    let required = definition.nodes.values().filter(|node| !node.allow_failure);
     let mut outcomes = Vec::new();
     for node in required {
-        let outcome = state.nodes.get(&node.id).and_then(NodeState::terminal)?;
+        let outcome = local.nodes[&node.id]
+            .terminal()
+            .expect("terminal children checked");
         outcomes.push(outcome);
     }
-    let mut cancellation = state.nodes.values().any(|node| {
+    let mut cancellation = local.nodes.values().any(|node| {
         matches!(
             node,
             NodeState::Terminal {
@@ -107,7 +114,7 @@ pub(crate) fn derive_workflow_outcome(
             NodeTerminalState::Success | NodeTerminalState::Skipped => {}
         }
     }
-    Some(if cancellation {
+    let mut outcome = if cancellation {
         WorkflowOutcome::Cancellation
     } else if denial {
         WorkflowOutcome::Denial
@@ -117,14 +124,34 @@ pub(crate) fn derive_workflow_outcome(
         WorkflowOutcome::Blocked
     } else {
         WorkflowOutcome::Success
-    })
+    };
+    // A failed or cancelled scope has no exported result. In particular, export
+    // validation must not obstruct cancellation after all attempts are stopped.
+    if outcome != WorkflowOutcome::Success {
+        return Ok(Some(ScopeResult {
+            outcome,
+            outputs: BTreeMap::new(),
+        }));
+    }
+    // The root-only runtime retains one scope result. Reuse the frozen retained
+    // output capacity rather than admitting unbounded export alias expansion.
+    let outputs = definition.resolve_exports(
+        &local.outputs,
+        workflow.runtime_limits.retained_output_total_bytes,
+    )?;
+    if outputs.is_none() && outcome == WorkflowOutcome::Success {
+        outcome = WorkflowOutcome::Blocked;
+    }
+    Ok(Some(ScopeResult {
+        outcome,
+        outputs: outputs.unwrap_or_default(),
+    }))
 }
 
 pub(crate) fn validate_lifecycle_transition(
-    workflow: &FrozenWorkflow,
     state: &WorkflowState,
     target: RunLifecycle,
-) -> WorkflowResult<Option<WorkflowOutcome>> {
+) -> WorkflowResult<()> {
     let allowed = state.lifecycle == target
         || matches!(
             (state.lifecycle, target),
@@ -147,18 +174,19 @@ pub(crate) fn validate_lifecycle_transition(
             state.lifecycle
         )));
     }
-    if target != RunLifecycle::Completed {
-        return Ok(None);
-    }
-    if state.nodes.values().any(|node| node.terminal().is_none()) {
+    if target == RunLifecycle::Running && state.root_scope().result.is_some() {
         return Err(WorkflowError::Scheduler(
-            "completed workflow contains non-terminal nodes".to_owned(),
+            "closed root scope must be explicitly reopened before running".to_owned(),
         ));
     }
-    let mut completed = state.clone();
-    completed.lifecycle = RunLifecycle::Completed;
-    derive_workflow_outcome(workflow, &completed)
-        .map(Some)
+    if target != RunLifecycle::Completed {
+        return Ok(());
+    }
+    state
+        .root_scope()
+        .result
+        .as_ref()
+        .map(|_| ())
         .ok_or_else(|| WorkflowError::Scheduler("completed workflow has no outcome".to_owned()))
 }
 

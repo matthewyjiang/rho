@@ -231,7 +231,7 @@ async fn resume_preflight_is_self_contained_after_plan_deletion() {
         .create_run(
             &plan,
             PlanConsent {
-                graph_digest: plan.manifest.graph_digest.clone(),
+                program_digest: plan.manifest.program_digest.clone(),
                 confirmed: true,
             },
             crate::workflow::RunStateRecord {
@@ -245,9 +245,7 @@ async fn resume_preflight_is_self_contained_after_plan_deletion() {
         )
         .unwrap();
     std::fs::remove_dir_all(
-        home.path()
-            .join("workflows/plans")
-            .join(plan.manifest.plan_id.to_string()),
+        crate::workflow::WorkflowLayout::new(home.path()).plan(plan.manifest.plan_id),
     )
     .unwrap();
     std::fs::remove_file(source.path()).unwrap();

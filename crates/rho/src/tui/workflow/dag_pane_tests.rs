@@ -12,9 +12,12 @@ use ratatui::layout::Rect;
 
 fn node(id: &str, name: &str, deps: &[&str], state: NodeState) -> WorkflowNodeSnapshot {
     WorkflowNodeSnapshot {
-        id: NodeId::new(id).unwrap(),
+        id: crate::workflow::TaskInstanceId::root(NodeId::new(id).unwrap()),
         display_name: name.into(),
-        dependencies: deps.iter().map(|dep| NodeId::new(*dep).unwrap()).collect(),
+        dependencies: deps
+            .iter()
+            .map(|dep| crate::workflow::TaskInstanceId::root(NodeId::new(*dep).unwrap()))
+            .collect(),
         access: WorkspaceAccess::ReadOnly,
         execution: ExecutionMetadata::Agent {
             name: "agent".into(),

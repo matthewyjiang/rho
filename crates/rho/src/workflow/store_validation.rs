@@ -2,16 +2,16 @@ use std::{collections::BTreeMap, path::Path};
 
 use super::corrupt;
 use crate::workflow::{
-    check_schema_version, derive_workflow_outcome, secure_fs::SecureDirectory,
-    store_replay::derive_snapshot, ArtifactObservation, FrozenWorkflow, NodeCompletion,
-    NodeExecution, NodeId, NodeTerminalState, RunLifecycle, RunStateRecord, WorkflowError,
-    WorkflowEventRecord, WorkflowResult, RUN_STATE_VERSION,
+    check_schema_version, scope_result, secure_fs::SecureDirectory, store_replay::derive_snapshot,
+    validate_state_shape, ArtifactObservation, FrozenWorkflow, NodeCompletion, NodeExecution,
+    NodeTerminalState, RunLifecycle, RunStateRecord, ScopeInstanceId, TaskInstanceId,
+    WorkflowError, WorkflowEventRecord, WorkflowResult, RUN_STATE_VERSION,
 };
 
 #[derive(Clone, Copy)]
 pub(super) enum CompletionFileValidation<'a> {
     All,
-    ChangedSince(&'a BTreeMap<NodeId, NodeCompletion>),
+    ChangedSince(&'a BTreeMap<TaskInstanceId, NodeCompletion>),
 }
 
 #[derive(Clone, Copy)]
@@ -29,10 +29,7 @@ pub(super) fn validate_state(
     run_relative: &Path,
 ) -> WorkflowResult<()> {
     check_schema_version("run state", record.schema_version, RUN_STATE_VERSION)?;
-    let state = &record.state;
-    if graph.graph.nodes.keys().ne(state.nodes.keys()) {
-        return corrupt(path, "node state keys differ from frozen graph keys");
-    }
+    validate_state_shape(graph, &record.state)?;
     let tail = events.last().map_or(0, |event| event.sequence);
     if record.last_event_sequence > tail {
         return corrupt(path, "snapshot sequence is ahead of the journal tail");
@@ -73,19 +70,19 @@ pub(super) fn validate_state_contents(
 ) -> WorkflowResult<()> {
     check_schema_version("run state", record.schema_version, RUN_STATE_VERSION)?;
     let state = &record.state;
-    if graph.graph.nodes.keys().ne(state.nodes.keys()) {
-        return corrupt(path, "node state keys differ from frozen graph keys");
-    }
+    validate_state_shape(graph, state)?;
+    let scope = state.root_scope();
+    let scope_definition = state.scope_definition(graph, ScopeInstanceId::ROOT)?;
     let mut retained_workflow_output = 0_u64;
-    let terminal = state
+    let terminal = scope
         .nodes
         .iter()
         .filter_map(|(node, state)| state.terminal().map(|outcome| (node, outcome)))
         .collect::<BTreeMap<_, _>>();
-    if terminal.keys().copied().ne(state.completions.keys()) {
+    if terminal.keys().copied().ne(scope.completions.keys()) {
         return corrupt(path, "completion keys differ from terminal node keys");
     }
-    for (node, completion) in &state.completions {
+    for (node, completion) in &scope.completions {
         if terminal.get(node).copied() != Some(completion.outcome) {
             return corrupt(path, "completion outcome differs from terminal node state");
         }
@@ -101,7 +98,7 @@ pub(super) fn validate_state_contents(
         {
             return corrupt(path, "synthetic completion contains attempt-owned data");
         }
-        let definition = &graph.graph.nodes[node];
+        let definition = &scope_definition.nodes[node];
         match &definition.execution {
             NodeExecution::Agent(_)
                 if completion.command_exit.is_some()
@@ -186,7 +183,7 @@ pub(super) fn validate_state_contents(
         let artifact_validation = match file_validation {
             CompletionFileValidation::All => ArtifactFileValidation::Full,
             CompletionFileValidation::ChangedSince(previous)
-                if previous.get(node) != Some(completion) =>
+                if previous.get(&TaskInstanceId::root(node.clone())) != Some(completion) =>
             {
                 ArtifactFileValidation::Full
             }
@@ -200,7 +197,7 @@ pub(super) fn validate_state_contents(
             "retained output exceeds the frozen workflow-wide limit",
         );
     }
-    let expected_exits = state
+    let expected_exits = scope
         .completions
         .iter()
         .filter_map(|(node, completion)| {
@@ -210,7 +207,7 @@ pub(super) fn validate_state_contents(
                 .map(|exit| (node.clone(), exit))
         })
         .collect::<BTreeMap<_, _>>();
-    let expected_outputs = state
+    let expected_outputs = scope
         .completions
         .iter()
         .filter_map(|(node, completion)| {
@@ -220,25 +217,22 @@ pub(super) fn validate_state_contents(
                 .map(|output| (node.clone(), output.value.clone()))
         })
         .collect::<BTreeMap<_, _>>();
-    if state.command_exits != expected_exits || state.outputs != expected_outputs {
+    if scope.command_exits != expected_exits || scope.outputs != expected_outputs {
         return corrupt(
             path,
             "output or command-exit keys differ from durable completions",
         );
     }
-    match state.lifecycle {
-        RunLifecycle::Completed => {
-            if terminal.len() != graph.graph.nodes.len() {
-                return corrupt(path, "completed run contains non-terminal nodes");
-            }
-            if state.outcome != derive_workflow_outcome(graph, state) {
-                return corrupt(path, "completed run outcome is absent or not derived");
-            }
+    if let Some(result) = &scope.result {
+        if scope_result(graph, state, ScopeInstanceId::ROOT)?.as_ref() != Some(result) {
+            return corrupt(
+                path,
+                "scope result differs from its completed tasks and exports",
+            );
         }
-        _ if state.outcome.is_some() => {
-            return corrupt(path, "non-completed run contains a workflow outcome")
-        }
-        _ => {}
+    }
+    if state.lifecycle == RunLifecycle::Completed && scope.result.is_none() {
+        return corrupt(path, "completed run has no closed root scope");
     }
     Ok(())
 }

@@ -2,13 +2,13 @@ use std::{collections::BTreeMap, fs::OpenOptions, io::Write};
 
 use super::*;
 use crate::workflow::{
-    graph_digest,
+    program_digest,
     store_replay::derive_snapshot,
     test_support::{agent_node, id, state, workflow},
     ArtifactObservation, ArtifactRef, AttemptArtifacts, AttemptNumber, CommandExit, CommandNode,
     Digest, ExternalOwner, NodeCompletion, NodeTerminalState, PlanConsent, RunLifecycle,
-    RunStateRecord, WorkflowEvent, WorkflowState, WorkspaceAccess, EVENT_VERSION,
-    RUN_STATE_VERSION,
+    RunStateRecord, ScopeInstanceId, ScopeResult, TaskInstanceId, WorkflowEvent, WorkflowOutcome,
+    WorkflowState, WorkspaceAccess, EVENT_VERSION, RUN_STATE_VERSION,
 };
 
 fn plan(store: &WorkflowStore) -> StoredPlan {
@@ -27,7 +27,7 @@ fn run(store: &WorkflowStore, plan: &StoredPlan) -> StoredRun {
         .create_run(
             plan,
             PlanConsent {
-                graph_digest: plan.manifest.graph_digest.clone(),
+                program_digest: plan.manifest.program_digest.clone(),
                 confirmed: true,
             },
             RunStateRecord {
@@ -61,7 +61,7 @@ fn run_keeps_an_independent_frozen_graph() {
         .create_run(
             &plan,
             PlanConsent {
-                graph_digest: plan.manifest.graph_digest.clone(),
+                program_digest: plan.manifest.program_digest.clone(),
                 confirmed: true,
             },
             state,
@@ -82,7 +82,7 @@ fn repairs_one_truncated_final_event_and_appends_from_the_prefix() {
         .create_run(
             &plan,
             PlanConsent {
-                graph_digest: plan.manifest.graph_digest.clone(),
+                program_digest: plan.manifest.program_digest.clone(),
                 confirmed: true,
             },
             RunStateRecord {
@@ -235,7 +235,7 @@ fn rejects_tampered_durable_records_at_load() {
             }
             DurableCorruption::PlanGraphDigest => {
                 let mut manifest = plan.manifest.clone();
-                manifest.graph_digest = Digest("sha256:00".to_owned());
+                manifest.program_digest = Digest("sha256:00".to_owned());
                 write_json(
                     &store.layout.plan_manifest(plan.manifest.plan_id),
                     &manifest,
@@ -261,9 +261,9 @@ fn rejects_tampered_durable_records_at_load() {
                     .get_mut("//workflow.star")
                     .unwrap()
                     .bytes += 1;
-                graph.graph_digest = graph_digest(&graph).unwrap();
+                graph.program_digest = program_digest(&graph).unwrap();
                 let mut manifest = plan.manifest.clone();
-                manifest.graph_digest = graph.graph_digest.clone();
+                manifest.program_digest = graph.program_digest.clone();
                 write_json(&store.layout.plan_graph(plan.manifest.plan_id), &graph).unwrap();
                 write_json(
                     &store.layout.plan_manifest(plan.manifest.plan_id),
@@ -294,10 +294,16 @@ fn rejects_tampered_durable_records_at_load() {
             }
             DurableCorruption::InvalidGraph => {
                 let mut graph = plan.graph.clone();
-                graph.graph.nodes.get_mut(&id("inspect")).unwrap().needs = vec![id("inspect")];
-                graph.graph_digest = graph_digest(&graph).unwrap();
+                graph
+                    .program
+                    .root
+                    .nodes
+                    .get_mut(&id("inspect"))
+                    .unwrap()
+                    .needs = vec![id("inspect")];
+                graph.program_digest = program_digest(&graph).unwrap();
                 let mut manifest = plan.manifest.clone();
-                manifest.graph_digest = graph.graph_digest.clone();
+                manifest.program_digest = graph.program_digest.clone();
                 write_json(&store.layout.plan_graph(plan.manifest.plan_id), &graph).unwrap();
                 write_json(
                     &store.layout.plan_manifest(plan.manifest.plan_id),
@@ -314,7 +320,7 @@ fn rejects_tampered_durable_records_at_load() {
             }
             DurableCorruption::RunGraphDigest => {
                 let mut manifest = run.manifest.clone();
-                manifest.graph_digest = Digest("sha256:00".to_owned());
+                manifest.program_digest = Digest("sha256:00".to_owned());
                 write_json(&store.layout.run_manifest(run.manifest.run_id), &manifest).unwrap();
                 store.load_run(run.manifest.run_id).map(|_| ())
             }
@@ -332,8 +338,17 @@ fn rejects_tampered_durable_records_at_load() {
             }
             DurableCorruption::NodeKeys => {
                 let mut state = run.state.clone();
-                let node_state = state.state.nodes.remove(&id("inspect")).unwrap();
-                state.state.nodes.insert(id("other"), node_state);
+                let node_state = state
+                    .state
+                    .root_scope_mut()
+                    .nodes
+                    .remove(&id("inspect"))
+                    .unwrap();
+                state
+                    .state
+                    .root_scope_mut()
+                    .nodes
+                    .insert(id("other"), node_state);
                 write_json(&store.layout.run_state(run.manifest.run_id), &state).unwrap();
                 store.load_run(run.manifest.run_id).map(|_| ())
             }
@@ -412,13 +427,24 @@ fn replay_rejects_cancellation_request_after_completion() {
         WorkflowEventRecord {
             schema_version: EVENT_VERSION,
             sequence: 2,
+            event: WorkflowEvent::ScopeFinished {
+                scope: ScopeInstanceId::ROOT,
+                result: ScopeResult {
+                    outcome: WorkflowOutcome::Success,
+                    outputs: BTreeMap::new(),
+                },
+            },
+        },
+        WorkflowEventRecord {
+            schema_version: EVENT_VERSION,
+            sequence: 3,
             event: WorkflowEvent::RunLifecycle {
                 lifecycle: RunLifecycle::Completed,
             },
         },
         WorkflowEventRecord {
             schema_version: EVENT_VERSION,
-            sequence: 3,
+            sequence: 4,
             event: WorkflowEvent::CancellationRequested {
                 request_id: "00000000-0000-0000-0000-000000000004".into(),
             },
@@ -429,7 +455,7 @@ fn replay_rejects_cancellation_request_after_completion() {
         derive_snapshot(
             &workflow,
             &events,
-            3,
+            4,
             std::path::Path::new("run-state.json"),
         ),
         Err(WorkflowError::Scheduler(message))
@@ -479,15 +505,19 @@ fn save_state_hashes_only_new_or_changed_completions() {
             lifecycle: RunLifecycle::Running,
         },
         WorkflowEvent::NodeReady {
-            node: id("inspect"),
+            node: TaskInstanceId::root(id("inspect")),
+        },
+        WorkflowEvent::LaunchIntended {
+            node: TaskInstanceId::root(id("inspect")),
+            attempt,
         },
         WorkflowEvent::AttemptStarted {
-            node: id("inspect"),
+            node: TaskInstanceId::root(id("inspect")),
             attempt,
             owner: ExternalOwner::Process { pid: 1 },
         },
         WorkflowEvent::NodeFinished {
-            node: id("inspect"),
+            node: TaskInstanceId::root(id("inspect")),
             completion: Box::new(completion),
         },
     ]
@@ -522,7 +552,7 @@ fn save_state_hashes_only_new_or_changed_completions() {
         sequence: run.state.last_event_sequence + 1,
         event: WorkflowEvent::HookObserved {
             event: "after_node".to_owned(),
-            node: Some(id("inspect")),
+            node: Some(TaskInstanceId::root(id("inspect"))),
             attempt: Some(attempt),
         },
     };
@@ -543,7 +573,7 @@ fn command_stream_fixture(
     workflow_total: u64,
 ) -> (FrozenWorkflow, RunStateRecord, Vec<WorkflowEventRecord>) {
     let mut workflow = workflow(vec![agent_node("inspect", &[], WorkspaceAccess::Mutating)]);
-    let node = workflow.graph.nodes.get_mut(&id("inspect")).unwrap();
+    let node = workflow.program.root.nodes.get_mut(&id("inspect")).unwrap();
     node.execution = NodeExecution::Command(CommandNode::Direct {
         executable: "/frozen/command".into(),
         arguments: Vec::new(),
@@ -575,15 +605,19 @@ fn command_stream_fixture(
             lifecycle: RunLifecycle::Running,
         },
         WorkflowEvent::NodeReady {
-            node: id("inspect"),
+            node: TaskInstanceId::root(id("inspect")),
+        },
+        WorkflowEvent::LaunchIntended {
+            node: TaskInstanceId::root(id("inspect")),
+            attempt,
         },
         WorkflowEvent::AttemptStarted {
-            node: id("inspect"),
+            node: TaskInstanceId::root(id("inspect")),
             attempt,
             owner: ExternalOwner::Process { pid: 1 },
         },
         WorkflowEvent::NodeFinished {
-            node: id("inspect"),
+            node: TaskInstanceId::root(id("inspect")),
             completion: Box::new(completion),
         },
     ]
@@ -1052,8 +1086,8 @@ fn plan_and_run_inventory_skips_journal_replay() {
     let plans = store.list_plan_inventory().unwrap();
     assert_eq!(plans.len(), 1);
     assert_eq!(plans[0].plan_id, plan.manifest.plan_id);
-    assert_eq!(plans[0].name, plan.graph.graph.name.as_str());
-    assert_eq!(plans[0].step_count, plan.graph.graph.nodes.len());
+    assert_eq!(plans[0].name, plan.graph.program.name.as_str());
+    assert_eq!(plans[0].step_count, plan.graph.program.root.nodes.len());
     assert_eq!(
         plans[0].workspace_identity,
         plan.manifest.workspace_identity
@@ -1062,73 +1096,14 @@ fn plan_and_run_inventory_skips_journal_replay() {
     let runs = store.list_run_inventory().unwrap();
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].run_id, run.manifest.run_id);
-    assert_eq!(runs[0].name, run.graph.graph.name.as_str());
+    assert_eq!(runs[0].name, run.graph.program.name.as_str());
     assert_eq!(runs[0].lifecycle, run.state.state.lifecycle);
-    assert_eq!(runs[0].total_steps, run.graph.graph.nodes.len());
+    assert_eq!(runs[0].total_steps, run.graph.program.root.nodes.len());
     assert_eq!(runs[0].done_steps, 0);
 
     // Delete must not require journal replay either.
     store.delete_run(run.manifest.run_id).unwrap();
     assert!(store.read_run_inventory(run.manifest.run_id).is_err());
-}
-
-// Covers: pre-field manifests still get name/steps via graph, else (unnamed).
-// Owner: workflow durable store.
-#[test]
-fn inventory_falls_back_for_legacy_manifests() {
-    let home = tempfile::tempdir().unwrap();
-    let store = WorkflowStore::new(home.path()).unwrap();
-    let plan = plan(&store);
-    let run = run(&store, &plan);
-
-    // Strip inventory fields as if the manifests predate them.
-    let mut plan_manifest: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(store.layout.plan_manifest(plan.manifest.plan_id)).unwrap(),
-    )
-    .unwrap();
-    let plan_fields = plan_manifest.as_object_mut().unwrap();
-    plan_fields.remove("name");
-    plan_fields.remove("step_count");
-    plan_fields.remove("created_at_unix_nanos");
-    std::fs::write(
-        store.layout.plan_manifest(plan.manifest.plan_id),
-        serde_json::to_vec_pretty(&plan_manifest).unwrap(),
-    )
-    .unwrap();
-
-    let mut run_manifest: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(store.layout.run_manifest(run.manifest.run_id)).unwrap(),
-    )
-    .unwrap();
-    let run_fields = run_manifest.as_object_mut().unwrap();
-    run_fields.remove("name");
-    run_fields.remove("step_count");
-    run_fields.remove("created_at_unix_nanos");
-    std::fs::write(
-        store.layout.run_manifest(run.manifest.run_id),
-        serde_json::to_vec_pretty(&run_manifest).unwrap(),
-    )
-    .unwrap();
-
-    let plans = store.list_plan_inventory().unwrap();
-    assert_eq!(plans[0].created_at_unix_nanos, 0);
-    assert_eq!(plans[0].name, plan.graph.graph.name.as_str());
-    assert_eq!(plans[0].step_count, plan.graph.graph.nodes.len());
-
-    let runs = store.list_run_inventory().unwrap();
-    assert_eq!(runs[0].created_at_unix_nanos, 0);
-    assert_eq!(runs[0].name, run.graph.graph.name.as_str());
-    assert_eq!(runs[0].total_steps, run.graph.graph.nodes.len());
-
-    // Without graph either, label is stable and listing still works.
-    std::fs::remove_file(store.layout.plan_graph(plan.manifest.plan_id)).unwrap();
-    std::fs::remove_file(store.layout.run_graph(run.manifest.run_id)).unwrap();
-    let plans = store.list_plan_inventory().unwrap();
-    assert_eq!(plans[0].name, "(unnamed)");
-    assert_eq!(plans[0].step_count, 0);
-    let runs = store.list_run_inventory().unwrap();
-    assert_eq!(runs[0].name, "(unnamed)");
-    assert_eq!(runs[0].total_steps, 0);
 }
 
 // Covers: a valid plan ID with unreadable contents must fail the list closed,

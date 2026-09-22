@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use thiserror::Error;
 
-use super::NodeId;
+use super::{NodeId, TaskInstanceId};
 
 pub(crate) type WorkflowResult<T> = Result<T, WorkflowError>;
 
@@ -34,7 +34,7 @@ pub(crate) enum WorkflowError {
     Condition(String),
     #[error("illegal node transition for '{node}': {from} -> {to}")]
     IllegalTransition {
-        node: NodeId,
+        node: TaskInstanceId,
         from: String,
         to: String,
     },
@@ -66,6 +66,11 @@ pub(crate) enum WorkflowError {
         found: u32,
         supported: u32,
     },
+    #[error(
+        "workflow {kind} {id} was saved by an older Rho release and is read-only; \
+         create a new plan from source to run it"
+    )]
+    LegacyRecord { kind: &'static str, id: String },
     #[error("workflow ID prefix '{prefix}' is ambiguous: {matches} matches")]
     AmbiguousId { prefix: String, matches: usize },
     #[error("unknown workflow ID '{0}'")]

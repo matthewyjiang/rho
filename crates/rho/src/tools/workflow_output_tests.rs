@@ -72,14 +72,14 @@ fn workflow_results_are_readable_line_summaries() {
             "plan",
             WorkflowToolResult::Plan {
                 plan_id: "plan-1".into(),
-                graph_digest: "sha256:plan".into(),
+                program_digest: "sha256:plan".into(),
                 workflow_name: "review".into(),
                 node_count: 2,
             },
             vec![
                 "workflow review: planned",
                 "plan_id: plan-1",
-                "graph_digest: sha256:plan",
+                "program_digest: sha256:plan",
                 "nodes: 2",
             ],
         ),
@@ -87,8 +87,9 @@ fn workflow_results_are_readable_line_summaries() {
             "run with a truncated artifact",
             WorkflowToolResult::Run {
                 run_id: "run-1".into(),
-                graph_digest: "sha256:run".into(),
+                program_digest: "sha256:run".into(),
                 state: RunLifecycle::Running,
+                result: None,
                 nodes: vec![WorkflowNodeSummary {
                     node_id: "build".into(),
                     state: NodeState::Running {
@@ -102,7 +103,7 @@ fn workflow_results_are_readable_line_summaries() {
             },
             vec![
                 "workflow run-1: running",
-                "graph_digest: sha256:run",
+                "program_digest: sha256:run",
                 "nodes: 1",
                 "  build · running · attempt 2",
                 "    stdout: artifacts/build/stdout · 8 bytes · digest sha256:artifact · truncated · showing 8 of at least 12 bytes",
@@ -112,8 +113,15 @@ fn workflow_results_are_readable_line_summaries() {
             "run with a complete artifact stays quiet about observation",
             WorkflowToolResult::Run {
                 run_id: "run-2".into(),
-                graph_digest: "sha256:run".into(),
+                program_digest: "sha256:run".into(),
                 state: RunLifecycle::Completed,
+                result: Some(crate::workflow::ScopeResult {
+                    outcome: crate::workflow::WorkflowOutcome::Success,
+                    outputs: std::collections::BTreeMap::from([(
+                        "summary".into(),
+                        crate::workflow::WorkflowValue::from_json(serde_json::json!({"accepted": true})).unwrap(),
+                    )]),
+                }),
                 nodes: vec![WorkflowNodeSummary {
                     node_id: "build".into(),
                     state: NodeState::Terminal {
@@ -125,7 +133,9 @@ fn workflow_results_are_readable_line_summaries() {
             },
             vec![
                 "workflow run-2: completed",
-                "graph_digest: sha256:run",
+                "program_digest: sha256:run",
+                "root outcome: success",
+                "  export summary: {\"accepted\":true}",
                 "nodes: 1",
                 "  build · success · attempt 1",
                 "    stdout: artifacts/build/stdout · 8 bytes · digest sha256:artifact",
@@ -135,13 +145,14 @@ fn workflow_results_are_readable_line_summaries() {
             "status without nodes",
             WorkflowToolResult::Run {
                 run_id: "run-3".into(),
-                graph_digest: "sha256:status".into(),
+                program_digest: "sha256:status".into(),
                 state: RunLifecycle::NeedsRecovery,
+                result: None,
                 nodes: Vec::new(),
             },
             vec![
                 "workflow run-3: needs_recovery",
-                "graph_digest: sha256:status",
+                "program_digest: sha256:status",
                 "nodes: 0",
             ],
         ),
@@ -173,8 +184,9 @@ fn workflow_results_are_readable_line_summaries() {
 fn bounded_results_keep_whole_lines_and_report_the_omission() {
     let result = WorkflowToolResult::Run {
         run_id: "run-1".into(),
-        graph_digest: "sha256:run".into(),
+        program_digest: "sha256:run".into(),
         state: RunLifecycle::Running,
+        result: None,
         nodes: (0..40)
             .map(|index| WorkflowNodeSummary {
                 node_id: format!("node-{index}"),
@@ -193,9 +205,9 @@ fn bounded_results_keep_whole_lines_and_report_the_omission() {
         output,
         concat!(
             "workflow run-1: running\n",
-            "graph_digest: sha256:run\n",
+            "program_digest: sha256:run\n",
             "nodes: 40\n",
-            "... 40 more line(s) omitted; workflow summary is 888 bytes and the limit is 160 bytes"
+            "... 40 more line(s) omitted; workflow summary is 890 bytes and the limit is 160 bytes"
         )
     );
 }

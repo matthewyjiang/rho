@@ -19,7 +19,7 @@ use starlark::{
 
 use super::{
     starlark_api, CollectedSources, InputName, InputSchema, PlanningLimits, WorkflowError,
-    WorkflowGraph, WorkflowResult, WorkflowValue,
+    WorkflowProgram, WorkflowResult, WorkflowValue,
 };
 
 #[path = "starlark_parse.rs"]
@@ -35,7 +35,7 @@ pub(crate) enum IsolationDecision {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PlannedSource {
-    pub(crate) graph: WorkflowGraph,
+    pub(crate) program: WorkflowProgram,
     pub(crate) inputs: BTreeMap<InputName, WorkflowValue>,
     pub(crate) ticks: u64,
     pub(crate) peak_heap_bytes: u64,
@@ -114,13 +114,18 @@ impl<'a> StarlarkPlanner<'a> {
                 .to_json_value()
                 .map_err(|error| WorkflowError::Starlark(error.to_string()))?;
             check_collection_limits(&json, self.limits, 1)?;
-            let graph = parse_graph(json, self.limits)?;
+            let program = starlark_parse::parse_program(json, self.limits, schemas)?;
+            self.limits
+                .graph_bytes
+                .check(serde_json::to_vec(&program)?.len() as u64)?;
             let ticks = eval.get_total_tick_count();
             self.limits.evaluator_ticks.check(ticks)?;
-            let peak_heap_bytes = module.heap().peak_allocated_bytes() as u64;
+            // Match Evaluator::check_heap_size_limit, including frozen allocations.
+            let peak_heap_bytes = (module.heap().peak_allocated_bytes()
+                + module.frozen_heap().allocated_bytes()) as u64;
             self.limits.evaluator_heap_bytes.check(peak_heap_bytes)?;
             Ok(PlannedSource {
-                graph,
+                program,
                 inputs,
                 ticks,
                 peak_heap_bytes,
@@ -368,10 +373,6 @@ fn check_input_limits(
     limits
         .input_depth
         .check(inputs.values().map(depth).max().unwrap_or(1))
-}
-
-fn parse_graph(value: serde_json::Value, limits: &PlanningLimits) -> WorkflowResult<WorkflowGraph> {
-    starlark_parse::parse_graph(value, limits)
 }
 
 #[cfg(test)]

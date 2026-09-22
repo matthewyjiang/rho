@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "measurement_command": "CARGO_BUILD_JOBS=12 cargo build -p rho-coding-agent --locked && python3 scripts/measure_workflow_limits.py --rho target/debug/rho",
+  "measurement_command": "CARGO_BUILD_JOBS=8 cargo build -p rho-coding-agent --locked && python3 scripts/measure_workflow_limits.py --rho target/debug/rho",
   "corpus_generator": "scripts/workflow_limit_corpus.py",
   "measurement_environment": {
     "platform": "Linux x86_64 with /proc",
@@ -32,7 +32,7 @@
       "module_count": 75,
       "module_depth": 15,
       "evaluator_ticks": 750019,
-      "evaluator_heap_bytes": 50334528,
+      "evaluator_heap_bytes": 67130920,
       "call_stack_depth": 15,
       "string_bytes": 750000,
       "list_items": 7500,
@@ -44,7 +44,7 @@
       "condition_depth": 1,
       "schema_depth": 5,
       "schema_bytes": 756418,
-      "graph_bytes": 7515347,
+      "graph_bytes": 7515385,
       "worker_wall_millis": 3494,
       "retained_output_per_stream_bytes": 6291456,
       "retained_output_total_bytes": 50331648,
@@ -71,7 +71,7 @@
       "condition_depth": 1,
       "schema_depth": 1,
       "schema_bytes": 243582,
-      "graph_bytes": 2484653,
+      "graph_bytes": 2484615,
       "worker_wall_millis": 6506,
       "retained_output_per_stream_bytes": 2097152,
       "retained_output_total_bytes": 16777216,
@@ -87,7 +87,7 @@
       "module_count": 100,
       "module_depth": 20,
       "evaluator_ticks": 1000000,
-      "evaluator_heap_bytes": 64000000,
+      "evaluator_heap_bytes": 80796392,
       "call_stack_depth": 25,
       "string_bytes": 1000000,
       "list_items": 10000,
@@ -117,8 +117,8 @@
       "accepted": 16777216
     },
     "response_frame_bytes": {
-      "measured": 7515451,
-      "margin": 9261765,
+      "measured": 7515491,
+      "margin": 9261725,
       "accepted": 16777216
     },
     "stderr_bytes": {

@@ -14,7 +14,7 @@ use crate::{
 
 fn terminal_agent(artifacts: Vec<ArtifactReference>) -> WorkflowNodeSnapshot {
     WorkflowNodeSnapshot {
-        id: NodeId::new("review").unwrap(),
+        id: crate::workflow::TaskInstanceId::root(NodeId::new("review").unwrap()),
         display_name: "Review".into(),
         dependencies: Vec::new(),
         access: WorkspaceAccess::ReadOnly,

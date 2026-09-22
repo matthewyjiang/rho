@@ -7,14 +7,14 @@ use std::path::Path;
 
 use fs2::FileExt;
 
-use super::{delete_child_directory, read_json, run_relative, WorkflowStore};
-use crate::workflow::{PlanId, RunId, RunManifest, WorkflowError, WorkflowResult};
+use super::{delete_child_directory, run_relative, WorkflowStore};
+use crate::workflow::{PlanId, RunId, WorkflowError, WorkflowResult};
 
 impl WorkflowStore {
     /// Deletes one plan directory. Runs keep their copied graph, so resume still works.
     pub(crate) fn delete_plan(&self, id: PlanId) -> WorkflowResult<()> {
         // Confirm the plan directory is a real store entry before removal.
-        let _ = self.read_plan_manifest(id)?;
+        let _ = self.read_plan_inventory(id)?;
         delete_child_directory(&self.layout.plans(), &self.layout.plan(id))
     }
 
@@ -25,7 +25,7 @@ impl WorkflowStore {
     /// Live (`Running` / `Cancelling`) runs are refused under that lock.
     pub(crate) fn delete_run(&self, id: RunId) -> WorkflowResult<()> {
         // Confirm the run directory is a real store entry before removal.
-        let _: RunManifest = read_json(&self.root, &run_relative(id, Path::new("manifest.json")))?;
+        let _ = self.is_legacy_run(id)?;
         let lock = self
             .root
             .open_private_file(&run_relative(id, Path::new("mutation.lock")), true)?;

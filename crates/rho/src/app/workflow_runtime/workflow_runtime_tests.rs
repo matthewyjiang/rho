@@ -142,6 +142,10 @@ fn node_id(value: &str) -> NodeId {
     NodeId::new(value).unwrap()
 }
 
+fn task_id(value: &str) -> TaskInstanceId {
+    TaskInstanceId::root(node_id(value))
+}
+
 fn test_workflow() -> FrozenWorkflow {
     let node = Node {
         id: node_id("inspect"),
@@ -173,7 +177,7 @@ fn test_workflow() -> FrozenWorkflow {
             format_version: 1,
             starlark_version: "0.14.2".into(),
         },
-        graph_digest: Digest(String::new()),
+        program_digest: Digest(String::new()),
         sources: SourceManifest {
             entry_label: "//workflow.star".into(),
             modules: BTreeMap::from([(
@@ -188,7 +192,7 @@ fn test_workflow() -> FrozenWorkflow {
             )]),
         },
         inputs: BTreeMap::new(),
-        graph,
+        program: WorkflowProgram::lower(graph, BTreeMap::new()),
         resolved_nodes: BTreeMap::from([(
             node_id("inspect"),
             ResolvedNode::Agent(Box::new(ResolvedAgent {
@@ -217,14 +221,15 @@ fn test_workflow() -> FrozenWorkflow {
         },
         runtime_limits: crate::workflow::test_support::runtime_limits(),
     };
-    workflow.graph_digest = graph_digest(&workflow).unwrap();
+    workflow.program_digest = program_digest(&workflow).unwrap();
     workflow
 }
 
 fn structured_workflow() -> FrozenWorkflow {
     let mut workflow = test_workflow();
     let NodeExecution::Agent(agent) = &mut workflow
-        .graph
+        .program
+        .root
         .nodes
         .get_mut(&node_id("inspect"))
         .unwrap()
@@ -233,22 +238,26 @@ fn structured_workflow() -> FrozenWorkflow {
         unreachable!();
     };
     agent.output = Some(OutputSchema::Bool);
-    workflow.graph_digest = graph_digest(&workflow).unwrap();
+    workflow.program_digest = program_digest(&workflow).unwrap();
     workflow
 }
 
 fn cancellation_workflow() -> FrozenWorkflow {
     let mut workflow = test_workflow();
-    let mut follow_up = workflow.graph.nodes[&node_id("inspect")].clone();
+    let mut follow_up = workflow.program.root.nodes[&node_id("inspect")].clone();
     follow_up.id = node_id("report");
     follow_up.display_name = "report".into();
     follow_up.needs = vec![node_id("inspect")];
-    workflow.graph.nodes.insert(follow_up.id.clone(), follow_up);
+    workflow
+        .program
+        .root
+        .nodes
+        .insert(follow_up.id.clone(), follow_up);
     workflow.resolved_nodes.insert(
         node_id("report"),
         workflow.resolved_nodes[&node_id("inspect")].clone(),
     );
-    workflow.graph_digest = graph_digest(&workflow).unwrap();
+    workflow.program_digest = program_digest(&workflow).unwrap();
     workflow
 }
 
@@ -271,7 +280,12 @@ fn command_workflow(
         marker = quote(marker),
         ready = quote(ready),
     );
-    let node = workflow.graph.nodes.get_mut(&node_id("inspect")).unwrap();
+    let node = workflow
+        .program
+        .root
+        .nodes
+        .get_mut(&node_id("inspect"))
+        .unwrap();
     node.execution = NodeExecution::Command(CommandNode::Shell {
         executable: executable.to_string_lossy().into_owned(),
         arguments: vec!["-c".into()],
@@ -291,27 +305,12 @@ fn command_workflow(
             environment_policy: "empty".into(),
         })),
     );
-    workflow.graph_digest = graph_digest(&workflow).unwrap();
+    workflow.program_digest = program_digest(&workflow).unwrap();
     workflow
 }
 
 fn test_state(workflow: &FrozenWorkflow) -> WorkflowState {
-    WorkflowState {
-        revision: 0,
-        lifecycle: RunLifecycle::Planned,
-        outcome: None,
-        cancellation_requested: false,
-        nodes: workflow
-            .graph
-            .nodes
-            .keys()
-            .cloned()
-            .map(|id| (id, NodeState::Pending))
-            .collect(),
-        command_exits: BTreeMap::new(),
-        outputs: BTreeMap::new(),
-        completions: BTreeMap::new(),
-    }
+    WorkflowState::new(workflow)
 }
 
 fn create_run(home: &std::path::Path, workspace: &std::path::Path) -> StoredRun {
@@ -337,7 +336,7 @@ fn create_run_with_workflow(
         .create_run(
             &plan,
             PlanConsent {
-                graph_digest: plan.manifest.graph_digest.clone(),
+                program_digest: plan.manifest.program_digest.clone(),
                 confirmed: true,
             },
             RunStateRecord {
@@ -373,9 +372,7 @@ fn append_fixture_event(
     run: &mut StoredRun,
     event: WorkflowEvent,
 ) {
-    let next =
-        super::journal::apply_durable_event(&run.graph, run_directory, &run.state.state, &event)
-            .unwrap();
+    let next = apply_durable_event(&run.graph, &run.state.state, &event, run_directory).unwrap();
     let sequence = run.state.last_event_sequence + 1;
     store
         .append_event(
@@ -398,6 +395,8 @@ enum CompletionCrashPoint {
     StructuredOutput,
     NodeFinished,
     SnapshotSaved,
+    ScopeFinished,
+    ScopeFinishedDuringCancellation,
 }
 
 // Covers: each durable write boundary after execution could strand completed work or rerun it.
@@ -409,18 +408,17 @@ async fn terminal_completion_recovers_at_each_crash_point() {
         CompletionCrashPoint::StructuredOutput,
         CompletionCrashPoint::NodeFinished,
         CompletionCrashPoint::SnapshotSaved,
+        CompletionCrashPoint::ScopeFinished,
+        CompletionCrashPoint::ScopeFinishedDuringCancellation,
     ] {
         let home = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
         let mut run =
             create_run_with_workflow(home.path(), workspace.path(), structured_workflow());
         let store = WorkflowStore::new(home.path()).unwrap();
-        let run_directory = home
-            .path()
-            .join("workflows/runs")
-            .join(run.manifest.run_id.to_string());
+        let run_directory = WorkflowLayout::new(home.path()).run(run.manifest.run_id);
         let attempt = AttemptNumber::new(1).unwrap();
-        let node = node_id("inspect");
+        let node = task_id("inspect");
         let mut guard = store.lock_run(run.manifest.run_id).unwrap();
         append_fixture_event(
             &store,
@@ -438,7 +436,7 @@ async fn terminal_completion_recovers_at_each_crash_point() {
             &mut run,
             WorkflowEvent::NodeReady { node: node.clone() },
         );
-        let attempt_directory = run_directory.join("nodes/inspect/attempts/1");
+        let attempt_directory = attempt_directory(&run_directory, &node, attempt);
         std::fs::create_dir_all(&attempt_directory).unwrap();
         let output_artifact = super::artifacts::write_artifact(
             &run_directory,
@@ -473,6 +471,16 @@ async fn terminal_completion_recovers_at_each_crash_point() {
             },
         )
         .unwrap();
+        append_fixture_event(
+            &store,
+            &mut guard,
+            &run_directory,
+            &mut run,
+            WorkflowEvent::LaunchIntended {
+                node: node.clone(),
+                attempt,
+            },
+        );
         append_fixture_event(
             &store,
             &mut guard,
@@ -523,7 +531,9 @@ async fn terminal_completion_recovers_at_each_crash_point() {
                         .unwrap();
                 }
             }
-            CompletionCrashPoint::SnapshotSaved => {
+            CompletionCrashPoint::SnapshotSaved
+            | CompletionCrashPoint::ScopeFinished
+            | CompletionCrashPoint::ScopeFinishedDuringCancellation => {
                 append_fixture_event(
                     &store,
                     &mut guard,
@@ -532,6 +542,34 @@ async fn terminal_completion_recovers_at_each_crash_point() {
                     structured_event,
                 );
                 append_fixture_event(&store, &mut guard, &run_directory, &mut run, finished_event);
+                if point == CompletionCrashPoint::ScopeFinishedDuringCancellation {
+                    append_fixture_event(
+                        &store,
+                        &mut guard,
+                        &run_directory,
+                        &mut run,
+                        WorkflowEvent::CancellationRequested {
+                            request_id: "00000000-0000-0000-0000-000000000007".into(),
+                        },
+                    );
+                }
+                if matches!(
+                    point,
+                    CompletionCrashPoint::ScopeFinished
+                        | CompletionCrashPoint::ScopeFinishedDuringCancellation
+                ) {
+                    let scope = ScopeInstanceId::ROOT;
+                    let result = scope_result(&run.graph, &run.state.state, scope)
+                        .unwrap()
+                        .unwrap();
+                    append_fixture_event(
+                        &store,
+                        &mut guard,
+                        &run_directory,
+                        &mut run,
+                        WorkflowEvent::ScopeFinished { scope, result },
+                    );
+                }
             }
         }
         drop(guard);
@@ -545,21 +583,30 @@ async fn terminal_completion_recovers_at_each_crash_point() {
 
         assert_eq!(executor.0.load(Ordering::SeqCst), 0, "point: {point:?}");
         assert_eq!(
-            completed.state.state.nodes[&node_id("inspect")].terminal(),
+            completed
+                .state
+                .state
+                .task(&task_id("inspect"))
+                .unwrap()
+                .terminal(),
             Some(NodeTerminalState::Success),
             "point: {point:?}"
         );
         assert_eq!(
-            completed.state.state.outputs[&node_id("inspect")],
+            completed.state.state.root_scope().outputs[&node_id("inspect")],
             WorkflowValue::Bool(true),
             "point: {point:?}"
         );
         assert_eq!(
-            completed.state.state.outcome,
+            completed.state.state.outcome(),
             Some(WorkflowOutcome::Success),
             "point: {point:?}"
         );
-        let artifact = completed.state.state.completions[&node_id("inspect")]
+        let artifact = completed
+            .state
+            .state
+            .completion(&task_id("inspect"))
+            .unwrap()
             .artifacts
             .structured_output
             .as_ref()
@@ -608,15 +655,22 @@ async fn runner_persists_successful_attempt() {
 
     assert_eq!(completed.state.state.lifecycle, RunLifecycle::Completed);
     assert_eq!(
-        completed.state.state.nodes[&node_id("inspect")].terminal(),
+        completed
+            .state
+            .state
+            .task(&task_id("inspect"))
+            .unwrap()
+            .terminal(),
         Some(NodeTerminalState::Success)
     );
     let attempt: AttemptRecord = serde_json::from_slice(
         &std::fs::read(
-            home.path()
-                .join("workflows/runs")
-                .join(run.manifest.run_id.to_string())
-                .join("nodes/inspect/attempts/1/status.json"),
+            attempt_directory(
+                &WorkflowLayout::new(home.path()).run(run.manifest.run_id),
+                &task_id("inspect"),
+                AttemptNumber::new(1).unwrap(),
+            )
+            .join("status.json"),
         )
         .unwrap(),
     )
@@ -644,11 +698,12 @@ async fn attempt_status_substitution_cannot_change_journal_completion() {
         .await
         .unwrap();
     let attempt = AttemptNumber::new(1).unwrap();
-    let status = home
-        .path()
-        .join("workflows/runs")
-        .join(run.manifest.run_id.to_string())
-        .join("nodes/inspect/attempts/1/status.json");
+    let status = attempt_directory(
+        &WorkflowLayout::new(home.path()).run(run.manifest.run_id),
+        &task_id("inspect"),
+        attempt,
+    )
+    .join("status.json");
     std::fs::write(
         status,
         serde_json::to_vec(&AttemptRecord {
@@ -689,10 +744,14 @@ fn artifact_writes_do_not_follow_symlinks() {
 
     let run = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
-    let attempt = run.path().join("nodes/inspect/attempts/1");
+    let attempt = attempt_directory(
+        run.path(),
+        &task_id("inspect"),
+        AttemptNumber::new(1).unwrap(),
+    );
     crate::workflow::ensure_directory_beneath(
         run.path(),
-        std::path::Path::new("nodes/inspect/attempts/1"),
+        attempt.strip_prefix(run.path()).unwrap(),
     )
     .unwrap();
     let agent = attempt.join("agent");
@@ -783,23 +842,32 @@ async fn cross_process_request_cancels_active_node() {
     assert_eq!(completed.state.state.lifecycle, RunLifecycle::Completed);
     assert!(completed.state.state.cancellation_requested);
     assert_eq!(
-        completed.state.state.nodes[&node_id("inspect")].terminal(),
+        completed
+            .state
+            .state
+            .task(&task_id("inspect"))
+            .unwrap()
+            .terminal(),
         Some(NodeTerminalState::Cancellation)
     );
     assert_eq!(
-        completed.state.state.nodes[&node_id("report")].terminal(),
+        completed
+            .state
+            .state
+            .task(&task_id("report"))
+            .unwrap()
+            .terminal(),
         Some(NodeTerminalState::Cancellation)
     );
     assert_eq!(
-        completed.state.state.outcome,
+        completed.state.state.outcome(),
         Some(WorkflowOutcome::Cancellation)
     );
     assert!(completed
         .state
         .state
-        .nodes
-        .values()
-        .all(|state| state.terminal().is_some()));
+        .tasks()
+        .all(|(_, state)| state.terminal().is_some()));
     assert!(cross_process_cancel_acknowledged(home.path(), run_id).unwrap());
     assert!(cancellation_request_acknowledged(home.path(), run_id, &receipt).unwrap());
 
@@ -813,16 +881,36 @@ async fn cross_process_request_cancels_active_node() {
     )
     .await
     .unwrap();
-    assert_eq!(resumed.state.state.outcome, Some(WorkflowOutcome::Success));
+    assert_eq!(
+        resumed.state.state.outcome(),
+        Some(WorkflowOutcome::Success)
+    );
+    assert_eq!(
+        resumed
+            .state
+            .state
+            .completion(&task_id("inspect"))
+            .unwrap()
+            .attempt,
+        Some(AttemptNumber::new(2).unwrap())
+    );
+    assert_eq!(
+        resumed
+            .state
+            .state
+            .completion(&task_id("report"))
+            .unwrap()
+            .attempt,
+        Some(AttemptNumber::new(1).unwrap())
+    );
     assert!(resumed
         .state
         .state
-        .nodes
-        .values()
-        .all(|state| { state.terminal() == Some(NodeTerminalState::Success) }));
+        .tasks()
+        .all(|(_, state)| { state.terminal() == Some(NodeTerminalState::Success) }));
 
     let store = WorkflowStore::new(home.path()).unwrap();
-    let run_directory = home.path().join("workflows/runs").join(run_id.to_string());
+    let run_directory = WorkflowLayout::new(home.path()).run(run_id);
     let mut replayed = StoredRun {
         manifest: resumed.manifest.clone(),
         graph: resumed.graph.clone(),
@@ -984,7 +1072,7 @@ async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
             .unwrap()
             .state
             .state
-            .outcome,
+            .outcome(),
         Some(WorkflowOutcome::Success)
     );
 
@@ -992,17 +1080,24 @@ async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
     let uncertain = store.load_run(run_id).unwrap();
     assert_eq!(uncertain.state.state.lifecycle, RunLifecycle::NeedsRecovery);
     assert_eq!(
-        uncertain.state.state.nodes[&node_id("inspect")],
+        uncertain
+            .state
+            .state
+            .task(&task_id("inspect"))
+            .unwrap()
+            .clone(),
         NodeState::Running {
             attempt: AttemptNumber::new(1).unwrap()
         }
     );
     let attempt: AttemptRecord = serde_json::from_slice(
         &std::fs::read(
-            home.path()
-                .join("workflows/runs")
-                .join(run_id.to_string())
-                .join("nodes/inspect/attempts/1/status.json"),
+            attempt_directory(
+                &WorkflowLayout::new(home.path()).run(run_id),
+                &task_id("inspect"),
+                AttemptNumber::new(1).unwrap(),
+            )
+            .join("status.json"),
         )
         .unwrap(),
     )
@@ -1035,7 +1130,10 @@ async fn uncertain_agent_cleanup_is_durable_recoverable_and_keeps_locks() {
     )
     .await
     .unwrap();
-    assert_eq!(resumed.state.state.outcome, Some(WorkflowOutcome::Success));
+    assert_eq!(
+        resumed.state.state.outcome(),
+        Some(WorkflowOutcome::Success)
+    );
     assert!(cancellation_request_acknowledged(home.path(), run_id, &receipt).unwrap());
 }
 
@@ -1073,7 +1171,10 @@ async fn uncertain_timeout_cleanup_does_not_become_cancellation() {
         .drive(run_id, RecoveryDecision::ConfirmNoProcess, None)
         .await
         .unwrap();
-    assert_eq!(resumed.state.state.outcome, Some(WorkflowOutcome::Success));
+    assert_eq!(
+        resumed.state.state.outcome(),
+        Some(WorkflowOutcome::Success)
+    );
 }
 
 // Covers: cancelling a real process must retain both streams and its typed result across resume.
@@ -1150,14 +1251,14 @@ async fn real_command_cancellation_loads_and_resumes_with_complete_result() {
         .load_run(run_id)
         .unwrap();
     assert_eq!(loaded.state, cancelled.state);
-    let completion = &loaded.state.state.completions[&node_id("inspect")];
+    let completion = loaded.state.state.completion(&task_id("inspect")).unwrap();
     assert_eq!(completion.command_exit, Some(CommandExit::Cancellation));
     assert_eq!(completion.outcome, NodeTerminalState::Cancellation);
     let stdout = completion.artifacts.stdout.as_ref().unwrap();
     let stderr = completion.artifacts.stderr.as_ref().unwrap();
     assert!(stdout.retained_bytes <= 4);
     assert!(stderr.retained_bytes <= 4);
-    let run_directory = home.path().join("workflows/runs").join(run_id.to_string());
+    let run_directory = WorkflowLayout::new(home.path()).run(run_id);
     let command_outcome: CommandOutcome = serde_json::from_slice(
         &std::fs::read(
             run_directory.join(
@@ -1192,9 +1293,12 @@ async fn real_command_cancellation_loads_and_resumes_with_complete_result() {
     )
     .await
     .unwrap();
-    assert_eq!(resumed.state.state.outcome, Some(WorkflowOutcome::Success));
     assert_eq!(
-        resumed.state.state.command_exits[&node_id("inspect")],
+        resumed.state.state.outcome(),
+        Some(WorkflowOutcome::Success)
+    );
+    assert_eq!(
+        resumed.state.state.root_scope().command_exits[&node_id("inspect")],
         CommandExit::Code { code: 0 }
     );
 }
@@ -1208,27 +1312,32 @@ async fn runner_replays_journal_tail() {
     let run = create_run(home.path(), workspace.path());
     let store = WorkflowStore::new(home.path()).unwrap();
     let mut guard = store.lock_run(run.manifest.run_id).unwrap();
-    store
-        .append_event(
-            &mut guard,
-            &WorkflowEventRecord {
-                schema_version: EVENT_VERSION,
-                sequence: 1,
-                event: WorkflowEvent::NodeReady {
-                    node: node_id("inspect"),
+    for (index, event) in [
+        WorkflowEvent::RunLifecycle {
+            lifecycle: RunLifecycle::Running,
+        },
+        WorkflowEvent::NodeReady {
+            node: task_id("inspect"),
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        store
+            .append_event(
+                &mut guard,
+                &WorkflowEventRecord {
+                    schema_version: EVENT_VERSION,
+                    sequence: index as u64 + 1,
+                    event,
                 },
-            },
-        )
-        .unwrap();
+            )
+            .unwrap();
+    }
     drop(guard);
     std::fs::OpenOptions::new()
         .append(true)
-        .open(
-            home.path()
-                .join("workflows/runs")
-                .join(run.manifest.run_id.to_string())
-                .join("events.jsonl"),
-        )
+        .open(WorkflowLayout::new(home.path()).run_events(run.manifest.run_id))
         .unwrap()
         .write_all(b"{\"schema_version\":")
         .unwrap();
@@ -1241,7 +1350,12 @@ async fn runner_replays_journal_tail() {
 
     assert_eq!(completed.state.state.lifecycle, RunLifecycle::Completed);
     assert_eq!(
-        completed.state.state.nodes[&node_id("inspect")].terminal(),
+        completed
+            .state
+            .state
+            .task(&task_id("inspect"))
+            .unwrap()
+            .terminal(),
         Some(NodeTerminalState::Success)
     );
     assert!(completed.state.last_event_sequence > 1);
@@ -1300,7 +1414,8 @@ async fn checkout_gate_lock_wait_honors_cancellation() {
         .unwrap();
     FileExt::lock_exclusive(&contender).unwrap();
     let cancellation = rho_sdk::CancellationToken::new();
-    let wait_limit_seconds = test_workflow().graph.nodes[&node_id("inspect")].timeout_seconds;
+    let wait_limit_seconds =
+        test_workflow().program.root.nodes[&node_id("inspect")].timeout_seconds;
 
     // Unix flock contends across file descriptors in the same process, so we can
     // enter the wait loop and cancel mid-wait. Windows LockFileEx is process-scoped,
@@ -1343,13 +1458,10 @@ async fn uncertain_attempt_requires_explicit_recovery() {
     let home = tempfile::tempdir().unwrap();
     let workspace = tempfile::tempdir().unwrap();
     let mut run = create_run(home.path(), workspace.path());
-    let node = node_id("inspect");
+    let node = task_id("inspect");
     let attempt = AttemptNumber::new(1).unwrap();
     let store = WorkflowStore::new(home.path()).unwrap();
-    let run_directory = home
-        .path()
-        .join("workflows/runs")
-        .join(run.manifest.run_id.to_string());
+    let run_directory = WorkflowLayout::new(home.path()).run(run.manifest.run_id);
     let mut guard = store.lock_run(run.manifest.run_id).unwrap();
     for event in [
         WorkflowEvent::RunLifecycle {
@@ -1369,10 +1481,10 @@ async fn uncertain_attempt_requires_explicit_recovery() {
         append_fixture_event(&store, &mut guard, &run_directory, &mut run, event);
     }
     drop(guard);
-    let attempt_directory = run_directory.join("nodes/inspect/attempts/1");
+    let attempt_directory = attempt_directory(&run_directory, &node, attempt);
     crate::workflow::ensure_directory_beneath(
         &run_directory,
-        std::path::Path::new("nodes/inspect/attempts/1"),
+        attempt_directory.strip_prefix(&run_directory).unwrap(),
     )
     .unwrap();
     super::artifacts::write_json(

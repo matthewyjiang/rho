@@ -132,10 +132,7 @@ pub(crate) fn cancellation_request_acknowledged(
 }
 
 pub(super) fn run_directory(rho_home: &std::path::Path, run_id: RunId) -> PathBuf {
-    rho_home
-        .join("workflows")
-        .join("runs")
-        .join(run_id.to_string())
+    crate::workflow::WorkflowLayout::new(rho_home).run(run_id)
 }
 
 pub(super) fn latest_cancellation_request(events: &[WorkflowEventRecord]) -> Option<String> {
@@ -168,8 +165,7 @@ pub(super) fn cancel_waiting_nodes(
 ) -> Result<(), RuntimeError> {
     let waiting = state
         .state
-        .nodes
-        .iter()
+        .tasks()
         .filter_map(|(node, state)| {
             matches!(state, NodeState::Pending | NodeState::Ready).then_some(node.clone())
         })

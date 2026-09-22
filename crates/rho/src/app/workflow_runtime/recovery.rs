@@ -1,7 +1,7 @@
 use crate::workflow::{
-    AttemptNumber, AttemptRecord, AttemptState, ExternalOwner, FrozenWorkflow, NodeId,
+    attempt_directory, AttemptNumber, AttemptRecord, AttemptState, ExternalOwner, FrozenWorkflow,
     NodeResetReason, NodeState, NodeTerminalState, RunLifecycle, RunMutationGuard, RunStateRecord,
-    WorkflowEvent, WorkflowStore, ATTEMPT_VERSION,
+    TaskInstanceId, WorkflowEvent, WorkflowStore, ATTEMPT_VERSION,
 };
 
 use super::{
@@ -11,11 +11,10 @@ use super::{
     RecoveryDecision, RuntimeError,
 };
 
-pub(super) fn uncertain_nodes(state: &RunStateRecord) -> Vec<NodeId> {
+pub(super) fn uncertain_nodes(state: &RunStateRecord) -> Vec<TaskInstanceId> {
     state
         .state
-        .nodes
-        .iter()
+        .tasks()
         .filter_map(|(node, value)| {
             matches!(value, NodeState::Running { .. }).then_some(node.clone())
         })
@@ -26,18 +25,18 @@ pub(super) fn mark_uncertain_attempts(
     run_directory: &std::path::Path,
     state: &RunStateRecord,
 ) -> Result<(), RuntimeError> {
-    for (node, node_state) in &state.state.nodes {
+    for (node, node_state) in state.state.tasks() {
         let NodeState::Running { attempt } = node_state else {
             continue;
         };
-        mark_attempt_uncertain(run_directory, node, *attempt)?;
+        mark_attempt_uncertain(run_directory, &node, *attempt)?;
     }
     Ok(())
 }
 
 pub(super) fn mark_attempt_uncertain(
     run_directory: &std::path::Path,
-    node: &NodeId,
+    node: &TaskInstanceId,
     attempt: AttemptNumber,
 ) -> Result<(), RuntimeError> {
     let record = read_attempt_record(run_directory, node, attempt)?;
@@ -50,11 +49,7 @@ pub(super) fn mark_attempt_uncertain(
             )))
         }
     };
-    let attempt_directory = run_directory
-        .join("nodes")
-        .join(node.as_str())
-        .join("attempts")
-        .join(attempt.to_string());
+    let attempt_directory = attempt_directory(run_directory, node, attempt);
     write_json(
         run_directory,
         &attempt_directory.join("status.json"),
@@ -76,11 +71,45 @@ pub(super) fn recover_state(
     decision: RecoveryDecision,
 ) -> Result<(), RuntimeError> {
     let uncertain = uncertain_nodes(state);
+    if state
+        .state
+        .root_scope()
+        .result
+        .as_ref()
+        .is_some_and(|result| result.outcome == crate::workflow::WorkflowOutcome::Cancellation)
+    {
+        persist_state_event(
+            store,
+            guard,
+            run_directory,
+            graph,
+            state,
+            WorkflowEvent::ScopeReopened {
+                scope: crate::workflow::ScopeInstanceId::ROOT,
+            },
+        )?;
+    }
+    if state.state.root_scope().result.is_some() {
+        // A late cancellation can arrive after every task completed, so a closed
+        // scope need not have a cancellation outcome. Preserve that result and
+        // let the driver finish the run instead of reopening successful work.
+        if state.state.cancellation_requested {
+            persist_state_event(
+                store,
+                guard,
+                run_directory,
+                graph,
+                state,
+                WorkflowEvent::CancellationCleared,
+            )?;
+        }
+        return Ok(());
+    }
     if uncertain.is_empty() && state.state.lifecycle != RunLifecycle::NeedsRecovery {
         if state.state.lifecycle != RunLifecycle::Planned
             && state.state.lifecycle != RunLifecycle::Running
             && (state.state.cancellation_requested
-                || state.state.nodes.values().any(|node| {
+                || state.state.tasks().any(|(_, node)| {
                     matches!(
                         node,
                         NodeState::Terminal {
@@ -145,8 +174,7 @@ fn reset_clean_cancellations(
 ) -> Result<(), RuntimeError> {
     let cancelled = state
         .state
-        .nodes
-        .iter()
+        .tasks()
         .filter_map(|(node, value)| {
             matches!(
                 value,

@@ -1,7 +1,7 @@
 use crate::workflow::{
-    apply_event, validate_lifecycle_transition, AttemptNumber, AttemptRecord, AttemptState,
-    NodeCompletion, NodeId, NodeResetReason, NodeTerminalState, SchedulerEvent, StoredRun,
-    WorkflowEvent, WorkflowState, WorkflowStore, ATTEMPT_VERSION,
+    apply_durable_event, attempt_directory, AttemptNumber, AttemptRecord, AttemptState,
+    NodeCompletion, NodeResetReason, StoredRun, TaskInstanceId, WorkflowEvent, WorkflowStore,
+    ATTEMPT_VERSION,
 };
 
 use super::RuntimeError;
@@ -30,103 +30,16 @@ pub(super) fn replay_journal(
             )));
         }
         run.state.state =
-            apply_durable_event(&run.graph, run_directory, &run.state.state, &record.event)?;
+            apply_durable_event(&run.graph, &run.state.state, &record.event, run_directory)?;
         run.state.last_event_sequence = record.sequence;
         changed = true;
     }
     Ok(changed)
 }
 
-pub(super) fn apply_durable_event(
-    graph: &crate::workflow::FrozenWorkflow,
-    _run_directory: &std::path::Path,
-    state: &WorkflowState,
-    event: &WorkflowEvent,
-) -> Result<WorkflowState, RuntimeError> {
-    Ok(match event {
-        WorkflowEvent::NodeReady { node } => apply_event(
-            graph,
-            state,
-            SchedulerEvent::MarkReady { node: node.clone() },
-        )?,
-        WorkflowEvent::LaunchIntended { .. }
-        | WorkflowEvent::StructuredOutput { .. }
-        | WorkflowEvent::HookObserved { .. }
-        | WorkflowEvent::CancellationAcknowledged { .. } => state.clone(),
-        WorkflowEvent::AttemptStarted { node, attempt, .. } => apply_event(
-            graph,
-            state,
-            SchedulerEvent::Launched {
-                node: node.clone(),
-                attempt: *attempt,
-            },
-        )?,
-        WorkflowEvent::NodeFinished { node, completion } => {
-            let completion = match completion.attempt {
-                Some(_) => completion.as_ref().clone(),
-                None if completion.outcome == NodeTerminalState::Cancellation => {
-                    let resume = match state.nodes.get(node) {
-                        Some(crate::workflow::NodeState::Pending) => {
-                            crate::workflow::CancellationResumeState::Pending
-                        }
-                        Some(crate::workflow::NodeState::Ready) => {
-                            crate::workflow::CancellationResumeState::Ready
-                        }
-                        _ => {
-                            return Err(RuntimeError::Data(format!(
-                                "synthetic cancellation targets non-waiting node '{node}'"
-                            )))
-                        }
-                    };
-                    NodeCompletion::cancelled(resume)
-                }
-                None => completion.as_ref().clone(),
-            };
-            apply_event(
-                graph,
-                state,
-                SchedulerEvent::Finished {
-                    node: node.clone(),
-                    completion: Box::new(completion),
-                },
-            )?
-        }
-        WorkflowEvent::CancellationRequested { .. } => {
-            apply_event(graph, state, SchedulerEvent::CancellationRequested)?
-        }
-        WorkflowEvent::NodeReset { node, reason } => apply_event(
-            graph,
-            state,
-            SchedulerEvent::ResetNode {
-                node: node.clone(),
-                reason: *reason,
-            },
-        )?,
-        WorkflowEvent::CancellationCleared => {
-            let mut next = state.clone();
-            if !next.cancellation_requested {
-                return Err(RuntimeError::Data(
-                    "cancellation clear event has no cancellation to clear".into(),
-                ));
-            }
-            next.cancellation_requested = false;
-            bump_revision(&mut next)?;
-            next
-        }
-        WorkflowEvent::RunLifecycle { lifecycle } => {
-            let outcome = validate_lifecycle_transition(graph, state, *lifecycle)?;
-            let mut next = state.clone();
-            next.lifecycle = *lifecycle;
-            next.outcome = outcome;
-            bump_revision(&mut next)?;
-            next
-        }
-    })
-}
-
 pub(super) fn completed_attempt(
     run_directory: &std::path::Path,
-    node: &NodeId,
+    node: &TaskInstanceId,
     attempt: AttemptNumber,
 ) -> Result<Option<NodeCompletion>, RuntimeError> {
     let record = read_attempt_record(run_directory, node, attempt)?;
@@ -141,10 +54,10 @@ pub(super) fn completed_attempt(
 
 pub(super) fn read_attempt_record(
     run_directory: &std::path::Path,
-    node: &NodeId,
+    node: &TaskInstanceId,
     attempt: AttemptNumber,
 ) -> Result<AttemptRecord, RuntimeError> {
-    let path = attempt_status_path(run_directory, node, attempt);
+    let path = attempt_directory(run_directory, node, attempt).join("status.json");
     let relative = path
         .strip_prefix(run_directory)
         .map_err(|_| RuntimeError::UnsafeArtifact(path.clone()))?;
@@ -165,27 +78,6 @@ pub(super) fn read_attempt_record(
     Ok(record)
 }
 
-fn attempt_status_path(
-    run_directory: &std::path::Path,
-    node: &NodeId,
-    attempt: AttemptNumber,
-) -> std::path::PathBuf {
-    run_directory
-        .join("nodes")
-        .join(node.as_str())
-        .join("attempts")
-        .join(attempt.to_string())
-        .join("status.json")
-}
-
-fn bump_revision(state: &mut WorkflowState) -> Result<(), RuntimeError> {
-    state.revision = state
-        .revision
-        .checked_add(1)
-        .ok_or_else(|| RuntimeError::Data("workflow state revision overflow".into()))?;
-    Ok(())
-}
-
-pub(super) fn reset_event(node: NodeId, reason: NodeResetReason) -> WorkflowEvent {
+pub(super) fn reset_event(node: TaskInstanceId, reason: NodeResetReason) -> WorkflowEvent {
     WorkflowEvent::NodeReset { node, reason }
 }

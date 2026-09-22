@@ -38,7 +38,7 @@ pub(crate) struct WorkflowFinishedSnapshot {
 pub(crate) struct WorkflowNotification {
     pub(crate) run_id: String,
     pub(crate) workflow_name: String,
-    pub(crate) graph_digest: String,
+    pub(crate) program_digest: String,
     pub(crate) finished: WorkflowFinishedSnapshot,
 }
 
@@ -46,7 +46,7 @@ pub(crate) struct WorkflowNotification {
 struct WorkflowEntry {
     run_id: String,
     workflow_name: String,
-    graph_digest: String,
+    program_digest: String,
     session_id: Option<String>,
     started: Instant,
     finished: Option<WorkflowFinishedSnapshot>,
@@ -91,7 +91,7 @@ impl WorkflowRunTracker {
         &self,
         run_id: impl Into<String>,
         workflow_name: impl Into<String>,
-        graph_digest: impl Into<String>,
+        program_digest: impl Into<String>,
         session_id: Option<String>,
     ) {
         let run_id = run_id.into();
@@ -102,7 +102,7 @@ impl WorkflowRunTracker {
             WorkflowEntry {
                 run_id,
                 workflow_name: workflow_name.into(),
-                graph_digest: graph_digest.into(),
+                program_digest: program_digest.into(),
                 session_id,
                 started: Instant::now(),
                 finished: None,
@@ -184,7 +184,7 @@ impl WorkflowRunTracker {
                     WorkflowNotification {
                         run_id: entry.run_id.clone(),
                         workflow_name: entry.workflow_name.clone(),
-                        graph_digest: entry.graph_digest.clone(),
+                        program_digest: entry.program_digest.clone(),
                         finished,
                     },
                 ))
@@ -222,10 +222,10 @@ impl WorkflowRunTracker {
 pub(crate) fn start_context_prompts(
     run_id: &str,
     workflow_name: &str,
-    graph_digest: &str,
+    program_digest: &str,
 ) -> (String, String) {
     let model = format!(
-        "[workflow started]\n\nrun_id: {run_id}\nworkflow: {workflow_name}\ngraph_digest: {graph_digest}\nstate: running\n{START_CONTEXT_FOOTER}"
+        "[workflow started]\n\nrun_id: {run_id}\nworkflow: {workflow_name}\nprogram_digest: {program_digest}\nstate: running\n{START_CONTEXT_FOOTER}"
     );
     let display = format!("workflow {workflow_name} started (run {run_id})");
     (model, display)
@@ -245,10 +245,10 @@ pub(crate) fn notification_prompts(notifications: &[WorkflowNotification]) -> (S
 
     let mut outputs_section = String::new();
     for notification in notifications {
-        for (node_id, value) in &notification.finished.outputs {
-            let label = format!("\n\n{}/{}:\n", notification.run_id, node_id);
+        for (name, value) in &notification.finished.outputs {
+            let label = format!("\n\n{}/{}:\n", notification.run_id, name);
             if outputs_section.is_empty() {
-                outputs_section.push_str("\n\nValidated outputs:");
+                outputs_section.push_str("\n\nWorkflow exports:");
             }
             if body.len() + outputs_section.len() + label.len() >= body_budget {
                 break;
@@ -290,7 +290,7 @@ fn format_notification_summary(notification: &WorkflowNotification) -> String {
     if let Some(outcome) = &notification.finished.outcome {
         lines.push(format!("outcome: {outcome}"));
     }
-    lines.push(format!("graph_digest: {}", notification.graph_digest));
+    lines.push(format!("program_digest: {}", notification.program_digest));
     if let Some(error) = &notification.finished.error {
         lines.push(format!("error: {error}"));
     }
@@ -308,23 +308,24 @@ pub(crate) fn snapshot_from_stored(run: &StoredRun) -> WorkflowFinishedSnapshot 
     let outcome = run
         .state
         .state
-        .outcome
+        .outcome()
         .map(WorkflowOutcome::as_str)
         .map(str::to_owned);
     let nodes = run
         .state
         .state
-        .nodes
-        .iter()
+        .tasks()
         .map(|(node_id, state)| WorkflowNodeLine {
             node_id: node_id.to_string(),
             state: state.as_str().into(),
         })
         .collect();
     let mut outputs = Vec::new();
-    for (node_id, value) in &run.state.state.outputs {
-        if let Some(text) = compact_output(value) {
-            outputs.push((node_id.to_string(), text));
+    if let Some(result) = &run.state.state.root_scope().result {
+        for (name, value) in &result.outputs {
+            if let Some(text) = compact_output(value) {
+                outputs.push((name.clone(), text));
+            }
         }
     }
     WorkflowFinishedSnapshot {
@@ -337,10 +338,7 @@ pub(crate) fn snapshot_from_stored(run: &StoredRun) -> WorkflowFinishedSnapshot 
 }
 
 fn compact_output(value: &WorkflowValue) -> Option<String> {
-    match serde_json::to_string(value) {
-        Ok(text) if !text.is_empty() && text != "null" => Some(text),
-        _ => None,
-    }
+    serde_json::to_string(value).ok()
 }
 
 fn push_excerpt(body: &mut String, text: &str, budget: usize) {

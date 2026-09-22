@@ -28,8 +28,9 @@ impl WorkflowToolService for RecordingService {
         Box::pin(async move {
             Ok(WorkflowToolResult::Run {
                 run_id: RUN_ID.into(),
-                graph_digest: "sha256:test".into(),
+                program_digest: "sha256:test".into(),
                 state: RunLifecycle::Running,
+                result: None,
                 nodes: Vec::new(),
             })
         })
@@ -58,7 +59,7 @@ async fn dispatches_a_typed_operation() {
     );
     assert_eq!(
         output.content(),
-        format!("workflow {RUN_ID}: running\ngraph_digest: sha256:test\nnodes: 0")
+        format!("workflow {RUN_ID}: running\nprogram_digest: sha256:test\nnodes: 0")
     );
 }
 

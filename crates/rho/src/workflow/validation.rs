@@ -11,13 +11,16 @@ use super::{
 
 pub(crate) fn validate_workflow(workflow: &FrozenWorkflow) -> WorkflowResult<()> {
     workflow.runtime_limits.validate()?;
-    let graph = &workflow.graph;
-    if graph.nodes.keys().ne(workflow.resolved_nodes.keys()) {
+    workflow.program.validate_bindings(&workflow.inputs)?;
+    let root = &workflow.program.root;
+    root.validate_exports()?;
+    root.validate_export_budget(workflow.runtime_limits.retained_output_total_bytes)?;
+    if root.nodes.keys().ne(workflow.resolved_nodes.keys()) {
         return Err(WorkflowError::Scheduler(
-            "resolved node keys differ from graph node keys".to_owned(),
+            "resolved node keys differ from root scope node keys".to_owned(),
         ));
     }
-    for (key, node) in &graph.nodes {
+    for (key, node) in &root.nodes {
         if key != &node.id {
             return Err(WorkflowError::Scheduler(format!(
                 "node map key '{key}' does not match node ID '{}'",
@@ -26,7 +29,7 @@ pub(crate) fn validate_workflow(workflow: &FrozenWorkflow) -> WorkflowResult<()>
         }
         validate_node_shape(node, workflow)?;
         for dependency in &node.needs {
-            if !graph.nodes.contains_key(dependency) {
+            if !root.nodes.contains_key(dependency) {
                 return Err(WorkflowError::MissingDependency {
                     node: node.id.clone(),
                     dependency: dependency.clone(),
@@ -34,7 +37,7 @@ pub(crate) fn validate_workflow(workflow: &FrozenWorkflow) -> WorkflowResult<()>
             }
         }
     }
-    detect_cycles(&graph.nodes)?;
+    detect_cycles(&root.nodes)?;
     validate_references(workflow)
 }
 
@@ -43,7 +46,7 @@ pub(crate) fn validate_runtime_budgets(
     limits: &PlanningLimits,
 ) -> WorkflowResult<()> {
     let mut retained_total = 0_u64;
-    for node in workflow.graph.nodes.values() {
+    for node in workflow.program.root.nodes.values() {
         limits
             .node_timeout_seconds
             .check_nonzero(node.timeout_seconds)?;
@@ -119,7 +122,8 @@ fn template_expansion_bound(
         let part_bytes = match part {
             TemplatePart::Literal { value } => value.len() as u64,
             TemplatePart::Output { reference } => workflow
-                .graph
+                .program
+                .root
                 .nodes
                 .get(&reference.node)
                 .map_or(u64::MAX, |node| node.max_output_bytes),
@@ -296,7 +300,7 @@ fn detect_cycles(nodes: &BTreeMap<NodeId, Node>) -> WorkflowResult<()> {
 }
 
 fn validate_references(workflow: &FrozenWorkflow) -> WorkflowResult<()> {
-    let nodes = &workflow.graph.nodes;
+    let nodes = &workflow.program.root.nodes;
     for node in nodes.values() {
         let ancestors = ancestors(node, nodes);
         let mut referenced = BTreeSet::new();

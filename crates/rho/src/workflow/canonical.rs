@@ -2,11 +2,11 @@ use sha2::{Digest as _, Sha256};
 
 use super::{Digest, FrozenWorkflow, WorkflowError, WorkflowResult};
 
-const DOMAIN: &[u8] = b"rho-workflow-graph-v1\0";
+const DOMAIN: &[u8] = b"rho-workflow-program-v1\0";
 
 pub(crate) fn canonical_bytes(workflow: &FrozenWorkflow) -> WorkflowResult<Vec<u8>> {
     let mut value = workflow.clone();
-    value.graph_digest = Digest(String::new());
+    value.program_digest = Digest(String::new());
     let json = serde_json::to_value(value)?;
     let mut output = Vec::new();
     output.extend_from_slice(DOMAIN);
@@ -14,12 +14,12 @@ pub(crate) fn canonical_bytes(workflow: &FrozenWorkflow) -> WorkflowResult<Vec<u
     Ok(output)
 }
 
-pub(crate) fn graph_digest(workflow: &FrozenWorkflow) -> WorkflowResult<Digest> {
+pub(crate) fn program_digest(workflow: &FrozenWorkflow) -> WorkflowResult<Digest> {
     let digest = Sha256::digest(canonical_bytes(workflow)?);
     Ok(Digest(format!("sha256:{digest:x}")))
 }
 
-// Tags are part of graph format v1: null, false, true, signed integer,
+// Tags are part of program format v1: null, false, true, signed integer,
 // unsigned integer, string, vector, object. Maps arrive sorted because all
 // workflow maps use BTreeMap; sorting again guards future serde map changes.
 fn encode_value(value: &serde_json::Value, output: &mut Vec<u8>) -> WorkflowResult<()> {

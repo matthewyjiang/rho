@@ -14,7 +14,7 @@ use crate::{
 
 fn finished_node(relative: &str, bytes: &[u8]) -> WorkflowNodeSnapshot {
     WorkflowNodeSnapshot {
-        id: NodeId::new("review").unwrap(),
+        id: crate::workflow::TaskInstanceId::root(NodeId::new("review").unwrap()),
         display_name: "Review".into(),
         dependencies: Vec::new(),
         access: WorkspaceAccess::ReadOnly,

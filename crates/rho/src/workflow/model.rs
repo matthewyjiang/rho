@@ -3,10 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 
 use super::{
-    AttemptNumber, InputName, NodeCompletion, NodeId, OutputSchema, WorkflowName, WorkflowValue,
+    AttemptNumber, InputName, NodeCompletion, NodeId, OutputSchema, ScopeInstanceId, ScopeResult,
+    TaskInstanceId, WorkflowName, WorkflowValue,
 };
 
-pub(crate) const FROZEN_WORKFLOW_SCHEMA_VERSION: u32 = 2;
+pub(crate) const FROZEN_WORKFLOW_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -35,15 +36,17 @@ pub(crate) struct SourceFile {
 pub(crate) struct FrozenWorkflow {
     pub(crate) schema_version: u32,
     pub(crate) planner: PlannerIdentity,
-    pub(crate) graph_digest: Digest,
+    pub(crate) program_digest: Digest,
     pub(crate) sources: SourceManifest,
     pub(crate) inputs: BTreeMap<InputName, WorkflowValue>,
-    pub(crate) graph: WorkflowGraph,
+    pub(crate) program: super::WorkflowProgram,
     pub(crate) resolved_nodes: BTreeMap<NodeId, ResolvedNode>,
     pub(crate) scheduler: FrozenSchedulerSettings,
     pub(crate) runtime_limits: super::FrozenRuntimeLimits,
 }
 
+/// Source-level build result. Lowered into a WorkflowProgram before freezing;
+/// schedulers and replay never execute this authoring representation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct WorkflowGraph {
     pub(crate) name: WorkflowName,
@@ -51,6 +54,7 @@ pub(crate) struct WorkflowGraph {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Node {
     pub(crate) id: NodeId,
     pub(crate) display_name: String,
@@ -70,7 +74,7 @@ impl Node {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum NodeExecution {
     Agent(AgentNode),
     Command(CommandNode),
@@ -136,6 +140,7 @@ pub(crate) enum TemplatePart {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct OutputReference {
     pub(crate) node: NodeId,
     pub(crate) path: OutputPath,
@@ -510,18 +515,6 @@ impl RunLifecycle {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct WorkflowState {
-    pub(crate) revision: u64,
-    pub(crate) lifecycle: RunLifecycle,
-    pub(crate) outcome: Option<WorkflowOutcome>,
-    pub(crate) cancellation_requested: bool,
-    pub(crate) nodes: BTreeMap<NodeId, NodeState>,
-    pub(crate) command_exits: BTreeMap<NodeId, CommandExit>,
-    pub(crate) outputs: BTreeMap<NodeId, WorkflowValue>,
-    pub(crate) completions: BTreeMap<NodeId, NodeCompletion>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SchedulerCapacity {
     pub(crate) total: u32,
@@ -531,15 +524,19 @@ pub(crate) struct SchedulerCapacity {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SchedulerAction {
+    FinishScope {
+        scope: ScopeInstanceId,
+        result: ScopeResult,
+    },
     MarkReady {
-        node: NodeId,
+        node: TaskInstanceId,
     },
     MarkTerminal {
-        node: NodeId,
+        node: TaskInstanceId,
         outcome: NodeTerminalState,
     },
     Launch {
-        node: NodeId,
+        node: TaskInstanceId,
         access: WorkspaceAccess,
     },
 }
@@ -547,19 +544,19 @@ pub(crate) enum SchedulerAction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SchedulerEvent {
     MarkReady {
-        node: NodeId,
+        node: TaskInstanceId,
     },
     Launched {
-        node: NodeId,
+        node: TaskInstanceId,
         attempt: AttemptNumber,
     },
     Finished {
-        node: NodeId,
+        node: TaskInstanceId,
         completion: Box<NodeCompletion>,
     },
     CancellationRequested,
     ResetNode {
-        node: NodeId,
+        node: TaskInstanceId,
         reason: NodeResetReason,
     },
 }

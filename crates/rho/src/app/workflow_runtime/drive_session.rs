@@ -3,9 +3,10 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Arc, time::Instant};
 use tokio::task::JoinSet;
 
 use crate::workflow::{
-    next_actions, AttemptNumber, AttemptRecord, AttemptState, ExternalOwner, NodeExecution, NodeId,
+    attempt_directory, next_actions, AttemptNumber, AttemptRecord, AttemptState, ExternalOwner,
     NodeState, NodeTerminalState, RunId, RunLifecycle, RunMutationGuard, SchedulerAction,
-    SchedulerCapacity, StoredRun, WorkflowEvent, WorkflowStore, WorkspaceAccess, ATTEMPT_VERSION,
+    SchedulerCapacity, StoredRun, TaskInstanceId, WorkflowEvent, WorkflowStore, WorkspaceAccess,
+    ATTEMPT_VERSION,
 };
 
 use super::{
@@ -14,17 +15,18 @@ use super::{
         cancel_waiting_nodes, latest_cancellation_request, latest_pending_cancellation_request,
         read_cancellation_request, run_directory, CROSS_PROCESS_CANCEL_POLL,
     },
+    prepared::{PreparedExecution, PreparedInvocation},
     recovery::{mark_attempt_uncertain, mark_uncertain_attempts, recover_state, uncertain_nodes},
     runner::{
-        append_event_and_save, append_event_only, persist_state_event,
-        recover_completed_transitions, send_event, RecoveryDecision, WorkflowRunner,
+        persist_state_event, recover_completed_transitions, send_event, RecoveryDecision,
+        WorkflowRunner,
     },
     CheckoutGate, CleanupCause, NodeExecutionRequest, NodeExecutionResult, NodeProgressReporter,
     RuntimeError, RuntimeEvent,
 };
 
 struct NodeTaskOutput {
-    node: NodeId,
+    node: TaskInstanceId,
     attempt: AttemptNumber,
     result: Result<NodeExecutionResult, RuntimeError>,
 }
@@ -45,7 +47,7 @@ struct DriveSession<'a> {
     guard: RunMutationGuard,
     run: StoredRun,
     drive_started_at: Instant,
-    attempt_started_at: BTreeMap<NodeId, Instant>,
+    attempt_started_at: BTreeMap<TaskInstanceId, Instant>,
     run_directory: PathBuf,
     events: Option<tokio::sync::mpsc::UnboundedSender<RuntimeEvent>>,
     cancellation_request_id: Option<String>,
@@ -92,7 +94,7 @@ impl<'a> DriveSession<'a> {
         runner.validate_security(&run)?;
         let checkout = CheckoutGate::new(&runner.rho_home, &runner.workspace)?;
         if run.state.state.lifecycle == RunLifecycle::Completed
-            && !run.state.state.nodes.values().any(|state| {
+            && !run.state.state.tasks().any(|(_, state)| {
                 matches!(
                     state,
                     NodeState::Terminal {
@@ -105,7 +107,7 @@ impl<'a> DriveSession<'a> {
         }
         let resuming_cancellation = run.state.state.cancellation_requested
             || run.state.state.lifecycle == RunLifecycle::Cancelling
-            || run.state.state.nodes.values().any(|state| {
+            || run.state.state.tasks().any(|(_, state)| {
                 matches!(
                     state,
                     NodeState::Terminal {
@@ -150,9 +152,11 @@ impl<'a> DriveSession<'a> {
             && (uncertain.is_empty() || recovery == RecoveryDecision::ConfirmNoProcess)
         {
             if let Some(request_id) = pending_cancellation_request {
-                append_event_and_save(
+                persist_state_event(
                     &store,
                     &mut guard,
+                    &run_directory,
+                    &run.graph,
                     &mut run.state,
                     WorkflowEvent::CancellationAcknowledged { request_id },
                 )?;
@@ -169,7 +173,9 @@ impl<'a> DriveSession<'a> {
         if resuming_cancellation {
             store.clear_cancellation_request(run_id)?;
         }
-        if run.state.state.lifecycle != RunLifecycle::Running {
+        if run.state.state.lifecycle != RunLifecycle::Running
+            && run.state.state.root_scope().result.is_none()
+        {
             persist_state_event(
                 &store,
                 &mut guard,
@@ -183,9 +189,11 @@ impl<'a> DriveSession<'a> {
         }
         if first_start {
             if let Some(hooks) = &runner.hooks {
-                append_event_and_save(
+                persist_state_event(
                     &store,
                     &mut guard,
+                    &run_directory,
+                    &run.graph,
                     &mut run.state,
                     WorkflowEvent::HookObserved {
                         event: "workflow_started".into(),
@@ -193,7 +201,7 @@ impl<'a> DriveSession<'a> {
                         attempt: None,
                     },
                 )?;
-                hooks.observe_workflow_started(&run_id.to_string(), &run.manifest.graph_digest.0);
+                hooks.observe_workflow_started(&run_id.to_string(), &run.manifest.program_digest.0);
             }
         }
 
@@ -311,14 +319,45 @@ impl<'a> DriveSession<'a> {
                     self.launch_node(node, access)?;
                     launched = true;
                 }
+                SchedulerAction::FinishScope { scope, result } => {
+                    persist_state_event(
+                        &self.store,
+                        &mut self.guard,
+                        &self.run_directory,
+                        &self.graph,
+                        &mut self.run.state,
+                        WorkflowEvent::ScopeFinished { scope, result },
+                    )?;
+                    send_event(
+                        &self.events,
+                        RuntimeEvent::StateChanged {
+                            revision: self.run.state.state.revision,
+                        },
+                    );
+                }
             }
         }
         Ok(launched)
     }
 
-    fn launch_node(&mut self, node: NodeId, access: WorkspaceAccess) -> Result<(), RuntimeError> {
+    fn launch_node(
+        &mut self,
+        node: TaskInstanceId,
+        access: WorkspaceAccess,
+    ) -> Result<(), RuntimeError> {
         let run_id = self.run.manifest.run_id;
-        let attempt = next_attempt(&self.run_directory, &node)?;
+        let attempt = self.run.state.state.next_attempt(&node)?;
+        persist_state_event(
+            &self.store,
+            &mut self.guard,
+            &self.run_directory,
+            &self.graph,
+            &mut self.run.state,
+            WorkflowEvent::LaunchIntended {
+                node: node.clone(),
+                attempt,
+            },
+        )?;
         let attempt_directory = attempt_directory(&self.run_directory, &node, attempt);
         let relative_attempt = attempt_directory
             .strip_prefix(&self.run_directory)
@@ -329,15 +368,6 @@ impl<'a> DriveSession<'a> {
             &attempt_directory,
             attempt,
             AttemptState::LaunchIntended,
-        )?;
-        append_event_only(
-            &self.store,
-            &mut self.guard,
-            &mut self.run.state,
-            WorkflowEvent::LaunchIntended {
-                node: node.clone(),
-                attempt,
-            },
         )?;
         let owner = ExternalOwner::Process {
             pid: std::process::id(),
@@ -364,9 +394,11 @@ impl<'a> DriveSession<'a> {
         )?;
         self.attempt_started_at.insert(node.clone(), Instant::now());
         if let Some(hooks) = &self.runner.hooks {
-            append_event_and_save(
+            persist_state_event(
                 &self.store,
                 &mut self.guard,
+                &self.run_directory,
+                &self.graph,
                 &mut self.run.state,
                 WorkflowEvent::HookObserved {
                     event: "workflow_node_started".into(),
@@ -376,8 +408,8 @@ impl<'a> DriveSession<'a> {
             )?;
             hooks.observe_workflow_node_started(
                 &run_id.to_string(),
-                &self.run.manifest.graph_digest.0,
-                node.as_str(),
+                &self.run.manifest.program_digest.0,
+                &node.to_string(),
                 attempt.get(),
             );
         }
@@ -394,23 +426,40 @@ impl<'a> DriveSession<'a> {
                 attempt,
             },
         );
-        let executor = match self.graph.graph.nodes[&node].execution {
-            NodeExecution::Agent(_) => Arc::clone(&self.runner.agents),
-            NodeExecution::Command(_) => Arc::clone(&self.runner.commands),
-        };
         let gate = self.checkout.clone();
         let progress = self
             .events
             .as_ref()
             .map(|sender| NodeProgressReporter::new(node.clone(), attempt, sender.clone()));
+        // AttemptStarted is durable before dispatch. An intent without that event
+        // therefore cannot have launched an executor and is safe to supersede.
+        let invocation =
+            match PreparedInvocation::prepare(&self.graph, &node, &self.run.state.state) {
+                Ok(invocation) => invocation,
+                Err(error) => {
+                    self.tasks.spawn(async move {
+                        Ok(NodeTaskOutput {
+                            node,
+                            attempt,
+                            result: Err(error),
+                        })
+                    });
+                    return Ok(());
+                }
+            };
+        let executor = match &invocation.execution {
+            PreparedExecution::Agent { .. } => Arc::clone(&self.runner.agents),
+            PreparedExecution::Command { .. } => Arc::clone(&self.runner.commands),
+        };
         let request = NodeExecutionRequest {
-            workflow: Arc::clone(&self.graph),
+            invocation,
+            plan_digest: self.graph.program_digest.clone(),
+            run_directory: self.run_directory.clone(),
             run_id,
             node: node.clone(),
             attempt,
             workspace: self.runner.workspace.clone(),
             attempt_directory,
-            outputs: self.run.state.state.outputs.clone(),
             cancellation: self.runner.cancellation.clone(),
             progress,
         };
@@ -420,7 +469,7 @@ impl<'a> DriveSession<'a> {
                 custom_providers,
                 async move {
                     let cancellation = request.cancellation.clone();
-                    let wait_limit_seconds = request.workflow.graph.nodes[&node].timeout_seconds;
+                    let wait_limit_seconds = request.invocation.timeout_seconds;
                     let permit = match gate
                         .acquire(access, &cancellation, wait_limit_seconds)
                         .await
@@ -549,9 +598,11 @@ impl<'a> DriveSession<'a> {
             },
         )?;
         if let Some(output) = completion.structured_output.clone() {
-            append_event_only(
+            persist_state_event(
                 &self.store,
                 &mut self.guard,
+                &self.run_directory,
+                &self.graph,
                 &mut self.run.state,
                 WorkflowEvent::StructuredOutput {
                     node: node.clone(),
@@ -573,9 +624,11 @@ impl<'a> DriveSession<'a> {
         )?;
         if let Some(hooks) = &self.runner.hooks {
             let artifacts = completion_artifacts(&completion);
-            append_event_and_save(
+            persist_state_event(
                 &self.store,
                 &mut self.guard,
+                &self.run_directory,
+                &self.graph,
                 &mut self.run.state,
                 WorkflowEvent::HookObserved {
                     event: "workflow_node_finished".into(),
@@ -585,8 +638,8 @@ impl<'a> DriveSession<'a> {
             )?;
             hooks.observe_workflow_node_finished(crate::hooks::WorkflowNodeFinished {
                 workflow_run_id: &run_id.to_string(),
-                plan_digest: &self.run.manifest.graph_digest.0,
-                node_id: node.as_str(),
+                plan_digest: &self.run.manifest.program_digest.0,
+                node_id: &node.to_string(),
                 attempt: attempt.get(),
                 outcome: &outcome,
                 duration: self
@@ -616,9 +669,11 @@ impl<'a> DriveSession<'a> {
                 &self.graph,
                 &mut self.run.state,
             )?;
-            append_event_and_save(
+            persist_state_event(
                 &self.store,
                 &mut self.guard,
+                &self.run_directory,
+                &self.graph,
                 &mut self.run.state,
                 WorkflowEvent::CancellationAcknowledged {
                     request_id: self.cancellation_request_id.clone().ok_or_else(|| {
@@ -627,37 +682,47 @@ impl<'a> DriveSession<'a> {
                 },
             )?;
         }
-        if self
-            .run
-            .state
-            .state
-            .nodes
-            .values()
-            .all(|state| state.terminal().is_some())
-        {
+        if self.run.state.state.root_scope().result.is_none() {
+            let result = crate::workflow::scope_result(
+                &self.graph,
+                &self.run.state.state,
+                crate::workflow::ScopeInstanceId::ROOT,
+            )?
+            .ok_or_else(|| {
+                RuntimeError::Data("scheduler stopped before root scope finished".into())
+            })?;
             persist_state_event(
                 &self.store,
                 &mut self.guard,
                 &self.run_directory,
                 &self.graph,
                 &mut self.run.state,
-                WorkflowEvent::RunLifecycle {
-                    lifecycle: RunLifecycle::Completed,
+                WorkflowEvent::ScopeFinished {
+                    scope: crate::workflow::ScopeInstanceId::ROOT,
+                    result,
                 },
             )?;
-            observe_workflow_completion(
-                &self.runner.hooks,
-                &self.store,
-                &mut self.guard,
-                &mut self.run,
-                self.drive_started_at.elapsed(),
-            )?;
-            send_event(&self.events, RuntimeEvent::Completed);
-            return Ok(self.run);
         }
-        Err(RuntimeError::Data(
-            "scheduler made no progress with non-terminal nodes".into(),
-        ))
+        persist_state_event(
+            &self.store,
+            &mut self.guard,
+            &self.run_directory,
+            &self.graph,
+            &mut self.run.state,
+            WorkflowEvent::RunLifecycle {
+                lifecycle: RunLifecycle::Completed,
+            },
+        )?;
+        observe_workflow_completion(
+            &self.runner.hooks,
+            &self.store,
+            &mut self.guard,
+            &self.run_directory,
+            &mut self.run,
+            self.drive_started_at.elapsed(),
+        )?;
+        send_event(&self.events, RuntimeEvent::Completed);
+        Ok(self.run)
     }
 }
 
@@ -665,13 +730,17 @@ fn observe_workflow_completion(
     hooks: &Option<Arc<crate::hooks::HookEngine>>,
     store: &WorkflowStore,
     guard: &mut RunMutationGuard,
+    run_directory: &std::path::Path,
     run: &mut StoredRun,
     duration: std::time::Duration,
 ) -> Result<(), RuntimeError> {
     let Some(hooks) = hooks else {
         return Ok(());
     };
-    let outcome = crate::workflow::derive_workflow_outcome(&run.graph, &run.state.state)
+    let outcome = run
+        .state
+        .state
+        .outcome()
         .ok_or_else(|| RuntimeError::Data("completed workflow has no outcome".into()))?;
     let event = match outcome {
         crate::workflow::WorkflowOutcome::Success => "workflow_completed",
@@ -680,9 +749,11 @@ fn observe_workflow_completion(
         | crate::workflow::WorkflowOutcome::Denial
         | crate::workflow::WorkflowOutcome::Blocked => "workflow_failed",
     };
-    append_event_and_save(
+    persist_state_event(
         store,
         guard,
+        run_directory,
+        &run.graph,
         &mut run.state,
         WorkflowEvent::HookObserved {
             event: event.into(),
@@ -691,7 +762,7 @@ fn observe_workflow_completion(
         },
     )?;
     let run_id = run.manifest.run_id.to_string();
-    let digest = &run.manifest.graph_digest.0;
+    let digest = &run.manifest.program_digest.0;
     match outcome {
         crate::workflow::WorkflowOutcome::Success => {
             hooks.observe_workflow_completed(&run_id, digest, duration, &[])
@@ -725,37 +796,6 @@ fn available_capacity(
     }
 }
 
-fn next_attempt(
-    run_directory: &std::path::Path,
-    node: &NodeId,
-) -> Result<AttemptNumber, RuntimeError> {
-    let attempts = run_directory
-        .join("nodes")
-        .join(node.as_str())
-        .join("attempts");
-    let mut highest = 0_u32;
-    if attempts.is_dir() {
-        for entry in std::fs::read_dir(&attempts)? {
-            let entry = entry?;
-            if entry.file_type()?.is_dir() {
-                if let Some(value) = entry
-                    .file_name()
-                    .to_str()
-                    .and_then(|value| value.parse::<u32>().ok())
-                {
-                    highest = highest.max(value);
-                }
-            }
-        }
-    }
-    AttemptNumber::new(
-        highest
-            .checked_add(1)
-            .ok_or_else(|| RuntimeError::Data("attempt number overflow".into()))?,
-    )
-    .map_err(RuntimeError::from)
-}
-
 fn write_attempt(
     run_directory: &std::path::Path,
     attempt_directory: &std::path::Path,
@@ -772,16 +812,4 @@ fn write_attempt(
         },
     )
     .map(|_| ())
-}
-
-fn attempt_directory(
-    run_directory: &std::path::Path,
-    node: &NodeId,
-    attempt: AttemptNumber,
-) -> PathBuf {
-    run_directory
-        .join("nodes")
-        .join(node.as_str())
-        .join("attempts")
-        .join(attempt.to_string())
 }

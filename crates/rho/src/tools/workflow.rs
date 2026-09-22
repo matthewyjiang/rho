@@ -119,16 +119,17 @@ pub(crate) enum WorkflowToolResult {
     },
     Plan {
         plan_id: String,
-        graph_digest: String,
+        program_digest: String,
         workflow_name: String,
         node_count: u64,
     },
     /// Shared by `run`, `status`, and `resume`: all three report the same run.
     Run {
         run_id: String,
-        graph_digest: String,
+        program_digest: String,
         state: RunLifecycle,
         nodes: Vec<WorkflowNodeSummary>,
+        result: Option<crate::workflow::ScopeResult>,
     },
     Cancel {
         run_id: String,
@@ -143,7 +144,7 @@ pub(crate) enum WorkflowToolResult {
 /// The service owns source collection, planning, persistence, confirmation,
 /// running, cancellation, and resume. It must authorize each collected source
 /// read through `context`. Run and resume must request host input for the exact
-/// graph digest and fail closed when no responder exists.
+/// program digest and fail closed when no responder exists.
 pub(crate) trait WorkflowToolService: Send + Sync {
     fn prepare(
         &self,

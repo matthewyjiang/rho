@@ -10,26 +10,24 @@ use super::event_adapter::{
     SourceDigestSummary, TerminalReason, WorkflowNodeSnapshot, WorkflowSnapshot,
 };
 use crate::workflow::{
-    derive_workflow_outcome, CommandNode, Digest, NodeExecution, NodeId, NodeState,
-    NodeTerminalState, ResolvedNode, RunLifecycle, StoredRun, Template, TemplatePart,
-    WorkflowState,
+    CommandNode, Digest, NodeExecution, NodeState, NodeTerminalState, ResolvedNode, RunLifecycle,
+    StoredRun, TaskInstanceId, Template, TemplatePart, WorkflowState,
 };
 
 /// Build a TUI snapshot from a fully loaded durable run.
 pub(crate) fn from_stored_run(run: &StoredRun) -> WorkflowSnapshot {
     let state = &run.state.state;
-    let nodes = run
-        .graph
-        .graph
-        .nodes
-        .iter()
-        .map(|(id, node)| {
-            let node_state = state.nodes[id].clone();
+    let nodes = state
+        .tasks()
+        .map(|(id, node_state)| {
+            let node = &run.graph.program.root.nodes[id.definition()];
+            let scope = state.scope(id.scope()).expect("task scope exists");
+            let node_state = node_state.clone();
             let current_attempt = match node_state {
                 NodeState::Running { attempt } => Some(attempt),
                 _ => None,
             };
-            let execution = match &run.graph.resolved_nodes[id] {
+            let execution = match &run.graph.resolved_nodes[id.definition()] {
                 ResolvedNode::Agent(agent) => ExecutionMetadata::Agent {
                     name: agent.agent_id.clone(),
                     runtime: agent.runtime,
@@ -48,32 +46,36 @@ pub(crate) fn from_stored_run(run: &StoredRun) -> WorkflowSnapshot {
             WorkflowNodeSnapshot {
                 id: id.clone(),
                 display_name: node.display_name.clone(),
-                dependencies: node.needs.clone(),
+                dependencies: node
+                    .needs
+                    .iter()
+                    .map(|dependency| TaskInstanceId::new(id.scope(), dependency.clone()))
+                    .collect(),
                 access: node.access,
                 execution,
                 work: node_work_summary(&node.execution),
                 state: node_state.clone(),
                 current_attempt,
-                command_exit: state.command_exits.get(id).cloned(),
-                validated_output: state.outputs.get(id).cloned(),
-                artifacts: durable_artifacts_for_node(state, id),
+                command_exit: scope.command_exits.get(id.definition()).cloned(),
+                validated_output: scope.outputs.get(id.definition()).cloned(),
+                artifacts: durable_artifacts_for_node(state, &id),
                 terminal_reason: terminal_reason(&node_state),
             }
         })
         .collect();
     let lifecycle = state.lifecycle;
     WorkflowSnapshot {
-        workflow_name: run.graph.graph.name.to_string(),
+        workflow_name: run.graph.program.name.to_string(),
         plan_id: run.manifest.plan_id,
         run_id: Some(run.manifest.run_id),
-        graph_digest: run.manifest.graph_digest.clone(),
+        program_digest: run.manifest.program_digest.clone(),
         sources: SourceDigestSummary {
             source_count: run.graph.sources.modules.len(),
             digest: source_digest(run),
         },
         approval: PlanApprovalState::Approved,
         lifecycle,
-        outcome: derive_workflow_outcome(&run.graph, state),
+        outcome: state.outcome(),
         nodes,
         cancellation: if state.cancellation_requested {
             if lifecycle == RunLifecycle::Completed {
@@ -90,11 +92,10 @@ pub(crate) fn from_stored_run(run: &StoredRun) -> WorkflowSnapshot {
 
 pub(crate) fn durable_artifacts_for_node(
     state: &WorkflowState,
-    id: &NodeId,
+    id: &TaskInstanceId,
 ) -> Vec<ArtifactReference> {
     state
-        .completions
-        .get(id)
+        .completion(id)
         .into_iter()
         .flat_map(|completion| completion.artifacts.iter())
         .map(|(kind, artifact)| ArtifactReference {

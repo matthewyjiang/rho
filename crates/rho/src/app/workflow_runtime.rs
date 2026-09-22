@@ -17,10 +17,14 @@ mod command;
 mod drive_session;
 #[path = "workflow_runtime/journal.rs"]
 mod journal;
+#[path = "workflow_runtime/prepared.rs"]
+mod prepared;
 #[path = "workflow_runtime/recovery.rs"]
 mod recovery;
 #[path = "workflow_runtime/runner.rs"]
 mod runner;
+#[path = "workflow_runtime/template.rs"]
+mod template;
 #[path = "workflow_runtime/types.rs"]
 mod types;
 

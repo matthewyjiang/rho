@@ -28,23 +28,35 @@ pub(super) fn format_workflow_result(result: &WorkflowToolResult) -> Vec<String>
         }
         WorkflowToolResult::Plan {
             plan_id,
-            graph_digest,
+            program_digest,
             workflow_name,
             node_count,
         } => {
             lines.push(format!("workflow {workflow_name}: planned"));
             lines.push(format!("plan_id: {plan_id}"));
-            lines.push(format!("graph_digest: {graph_digest}"));
+            lines.push(format!("program_digest: {program_digest}"));
             lines.push(format!("nodes: {node_count}"));
         }
         WorkflowToolResult::Run {
             run_id,
-            graph_digest,
+            program_digest,
             state,
             nodes,
+            result,
         } => {
             lines.push(format!("workflow {run_id}: {}", state.as_str()));
-            lines.push(format!("graph_digest: {graph_digest}"));
+            lines.push(format!("program_digest: {program_digest}"));
+            if let Some(result) = result {
+                lines.push(format!("root outcome: {}", result.outcome.as_str()));
+                for (name, value) in &result.outputs {
+                    push_labeled_lines(
+                        &mut lines,
+                        "  ",
+                        &format!("export {name}"),
+                        &value.to_string(),
+                    );
+                }
+            }
             lines.push(format!("nodes: {}", nodes.len()));
             for node in nodes {
                 push_node(&mut lines, node);

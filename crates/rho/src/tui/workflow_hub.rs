@@ -561,7 +561,7 @@ impl App {
         self.input_ui.set_composer(ComposerMode::Input);
         self.insert_entry(&Entry::Notice(format!(
             "Starting '{}' in the background (run {}). Default inputs only. Completion is delivered automatically.",
-            plan.graph.graph.name,
+            plan.graph.program.name,
             short_id(&run_id.to_string())
         )));
         self.launch_workflow_execution(run, RecoveryDecision::NormalResume, agent)
@@ -656,15 +656,15 @@ impl App {
         agent: &mut super::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let run_id = run.manifest.run_id;
-        let workflow_name = run.graph.graph.name.as_str().to_owned();
-        let graph_digest = run.manifest.graph_digest.0.clone();
+        let workflow_name = run.graph.program.name.as_str().to_owned();
+        let program_digest = run.manifest.program_digest.0.clone();
         let config_path = self.info.services.config_repository.configured_path().ok();
         // Background runs keep the chat TUI, so workflow approvals are headless.
         let tracker = agent.workflow_tracker().clone();
         tracker.register_start(
             run_id.to_string(),
             workflow_name.clone(),
-            graph_digest.clone(),
+            program_digest.clone(),
             Some(agent.session_id().to_string()),
         );
         match workflow_cli::spawn_background_run(run, recovery, config_path, Some(tracker)).await {
@@ -672,7 +672,7 @@ impl App {
                 let (model, display) = crate::tools::workflow_tracker::start_context_prompts(
                     &run_id.to_string(),
                     &workflow_name,
-                    &graph_digest,
+                    &program_digest,
                 );
                 if let Err(error) = agent.append_user_context_with_display(model, display.clone()) {
                     self.insert_entry(&Entry::Error(format!(
