@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use std::{path::PathBuf, time::Duration};
 
 use pretty_assertions::assert_eq;

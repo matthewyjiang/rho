@@ -12,8 +12,9 @@ use crate::workflow::{
     CommandExit, NodeState, NodeTerminalState, RunLifecycle, WorkflowOutcome, WorkspaceAccess,
 };
 
+#[cfg(any(test, debug_assertions))]
+use super::control::ConfirmKind;
 use super::{
-    control::ConfirmKind,
     dag::{state_glyph, state_label, state_style},
     dag_pane::{self, DagMouse},
     event_adapter::{CancellationState, ExecutionMetadata, TerminalReason, WorkflowNodeSnapshot},
@@ -260,6 +261,7 @@ fn draw_footer(frame: &mut Frame<'_>, area: Rect, state: &WorkflowUiState) {
     ) {
         keys.push("watch".into());
     }
+    #[cfg(any(test, debug_assertions))]
     match policy.confirm {
         Some(ConfirmKind::StartPlan) => keys.push("Enter start".into()),
         Some(ConfirmKind::ContinueResume) => keys.push("Enter continue".into()),

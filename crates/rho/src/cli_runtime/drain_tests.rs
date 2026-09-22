@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use std::future::Future;
 use std::pin::Pin;
 

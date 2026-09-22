@@ -29,6 +29,7 @@ const HOST_CANCELLATION_COMPLETION_MILLIS: u64 = 2_500;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ExactProcessExit {
     Code(i32),
+    #[cfg(unix)]
     Signal(i32),
     Timeout,
     Cancellation,

@@ -92,6 +92,7 @@ impl std::error::Error for AutomationInterrupted {}
 #[derive(Clone, Copy, Debug)]
 enum ShutdownSignal {
     Interrupt,
+    #[cfg(unix)]
     Terminate,
 }
 
@@ -99,6 +100,7 @@ impl ShutdownSignal {
     fn exit_code(self) -> u8 {
         match self {
             Self::Interrupt => 130,
+            #[cfg(unix)]
             Self::Terminate => 143,
         }
     }
@@ -108,6 +110,7 @@ impl fmt::Display for ShutdownSignal {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Interrupt => formatter.write_str("SIGINT"),
+            #[cfg(unix)]
             Self::Terminate => formatter.write_str("SIGTERM"),
         }
     }

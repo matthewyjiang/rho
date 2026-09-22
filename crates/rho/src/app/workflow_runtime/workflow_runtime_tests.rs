@@ -105,10 +105,10 @@ impl WorkflowNodeExecutor for SignallingSuccessfulExecutor {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, any(target_os = "linux", target_os = "android")))]
 struct AllowCommandHosts;
 
-#[cfg(unix)]
+#[cfg(all(unix, any(target_os = "linux", target_os = "android")))]
 impl CommandHostFactory for AllowCommandHosts {
     fn create(
         &self,

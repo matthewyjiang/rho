@@ -81,7 +81,7 @@ pub(super) struct RevokeOnDrop {
 }
 
 impl RevokeOnDrop {
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn new(session: ComputerUseSession, grant: Arc<CancellationToken>) -> Self {
         Self::with_arm(session, grant, /*armed*/ true)
     }

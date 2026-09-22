@@ -20,6 +20,7 @@ mod file_document;
 mod file_permissions;
 #[cfg(windows)]
 mod file_windows;
+#[cfg(any(test, debug_assertions))]
 mod memory;
 mod os;
 
