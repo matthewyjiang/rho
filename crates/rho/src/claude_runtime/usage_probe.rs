@@ -14,11 +14,12 @@ use std::{
 
 use thiserror::Error;
 
+#[cfg(any(unix, test))]
+use super::usage_parse::{named_window_keys, parse_usage_screen};
 use super::{
     auth::{self, ClaudeAuthError},
     executable,
     rate_limit::{self, RateLimitState},
-    usage_parse::{named_window_keys, parse_usage_screen},
 };
 use crate::usage_limits::UsageFailure;
 
@@ -41,8 +42,13 @@ pub(crate) struct ProbeBudget {
     /// refresh; a user-visible probe failure landed 20-30s after `/limits`,
     /// which is exactly startup + the old 15s budget. Warm runs never wait
     /// this long; it only bounds a hung refresh.
+    ///
+    /// Read by the Unix PTY driver. Non-Unix builds construct the budget and
+    /// return [`UsageProbeError::Unsupported`] without inspecting it.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) panel_wait: Duration,
     /// Wait this long only while the screen names a window we have not parsed.
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) grow: Duration,
 }
 
@@ -51,12 +57,17 @@ const PROBE_BUDGET: ProbeBudget = ProbeBudget {
     grow: Duration::from_secs(2),
 };
 
+#[cfg(any(unix, test))]
 const PROMPT_MARKERS: &[&str] = &["? for shortcuts", "try \"", "shift+tab to cycle"];
+#[cfg(any(unix, test))]
 const TRUST_MARKERS: &[&str] = &["trust this folder", "do you trust"];
+#[cfg(any(unix, test))]
 const LOGIN_MARKERS: &[&str] = &["log in", "sign in to"];
+#[cfg(any(unix, test))]
 const PANEL_MARKERS: &[&str] = &["Current session", "% used", "%used"];
 /// Claude can keep percentages visible after a failed refresh, and hides the
 /// spinner when showing these notices. None of those windows are live results.
+#[cfg(any(unix, test))]
 const REFRESH_FAILURE_MARKERS: &[&str] = &[
     "failed to load usage",
     "showing last-known usage",
@@ -69,6 +80,7 @@ const REFRESH_FAILURE_MARKERS: &[&str] = &[
 /// "(rate limited — try again in a moment)") carries this phrase. It only
 /// picks the reason for a screen the failure markers already rejected; it is
 /// not a failure gate on its own.
+#[cfg(any(unix, test))]
 const RATE_LIMITED_MARKER: &str = "rate limited";
 
 #[derive(Debug, Error)]
@@ -76,23 +88,29 @@ pub(crate) enum UsageProbeError {
     #[error("claude code: binary not found on PATH")]
     BinaryMissing,
     #[error("claude code: not signed in - run /login claude-code")]
+    #[cfg_attr(not(unix), allow(dead_code))]
     NotSignedIn,
     #[error("claude code: usage probe needs a Unix PTY")]
     Unsupported,
     #[error("claude code: could not start usage probe: {0}")]
     Spawn(String),
     #[error("claude code: usage probe cancelled")]
+    #[cfg_attr(not(unix), allow(dead_code))]
     Cancelled,
     #[error("claude code: timed out waiting for {what}: {screen}")]
+    #[cfg_attr(not(unix), allow(dead_code))]
     TimeoutScreen { what: &'static str, screen: String },
     #[error("claude code: claude exited before {what}: {screen}")]
+    #[cfg_attr(not(unix), allow(dead_code))]
     Exited { what: &'static str, screen: String },
     #[error("claude code: /usage refresh failed: {screen}")]
+    #[cfg_attr(not(unix), allow(dead_code))]
     RefreshFailed {
         reason: UsageFailure,
         screen: String,
     },
     #[error("claude code: /usage panel was not readable")]
+    #[cfg_attr(not(unix), allow(dead_code))]
     Unparseable,
     #[error("claude code: auth preflight failed: {0}")]
     Auth(#[from] ClaudeAuthError),
@@ -239,6 +257,7 @@ pub(crate) fn read_usage_from_binary(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(any(unix, test))]
 enum IdleScreen {
     Trust,
     Login,
@@ -246,6 +265,7 @@ enum IdleScreen {
     Other,
 }
 
+#[cfg(any(unix, test))]
 fn classify_idle_screen(screen: &str) -> IdleScreen {
     let lower = screen.to_ascii_lowercase();
     if contains_any(&lower, TRUST_MARKERS) {
@@ -260,6 +280,7 @@ fn classify_idle_screen(screen: &str) -> IdleScreen {
     IdleScreen::Other
 }
 
+#[cfg(any(unix, test))]
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
@@ -267,6 +288,7 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
 /// What one `/usage` viewport means. Only `Ready` carries live percentages;
 /// every other frame may show placeholder or last-known values.
 #[derive(Debug)]
+#[cfg(any(unix, test))]
 enum UsageScreen {
     /// The panel has not painted yet.
     NoPanel,
@@ -291,6 +313,7 @@ fn usage_screen_kind(screen: &UsageScreen) -> &'static str {
     }
 }
 
+#[cfg(any(unix, test))]
 fn classify_usage_screen(screen: &str, now_unix: i64) -> UsageScreen {
     let lower = screen.to_ascii_lowercase();
     if contains_any(&lower, REFRESH_FAILURE_MARKERS) {
@@ -314,6 +337,7 @@ fn classify_usage_screen(screen: &str, now_unix: i64) -> UsageScreen {
     }
 }
 
+#[cfg(any(unix, test))]
 fn waiting_on_named_windows(screen: &str, parsed: Option<&RateLimitState>) -> bool {
     let named = named_window_keys(screen);
     if named.is_empty() {
@@ -331,6 +355,7 @@ fn waiting_on_named_windows(screen: &str, parsed: Option<&RateLimitState>) -> bo
     named.iter().any(|key| !have.contains(&key.as_str()))
 }
 
+#[cfg(any(unix, test))]
 fn trust_yes_selected(screen: &str) -> bool {
     screen.lines().any(|line| {
         let trimmed = line.trim_start();

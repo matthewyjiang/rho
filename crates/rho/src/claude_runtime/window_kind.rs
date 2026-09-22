@@ -35,6 +35,7 @@ impl WindowKind {
     }
 
     /// Classify the inner text of a `Current week (...)` `/usage` header.
+    #[cfg(any(unix, test))]
     pub(crate) fn from_week_inner(inner: &str) -> Self {
         let inner = inner.trim();
         if inner.contains("all model") {
@@ -60,6 +61,7 @@ impl WindowKind {
     }
 
     /// Stable merge key written to cache and matched against stream events.
+    #[cfg(any(unix, test))]
     pub(crate) fn key(&self) -> &str {
         match self {
             Self::FiveHour => "five_hour",

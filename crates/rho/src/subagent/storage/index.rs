@@ -2,7 +2,7 @@
 
 use std::{
     io::ErrorKind,
-    path::{Path, PathBuf},
+    path::Path,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -144,6 +144,7 @@ pub(super) fn set_index_permissions(path: &Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
+        use std::path::PathBuf;
         for candidate in [
             path.to_path_buf(),
             PathBuf::from(format!("{}-wal", path.display())),

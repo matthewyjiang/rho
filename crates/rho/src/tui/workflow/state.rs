@@ -73,6 +73,7 @@ impl WorkflowUiState {
             WorkflowEvent::Progress { node, progress } => {
                 self.progress.insert(node, progress);
             }
+            #[cfg(any(test, debug_assertions))]
             WorkflowEvent::Notice(notice) => self.notice = Some(notice),
         }
     }

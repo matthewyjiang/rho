@@ -60,7 +60,7 @@ impl CheckoutGate {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn arm_lock_wait_signal() -> tokio::sync::oneshot::Receiver<()> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         *LOCK_WAIT_SIGNAL.lock().expect("checkout lock wait signal") = Some(tx);

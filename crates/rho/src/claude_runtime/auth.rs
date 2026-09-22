@@ -13,7 +13,7 @@ use thiserror::Error;
 
 use crate::cli_runtime::{run_bounded_probe, BoundedOutput, CliExecutable, ProbeError};
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use crate::cli_runtime::{run_bounded_command_with_timeout, PROBE_OUTPUT_CAP_BYTES};
 
 use super::executable;
@@ -239,7 +239,7 @@ pub(crate) async fn version_executable(
     Ok(version)
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 impl ClaudeAuthError {
     pub(crate) fn is_binary_missing(&self) -> bool {
         matches!(

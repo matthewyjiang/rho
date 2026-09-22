@@ -8,7 +8,11 @@ use super::event_adapter::{PlanApprovalState, WorkflowSession, WorkflowSnapshot}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ConfirmKind {
+    /// Constructed only by the debug matrix fixture and tests.
+    #[cfg_attr(not(any(test, debug_assertions)), allow(dead_code))]
     StartPlan,
+    /// Constructed only by the debug matrix fixture and tests.
+    #[cfg_attr(not(any(test, debug_assertions)), allow(dead_code))]
     ContinueResume,
 }
 
@@ -46,7 +50,9 @@ pub(super) fn control_policy(
             cancel_plain_c: live && approved,
             cancel_on_interrupt: live,
             confirm: match snapshot.approval {
+                #[cfg(any(test, debug_assertions))]
                 PlanApprovalState::AwaitingPlan => Some(ConfirmKind::StartPlan),
+                #[cfg(any(test, debug_assertions))]
                 PlanApprovalState::AwaitingResume => Some(ConfirmKind::ContinueResume),
                 PlanApprovalState::Approved => None,
             },

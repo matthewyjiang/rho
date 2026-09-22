@@ -1,12 +1,16 @@
+#[cfg(unix)]
 use crate::agent::PromptPolicy;
+#[cfg(unix)]
 use crate::subagent;
 
 use super::*;
 
+#[cfg(unix)]
 fn system_prompt() -> PromptPolicy {
     PromptPolicy::Extend(String::new())
 }
 
+#[cfg(unix)]
 fn logged_in() -> CursorAuthStatus {
     CursorAuthStatus {
         status: "authenticated".into(),
@@ -18,6 +22,7 @@ fn logged_in() -> CursorAuthStatus {
     }
 }
 
+#[cfg(unix)]
 fn cursor_identity() -> RunArtifactIdentity {
     RunArtifactIdentity {
         agent_id: "cursor-worker".into(),

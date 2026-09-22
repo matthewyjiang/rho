@@ -1,7 +1,9 @@
 use pretty_assertions::assert_eq;
+#[cfg(unix)]
 use tokio::process::Command;
 
 use super::*;
+#[cfg(unix)]
 use crate::cli_runtime::ProbeError;
 
 /// Stable system shell used by process tests.

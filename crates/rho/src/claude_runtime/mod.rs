@@ -13,6 +13,7 @@ pub(crate) mod session;
 pub(crate) mod spawn;
 pub(crate) mod stream;
 pub(crate) mod tools;
+#[cfg(any(unix, test))]
 pub(crate) mod usage_parse;
 pub(crate) mod usage_probe;
 #[cfg(unix)]

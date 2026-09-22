@@ -56,7 +56,7 @@ async fn owned_child_terminate_stops_running_process() {
         c
     };
     #[cfg(windows)]
-    let mut cmd = {
+    let cmd = {
         let mut c = Command::new("powershell.exe");
         c.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 30"]);
         c

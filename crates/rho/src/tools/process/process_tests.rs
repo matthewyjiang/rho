@@ -856,10 +856,10 @@ async fn leader_exit_terminates_surviving_descendants() {
     // a non-reaping init, so also accept a Linux Z state as gone.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        let mut alive = unsafe { libc::kill(pid, 0) } == 0;
+        let alive = unsafe { libc::kill(pid, 0) } == 0;
         #[cfg(target_os = "linux")]
-        if alive {
-            alive &= std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        let alive = alive
+            && std::fs::read_to_string(format!("/proc/{pid}/stat"))
                 .ok()
                 .and_then(|stat| {
                     // Field 3 of /proc/<pid>/stat; safe here because the comm
@@ -867,7 +867,6 @@ async fn leader_exit_terminates_surviving_descendants() {
                     stat.split_whitespace().nth(2).map(|state| state != "Z")
                 })
                 .unwrap_or(false);
-        }
         if !alive {
             break;
         }

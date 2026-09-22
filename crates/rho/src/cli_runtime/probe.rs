@@ -57,7 +57,7 @@ pub(crate) enum ProbeError {
 }
 
 impl ProbeError {
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn is_binary_missing(&self) -> bool {
         matches!(self, Self::BinaryMissing)
     }
