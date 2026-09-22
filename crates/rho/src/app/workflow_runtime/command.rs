@@ -246,6 +246,7 @@ fn stream_observation(
 fn map_exit(exit: ExactProcessExit) -> CommandExit {
     match exit {
         ExactProcessExit::Code(code) => CommandExit::Code { code },
+        #[cfg(unix)]
         ExactProcessExit::Signal(signal) => CommandExit::Signal { signal },
         ExactProcessExit::Timeout => CommandExit::Timeout,
         ExactProcessExit::Cancellation => CommandExit::Cancellation,

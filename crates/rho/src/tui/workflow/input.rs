@@ -2,10 +2,9 @@ use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use super::{
-    control::ConfirmKind, dag::SpatialDirection, event_adapter::WorkflowAction,
-    state::WorkflowUiState,
-};
+#[cfg(any(test, debug_assertions))]
+use super::control::ConfirmKind;
+use super::{dag::SpatialDirection, event_adapter::WorkflowAction, state::WorkflowUiState};
 
 #[derive(Debug)]
 pub(super) enum InputResult {
@@ -46,6 +45,7 @@ pub(super) fn handle_key(state: &mut WorkflowUiState, key: KeyEvent) -> InputRes
         KeyCode::Char('d') if ctrl => scroll_details(state, ScrollCommand::PageDown),
         KeyCode::Home => scroll_details(state, ScrollCommand::Home),
         KeyCode::End => scroll_details(state, ScrollCommand::End),
+        #[cfg(any(test, debug_assertions))]
         KeyCode::Enter => match policy.confirm {
             Some(ConfirmKind::StartPlan) => InputResult::Action(WorkflowAction::ConfirmPlan),
             Some(ConfirmKind::ContinueResume) => InputResult::Action(WorkflowAction::ConfirmResume),

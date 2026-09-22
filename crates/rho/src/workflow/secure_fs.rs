@@ -17,6 +17,10 @@ pub(super) use super::secure_fs_windows::validate_opened_windows_path;
 
 pub(crate) struct SecureDirectory {
     pub(super) path: std::path::PathBuf,
+    /// Ownership anchor for the opened directory. Unix path walks read the
+    /// descriptor; Windows checks use `expected_path` and only need the handle
+    /// held so the directory cannot disappear underneath the struct.
+    #[cfg_attr(windows, allow(dead_code))]
     pub(super) file: File,
     #[cfg(windows)]
     pub(super) expected_path: std::path::PathBuf,

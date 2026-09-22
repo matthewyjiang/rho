@@ -3,23 +3,25 @@
 //! Claude owns the subscription token. Rho never reads credential files; it
 //! spawns the `claude` TUI, sends `/usage`, and parses the panel.
 
+use std::time::Duration;
+#[cfg(unix)]
 use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
 };
 
 use thiserror::Error;
 
-use super::{
-    auth::{self, ClaudeAuthError},
-    executable,
-    rate_limit::{self, RateLimitState},
-    usage_parse::{named_window_keys, parse_usage_screen},
-};
+use super::auth::{self, ClaudeAuthError};
+#[cfg(any(unix, test))]
+use super::rate_limit::RateLimitState;
+#[cfg(any(unix, test))]
+use super::usage_parse::{named_window_keys, parse_usage_screen};
+#[cfg(unix)]
+use super::{executable, rate_limit};
 use crate::usage_limits::UsageFailure;
 
 #[cfg(unix)]
@@ -35,6 +37,7 @@ pub(crate) const LIVE_TTL: Duration = Duration::from_secs(5 * 60);
 /// Time budgets for one `/usage` read after the idle prompt. Tests shrink
 /// these so hung-child cases do not wait out the production values.
 #[derive(Clone, Copy, Debug)]
+#[cfg(unix)]
 pub(crate) struct ProbeBudget {
     /// `/usage` then Anthropic's usage endpoint. Warm captures paint "% used"
     /// in under 1s, but a cold start stacks startup latency with a slow usage
@@ -46,17 +49,23 @@ pub(crate) struct ProbeBudget {
     pub(crate) grow: Duration,
 }
 
+#[cfg(unix)]
 const PROBE_BUDGET: ProbeBudget = ProbeBudget {
     panel_wait: Duration::from_secs(30),
     grow: Duration::from_secs(2),
 };
 
+#[cfg(any(unix, test))]
 const PROMPT_MARKERS: &[&str] = &["? for shortcuts", "try \"", "shift+tab to cycle"];
+#[cfg(any(unix, test))]
 const TRUST_MARKERS: &[&str] = &["trust this folder", "do you trust"];
+#[cfg(any(unix, test))]
 const LOGIN_MARKERS: &[&str] = &["log in", "sign in to"];
+#[cfg(any(unix, test))]
 const PANEL_MARKERS: &[&str] = &["Current session", "% used", "%used"];
 /// Claude can keep percentages visible after a failed refresh, and hides the
 /// spinner when showing these notices. None of those windows are live results.
+#[cfg(any(unix, test))]
 const REFRESH_FAILURE_MARKERS: &[&str] = &[
     "failed to load usage",
     "showing last-known usage",
@@ -69,30 +78,40 @@ const REFRESH_FAILURE_MARKERS: &[&str] = &[
 /// "(rate limited — try again in a moment)") carries this phrase. It only
 /// picks the reason for a screen the failure markers already rejected; it is
 /// not a failure gate on its own.
+#[cfg(any(unix, test))]
 const RATE_LIMITED_MARKER: &str = "rate limited";
 
 #[derive(Debug, Error)]
 pub(crate) enum UsageProbeError {
     #[error("claude code: binary not found on PATH")]
+    #[cfg(unix)]
     BinaryMissing,
     #[error("claude code: not signed in - run /login claude-code")]
+    #[cfg(unix)]
     NotSignedIn,
     #[error("claude code: usage probe needs a Unix PTY")]
+    #[cfg(not(unix))]
     Unsupported,
     #[error("claude code: could not start usage probe: {0}")]
+    #[cfg(unix)]
     Spawn(String),
     #[error("claude code: usage probe cancelled")]
+    #[cfg(unix)]
     Cancelled,
     #[error("claude code: timed out waiting for {what}: {screen}")]
+    #[cfg(any(unix, test))]
     TimeoutScreen { what: &'static str, screen: String },
     #[error("claude code: claude exited before {what}: {screen}")]
+    #[cfg(unix)]
     Exited { what: &'static str, screen: String },
     #[error("claude code: /usage refresh failed: {screen}")]
+    #[cfg(any(unix, test))]
     RefreshFailed {
         reason: UsageFailure,
         screen: String,
     },
     #[error("claude code: /usage panel was not readable")]
+    #[cfg(any(unix, test))]
     Unparseable,
     #[error("claude code: auth preflight failed: {0}")]
     Auth(#[from] ClaudeAuthError),
@@ -103,16 +122,17 @@ impl UsageProbeError {
     /// error (spawn, timeout, auth) reads as a plain failure.
     pub(crate) fn failure(&self) -> UsageFailure {
         match self {
+            #[cfg(any(unix, test))]
             Self::RefreshFailed { reason, .. } => *reason,
-            Self::BinaryMissing
-            | Self::NotSignedIn
-            | Self::Unsupported
-            | Self::Spawn(_)
-            | Self::Cancelled
-            | Self::TimeoutScreen { .. }
-            | Self::Exited { .. }
-            | Self::Unparseable
-            | Self::Auth(_) => UsageFailure::Other,
+            Self::Auth(_) => UsageFailure::Other,
+            #[cfg(not(unix))]
+            Self::Unsupported => UsageFailure::Other,
+            #[cfg(unix)]
+            Self::BinaryMissing | Self::Spawn(_) => UsageFailure::Other,
+            #[cfg(unix)]
+            Self::NotSignedIn | Self::Cancelled | Self::Exited { .. } => UsageFailure::Other,
+            #[cfg(any(unix, test))]
+            Self::TimeoutScreen { .. } | Self::Unparseable => UsageFailure::Other,
         }
     }
 }
@@ -120,12 +140,15 @@ impl UsageProbeError {
 /// Probe finished without a live panel. `/limits` should keep disk windows.
 #[derive(Debug)]
 pub(crate) enum UsageProbeOutcome {
+    #[cfg(unix)]
     Ready(RateLimitState),
     Unavailable,
 }
 
+#[cfg(unix)]
 struct CancelOnDrop(Arc<AtomicBool>);
 
+#[cfg(unix)]
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Relaxed);
@@ -145,24 +168,29 @@ pub(crate) async fn fetch_usage() -> Result<UsageProbeOutcome, UsageProbeError> 
         Err(ClaudeAuthError::BinaryMissing) => return Ok(UsageProbeOutcome::Unavailable),
         Err(error) => return Err(error.into()),
     }
-    if !probe_supported() {
+    #[cfg(not(unix))]
+    {
         return Err(UsageProbeError::Unsupported);
     }
-    let abort = Arc::new(AtomicBool::new(false));
-    let _cancel = CancelOnDrop(Arc::clone(&abort));
-    let mut state = tokio::task::spawn_blocking(move || probe_usage_blocking(&abort))
-        .await
-        .map_err(|error| UsageProbeError::Spawn(error.to_string()))??;
-    let now = rate_limit::now_unix();
-    state.last_probe_unix = Some(now);
-    // Capture stamps parse time per window. Restamp seconds so `/limits` age
-    // is the probe instant, not a mid-panel parse that crossed a second.
-    for window in &mut state.windows {
-        window.observed_at_unix = now;
+    #[cfg(unix)]
+    {
+        let abort = Arc::new(AtomicBool::new(false));
+        let _cancel = CancelOnDrop(Arc::clone(&abort));
+        let mut state = tokio::task::spawn_blocking(move || probe_usage_blocking(&abort))
+            .await
+            .map_err(|error| UsageProbeError::Spawn(error.to_string()))??;
+        let now = rate_limit::now_unix();
+        state.last_probe_unix = Some(now);
+        // Capture stamps parse time per window. Restamp seconds so `/limits` age
+        // is the probe instant, not a mid-panel parse that crossed a second.
+        for window in &mut state.windows {
+            window.observed_at_unix = now;
+        }
+        persist_probe_state(state)
     }
-    persist_probe_state(state)
 }
 
+#[cfg(unix)]
 fn persist_probe_state(state: RateLimitState) -> Result<UsageProbeOutcome, UsageProbeError> {
     let path = match rate_limit::default_state_path() {
         Ok(path) => path,
@@ -183,6 +211,7 @@ fn persist_probe_state(state: RateLimitState) -> Result<UsageProbeOutcome, Usage
     }
 }
 
+#[cfg(unix)]
 fn probe_usage_blocking(abort: &AtomicBool) -> Result<RateLimitState, UsageProbeError> {
     let executable = executable::resolve().map_err(|error| match error {
         ClaudeAuthError::BinaryMissing => UsageProbeError::BinaryMissing,
@@ -214,11 +243,13 @@ fn probe_usage_blocking(abort: &AtomicBool) -> Result<RateLimitState, UsageProbe
 
 /// Session workspace. Claude already accepted this folder for the running
 /// Rho session; a throwaway cache dir always shows the first-run trust dialog.
+#[cfg(unix)]
 fn probe_cwd() -> Result<PathBuf, UsageProbeError> {
     std::env::current_dir().map_err(|error| UsageProbeError::Spawn(error.to_string()))
 }
 
 /// Drive `binary` until a completed `/usage` refresh parses. Tests inject a fake child.
+#[cfg(unix)]
 pub(crate) fn read_usage_from_binary(
     binary: &Path,
     args: &[&str],
@@ -227,18 +258,11 @@ pub(crate) fn read_usage_from_binary(
     abort: &AtomicBool,
     budget: ProbeBudget,
 ) -> Result<RateLimitState, UsageProbeError> {
-    #[cfg(not(unix))]
-    {
-        let _ = (binary, args, env, cwd, abort, budget);
-        return Err(UsageProbeError::Unsupported);
-    }
-    #[cfg(unix)]
-    {
-        drive::read_usage_from_binary(binary, args, env, cwd, abort, budget)
-    }
+    drive::read_usage_from_binary(binary, args, env, cwd, abort, budget)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg(any(unix, test))]
 enum IdleScreen {
     Trust,
     Login,
@@ -246,6 +270,7 @@ enum IdleScreen {
     Other,
 }
 
+#[cfg(any(unix, test))]
 fn classify_idle_screen(screen: &str) -> IdleScreen {
     let lower = screen.to_ascii_lowercase();
     if contains_any(&lower, TRUST_MARKERS) {
@@ -260,6 +285,7 @@ fn classify_idle_screen(screen: &str) -> IdleScreen {
     IdleScreen::Other
 }
 
+#[cfg(any(unix, test))]
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
@@ -267,6 +293,7 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
 /// What one `/usage` viewport means. Only `Ready` carries live percentages;
 /// every other frame may show placeholder or last-known values.
 #[derive(Debug)]
+#[cfg(any(unix, test))]
 enum UsageScreen {
     /// The panel has not painted yet.
     NoPanel,
@@ -291,6 +318,7 @@ fn usage_screen_kind(screen: &UsageScreen) -> &'static str {
     }
 }
 
+#[cfg(any(unix, test))]
 fn classify_usage_screen(screen: &str, now_unix: i64) -> UsageScreen {
     let lower = screen.to_ascii_lowercase();
     if contains_any(&lower, REFRESH_FAILURE_MARKERS) {
@@ -314,6 +342,7 @@ fn classify_usage_screen(screen: &str, now_unix: i64) -> UsageScreen {
     }
 }
 
+#[cfg(any(unix, test))]
 fn waiting_on_named_windows(screen: &str, parsed: Option<&RateLimitState>) -> bool {
     let named = named_window_keys(screen);
     if named.is_empty() {
@@ -331,6 +360,7 @@ fn waiting_on_named_windows(screen: &str, parsed: Option<&RateLimitState>) -> bo
     named.iter().any(|key| !have.contains(&key.as_str()))
 }
 
+#[cfg(any(unix, test))]
 fn trust_yes_selected(screen: &str) -> bool {
     screen.lines().any(|line| {
         let trimmed = line.trim_start();
@@ -344,6 +374,7 @@ fn trust_yes_selected(screen: &str) -> bool {
 
 /// Keep aligned with `rho-tui-pty` `HOST_TERMINAL_MARKERS`. Inherit the rest so
 /// keyring / TLS / proxy settings still reach Claude's usage endpoint.
+#[cfg(any(unix, test))]
 const STRIP_ENV: &[&str] = &[
     "CURSOR_TRACE_ID",
     "VSCODE_GIT_ASKPASS_MAIN",
@@ -378,6 +409,7 @@ const STRIP_ENV: &[&str] = &[
     "HERDR_PANE_ID",
 ];
 
+#[cfg(any(unix, test))]
 fn claude_probe_env(inherited: impl Iterator<Item = (String, String)>) -> Vec<(String, String)> {
     // Inherit the host environment so keyring, TLS, and proxy settings reach
     // Claude's usage endpoint. A tight allowlist drops those and the panel
@@ -402,6 +434,7 @@ fn claude_probe_env(inherited: impl Iterator<Item = (String, String)>) -> Vec<(S
     env
 }
 
+#[cfg(any(unix, test))]
 fn upsert_env(env: &mut Vec<(String, String)>, key: &str, value: &str) {
     if let Some(existing) = env.iter_mut().find(|(name, _)| name == key) {
         existing.1 = value.into();

@@ -129,7 +129,7 @@ pub(crate) fn write_export(
 }
 
 /// Test helper that forces HTML and overwrites, matching the old write path.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) fn write_export_html(
     cwd: &Path,
     path_arg: &str,

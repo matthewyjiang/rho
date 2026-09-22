@@ -551,6 +551,7 @@ fn font_size_from_winsize() -> Option<FontSize> {
 
 /// Converts window pixels and cell counts to a font size. Rejects a zero
 /// quotient so `Resize::Fit` cannot treat height 0 as `u16::MAX` reserved rows.
+#[cfg(any(unix, test))]
 pub(super) fn cell_font_size(xpixel: u16, ypixel: u16, cols: u16, rows: u16) -> Option<FontSize> {
     if xpixel == 0 || ypixel == 0 || cols == 0 || rows == 0 {
         return None;

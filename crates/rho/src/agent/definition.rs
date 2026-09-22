@@ -105,6 +105,9 @@ impl AgentCapabilities {
         self.tools.contains(capability)
     }
 
+    /// Debug matrix fixture injects the TUI extension tool. Release builds
+    /// never mutate a resolved set after [`Self::new`].
+    #[cfg(debug_assertions)]
     pub fn insert(&mut self, capability: ToolCapability) {
         self.tools.insert(capability);
     }

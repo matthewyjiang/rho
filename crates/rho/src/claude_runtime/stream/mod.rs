@@ -40,9 +40,10 @@ use rho_sdk::model::ModelUsage;
 use crate::cli_runtime::drain::StreamLineMapper;
 use crate::{run_artifacts::AttachmentEvent, subagent::RunState};
 
+#[cfg(any(unix, test))]
+pub(crate) use crate::cli_runtime::stream_effect::RateLimitInfo;
 pub(crate) use crate::cli_runtime::stream_effect::{
-    classify_terminal_result, RateLimitInfo, StatusPatch, StreamEffect, TerminalClassification,
-    TerminalResult,
+    classify_terminal_result, StatusPatch, StreamEffect, TerminalClassification, TerminalResult,
 };
 #[cfg(test)]
 pub(crate) use crate::cli_runtime::stream_effect::{

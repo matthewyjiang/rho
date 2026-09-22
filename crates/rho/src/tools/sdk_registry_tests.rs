@@ -1,6 +1,8 @@
+#[cfg(unix)]
+use std::sync::Mutex;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc,
 };
 
 use pretty_assertions::assert_eq;
@@ -8,9 +10,13 @@ use rho_sdk::{
     model::{ContentBlock, ModelIdentity, ModelResponse, ToolCall},
     provider::{ScriptedProvider, ScriptedTurn},
     tool::{ToolErrorKind, ToolOrigin},
+    CapabilityKind, Rho, RunEvent, ScopedWorkspacePolicy, SessionOptions, ToolCompletion,
+    UserInput, Workspace,
+};
+#[cfg(unix)]
+use rho_sdk::{
     ApprovalAuditDecision, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
-    CapabilityKind, CapabilityOperation, CapabilitySource, ProcessEnvironment, Rho, RunEvent,
-    ScopedWorkspacePolicy, SessionOptions, ToolCompletion, UserInput, Workspace,
+    CapabilityOperation, CapabilitySource, ProcessEnvironment,
 };
 use serde_json::json;
 
@@ -171,11 +177,13 @@ async fn shuts_down_feature_bundles_through_the_generic_lifecycle() {
     assert!(shutdown.load(Ordering::SeqCst));
 }
 
+#[cfg(unix)]
 #[derive(Debug)]
 struct RecordingApprovals {
     requests: Mutex<Vec<ApprovalRequest>>,
 }
 
+#[cfg(unix)]
 impl ApprovalHandler for RecordingApprovals {
     fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a> {
         Box::pin(async move {

@@ -1,4 +1,6 @@
-use std::{collections::BTreeMap, fs};
+use std::collections::BTreeMap;
+#[cfg(unix)]
+use std::fs;
 
 use pretty_assertions::assert_eq;
 
@@ -9,15 +11,19 @@ use super::{
     },
     exported_name::namespaced_tool_name,
     parse_remote_url, parse_remote_url_with,
+    validate::McpHttpSecurity,
+    McpBundle, McpRoots, McpServerStatus, McpSessionOptions, MCP_RUNTIME_CONSTRUCTIONS,
+};
+#[cfg(unix)]
+use super::{
     progress::McpProgressRouter,
     result::ResultExpectation,
     session::prepare_server_filesystem,
     tool::{call_remote_tool, CallBudget, McpCall, MCP_TOOL_CALL_BUDGET},
-    validate::McpHttpSecurity,
-    McpBundle, McpImageDelivery, McpRoots, McpServerStatus, McpSessionOptions,
-    MCP_RUNTIME_CONSTRUCTIONS,
+    McpImageDelivery,
 };
 use crate::tools::sdk_registry::ToolBundle;
+#[cfg(unix)]
 use rho_sdk::{
     tool::{ToolContext, ToolErrorKind},
     CancellationToken,

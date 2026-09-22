@@ -13,7 +13,11 @@ use crate::workflow::{NodeId, NodeTerminalState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PlanApprovalState {
+    /// Debug matrix and tests only. Durable snapshots are already approved.
+    #[cfg(any(test, debug_assertions))]
     AwaitingPlan,
+    /// Debug matrix and tests only. Durable snapshots are already approved.
+    #[cfg(any(test, debug_assertions))]
     AwaitingResume,
     Approved,
 }
@@ -116,12 +120,16 @@ pub(crate) enum WorkflowEvent {
         node: TaskInstanceId,
         progress: WorkflowProgress,
     },
+    /// Debug matrix fixture only. Durable adapters emit snapshots and progress.
+    #[cfg(any(test, debug_assertions))]
     Notice(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WorkflowAction {
+    #[cfg(any(test, debug_assertions))]
     ConfirmPlan,
+    #[cfg(any(test, debug_assertions))]
     ConfirmResume,
     Cancel,
 }

@@ -29,10 +29,10 @@ pub(crate) use child::OwnedChild;
 pub(crate) use executable::{CliExecutable, CliExecutableError};
 pub(crate) use frozen_args::overlay_identity_flags;
 pub(crate) use log_tail::read_log_tail;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use probe::{run_bounded_command_with_timeout, PROBE_OUTPUT_CAP_BYTES};
 pub(crate) use probe::{run_bounded_probe, BoundedOutput, ProbeError};
 pub(crate) use session::CliSessionOverrides;
 pub(crate) use stderr_tail::StderrTail;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use stderr_tail::MAX_STDERR_BYTES;

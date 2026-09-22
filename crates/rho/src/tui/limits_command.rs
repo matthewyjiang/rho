@@ -40,6 +40,7 @@ enum LimitsFetchResult {
     ProviderReady {
         limits: crate::usage_limits::ProviderUsageLimits,
     },
+    #[cfg(unix)]
     ClaudeReady {
         windows: Vec<UsageLimitWindow>,
     },
@@ -437,6 +438,7 @@ impl App {
                     self.apply_provider_ready(kind, limits);
                 }
             }
+            #[cfg(unix)]
             LimitsFetchResult::ClaudeReady { windows } => {
                 if id == LimitsSectionId::ClaudeCode {
                     limits_claude::apply_claude_live(self, windows);

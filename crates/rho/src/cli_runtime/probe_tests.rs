@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 use std::time::Duration;
 
 use tokio::process::Command;

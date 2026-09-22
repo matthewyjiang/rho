@@ -101,9 +101,9 @@ impl<I: Send + 'static> WorkflowNodeExecutor<I> for TimeoutCleanupExecutor {
         })
     }
 }
-#[cfg(unix)]
+#[cfg(all(unix, any(target_os = "linux", target_os = "android")))]
 pub(super) struct AllowCommandHosts;
-#[cfg(unix)]
+#[cfg(all(unix, any(target_os = "linux", target_os = "android")))]
 impl CommandHostFactory for AllowCommandHosts {
     fn create(
         &self,

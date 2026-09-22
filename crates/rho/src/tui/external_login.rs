@@ -12,7 +12,9 @@ use ratatui::DefaultTerminal;
 
 use crate::cli_runtime::CliExecutable;
 
-use super::{external_editor, App, Entry};
+#[cfg(unix)]
+use super::external_editor;
+use super::{App, Entry};
 
 pub(super) type QueryFuture<S, E> = Pin<Box<dyn Future<Output = Result<S, E>> + Send>>;
 pub(super) type AfterSuccessFuture = Pin<Box<dyn Future<Output = ()> + Send>>;

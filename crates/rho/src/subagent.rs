@@ -357,13 +357,17 @@ pub(crate) fn ensure_private_directory(path: &Path) -> std::io::Result<()> {
 }
 
 pub(crate) fn create_private_directory(path: &Path) -> std::io::Result<()> {
-    let mut builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::DirBuilderExt;
+        let mut builder = std::fs::DirBuilder::new();
         builder.mode(0o700);
+        builder.create(path)
     }
-    builder.create(path)
+    #[cfg(not(unix))]
+    {
+        std::fs::DirBuilder::new().create(path)
+    }
 }
 
 /// Test-only hooks for deterministic status-write interleaving.

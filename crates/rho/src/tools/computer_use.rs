@@ -230,7 +230,7 @@ impl ComputerUseSession {
     }
 
     /// Host-only activation. Never called from a tool, retry path, or startup.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) async fn connect(&self) -> anyhow::Result<()> {
         self.start_connect()?;
         let (grant, task) = match &*self.state() {

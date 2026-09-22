@@ -7,6 +7,7 @@ use std::{
 
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 const GRAPHICS_PROBE_TIMEOUT: Duration = Duration::from_millis(100);
+#[cfg(unix)]
 const MAX_RESPONSE_BYTES: u64 = 64 * 1024;
 const SOURCE: &str = "herdr:rho";
 const AGENT: &str = "rho";
