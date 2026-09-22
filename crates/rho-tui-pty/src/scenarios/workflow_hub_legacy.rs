@@ -11,6 +11,7 @@ use crate::{env::IsolatedHome, harness::WaitTimeout, keys::Key, scenario::Step};
 pub(super) const WORKFLOW_HUB_LEGACY_RUN_ID: &str = "workflow_hub_legacy_run";
 
 const RUN_ID: &str = "1e9ac700-0000-4000-8000-000000000001";
+const PLAN_ID: &str = "1e9ac700-0000-4000-8000-000000000002";
 const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
 const SETTLE: WaitTimeout = WaitTimeout::secs(10, "ui settle");
 const STREAM: WaitTimeout = WaitTimeout::secs(20, "stream response");
@@ -20,9 +21,25 @@ pub(super) fn setup_workflow_hub_legacy_run(home: &IsolatedHome) -> Result<()> {
     let workspace = fs::canonicalize(&home.workspace).context("canonicalize workspace")?;
     let workflows = home.home.join(".rho/workflows");
     let run = workflows.join("runs").join(RUN_ID);
-    for directory in [&workflows, &workflows.join("runs"), &run] {
+    let plan = workflows.join("plans").join(PLAN_ID);
+    for directory in [
+        &workflows,
+        &workflows.join("runs"),
+        &run,
+        &workflows.join("plans"),
+        &plan,
+    ] {
         create_private_directory(directory)?;
     }
+    write_private_json(
+        &plan.join("manifest.json"),
+        &json!({
+            "schema_version": 1, "plan_id": PLAN_ID,
+            "graph_digest": "sha256:legacy", "source_digests": {},
+            "workspace_identity": workspace.to_string_lossy(),
+            "name": "legacy plan", "step_count": 1,
+        }),
+    )?;
     write_private_json(
         &run.join("graph.json"),
         &json!({"schema_version": 2, "graph_digest": "sha256:legacy"}),
@@ -113,6 +130,22 @@ pub(super) const WORKFLOW_HUB_LEGACY_RUN_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Phase("tui_still_running"),
+    Step::SubmitText("/workflow"),
+    Step::WaitText {
+        text: "WORKFLOWS",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Down),
+    Step::Key(Key::Down),
+    Step::WaitText {
+        text: "Read-only legacy plan",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "legacy plan 1e9ac700 is read-only",
+        timeout: SETTLE,
+    },
     Step::SubmitText("after legacy run"),
     Step::WaitText {
         text: "fixture response: after legacy run",

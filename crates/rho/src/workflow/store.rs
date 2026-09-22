@@ -115,16 +115,20 @@ impl WorkflowStore {
     }
 
     pub(crate) fn load_plan(&self, id: PlanId) -> WorkflowResult<StoredPlan> {
-        let legacy::ManifestRecord::Current(manifest) = self.read_plan_manifest(id)? else {
+        let legacy::ManifestRecord::Current(manifest) =
+            legacy::read_manifest::<PlanManifest, legacy::LegacyPlanManifest>(
+                self,
+                &plan_relative(id, Path::new("manifest.json")),
+                "plan manifest",
+                PLAN_MANIFEST_VERSION,
+                "plan_id",
+                id,
+            )?
+        else {
             return Err(legacy::legacy_record("plan", id));
         };
         let graph: FrozenWorkflow =
             read_json(&self.root, &plan_relative(id, Path::new("graph.json")))?;
-        check_schema_version(
-            "frozen graph",
-            graph.schema_version,
-            FROZEN_WORKFLOW_SCHEMA_VERSION,
-        )?;
         validate_plan(&self.layout, &self.root, id, &manifest, &graph)?;
         Ok(StoredPlan { manifest, graph })
     }
@@ -206,14 +210,30 @@ impl WorkflowStore {
         &self,
         id: RunId,
     ) -> WorkflowResult<(StoredRun, Vec<WorkflowEventRecord>)> {
-        let legacy::ManifestRecord::Current(manifest) = self.read_run_manifest(id)? else {
+        let legacy::ManifestRecord::Current(manifest) =
+            legacy::read_manifest::<RunManifest, legacy::LegacyRunManifest>(
+                self,
+                &run_relative(id, Path::new("manifest.json")),
+                "run manifest",
+                RUN_MANIFEST_VERSION,
+                "run_id",
+                id,
+            )?
+        else {
             return Err(legacy::legacy_record("run", id));
         };
         self.read_current_run(id, manifest)
     }
 
     pub(crate) fn load_run_record(&self, id: RunId) -> WorkflowResult<RunRecord> {
-        match self.read_run_manifest(id)? {
+        match legacy::read_manifest(
+            self,
+            &run_relative(id, Path::new("manifest.json")),
+            "run manifest",
+            RUN_MANIFEST_VERSION,
+            "run_id",
+            id,
+        )? {
             legacy::ManifestRecord::Current(manifest) => Ok(RunRecord::Current(Box::new(
                 self.load_current_run(id, manifest)?,
             ))),
@@ -234,16 +254,10 @@ impl WorkflowStore {
     ) -> WorkflowResult<(StoredRun, Vec<WorkflowEventRecord>)> {
         let graph: FrozenWorkflow =
             read_json(&self.root, &run_relative(id, Path::new("graph.json")))?;
-        check_schema_version(
-            "frozen graph",
-            graph.schema_version,
-            FROZEN_WORKFLOW_SCHEMA_VERSION,
-        )?;
         validate_frozen_graph(&graph, &manifest.program_digest, &self.layout.run_graph(id))?;
         validate_run_manifest(&manifest, &graph, &self.layout.run_manifest(id))?;
         let state: RunStateRecord =
             read_json(&self.root, &run_relative(id, Path::new("state.json")))?;
-        check_schema_version("run state", state.schema_version, RUN_STATE_VERSION)?;
         let events = self.read_events(id)?;
         validate_state(
             &graph,
@@ -264,6 +278,7 @@ impl WorkflowStore {
     }
 
     pub(crate) fn lock_run(&self, id: RunId) -> WorkflowResult<RunMutationGuard> {
+        self.require_executable_run(id)?;
         let file = self
             .root
             .open_private_file(&run_relative(id, Path::new("mutation.lock")), true)?;
@@ -292,8 +307,7 @@ impl WorkflowStore {
             next_sequence,
             file,
             journal,
-            persisted_completions: None,
-            validated_program: None,
+            validated: None,
         })
     }
 
@@ -341,33 +355,28 @@ impl WorkflowStore {
                 "saved snapshot sequence differs from the journal tail",
             );
         }
-        if guard.validated_program.is_none() {
+        if guard.validated.is_none() {
             let persisted = self.load_run(guard.id)?;
-            guard.persisted_completions = Some(completion_index(&persisted.state.state));
-            guard.validated_program = Some(persisted.graph);
+            guard.validated = Some(ValidatedRun {
+                persisted_completions: completion_index(&persisted.state.state),
+                program: persisted.graph,
+            });
         }
+        let validated = guard.validated.as_mut().expect("run validated above");
         validate_state_contents(
-            guard
-                .validated_program
-                .as_ref()
-                .expect("program validated above"),
+            &validated.program,
             state,
             &self.layout.run_state(guard.id),
             &self.root,
             &run_relative(guard.id, Path::new("")),
-            CompletionFileValidation::ChangedSince(
-                guard
-                    .persisted_completions
-                    .as_ref()
-                    .expect("persisted completions initialized above"),
-            ),
+            CompletionFileValidation::ChangedSince(&validated.persisted_completions),
         )?;
         write_json_beneath(
             &self.root,
             &run_relative(guard.id, Path::new("state.json")),
             state,
         )?;
-        guard.persisted_completions = Some(completion_index(&state.state));
+        validated.persisted_completions = completion_index(&state.state);
         Ok(())
     }
 
@@ -400,11 +409,13 @@ impl WorkflowStore {
         id: RunId,
         bytes: &[u8],
     ) -> WorkflowResult<bool> {
+        self.require_executable_run(id)?;
         self.root
             .write_file_if_absent(&run_relative(id, Path::new("cancel.request")), bytes)
     }
 
     pub(crate) fn clear_cancellation_request(&self, id: RunId) -> WorkflowResult<()> {
+        self.require_executable_run(id)?;
         match self
             .root
             .remove_file(&run_relative(id, Path::new("cancel.request")))
@@ -440,7 +451,7 @@ fn delete_child_directory(parent: &Path, child: &Path) -> WorkflowResult<()> {
 
 #[path = "store_inventory.rs"]
 mod inventory;
-pub(crate) use inventory::{PlanInventoryItem, RunInventoryItem};
+pub(crate) use inventory::{PlanInventoryItem, RecordAccess, RunInventoryItem};
 
 #[path = "store_mutate.rs"]
 mod mutate;
@@ -456,9 +467,12 @@ pub(crate) struct RunMutationGuard {
     journal: File,
     /// Immutable run program, verified once for this lock owner rather than
     /// deserialized again for each task event.
-    validated_program: Option<FrozenWorkflow>,
-    persisted_completions:
-        Option<std::collections::BTreeMap<super::TaskInstanceId, super::NodeCompletion>>,
+    validated: Option<ValidatedRun>,
+}
+
+struct ValidatedRun {
+    program: FrozenWorkflow,
+    persisted_completions: std::collections::BTreeMap<super::TaskInstanceId, super::NodeCompletion>,
 }
 
 /// Derived cache for deciding which attempt artifacts need revalidation.
@@ -466,18 +480,14 @@ fn completion_index(
     state: &super::WorkflowState,
 ) -> std::collections::BTreeMap<super::TaskInstanceId, super::NodeCompletion> {
     state
-        .scopes
+        .root_scope()
+        .completions
         .iter()
-        .flat_map(|(scope_id, scope)| {
-            scope
-                .completions
-                .iter()
-                .map(move |(definition, completion)| {
-                    (
-                        super::TaskInstanceId::new(*scope_id, definition.clone()),
-                        completion.clone(),
-                    )
-                })
+        .map(|(definition, completion)| {
+            (
+                super::TaskInstanceId::root(definition.clone()),
+                completion.clone(),
+            )
         })
         .collect()
 }
@@ -569,12 +579,6 @@ fn validate_plan(
     manifest: &PlanManifest,
     graph: &FrozenWorkflow,
 ) -> WorkflowResult<()> {
-    if manifest.plan_id != id {
-        return corrupt(
-            &layout.plan_manifest(id),
-            "plan manifest ID differs from its directory ID",
-        );
-    }
     if manifest.workspace_identity.is_empty() {
         return corrupt(
             &layout.plan_manifest(id),

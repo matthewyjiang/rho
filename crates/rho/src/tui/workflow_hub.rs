@@ -16,7 +16,7 @@ use crate::{
         workflow_runtime::RecoveryDecision,
     },
     workflow::{
-        PlanId, PlanInventoryItem, RunId, RunInventoryItem, RunLifecycle, StoredRun,
+        PlanId, PlanInventoryItem, RecordAccess, RunId, RunInventoryItem, RunLifecycle, StoredRun,
         WorkflowOutcome, WorkflowValue,
     },
 };
@@ -24,6 +24,8 @@ use crate::{
 const SOURCE_PREFIX: &str = "source:";
 const PLAN_PREFIX: &str = "plan:";
 const RUN_PREFIX: &str = "run:";
+const READ_ONLY_PLAN_PREFIX: &str = "read-only-plan:";
+const READ_ONLY_RUN_PREFIX: &str = "read-only-run:";
 
 const MAX_FINISHED_RUNS: usize = 8;
 
@@ -100,10 +102,38 @@ fn legacy_run_item(run: &RunInventoryItem) -> PickerItem {
         format!("Status  legacy  ·  {short}"),
         format!("{}\n{} · {} · {}\nRead-only legacy run. Enter shows status. Press d to delete.\nRun id {short}",
             run.name, lifecycle_label(run.lifecycle), outcome_label(run.outcome), run_progress(run.done_steps, run.total_steps)),
-        format!("{RUN_PREFIX}{id}"),
+        format!("{READ_ONLY_RUN_PREFIX}{id}"),
         Some(("read-only".into(), PickerBadgeTone::Internal)),
         Some("status"),
     )
+}
+
+fn run_item(run: &RunInventoryItem) -> PickerItem {
+    match run.access {
+        RecordAccess::ReadOnly => legacy_run_item(run),
+        RecordAccess::Executable => {
+            let id = run.run_id.to_string();
+            let short = short_id(&id);
+            let (label, tone) = match run.lifecycle {
+                RunLifecycle::Completed => (outcome_label(run.outcome), outcome_tone(run.outcome)),
+                RunLifecycle::Planned
+                | RunLifecycle::Running
+                | RunLifecycle::Cancelling
+                | RunLifecycle::NeedsRecovery => (
+                    lifecycle_label(run.lifecycle).into(),
+                    lifecycle_tone(run.lifecycle),
+                ),
+            };
+            item(
+                Some("RUNS"),
+                format!("Watch  {label}  ·  {short}"),
+                format!("{}\n{label} · {}\nEnter opens the DAG watch screen. Press d to delete.\nRun id {short}", run.name, run_progress(run.done_steps, run.total_steps)),
+                format!("{RUN_PREFIX}{id}"),
+                Some((label, tone)),
+                Some("watch"),
+            )
+        }
+    }
 }
 
 /// Root list: start workflows, open runs, or reuse a saved plan.
@@ -162,49 +192,7 @@ pub(super) fn hub_picker(
             Some("close"),
         ));
     } else {
-        for run in active {
-            if run.read_only {
-                items.push(legacy_run_item(run));
-                continue;
-            }
-            let id = run.run_id.to_string();
-            let short = short_id(&id);
-            let life = lifecycle_label(run.lifecycle);
-            let name = run.name.as_str();
-            items.push(item(
-                Some("RUNS"),
-                format!("Watch  {life}  ·  {short}"),
-                format!(
-                    "{name}\n{life} · {}\nEnter opens the DAG watch screen. Press d to delete.\nRun id {short}",
-                    run_progress(run.done_steps, run.total_steps)
-                ),
-                format!("{RUN_PREFIX}{id}"),
-                Some((life.into(), lifecycle_tone(run.lifecycle))),
-                Some("watch"),
-            ));
-        }
-        for run in finished {
-            if run.read_only {
-                items.push(legacy_run_item(run));
-                continue;
-            }
-            let id = run.run_id.to_string();
-            let short = short_id(&id);
-            let outcome = outcome_label(run.outcome);
-            let name = run.name.as_str();
-            let tone = outcome_tone(run.outcome);
-            items.push(item(
-                Some("RUNS"),
-                format!("Watch  {outcome}  ·  {short}"),
-                format!(
-                    "{name}\nFinished · {outcome} · {}\nEnter opens the DAG watch screen. Press d to delete.\nRun id {short}",
-                    run_progress(run.done_steps, run.total_steps)
-                ),
-                format!("{RUN_PREFIX}{id}"),
-                Some((outcome, tone)),
-                Some("watch"),
-            ));
-        }
+        items.extend(active.into_iter().chain(finished).map(run_item));
     }
 
     if plans.is_empty() {
@@ -215,7 +203,17 @@ pub(super) fn hub_picker(
             let short = short_id(&id);
             let name = plan.name.as_str();
             let steps = plan.step_count;
-            items.push(item(
+            match plan.access {
+                RecordAccess::ReadOnly => {
+                    items.push(item(
+                        Some("SAVED PLANS"), format!("Legacy plan  ·  {short}"),
+                        format!("{name}\n{steps} steps already frozen.\nRead-only legacy plan. Create a new plan from source to run it. Press d to delete.\nPlan id {short}"),
+                        format!("{READ_ONLY_PLAN_PREFIX}{id}"),
+                        Some(("read-only".into(), PickerBadgeTone::Internal)), Some("close"),
+                    ));
+                }
+                RecordAccess::Executable => {
+                    items.push(item(
                 Some("SAVED PLANS"),
                 format!("Run plan  ·  {short}"),
                 format!(
@@ -225,6 +223,8 @@ pub(super) fn hub_picker(
                 Some(("saved".into(), PickerBadgeTone::Internal)),
                 Some("run"),
             ));
+                }
+            }
         }
     }
 
@@ -289,7 +289,10 @@ impl App {
         let Some(value) = self.selected_workflow_value() else {
             return Ok(());
         };
-        if let Some(plan_id) = value.strip_prefix(PLAN_PREFIX) {
+        if let Some(plan_id) = value
+            .strip_prefix(PLAN_PREFIX)
+            .or_else(|| value.strip_prefix(READ_ONLY_PLAN_PREFIX))
+        {
             let short = short_id(plan_id);
             let choice = InlineChoice::new(
                 format!("Delete plan {short}?"),
@@ -321,7 +324,10 @@ impl App {
             self.set_status("confirm delete plan");
             return Ok(());
         }
-        if let Some(run_id) = value.strip_prefix(RUN_PREFIX) {
+        if let Some(run_id) = value
+            .strip_prefix(RUN_PREFIX)
+            .or_else(|| value.strip_prefix(READ_ONLY_RUN_PREFIX))
+        {
             let short = short_id(run_id);
             let choice = InlineChoice::new(
                 format!("Delete run {short}?"),
@@ -422,6 +428,40 @@ impl App {
             return Ok(());
         }
         match value {
+            value if value.starts_with(READ_ONLY_PLAN_PREFIX) => {
+                let id = value
+                    .strip_prefix(READ_ONLY_PLAN_PREFIX)
+                    .expect("prefix checked above");
+                self.input_ui.set_composer(ComposerMode::Input);
+                self.insert_entry(&Entry::Notice(format!(
+                    "legacy plan {} is read-only; create a new plan from source to run it",
+                    short_id(id),
+                )));
+                self.set_status("legacy plan");
+                Ok(())
+            }
+            value if value.starts_with(READ_ONLY_RUN_PREFIX) => {
+                let id: RunId = value
+                    .strip_prefix(READ_ONLY_RUN_PREFIX)
+                    .expect("prefix checked above")
+                    .parse()?;
+                let run = match self.workflow_ops()?.read_run_inventory(id) {
+                    Ok(run) => run,
+                    Err(error) => {
+                        self.insert_entry(&Entry::Error(format!("could not load run: {error:#}")));
+                        self.set_status("open failed");
+                        return Ok(());
+                    }
+                };
+                self.input_ui.set_composer(ComposerMode::Input);
+                self.insert_entry(&Entry::Notice(format!(
+                    "legacy run {} · {}\n{} · {}\nread-only: use `rho workflow status {id} --output json` for the stored snapshot",
+                    short_id(&id.to_string()), run.name,
+                    lifecycle_label(run.lifecycle), outcome_label(run.outcome),
+                )));
+                self.set_status("legacy run status");
+                Ok(())
+            }
             // Enter on a workflow starts it. No extra menu.
             value if value.starts_with(SOURCE_PREFIX) => {
                 let path = value
@@ -485,19 +525,16 @@ impl App {
         }
     }
 
-    /// Shows legacy status without handing off to an incompatible watch screen.
-    /// Reports unreadable records in the transcript instead of leaving the TUI.
+    /// Loads an executable watch target by exact ID, reporting unreadable or
+    /// replaced records in the transcript instead of leaving the TUI.
     fn load_run_for_watch(&mut self, run_id: RunId) -> anyhow::Result<Option<StoredRun>> {
-        match self.workflow_ops()?.load_run_record(&run_id.to_string()) {
+        match self.workflow_ops()?.load_run_record_id(run_id) {
             Ok(crate::workflow::RunRecord::Current(run)) => Ok(Some(*run)),
-            Ok(crate::workflow::RunRecord::Legacy(run)) => {
-                self.input_ui.set_composer(ComposerMode::Input);
-                self.insert_entry(&Entry::Notice(format!(
-                    "legacy run {} · {}\n{} · {}\nread-only: use `rho workflow status {run_id} --output json` for the stored snapshot",
-                    short_id(&run_id.to_string()), run.manifest.name,
-                    lifecycle_label(run.state.state.lifecycle), outcome_label(run.state.state.outcome),
-                )));
-                self.set_status("legacy run status");
+            Ok(crate::workflow::RunRecord::Legacy(_)) => {
+                self.insert_entry(&Entry::Error(
+                    "could not watch run: record is read-only".into(),
+                ));
+                self.set_status("open failed");
                 Ok(None)
             }
             Err(error) => {

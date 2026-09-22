@@ -13,10 +13,10 @@ use std::{collections::BTreeMap, path::Path};
 
 use serde::{Deserialize, Serialize};
 
-use super::{plan_relative, read_json, run_relative, WorkflowStore};
+use super::{read_json, run_relative, RecordAccess, WorkflowStore};
 use crate::workflow::{
-    check_schema_version, CommandExit, Digest, NodeCompletion, NodeId, NodeState, PlanId, RunId,
-    RunLifecycle, WorkflowError, WorkflowOutcome, WorkflowResult, WorkflowValue,
+    check_schema_version, Digest, PlanId, RunId, RunLifecycle, WorkflowError, WorkflowOutcome,
+    WorkflowResult,
 };
 
 pub(super) const LEGACY_MANIFEST_VERSION: u32 = 1;
@@ -36,23 +36,29 @@ pub(crate) enum RunRecord {
 }
 
 /// Reads once, checks the generation, then deserializes its typed manifest.
-fn read_manifest<T: serde::de::DeserializeOwned, L: serde::de::DeserializeOwned>(
+pub(super) fn read_manifest<T: serde::de::DeserializeOwned, L: serde::de::DeserializeOwned>(
     store: &WorkflowStore,
     relative: &Path,
     kind: &'static str,
     current_version: u32,
+    id_key: &str,
+    id: impl ToString,
 ) -> WorkflowResult<ManifestRecord<T, L>> {
     let value: serde_json::Value = read_json(&store.root, relative)?;
     #[derive(Deserialize)]
     struct Version {
         schema_version: u32,
     }
-    let version: Version = serde_json::from_value(value.clone())?;
-    if version.schema_version == LEGACY_MANIFEST_VERSION {
-        Ok(ManifestRecord::Legacy(serde_json::from_value(value)?))
-    } else {
-        check_schema_version(kind, version.schema_version, current_version)?;
-        Ok(ManifestRecord::Current(serde_json::from_value(value)?))
+    let version = Version::deserialize(&value)?;
+    if value.get(id_key).and_then(serde_json::Value::as_str) != Some(id.to_string().as_str()) {
+        return super::corrupt(
+            &store.layout.root().join(relative),
+            "manifest ID differs from its directory ID",
+        );
+    }
+    match RecordAccess::from_version(kind, version.schema_version, current_version)? {
+        RecordAccess::ReadOnly => Ok(ManifestRecord::Legacy(serde_json::from_value(value)?)),
+        RecordAccess::Executable => Ok(ManifestRecord::Current(serde_json::from_value(value)?)),
     }
 }
 
@@ -100,17 +106,19 @@ pub(crate) struct LegacyRunState {
     pub(crate) state: LegacyWorkflowState,
 }
 
-/// Flat single-graph run state keyed by node ID.
+/// Frozen display projection of single-graph state. Historical task payloads
+/// remain JSON so evolving executable state/attempt types cannot break status.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LegacyWorkflowState {
     pub(crate) revision: u64,
     pub(crate) lifecycle: RunLifecycle,
     pub(crate) outcome: Option<WorkflowOutcome>,
     pub(crate) cancellation_requested: bool,
-    pub(crate) nodes: BTreeMap<NodeId, NodeState>,
-    pub(crate) command_exits: BTreeMap<NodeId, CommandExit>,
-    pub(crate) outputs: BTreeMap<NodeId, WorkflowValue>,
-    pub(crate) completions: BTreeMap<NodeId, NodeCompletion>,
+    // Keep historic payloads opaque: status prints them, never executes them.
+    pub(crate) nodes: BTreeMap<String, serde_json::Value>,
+    pub(crate) command_exits: BTreeMap<String, serde_json::Value>,
+    pub(crate) outputs: BTreeMap<String, serde_json::Value>,
+    pub(crate) completions: BTreeMap<String, serde_json::Value>,
 }
 
 /// A legacy run as stored. Serializes to the status document shape those
@@ -123,60 +131,6 @@ pub(crate) struct LegacyRun {
 }
 
 impl WorkflowStore {
-    /// True when the run was written before scoped programs and is read-only.
-    pub(crate) fn is_legacy_run(&self, id: RunId) -> WorkflowResult<bool> {
-        Ok(matches!(
-            self.read_run_manifest(id)?,
-            ManifestRecord::Legacy(_)
-        ))
-    }
-
-    pub(super) fn read_plan_manifest(
-        &self,
-        id: PlanId,
-    ) -> WorkflowResult<ManifestRecord<crate::workflow::PlanManifest, LegacyPlanManifest>> {
-        let manifest = read_manifest::<crate::workflow::PlanManifest, LegacyPlanManifest>(
-            self,
-            &plan_relative(id, Path::new("manifest.json")),
-            "plan manifest",
-            crate::workflow::PLAN_MANIFEST_VERSION,
-        )?;
-        let stored_id = match &manifest {
-            ManifestRecord::Current(manifest) => manifest.plan_id,
-            ManifestRecord::Legacy(manifest) => manifest.plan_id,
-        };
-        if stored_id != id {
-            return Err(WorkflowError::Corrupt {
-                path: self.layout.plan_manifest(id),
-                reason: "plan manifest ID differs from its directory ID".to_owned(),
-            });
-        }
-        Ok(manifest)
-    }
-
-    pub(super) fn read_run_manifest(
-        &self,
-        id: RunId,
-    ) -> WorkflowResult<ManifestRecord<crate::workflow::RunManifest, LegacyRunManifest>> {
-        let manifest = read_manifest::<crate::workflow::RunManifest, LegacyRunManifest>(
-            self,
-            &run_relative(id, Path::new("manifest.json")),
-            "run manifest",
-            crate::workflow::RUN_MANIFEST_VERSION,
-        )?;
-        let stored_id = match &manifest {
-            ManifestRecord::Current(manifest) => manifest.run_id,
-            ManifestRecord::Legacy(manifest) => manifest.run_id,
-        };
-        if stored_id != id {
-            return Err(WorkflowError::Corrupt {
-                path: self.layout.run_manifest(id),
-                reason: "run manifest ID differs from its directory ID".to_owned(),
-            });
-        }
-        Ok(manifest)
-    }
-
     pub(super) fn read_legacy_run_state(&self, id: RunId) -> WorkflowResult<LegacyRunState> {
         let state: LegacyRunState =
             read_json(&self.root, &run_relative(id, Path::new("state.json")))?;

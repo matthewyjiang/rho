@@ -26,8 +26,6 @@ impl WorkflowStore {
     /// read-only legacy runs: nothing can cancel or resume them, so a free lock
     /// means no owner remains.
     pub(crate) fn delete_run(&self, id: RunId) -> WorkflowResult<()> {
-        // Confirm the run directory is a real store entry before removal.
-        let legacy = self.is_legacy_run(id)?;
         let lock = self
             .root
             .open_private_file(&run_relative(id, Path::new("mutation.lock")), true)?;
@@ -38,16 +36,13 @@ impl WorkflowStore {
             })?;
 
         // The store owns the live-run deletion policy; check it under the lock.
-        let lifecycle = self.read_run_lifecycle(id)?;
+        let run = self.read_run_inventory(id)?;
         // NEXT_MAJOR(rho-coding-agent): drop the legacy exemption with version 1 run support.
-        if lifecycle.is_live() && !legacy {
+        if run.lifecycle.is_live() && run.access == super::RecordAccess::Executable {
             let _ = lock.unlock();
-            return Err(WorkflowError::Corrupt {
-                path: self.layout.run(id),
-                reason: format!(
-                    "run is still {}, stop it before deleting",
-                    format!("{lifecycle:?}").to_ascii_lowercase()
-                ),
+            return Err(WorkflowError::LiveRun {
+                id,
+                lifecycle: run.lifecycle,
             });
         }
 

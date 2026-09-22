@@ -71,6 +71,11 @@ pub(crate) enum WorkflowError {
          create a new plan from source to run it"
     )]
     LegacyRecord { kind: &'static str, id: String },
+    #[error("run {id} is still {}, stop it before deleting", lifecycle.as_str())]
+    LiveRun {
+        id: super::RunId,
+        lifecycle: super::RunLifecycle,
+    },
     #[error("workflow ID prefix '{prefix}' is ambiguous: {matches} matches")]
     AmbiguousId { prefix: String, matches: usize },
     #[error("unknown workflow ID '{0}'")]

@@ -522,6 +522,7 @@ fn diagnostic_for_error_for(error: &anyhow::Error, audience: DiagnosticAudience)
             WorkflowError::Corrupt { .. } => "corrupt",
             WorkflowError::UnsupportedVersion { .. } => "unsupported_version",
             WorkflowError::LegacyRecord { .. } => "legacy_record",
+            WorkflowError::LiveRun { .. } => "live_run",
             WorkflowError::AmbiguousId { .. } => "ambiguous_id",
             WorkflowError::UnknownId(_) => "unknown_id",
             WorkflowError::UntrustedDirectory(_) => "untrusted_directory",
@@ -587,6 +588,7 @@ fn workflow_error_message(error: &WorkflowError, audience: DiagnosticAudience) -
             | WorkflowError::NonAncestorReference { .. }
             | WorkflowError::MissingWorkflow
             | WorkflowError::UnsupportedVersion { .. }
+            | WorkflowError::LiveRun { .. }
             | WorkflowError::LegacyRecord { .. } => error.to_string(),
             WorkflowError::Starlark(_) => "workflow evaluation failed".to_owned(),
             // Keep these cases opaque. Their strings can contain source text,

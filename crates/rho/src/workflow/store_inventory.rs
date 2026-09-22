@@ -17,19 +17,65 @@ use std::{collections::BTreeMap, path::Path, str::FromStr};
 
 use serde::Deserialize;
 
-use super::{
-    legacy::{LegacyRunManifest, ManifestRecord},
-    read_json, run_relative, WorkflowStore,
-};
+use super::{plan_relative, read_json, run_relative, WorkflowStore};
 use crate::workflow::{
-    NodeId, NodeState, PlanId, RunId, RunLifecycle, ScopeInstanceId, WorkflowOutcome,
-    WorkflowResult,
+    check_schema_version, NodeId, NodeState, PlanId, RunId, RunLifecycle, ScopeInstanceId,
+    WorkflowOutcome, WorkflowResult, PLAN_MANIFEST_VERSION, RUN_MANIFEST_VERSION,
 };
+
+/// Inventory owns generation policy; readers and mutation boundaries consume it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RecordAccess {
+    Executable,
+    ReadOnly,
+}
+
+impl RecordAccess {
+    pub(super) fn from_version(
+        kind: &'static str,
+        version: u32,
+        current: u32,
+    ) -> WorkflowResult<Self> {
+        if version == super::legacy::LEGACY_MANIFEST_VERSION {
+            Ok(Self::ReadOnly)
+        } else {
+            check_schema_version(kind, version, current)?;
+            Ok(Self::Executable)
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct InventoryManifest {
+    schema_version: u32,
+    #[serde(default)]
+    created_at_unix_nanos: u64,
+    workspace_identity: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    step_count: usize,
+}
+
+#[derive(Deserialize)]
+struct PlanSummary {
+    plan_id: PlanId,
+    #[serde(flatten)]
+    metadata: InventoryManifest,
+}
+
+#[derive(Deserialize)]
+struct RunSummary {
+    run_id: RunId,
+    #[serde(flatten)]
+    metadata: InventoryManifest,
+}
 
 /// Lightweight plan row for workspace inventory UIs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PlanInventoryItem {
     pub(crate) plan_id: PlanId,
+    pub(crate) access: RecordAccess,
     /// Persisted creation time.
     pub(crate) created_at_unix_nanos: u64,
     pub(crate) workspace_identity: String,
@@ -42,7 +88,7 @@ pub(crate) struct PlanInventoryItem {
 pub(crate) struct RunInventoryItem {
     pub(crate) run_id: RunId,
     /// Older generations support status and deletion, but not execution or watch.
-    pub(crate) read_only: bool,
+    pub(crate) access: RecordAccess,
     /// Persisted creation time.
     pub(crate) created_at_unix_nanos: u64,
     pub(crate) workspace_identity: String,
@@ -141,7 +187,7 @@ impl WorkflowStore {
         Ok(state.state.revision)
     }
 
-    /// Reads lifecycle without journal replay. Used by locked delete checks.
+    /// Reads lifecycle without journal replay for watch cancellation polling.
     pub(crate) fn read_run_lifecycle(&self, id: RunId) -> WorkflowResult<RunLifecycle> {
         let state: LifecycleStateFile =
             read_json(&self.root, &run_relative(id, Path::new("state.json")))?;
@@ -152,12 +198,23 @@ impl WorkflowStore {
     ///
     /// Uses manifest metadata without opening the frozen program.
     pub(crate) fn read_run_inventory(&self, id: RunId) -> WorkflowResult<RunInventoryItem> {
-        let manifest = match self.read_run_manifest(id)? {
-            ManifestRecord::Current(manifest) => manifest,
-            ManifestRecord::Legacy(manifest) => {
-                return self.read_legacy_run_inventory(id, manifest)
-            }
-        };
+        let summary: RunSummary =
+            read_json(&self.root, &run_relative(id, Path::new("manifest.json")))?;
+        if summary.run_id != id {
+            return super::corrupt(
+                &self.layout.run_manifest(id),
+                "run manifest ID differs from its directory ID",
+            );
+        }
+        let manifest = summary.metadata;
+        let access = RecordAccess::from_version(
+            "run manifest",
+            manifest.schema_version,
+            RUN_MANIFEST_VERSION,
+        )?;
+        if access == RecordAccess::ReadOnly {
+            return self.read_legacy_run_inventory(id, manifest, access);
+        }
         let state: InventoryStateFile =
             read_json(&self.root, &run_relative(id, Path::new("state.json")))?;
         let scope = state
@@ -170,7 +227,7 @@ impl WorkflowStore {
             })?;
         Ok(RunInventoryItem {
             run_id: id,
-            read_only: false,
+            access,
             created_at_unix_nanos: manifest.created_at_unix_nanos,
             workspace_identity: manifest.workspace_identity,
             name: manifest.name,
@@ -189,44 +246,73 @@ impl WorkflowStore {
     fn read_legacy_run_inventory(
         &self,
         id: RunId,
-        manifest: LegacyRunManifest,
+        manifest: InventoryManifest,
+        access: RecordAccess,
     ) -> WorkflowResult<RunInventoryItem> {
         let state = self.read_legacy_run_state(id)?.state;
         Ok(RunInventoryItem {
             run_id: id,
-            read_only: true,
+            access,
             created_at_unix_nanos: manifest.created_at_unix_nanos,
             workspace_identity: manifest.workspace_identity,
             name: manifest.name,
             lifecycle: state.lifecycle,
             outcome: state.outcome,
-            done_steps: terminal_count(state.nodes.values()),
+            done_steps: state
+                .nodes
+                .values()
+                .filter(|node| {
+                    node.get("state").and_then(serde_json::Value::as_str) == Some("terminal")
+                })
+                .count(),
             total_steps: manifest.step_count,
         })
     }
 
     /// Reads one plan row. Accepts current and legacy read-only plans.
     pub(crate) fn read_plan_inventory(&self, id: PlanId) -> WorkflowResult<PlanInventoryItem> {
-        let manifest = match self.read_plan_manifest(id)? {
-            ManifestRecord::Current(manifest) => manifest,
-            ManifestRecord::Legacy(manifest) => {
-                // NEXT_MAJOR(rho-coding-agent): remove legacy version 1 plan rows from workflow inventory.
-                return Ok(PlanInventoryItem {
-                    plan_id: id,
-                    created_at_unix_nanos: manifest.created_at_unix_nanos,
-                    workspace_identity: manifest.workspace_identity,
-                    name: manifest.name,
-                    step_count: manifest.step_count,
-                });
-            }
-        };
+        let summary: PlanSummary =
+            read_json(&self.root, &plan_relative(id, Path::new("manifest.json")))?;
+        if summary.plan_id != id {
+            return super::corrupt(
+                &self.layout.plan_manifest(id),
+                "plan manifest ID differs from its directory ID",
+            );
+        }
+        let manifest = summary.metadata;
+        // NEXT_MAJOR(rho-coding-agent): remove legacy version 1 plan rows from workflow inventory.
+        let access = RecordAccess::from_version(
+            "plan manifest",
+            manifest.schema_version,
+            PLAN_MANIFEST_VERSION,
+        )?;
         Ok(PlanInventoryItem {
             plan_id: id,
+            access,
             created_at_unix_nanos: manifest.created_at_unix_nanos,
             workspace_identity: manifest.workspace_identity,
             name: manifest.name,
             step_count: manifest.step_count,
         })
+    }
+
+    pub(super) fn require_executable_run(&self, id: RunId) -> WorkflowResult<()> {
+        let summary: RunSummary =
+            read_json(&self.root, &run_relative(id, Path::new("manifest.json")))?;
+        if summary.run_id != id {
+            return super::corrupt(
+                &self.layout.run_manifest(id),
+                "run manifest ID differs from its directory ID",
+            );
+        }
+        match RecordAccess::from_version(
+            "run manifest",
+            summary.metadata.schema_version,
+            RUN_MANIFEST_VERSION,
+        )? {
+            RecordAccess::Executable => Ok(()),
+            RecordAccess::ReadOnly => Err(super::legacy::legacy_record("run", id)),
+        }
     }
 }
 

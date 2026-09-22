@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "last_event_sequence": 4,
+  "state": {
+    "revision": 4,
+    "lifecycle": "completed",
+    "outcome": "success",
+    "cancellation_requested": false,
+    "nodes": {"inspect": {"state": "terminal", "outcome": "success"}},
+    "command_exits": {},
+    "outputs": {"inspect": {"summary": "ok"}},
+    "completions": {
+      "inspect": {
+        "attempt": 1,
+        "outcome": "success",
+        "cancellation_resume": null,
+        "command_exit": null,
+        "structured_output": {
+          "artifact": {
+            "relative_path": "nodes/inspect/attempts/1/output.json",
+            "retained_bytes": 16,
+            "observed": {"kind": "complete", "observed_bytes": 16},
+            "digest": "sha256:91eb060ae89c761643ca0931e6ba538318e2505253b4f63a9ffee7670a1010fc"
+          },
+          "value": {"summary": "ok"}
+        },
+        "artifacts": {
+          "stdout": null,
+          "stderr": null,
+          "answer": {
+            "relative_path": "nodes/inspect/attempts/1/answer.txt",
+            "retained_bytes": 2,
+            "observed": {"kind": "complete", "observed_bytes": 2},
+            "digest": "sha256:2689367b205c16ce32ed4200942b8b8b1e262dfc70d9bc9fbc77c49699a4f1df"
+          },
+          "structured_output": {
+            "relative_path": "nodes/inspect/attempts/1/output.json",
+            "retained_bytes": 16,
+            "observed": {"kind": "complete", "observed_bytes": 16},
+            "digest": "sha256:91eb060ae89c761643ca0931e6ba538318e2505253b4f63a9ffee7670a1010fc"
+          },
+          "command_outcome": null
+        }
+      }
+    }
+  }
+}

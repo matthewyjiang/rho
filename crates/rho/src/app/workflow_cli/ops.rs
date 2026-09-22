@@ -118,11 +118,19 @@ impl WorkflowOps {
     pub(crate) fn load_run_record(&self, prefix: &str) -> anyhow::Result<RunRecord> {
         let store = self.service.store();
         let run_id = store.resolve_run(prefix)?;
-        Ok(store.load_run_record(run_id)?)
+        self.load_run_record_id(run_id)
+    }
+
+    pub(crate) fn load_run_record_id(&self, run_id: RunId) -> anyhow::Result<RunRecord> {
+        Ok(self.service.store().load_run_record(run_id)?)
     }
 
     pub(crate) fn load_run_id(&self, run_id: RunId) -> anyhow::Result<StoredRun> {
         Ok(self.service.store().load_run(run_id)?)
+    }
+
+    pub(crate) fn read_run_inventory(&self, run_id: RunId) -> anyhow::Result<RunInventoryItem> {
+        Ok(self.service.store().read_run_inventory(run_id)?)
     }
 
     pub(crate) fn list_workspace_plans(&self) -> anyhow::Result<Vec<PlanInventoryItem>> {

@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
+use super::super::plan_relative;
 use super::*;
-use crate::workflow::{NodeTerminalState, PlanInventoryItem, RunInventoryItem, WorkflowStore};
+use crate::workflow::{PlanInventoryItem, RecordAccess, RunInventoryItem, WorkflowStore};
 
 const PLAN_ID: &str = "018f0000-0000-7000-8000-000000000001";
 const RUN_ID: &str = "018f0000-0000-7000-8000-000000000002";
@@ -61,24 +62,11 @@ fn write_legacy_records(store: &WorkflowStore, lifecycle: &str) {
         run_relative(run_id, Path::new("graph.json")),
         &json!({"schema_version": 2, "graph_digest": "sha256:legacy"}),
     );
-    write(
-        store,
-        run_relative(run_id, Path::new("state.json")),
-        &json!({
-            "schema_version": 2,
-            "last_event_sequence": 4,
-            "state": {
-                "revision": 4,
-                "lifecycle": lifecycle,
-                "outcome": "success",
-                "cancellation_requested": false,
-                "nodes": {"inspect": {"state": "terminal", "outcome": "success"}},
-                "command_exits": {},
-                "outputs": {"inspect": {"summary": "ok"}},
-                "completions": {},
-            },
-        }),
-    );
+    // Frozen from the single-graph NodeCompletion/AttemptArtifacts format at 2ea7ad26.
+    let mut state: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/legacy_run_state.json")).unwrap();
+    state["state"]["lifecycle"] = json!(lifecycle);
+    write(store, run_relative(run_id, Path::new("state.json")), &state);
 }
 
 // Covers: plans and runs saved before scoped programs stay listed and readable
@@ -96,6 +84,7 @@ fn legacy_records_are_listed_and_read_only() {
         store.list_plan_inventory().unwrap(),
         vec![PlanInventoryItem {
             plan_id,
+            access: RecordAccess::ReadOnly,
             created_at_unix_nanos: 7,
             workspace_identity: "workspace-id".to_owned(),
             name: "review".to_owned(),
@@ -106,7 +95,7 @@ fn legacy_records_are_listed_and_read_only() {
         store.list_run_inventory().unwrap(),
         vec![RunInventoryItem {
             run_id,
-            read_only: true,
+            access: RecordAccess::ReadOnly,
             created_at_unix_nanos: 8,
             workspace_identity: "workspace-id".to_owned(),
             name: "review".to_owned(),
@@ -120,28 +109,9 @@ fn legacy_records_are_listed_and_read_only() {
     let RunRecord::Legacy(legacy) = store.load_run_record(run_id).unwrap() else {
         panic!("expected a read-only legacy record");
     };
-    let inspect = NodeId::new("inspect").unwrap();
-    assert_eq!(
-        legacy.state.state,
-        LegacyWorkflowState {
-            revision: 4,
-            lifecycle: RunLifecycle::Completed,
-            outcome: Some(WorkflowOutcome::Success),
-            cancellation_requested: false,
-            nodes: BTreeMap::from([(
-                inspect.clone(),
-                NodeState::Terminal {
-                    outcome: NodeTerminalState::Success
-                }
-            )]),
-            command_exits: BTreeMap::new(),
-            outputs: BTreeMap::from([(
-                inspect,
-                WorkflowValue::from_json(json!({"summary": "ok"})).unwrap()
-            )]),
-            completions: BTreeMap::new(),
-        }
-    );
+    let expected: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/legacy_run_state.json")).unwrap();
+    assert_eq!(serde_json::to_value(&legacy.state).unwrap(), expected);
 
     for error in [
         store.load_plan(plan_id).unwrap_err(),
@@ -152,6 +122,33 @@ fn legacy_records_are_listed_and_read_only() {
             "{error:?}"
         );
     }
+
+    // A legacy journal may end mid-write. Refusing a writer must not repair it.
+    let partial = b"{\"schema_version\":";
+    store
+        .root
+        .write_file(&run_relative(run_id, Path::new("events.jsonl")), partial)
+        .unwrap();
+    let error = match store.lock_run(run_id) {
+        Ok(_) => panic!("legacy record accepted a writer"),
+        Err(error) => error,
+    };
+    assert!(matches!(error, WorkflowError::LegacyRecord { .. }));
+    assert!(matches!(
+        store
+            .install_cancellation_request(run_id, b"request")
+            .unwrap_err(),
+        WorkflowError::LegacyRecord { .. }
+    ));
+    assert!(matches!(
+        store.clear_cancellation_request(run_id).unwrap_err(),
+        WorkflowError::LegacyRecord { .. }
+    ));
+    assert_eq!(
+        std::fs::read(store.layout.run_events(run_id)).unwrap(),
+        partial
+    );
+    assert!(!store.layout.run(run_id).join("cancel.request").exists());
 
     store.delete_run(run_id).unwrap();
     store.delete_plan(plan_id).unwrap();

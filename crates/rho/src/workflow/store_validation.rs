@@ -68,7 +68,6 @@ pub(super) fn validate_state_contents(
     run_relative: &Path,
     file_validation: CompletionFileValidation<'_>,
 ) -> WorkflowResult<()> {
-    check_schema_version("run state", record.schema_version, RUN_STATE_VERSION)?;
     let state = &record.state;
     validate_state_shape(graph, state)?;
     let scope = state.root_scope();
