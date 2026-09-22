@@ -1,5 +1,2 @@
 [models."openai-codex/gpt-5.5"]
 effective_context_window = 400000
-
-[models."openai-codex/gpt-6-astra"]
-supported_reasoning_levels = ["low", "medium", "high", "xhigh", "max"]

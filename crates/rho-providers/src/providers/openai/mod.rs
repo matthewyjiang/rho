@@ -17,15 +17,16 @@ pub use cache::prompt_cache_key_from_session_id;
 
 /// Returns whether a Codex model offers OpenAI's faster priority tier.
 ///
-/// GPT-5.5+ and GPT-6 Astra bill fast mode at 2x; older Codex models ignore
+/// GPT-5.5+ and GPT-6 bill fast mode at 2x; older Codex models ignore
 /// `service_tier`, so Rho omits it for them.
 pub fn supports_fast_mode(provider: &str, model: &str) -> bool {
     provider == "openai-codex"
-        && (matches!(model, "gpt-5.5" | "gpt-5.6")
-            || is_gpt6_astra(model)
-            || model
-                .strip_prefix("gpt-5.6-")
-                .is_some_and(|suffix| !suffix.is_empty()))
+        && (matches!(
+            model,
+            "gpt-5.5" | "gpt-5.6" | "gpt-6-astra" | "gpt-6-sol" | "gpt-6-luna"
+        ) || model
+            .strip_prefix("gpt-5.6-")
+            .is_some_and(|suffix| !suffix.is_empty()))
 }
 
 /// Returns whether a Responses model accepts `"async": true` on function tools.
