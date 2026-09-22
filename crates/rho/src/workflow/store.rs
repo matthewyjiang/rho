@@ -197,10 +197,19 @@ impl WorkflowStore {
     }
 
     pub(crate) fn load_run(&self, id: RunId) -> WorkflowResult<StoredRun> {
+        self.load_run_with_events(id).map(|(run, _)| run)
+    }
+
+    /// Return the validated snapshot and the journal from the same read. Owners
+    /// can replay its tail and inspect cancellation without reopening the journal.
+    pub(crate) fn load_run_with_events(
+        &self,
+        id: RunId,
+    ) -> WorkflowResult<(StoredRun, Vec<WorkflowEventRecord>)> {
         let legacy::ManifestRecord::Current(manifest) = self.read_run_manifest(id)? else {
             return Err(legacy::legacy_record("run", id));
         };
-        self.load_current_run(id, manifest)
+        self.read_current_run(id, manifest)
     }
 
     pub(crate) fn load_run_record(&self, id: RunId) -> WorkflowResult<RunRecord> {
@@ -215,6 +224,14 @@ impl WorkflowStore {
     }
 
     fn load_current_run(&self, id: RunId, manifest: RunManifest) -> WorkflowResult<StoredRun> {
+        self.read_current_run(id, manifest).map(|(run, _)| run)
+    }
+
+    fn read_current_run(
+        &self,
+        id: RunId,
+        manifest: RunManifest,
+    ) -> WorkflowResult<(StoredRun, Vec<WorkflowEventRecord>)> {
         let graph: FrozenWorkflow =
             read_json(&self.root, &run_relative(id, Path::new("graph.json")))?;
         check_schema_version(
@@ -236,11 +253,14 @@ impl WorkflowStore {
             &self.root,
             &run_relative(id, Path::new("")),
         )?;
-        Ok(StoredRun {
-            manifest,
-            graph,
-            state,
-        })
+        Ok((
+            StoredRun {
+                manifest,
+                graph,
+                state,
+            },
+            events,
+        ))
     }
 
     pub(crate) fn lock_run(&self, id: RunId) -> WorkflowResult<RunMutationGuard> {

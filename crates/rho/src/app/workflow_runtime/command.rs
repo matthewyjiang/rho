@@ -12,7 +12,7 @@ use crate::{
 
 use super::{
     artifacts::{write_artifact, write_artifact_with_observation, write_json},
-    prepared::PreparedExecution,
+    prepared::CommandInvocation,
     NodeExecutionRequest, NodeExecutionResult, RuntimeError, WorkflowExecutionFuture,
     WorkflowNodeExecutor,
 };
@@ -38,8 +38,11 @@ impl WorkflowCommandExecutor {
     }
 }
 
-impl WorkflowNodeExecutor for WorkflowCommandExecutor {
-    fn execute<'a>(&'a self, request: NodeExecutionRequest) -> WorkflowExecutionFuture<'a> {
+impl WorkflowNodeExecutor<CommandInvocation> for WorkflowCommandExecutor {
+    fn execute<'a>(
+        &'a self,
+        request: NodeExecutionRequest<CommandInvocation>,
+    ) -> WorkflowExecutionFuture<'a> {
         Box::pin(async move { self.execute_command(request).await })
     }
 }
@@ -47,17 +50,13 @@ impl WorkflowNodeExecutor for WorkflowCommandExecutor {
 impl WorkflowCommandExecutor {
     async fn execute_command(
         &self,
-        request: NodeExecutionRequest,
+        request: NodeExecutionRequest<CommandInvocation>,
     ) -> Result<NodeExecutionResult, RuntimeError> {
         let prepared = &request.invocation;
-        let PreparedExecution::Command {
+        let CommandInvocation {
             resolved,
             invocation,
-            progress_message,
-        } = &prepared.execution
-        else {
-            return Err(RuntimeError::LaunchMetadata { node: request.node });
-        };
+        } = &prepared.execution;
         if !resolved.exact_path {
             return Err(RuntimeError::Data(format!(
                 "node '{}' executable was not frozen as an exact path",
@@ -80,7 +79,7 @@ impl WorkflowCommandExecutor {
             )));
         }
         if let Some(progress) = &request.progress {
-            progress.message(progress_message.clone());
+            progress.message(command_progress_message(&executable, invocation));
         }
         let max_output_bytes = usize::try_from(prepared.max_output_bytes).map_err(|_| {
             RuntimeError::Data(format!(
@@ -180,7 +179,12 @@ impl WorkflowCommandExecutor {
                             value: parsed.clone(),
                         });
                     }
-                    Err(_) => outcome = NodeTerminalState::Failure,
+                    Err(error) => {
+                        if let Some(progress) = &request.progress {
+                            progress.message(error.to_string());
+                        }
+                        outcome = NodeTerminalState::Failure;
+                    }
                 }
             }
         }
@@ -280,6 +284,32 @@ fn map_host_error(error: rho_sdk::Error) -> RuntimeError {
             RuntimeError::Cancelled
         }
         error => RuntimeError::Executor(error.to_string()),
+    }
+}
+
+fn command_progress_message(executable: &Path, invocation: &rho_sdk::ProcessInvocation) -> String {
+    match invocation.shell_command() {
+        Some(command) => {
+            let shell = executable
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("shell");
+            format!("running {shell}: {command}")
+        }
+        None => {
+            let exe = executable
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("command");
+            let args = invocation.arguments();
+            if args.is_empty() {
+                format!("running {exe}")
+            } else {
+                // Preserve the existing compact activity-preview width.
+                let summary = super::agent::truncate_chars(&args.join(" "), 140);
+                format!("running {exe} {summary}")
+            }
+        }
     }
 }
 

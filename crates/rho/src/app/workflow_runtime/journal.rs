@@ -1,40 +1,80 @@
+use std::path::PathBuf;
+
 use crate::workflow::{
     apply_durable_event, attempt_directory, AttemptNumber, AttemptRecord, AttemptState,
-    NodeCompletion, NodeResetReason, StoredRun, TaskInstanceId, WorkflowEvent, WorkflowStore,
-    ATTEMPT_VERSION,
+    NodeCompletion, RunMutationGuard, StoredRun, TaskInstanceId, WorkflowEvent,
+    WorkflowEventRecord, WorkflowStore, ATTEMPT_VERSION, EVENT_VERSION,
 };
 
-use super::RuntimeError;
+use super::{runner::send_event, RuntimeError, RuntimeEvent};
 
-pub(super) fn replay_journal(
-    store: &WorkflowStore,
-    run_directory: &std::path::Path,
-    run: &mut StoredRun,
-) -> Result<bool, RuntimeError> {
-    let events = store.read_events(run.manifest.run_id)?;
-    let mut changed = false;
-    let snapshot_sequence = run.state.last_event_sequence;
-    for record in events
-        .into_iter()
-        .filter(|event| event.sequence > snapshot_sequence)
-    {
-        let expected = run
-            .state
+/// The single writer for a run. The journal is authoritative; snapshots may lag
+/// append-only events or any append interrupted before its snapshot write.
+pub(super) struct RunJournal {
+    pub(super) store: WorkflowStore,
+    pub(super) guard: RunMutationGuard,
+    pub(super) directory: PathBuf,
+    pub(super) run: StoredRun,
+}
+
+impl RunJournal {
+    pub(super) fn commit(&mut self, event: WorkflowEvent) -> Result<(), RuntimeError> {
+        let record = &mut self.run.state;
+        let next = apply_durable_event(&self.run.graph, &record.state, &event, &self.directory)?;
+        let sequence = record
             .last_event_sequence
             .checked_add(1)
             .ok_or_else(|| RuntimeError::Data("workflow event sequence overflow".into()))?;
-        if record.sequence != expected {
-            return Err(RuntimeError::Data(format!(
-                "workflow journal sequence {} followed {}",
-                record.sequence, run.state.last_event_sequence
-            )));
+        // These events are consumed by the next saving commit. In particular an
+        // intent must precede attempt files, and output must precede completion.
+        let append_only = match &event {
+            WorkflowEvent::LaunchIntended { .. } | WorkflowEvent::StructuredOutput { .. } => true,
+            WorkflowEvent::ScopeFinished { .. }
+            | WorkflowEvent::ScopeReopened { .. }
+            | WorkflowEvent::RunLifecycle { .. }
+            | WorkflowEvent::CancellationRequested { .. }
+            | WorkflowEvent::NodeReady { .. }
+            | WorkflowEvent::AttemptStarted { .. }
+            | WorkflowEvent::NodeFinished { .. }
+            | WorkflowEvent::NodeReset { .. }
+            | WorkflowEvent::CancellationCleared
+            | WorkflowEvent::CancellationAcknowledged { .. }
+            | WorkflowEvent::HookObserved { .. } => false,
+        };
+        self.store.append_event(
+            &mut self.guard,
+            &WorkflowEventRecord {
+                schema_version: EVENT_VERSION,
+                sequence,
+                event,
+            },
+        )?;
+        record.last_event_sequence = sequence;
+        record.state = next;
+        if !append_only {
+            self.store.save_state(&mut self.guard, record)?;
         }
-        run.state.state =
-            apply_durable_event(&run.graph, &run.state.state, &record.event, run_directory)?;
-        run.state.last_event_sequence = record.sequence;
-        changed = true;
+        Ok(())
     }
-    Ok(changed)
+
+    pub(super) fn commit_and_notify(
+        &mut self,
+        event: WorkflowEvent,
+        sender: &Option<tokio::sync::mpsc::UnboundedSender<RuntimeEvent>>,
+    ) -> Result<(), RuntimeError> {
+        self.commit(event)?;
+        self.notify(sender);
+        Ok(())
+    }
+
+    pub(super) fn notify(&self, sender: &Option<tokio::sync::mpsc::UnboundedSender<RuntimeEvent>>) {
+        send_event(
+            sender,
+            RuntimeEvent::StateChanged {
+                revision: self.run.state.state.revision,
+            },
+        );
+    }
 }
 
 pub(super) fn completed_attempt(
@@ -76,8 +116,4 @@ pub(super) fn read_attempt_record(
         )));
     }
     Ok(record)
-}
-
-pub(super) fn reset_event(node: TaskInstanceId, reason: NodeResetReason) -> WorkflowEvent {
-    WorkflowEvent::NodeReset { node, reason }
 }

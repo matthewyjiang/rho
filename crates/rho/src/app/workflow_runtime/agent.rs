@@ -9,7 +9,7 @@ use crate::{
 use super::{
     artifacts::{write_artifact, write_artifact_with_observation},
     cancellation::AGENT_CANCELLATION_CLEANUP_MILLIS,
-    prepared::PreparedExecution,
+    prepared::AgentInvocation,
     CleanupCause, NodeExecutionRequest, NodeExecutionResult, NodeProgressUpdate, RuntimeError,
     WorkflowExecutionFuture, WorkflowNodeExecutor,
 };
@@ -24,8 +24,11 @@ impl WorkflowAgentExecutor {
     }
 }
 
-impl WorkflowNodeExecutor for WorkflowAgentExecutor {
-    fn execute<'a>(&'a self, request: NodeExecutionRequest) -> WorkflowExecutionFuture<'a> {
+impl WorkflowNodeExecutor<AgentInvocation> for WorkflowAgentExecutor {
+    fn execute<'a>(
+        &'a self,
+        request: NodeExecutionRequest<AgentInvocation>,
+    ) -> WorkflowExecutionFuture<'a> {
         Box::pin(async move { self.execute_agent(request).await })
     }
 }
@@ -33,12 +36,10 @@ impl WorkflowNodeExecutor for WorkflowAgentExecutor {
 impl WorkflowAgentExecutor {
     async fn execute_agent(
         &self,
-        request: NodeExecutionRequest,
+        request: NodeExecutionRequest<AgentInvocation>,
     ) -> Result<NodeExecutionResult, RuntimeError> {
         let prepared = &request.invocation;
-        let PreparedExecution::Agent { agent, prompt } = &prepared.execution else {
-            return Err(RuntimeError::LaunchMetadata { node: request.node });
-        };
+        let AgentInvocation { agent, prompt } = &prepared.execution;
         let agent_directory = request.attempt_directory.join("agent");
         let run_directory = &request.run_directory;
         crate::workflow::ensure_directory_beneath(
@@ -158,7 +159,12 @@ impl WorkflowAgentExecutor {
                     result.artifacts.structured_output = Some(artifact.clone());
                     result.structured_output = Some(ValidatedOutputRef { artifact, value });
                 }
-                Err(_) => result.outcome = NodeTerminalState::Failure,
+                Err(error) => {
+                    if let Some(progress) = &request.progress {
+                        progress.message(error.to_string());
+                    }
+                    result.outcome = NodeTerminalState::Failure;
+                }
             }
         }
         Ok(result)
@@ -210,7 +216,7 @@ fn last_nonempty_line(text: &str) -> String {
         .to_owned()
 }
 
-fn truncate_chars(text: &str, max_chars: usize) -> String {
+pub(super) fn truncate_chars(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         return text.to_owned();
     }

@@ -4,11 +4,10 @@ use std::{
 };
 
 use crate::workflow::{
-    CancellationResumeState, NodeState, RunId, RunMutationGuard, RunStateRecord, WorkflowEvent,
-    WorkflowEventRecord, WorkflowStore,
+    CancellationResumeState, NodeState, RunId, WorkflowEvent, WorkflowEventRecord, WorkflowStore,
 };
 
-use super::{runner::persist_state_event, RuntimeError};
+use super::{journal::RunJournal, RuntimeError};
 
 // Receipt: the cross-process cancellation command measures owner response with
 // this poll interval and checks the accepted acknowledgement limit.
@@ -156,14 +155,10 @@ pub(super) fn latest_pending_cancellation_request(
     .then_some(request_id)
 }
 
-pub(super) fn cancel_waiting_nodes(
-    store: &WorkflowStore,
-    guard: &mut RunMutationGuard,
-    run_directory: &Path,
-    graph: &crate::workflow::FrozenWorkflow,
-    state: &mut RunStateRecord,
-) -> Result<(), RuntimeError> {
-    let waiting = state
+pub(super) fn cancel_waiting_nodes(journal: &mut RunJournal) -> Result<(), RuntimeError> {
+    let waiting = journal
+        .run
+        .state
         .state
         .tasks()
         .filter_map(|(node, state)| {
@@ -176,17 +171,10 @@ pub(super) fn cancel_waiting_nodes(
         })
         .collect::<Vec<_>>();
     for (node, resume) in waiting {
-        persist_state_event(
-            store,
-            guard,
-            run_directory,
-            graph,
-            state,
-            WorkflowEvent::NodeFinished {
-                node,
-                completion: Box::new(crate::workflow::NodeCompletion::cancelled(resume)),
-            },
-        )?;
+        journal.commit(WorkflowEvent::NodeFinished {
+            node,
+            completion: Box::new(crate::workflow::NodeCompletion::cancelled(resume)),
+        })?;
     }
     Ok(())
 }

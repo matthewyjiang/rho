@@ -4,8 +4,8 @@ use std::{collections::BTreeMap, path::Path};
 use rho_sdk::ProcessInvocation;
 
 use crate::workflow::{
-    CommandNode, FrozenRuntimeLimits, FrozenWorkflow, Node, NodeExecution, NodeId, OutputSchema,
-    ResolvedAgent, ResolvedCommand, ResolvedNode, TaskInstanceId, WorkflowState, WorkflowValue,
+    CommandNode, FrozenRuntimeLimits, FrozenWorkflow, Leaf, LeafExecution, NodeId, OutputSchema,
+    ResolvedAgent, ResolvedCommand, TaskInstanceId, WorkflowState, WorkflowValue,
 };
 
 use super::{
@@ -15,8 +15,8 @@ use super::{
 
 /// The executor receives only the selected leaf, never the workflow or sibling outputs.
 #[derive(Clone)]
-pub(crate) struct PreparedInvocation {
-    pub(crate) execution: PreparedExecution,
+pub(crate) struct PreparedInvocation<I = PreparedExecution> {
+    pub(crate) execution: I,
     pub(crate) output: Option<OutputSchema>,
     pub(crate) timeout_seconds: u64,
     pub(crate) max_output_bytes: u64,
@@ -24,15 +24,31 @@ pub(crate) struct PreparedInvocation {
 
 #[derive(Clone)]
 pub(crate) enum PreparedExecution {
-    Agent {
-        agent: Box<ResolvedAgent>,
-        prompt: String,
-    },
-    Command {
-        resolved: Box<ResolvedCommand>,
-        invocation: ProcessInvocation,
-        progress_message: String,
-    },
+    Agent(AgentInvocation),
+    Command(CommandInvocation),
+}
+
+#[derive(Clone)]
+pub(crate) struct AgentInvocation {
+    pub(crate) agent: Box<ResolvedAgent>,
+    pub(crate) prompt: String,
+}
+
+#[derive(Clone)]
+pub(crate) struct CommandInvocation {
+    pub(crate) resolved: Box<ResolvedCommand>,
+    pub(crate) invocation: ProcessInvocation,
+}
+
+impl<I> PreparedInvocation<I> {
+    pub(super) fn map_execution<J>(self, map: impl FnOnce(I) -> J) -> PreparedInvocation<J> {
+        PreparedInvocation {
+            execution: map(self.execution),
+            output: self.output,
+            timeout_seconds: self.timeout_seconds,
+            max_output_bytes: self.max_output_bytes,
+        }
+    }
 }
 
 impl PreparedInvocation {
@@ -52,25 +68,20 @@ impl PreparedInvocation {
             .ok_or_else(|| RuntimeError::LaunchMetadata {
                 node: node_id.clone(),
             })?;
-        Self::prepare_node(
-            node_id,
-            leaf.node,
-            leaf.resolved,
-            &workflow.runtime_limits,
-            &scope.outputs,
-        )
+        Self::prepare_node(leaf, &workflow.runtime_limits, &scope.outputs)
     }
 
     /// Prepare a leaf already selected from a scope by the driver.
     pub(crate) fn prepare_node(
-        task: &TaskInstanceId,
-        node: &Node,
-        resolved: &ResolvedNode,
+        leaf: Leaf<'_>,
         limits: &FrozenRuntimeLimits,
         outputs: &BTreeMap<NodeId, WorkflowValue>,
     ) -> Result<Self, RuntimeError> {
-        let execution = match (&node.execution, resolved) {
-            (NodeExecution::Agent(node), ResolvedNode::Agent(agent)) => {
+        let execution = match leaf.execution {
+            LeafExecution::Agent {
+                node,
+                resolved: agent,
+            } => {
                 let mut prompt = render_template(&node.prompt, outputs, limits)?;
                 if let Some(schema) = &node.output {
                     prompt.push_str("\n\nReturn exactly one JSON value as the final answer. Do not use a code fence. Schema: ");
@@ -81,30 +92,28 @@ impl PreparedInvocation {
                     limits.prompt_expansion_bytes,
                     prompt.len() as u64,
                 )?;
-                PreparedExecution::Agent {
-                    agent: agent.clone(),
+                PreparedExecution::Agent(AgentInvocation {
+                    agent: Box::new(agent.clone()),
                     prompt,
-                }
+                })
             }
-            (NodeExecution::Command(command), ResolvedNode::Command(resolved)) => {
+            LeafExecution::Command {
+                node: command,
+                resolved,
+            } => {
                 let executable = Path::new(&resolved.executable);
                 let invocation = invocation(command, executable, outputs, limits)?;
-                let progress_message = command_progress_message(command, executable, &invocation);
-                PreparedExecution::Command {
-                    resolved: resolved.clone(),
+                PreparedExecution::Command(CommandInvocation {
+                    resolved: Box::new(resolved.clone()),
                     invocation,
-                    progress_message,
-                }
-            }
-            (NodeExecution::Agent(_) | NodeExecution::Command(_), _) => {
-                return Err(RuntimeError::LaunchMetadata { node: task.clone() });
+                })
             }
         };
         Ok(Self {
             execution,
-            output: node.output_schema().cloned(),
-            timeout_seconds: node.timeout_seconds,
-            max_output_bytes: node.max_output_bytes,
+            output: leaf.node.output_schema().cloned(),
+            timeout_seconds: leaf.node.timeout_seconds,
+            max_output_bytes: leaf.node.max_output_bytes,
         })
     }
 }
@@ -145,42 +154,6 @@ fn invocation(
         } => ProcessInvocation::shell(executable, arguments.clone(), command),
     };
     Ok(invocation)
-}
-
-fn command_progress_message(
-    command: &CommandNode,
-    executable: &Path,
-    invocation: &ProcessInvocation,
-) -> String {
-    match command {
-        CommandNode::Shell { command, .. } => {
-            let shell = executable
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("shell");
-            format!("running {shell}: {command}")
-        }
-        CommandNode::Direct { .. } => {
-            let exe = executable
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("command");
-            let args = invocation.arguments();
-            if args.is_empty() {
-                format!("running {exe}")
-            } else {
-                let joined = args.join(" ");
-                let summary = if joined.chars().count() > 140 {
-                    let mut out = joined.chars().take(139).collect::<String>();
-                    out.push('…');
-                    out
-                } else {
-                    joined
-                };
-                format!("running {exe} {summary}")
-            }
-        }
-    }
 }
 
 #[cfg(test)]

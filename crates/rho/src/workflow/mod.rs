@@ -40,7 +40,7 @@ mod wire;
 
 pub(crate) use canonical::program_digest;
 pub(crate) use condition::{evaluate_condition, ConditionContext};
-pub(crate) use durable::{apply_durable_event, DurableReplayState};
+pub(crate) use durable::{apply_durable_event, derive_snapshot, DurableReplayState};
 pub(crate) use error::{WorkflowError, WorkflowResult};
 pub(crate) use ids::*;
 pub(crate) use instances::{ScopeInstanceId, TaskInstanceId};

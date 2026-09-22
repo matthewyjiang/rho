@@ -11,9 +11,10 @@ use crate::workflow::{
 pub(crate) type WorkflowExecutionFuture<'a> =
     Pin<Box<dyn Future<Output = Result<NodeExecutionResult, RuntimeError>> + Send + 'a>>;
 
-/// Adapter boundary for Rho agents, Claude agents, and authorized commands.
-pub(crate) trait WorkflowNodeExecutor: Send + Sync {
-    fn execute<'a>(&'a self, request: NodeExecutionRequest) -> WorkflowExecutionFuture<'a>;
+/// Executes one bound invocation of the indicated kind. Implementors must honor
+/// cancellation and report uncertain cleanup rather than assume a process exited.
+pub(crate) trait WorkflowNodeExecutor<I>: Send + Sync {
+    fn execute<'a>(&'a self, request: NodeExecutionRequest<I>) -> WorkflowExecutionFuture<'a>;
 }
 
 /// Live activity from one node attempt for TUI and text observers.
@@ -67,8 +68,8 @@ impl NodeProgressReporter {
 }
 
 #[derive(Clone)]
-pub(crate) struct NodeExecutionRequest {
-    pub(crate) invocation: super::prepared::PreparedInvocation,
+pub(crate) struct NodeExecutionRequest<I> {
+    pub(crate) invocation: super::prepared::PreparedInvocation<I>,
     pub(crate) plan_digest: Digest,
     pub(crate) run_id: RunId,
     pub(crate) node: TaskInstanceId,
@@ -78,6 +79,52 @@ pub(crate) struct NodeExecutionRequest {
     pub(crate) attempt_directory: PathBuf,
     pub(crate) cancellation: rho_sdk::CancellationToken,
     pub(crate) progress: Option<NodeProgressReporter>,
+}
+
+impl<I> NodeExecutionRequest<I> {
+    pub(super) fn map_execution<J>(self, map: impl FnOnce(I) -> J) -> NodeExecutionRequest<J> {
+        NodeExecutionRequest {
+            invocation: self.invocation.map_execution(map),
+            plan_digest: self.plan_digest,
+            run_id: self.run_id,
+            node: self.node,
+            attempt: self.attempt,
+            workspace: self.workspace,
+            run_directory: self.run_directory,
+            attempt_directory: self.attempt_directory,
+            cancellation: self.cancellation,
+            progress: self.progress,
+        }
+    }
+
+    pub(super) fn split_execution(self) -> (I, NodeExecutionRequest<()>) {
+        let super::prepared::PreparedInvocation {
+            execution,
+            output,
+            timeout_seconds,
+            max_output_bytes,
+        } = self.invocation;
+        (
+            execution,
+            NodeExecutionRequest {
+                invocation: super::prepared::PreparedInvocation {
+                    execution: (),
+                    output,
+                    timeout_seconds,
+                    max_output_bytes,
+                },
+                plan_digest: self.plan_digest,
+                run_id: self.run_id,
+                node: self.node,
+                attempt: self.attempt,
+                workspace: self.workspace,
+                run_directory: self.run_directory,
+                attempt_directory: self.attempt_directory,
+                cancellation: self.cancellation,
+                progress: self.progress,
+            },
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -206,6 +253,8 @@ pub(crate) enum RuntimeError {
     TrustRemoved { node: NodeId },
     #[error("workflow node '{node}' launch metadata is missing or has the wrong kind")]
     LaunchMetadata { node: TaskInstanceId },
+    #[error("workflow node '{node}' launch metadata is missing or has the wrong kind")]
+    DefinitionLaunchMetadata { node: NodeId },
     #[error("workflow node '{node}' is not enforceably read-only: {capability}")]
     ReadOnlyCapability { node: NodeId, capability: String },
     #[error("workflow run needs explicit recovery for: {nodes}")]

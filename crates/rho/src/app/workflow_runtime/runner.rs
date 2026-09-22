@@ -1,9 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use crate::workflow::{
-    NodeId, NodeState, ResolvedNode, RunId, RunStateRecord, StoredRun, WorkflowEvent,
-    WorkflowEventRecord, WorkflowStore, WorkspaceAccess, EVENT_VERSION,
-};
+use crate::workflow::{NodeId, ResolvedNode, RunId, StoredRun, WorkspaceAccess};
 
 use super::{
     cancellation::CancellationRequest, RuntimeError, RuntimeEvent, RuntimeSecurity,
@@ -20,8 +17,8 @@ pub(crate) struct WorkflowRunner {
     pub(super) rho_home: PathBuf,
     pub(super) workspace: PathBuf,
     security: RuntimeSecurity,
-    pub(super) agents: Arc<dyn WorkflowNodeExecutor>,
-    pub(super) commands: Arc<dyn WorkflowNodeExecutor>,
+    pub(super) agents: Arc<dyn WorkflowNodeExecutor<super::prepared::AgentInvocation>>,
+    pub(super) commands: Arc<dyn WorkflowNodeExecutor<super::prepared::CommandInvocation>>,
     pub(super) cancellation: rho_sdk::CancellationToken,
     /// Wakes the drive loop to re-check durable cancellation without waiting for
     /// the cross-process poll interval. Production CLI cancel still relies on the
@@ -36,8 +33,8 @@ impl WorkflowRunner {
         rho_home: PathBuf,
         workspace: PathBuf,
         security: RuntimeSecurity,
-        agents: Arc<dyn WorkflowNodeExecutor>,
-        commands: Arc<dyn WorkflowNodeExecutor>,
+        agents: Arc<dyn WorkflowNodeExecutor<super::prepared::AgentInvocation>>,
+        commands: Arc<dyn WorkflowNodeExecutor<super::prepared::CommandInvocation>>,
     ) -> Self {
         Self {
             rho_home,
@@ -111,8 +108,8 @@ impl WorkflowRunner {
         }
         for node in run.graph.program.root.nodes.values() {
             let resolved = run.graph.resolved_nodes.get(&node.id).ok_or_else(|| {
-                RuntimeError::LaunchMetadata {
-                    node: crate::workflow::TaskInstanceId::root(node.id.clone()),
+                RuntimeError::DefinitionLaunchMetadata {
+                    node: node.id.clone(),
                 }
             })?;
             match resolved {
@@ -176,85 +173,6 @@ fn validate_agent_access(
             capability: capability.clone(),
         });
     }
-    Ok(())
-}
-
-pub(super) fn recover_completed_transitions(
-    store: &WorkflowStore,
-    guard: &mut crate::workflow::RunMutationGuard,
-    run_directory: &std::path::Path,
-    run: &mut StoredRun,
-) -> Result<(), RuntimeError> {
-    let running = run
-        .state
-        .state
-        .tasks()
-        .filter_map(|(node, state)| match state {
-            NodeState::Running { attempt } => Some((node.clone(), *attempt)),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    for (node, attempt) in running {
-        let Some(completion) = super::journal::completed_attempt(run_directory, &node, attempt)?
-        else {
-            continue;
-        };
-        if let Some(output) = completion.structured_output.clone() {
-            let recorded = run.state.state.structured_output(&node, attempt).is_some();
-            if !recorded {
-                persist_state_event(
-                    store,
-                    guard,
-                    run_directory,
-                    &run.graph,
-                    &mut run.state,
-                    WorkflowEvent::StructuredOutput {
-                        node: node.clone(),
-                        attempt,
-                        output,
-                    },
-                )?;
-            }
-        }
-        persist_state_event(
-            store,
-            guard,
-            run_directory,
-            &run.graph,
-            &mut run.state,
-            WorkflowEvent::NodeFinished {
-                node,
-                completion: Box::new(completion),
-            },
-        )?;
-    }
-    Ok(())
-}
-
-pub(super) fn persist_state_event(
-    store: &WorkflowStore,
-    guard: &mut crate::workflow::RunMutationGuard,
-    run_directory: &std::path::Path,
-    graph: &crate::workflow::FrozenWorkflow,
-    record: &mut RunStateRecord,
-    event: WorkflowEvent,
-) -> Result<(), RuntimeError> {
-    let next = crate::workflow::apply_durable_event(graph, &record.state, &event, run_directory)?;
-    let sequence = record
-        .last_event_sequence
-        .checked_add(1)
-        .ok_or_else(|| RuntimeError::Data("workflow event sequence overflow".into()))?;
-    store.append_event(
-        guard,
-        &WorkflowEventRecord {
-            schema_version: EVENT_VERSION,
-            sequence,
-            event,
-        },
-    )?;
-    record.last_event_sequence = sequence;
-    record.state = next;
-    store.save_state(guard, record)?;
     Ok(())
 }
 

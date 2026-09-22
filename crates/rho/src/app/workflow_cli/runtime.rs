@@ -375,7 +375,8 @@ pub(crate) async fn spawn_background_run(
 
 struct WorkflowRuntime {
     runner: Arc<WorkflowRunner>,
-    command_executor: Arc<dyn WorkflowNodeExecutor>,
+    command_executor:
+        Arc<dyn WorkflowNodeExecutor<crate::app::workflow_runtime::CommandInvocation>>,
     hosts: Arc<WorkflowCommandHosts>,
     permission_mode: crate::permission::PermissionMode,
     custom_providers: std::sync::Arc<[String]>,
@@ -453,13 +454,15 @@ impl WorkflowRuntime {
             )
             .with_approval_session(approvals.session),
         });
-        let agent_executor: Arc<dyn WorkflowNodeExecutor> =
-            Arc::new(WorkflowAgentExecutor::new(app_agent_executor));
-        let command_executor: Arc<dyn WorkflowNodeExecutor> =
-            Arc::new(WorkflowCommandExecutor::new(
-                process_environment,
-                Arc::clone(&hosts) as Arc<dyn CommandHostFactory>,
-            ));
+        let agent_executor: Arc<
+            dyn WorkflowNodeExecutor<crate::app::workflow_runtime::AgentInvocation>,
+        > = Arc::new(WorkflowAgentExecutor::new(app_agent_executor));
+        let command_executor: Arc<
+            dyn WorkflowNodeExecutor<crate::app::workflow_runtime::CommandInvocation>,
+        > = Arc::new(WorkflowCommandExecutor::new(
+            process_environment,
+            Arc::clone(&hosts) as Arc<dyn CommandHostFactory>,
+        ));
         let security = RuntimeSecurity {
             project_trusted: crate::workspace::ProjectTrust::from_agents_env().is_trusted(),
             permission_mode,

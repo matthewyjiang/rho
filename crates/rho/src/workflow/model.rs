@@ -47,7 +47,36 @@ pub(crate) struct FrozenWorkflow {
 
 pub(crate) struct Leaf<'a> {
     pub(crate) node: &'a Node,
-    pub(crate) resolved: &'a ResolvedNode,
+    pub(crate) execution: LeafExecution<'a>,
+}
+
+/// A selected definition and its matching frozen authority. Kind mismatches are
+/// rejected at selection, so binding and execution need no impossible arms.
+pub(crate) enum LeafExecution<'a> {
+    Agent {
+        node: &'a AgentNode,
+        resolved: &'a ResolvedAgent,
+    },
+    Command {
+        node: &'a CommandNode,
+        resolved: &'a ResolvedCommand,
+    },
+}
+
+impl<'a> Leaf<'a> {
+    pub(crate) fn new(node: &'a Node, resolved: &'a ResolvedNode) -> Option<Self> {
+        let execution = match (&node.execution, resolved) {
+            (NodeExecution::Agent(node), ResolvedNode::Agent(resolved)) => {
+                LeafExecution::Agent { node, resolved }
+            }
+            (NodeExecution::Command(node), ResolvedNode::Command(resolved)) => {
+                LeafExecution::Command { node, resolved }
+            }
+            (NodeExecution::Agent(_), ResolvedNode::Command(_))
+            | (NodeExecution::Command(_), ResolvedNode::Agent(_)) => return None,
+        };
+        Some(Self { node, execution })
+    }
 }
 
 impl FrozenWorkflow {
@@ -57,14 +86,13 @@ impl FrozenWorkflow {
             ScopeInstanceId::ROOT => super::ScopeDefinitionId::Root,
             _ => return None,
         };
-        Some(Leaf {
-            node: self
-                .program
+        Leaf::new(
+            self.program
                 .scope(definition)
                 .nodes
                 .get(task.definition())?,
-            resolved: self.resolved_nodes.get(task.definition())?,
-        })
+            self.resolved_nodes.get(task.definition())?,
+        )
     }
 }
 

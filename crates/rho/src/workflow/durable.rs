@@ -380,7 +380,7 @@ fn validate_completion(
     }
 }
 
-pub(super) fn derive_snapshot(
+pub(crate) fn derive_snapshot(
     graph: &FrozenWorkflow,
     events: &[WorkflowEventRecord],
     through: u64,

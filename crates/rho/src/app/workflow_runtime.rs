@@ -13,6 +13,8 @@ mod cancellation;
 mod checkout_gate;
 #[path = "workflow_runtime/command.rs"]
 mod command;
+#[path = "workflow_runtime/diagnostics.rs"]
+mod diagnostics;
 #[path = "workflow_runtime/drive_session.rs"]
 mod drive_session;
 #[path = "workflow_runtime/journal.rs"]
@@ -35,6 +37,7 @@ pub(crate) use cancellation::{
 };
 pub(crate) use checkout_gate::CheckoutGate;
 pub(crate) use command::{CommandHostFactory, WorkflowCommandExecutor};
+pub(crate) use prepared::{AgentInvocation, CommandInvocation};
 pub(crate) use runner::{RecoveryDecision, WorkflowRunner};
 pub(crate) use types::{
     CleanupCause, NodeExecutionRequest, NodeExecutionResult, NodeProgressReporter,
@@ -45,3 +48,11 @@ pub(crate) use types::{
 #[cfg(test)]
 #[path = "workflow_runtime/workflow_runtime_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "workflow_runtime/workflow_runtime_test_support.rs"]
+mod test_support;
+
+#[cfg(test)]
+#[path = "workflow_runtime/workflow_runtime_recovery_tests.rs"]
+mod recovery_tests;

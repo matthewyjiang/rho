@@ -10,8 +10,8 @@ use super::event_adapter::{
     SourceDigestSummary, TerminalReason, WorkflowNodeSnapshot, WorkflowSnapshot,
 };
 use crate::workflow::{
-    CommandNode, Digest, NodeExecution, NodeState, NodeTerminalState, ResolvedNode, RunLifecycle,
-    StoredRun, TaskInstanceId, Template, TemplatePart, WorkflowState,
+    CommandNode, Digest, NodeExecution, NodeState, NodeTerminalState, RunLifecycle, StoredRun,
+    TaskInstanceId, Template, TemplatePart, WorkflowState,
 };
 
 /// Build a TUI snapshot from a fully loaded durable run.
@@ -28,14 +28,18 @@ pub(crate) fn from_stored_run(run: &StoredRun) -> WorkflowSnapshot {
                 NodeState::Running { attempt } => Some(attempt),
                 _ => None,
             };
-            let execution = match leaf.resolved {
-                ResolvedNode::Agent(agent) => ExecutionMetadata::Agent {
+            let execution = match leaf.execution {
+                crate::workflow::LeafExecution::Agent {
+                    resolved: agent, ..
+                } => ExecutionMetadata::Agent {
                     name: agent.agent_id.clone(),
                     runtime: agent.runtime,
                     provider: agent.provider.clone(),
                     model: agent.model.clone(),
                 },
-                ResolvedNode::Command(command) => ExecutionMetadata::Command {
+                crate::workflow::LeafExecution::Command {
+                    resolved: command, ..
+                } => ExecutionMetadata::Command {
                     executable: command.executable.clone(),
                     cwd: command.cwd.clone(),
                     shell: matches!(
