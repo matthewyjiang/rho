@@ -9,7 +9,6 @@ use super::{
     composer_chrome::wrap_footer_parts,
     feed_image::{reserve_entry_image_rows, reserve_markdown_image_rows},
     first_run::SetupState,
-    info_command::runtime_info_lines,
     message_render::{render_assistant_content, render_reasoning_content},
     rendered_entry::RenderedEntry,
     theme::Theme,
@@ -646,7 +645,6 @@ fn render_non_assistant_entry(
         Entry::Notice(text) => {
             push_wrapped_text(lines, text, width, Theme::dim_italic(), LineFill::Natural)
         }
-        Entry::RuntimeInfo(info) => lines.extend(runtime_info_lines(info, width)),
         Entry::Changelog(display) => lines.extend(changelog_lines(display, width)),
         Entry::Error(text) => {
             // Text marker keeps severity readable when color is flattened

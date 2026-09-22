@@ -99,6 +99,10 @@ impl App {
             );
             return Ok(());
         }
+        if matches!(self.input_ui.composer(), ComposerMode::Info(_)) {
+            self.handle_info_overlay_mouse(kind, screen, column, row, now);
+            return Ok(());
+        }
         // The side overlay owns pointer input while open. Do not let clicks,
         // drags or releases reach transcript controls hidden behind it.
         if matches!(self.input_ui.composer(), ComposerMode::Side) {

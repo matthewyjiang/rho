@@ -12,10 +12,10 @@ use super::{
         CostSource,
     },
     workspace::git_branch,
-    App, Entry,
+    App,
 };
 use crate::agent::AgentRuntime;
-use crate::claude_runtime::auth::{self, ClaudeProbeSnapshot};
+use crate::claude_runtime::auth;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BillingInfo {
@@ -70,6 +70,8 @@ pub(super) struct RuntimeInfo {
     model_metadata: Option<ModelMetadata>,
     tree: Option<crate::session::tree::SessionTreeFacts>,
     tree_error: Option<String>,
+    /// Session tree is read off the open path so a large file cannot delay the overlay.
+    tree_loading: bool,
     /// Auth summaries for runtimes outside provider credentials (Claude, Cursor).
     external_runtimes: Vec<String>,
     /// Cumulative cost from all completed subagents, including failed/canceled ones.
@@ -78,43 +80,54 @@ pub(super) struct RuntimeInfo {
     advisor_total_cost_usd_micros: u64,
 }
 
+impl RuntimeInfo {
+    pub(super) fn tree_loading(&self) -> bool {
+        self.tree_loading
+    }
+
+    #[cfg(test)]
+    pub(super) fn external_runtimes(&self) -> &[String] {
+        &self.external_runtimes
+    }
+
+    pub(super) fn set_external_runtimes(&mut self, lines: Vec<String>) {
+        self.external_runtimes = lines;
+    }
+
+    pub(super) fn set_tree(
+        &mut self,
+        tree: Option<crate::session::tree::SessionTreeFacts>,
+        error: Option<String>,
+    ) {
+        self.tree = tree;
+        self.tree_error = error;
+        self.tree_loading = false;
+    }
+
+    pub(super) fn begin_tree_load(&mut self) {
+        self.tree = None;
+        self.tree_error = None;
+        self.tree_loading = true;
+    }
+}
+
 impl App {
-    pub(super) async fn execute_info_command(&mut self) -> anyhow::Result<()> {
+    /// Open `/info` from in-memory state. External probes and the session tree
+    /// fill in afterwards; this must not await either.
+    pub(super) fn execute_info_command(&mut self) -> anyhow::Result<()> {
         let identity = self.info.services.diagnostics.identity();
-        let (tree, tree_error) = match self.info.session.session_id.as_deref() {
+        // A live turn may still be writing the tree. Read it only when idle.
+        let (tree_error, tree_loading) = match self.info.session.session_id.as_deref() {
             Some(_) if self.is_ui_busy() => (
-                None,
                 Some("tree facts are available after the current model turn".into()),
+                false,
             ),
-            Some(id) => match crate::session::Session::tree_facts_by_id(&self.info.runtime.cwd, id)
-            {
-                Ok(facts) => (Some(facts), None),
-                Err(error) => (None, Some(error.to_string())),
-            },
-            None => (None, None),
+            Some(_) => (None, true),
+            None => (None, false),
         };
-        // During a turn never block stream draining on a child probe.
-        let external_runtimes = if self.is_ui_busy() {
-            vec![
-                ClaudeProbeSnapshot::not_refreshed_during_turn().auth_description(),
-                format!(
-                    "{}: status not refreshed during a model turn",
-                    AgentRuntime::Cursor.as_str()
-                ),
-            ]
-        } else {
-            let (claude, cursor) = tokio::join!(
-                self.claude_probe_snapshot(),
-                crate::cursor_runtime::auth::query(),
-            );
-            vec![
-                claude.auth_description(),
-                match cursor {
-                    Ok(status) => status.auth_description(),
-                    Err(error) => error.to_string(),
-                },
-            ]
-        };
+        // Loading stays false until the turn ends so the unavailable note
+        // remains. The idle poll starts the read if the overlay is still open.
+        self.info_tree_deferred = tree_error.is_some();
         let info = RuntimeInfo {
             version: identity.rho_version.to_string(),
             provider: identity.provider.to_string(),
@@ -153,25 +166,41 @@ impl App {
             context_usage: self.usage.current_context.clone(),
             compaction: self.info.services.diagnostics.compaction(),
             model_metadata: self.model_metadata.clone(),
-            tree,
+            tree: None,
             tree_error,
-            external_runtimes,
+            tree_loading,
+            external_runtimes: checking_external_runtimes(),
             subagent_total_cost_usd_micros: self.usage.subagent_total_cost_usd_micros,
             advisor_total_cost_usd_micros: self.usage.advisor_total_cost_usd_micros,
         };
-        self.insert_entry(&Entry::RuntimeInfo(Box::new(info)));
-        self.set_status("runtime info");
+        self.show_info_overlay(info);
+        self.start_info_refresh();
         Ok(())
-    }
-
-    /// Live Claude probe for idle surfaces.
-    pub(super) async fn claude_probe_snapshot(&self) -> ClaudeProbeSnapshot {
-        auth::probe_snapshot().await
     }
 }
 
+/// Placeholder rows painted before Claude and Cursor probes return.
+pub(super) fn checking_external_runtimes() -> Vec<String> {
+    vec![
+        "claude code: checking…".into(),
+        format!("{}: checking…", AgentRuntime::Cursor.as_str()),
+    ]
+}
+
+pub(super) async fn load_external_runtimes() -> Vec<String> {
+    let (claude, cursor) =
+        tokio::join!(auth::probe_snapshot(), crate::cursor_runtime::auth::query(),);
+    vec![
+        claude.auth_description(),
+        match cursor {
+            Ok(status) => status.auth_description(),
+            Err(error) => error.to_string(),
+        },
+    ]
+}
+
 pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'static>> {
-    let mut block = CommandBlock::new(width);
+    let mut block = CommandBlock::on_surface(width);
     block.push_header("rho", &format!("v{}", info.version));
 
     block.push_section("Model");
@@ -188,7 +217,9 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
     }
 
     block.push_section("Session");
-    if let Some(tree) = &info.tree {
+    if info.tree_loading {
+        block.push_note("checking…");
+    } else if let Some(tree) = &info.tree {
         block.push_field(
             "Active leaf",
             tree.active_leaf_id
@@ -249,6 +280,25 @@ pub(super) fn runtime_info_lines(info: &RuntimeInfo, width: usize) -> Vec<Line<'
         info.branch.as_deref().unwrap_or("not in a Git worktree"),
     );
     block.finish()
+}
+
+/// Plain-text report for the clipboard. Wider than the panel so a pasted
+/// field stays one line instead of keeping the on-screen wrap.
+const INFO_COPY_WIDTH: usize = 200;
+
+pub(super) fn info_copy_text(info: &RuntimeInfo) -> String {
+    runtime_info_lines(info, INFO_COPY_WIDTH)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn push_usage_fields(block: &mut CommandBlock, info: &RuntimeInfo) {

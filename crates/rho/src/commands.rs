@@ -340,7 +340,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         id: CommandId::Info,
         name: "info",
         usage: "/info",
-        description: "show runtime, usage, and workspace details",
+        description: "show runtime, usage, and workspace details in an overlay",
         argument_choices: &[],
     },
     CommandSpec {

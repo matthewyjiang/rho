@@ -701,6 +701,10 @@ fn signed_out_session_offers_login_from_header_statusline_and_prompt() {
     assert_pass("signed_out_setup_state");
 }
 
+// Covers: /info must open a single-pane overlay, copy with c and a drag,
+// keep a narrow field readable, and Esc must dismiss it instead of leaving
+// a transcript block.
+// Owner: interactive TUI
 #[test]
 fn runtime_info_reflows_after_narrow_resize() {
     assert_pass("runtime_info");

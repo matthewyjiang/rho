@@ -110,6 +110,9 @@ impl App {
         if self.handle_hooks_overlay_key(key, terminal) {
             return Ok(false);
         }
+        if self.handle_info_overlay_key(key, terminal) {
+            return Ok(false);
+        }
         if self.handle_side_chat_key(key, terminal) {
             return Ok(false);
         }
@@ -389,7 +392,7 @@ impl App {
             CommandId::Exit => self.execute_exit_command(),
             CommandId::Theme => self.open_theme_picker(),
             CommandId::Config => self.execute_config_command(terminal),
-            CommandId::Info => self.execute_info_command().await,
+            CommandId::Info => self.execute_info_command(),
             CommandId::Help => self.execute_help_command(),
             CommandId::Skills => self.execute_skills_command(),
             CommandId::Agents => self.execute_agents_command(),

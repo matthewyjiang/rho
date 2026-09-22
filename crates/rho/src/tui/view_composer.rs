@@ -61,6 +61,7 @@ impl App {
             | ComposerMode::Doctor(_)
             | ComposerMode::Computer(_)
             | ComposerMode::Hooks(_)
+            | ComposerMode::Info(_)
             | ComposerMode::Side
             | ComposerMode::Questionnaire(_)
             | ComposerMode::Approval(_)
@@ -207,6 +208,7 @@ impl App {
             | ComposerMode::Doctor(_)
             | ComposerMode::Computer(_)
             | ComposerMode::Hooks(_)
+            | ComposerMode::Info(_)
             | ComposerMode::Side => ComposerFrame::new(Vec::new(), Position { x: 0, y: 0 }),
         }
     }

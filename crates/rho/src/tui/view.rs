@@ -477,6 +477,23 @@ impl App {
                 );
                 overlay.cursor
             }),
+            ComposerMode::Info(_) => self.info_overlay_frame(area).map(|overlay| {
+                frame.render_widget(Clear, overlay.outer);
+                let body = overlay.body();
+                let scroll = overlay.scroll();
+                frame.render_widget(
+                    Paragraph::new(overlay.lines).style(Theme::surface()),
+                    overlay.outer,
+                );
+                if let Some(selection) = self.info_text_selection() {
+                    highlight_selection(frame.buffer_mut(), body, scroll, selection);
+                }
+                // The notice is painted with the composer, under this panel.
+                if let Some(notice) = self.history.copy_notice() {
+                    render_copy_notice(frame, area, notice, now);
+                }
+                overlay.cursor
+            }),
             ComposerMode::Side => self.side_overlay_frame(area).map(|overlay| {
                 frame.render_widget(Clear, overlay.outer);
                 frame.render_widget(

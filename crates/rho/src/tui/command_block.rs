@@ -26,6 +26,16 @@ impl CommandBlock {
         }
     }
 
+    /// Same layout as [`Self::new`], without the transcript card background.
+    /// Overlay panels paint their own surface, so a block fill would cover it.
+    pub(super) fn on_surface(width: usize) -> Self {
+        Self {
+            lines: Vec::new(),
+            style: Theme::text(),
+            width,
+        }
+    }
+
     pub(super) fn push_header(&mut self, title: &str, detail: &str) {
         if self.width == 0 {
             self.lines.push(Line::from(Span::styled("", self.style)));

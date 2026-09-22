@@ -45,6 +45,14 @@ pub(super) struct OverlayPanelFrame {
 }
 
 impl OverlayPanelFrame {
+    pub(super) fn body(&self) -> Rect {
+        self.body
+    }
+
+    pub(super) fn scroll(&self) -> usize {
+        self.scroll
+    }
+
     pub(super) fn copy_text_at(&self, column: u16, row: u16) -> Option<&str> {
         self.copy_hits
             .iter()
