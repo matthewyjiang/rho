@@ -20,6 +20,8 @@ use super::auth::{self, ClaudeAuthError};
 use super::rate_limit::RateLimitState;
 #[cfg(any(unix, test))]
 use super::usage_parse::{named_window_keys, parse_usage_screen};
+#[cfg(any(unix, test))]
+use super::window_kind::WindowKind;
 #[cfg(unix)]
 use super::{executable, rate_limit};
 use crate::usage_limits::UsageFailure;
@@ -113,6 +115,9 @@ pub(crate) enum UsageProbeError {
     #[error("claude code: /usage panel was not readable")]
     #[cfg(any(unix, test))]
     Unparseable,
+    #[error("claude code: /usage panel is taller than the probe terminal: {screen}")]
+    #[cfg(any(unix, test))]
+    PanelClipped { screen: String },
     #[error("claude code: auth preflight failed: {0}")]
     Auth(#[from] ClaudeAuthError),
 }
@@ -132,7 +137,9 @@ impl UsageProbeError {
             #[cfg(unix)]
             Self::NotSignedIn | Self::Cancelled | Self::Exited { .. } => UsageFailure::Other,
             #[cfg(any(unix, test))]
-            Self::TimeoutScreen { .. } | Self::Unparseable => UsageFailure::Other,
+            Self::TimeoutScreen { .. } | Self::Unparseable | Self::PanelClipped { .. } => {
+                UsageFailure::Other
+            }
         }
     }
 }
@@ -303,6 +310,9 @@ enum UsageScreen {
     Refreshing,
     /// The panel names a window that has no percentage yet.
     Incomplete,
+    /// Week windows parsed but the "Current session" header is missing: the
+    /// panel outgrew the PTY and scrolled its top off the viewport.
+    Clipped,
     Ready(RateLimitState),
 }
 
@@ -314,6 +324,7 @@ fn usage_screen_kind(screen: &UsageScreen) -> &'static str {
         UsageScreen::Failed(UsageFailure::Other) => "Failed(Other)",
         UsageScreen::Refreshing => "Refreshing",
         UsageScreen::Incomplete => "Incomplete",
+        UsageScreen::Clipped => "Clipped",
         UsageScreen::Ready(_) => "Ready",
     }
 }
@@ -337,9 +348,21 @@ fn classify_usage_screen(screen: &str, now_unix: i64) -> UsageScreen {
     // Never retain an earlier parse: equal-count refreshes replace
     // percentages and may remove windows as well as add them.
     match parse_usage_screen(screen, now_unix) {
-        Some(state) if !waiting_on_named_windows(screen, Some(&state)) => UsageScreen::Ready(state),
-        _ => UsageScreen::Incomplete,
+        Some(state) if waiting_on_named_windows(screen, Some(&state)) => UsageScreen::Incomplete,
+        // Every plan's panel leads with "Current session". Accepting a read
+        // without it would silently leave a stale 5-hour window in the cache.
+        Some(state) if !has_window(&state, WindowKind::FiveHour) => UsageScreen::Clipped,
+        Some(state) => UsageScreen::Ready(state),
+        None => UsageScreen::Incomplete,
     }
+}
+
+#[cfg(any(unix, test))]
+fn has_window(state: &RateLimitState, kind: WindowKind) -> bool {
+    state
+        .windows
+        .iter()
+        .any(|window| window.info.window_key() == kind.key())
 }
 
 #[cfg(any(unix, test))]
