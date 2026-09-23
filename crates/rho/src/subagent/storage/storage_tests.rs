@@ -12,8 +12,8 @@ use super::{
     index::{
         initialize_index, insert_parent_lock_for_test, unix_timestamp_secs, PARENT_LOCK_TTL_SECS,
     },
-    is_trusted_directory, list_workspace_runs_in_root, lock_parent_for_cleanup_in_root,
-    reserve_run_directory_in_root as reserve_at, resolve_run_directory_in_root, RunPlacement,
+    is_trusted_directory, list_workspace_runs_in_root, reserve_run_directory_in_root as reserve_at,
+    resolve_run_directory_in_root, RunIndexCleanup, RunPlacement,
 };
 use crate::session::Session;
 use std::path::{Path, PathBuf};
@@ -234,11 +234,12 @@ fn parent_cleanup_lock_blocks_reservations_for_that_parent() {
     let (release_tx, release_rx) = mpsc::channel();
     let cleanup_root = subagents_root.clone();
     let cleanup = thread::spawn(move || {
-        let guard = lock_parent_for_cleanup_in_root(&cleanup_root, "session-id")?;
+        let index = RunIndexCleanup::open(&cleanup_root)?;
+        let guard = index.lock_parent("session-id")?;
         entered_tx.send(()).unwrap();
         release_rx.recv().unwrap();
         fs::remove_dir_all(session_dir)?;
-        guard.clear_index_and_unlock()
+        guard.clear_index()
     });
     entered_rx.recv().unwrap();
 
@@ -275,7 +276,8 @@ fn parent_cleanup_lock_does_not_block_unrelated_parents() {
     let rho_root = temp.path();
     let subagents_root = rho_root.join("subagents");
     let other_subagents = create_session_subagents(rho_root);
-    let _guard = lock_parent_for_cleanup_in_root(&subagents_root, "deleting-session").unwrap();
+    let index = RunIndexCleanup::open(&subagents_root).unwrap();
+    let _guard = index.lock_parent("deleting-session").unwrap();
 
     let (_, directory) = reserve_in_default_workspace(
         rho_root,
@@ -318,19 +320,24 @@ fn stale_parent_lock_can_be_stolen_for_cleanup() {
     let stale_at = unix_timestamp_secs() - PARENT_LOCK_TTL_SECS - 1;
     insert_parent_lock_for_test(&subagents_root, "session-id", stale_at).unwrap();
 
-    let guard = lock_parent_for_cleanup_in_root(&subagents_root, "session-id").unwrap();
-    guard.clear_index_and_unlock().unwrap();
+    let index = RunIndexCleanup::open(&subagents_root).unwrap();
+    let guard = index.lock_parent("session-id").unwrap();
+    guard.clear_index().unwrap();
+    drop(guard);
 
     // A fresh lock should succeed after the stolen cleanup finished.
-    let _guard = lock_parent_for_cleanup_in_root(&subagents_root, "session-id").unwrap();
+    let _guard = index.lock_parent("session-id").unwrap();
 }
 
 #[test]
 fn fresh_parent_lock_rejects_second_cleanup() {
     let temp = TempDir::new().unwrap();
     let subagents_root = temp.path().join("subagents");
-    let _guard = lock_parent_for_cleanup_in_root(&subagents_root, "session-id").unwrap();
-    let error = lock_parent_for_cleanup_in_root(&subagents_root, "session-id").unwrap_err();
+    let index = RunIndexCleanup::open(&subagents_root).unwrap();
+    let _guard = index.lock_parent("session-id").unwrap();
+    // A second handle stands in for another Rho process.
+    let other = RunIndexCleanup::open(&subagents_root).unwrap();
+    let error = other.lock_parent("session-id").unwrap_err();
     assert!(
         error.to_string().contains("already being deleted"),
         "{error}"
@@ -380,7 +387,8 @@ fn failed_cleanup_releases_parent_lock() {
     let subagents_dir = create_session_subagents(temp.path());
 
     {
-        let _guard = lock_parent_for_cleanup_in_root(&subagents_root, "session-id").unwrap();
+        let index = RunIndexCleanup::open(&subagents_root).unwrap();
+        let _guard = index.lock_parent("session-id").unwrap();
     }
 
     let (_, directory) = reserve_in_default_workspace(

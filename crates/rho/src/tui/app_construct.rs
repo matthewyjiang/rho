@@ -149,6 +149,7 @@ impl App {
             pending_auto_classifier_demote: false,
             agent_editor_session: None,
             sessions_hub_state: super::sessions_hub::SessionsHubState::default(),
+            pending_sessions_task: None,
             pending_session_title: None,
             session_title_locked: false,
             clipboard: Box::new(SystemClipboard::default()),

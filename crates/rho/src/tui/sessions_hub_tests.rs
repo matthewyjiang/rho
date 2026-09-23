@@ -2,7 +2,9 @@ use std::path::{Path, PathBuf};
 
 use pretty_assertions::assert_eq;
 
-use super::{directory_picker, hub_picker, DirectoryGroup, HubGroup, SessionsHubTarget};
+use super::{
+    directory_picker, hub_picker, ComposerMode, DirectoryGroup, HubGroup, SessionsHubTarget,
+};
 use crate::session::{SessionSummary, SessionTarget};
 use crate::tui::sessions_hub_groups::Worktree;
 
@@ -138,4 +140,31 @@ fn hub_picker_collapses_sibling_worktrees() {
             (Some("/repo"), "wt-b · 1"),
         ]
     );
+}
+
+// Covers: a listing that lands after the user left the loading hub (Esc, then
+// typing or a prompt) must not pop the hub open over the composer.
+// Owner: sessions hub loading state
+#[tokio::test]
+async fn late_listing_only_fills_a_hub_still_waiting_for_it() {
+    let groups = || {
+        Ok(vec![HubGroup::Directory(group(
+            "/work/current",
+            "~/current",
+            vec![summary("a-session", "/work/current", 100)],
+        ))])
+    };
+    let mut app = super::super::tests::test_app();
+
+    app.execute_sessions_command();
+    app.handle_picker_escape(/*running*/ false).unwrap();
+    app.fill_sessions_hub(groups());
+    assert!(matches!(app.input_ui.composer(), ComposerMode::Input));
+
+    app.execute_sessions_command();
+    app.fill_sessions_hub(groups());
+    let ComposerMode::Picker(picker) = app.input_ui.composer() else {
+        panic!("waiting hub should show the listing");
+    };
+    assert_eq!(picker.items.len(), 2);
 }

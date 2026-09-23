@@ -14,8 +14,8 @@ use crate::agent::{AgentRuntime, ReasoningLevel};
 
 mod storage;
 pub(crate) use storage::{
-    is_trusted_directory, list_workspace_runs, lock_parent_for_cleanup, release_run_directory,
-    reserve_run_directory, resolve_run_directory, RunPlacement, RunningRun,
+    is_trusted_directory, list_workspace_runs, release_run_directory, reserve_run_directory,
+    resolve_run_directory, RunIndexCleanup, RunPlacement, RunningRun,
 };
 
 pub const RESULT_FILE_NAME: &str = "result.json";

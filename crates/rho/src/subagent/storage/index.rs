@@ -231,32 +231,23 @@ pub(super) fn ensure_parent_not_locked(
     }
 }
 
+/// Drop run rows for one parent. The cleanup lease stays held.
 pub(super) fn clear_parent_index_rows(
-    subagents_root: &Path,
+    connection: &Connection,
     parent_session_id: &str,
 ) -> anyhow::Result<()> {
-    let index_path = subagents_root.join(INDEX_FILE_NAME);
-    let mut connection = initialize_index(&index_path)?;
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    transaction.execute(
+    connection.execute(
         "DELETE FROM runs WHERE parent_session_id = ?1",
         params![parent_session_id],
     )?;
-    transaction.execute(
-        "DELETE FROM parent_locks WHERE parent_session_id = ?1",
-        params![parent_session_id],
-    )?;
-    transaction.commit()?;
     Ok(())
 }
 
-pub(super) fn unlock_parent(subagents_root: &Path, parent_session_id: &str) -> anyhow::Result<()> {
-    let index_path = subagents_root.join(INDEX_FILE_NAME);
-    if !index_path.is_file() {
-        return Ok(());
-    }
-    let mut connection = initialize_index(&index_path)?;
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+pub(super) fn unlock_parent(
+    connection: &Connection,
+    parent_session_id: &str,
+) -> anyhow::Result<()> {
+    let transaction = Transaction::new_unchecked(connection, TransactionBehavior::Immediate)?;
     transaction.execute(
         "DELETE FROM parent_locks WHERE parent_session_id = ?1",
         params![parent_session_id],

@@ -18,8 +18,10 @@ const QUIET: Step = Step::WaitQuiet {
     timeout: SETTLE,
 };
 
-/// Seed one valid foreign transcript and one transcript misplaced under the
-/// launch workspace. The scenario proves only the valid owner is discoverable.
+/// Seed one valid foreign transcript, one transcript misplaced under the
+/// launch workspace, and one whose workspace directory is gone. The scenario
+/// proves only the valid owner is discoverable and that cleanup removes the
+/// orphan.
 pub(super) fn setup_sessions_hub(home: &IsolatedHome) -> Result<()> {
     let foreign_cwd = home.path().join("foreign-workspace");
     fs::create_dir_all(&foreign_cwd).context("create foreign session workspace")?;
@@ -38,6 +40,15 @@ pub(super) fn setup_sessions_hub(home: &IsolatedHome) -> Result<()> {
         &foreign_cwd,
         "22222222-0000-4000-8000-000000000002",
         "misplaced foreign workspace target",
+    )?;
+
+    let deleted_cwd = home.path().join("deleted-workspace");
+    write_seed_session(
+        home,
+        &deleted_cwd,
+        &deleted_cwd,
+        "33333333-0000-4000-8000-000000000003",
+        "orphaned workspace target",
     )?;
     Ok(())
 }
@@ -88,7 +99,9 @@ fn workspace_key(cwd: &Path) -> String {
 
 /// Reject direct and hub-based resume of a foreign session, then browse and
 /// resume a local session. Exercise directory-wide delete by cancelling,
-/// confirming, and verifying the current session survives.
+/// confirming, and verifying the current session survives. Finally, clean up
+/// the session whose directory is gone; the delete runs in the background and
+/// the hub refreshes without its cleanup row.
 pub(super) const SESSIONS_HUB_STEPS: &[Step] = &[
     Step::Phase("create_saved_session"),
     Step::WaitText {
@@ -129,6 +142,8 @@ pub(super) const SESSIONS_HUB_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Phase("reject_cross_directory_resume"),
+    // The cleanup row for the missing directory leads the list.
+    Step::Key(Key::Down),
     Step::Key(Key::Down),
     Step::Key(Key::Down),
     Step::Key(Key::Enter),
@@ -180,6 +195,8 @@ pub(super) const SESSIONS_HUB_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Phase("cancel_directory_delete"),
+    // Past the leading cleanup row to this directory's "All sessions".
+    Step::Key(Key::Down),
     Step::Key(Key::Char('d')),
     Step::WaitText {
         text: "Delete all sessions in",
@@ -207,6 +224,22 @@ pub(super) const SESSIONS_HUB_STEPS: &[Step] = &[
     Step::Key(Key::Char('d')),
     Step::WaitText {
         text: "cannot delete the current session",
+        timeout: SETTLE,
+    },
+    Step::Phase("clean_up_missing_directories"),
+    Step::Key(Key::Home),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "Delete sessions for missing directories?",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "cleaned up 1 session",
+        timeout: SETTLE,
+    },
+    Step::WaitTextGone {
+        text: "MISSING DIRECTORIES",
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),

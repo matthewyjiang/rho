@@ -88,7 +88,10 @@ impl App {
                     .await
             }
             CommandId::Rewind => self.execute_rewind_command(invocation, agent),
-            CommandId::Sessions => self.execute_sessions_command(terminal),
+            CommandId::Sessions => {
+                self.execute_sessions_command();
+                Ok(())
+            }
             CommandId::Tree => self.execute_tree_command(agent),
             CommandId::Config => self.execute_config_command(terminal),
             CommandId::Permissions => self.execute_permissions_command(invocation, agent).await,

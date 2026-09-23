@@ -2,9 +2,9 @@ use ratatui::DefaultTerminal;
 
 use super::{
     session_picker, App, CommandInvocation, ComposerMode, Entry, InlineChoice, InlineChoiceOption,
-    InlineChoicePending, InteractiveRuntime, Session, UiPicker,
+    InlineChoicePending, InteractiveRuntime, Session,
 };
-use crate::session::{is_cross_project, DeleteOptions, SessionHistories, SessionTarget};
+use crate::session::{is_cross_project, SessionHistories, SessionSummary, SessionTarget};
 
 impl App {
     pub(super) async fn execute_resume_command(
@@ -33,7 +33,15 @@ impl App {
             ));
             return Ok(());
         }
-        match Session::list(&self.info.runtime.cwd) {
+        self.show_resume_picker(Session::list(&self.info.runtime.cwd))
+    }
+
+    /// Open the resume picker for a listing of this workspace's sessions.
+    pub(super) fn show_resume_picker(
+        &mut self,
+        sessions: anyhow::Result<Vec<SessionSummary>>,
+    ) -> anyhow::Result<()> {
+        match sessions {
             Ok(sessions) if sessions.is_empty() => {
                 self.input_ui.set_composer(ComposerMode::Input);
                 self.set_status("no saved sessions for this workspace");
@@ -71,6 +79,9 @@ impl App {
     }
 
     pub(super) fn prompt_delete_session(&mut self, target: SessionTarget) -> anyhow::Result<()> {
+        if self.refuse_while_sessions_delete_runs() {
+            return Ok(());
+        }
         let short = session_picker::short_session_id(&target.id);
         let choice = InlineChoice::new(
             format!("Delete session {short}?"),
@@ -96,75 +107,6 @@ impl App {
             InlineChoicePending::DeleteSession { target },
             "confirm delete",
         )
-    }
-
-    pub(super) fn submit_delete_session_choice(
-        &mut self,
-        value: &str,
-        target: &SessionTarget,
-        parent: Option<Box<UiPicker>>,
-    ) -> anyhow::Result<()> {
-        if value != "delete" {
-            self.restore_session_choice_parent(parent);
-            return Ok(());
-        }
-
-        let short = session_picker::short_session_id(&target.id);
-        match Session::delete_target(
-            target,
-            DeleteOptions {
-                force: false,
-                protected_session: self.current_session_target(),
-            },
-        ) {
-            Ok(outcome) => {
-                let mut notice = format!("deleted session {short}");
-                if outcome.deleted_run_count > 0 {
-                    notice.push_str(&format!(
-                        " and {} related run{}",
-                        outcome.deleted_run_count,
-                        if outcome.deleted_run_count == 1 {
-                            ""
-                        } else {
-                            "s"
-                        }
-                    ));
-                }
-                self.refresh_picker_after_session_delete(parent.as_deref())?;
-                self.set_status(notice);
-            }
-            Err(err) => {
-                self.insert_entry(&Entry::Error(format!("could not delete session: {err}")));
-                self.refresh_picker_after_session_delete(parent.as_deref())?;
-                self.set_status("delete failed");
-            }
-        }
-        Ok(())
-    }
-
-    fn refresh_picker_after_session_delete(
-        &mut self,
-        previous: Option<&UiPicker>,
-    ) -> anyhow::Result<()> {
-        match previous {
-            Some(picker) if picker.is_resume_session() => {
-                let cursor = Some(picker.cursor());
-                self.open_resume_picker()?;
-                if let (Some(cursor), ComposerMode::Picker(open)) =
-                    (cursor.as_ref(), self.input_ui.composer_mut())
-                {
-                    open.restore_cursor(cursor);
-                }
-                Ok(())
-            }
-            Some(picker) if picker.is_manage_sessions() => {
-                self.refresh_sessions_location(Some(picker))
-            }
-            _ => {
-                self.input_ui.set_composer(ComposerMode::Input);
-                Ok(())
-            }
-        }
     }
 
     fn selected_resume_session_id(&self) -> Option<String> {

@@ -1,5 +1,6 @@
 use ratatui::DefaultTerminal;
 
+use super::sessions_hub_tasks::SessionsDelete;
 use super::{App, ComposerMode, InlineChoiceKeyOutcome, InlineChoicePending, InteractiveRuntime};
 
 impl App {
@@ -60,22 +61,25 @@ impl App {
                         self.submit_claude_code_logout_choice(modal.choice).await?;
                     }
                     InlineChoicePending::DeleteSession { target } => {
-                        self.submit_delete_session_choice(&value, &target, modal.parent_picker)?;
+                        self.submit_sessions_delete_choice(
+                            &value,
+                            SessionsDelete::One(target),
+                            modal.parent_picker,
+                        );
                     }
                     InlineChoicePending::DeleteDirectorySessions { cwd, targets } => {
-                        self.submit_delete_directory_sessions_choice(
+                        self.submit_sessions_delete_choice(
                             &value,
-                            &cwd,
-                            &targets,
+                            SessionsDelete::Directory { cwd, targets },
                             modal.parent_picker,
-                        )?;
+                        );
                     }
                     InlineChoicePending::CleanupMissingSessionDirectories { targets } => {
-                        self.submit_cleanup_missing_session_directories_choice(
+                        self.submit_sessions_delete_choice(
                             &value,
-                            &targets,
+                            SessionsDelete::CleanupMissing(targets),
                             modal.parent_picker,
-                        )?;
+                        );
                     }
                     InlineChoicePending::DeleteWorkflowPlan { plan_id } => {
                         self.submit_delete_workflow_plan_choice(&value, &plan_id)?;

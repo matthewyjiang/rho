@@ -149,7 +149,8 @@ pub(super) fn reconcile_all_workspaces(session_root: &Path) -> anyhow::Result<()
     reconcile_sessions(session_root, ReconcileScope::All)
 }
 
-type IndexKey = (String, String);
+/// `(workspace_key, id)`: one index row.
+pub(super) type IndexKey = (String, String);
 
 enum ReconcileScope {
     Workspace { workspace_key: String, dir: PathBuf },
@@ -905,20 +906,24 @@ fn apply_reconciliation_transaction(
     Ok(())
 }
 
-/// Drops the index row for a session after its on-disk unit is gone.
-pub(super) fn remove_session(
-    session_root: &Path,
-    workspace_key: &str,
-    id: &str,
-) -> anyhow::Result<()> {
+/// Drops index rows for sessions whose on-disk units are gone, in one commit.
+pub(super) fn remove_sessions(session_root: &Path, sessions: &[IndexKey]) -> anyhow::Result<()> {
+    if sessions.is_empty() {
+        return Ok(());
+    }
     let connection = open_index(session_root)?;
-    let connection = connection
+    let mut connection = connection
         .lock()
         .expect("session index connection poisoned");
-    connection.execute(
-        "delete from sessions where workspace_key = ?1 and id = ?2",
-        params![workspace_key, id],
-    )?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    {
+        let mut statement =
+            transaction.prepare("delete from sessions where workspace_key = ?1 and id = ?2")?;
+        for (workspace_key, id) in sessions {
+            statement.execute(params![workspace_key, id])?;
+        }
+    }
+    transaction.commit()?;
     Ok(())
 }
 

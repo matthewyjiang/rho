@@ -8,7 +8,7 @@ use std::{
 
 #[cfg(test)]
 use crate::subagent::RunStatus;
-use crate::subagent::{self, RunState, RESULT_FILE_NAME};
+use crate::subagent::{self, RunIndexCleanup, RunState, RESULT_FILE_NAME};
 
 use super::{
     acquire_delete_session_lease, index,
@@ -113,6 +113,7 @@ pub(super) fn cleanup_missing_targets_in_roots(
     targets: &[SessionTarget],
     options: &DeleteOptions,
 ) -> anyhow::Result<CleanupOutcome> {
+    let mut batch = BatchDelete::open(session_root, subagents_root, options)?;
     let mut outcome = CleanupOutcome::default();
     for target in targets {
         // Confirmation and deletion are separate operations. Re-check only the
@@ -133,7 +134,7 @@ pub(super) fn cleanup_missing_targets_in_roots(
                 continue;
             }
         }
-        match delete_target_in_roots(session_root, subagents_root, target, options) {
+        match batch.delete_target(target) {
             Ok(deleted) => outcome.deleted.push(deleted),
             Err(error) => outcome.failures.push(CleanupFailure {
                 id: target.id.clone(),
@@ -142,8 +143,10 @@ pub(super) fn cleanup_missing_targets_in_roots(
             }),
         }
     }
+    batch.finish();
     Ok(outcome)
 }
+
 pub(super) fn workspace_directory_is_missing(cwd: &Path) -> anyhow::Result<bool> {
     match fs::metadata(cwd) {
         Ok(metadata) => Ok(!metadata.is_dir()),
@@ -164,7 +167,10 @@ pub(super) fn delete_in_roots(
     options: &DeleteOptions,
 ) -> anyhow::Result<DeleteOutcome> {
     let resolved = SessionStore::new(session_root, cwd).resolve(id_prefix)?;
-    delete_resolved(session_root, subagents_root, resolved, options)
+    let mut batch = BatchDelete::open(session_root, subagents_root, options)?;
+    let outcome = batch.delete_resolved(resolved)?;
+    batch.finish();
+    Ok(outcome)
 }
 
 pub(super) fn delete_target_in_roots(
@@ -173,8 +179,10 @@ pub(super) fn delete_target_in_roots(
     target: &SessionTarget,
     options: &DeleteOptions,
 ) -> anyhow::Result<DeleteOutcome> {
-    let resolved = SessionStore::new(session_root, &target.cwd).resolve_in_workspace(&target.id)?;
-    delete_resolved(session_root, subagents_root, resolved, options)
+    let mut batch = BatchDelete::open(session_root, subagents_root, options)?;
+    let outcome = batch.delete_target(target)?;
+    batch.finish();
+    Ok(outcome)
 }
 
 pub(super) fn delete_targets_in_roots(
@@ -183,13 +191,14 @@ pub(super) fn delete_targets_in_roots(
     targets: &[SessionTarget],
     options: &DeleteOptions,
 ) -> anyhow::Result<WorkspaceDeleteOutcome> {
+    let mut batch = BatchDelete::open(session_root, subagents_root, options)?;
     let mut outcome = WorkspaceDeleteOutcome::default();
     for target in targets {
         if options.protected_session.as_ref() == Some(target) {
             outcome.kept_protected.push(target.clone());
             continue;
         }
-        match delete_target_in_roots(session_root, subagents_root, target, options) {
+        match batch.delete_target(target) {
             Ok(deleted) => outcome.deleted.push(deleted),
             Err(error) => outcome.failures.push(CleanupFailure {
                 id: target.id.clone(),
@@ -198,99 +207,147 @@ pub(super) fn delete_targets_in_roots(
             }),
         }
     }
+    batch.finish();
     Ok(outcome)
 }
 
-fn delete_resolved(
-    session_root: &Path,
-    subagents_root: &Path,
-    resolved: ResolvedSession,
-    options: &DeleteOptions,
-) -> anyhow::Result<DeleteOutcome> {
-    if options
-        .protected_session
-        .as_ref()
-        .is_some_and(|protected| protected.id == resolved.id && protected.cwd == resolved.cwd)
-    {
-        anyhow::bail!(
-            "refusing to delete the current session '{}'; start a new session or resume another first",
-            short_id(&resolved.id)
-        );
+/// One delete pass over any number of sessions.
+///
+/// Index bookkeeping, not file removal, dominated bulk cleanup: each session
+/// reopened the WAL run index three times (each close checkpoints and syncs)
+/// and made its own session-index commit, about 18ms per session and 10s for
+/// 523 sessions. The batch keeps one run-index handle open and drops
+/// session-index rows in one transaction in [`Self::finish`]. Deferring those
+/// rows is safe: every reader either reconciles first or skips rows whose
+/// transcript is gone, and reconciliation drops rows `finish` never reached.
+struct BatchDelete<'a> {
+    session_root: &'a Path,
+    subagents_root: &'a Path,
+    runs: RunIndexCleanup,
+    options: &'a DeleteOptions,
+    /// Index rows of sessions removed from disk.
+    removed: Vec<index::IndexKey>,
+}
+
+impl<'a> BatchDelete<'a> {
+    fn open(
+        session_root: &'a Path,
+        subagents_root: &'a Path,
+        options: &'a DeleteOptions,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            session_root,
+            subagents_root,
+            runs: RunIndexCleanup::open(subagents_root)?,
+            options,
+            removed: Vec::new(),
+        })
     }
 
-    let unit = SessionUnit::from_path(&resolved.path).ok_or_else(|| {
-        anyhow::anyhow!(
-            "session '{}' has an unrecognized on-disk layout at {}",
-            resolved.id,
-            resolved.path.display()
-        )
-    })?;
+    fn delete_target(&mut self, target: &SessionTarget) -> anyhow::Result<DeleteOutcome> {
+        let resolved =
+            SessionStore::new(self.session_root, &target.cwd).resolve_in_workspace(&target.id)?;
+        self.delete_resolved(resolved)
+    }
 
-    let _session_lease = acquire_delete_session_lease(session_root, &resolved.cwd, &resolved.id)?;
-    let parent_session_id = resolved.id.clone();
-    let cleanup_guard = subagent::lock_parent_for_cleanup(subagents_root, &parent_session_id)?;
-
-    let mut linked = find_nested_runs(&unit)?;
-    linked.extend(find_parent_linked_runs(subagents_root, &resolved.id)?);
-    linked.sort_by(|left, right| {
-        left.id
-            .cmp(&right.id)
-            .then_with(|| left.dir.cmp(&right.dir))
-    });
-
-    let mut forced_run_ids = Vec::new();
-    for run in &linked {
-        if run.state.is_some_and(RunState::is_terminal) {
-            continue;
-        }
-        if !options.force {
-            let crash_hint = if matches!(run.state, Some(RunState::Running | RunState::Starting)) {
-                " (use --force only for stale runs left after a crash)"
-            } else {
-                ""
-            };
-            let state = run.state.map(RunState::as_str).unwrap_or("unknown");
+    fn delete_resolved(&mut self, resolved: ResolvedSession) -> anyhow::Result<DeleteOutcome> {
+        let options = self.options;
+        if options
+            .protected_session
+            .as_ref()
+            .is_some_and(|protected| protected.id == resolved.id && protected.cwd == resolved.cwd)
+        {
             anyhow::bail!(
-                "refusing to delete session '{}': related run {} is still {state}{crash_hint}; wait for it to finish or pass --force",
-                short_id(&resolved.id),
-                run.id,
+                "refusing to delete the current session '{}'; start a new session or resume another first",
+                short_id(&resolved.id)
             );
         }
-        forced_run_ids.push(run.id.clone());
-    }
 
-    // Finish every fallible side cleanup while the transcript still exists, so
-    // any error leaves an exact target that the caller can retry.
-    for run in linked
-        .iter()
-        .filter(|run| run.cleanup == RunCleanup::Explicit)
-    {
-        match fs::remove_dir_all(&run.dir) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(anyhow::anyhow!(
-                    "could not remove related run {} before deleting session '{}': {error}",
+        let unit = SessionUnit::from_path(&resolved.path).ok_or_else(|| {
+            anyhow::anyhow!(
+                "session '{}' has an unrecognized on-disk layout at {}",
+                resolved.id,
+                resolved.path.display()
+            )
+        })?;
+
+        let _session_lease =
+            acquire_delete_session_lease(self.session_root, &resolved.cwd, &resolved.id)?;
+        let cleanup_guard = self.runs.lock_parent(&resolved.id)?;
+
+        let mut linked = find_nested_runs(&unit)?;
+        linked.extend(find_parent_linked_runs(self.subagents_root, &resolved.id)?);
+        linked.sort_by(|left, right| {
+            left.id
+                .cmp(&right.id)
+                .then_with(|| left.dir.cmp(&right.dir))
+        });
+
+        let mut forced_run_ids = Vec::new();
+        for run in &linked {
+            if run.state.is_some_and(RunState::is_terminal) {
+                continue;
+            }
+            if !options.force {
+                let crash_hint =
+                    if matches!(run.state, Some(RunState::Running | RunState::Starting)) {
+                        " (use --force only for stale runs left after a crash)"
+                    } else {
+                        ""
+                    };
+                let state = run.state.map(RunState::as_str).unwrap_or("unknown");
+                anyhow::bail!(
+                    "refusing to delete session '{}': related run {} is still {state}{crash_hint}; wait for it to finish or pass --force",
+                    short_id(&resolved.id),
                     run.id,
-                    resolved.id
-                ));
+                );
+            }
+            forced_run_ids.push(run.id.clone());
+        }
+
+        // Finish every fallible side cleanup while the transcript still exists,
+        // so any error leaves an exact target that the caller can retry.
+        for run in linked
+            .iter()
+            .filter(|run| run.cleanup == RunCleanup::Explicit)
+        {
+            match fs::remove_dir_all(&run.dir) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(anyhow::anyhow!(
+                        "could not remove related run {} before deleting session '{}': {error}",
+                        run.id,
+                        resolved.id
+                    ));
+                }
             }
         }
+        cleanup_guard.clear_index()?;
+        unit.delete_from_disk()?;
+        drop(cleanup_guard);
+        self.removed
+            .push((workspace_key(&resolved.cwd), resolved.id.clone()));
+
+        Ok(DeleteOutcome {
+            deleted_run_count: linked.len(),
+            id: resolved.id,
+            cwd: resolved.cwd,
+            path: resolved.path,
+            forced_run_ids,
+        })
     }
-    cleanup_guard.clear_index()?;
-    index::remove_session(session_root, &workspace_key(&resolved.cwd), &resolved.id)?;
-    unit.delete_from_disk()?;
-    drop(cleanup_guard);
 
-    let deleted_run_count = linked.len();
-
-    Ok(DeleteOutcome {
-        id: resolved.id,
-        cwd: resolved.cwd,
-        path: resolved.path,
-        deleted_run_count,
-        forced_run_ids,
-    })
+    /// Drop index rows for every deleted session in one commit.
+    ///
+    /// Best effort: the sessions are already gone from disk, and a leftover
+    /// row is ignored by readers and dropped by the next reconcile, so an
+    /// index failure must not report a finished delete as failed.
+    fn finish(self) {
+        if let Err(error) = index::remove_sessions(self.session_root, &self.removed) {
+            tracing::warn!(%error, "could not drop deleted sessions from the session index");
+        }
+    }
 }
 
 fn find_nested_runs(unit: &SessionUnit) -> anyhow::Result<Vec<LinkedRun>> {
