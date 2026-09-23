@@ -15,7 +15,7 @@ fn runtime_event_json_matches_wire_shape() {
     let run_id = "00000000-0000-4000-8000-000000000001"
         .parse::<RunId>()
         .unwrap();
-    let node = NodeId::new("build").unwrap();
+    let node = crate::workflow::TaskInstanceId::root(NodeId::new("build").unwrap());
     let attempt = AttemptNumber::new(2).unwrap();
 
     assert_eq!(
@@ -120,7 +120,7 @@ fn runtime_event_json_matches_wire_shape() {
 // Owner: workflow CLI runtime event presentation.
 #[test]
 fn runtime_event_message_is_canonical() {
-    let node = NodeId::new("build").unwrap();
+    let node = crate::workflow::TaskInstanceId::root(NodeId::new("build").unwrap());
     let attempt = AttemptNumber::new(2).unwrap();
     assert_eq!(
         RuntimeEvent::StateChanged { revision: 3 }.message(),
@@ -156,7 +156,10 @@ fn runtime_event_message_is_canonical() {
     );
     assert_eq!(
         RuntimeEvent::NeedsRecovery {
-            nodes: vec![node, NodeId::new("test").unwrap()]
+            nodes: vec![
+                node,
+                crate::workflow::TaskInstanceId::root(NodeId::new("test").unwrap())
+            ]
         }
         .message(),
         "workflow needs recovery: build, test"

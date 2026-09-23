@@ -121,7 +121,7 @@ def run_worker(rho: Path, request: dict[str, Any], home: Path) -> tuple[dict, di
     payload = compact_json(request)
     frame = len(payload).to_bytes(8, "big") + payload
     env = os.environ.copy()
-    env.update({"RHO_HOME": str(home), "RHO_WORKFLOW_PLANNER_WORKER": token})
+    env.update({"HOME": str(home), "RHO_HOME": str(home), "RHO_WORKFLOW_PLANNER_WORKER": token})
     started = time.monotonic_ns()
     process = subprocess.Popen(
         [str(rho), "__workflow_planner_worker"],
@@ -162,7 +162,7 @@ def run_public_validation(
     process = subprocess.Popen(
         [str(rho), "workflow", "validate", str(case.entry.relative_to(corpus_root))],
         cwd=corpus_root,
-        env={**os.environ, "RHO_HOME": str(home)},
+        env={**os.environ, "HOME": str(home), "RHO_HOME": str(home)},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -252,8 +252,8 @@ def template_bytes(template: list[dict[str, Any]], nodes: dict[str, Any]) -> int
 
 
 def plan_measurements(plan: dict[str, Any]) -> dict[str, int]:
-    graph = plan["graph"]
-    nodes = graph["nodes"]
+    program = plan["program"]
+    nodes = program["root"]["nodes"]
     schemas = []
     conditions = []
     retained_total = 0
@@ -294,7 +294,7 @@ def plan_measurements(plan: dict[str, Any]) -> dict[str, int]:
                 + len(execution["command"].encode())
                 + sum(len(argument.encode()) for argument in execution["arguments"]),
             )
-    strings, lists, dictionaries = collection_maxima({"graph": graph, "inputs": plan["inputs"]})
+    strings, lists, dictionaries = collection_maxima({"program": program, "inputs": plan["inputs"]})
     return {
         "evaluator_ticks": plan["evaluator_ticks"],
         "evaluator_heap_bytes": plan["evaluator_peak_heap_bytes"],
@@ -308,7 +308,7 @@ def plan_measurements(plan: dict[str, Any]) -> dict[str, int]:
         "condition_depth": max(map(condition_depth, conditions), default=0),
         "schema_depth": max(map(schema_depth, schemas), default=0),
         "schema_bytes": max((len(compact_json(schema)) for schema in schemas), default=0),
-        "graph_bytes": len(compact_json(graph)),
+        "graph_bytes": len(compact_json(program)),
         "retained_output_per_stream_bytes": output_max,
         "retained_output_total_bytes": retained_total,
         "rendered_template_bytes": rendered_max,
@@ -358,7 +358,10 @@ def measure_corpus(rho: Path, *, public_validation: bool) -> tuple[dict, dict, d
             }
             home = workspace / f"home-{case.name}"
             home.mkdir()
-            plan, process = run_worker(rho, request, home)
+            try:
+                plan, process = run_worker(rho, request, home)
+            except SystemExit as error:
+                raise SystemExit(f"case {case.name}: {error}") from error
             measured = plan_measurements(plan)
             measured.update(
                 {
@@ -548,7 +551,6 @@ def main() -> None:
     measured, process, cases = measure_corpus(
         args.rho.resolve(), public_validation=not args.skip_public_validation
     )
-    compare_measurements(receipt, measured, process)
     if args.json_output:
         args.json_output.write_text(
             json.dumps(
@@ -558,6 +560,7 @@ def main() -> None:
             )
             + "\n"
         )
+    compare_measurements(receipt, measured, process)
     print("workflow limit receipt verified against the generated acceptance corpus")
 
 

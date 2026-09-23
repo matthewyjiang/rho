@@ -2,8 +2,19 @@
 
 Rho workflows run a fixed directed acyclic graph of agent and command nodes.
 You write the graph in Starlark. Rho evaluates the source and explicit inputs
-only when you validate or plan. A plan stores a normalized frozen graph. Run and
-resume use that graph and do not evaluate Starlark or reload agent definitions.
+only when you validate or plan. A plan stores a normalized frozen program with
+one root scope containing typed parameters and the node graph. Run and resume
+use that program and do not evaluate Starlark or reload agent definitions.
+
+The current runtime executes only a static root scope, identified as `s0`.
+Root task instances keep their source names, such as `review`, in events,
+status, hooks, and artifact paths. The root closes with a typed result
+containing its outcome and named exports. Runtime map and iterate controllers
+and dynamic expansion are not supported.
+
+Plans and runs saved by earlier releases remain listed and readable with
+`status`, but they are read-only. Run, resume, and cancel reject them. Replan
+from source to run the workflow again.
 
 Use a workflow when a task needs fixed steps, parallel work, typed conditions,
 durable status, or manual resume. Use `rho run` for one model task that does not
@@ -35,7 +46,7 @@ stateDiagram
    instead of leaving scripts loose under `.rho/workflows/`. Local agents live
    in `<workflow_dir>/agents/*.md`.
 2. Validate the source and inputs.
-3. Create a frozen plan and inspect its graph digest and authority list.
+3. Create a frozen plan and inspect its program digest and authority list.
 4. Confirm that exact digest and start a run by plan ID.
 5. Read status and artifact references by run ID.
 6. Cancel or resume the same frozen run when needed.
@@ -161,8 +172,8 @@ protect the argument. The inner quotes are JSON syntax, so
 ### Plan
 
 `plan` performs validation, resolves agents and command executables, normalizes
-the graph, and stores an immutable plan. Its output includes the plan ID, full
-authority list, source digests, inputs, scheduler limits, and graph digest.
+the program, and stores an immutable plan. Its output includes the plan ID, full
+authority list, source digests, inputs, scheduler limits, and program digest.
 
 ```bash
 rho workflow plan .rho/workflows/review.star \
@@ -175,7 +186,7 @@ Keep the returned plan ID. A run accepts a plan ID, not a source path.
 
 `run` checks the stored plan, source digests, current workspace identity,
 current trust, and current security policy. It does not evaluate Starlark. It
-copies the frozen graph into the run store so later plan removal cannot break
+copies the frozen program into the run store so later plan removal cannot break
 resume.
 
 ```bash
@@ -184,7 +195,7 @@ rho workflow run 018f... --yes --output jsonl
 ```
 
 Rho asks for confirmation when a terminal can answer. Non-interactive use must
-pass `--yes`. Consent applies only to the exact graph digest and new run. It is
+pass `--yes`. Consent applies only to the exact program digest and new run. It is
 not capability approval.
 
 ### Status
@@ -225,7 +236,7 @@ states that have a safe transition when an owner next opens the run.
 
 ### Resume
 
-`resume` accepts only a run ID. It uses the graph copied into the run store. It
+`resume` accepts only a run ID. It uses the program copied into the run store. It
 does not accept a new source or new inputs, reload modules or agents, or rerun
 successful nodes.
 

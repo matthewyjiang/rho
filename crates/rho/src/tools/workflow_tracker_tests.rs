@@ -100,7 +100,7 @@ fn start_and_notification_prompts_include_run_identity() {
     let (model, display) = notification_prompts(&[WorkflowNotification {
         run_id: "abc-123".into(),
         workflow_name: "thermo".into(),
-        graph_digest: "sha256:deadbeef".into(),
+        program_digest: "sha256:deadbeef".into(),
         finished: WorkflowFinishedSnapshot {
             lifecycle: "completed".into(),
             outcome: Some("success".into()),

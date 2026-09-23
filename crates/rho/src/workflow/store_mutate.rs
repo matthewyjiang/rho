@@ -7,14 +7,14 @@ use std::path::Path;
 
 use fs2::FileExt;
 
-use super::{delete_child_directory, read_json, run_relative, WorkflowStore};
-use crate::workflow::{PlanId, RunId, RunManifest, WorkflowError, WorkflowResult};
+use super::{delete_child_directory, run_relative, WorkflowStore};
+use crate::workflow::{PlanId, RunId, WorkflowError, WorkflowResult};
 
 impl WorkflowStore {
     /// Deletes one plan directory. Runs keep their copied graph, so resume still works.
     pub(crate) fn delete_plan(&self, id: PlanId) -> WorkflowResult<()> {
         // Confirm the plan directory is a real store entry before removal.
-        let _ = self.read_plan_manifest(id)?;
+        let _ = self.read_plan_inventory(id)?;
         delete_child_directory(&self.layout.plans(), &self.layout.plan(id))
     }
 
@@ -22,10 +22,10 @@ impl WorkflowStore {
     ///
     /// Holds the exclusive writer lock across a rename of the run ID path so
     /// another process cannot `lock_run` and drive the tree while it is removed.
-    /// Live (`Running` / `Cancelling`) runs are refused under that lock.
+    /// Live (`Running` / `Cancelling`) runs are refused under that lock, except
+    /// read-only legacy runs: nothing can cancel or resume them, so a free lock
+    /// means no owner remains.
     pub(crate) fn delete_run(&self, id: RunId) -> WorkflowResult<()> {
-        // Confirm the run directory is a real store entry before removal.
-        let _: RunManifest = read_json(&self.root, &run_relative(id, Path::new("manifest.json")))?;
         let lock = self
             .root
             .open_private_file(&run_relative(id, Path::new("mutation.lock")), true)?;
@@ -35,17 +35,14 @@ impl WorkflowStore {
                 reason: format!("run already has an active writer: {error}"),
             })?;
 
-        // Re-check lifecycle under the lock. Ops may have checked earlier, but
-        // a concurrent owner could have advanced state before we took the lock.
-        let lifecycle = self.read_run_lifecycle(id)?;
-        if lifecycle.is_live() {
+        // The store owns the live-run deletion policy; check it under the lock.
+        let run = self.read_run_inventory(id)?;
+        // NEXT_MAJOR(rho-coding-agent): drop the legacy exemption with version 1 run support.
+        if run.lifecycle.is_live() && run.access == super::RecordAccess::Executable {
             let _ = lock.unlock();
-            return Err(WorkflowError::Corrupt {
-                path: self.layout.run(id),
-                reason: format!(
-                    "run is still {}, stop it before deleting",
-                    format!("{lifecycle:?}").to_ascii_lowercase()
-                ),
+            return Err(WorkflowError::LiveRun {
+                id,
+                lifecycle: run.lifecycle,
             });
         }
 

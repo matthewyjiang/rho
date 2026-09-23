@@ -3,6 +3,8 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 
+use pretty_assertions::assert_eq;
+
 use super::*;
 use crate::workflow::{
     test_support::limits, Condition, Digest, ExitCodePredicate, NodeId, ObjectFieldSchema,
@@ -26,10 +28,63 @@ fn collected(source: &str) -> CollectedSources {
     }
 }
 
+// Covers: source exports must lower to typed references, not arbitrary schema dictionaries.
+// Owner: Starlark compiler boundary.
+#[test]
+fn compiles_typed_exports_and_rejects_invalid_bindings() {
+    use crate::workflow::{OutputPath, OutputReference};
+
+    for (exports, valid) in [
+        (r#"{"report title": output("report", ["field"])}"#, true),
+        (r#"{"": output("report", ["field"])}"#, false),
+        (r#"{"report": output("missing", [])}"#, false),
+        (
+            r#"{"report": output("report", ["field", "deeper"])}"#,
+            false,
+        ),
+        (r#"{"report": output("untyped", [])}"#, false),
+        (r#"{"report": schema.string()}"#, false),
+        (
+            r#"{"report": {"__rho_type": "output_ref", "node": "report", "path": [], "extra": True}}"#,
+            false,
+        ),
+    ] {
+        let source = format!(
+            r#"
+def build(inputs):
+    return workflow(name = "exports", nodes = [
+        agent(name = "report", agent = "reviewer", prompt = "review", access = "read_only", timeout_seconds = 5, max_output_bytes = 4096, output = schema.record({{"field": schema.string()}})),
+        agent(name = "untyped", agent = "reviewer", prompt = "review", access = "read_only", timeout_seconds = 5, max_output_bytes = 4096),
+    ], exports = {exports})
+WORKFLOW = define(inputs = {{}}, build = build)
+"#
+        );
+        let limits = limits();
+        let result = StarlarkPlanner::new(&limits).plan_in_process_prototype(
+            &collected(&source),
+            &BTreeMap::new(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert_eq!(result.is_ok(), valid, "{exports}: {result:?}");
+        if let Ok(planned) = result {
+            assert_eq!(
+                planned.program.root.exports,
+                BTreeMap::from([(
+                    "report title".to_owned().try_into().unwrap(),
+                    OutputReference {
+                        node: NodeId::new("report").unwrap(),
+                        path: OutputPath(vec!["field".to_owned()]),
+                    },
+                )])
+            );
+        }
+    }
+}
+
 // Covers: planning could call build more than once or retain interpreter values.
 // Owner: Starlark planning frontend.
 #[test]
-fn validates_inputs_and_builds_one_owned_graph() {
+fn validates_inputs_and_lowers_one_owned_root_scope() {
     let source = r#"
 calls = []
 def build(inputs):
@@ -57,16 +112,47 @@ WORKFLOW = define(inputs = {"target": input.string(default = ".")}, build = buil
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
-    assert_eq!(planned.graph.name, WorkflowName::new("review").unwrap());
-    assert_eq!(planned.graph.nodes.len(), 1);
+    assert_eq!(planned.program.name, WorkflowName::new("review").unwrap());
+    assert_eq!(planned.program.root.nodes.len(), 1);
+    assert_eq!(
+        planned.program.root.parameters,
+        BTreeMap::from([(
+            InputName::new("target").unwrap(),
+            InputSchema::String {
+                default: Some(".".to_owned())
+            },
+        )])
+    );
     assert!(planned
-        .graph
+        .program
+        .root
         .nodes
         .contains_key(&NodeId::new("inspect_1").unwrap()));
     assert_eq!(
         planned.inputs[&InputName::new("target").unwrap()],
         WorkflowValue::String(".".to_owned())
     );
+}
+
+// Covers: unimplemented control-flow and scope declarations must not silently
+// compile into a different, static program.
+// Owner: Starlark compiler boundary.
+#[test]
+fn rejects_unsupported_program_shapes() {
+    for built in [
+        r#"{"__rho_type": "workflow", "name": "x", "nodes": [], "unexpected": {}}"#,
+        r#"{"__rho_type": "workflow", "name": "x", "nodes": [{"__rho_type": "map"}]}"#,
+        r#"{"__rho_type": "workflow", "name": "x", "nodes": [{"__rho_type": "iterate"}]}"#,
+    ] {
+        let source = format!("WORKFLOW = define(inputs = {{}}, build = lambda inputs: {built})");
+        let limits = limits();
+        let result = StarlarkPlanner::new(&limits).plan_in_process_prototype(
+            &collected(&source),
+            &BTreeMap::new(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert!(matches!(result, Err(WorkflowError::Starlark(_))));
+    }
 }
 
 // Covers: cancellation must stop evaluator work rather than only its caller.
@@ -138,10 +224,11 @@ WORKFLOW = define(inputs = {}, build = build)
         .unwrap();
 
     assert!(planned
-        .graph
+        .program
+        .root
         .nodes
         .contains_key(&NodeId::new("check").unwrap()));
-    let review = &planned.graph.nodes[&NodeId::new("review").unwrap()];
+    let review = &planned.program.root.nodes[&NodeId::new("review").unwrap()];
     assert!(matches!(
         review.condition.as_ref(),
         Some(Condition::All { conditions })
@@ -214,7 +301,7 @@ WORKFLOW = define(inputs = {}, build = build)
         )
         .unwrap();
     assert!(matches!(
-        planned.graph.nodes[&NodeId::new("review").unwrap()]
+        planned.program.root.nodes[&NodeId::new("review").unwrap()]
             .condition
             .as_ref(),
         Some(Condition::CommandExit {

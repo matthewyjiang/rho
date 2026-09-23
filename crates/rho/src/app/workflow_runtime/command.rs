@@ -1,21 +1,18 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
-use rho_sdk::{
-    ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits, ToolHost,
-    ToolHostCall,
-};
+use rho_sdk::{ProcessEnvironment, ProcessExecution, ProcessOutputLimits, ToolHost, ToolHostCall};
 
 use crate::{
     tools::process::{ExactProcessExit, WorkflowCommandTool},
     workflow::{
-        ArtifactObservation, AttemptArtifacts, CommandExit, CommandNode, CommandOutcome,
-        NodeExecution, NodeTerminalState, ResolvedNode, Template, TemplatePart, ValidatedOutputRef,
-        WorkflowValue,
+        ArtifactObservation, AttemptArtifacts, CommandExit, CommandOutcome, NodeTerminalState,
+        ValidatedOutputRef, WorkflowValue,
     },
 };
 
 use super::{
     artifacts::{write_artifact, write_artifact_with_observation, write_json},
+    prepared::CommandInvocation,
     NodeExecutionRequest, NodeExecutionResult, RuntimeError, WorkflowExecutionFuture,
     WorkflowNodeExecutor,
 };
@@ -41,8 +38,11 @@ impl WorkflowCommandExecutor {
     }
 }
 
-impl WorkflowNodeExecutor for WorkflowCommandExecutor {
-    fn execute<'a>(&'a self, request: NodeExecutionRequest) -> WorkflowExecutionFuture<'a> {
+impl WorkflowNodeExecutor<CommandInvocation> for WorkflowCommandExecutor {
+    fn execute<'a>(
+        &'a self,
+        request: NodeExecutionRequest<CommandInvocation>,
+    ) -> WorkflowExecutionFuture<'a> {
         Box::pin(async move { self.execute_command(request).await })
     }
 }
@@ -50,17 +50,13 @@ impl WorkflowNodeExecutor for WorkflowCommandExecutor {
 impl WorkflowCommandExecutor {
     async fn execute_command(
         &self,
-        request: NodeExecutionRequest,
+        request: NodeExecutionRequest<CommandInvocation>,
     ) -> Result<NodeExecutionResult, RuntimeError> {
-        let node = &request.workflow.graph.nodes[&request.node];
-        let NodeExecution::Command(command) = &node.execution else {
-            return Err(RuntimeError::LaunchMetadata { node: request.node });
-        };
-        let Some(ResolvedNode::Command(resolved)) =
-            request.workflow.resolved_nodes.get(&request.node)
-        else {
-            return Err(RuntimeError::LaunchMetadata { node: request.node });
-        };
+        let prepared = &request.invocation;
+        let CommandInvocation {
+            resolved,
+            invocation,
+        } = &prepared.execution;
         if !resolved.exact_path {
             return Err(RuntimeError::Data(format!(
                 "node '{}' executable was not frozen as an exact path",
@@ -82,16 +78,10 @@ impl WorkflowCommandExecutor {
                 request.node
             )));
         }
-        let invocation = invocation(
-            command,
-            &executable,
-            &request.outputs,
-            &request.workflow.runtime_limits,
-        )?;
         if let Some(progress) = &request.progress {
-            progress.message(command_progress_message(command, &executable, &invocation));
+            progress.message(command_progress_message(&executable, invocation));
         }
-        let max_output_bytes = usize::try_from(node.max_output_bytes).map_err(|_| {
+        let max_output_bytes = usize::try_from(prepared.max_output_bytes).map_err(|_| {
             RuntimeError::Data(format!(
                 "node '{}' output limit does not fit this platform",
                 request.node
@@ -99,11 +89,11 @@ impl WorkflowCommandExecutor {
         })?;
         let execution = ProcessExecution::new(
             cwd,
-            invocation,
+            invocation.clone(),
             self.environment.clone(),
             ProcessOutputLimits::new(
                 max_output_bytes,
-                Some(Duration::from_secs(node.timeout_seconds)),
+                Some(Duration::from_secs(prepared.timeout_seconds)),
             ),
         );
         let tool = WorkflowCommandTool::new(
@@ -113,7 +103,7 @@ impl WorkflowCommandExecutor {
         );
         let labels = rho_sdk::hooks::HookHostLabels::new()
             .label("workflow_run_id", request.run_id.to_string())
-            .label("plan_digest", request.workflow.graph_digest.0.clone())
+            .label("plan_digest", request.plan_digest.0.clone())
             .label("node_id", request.node.to_string())
             .label("attempt", request.attempt.to_string());
         let host = self.hosts.create(tool.clone(), labels)?;
@@ -140,11 +130,7 @@ impl WorkflowCommandExecutor {
                 ));
             }
         };
-        let run_directory = request
-            .attempt_directory
-            .ancestors()
-            .nth(4)
-            .ok_or_else(|| RuntimeError::UnsafeArtifact(request.attempt_directory.clone()))?;
+        let run_directory = &request.run_directory;
         let stdout = write_artifact_with_observation(
             run_directory,
             &request.attempt_directory.join("stdout"),
@@ -169,7 +155,7 @@ impl WorkflowCommandExecutor {
         let mut structured_output = None;
         let mut outcome = process_outcome(&exit, output.cleanup_incomplete);
         let successful_schema = (outcome == NodeTerminalState::Success)
-            .then_some(command.output())
+            .then_some(prepared.output.as_ref())
             .flatten();
         if let Some(schema) = successful_schema {
             if output.stdout_truncated {
@@ -193,7 +179,12 @@ impl WorkflowCommandExecutor {
                             value: parsed.clone(),
                         });
                     }
-                    Err(_) => outcome = NodeTerminalState::Failure,
+                    Err(error) => {
+                        if let Some(progress) = &request.progress {
+                            progress.message(error.to_string());
+                        }
+                        outcome = NodeTerminalState::Failure;
+                    }
                 }
             }
         }
@@ -252,143 +243,6 @@ fn stream_observation(
     }
 }
 
-fn invocation(
-    command: &CommandNode,
-    executable: &Path,
-    outputs: &std::collections::BTreeMap<crate::workflow::NodeId, WorkflowValue>,
-    limits: &crate::workflow::FrozenRuntimeLimits,
-) -> Result<ProcessInvocation, RuntimeError> {
-    let invocation = match command {
-        CommandNode::Direct { arguments, .. } => {
-            let arguments = arguments
-                .iter()
-                .map(|argument| render_template(argument, outputs, limits))
-                .collect::<Result<Vec<_>, _>>()?;
-            let argv_bytes = arguments.iter().try_fold(
-                executable.as_os_str().as_encoded_bytes().len() as u64,
-                |total, argument| {
-                    total.checked_add(argument.len() as u64).ok_or({
-                        RuntimeError::Workflow(crate::workflow::WorkflowError::BudgetExceeded {
-                            budget: "argv expansion bytes",
-                            limit: limits.argv_expansion_bytes,
-                            actual: u64::MAX,
-                        })
-                    })
-                },
-            )?;
-            check_runtime_limit(
-                "argv expansion bytes",
-                limits.argv_expansion_bytes,
-                argv_bytes,
-            )?;
-            ProcessInvocation::executable(executable, arguments)
-        }
-        CommandNode::Shell {
-            arguments, command, ..
-        } => ProcessInvocation::shell(executable, arguments.clone(), command),
-    };
-    Ok(invocation)
-}
-
-fn command_progress_message(
-    command: &CommandNode,
-    executable: &Path,
-    invocation: &ProcessInvocation,
-) -> String {
-    match command {
-        CommandNode::Shell { command, .. } => {
-            let shell = executable
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("shell");
-            format!("running {shell}: {command}")
-        }
-        CommandNode::Direct { .. } => {
-            let exe = executable
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("command");
-            let args = invocation.arguments();
-            if args.is_empty() {
-                format!("running {exe}")
-            } else {
-                let joined = args.join(" ");
-                let summary = if joined.chars().count() > 140 {
-                    let mut out = joined.chars().take(139).collect::<String>();
-                    out.push('…');
-                    out
-                } else {
-                    joined
-                };
-                format!("running {exe} {summary}")
-            }
-        }
-    }
-}
-
-pub(super) fn render_template(
-    template: &Template,
-    outputs: &std::collections::BTreeMap<crate::workflow::NodeId, WorkflowValue>,
-    limits: &crate::workflow::FrozenRuntimeLimits,
-) -> Result<String, RuntimeError> {
-    let mut rendered = String::new();
-    for part in &template.0 {
-        match part {
-            TemplatePart::Literal { value } => {
-                append_bounded(&mut rendered, value, limits.rendered_template_bytes)?
-            }
-            TemplatePart::Output { reference } => {
-                let value = outputs
-                    .get(&reference.node)
-                    .and_then(|value| value.at_path(&reference.path.0))
-                    .ok_or_else(|| {
-                        RuntimeError::Data(format!(
-                            "required output '{}.{}' is unavailable",
-                            reference.node,
-                            reference.path.0.join(".")
-                        ))
-                    })?;
-                append_bounded(
-                    &mut rendered,
-                    &value.to_string(),
-                    limits.rendered_template_bytes,
-                )?;
-            }
-        }
-    }
-    Ok(rendered)
-}
-
-fn append_bounded(output: &mut String, value: &str, limit: u64) -> Result<(), RuntimeError> {
-    let requested = output
-        .len()
-        .checked_add(value.len())
-        .map(|value| value as u64)
-        .unwrap_or(u64::MAX);
-    check_runtime_limit("rendered template bytes", limit, requested)?;
-    output
-        .try_reserve(value.len())
-        .map_err(|error| RuntimeError::Executor(format!("template allocation failed: {error}")))?;
-    output.push_str(value);
-    Ok(())
-}
-
-pub(super) fn check_runtime_limit(
-    budget: &'static str,
-    limit: u64,
-    actual: u64,
-) -> Result<(), RuntimeError> {
-    if actual > limit {
-        return Err(crate::workflow::WorkflowError::BudgetExceeded {
-            budget,
-            limit,
-            actual,
-        }
-        .into());
-    }
-    Ok(())
-}
-
 fn map_exit(exit: ExactProcessExit) -> CommandExit {
     match exit {
         ExactProcessExit::Code(code) => CommandExit::Code { code },
@@ -431,6 +285,32 @@ fn map_host_error(error: rho_sdk::Error) -> RuntimeError {
             RuntimeError::Cancelled
         }
         error => RuntimeError::Executor(error.to_string()),
+    }
+}
+
+fn command_progress_message(executable: &Path, invocation: &rho_sdk::ProcessInvocation) -> String {
+    match invocation.shell_command() {
+        Some(command) => {
+            let shell = executable
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("shell");
+            format!("running {shell}: {command}")
+        }
+        None => {
+            let exe = executable
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("command");
+            let args = invocation.arguments();
+            if args.is_empty() {
+                format!("running {exe}")
+            } else {
+                // Preserve the existing compact activity-preview width.
+                let summary = super::agent::truncate_chars(&args.join(" "), 140);
+                format!("running {exe} {summary}")
+            }
+        }
     }
 }
 

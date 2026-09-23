@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use super::{hub_picker, test_source};
-use crate::workflow::{RunId, RunInventoryItem, RunLifecycle, WorkflowOutcome};
+use crate::workflow::{RecordAccess, RunId, RunInventoryItem, RunLifecycle, WorkflowOutcome};
 use pretty_assertions::assert_eq;
 
 // Covers: a discovered source is startable from the hub (action identity, not chrome copy).
@@ -33,6 +33,7 @@ fn hub_picker_marks_empty_start_when_no_sources() {
 fn finished_run(id: &str, created_at_unix_nanos: u64) -> RunInventoryItem {
     RunInventoryItem {
         run_id: RunId::from_str(id).unwrap(),
+        access: RecordAccess::Executable,
         created_at_unix_nanos,
         workspace_identity: "workspace".into(),
         name: "review".into(),

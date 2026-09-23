@@ -3,10 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize};
 
 use super::{
-    AttemptNumber, InputName, NodeCompletion, NodeId, OutputSchema, WorkflowName, WorkflowValue,
+    AttemptNumber, InputName, NodeId, OutputSchema, ScopeInstanceId, ScopeResult, TaskInstanceId,
+    WorkflowValue,
 };
 
-pub(crate) const FROZEN_WORKFLOW_SCHEMA_VERSION: u32 = 2;
+pub(crate) const FROZEN_WORKFLOW_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -35,22 +36,68 @@ pub(crate) struct SourceFile {
 pub(crate) struct FrozenWorkflow {
     pub(crate) schema_version: u32,
     pub(crate) planner: PlannerIdentity,
-    pub(crate) graph_digest: Digest,
+    pub(crate) program_digest: Digest,
     pub(crate) sources: SourceManifest,
     pub(crate) inputs: BTreeMap<InputName, WorkflowValue>,
-    pub(crate) graph: WorkflowGraph,
+    pub(crate) program: super::WorkflowProgram,
     pub(crate) resolved_nodes: BTreeMap<NodeId, ResolvedNode>,
     pub(crate) scheduler: FrozenSchedulerSettings,
     pub(crate) runtime_limits: super::FrozenRuntimeLimits,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct WorkflowGraph {
-    pub(crate) name: WorkflowName,
-    pub(crate) nodes: BTreeMap<NodeId, Node>,
+pub(crate) struct Leaf<'a> {
+    pub(crate) node: &'a Node,
+    pub(crate) execution: LeafExecution<'a>,
+}
+
+/// A selected definition and its matching frozen authority. Kind mismatches are
+/// rejected at selection, so binding and execution need no impossible arms.
+pub(crate) enum LeafExecution<'a> {
+    Agent {
+        node: &'a AgentNode,
+        resolved: &'a ResolvedAgent,
+    },
+    Command {
+        node: &'a CommandNode,
+        resolved: &'a ResolvedCommand,
+    },
+}
+
+impl<'a> Leaf<'a> {
+    pub(crate) fn new(node: &'a Node, resolved: &'a ResolvedNode) -> Option<Self> {
+        let execution = match (&node.execution, resolved) {
+            (NodeExecution::Agent(node), ResolvedNode::Agent(resolved)) => {
+                LeafExecution::Agent { node, resolved }
+            }
+            (NodeExecution::Command(node), ResolvedNode::Command(resolved)) => {
+                LeafExecution::Command { node, resolved }
+            }
+            (NodeExecution::Agent(_), ResolvedNode::Command(_))
+            | (NodeExecution::Command(_), ResolvedNode::Agent(_)) => return None,
+        };
+        Some(Self { node, execution })
+    }
+}
+
+impl FrozenWorkflow {
+    /// Resolve both halves of a frozen leaf; only root instances execute today.
+    pub(crate) fn leaf(&self, task: &TaskInstanceId) -> Option<Leaf<'_>> {
+        let definition = match task.scope() {
+            ScopeInstanceId::ROOT => super::ScopeDefinitionId::Root,
+            _ => return None,
+        };
+        Leaf::new(
+            self.program
+                .scope(definition)
+                .nodes
+                .get(task.definition())?,
+            self.resolved_nodes.get(task.definition())?,
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct Node {
     pub(crate) id: NodeId,
     pub(crate) display_name: String,
@@ -70,7 +117,7 @@ impl Node {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum NodeExecution {
     Agent(AgentNode),
     Command(CommandNode),
@@ -136,6 +183,7 @@ pub(crate) enum TemplatePart {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct OutputReference {
     pub(crate) node: NodeId,
     pub(crate) path: OutputPath,
@@ -510,18 +558,6 @@ impl RunLifecycle {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct WorkflowState {
-    pub(crate) revision: u64,
-    pub(crate) lifecycle: RunLifecycle,
-    pub(crate) outcome: Option<WorkflowOutcome>,
-    pub(crate) cancellation_requested: bool,
-    pub(crate) nodes: BTreeMap<NodeId, NodeState>,
-    pub(crate) command_exits: BTreeMap<NodeId, CommandExit>,
-    pub(crate) outputs: BTreeMap<NodeId, WorkflowValue>,
-    pub(crate) completions: BTreeMap<NodeId, NodeCompletion>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SchedulerCapacity {
     pub(crate) total: u32,
@@ -531,36 +567,20 @@ pub(crate) struct SchedulerCapacity {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SchedulerAction {
+    FinishScope {
+        scope: ScopeInstanceId,
+        result: ScopeResult,
+    },
     MarkReady {
-        node: NodeId,
+        node: TaskInstanceId,
     },
     MarkTerminal {
-        node: NodeId,
+        node: TaskInstanceId,
         outcome: NodeTerminalState,
     },
     Launch {
-        node: NodeId,
+        node: TaskInstanceId,
         access: WorkspaceAccess,
-    },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum SchedulerEvent {
-    MarkReady {
-        node: NodeId,
-    },
-    Launched {
-        node: NodeId,
-        attempt: AttemptNumber,
-    },
-    Finished {
-        node: NodeId,
-        completion: Box<NodeCompletion>,
-    },
-    CancellationRequested,
-    ResetNode {
-        node: NodeId,
-        reason: NodeResetReason,
     },
 }
 

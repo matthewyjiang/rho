@@ -15,7 +15,7 @@ use crate::{
         },
         theme::Theme,
     },
-    workflow::{NodeId, NodeState, NodeTerminalState},
+    workflow::{NodeState, NodeTerminalState, TaskInstanceId},
 };
 
 use super::event_adapter::WorkflowNodeSnapshot;
@@ -136,7 +136,7 @@ fn workflow_graph(
         .iter()
         .enumerate()
         .map(|(index, node)| (node.id.clone(), index))
-        .collect::<BTreeMap<NodeId, usize>>();
+        .collect::<BTreeMap<TaskInstanceId, usize>>();
     let graph_nodes = nodes
         .iter()
         .enumerate()

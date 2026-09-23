@@ -8,7 +8,7 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use crate::workflow::NodeId;
+use crate::workflow::TaskInstanceId;
 
 use super::super::{
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
@@ -26,7 +26,7 @@ pub(super) struct DetailPane {
     run_directory: Option<PathBuf>,
     body: Option<NodeOutputBody>,
     /// Node and artifacts from the last load attempt, including a cache miss.
-    loaded_key: Option<(NodeId, Vec<ArtifactReference>)>,
+    loaded_key: Option<(TaskInstanceId, Vec<ArtifactReference>)>,
     scroll: HistoryScrollChrome,
     area: Rect,
     content_len: usize,

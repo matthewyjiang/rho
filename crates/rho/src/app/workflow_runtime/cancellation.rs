@@ -4,11 +4,10 @@ use std::{
 };
 
 use crate::workflow::{
-    NodeState, NodeTerminalState, RunId, RunMutationGuard, RunStateRecord, WorkflowEvent,
-    WorkflowEventRecord, WorkflowStore,
+    CancellationResumeState, NodeState, RunId, WorkflowEvent, WorkflowEventRecord, WorkflowStore,
 };
 
-use super::{runner::persist_state_event, RuntimeError};
+use super::{journal::RunJournal, RuntimeError};
 
 // Receipt: the cross-process cancellation command measures owner response with
 // this poll interval and checks the accepted acknowledgement limit.
@@ -132,10 +131,7 @@ pub(crate) fn cancellation_request_acknowledged(
 }
 
 pub(super) fn run_directory(rho_home: &std::path::Path, run_id: RunId) -> PathBuf {
-    rho_home
-        .join("workflows")
-        .join("runs")
-        .join(run_id.to_string())
+    crate::workflow::WorkflowLayout::new(rho_home).run(run_id)
 }
 
 pub(super) fn latest_cancellation_request(events: &[WorkflowEventRecord]) -> Option<String> {
@@ -159,35 +155,26 @@ pub(super) fn latest_pending_cancellation_request(
     .then_some(request_id)
 }
 
-pub(super) fn cancel_waiting_nodes(
-    store: &WorkflowStore,
-    guard: &mut RunMutationGuard,
-    run_directory: &Path,
-    graph: &crate::workflow::FrozenWorkflow,
-    state: &mut RunStateRecord,
-) -> Result<(), RuntimeError> {
-    let waiting = state
+pub(super) fn cancel_waiting_nodes(journal: &mut RunJournal) -> Result<(), RuntimeError> {
+    let waiting = journal
+        .run
         .state
-        .nodes
-        .iter()
+        .state
+        .tasks()
         .filter_map(|(node, state)| {
-            matches!(state, NodeState::Pending | NodeState::Ready).then_some(node.clone())
+            let resume = match state {
+                NodeState::Pending => CancellationResumeState::Pending,
+                NodeState::Ready => CancellationResumeState::Ready,
+                NodeState::Running { .. } | NodeState::Terminal { .. } => return None,
+            };
+            Some((node, resume))
         })
         .collect::<Vec<_>>();
-    for node in waiting {
-        persist_state_event(
-            store,
-            guard,
-            run_directory,
-            graph,
-            state,
-            WorkflowEvent::NodeFinished {
-                node,
-                completion: Box::new(crate::workflow::NodeCompletion::terminal(
-                    NodeTerminalState::Cancellation,
-                )),
-            },
-        )?;
+    for (node, resume) in waiting {
+        journal.commit(WorkflowEvent::NodeFinished {
+            node,
+            completion: Box::new(crate::workflow::NodeCompletion::cancelled(resume)),
+        })?;
     }
     Ok(())
 }

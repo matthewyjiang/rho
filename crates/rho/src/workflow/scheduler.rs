@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
 use super::{
-    evaluate_condition, validate_lifecycle_transition, validate_reset_transition,
-    validate_transition, ConditionContext, FrozenWorkflow, NodeExecution, NodeId, NodeState,
-    NodeTerminalState, RunLifecycle, SchedulerAction, SchedulerCapacity, SchedulerEvent,
-    TruthValue, WorkflowError, WorkflowResult, WorkflowState, WorkspaceAccess,
+    evaluate_condition, validate_state_shape, ConditionContext, FrozenWorkflow, NodeExecution,
+    NodeState, NodeTerminalState, RunLifecycle, SchedulerAction, SchedulerCapacity,
+    ScopeInstanceId, ScopeState, TaskInstanceId, TruthValue, WorkflowResult, WorkflowState,
+    WorkspaceAccess,
 };
 
 pub(crate) fn next_actions(
@@ -13,32 +13,43 @@ pub(crate) fn next_actions(
     capacity: SchedulerCapacity,
 ) -> WorkflowResult<Vec<SchedulerAction>> {
     validate_state_shape(workflow, state)?;
-    if state.cancellation_requested || state.lifecycle == RunLifecycle::NeedsRecovery {
+    let local = state.root_scope();
+    if !state.lifecycle.is_live() || local.result.is_some() {
         return Ok(Vec::new());
     }
-    let statuses = state
+    if let Some(result) = super::scope_result(workflow, state, ScopeInstanceId::ROOT)? {
+        return Ok(vec![SchedulerAction::FinishScope {
+            scope: ScopeInstanceId::ROOT,
+            result,
+        }]);
+    }
+    if state.cancellation_requested || state.lifecycle == RunLifecycle::Cancelling {
+        return Ok(Vec::new());
+    }
+    let statuses = local
         .nodes
         .iter()
         .filter_map(|(id, state)| state.terminal().map(|outcome| (id.clone(), outcome)))
         .collect::<BTreeMap<_, _>>();
     let context = ConditionContext {
         statuses: &statuses,
-        command_exits: &state.command_exits,
-        outputs: &state.outputs,
+        command_exits: &local.command_exits,
+        outputs: &local.outputs,
     };
     let mut actions = Vec::new();
     let mut runnable = Vec::new();
-    for node in workflow.graph.nodes.values() {
-        match state.nodes[&node.id] {
+    let definition = workflow.program.scope(local.definition);
+    for node in definition.nodes.values() {
+        match local.nodes[&node.id] {
             NodeState::Ready => runnable.push(node),
-            NodeState::Pending if dependencies_terminal(node, state) => {
+            NodeState::Pending if dependencies_terminal(node, local) => {
                 match node_decision(node, &context) {
                     NodeDecision::Run => actions.push(SchedulerAction::MarkReady {
-                        node: node.id.clone(),
+                        node: TaskInstanceId::root(node.id.clone()),
                     }),
                     NodeDecision::Terminal(outcome) => {
                         actions.push(SchedulerAction::MarkTerminal {
-                            node: node.id.clone(),
+                            node: TaskInstanceId::root(node.id.clone()),
                             outcome,
                         })
                     }
@@ -47,12 +58,11 @@ pub(crate) fn next_actions(
             NodeState::Pending | NodeState::Running { .. } | NodeState::Terminal { .. } => {}
         }
     }
-
-    let running = state
+    let running = local
         .nodes
         .iter()
         .filter(|(_, node_state)| matches!(node_state, NodeState::Running { .. }))
-        .map(|(id, _)| &workflow.graph.nodes[id]);
+        .map(|(id, _)| &definition.nodes[id]);
     let mut use_total = 0_u32;
     let mut use_agents = 0_u32;
     let mut use_commands = 0_u32;
@@ -93,7 +103,7 @@ pub(crate) fn next_actions(
             break;
         }
         actions.push(SchedulerAction::Launch {
-            node: node.id.clone(),
+            node: TaskInstanceId::root(node.id.clone()),
             access: node.access,
         });
         use_total += 1;
@@ -143,126 +153,13 @@ fn node_decision(node: &super::Node, context: &ConditionContext<'_>) -> NodeDeci
     }
 }
 
-fn dependencies_terminal(node: &super::Node, state: &WorkflowState) -> bool {
+fn dependencies_terminal(node: &super::Node, local: &ScopeState) -> bool {
     node.needs.iter().all(|id| {
-        state
+        local
             .nodes
             .get(id)
             .is_some_and(|state| state.terminal().is_some())
     })
-}
-
-pub(crate) fn apply_event(
-    workflow: &FrozenWorkflow,
-    state: &WorkflowState,
-    event: SchedulerEvent,
-) -> WorkflowResult<WorkflowState> {
-    validate_state_shape(workflow, state)?;
-    let mut next = state.clone();
-    match event {
-        SchedulerEvent::MarkReady { node } => replace_node(&mut next, node, NodeState::Ready)?,
-        SchedulerEvent::Launched { node, attempt } => {
-            replace_node(&mut next, node, NodeState::Running { attempt })?
-        }
-        SchedulerEvent::Finished { node, completion } => {
-            let definition = workflow.graph.nodes.get(&node).ok_or_else(|| {
-                WorkflowError::Scheduler(format!("event targets unknown node '{node}'"))
-            })?;
-            if let Some(output) = &completion.structured_output {
-                let value = &output.value;
-                let output_bytes = serde_json::to_vec(value)?.len() as u64;
-                if output_bytes > definition.max_output_bytes {
-                    return Err(WorkflowError::Scheduler(format!(
-                        "node '{node}' output budget is {} bytes but observed {output_bytes} bytes",
-                        definition.max_output_bytes
-                    )));
-                }
-                definition
-                    .execution
-                    .output_schema()
-                    .ok_or_else(|| {
-                        WorkflowError::Scheduler(format!(
-                            "node '{node}' produced structured output without a schema"
-                        ))
-                    })?
-                    .validate_value(value)?;
-                next.outputs.insert(node.clone(), value.clone());
-            }
-            if let Some(exit) = &completion.command_exit {
-                if !matches!(definition.execution, NodeExecution::Command(_)) {
-                    return Err(WorkflowError::Scheduler(format!(
-                        "agent node '{node}' reported a command exit"
-                    )));
-                }
-                next.command_exits.insert(node.clone(), exit.clone());
-            }
-            replace_node(
-                &mut next,
-                node.clone(),
-                NodeState::Terminal {
-                    outcome: completion.outcome,
-                },
-            )?;
-            next.completions.insert(node, *completion);
-        }
-        SchedulerEvent::CancellationRequested => {
-            validate_lifecycle_transition(workflow, state, RunLifecycle::Cancelling)?;
-            next.cancellation_requested = true;
-            next.lifecycle = RunLifecycle::Cancelling;
-        }
-        SchedulerEvent::ResetNode { node, reason } => {
-            let current = next.nodes.get(&node).ok_or_else(|| {
-                WorkflowError::Scheduler(format!("event targets unknown node '{node}'"))
-            })?;
-            let target = match reason {
-                super::NodeResetReason::InterruptedRecovery => NodeState::Ready,
-                super::NodeResetReason::CleanCancellation => match next
-                    .completions
-                    .get(&node)
-                    .and_then(|completion| completion.cancellation_resume)
-                {
-                    Some(super::CancellationResumeState::Pending) => NodeState::Pending,
-                    Some(super::CancellationResumeState::Ready) => NodeState::Ready,
-                    None => {
-                        return Err(WorkflowError::Scheduler(format!(
-                            "cancelled node '{node}' has no resume state"
-                        )))
-                    }
-                },
-            };
-            validate_reset_transition(&node, current, reason, &target)?;
-            next.nodes.insert(node.clone(), target);
-            next.command_exits.remove(&node);
-            next.outputs.remove(&node);
-            next.completions.remove(&node);
-        }
-    }
-    next.revision = next
-        .revision
-        .checked_add(1)
-        .ok_or_else(|| WorkflowError::Scheduler("state revision overflow".to_owned()))?;
-    Ok(next)
-}
-
-fn replace_node(state: &mut WorkflowState, node: NodeId, target: NodeState) -> WorkflowResult<()> {
-    let current = state
-        .nodes
-        .get(&node)
-        .ok_or_else(|| WorkflowError::Scheduler(format!("event targets unknown node '{node}'")))?;
-    validate_transition(&node, current, &target)?;
-    state.nodes.insert(node, target);
-    Ok(())
-}
-
-fn validate_state_shape(workflow: &FrozenWorkflow, state: &WorkflowState) -> WorkflowResult<()> {
-    if workflow.graph.nodes.len() != state.nodes.len()
-        || workflow.graph.nodes.keys().ne(state.nodes.keys())
-    {
-        return Err(WorkflowError::Scheduler(
-            "node state keys differ from frozen graph keys".to_owned(),
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -196,10 +196,12 @@ async fn cancellation_wait_returns_typed_exact_state() {
 #[tokio::test]
 async fn resume_preflight_is_self_contained_after_plan_deletion() {
     struct SuccessfulExecutor;
-    impl crate::app::workflow_runtime::WorkflowNodeExecutor for SuccessfulExecutor {
+    impl<I: Send + 'static> crate::app::workflow_runtime::WorkflowNodeExecutor<I>
+        for SuccessfulExecutor
+    {
         fn execute<'a>(
             &'a self,
-            _request: crate::app::workflow_runtime::NodeExecutionRequest,
+            _request: crate::app::workflow_runtime::NodeExecutionRequest<I>,
         ) -> crate::app::workflow_runtime::WorkflowExecutionFuture<'a> {
             Box::pin(async {
                 Ok(crate::app::workflow_runtime::NodeExecutionResult::terminal(
@@ -231,7 +233,7 @@ async fn resume_preflight_is_self_contained_after_plan_deletion() {
         .create_run(
             &plan,
             PlanConsent {
-                graph_digest: plan.manifest.graph_digest.clone(),
+                program_digest: plan.manifest.program_digest.clone(),
                 confirmed: true,
             },
             crate::workflow::RunStateRecord {
@@ -245,9 +247,7 @@ async fn resume_preflight_is_self_contained_after_plan_deletion() {
         )
         .unwrap();
     std::fs::remove_dir_all(
-        home.path()
-            .join("workflows/plans")
-            .join(plan.manifest.plan_id.to_string()),
+        crate::workflow::WorkflowLayout::new(home.path()).plan(plan.manifest.plan_id),
     )
     .unwrap();
     std::fs::remove_file(source.path()).unwrap();
@@ -265,8 +265,7 @@ async fn resume_preflight_is_self_contained_after_plan_deletion() {
     .unwrap()
     .recheck_run(&run)
     .unwrap();
-    let executor: Arc<dyn crate::app::workflow_runtime::WorkflowNodeExecutor> =
-        Arc::new(SuccessfulExecutor);
+    let executor = Arc::new(SuccessfulExecutor);
     let resumed = WorkflowRunner::new(
         home.path().to_owned(),
         workspace,
@@ -274,7 +273,7 @@ async fn resume_preflight_is_self_contained_after_plan_deletion() {
             project_trusted: true,
             permission_mode: crate::permission::PermissionMode::Auto,
         },
-        Arc::clone(&executor),
+        executor.clone(),
         executor,
     )
     .drive(

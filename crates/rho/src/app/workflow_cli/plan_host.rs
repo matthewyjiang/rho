@@ -147,10 +147,11 @@ impl PlanHost for AuthorizedPlanHost<'_> {
 }
 
 pub(crate) fn resolve_nodes_with_host(
-    graph: &crate::workflow::WorkflowGraph,
+    program: &crate::workflow::WorkflowProgram,
     host: &dyn PlanHost,
 ) -> anyhow::Result<BTreeMap<crate::workflow::NodeId, ResolvedNode>> {
-    graph
+    program
+        .root
         .nodes
         .iter()
         .map(|(id, node)| {

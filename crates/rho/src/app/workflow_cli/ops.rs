@@ -36,6 +36,8 @@ pub(crate) struct PreparedPlan {
     pub(crate) workflow: FrozenWorkflow,
 }
 
+pub(crate) use crate::workflow::RunRecord;
+
 /// Owns validate | plan | run | status | cancel | resume policy for both adapters.
 pub(crate) struct WorkflowOps {
     service: WorkflowService,
@@ -71,7 +73,7 @@ impl WorkflowOps {
         limits: &PlanningLimits,
     ) -> anyhow::Result<PreparedPlan> {
         let planned = run_supervised_planner(&sources, inputs, limits).await?;
-        let resolved_nodes = resolve_nodes_with_host(&planned.graph, host)?;
+        let resolved_nodes = resolve_nodes_with_host(&planned.program, host)?;
         freeze_planned_workflow(sources, planned, resolved_nodes, limits)
     }
 
@@ -112,8 +114,23 @@ impl WorkflowOps {
         Ok(self.service.store().load_run(run_id)?)
     }
 
+    /// Loads a run for display, including read-only runs from older releases.
+    pub(crate) fn load_run_record(&self, prefix: &str) -> anyhow::Result<RunRecord> {
+        let store = self.service.store();
+        let run_id = store.resolve_run(prefix)?;
+        self.load_run_record_id(run_id)
+    }
+
+    pub(crate) fn load_run_record_id(&self, run_id: RunId) -> anyhow::Result<RunRecord> {
+        Ok(self.service.store().load_run_record(run_id)?)
+    }
+
     pub(crate) fn load_run_id(&self, run_id: RunId) -> anyhow::Result<StoredRun> {
         Ok(self.service.store().load_run(run_id)?)
+    }
+
+    pub(crate) fn read_run_inventory(&self, run_id: RunId) -> anyhow::Result<RunInventoryItem> {
+        Ok(self.service.store().read_run_inventory(run_id)?)
     }
 
     pub(crate) fn list_workspace_plans(&self) -> anyhow::Result<Vec<PlanInventoryItem>> {
@@ -139,7 +156,7 @@ impl WorkflowOps {
     }
 
     pub(crate) fn delete_workspace_plan(&self, plan_id: PlanId) -> anyhow::Result<()> {
-        let manifest = self.service.store().read_plan_manifest(plan_id)?;
+        let manifest = self.service.store().read_plan_inventory(plan_id)?;
         let identity = workspace_identity(&self.workspace)?;
         if manifest.workspace_identity != identity {
             anyhow::bail!("plan belongs to another workspace");
@@ -152,13 +169,6 @@ impl WorkflowOps {
         let identity = workspace_identity(&self.workspace)?;
         if run.workspace_identity != identity {
             anyhow::bail!("run belongs to another workspace");
-        }
-        if run.lifecycle.is_live() {
-            anyhow::bail!(
-                "run {} is still {}, stop it before deleting",
-                run_id,
-                run.lifecycle.as_str()
-            );
         }
         Ok(self.service.store().delete_run(run_id)?)
     }
@@ -184,11 +194,11 @@ impl WorkflowOps {
                 current_workspace
             );
         }
-        if crate::workflow::graph_digest(&run.graph)? != run.manifest.graph_digest {
+        if crate::workflow::program_digest(&run.graph)? != run.manifest.program_digest {
             anyhow::bail!("workflow run digest does not match its copied frozen graph");
         }
         if !run.manifest.consent.confirmed
-            || run.manifest.consent.graph_digest != run.manifest.graph_digest
+            || run.manifest.consent.program_digest != run.manifest.program_digest
         {
             anyhow::bail!("workflow run consent does not match its copied frozen graph");
         }
@@ -199,7 +209,7 @@ impl WorkflowOps {
         Ok(self.service.create_run(
             plan,
             PlanConsent {
-                graph_digest: plan.manifest.graph_digest.clone(),
+                program_digest: plan.manifest.program_digest.clone(),
                 confirmed: true,
             },
         )?)
@@ -260,10 +270,10 @@ pub(crate) fn freeze_planned_workflow(
             format_version: PLANNER_FORMAT_VERSION,
             starlark_version: STARLARK_VERSION.to_owned(),
         },
-        graph_digest: Digest(String::new()),
+        program_digest: Digest(String::new()),
         sources: sources.manifest.clone(),
         inputs: planned.inputs,
-        graph: planned.graph,
+        program: planned.program,
         resolved_nodes,
         scheduler: FrozenSchedulerSettings {
             max_parallel_nodes: DEFAULT_PARALLEL_NODES,

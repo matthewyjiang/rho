@@ -1,6 +1,6 @@
 use super::{
-    PlanConsent, RunLifecycle, RunStateRecord, StoredPlan, StoredRun, WorkflowResult,
-    WorkflowState, WorkflowStore, RUN_STATE_VERSION,
+    PlanConsent, RunStateRecord, StoredPlan, StoredRun, WorkflowResult, WorkflowState,
+    WorkflowStore, RUN_STATE_VERSION,
 };
 use std::collections::BTreeMap;
 
@@ -32,23 +32,7 @@ impl WorkflowService {
         plan: &StoredPlan,
         consent: PlanConsent,
     ) -> WorkflowResult<StoredRun> {
-        let state = WorkflowState {
-            revision: 0,
-            lifecycle: RunLifecycle::Planned,
-            outcome: None,
-            cancellation_requested: false,
-            nodes: plan
-                .graph
-                .graph
-                .nodes
-                .keys()
-                .cloned()
-                .map(|id| (id, super::NodeState::Pending))
-                .collect(),
-            command_exits: BTreeMap::new(),
-            outputs: BTreeMap::new(),
-            completions: BTreeMap::new(),
-        };
+        let state = WorkflowState::new(&plan.graph);
         self.store.create_run(
             plan,
             consent,

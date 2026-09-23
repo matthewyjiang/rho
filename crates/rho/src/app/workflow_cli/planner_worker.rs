@@ -34,7 +34,7 @@ struct PlannerWorkerRequest {
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct PlannerWorkerPlan {
-    pub(super) graph: crate::workflow::WorkflowGraph,
+    pub(super) program: crate::workflow::WorkflowProgram,
     pub(super) inputs: BTreeMap<InputName, WorkflowValue>,
     pub(super) evaluator_ticks: u64,
     pub(super) evaluator_peak_heap_bytes: u64,
@@ -166,7 +166,7 @@ pub(crate) async fn run_planner_worker() -> anyhow::Result<()> {
     ) {
         Ok(planned) => PlannerWorkerResponse {
             plan: Some(PlannerWorkerPlan {
-                graph: planned.graph,
+                program: planned.program,
                 inputs: planned.inputs,
                 evaluator_ticks: planned.ticks,
                 evaluator_peak_heap_bytes: planned.peak_heap_bytes,

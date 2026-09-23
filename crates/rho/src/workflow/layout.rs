@@ -1,6 +1,18 @@
 use std::path::{Path, PathBuf};
 
-use super::{PlanId, RunId};
+use super::{AttemptNumber, PlanId, RunId, TaskInstanceId};
+
+pub(crate) fn attempt_directory(
+    run_directory: &Path,
+    node: &TaskInstanceId,
+    attempt: AttemptNumber,
+) -> PathBuf {
+    run_directory
+        .join("nodes")
+        .join(node.to_string())
+        .join("attempts")
+        .join(attempt.to_string())
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct WorkflowLayout {

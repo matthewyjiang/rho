@@ -49,7 +49,7 @@ impl WorkflowStore {
         workspace_identity: String,
         source_bytes: &std::collections::BTreeMap<String, String>,
     ) -> WorkflowResult<StoredPlan> {
-        validate_frozen_graph(graph, &graph.graph_digest, &self.layout.plans())?;
+        validate_frozen_graph(graph, &graph.program_digest, &self.layout.plans())?;
         if workspace_identity.is_empty() {
             return corrupt(&self.layout.plans(), "plan workspace identity is empty");
         }
@@ -86,11 +86,11 @@ impl WorkflowStore {
             schema_version: PLAN_MANIFEST_VERSION,
             plan_id: id,
             created_at_unix_nanos: unix_time_nanos()?,
-            graph_digest: graph.graph_digest.clone(),
+            program_digest: graph.program_digest.clone(),
             workspace_identity,
             source_digests,
-            name: graph.graph.name.to_string(),
-            step_count: graph.graph.nodes.len(),
+            name: graph.program.name.to_string(),
+            step_count: graph.program.root.nodes.len(),
         };
         write_json_beneath(
             &self.root,
@@ -115,26 +115,20 @@ impl WorkflowStore {
     }
 
     pub(crate) fn load_plan(&self, id: PlanId) -> WorkflowResult<StoredPlan> {
-        let manifest: PlanManifest =
-            read_json(&self.root, &plan_relative(id, Path::new("manifest.json")))?;
-        check_schema_version(
-            "plan manifest",
-            manifest.schema_version,
-            PLAN_MANIFEST_VERSION,
-        )?;
-        if manifest.plan_id != id {
-            return corrupt(
-                &self.layout.plan_manifest(id),
-                "plan manifest ID differs from its directory ID",
-            );
-        }
+        let legacy::ManifestRecord::Current(manifest) =
+            legacy::read_manifest::<PlanManifest, legacy::LegacyPlanManifest>(
+                self,
+                &plan_relative(id, Path::new("manifest.json")),
+                "plan manifest",
+                PLAN_MANIFEST_VERSION,
+                "plan_id",
+                id,
+            )?
+        else {
+            return Err(legacy::legacy_record("plan", id));
+        };
         let graph: FrozenWorkflow =
             read_json(&self.root, &plan_relative(id, Path::new("graph.json")))?;
-        check_schema_version(
-            "frozen graph",
-            graph.schema_version,
-            FROZEN_WORKFLOW_SCHEMA_VERSION,
-        )?;
         validate_plan(&self.layout, &self.root, id, &manifest, &graph)?;
         Ok(StoredPlan { manifest, graph })
     }
@@ -152,7 +146,7 @@ impl WorkflowStore {
             &plan.manifest,
             &plan.graph,
         )?;
-        if !consent.confirmed || consent.graph_digest != plan.manifest.graph_digest {
+        if !consent.confirmed || consent.program_digest != plan.manifest.program_digest {
             return Err(WorkflowError::Corrupt {
                 path: self.layout.plans(),
                 reason: "run consent does not match the exact plan digest".to_owned(),
@@ -174,11 +168,11 @@ impl WorkflowStore {
             run_id: id,
             created_at_unix_nanos: unix_time_nanos()?,
             plan_id: plan.manifest.plan_id,
-            graph_digest: plan.manifest.graph_digest.clone(),
+            program_digest: plan.manifest.program_digest.clone(),
             workspace_identity: plan.manifest.workspace_identity.clone(),
             consent,
-            name: plan.graph.graph.name.to_string(),
-            step_count: plan.graph.graph.nodes.len(),
+            name: plan.graph.program.name.to_string(),
+            step_count: plan.graph.program.root.nodes.len(),
         };
         write_json_beneath(
             &self.root,
@@ -207,31 +201,63 @@ impl WorkflowStore {
     }
 
     pub(crate) fn load_run(&self, id: RunId) -> WorkflowResult<StoredRun> {
-        let manifest: RunManifest =
-            read_json(&self.root, &run_relative(id, Path::new("manifest.json")))?;
-        check_schema_version(
+        self.load_run_with_events(id).map(|(run, _)| run)
+    }
+
+    /// Return the validated snapshot and the journal from the same read. Owners
+    /// can replay its tail and inspect cancellation without reopening the journal.
+    pub(crate) fn load_run_with_events(
+        &self,
+        id: RunId,
+    ) -> WorkflowResult<(StoredRun, Vec<WorkflowEventRecord>)> {
+        let legacy::ManifestRecord::Current(manifest) =
+            legacy::read_manifest::<RunManifest, legacy::LegacyRunManifest>(
+                self,
+                &run_relative(id, Path::new("manifest.json")),
+                "run manifest",
+                RUN_MANIFEST_VERSION,
+                "run_id",
+                id,
+            )?
+        else {
+            return Err(legacy::legacy_record("run", id));
+        };
+        self.read_current_run(id, manifest)
+    }
+
+    pub(crate) fn load_run_record(&self, id: RunId) -> WorkflowResult<RunRecord> {
+        match legacy::read_manifest(
+            self,
+            &run_relative(id, Path::new("manifest.json")),
             "run manifest",
-            manifest.schema_version,
             RUN_MANIFEST_VERSION,
-        )?;
-        if manifest.run_id != id {
-            return corrupt(
-                &self.layout.run_manifest(id),
-                "run manifest ID differs from its directory ID",
-            );
+            "run_id",
+            id,
+        )? {
+            legacy::ManifestRecord::Current(manifest) => Ok(RunRecord::Current(Box::new(
+                self.load_current_run(id, manifest)?,
+            ))),
+            legacy::ManifestRecord::Legacy(manifest) => Ok(RunRecord::Legacy(Box::new(
+                self.load_legacy_run(id, manifest)?,
+            ))),
         }
+    }
+
+    fn load_current_run(&self, id: RunId, manifest: RunManifest) -> WorkflowResult<StoredRun> {
+        self.read_current_run(id, manifest).map(|(run, _)| run)
+    }
+
+    fn read_current_run(
+        &self,
+        id: RunId,
+        manifest: RunManifest,
+    ) -> WorkflowResult<(StoredRun, Vec<WorkflowEventRecord>)> {
         let graph: FrozenWorkflow =
             read_json(&self.root, &run_relative(id, Path::new("graph.json")))?;
-        check_schema_version(
-            "frozen graph",
-            graph.schema_version,
-            FROZEN_WORKFLOW_SCHEMA_VERSION,
-        )?;
-        validate_frozen_graph(&graph, &manifest.graph_digest, &self.layout.run_graph(id))?;
+        validate_frozen_graph(&graph, &manifest.program_digest, &self.layout.run_graph(id))?;
         validate_run_manifest(&manifest, &graph, &self.layout.run_manifest(id))?;
         let state: RunStateRecord =
             read_json(&self.root, &run_relative(id, Path::new("state.json")))?;
-        check_schema_version("run state", state.schema_version, RUN_STATE_VERSION)?;
         let events = self.read_events(id)?;
         validate_state(
             &graph,
@@ -241,14 +267,18 @@ impl WorkflowStore {
             &self.root,
             &run_relative(id, Path::new("")),
         )?;
-        Ok(StoredRun {
-            manifest,
-            graph,
-            state,
-        })
+        Ok((
+            StoredRun {
+                manifest,
+                graph,
+                state,
+            },
+            events,
+        ))
     }
 
     pub(crate) fn lock_run(&self, id: RunId) -> WorkflowResult<RunMutationGuard> {
+        self.require_executable_run(id)?;
         let file = self
             .root
             .open_private_file(&run_relative(id, Path::new("mutation.lock")), true)?;
@@ -277,7 +307,7 @@ impl WorkflowStore {
             next_sequence,
             file,
             journal,
-            persisted_completions: None,
+            validated: None,
         })
     }
 
@@ -325,32 +355,28 @@ impl WorkflowStore {
                 "saved snapshot sequence differs from the journal tail",
             );
         }
-        let graph: FrozenWorkflow =
-            read_json(&self.root, &run_relative(guard.id, Path::new("graph.json")))?;
-        if guard.persisted_completions.is_none() {
-            let persisted: RunStateRecord =
-                read_json(&self.root, &run_relative(guard.id, Path::new("state.json")))?;
-            guard.persisted_completions = Some(persisted.state.completions);
+        if guard.validated.is_none() {
+            let persisted = self.load_run(guard.id)?;
+            guard.validated = Some(ValidatedRun {
+                persisted_completions: completion_index(&persisted.state.state),
+                program: persisted.graph,
+            });
         }
+        let validated = guard.validated.as_mut().expect("run validated above");
         validate_state_contents(
-            &graph,
+            &validated.program,
             state,
             &self.layout.run_state(guard.id),
             &self.root,
             &run_relative(guard.id, Path::new("")),
-            CompletionFileValidation::ChangedSince(
-                guard
-                    .persisted_completions
-                    .as_ref()
-                    .expect("persisted completions initialized above"),
-            ),
+            CompletionFileValidation::ChangedSince(&validated.persisted_completions),
         )?;
         write_json_beneath(
             &self.root,
             &run_relative(guard.id, Path::new("state.json")),
             state,
         )?;
-        guard.persisted_completions = Some(state.state.completions.clone());
+        validated.persisted_completions = completion_index(&state.state);
         Ok(())
     }
 
@@ -383,11 +409,13 @@ impl WorkflowStore {
         id: RunId,
         bytes: &[u8],
     ) -> WorkflowResult<bool> {
+        self.require_executable_run(id)?;
         self.root
             .write_file_if_absent(&run_relative(id, Path::new("cancel.request")), bytes)
     }
 
     pub(crate) fn clear_cancellation_request(&self, id: RunId) -> WorkflowResult<()> {
+        self.require_executable_run(id)?;
         match self
             .root
             .remove_file(&run_relative(id, Path::new("cancel.request")))
@@ -423,17 +451,45 @@ fn delete_child_directory(parent: &Path, child: &Path) -> WorkflowResult<()> {
 
 #[path = "store_inventory.rs"]
 mod inventory;
-pub(crate) use inventory::{PlanInventoryItem, RunInventoryItem};
+pub(crate) use inventory::{PlanInventoryItem, RecordAccess, RunInventoryItem};
 
 #[path = "store_mutate.rs"]
 mod mutate;
+
+#[path = "store_legacy.rs"]
+mod legacy;
+pub(crate) use legacy::{LegacyRun, LegacyWorkflowState, RunRecord};
 
 pub(crate) struct RunMutationGuard {
     id: RunId,
     next_sequence: u64,
     file: File,
     journal: File,
-    persisted_completions: Option<std::collections::BTreeMap<super::NodeId, super::NodeCompletion>>,
+    /// Immutable run program, verified once for this lock owner rather than
+    /// deserialized again for each task event.
+    validated: Option<ValidatedRun>,
+}
+
+struct ValidatedRun {
+    program: FrozenWorkflow,
+    persisted_completions: std::collections::BTreeMap<super::TaskInstanceId, super::NodeCompletion>,
+}
+
+/// Derived cache for deciding which attempt artifacts need revalidation.
+fn completion_index(
+    state: &super::WorkflowState,
+) -> std::collections::BTreeMap<super::TaskInstanceId, super::NodeCompletion> {
+    state
+        .root_scope()
+        .completions
+        .iter()
+        .map(|(definition, completion)| {
+            (
+                super::TaskInstanceId::root(definition.clone()),
+                completion.clone(),
+            )
+        })
+        .collect()
 }
 impl Drop for RunMutationGuard {
     fn drop(&mut self) {
@@ -442,7 +498,7 @@ impl Drop for RunMutationGuard {
 }
 
 fn verify_digest(graph: &FrozenWorkflow, expected: &super::Digest) -> WorkflowResult<()> {
-    let actual = super::graph_digest(graph)?;
+    let actual = super::program_digest(graph)?;
     if &actual == expected {
         Ok(())
     } else {
@@ -466,7 +522,7 @@ fn validate_frozen_graph(
         graph.schema_version,
         FROZEN_WORKFLOW_SCHEMA_VERSION,
     )?;
-    if &graph.graph_digest != expected_digest {
+    if &graph.program_digest != expected_digest {
         return corrupt(
             path,
             "frozen graph self-digest differs from its manifest digest",
@@ -477,24 +533,29 @@ fn validate_frozen_graph(
         path: path.to_path_buf(),
         reason: format!("frozen graph validation failed: {error}"),
     })?;
-    let retained_bound = graph.graph.nodes.values().try_fold(0_u64, |total, node| {
-        let streams = if matches!(node.execution, NodeExecution::Command(_)) {
-            2
-        } else {
-            1
-        };
-        total
-            .checked_add(node.max_output_bytes.checked_mul(streams).ok_or_else(|| {
-                WorkflowError::Corrupt {
+    let retained_bound = graph
+        .program
+        .root
+        .nodes
+        .values()
+        .try_fold(0_u64, |total, node| {
+            let streams = if matches!(node.execution, NodeExecution::Command(_)) {
+                2
+            } else {
+                1
+            };
+            total
+                .checked_add(node.max_output_bytes.checked_mul(streams).ok_or_else(|| {
+                    WorkflowError::Corrupt {
+                        path: path.to_path_buf(),
+                        reason: "frozen retained output bound overflowed".to_owned(),
+                    }
+                })?)
+                .ok_or_else(|| WorkflowError::Corrupt {
                     path: path.to_path_buf(),
                     reason: "frozen retained output bound overflowed".to_owned(),
-                }
-            })?)
-            .ok_or_else(|| WorkflowError::Corrupt {
-                path: path.to_path_buf(),
-                reason: "frozen retained output bound overflowed".to_owned(),
-            })
-    })?;
+                })
+        })?;
     if retained_bound > graph.runtime_limits.retained_output_total_bytes {
         return corrupt(path, "frozen graph exceeds its workflow-wide output limit");
     }
@@ -518,19 +579,13 @@ fn validate_plan(
     manifest: &PlanManifest,
     graph: &FrozenWorkflow,
 ) -> WorkflowResult<()> {
-    if manifest.plan_id != id {
-        return corrupt(
-            &layout.plan_manifest(id),
-            "plan manifest ID differs from its directory ID",
-        );
-    }
     if manifest.workspace_identity.is_empty() {
         return corrupt(
             &layout.plan_manifest(id),
             "plan workspace identity is empty",
         );
     }
-    validate_frozen_graph(graph, &manifest.graph_digest, &layout.plan_graph(id))?;
+    validate_frozen_graph(graph, &manifest.program_digest, &layout.plan_graph(id))?;
     let graph_digests = graph
         .sources
         .modules
@@ -579,8 +634,8 @@ fn validate_run_manifest(
         return corrupt(path, "run workspace identity is empty");
     }
     if !manifest.consent.confirmed
-        || manifest.consent.graph_digest != manifest.graph_digest
-        || manifest.graph_digest != graph.graph_digest
+        || manifest.consent.program_digest != manifest.program_digest
+        || manifest.program_digest != graph.program_digest
     {
         return corrupt(path, "run consent and graph digest do not match");
     }

@@ -13,6 +13,17 @@ change set, then applies the suggested fixes.
 3. `apply_fixes` - worker applies blocker/major findings from all three lanes
 4. `no_changes` - cheap no-op path when the change set is empty
 
+## Result
+
+The run exports the reviewed change set: `branch`, `head`, `base_commit`,
+`changed_files`, and `has_changes`. `rho workflow status` prints them as the
+root scope result. The fix summary stays in the `apply_fixes` or `no_changes`
+node output, because only one of those nodes runs and every export must
+resolve for a successful run.
+
+Planning `exports` needs a Rho release with scoped workflow programs; 2.13 and
+earlier reject the field.
+
 ## Inputs
 
 | Input | Default | Meaning |

@@ -23,7 +23,7 @@ fn tui_artifacts_come_from_durable_completions() {
         },
         digest: crate::workflow::Digest("sha256:test".into()),
     };
-    state.completions.insert(
+    state.root_scope_mut().completions.insert(
         id.clone(),
         crate::workflow::NodeCompletion {
             attempt: Some(AttemptNumber::new(1).unwrap()),
@@ -39,7 +39,7 @@ fn tui_artifacts_come_from_durable_completions() {
     );
 
     assert_eq!(
-        durable_artifacts_for_node(&state, &id),
+        durable_artifacts_for_node(&state, &crate::workflow::TaskInstanceId::root(id)),
         vec![crate::tui::workflow::ArtifactReference {
             kind: crate::workflow::ArtifactKind::AgentAnswer,
             artifact,

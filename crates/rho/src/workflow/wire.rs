@@ -3,14 +3,15 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AttemptNumber, CommandExit, Digest, FrozenWorkflow, NodeId, NodeResetReason, NodeTerminalState,
-    PlanId, RunId, RunLifecycle, WorkflowState, WorkflowValue,
+    AttemptNumber, CommandExit, Digest, FrozenWorkflow, NodeResetReason, NodeTerminalState, PlanId,
+    RunId, RunLifecycle, ScopeInstanceId, ScopeResult, TaskInstanceId, WorkflowState,
+    WorkflowValue,
 };
 
-pub(crate) const PLAN_MANIFEST_VERSION: u32 = 1;
-pub(crate) const RUN_MANIFEST_VERSION: u32 = 1;
-pub(crate) const RUN_STATE_VERSION: u32 = 2;
-pub(crate) const EVENT_VERSION: u32 = 3;
+pub(crate) const PLAN_MANIFEST_VERSION: u32 = 2;
+pub(crate) const RUN_MANIFEST_VERSION: u32 = 2;
+pub(crate) const RUN_STATE_VERSION: u32 = 4;
+pub(crate) const EVENT_VERSION: u32 = 5;
 pub(crate) const ATTEMPT_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,16 +19,13 @@ pub(crate) struct PlanManifest {
     pub(crate) schema_version: u32,
     pub(crate) plan_id: PlanId,
     /// Creation time used for durable newest-first inventory ordering.
-    #[serde(default)]
     pub(crate) created_at_unix_nanos: u64,
-    pub(crate) graph_digest: Digest,
+    pub(crate) program_digest: Digest,
     pub(crate) workspace_identity: String,
     pub(crate) source_digests: BTreeMap<String, Digest>,
-    /// Inventory label. Default empty for manifests written before this field.
-    #[serde(default)]
+    /// Inventory label copied from the approved program.
     pub(crate) name: String,
-    /// Inventory step count. Default 0 for manifests written before this field.
-    #[serde(default)]
+    /// Number of root-scope tasks in the approved program.
     pub(crate) step_count: usize,
 }
 
@@ -39,7 +37,7 @@ pub(crate) struct StoredPlan {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct PlanConsent {
-    pub(crate) graph_digest: Digest,
+    pub(crate) program_digest: Digest,
     pub(crate) confirmed: bool,
 }
 
@@ -48,17 +46,14 @@ pub(crate) struct RunManifest {
     pub(crate) schema_version: u32,
     pub(crate) run_id: RunId,
     /// Creation time used for durable newest-first inventory ordering.
-    #[serde(default)]
     pub(crate) created_at_unix_nanos: u64,
     pub(crate) plan_id: PlanId,
-    pub(crate) graph_digest: Digest,
+    pub(crate) program_digest: Digest,
     pub(crate) workspace_identity: String,
     pub(crate) consent: PlanConsent,
-    /// Inventory label. Default empty for manifests written before this field.
-    #[serde(default)]
+    /// Inventory label copied from the approved program.
     pub(crate) name: String,
-    /// Inventory step count. Default 0 for manifests written before this field.
-    #[serde(default)]
+    /// Number of root-scope tasks in the approved program.
     pub(crate) step_count: usize,
 }
 
@@ -86,6 +81,13 @@ pub(crate) struct WorkflowEventRecord {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum WorkflowEvent {
+    ScopeFinished {
+        scope: ScopeInstanceId,
+        result: ScopeResult,
+    },
+    ScopeReopened {
+        scope: ScopeInstanceId,
+    },
     RunLifecycle {
         lifecycle: RunLifecycle,
     },
@@ -93,28 +95,28 @@ pub(crate) enum WorkflowEvent {
         request_id: String,
     },
     NodeReady {
-        node: NodeId,
+        node: TaskInstanceId,
     },
     LaunchIntended {
-        node: NodeId,
+        node: TaskInstanceId,
         attempt: AttemptNumber,
     },
     AttemptStarted {
-        node: NodeId,
+        node: TaskInstanceId,
         attempt: AttemptNumber,
         owner: ExternalOwner,
     },
     NodeFinished {
-        node: NodeId,
+        node: TaskInstanceId,
         completion: Box<NodeCompletion>,
     },
     StructuredOutput {
-        node: NodeId,
+        node: TaskInstanceId,
         attempt: AttemptNumber,
         output: ValidatedOutputRef,
     },
     NodeReset {
-        node: NodeId,
+        node: TaskInstanceId,
         reason: NodeResetReason,
     },
     CancellationCleared,
@@ -123,7 +125,7 @@ pub(crate) enum WorkflowEvent {
     },
     HookObserved {
         event: String,
-        node: Option<NodeId>,
+        node: Option<TaskInstanceId>,
         attempt: Option<AttemptNumber>,
     },
 }

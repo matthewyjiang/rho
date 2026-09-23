@@ -51,14 +51,14 @@ fn stored_run(graph: workflow::FrozenWorkflow) -> StoredRun {
             run_id: RunId::new(),
             created_at_unix_nanos: 0,
             plan_id: PlanId::new(),
-            graph_digest: graph.graph_digest.clone(),
+            program_digest: graph.program_digest.clone(),
             workspace_identity: "test-workspace".into(),
             consent: PlanConsent {
-                graph_digest: graph.graph_digest.clone(),
+                program_digest: graph.program_digest.clone(),
                 confirmed: true,
             },
             name: "test".into(),
-            step_count: graph.graph.nodes.len(),
+            step_count: graph.program.root.nodes.len(),
         },
         state: RunStateRecord {
             schema_version: workflow::RUN_STATE_VERSION,

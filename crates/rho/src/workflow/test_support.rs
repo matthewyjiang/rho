@@ -41,14 +41,19 @@ pub(crate) fn agent_node(name: &str, needs: &[&str], access: WorkspaceAccess) ->
 }
 
 pub(crate) fn workflow(nodes: Vec<Node>) -> FrozenWorkflow {
-    let graph = WorkflowGraph {
+    let program = WorkflowProgram {
         name: WorkflowName::new("test").unwrap(),
-        nodes: nodes
-            .into_iter()
-            .map(|node| (node.id.clone(), node))
-            .collect(),
+        root: ScopeDefinition {
+            parameters: BTreeMap::new(),
+            nodes: nodes
+                .into_iter()
+                .map(|node| (node.id.clone(), node))
+                .collect(),
+            exports: BTreeMap::new(),
+        },
     };
-    let resolved_nodes = graph
+    let resolved_nodes = program
+        .root
         .nodes
         .keys()
         .cloned()
@@ -83,7 +88,7 @@ pub(crate) fn workflow(nodes: Vec<Node>) -> FrozenWorkflow {
             format_version: 1,
             starlark_version: "0.14.2".to_owned(),
         },
-        graph_digest: Digest(String::new()),
+        program_digest: Digest(String::new()),
         sources: SourceManifest {
             entry_label: "//workflow.star".to_owned(),
             modules: BTreeMap::from([(
@@ -98,7 +103,7 @@ pub(crate) fn workflow(nodes: Vec<Node>) -> FrozenWorkflow {
             )]),
         },
         inputs: BTreeMap::new(),
-        graph,
+        program,
         resolved_nodes,
         scheduler: FrozenSchedulerSettings {
             max_parallel_nodes: 8,
@@ -107,27 +112,18 @@ pub(crate) fn workflow(nodes: Vec<Node>) -> FrozenWorkflow {
         },
         runtime_limits: runtime_limits(),
     };
-    workflow.graph_digest = graph_digest(&workflow).unwrap();
+    workflow.program_digest = program_digest(&workflow).unwrap();
     workflow
 }
 
 pub(crate) fn state(workflow: &FrozenWorkflow) -> WorkflowState {
-    WorkflowState {
-        revision: 0,
-        lifecycle: RunLifecycle::Running,
-        outcome: None,
-        cancellation_requested: false,
-        nodes: workflow
-            .graph
-            .nodes
-            .keys()
-            .cloned()
-            .map(|id| (id, NodeState::Pending))
-            .collect(),
-        command_exits: BTreeMap::new(),
-        outputs: BTreeMap::new(),
-        completions: BTreeMap::new(),
-    }
+    let mut state = WorkflowState::new(workflow);
+    state.lifecycle = RunLifecycle::Running;
+    state
+}
+
+pub(crate) fn task_id(value: &str) -> TaskInstanceId {
+    TaskInstanceId::root(id(value))
 }
 
 pub(crate) fn limits() -> PlanningLimits {

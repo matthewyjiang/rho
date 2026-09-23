@@ -104,6 +104,7 @@ fn workflow_api(builder: &mut GlobalsBuilder) {
     fn workflow<'v>(
         name: &str,
         nodes: Value<'v>,
+        #[starlark(default = NoneType)] exports: Value<'v>,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<Value<'v>> {
         Ok(object(
@@ -112,6 +113,7 @@ fn workflow_api(builder: &mut GlobalsBuilder) {
                 ("__rho_type", eval.heap().alloc("workflow")),
                 ("name", eval.heap().alloc(name)),
                 ("nodes", nodes),
+                ("exports", exports),
             ],
         ))
     }

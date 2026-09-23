@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
-use crate::workflow::NodeId;
+use crate::workflow::TaskInstanceId;
 
 use super::{
     control::{control_policy, ControlPolicy},
@@ -16,7 +16,7 @@ pub(super) struct WorkflowUiState {
     session: WorkflowSession,
     snapshot: WorkflowSnapshot,
     selected: usize,
-    progress: BTreeMap<NodeId, WorkflowProgress>,
+    progress: BTreeMap<TaskInstanceId, WorkflowProgress>,
     notice: Option<String>,
     details: DetailPane,
     dag_pane: DagPane,

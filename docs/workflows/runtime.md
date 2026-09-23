@@ -46,7 +46,7 @@ turn a failed node into success, and status conditions still see `failure`.
 
 ## Deterministic scheduling
 
-The scheduler uses only the frozen graph, durable state, and frozen capacity
+The scheduler uses only the frozen program, durable state, and frozen capacity
 settings. It does not use wall-clock timing to choose a ready node.
 
 ```mermaid
@@ -98,7 +98,7 @@ processes.
 
 A plan records:
 
-- normalized graph and inputs
+- normalized program, root parameter schemas, and bound inputs
 - source labels, sizes, and content digests
 - resolved agent setup and capability sets
 - resolved command, script-interpreter, and working-directory identities
@@ -107,17 +107,20 @@ A plan records:
 - schemas and scheduler settings
 - planner format identity
 
-Rho calculates the graph digest from a versioned canonical binary encoding,
-not from pretty JSON. JSON remains available for inspection.
+Rho calculates `program_digest` from a versioned canonical binary encoding,
+not from pretty JSON. The frozen program contains its name and one root scope
+with parameter schemas, typed named exports, and static nodes. JSON remains available for inspection.
+This release does not execute map or iterate controllers or create nodes at
+runtime.
 
-Resume checks the copied graph and schema version. It uses current trust and
+Resume checks the copied program and schema version. It uses current trust and
 security policy only to narrow authority. It cannot widen the frozen plan. If a
 plan needs project trust that has since been removed, create a new plan after
 you resolve trust. Resume does not read the plan or any workflow source file.
 
 Before execution, Rho opens each frozen executable, script interpreter, and
 working directory with no-follow checks and compares its content and file
-identity with the confirmed graph. Linux and Android launch the executable,
+identity with the confirmed program. Linux and Android launch the executable,
 script interpreter, and working directory through those verified handles, so a
 path replacement after the check cannot select another object. Frozen workflow
 command execution fails closed on other targets. Those targets do not use the
@@ -131,7 +134,7 @@ Plan confirmation and capability approval are separate.
 
 Plan confirmation:
 
-- names the exact graph digest
+- names the exact program digest
 - applies to one new run
 - does not create a session-wide allow rule
 - does not change permission mode
@@ -219,12 +222,40 @@ Workflow data lives below the Rho data directory:
     state.json
     events.jsonl
     mutation.lock
-    nodes/<NODE_ID>/attempts/<ATTEMPT>/...
+    nodes/<TASK_INSTANCE_ID>/attempts/<ATTEMPT>/...
 ```
 
 `RHO_HOME` replaces `~/.rho` when set. Rho uses private directories, rejects
 symlink store entries, writes state atomically, and appends journal records with
 monotonic sequence numbers.
+
+The `graph.json` filename is retained, but its frozen document now contains
+`program` and `program_digest`. Plan and status JSON also still include
+`graph_digest`, the flat `graph` view of the root scope, and the root scope's
+flat `nodes`, `outputs`, `command_exits`, `completions`, and `outcome` in run
+state. Prefer the program and scope fields in new consumers.
+
+Plans and runs saved by earlier releases use version 1 manifests. They stay in
+`plans/` and `runs/`, appear in `list` and the workflow hub, and print through
+`status` in their original shape. They are read-only: run, resume, and cancel
+fail and ask you to create a new plan from source. Delete still removes them,
+including a run an older release left `running`, once no process holds that
+run's writer lock. Rho does not migrate them.
+
+Source node names are definition IDs. Runtime events, status rows, selection,
+progress, and artifact paths use task instance IDs. A root-scope task instance
+ID is its definition name, such as `review`, so CLI JSONL output keeps wire
+version `1`. Attempts remain local to that task instance. State stores task
+states, outputs, command exits, completions, and durable attempt records inside
+their owning scope, not in global node maps.
+
+Scope closure is journaled separately from task completion. A closed root stores
+its outcome and resolved named exports in `scopes.s0.result`; a run completes
+only after the root closes. Resume journals reopening before changing tasks in
+a closed scope and clears its previous result. CLI JSON status includes this
+state; text status prints scope results. Model status and completion notices
+include exported values within their existing output budgets. Read artifact
+references separately when a bounded summary omits detail.
 
 Plans and runs remain until you remove the Rho data. The first release has no
 automatic retention policy. Treat source snapshots, inputs, prompts, model
@@ -245,7 +276,7 @@ An agent with the `workflow` capability uses the same service and store as the C
 
 `run` and `resume` start in the background and return a run id. Completions arrive at the next turn boundary. Use `status` after delivery, and `cancel` to stop. Do not poll.
 
-Validate and plan authorize the config path, agent catalog, source and loaded modules, planner process facts, command working directories, executable paths, and script interpreters. Paths found during discovery use normal dynamic authorization before Rho reads them. Run and resume ask the host to confirm the exact graph digest and fail closed if host input is not available. Node capabilities are authorized separately.
+Validate and plan authorize the config path, agent catalog, source and loaded modules, planner process facts, command working directories, executable paths, and script interpreters. Paths found during discovery use normal dynamic authorization before Rho reads them. Run and resume ask the host to confirm the exact program digest and fail closed if host input is not available. Node capabilities are authorized separately. Plan and run tool summaries report `program_digest`.
 
 Cancel returns the same `request_id` and `cancellation_state` as the CLI.
 
@@ -270,7 +301,7 @@ its supervised planning worker.
 - input depth and bytes
 - node and edge count
 - condition and schema depth
-- schema and serialized graph bytes
+- schema and serialized program bytes
 - rendered templates, expanded prompts and argv, node timeouts, and retained
   command output
 

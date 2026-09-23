@@ -3,16 +3,13 @@ use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 use crate::{
     app::agent_executor::{AgentExecutor, FrozenAgentLaunchRequest},
     subagent::RunState,
-    workflow::{
-        ArtifactObservation, NodeExecution, NodeTerminalState, ResolvedNode, ValidatedOutputRef,
-        WorkflowValue,
-    },
+    workflow::{ArtifactObservation, NodeTerminalState, ValidatedOutputRef, WorkflowValue},
 };
 
 use super::{
     artifacts::{write_artifact, write_artifact_with_observation},
     cancellation::AGENT_CANCELLATION_CLEANUP_MILLIS,
-    command::render_template,
+    prepared::AgentInvocation,
     CleanupCause, NodeExecutionRequest, NodeExecutionResult, NodeProgressUpdate, RuntimeError,
     WorkflowExecutionFuture, WorkflowNodeExecutor,
 };
@@ -27,8 +24,11 @@ impl WorkflowAgentExecutor {
     }
 }
 
-impl WorkflowNodeExecutor for WorkflowAgentExecutor {
-    fn execute<'a>(&'a self, request: NodeExecutionRequest) -> WorkflowExecutionFuture<'a> {
+impl WorkflowNodeExecutor<AgentInvocation> for WorkflowAgentExecutor {
+    fn execute<'a>(
+        &'a self,
+        request: NodeExecutionRequest<AgentInvocation>,
+    ) -> WorkflowExecutionFuture<'a> {
         Box::pin(async move { self.execute_agent(request).await })
     }
 }
@@ -36,39 +36,12 @@ impl WorkflowNodeExecutor for WorkflowAgentExecutor {
 impl WorkflowAgentExecutor {
     async fn execute_agent(
         &self,
-        request: NodeExecutionRequest,
+        request: NodeExecutionRequest<AgentInvocation>,
     ) -> Result<NodeExecutionResult, RuntimeError> {
-        let node = &request.workflow.graph.nodes[&request.node];
-        let NodeExecution::Agent(agent_node) = &node.execution else {
-            return Err(RuntimeError::LaunchMetadata { node: request.node });
-        };
-        let Some(ResolvedNode::Agent(agent)) = request.workflow.resolved_nodes.get(&request.node)
-        else {
-            return Err(RuntimeError::LaunchMetadata { node: request.node });
-        };
-        let mut prompt = render_template(
-            &agent_node.prompt,
-            &request.outputs,
-            &request.workflow.runtime_limits,
-        )?;
-        if let Some(schema) = &agent_node.output {
-            let normalized = serde_json::to_string(schema)?;
-            prompt.push_str(
-                "\n\nReturn exactly one JSON value as the final answer. Do not use a code fence. Schema: ",
-            );
-            prompt.push_str(&normalized);
-        }
-        super::command::check_runtime_limit(
-            "prompt expansion bytes",
-            request.workflow.runtime_limits.prompt_expansion_bytes,
-            prompt.len() as u64,
-        )?;
+        let prepared = &request.invocation;
+        let AgentInvocation { agent, prompt } = &prepared.execution;
         let agent_directory = request.attempt_directory.join("agent");
-        let run_directory = request
-            .attempt_directory
-            .ancestors()
-            .nth(4)
-            .ok_or_else(|| RuntimeError::UnsafeArtifact(request.attempt_directory.clone()))?;
+        let run_directory = &request.run_directory;
         crate::workflow::ensure_directory_beneath(
             run_directory,
             agent_directory
@@ -80,7 +53,7 @@ impl WorkflowAgentExecutor {
             .executor
             .spawn_frozen(FrozenAgentLaunchRequest {
                 agent: agent.as_ref().clone(),
-                prompt,
+                prompt: prompt.clone(),
                 run_id: format!(
                     "workflow:{}:{}:{}",
                     request.run_id, request.node, request.attempt
@@ -88,7 +61,7 @@ impl WorkflowAgentExecutor {
                 output_file: output_file.clone(),
                 hook_host_labels: rho_sdk::hooks::HookHostLabels::new()
                     .label("workflow_run_id", request.run_id.to_string())
-                    .label("plan_digest", request.workflow.graph_digest.0.clone())
+                    .label("plan_digest", request.plan_digest.0.clone())
                     .label("node_id", request.node.to_string())
                     .label("attempt", request.attempt.to_string()),
             })
@@ -96,7 +69,7 @@ impl WorkflowAgentExecutor {
         if let Some(progress) = &request.progress {
             progress.message(format!("starting agent {}", agent.agent_id));
         }
-        let deadline = tokio::time::sleep(Duration::from_secs(node.timeout_seconds));
+        let deadline = tokio::time::sleep(Duration::from_secs(prepared.timeout_seconds));
         tokio::pin!(deadline);
         let mut status_rx = handle.clone_status_watch();
         let mut last_report = String::new();
@@ -136,12 +109,12 @@ impl WorkflowAgentExecutor {
         };
         let mut result = NodeExecutionResult::terminal(outcome);
         let Some(answer) = status.result else {
-            if agent_node.output.is_some() {
+            if prepared.output.is_some() {
                 result.outcome = NodeTerminalState::Failure;
             }
             return Ok(result);
         };
-        let max_output_bytes = usize::try_from(node.max_output_bytes).map_err(|_| {
+        let max_output_bytes = usize::try_from(prepared.max_output_bytes).map_err(|_| {
             RuntimeError::Data(format!(
                 "node '{}' output limit does not fit this platform",
                 request.node
@@ -164,7 +137,7 @@ impl WorkflowAgentExecutor {
             },
         )?;
         result.artifacts.answer = Some(answer_artifact);
-        if let Some(schema) = &agent_node.output {
+        if let Some(schema) = &prepared.output {
             if answer_truncated {
                 result.outcome = NodeTerminalState::Failure;
                 return Ok(result);
@@ -186,7 +159,12 @@ impl WorkflowAgentExecutor {
                     result.artifacts.structured_output = Some(artifact.clone());
                     result.structured_output = Some(ValidatedOutputRef { artifact, value });
                 }
-                Err(_) => result.outcome = NodeTerminalState::Failure,
+                Err(error) => {
+                    if let Some(progress) = &request.progress {
+                        progress.message(error.to_string());
+                    }
+                    result.outcome = NodeTerminalState::Failure;
+                }
             }
         }
         Ok(result)
@@ -238,7 +216,7 @@ fn last_nonempty_line(text: &str) -> String {
         .to_owned()
 }
 
-fn truncate_chars(text: &str, max_chars: usize) -> String {
+pub(super) fn truncate_chars(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         return text.to_owned();
     }

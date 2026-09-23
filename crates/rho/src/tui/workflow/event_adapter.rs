@@ -4,12 +4,12 @@ use std::{future::Future, pin::Pin};
 use std::{collections::VecDeque, str::FromStr};
 
 pub(crate) use crate::workflow::ArtifactKind;
-#[cfg(debug_assertions)]
-use crate::workflow::NodeTerminalState;
 use crate::workflow::{
-    AgentRuntime, ArtifactRef, AttemptNumber, CommandExit, Digest, ExternalOwner, NodeId,
-    NodeState, PlanId, RunId, RunLifecycle, WorkflowOutcome, WorkflowValue, WorkspaceAccess,
+    AgentRuntime, ArtifactRef, AttemptNumber, CommandExit, Digest, ExternalOwner, NodeState,
+    PlanId, RunId, RunLifecycle, TaskInstanceId, WorkflowOutcome, WorkflowValue, WorkspaceAccess,
 };
+#[cfg(debug_assertions)]
+use crate::workflow::{NodeId, NodeTerminalState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PlanApprovalState {
@@ -66,7 +66,7 @@ pub(crate) enum TerminalReason {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RecoveryRequirement {
-    pub(crate) node: NodeId,
+    pub(crate) node: TaskInstanceId,
     pub(crate) attempt: AttemptNumber,
     pub(crate) uncertain_owner: ExternalOwner,
 }
@@ -82,9 +82,9 @@ pub(crate) struct WorkflowProgress {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WorkflowNodeSnapshot {
-    pub(crate) id: NodeId,
+    pub(crate) id: TaskInstanceId,
     pub(crate) display_name: String,
-    pub(crate) dependencies: Vec<NodeId>,
+    pub(crate) dependencies: Vec<TaskInstanceId>,
     pub(crate) access: WorkspaceAccess,
     pub(crate) execution: ExecutionMetadata,
     /// Short task description from the plan (prompt/command), always available.
@@ -102,7 +102,7 @@ pub(crate) struct WorkflowSnapshot {
     pub(crate) workflow_name: String,
     pub(crate) plan_id: PlanId,
     pub(crate) run_id: Option<RunId>,
-    pub(crate) graph_digest: Digest,
+    pub(crate) program_digest: Digest,
     pub(crate) sources: SourceDigestSummary,
     pub(crate) approval: PlanApprovalState,
     pub(crate) lifecycle: RunLifecycle,
@@ -117,7 +117,7 @@ pub(crate) struct WorkflowSnapshot {
 pub(crate) enum WorkflowEvent {
     Snapshot(WorkflowSnapshot),
     Progress {
-        node: NodeId,
+        node: TaskInstanceId,
         progress: WorkflowProgress,
     },
     /// Debug matrix fixture only. Durable adapters emit snapshots and progress.
@@ -250,10 +250,10 @@ impl MatrixAdapter {
         self.snapshot.approval = PlanApprovalState::Approved;
         self.snapshot.lifecycle = RunLifecycle::Running;
         for node in &mut self.snapshot.nodes {
-            if node.id.as_str() == "inspect" && self.start == MatrixWorkflowStart::Resume {
+            if node.id == node_id("inspect") && self.start == MatrixWorkflowStart::Resume {
                 continue;
             }
-            if node.id.as_str() == "inspect" || node.id.as_str() == "test" {
+            if node.id == node_id("inspect") || node.id == node_id("test") {
                 let attempt = if self.start == MatrixWorkflowStart::Resume {
                     AttemptNumber::new(2).expect("valid matrix attempt")
                 } else {
@@ -287,7 +287,7 @@ impl MatrixAdapter {
                     .snapshot
                     .nodes
                     .iter()
-                    .find(|node| node.id.as_str() == "test")
+                    .find(|node| node.id == node_id("test"))
                     .and_then(|node| node.current_attempt)
                     .expect("matrix test attempt");
                 self.queued.push_back(WorkflowEvent::Progress {
@@ -301,12 +301,12 @@ impl MatrixAdapter {
                     },
                 });
                 for node in &mut self.snapshot.nodes {
-                    if node.id.as_str() == "inspect" || node.id.as_str() == "test" {
+                    if node.id == node_id("inspect") || node.id == node_id("test") {
                         node.state = NodeState::Terminal {
                             outcome: NodeTerminalState::Success,
                         };
                     }
-                    if node.id.as_str() == "apply" {
+                    if node.id == node_id("apply") {
                         let attempt = AttemptNumber::new(1).expect("valid matrix attempt");
                         node.state = NodeState::Running { attempt };
                         node.current_attempt = Some(attempt);
@@ -320,7 +320,7 @@ impl MatrixAdapter {
                     .snapshot
                     .nodes
                     .iter_mut()
-                    .find(|node| node.id.as_str() == "apply")
+                    .find(|node| node.id == node_id("apply"))
                     .expect("matrix apply node");
                 apply.state = NodeState::Terminal {
                     outcome: NodeTerminalState::Success,
@@ -458,7 +458,7 @@ fn matrix_snapshot(start: MatrixWorkflowStart) -> WorkflowSnapshot {
         workflow_name: "matrix workflow".into(),
         plan_id: PlanId::from_str(MATRIX_WORKFLOW_PLAN_ID).expect("valid matrix plan id"),
         run_id: Some(RunId::from_str(MATRIX_WORKFLOW_RUN_ID).expect("valid matrix run id")),
-        graph_digest: Digest(
+        program_digest: Digest(
             "6740000000000000000000000000000000000000000000000000000000000000".into(),
         ),
         sources: SourceDigestSummary {
@@ -536,6 +536,6 @@ fn matrix_snapshot(start: MatrixWorkflowStart) -> WorkflowSnapshot {
 }
 
 #[cfg(debug_assertions)]
-fn node_id(value: &str) -> NodeId {
-    NodeId::new(value).expect("valid matrix node id")
+fn node_id(value: &str) -> TaskInstanceId {
+    TaskInstanceId::root(NodeId::new(value).expect("valid matrix node id"))
 }

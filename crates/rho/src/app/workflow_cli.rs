@@ -14,10 +14,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use crate::{
     cli::{Cli, WorkflowCommand, WorkflowDocumentFormat, WorkflowRunFormat},
     workflow::{
-        derive_workflow_outcome, CollectedSources, Diagnostic, InputName, PlanInventoryItem,
-        PlanningLimits, PlanningMeasurements, RunInventoryItem, SourceManifest, StarlarkPlanner,
-        StoredPlan, StoredRun, WorkflowError, WorkflowResult, WorkflowService, WorkflowStore,
-        WorkflowValue,
+        CollectedSources, Diagnostic, InputName, PlanInventoryItem, PlanningLimits,
+        PlanningMeasurements, RunInventoryItem, SourceManifest, StarlarkPlanner, WorkflowError,
+        WorkflowResult, WorkflowService, WorkflowStore, WorkflowValue,
     },
 };
 
@@ -34,6 +33,8 @@ use super::workflow_runtime::WorkflowRunner;
 
 #[path = "workflow_cli/cancel.rs"]
 mod cancel;
+#[path = "workflow_cli/documents.rs"]
+mod documents;
 #[path = "workflow_cli/ops.rs"]
 mod ops;
 #[path = "workflow_cli/plan_host.rs"]
@@ -51,6 +52,7 @@ use cancel::run_cancel;
 #[cfg(test)]
 use cancel::{cancellation_state, wait_for_cancellation_ack};
 pub(super) use cancel::{request_cancellation, CancellationState};
+use documents::{run_status, write_plan};
 pub(crate) use ops::{freeze_planned_workflow, PreparedPlan, WorkflowOps};
 #[cfg(test)]
 pub(super) use plan_host::{resolve_nodes_with_host, AuthorizedPlanHost};
@@ -260,8 +262,8 @@ async fn run_validate(file: &Path, inputs: &[String], cli: &Cli) -> anyhow::Resu
                 valid: true,
                 diagnostics: Vec::new(),
                 source_manifest: Some(prepared.sources.manifest),
-                workflow_name: Some(prepared.workflow.graph.name.to_string()),
-                node_count: Some(prepared.workflow.graph.nodes.len()),
+                workflow_name: Some(prepared.workflow.program.name.to_string()),
+                node_count: Some(prepared.workflow.program.root.nodes.len()),
             };
             write_validation_document(&document)?;
             Ok(())
@@ -308,21 +310,6 @@ async fn run_plan(
     let ops = WorkflowOps::open(std::env::current_dir()?, cli.config.clone())?;
     let stored = ops.store_plan(&prepared)?;
     write_plan(&stored, output)
-}
-
-fn write_plan(plan: &StoredPlan, output: WorkflowDocumentFormat) -> anyhow::Result<()> {
-    match output {
-        WorkflowDocumentFormat::Json => write_json_document(plan),
-        WorkflowDocumentFormat::Text => {
-            println!("plan id: {}", plan.manifest.plan_id);
-            println!("plan digest: {}", plan.manifest.graph_digest.0);
-            println!("workspace: {}", plan.manifest.workspace_identity);
-            println!("workflow: {}", plan.graph.graph.name);
-            println!("authorities and frozen graph:");
-            println!("{}", serde_json::to_string_pretty(&plan.graph)?);
-            Ok(())
-        }
-    }
 }
 
 async fn prepare_plan(
@@ -393,7 +380,7 @@ async fn run_frozen_plan(
         yes,
         &format!(
             "run workflow plan {} ({})",
-            plan.manifest.plan_id, plan.manifest.graph_digest.0
+            plan.manifest.plan_id, plan.manifest.program_digest.0
         ),
     )?;
     let run = ops.create_confirmed_run(&plan)?;
@@ -444,57 +431,6 @@ fn confirmation_requirement(yes: bool, terminal: bool) -> ConfirmationRequiremen
     }
 }
 
-#[derive(Serialize)]
-struct StatusDocument<'a> {
-    run: &'a StoredRun,
-    outcome: Option<crate::workflow::WorkflowOutcome>,
-}
-
-fn run_status(prefix: &str, output: WorkflowDocumentFormat) -> anyhow::Result<()> {
-    let ops = WorkflowOps::open(std::env::current_dir()?, None)?;
-    let run = ops.load_run_prefix(prefix)?;
-    let document = StatusDocument {
-        outcome: derive_workflow_outcome(&run.graph, &run.state.state),
-        run: &run,
-    };
-    match output {
-        WorkflowDocumentFormat::Json => write_json_document(&document),
-        WorkflowDocumentFormat::Text => {
-            println!("run id: {}", run.manifest.run_id);
-            println!("plan id: {}", run.manifest.plan_id);
-            println!("digest: {}", run.manifest.graph_digest.0);
-            println!("lifecycle: {}", run.state.state.lifecycle.as_str());
-            println!("revision: {}", run.state.state.revision);
-            println!(
-                "cancellation requested: {}",
-                run.state.state.cancellation_requested
-            );
-            for (node, state) in &run.state.state.nodes {
-                println!("node {node}: {}", serde_json::to_string(state)?);
-            }
-            for (node, exit) in &run.state.state.command_exits {
-                println!("command exit {node}: {}", serde_json::to_string(exit)?);
-            }
-            for (node, value) in &run.state.state.outputs {
-                println!("output {node}: {value}");
-            }
-            for (node, completion) in &run.state.state.completions {
-                for (kind, artifact) in completion.artifacts.iter() {
-                    println!(
-                        "artifact {node} {}: {}",
-                        kind.label(),
-                        serde_json::to_string(artifact)?
-                    );
-                }
-            }
-            if let Some(outcome) = document.outcome {
-                println!("outcome: {}", outcome.as_str());
-            }
-            Ok(())
-        }
-    }
-}
-
 async fn run_resume(
     prefix: &str,
     yes: bool,
@@ -513,7 +449,7 @@ async fn run_resume(
         yes,
         &format!(
             "resume workflow run {} ({})",
-            run.manifest.run_id, run.manifest.graph_digest.0
+            run.manifest.run_id, run.manifest.program_digest.0
         ),
     )?;
     runtime::execute_run(run, recovery, output, config_path).await
@@ -585,6 +521,8 @@ fn diagnostic_for_error_for(error: &anyhow::Error, audience: DiagnosticAudience)
             WorkflowError::InvalidInput { .. } => "invalid_input",
             WorkflowError::Corrupt { .. } => "corrupt",
             WorkflowError::UnsupportedVersion { .. } => "unsupported_version",
+            WorkflowError::LegacyRecord { .. } => "legacy_record",
+            WorkflowError::LiveRun { .. } => "live_run",
             WorkflowError::AmbiguousId { .. } => "ambiguous_id",
             WorkflowError::UnknownId(_) => "unknown_id",
             WorkflowError::UntrustedDirectory(_) => "untrusted_directory",
@@ -649,7 +587,9 @@ fn workflow_error_message(error: &WorkflowError, audience: DiagnosticAudience) -
             | WorkflowError::MissingDependency { .. }
             | WorkflowError::NonAncestorReference { .. }
             | WorkflowError::MissingWorkflow
-            | WorkflowError::UnsupportedVersion { .. } => error.to_string(),
+            | WorkflowError::UnsupportedVersion { .. }
+            | WorkflowError::LiveRun { .. }
+            | WorkflowError::LegacyRecord { .. } => error.to_string(),
             WorkflowError::Starlark(_) => "workflow evaluation failed".to_owned(),
             // Keep these cases opaque. Their strings can contain source text,
             // lower-level diagnostics, or local paths.

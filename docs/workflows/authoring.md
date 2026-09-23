@@ -36,7 +36,46 @@ WORKFLOW = define(
 Rho validates supplied inputs before it calls `build`. It calls `build` once.
 Starlark loops may construct finite graph data during planning. Runtime loops
 and graph cycles are not allowed. Rho converts all values to owned Rust data
-before it stores a plan.
+before it stores a plan. The source `workflow(...)` graph becomes a frozen
+`WorkflowProgram` with a name and a root scope. The root retains the declared
+parameter schemas, named exports, and the static nodes produced by `build`. Input values are
+bound during planning, not reevaluated during execution.
+
+This format does not yet support runtime map or iterate controllers, nested
+execution scopes, or dynamic node creation. The source API and watch view still
+describe one static dependency graph.
+
+### Root exports
+
+Use `exports` to name the workflow's results rather than exposing every task's
+intermediate output:
+
+```starlark
+return workflow(
+    name = "review",
+    nodes = [review],
+    exports = {"summary": output("review", ["summary"])},
+)
+```
+
+The example assumes `review` declares an output schema with a string field
+`summary`. Each export is a typed, required reference to a task output. Planning
+checks its node and schema path. Closing the root resolves the exports and saves
+them with the scope outcome. An unavailable required export cannot produce a
+successful root result. Task definitions keep local source names, and root
+task instances use the same names at runtime.
+Use `output("review", [])` to export the entire typed value.
+
+Planning bounds the serialized export map using each referenced task's declared
+`max_output_bytes`, plus encoded keys and JSON punctuation. This upper bound must
+fit the frozen workflow-wide retained-output capacity. Repeated aliases count
+separately; the bound uses the whole source task even when an export selects one
+field. Oversized declarations fail before tasks run. Runtime counting remains a
+check on the frozen contract and stops before cloning oversized values.
+
+Failed, denied, blocked, and cancelled scopes retain their task outcomes and
+artifacts but do not export values. A successful set of tasks with an unavailable
+required export closes as `blocked`; an explicit JSON `null` is not missing.
 
 The restricted Starlark environment has no process, filesystem, network,
 environment, clock, or random functions.
@@ -122,7 +161,7 @@ All node constructors accept these common fields:
 | `max_output_bytes` | Required positive frozen retained-output limit |
 | `output` | Optional typed output schema |
 
-Planning places the explicit timeout and output bound in the graph digest. A
+Planning places the explicit timeout and output bound in the program digest. A
 runtime value cannot choose either setting.
 
 ### Agent

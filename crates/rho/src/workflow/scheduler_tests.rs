@@ -1,8 +1,9 @@
 use super::*;
 use crate::workflow::{
-    test_support::{agent_node, id, state, workflow},
+    test_support::{agent_node, id, state, task_id, workflow},
     CommandNode, Node,
 };
+use pretty_assertions::assert_eq;
 
 fn capacity() -> SchedulerCapacity {
     SchedulerCapacity {
@@ -33,13 +34,13 @@ fn launches_ready_nodes_in_id_order_and_stable_prefix() {
         agent_node("m", &[], WorkspaceAccess::Mutating),
     ]);
     let mut state = state(&workflow);
-    for node_state in state.nodes.values_mut() {
+    for node_state in state.root_scope_mut().nodes.values_mut() {
         *node_state = NodeState::Ready;
     }
     assert_eq!(
         next_actions(&workflow, &state, capacity()).unwrap(),
         vec![SchedulerAction::Launch {
-            node: id("a"),
+            node: task_id("a"),
             access: WorkspaceAccess::ReadOnly,
         }]
     );
@@ -53,7 +54,7 @@ fn pending_nodes_transition_to_ready_before_launch() {
     assert_eq!(
         next_actions(&workflow, &state(&workflow), capacity()).unwrap(),
         vec![SchedulerAction::MarkReady {
-            node: id("inspect")
+            node: task_id("inspect")
         }]
     );
 }
@@ -67,7 +68,7 @@ fn full_kind_lane_does_not_block_other_kind() {
         command_node("command", WorkspaceAccess::ReadOnly),
     ]);
     let mut state = state(&workflow);
-    for node_state in state.nodes.values_mut() {
+    for node_state in state.root_scope_mut().nodes.values_mut() {
         *node_state = NodeState::Ready;
     }
     let capacity = SchedulerCapacity {
@@ -79,7 +80,7 @@ fn full_kind_lane_does_not_block_other_kind() {
     assert_eq!(
         next_actions(&workflow, &state, capacity).unwrap(),
         vec![SchedulerAction::Launch {
-            node: id("command"),
+            node: task_id("command"),
             access: WorkspaceAccess::ReadOnly,
         }]
     );
@@ -98,7 +99,7 @@ fn implicit_dependencies_preserve_skipped_and_blocked_rules() {
             agent_node("next", &["first"], WorkspaceAccess::Mutating),
         ]);
         let mut state = state(&workflow);
-        state.nodes.insert(
+        state.root_scope_mut().nodes.insert(
             id("first"),
             NodeState::Terminal {
                 outcome: dependency,
@@ -107,9 +108,39 @@ fn implicit_dependencies_preserve_skipped_and_blocked_rules() {
         assert_eq!(
             next_actions(&workflow, &state, capacity()).unwrap(),
             vec![SchedulerAction::MarkTerminal {
-                node: id("next"),
+                node: task_id("next"),
                 outcome: expected,
             }]
         );
     }
+}
+
+// Covers: a different scope's same-named definition must never target the root task.
+#[test]
+fn runtime_namespace_requires_the_planned_root_membership() {
+    let workflow = workflow(vec![agent_node("work", &[], WorkspaceAccess::ReadOnly)]);
+    let base = state(&workflow);
+    let other = ScopeInstanceId::new(1);
+    assert!(crate::workflow::apply_durable_event(
+        &workflow,
+        &base,
+        &crate::workflow::WorkflowEvent::NodeReady {
+            node: TaskInstanceId::new(other, id("work"))
+        },
+        std::path::Path::new("journal.jsonl"),
+    )
+    .is_err());
+    let mut missing_root = base.clone();
+    missing_root.scopes.clear();
+    let mut extra_scope = base.clone();
+    extra_scope.scopes.insert(other, base.root_scope().clone());
+    let mut unknown_task = base.clone();
+    unknown_task
+        .root_scope_mut()
+        .nodes
+        .insert(id("unknown"), NodeState::Pending);
+    for invalid in [missing_root, extra_scope, unknown_task] {
+        assert!(next_actions(&workflow, &invalid, capacity()).is_err());
+    }
+    assert_eq!(base.task(&task_id("work")), Some(&NodeState::Pending));
 }

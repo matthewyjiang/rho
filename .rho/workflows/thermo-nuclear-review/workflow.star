@@ -257,6 +257,15 @@ def build(inputs):
             empty,
             apply_fixes,
         ],
+        # Exports must resolve on every successful path. Only collect_context
+        # always runs; the fix result comes from apply_fixes or no_changes.
+        exports = {
+            "branch": output("collect_context", ["branch"]),
+            "head": output("collect_context", ["head"]),
+            "base_commit": output("collect_context", ["base_commit"]),
+            "changed_files": output("collect_context", ["changed_files"]),
+            "has_changes": output("collect_context", ["has_changes"]),
+        },
     )
 
 
