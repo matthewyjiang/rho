@@ -44,47 +44,31 @@ fn finished_run(id: &str, created_at_unix_nanos: u64) -> RunInventoryItem {
     }
 }
 
-// Covers: the hub lists the newest finished run first even when UUID order differs.
+// Covers: the hub lists the newest finished run first even when UUID order
+// differs, and legacy runs without a timestamp keep a stable order across refreshes.
 // Owner: workflow hub inventory projection.
 #[test]
-fn hub_picker_orders_runs_by_creation_time() {
-    let older = finished_run("ffffffff-ffff-4fff-8fff-ffffffffffff", 1);
-    let newer = finished_run("00000000-0000-4000-8000-000000000000", 2);
-    let runs = vec![older, newer];
-    let picker = hub_picker(&[], &[], &runs);
-    let run_values = picker
-        .items
-        .iter()
-        .filter(|item| item.value.starts_with("run:"))
-        .map(|item| item.value.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        run_values,
-        vec![
-            "run:00000000-0000-4000-8000-000000000000",
-            "run:ffffffff-ffff-4fff-8fff-ffffffffffff",
-        ]
-    );
-}
-
-// Covers: legacy runs without a timestamp keep a stable order across hub refreshes.
-// Owner: workflow hub inventory projection.
-#[test]
-fn hub_picker_orders_legacy_zero_timestamps_by_run_id() {
-    let larger_id = finished_run("ffffffff-ffff-4fff-8fff-ffffffffffff", 0);
-    let smaller_id = finished_run("00000000-0000-4000-8000-000000000000", 0);
-    let picker = hub_picker(&[], &[], &[smaller_id, larger_id]);
-    let run_values = picker
-        .items
-        .iter()
-        .filter(|item| item.value.starts_with("run:"))
-        .map(|item| item.value.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        run_values,
-        vec![
-            "run:ffffffff-ffff-4fff-8fff-ffffffffffff",
-            "run:00000000-0000-4000-8000-000000000000",
-        ]
-    );
+fn hub_picker_orders_runs_by_creation_time_then_run_id() {
+    const LOW: &str = "00000000-0000-4000-8000-000000000000";
+    const HIGH: &str = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    for (case, runs, expected) in [
+        (
+            "newest first",
+            vec![finished_run(HIGH, 1), finished_run(LOW, 2)],
+            [LOW, HIGH],
+        ),
+        (
+            "legacy zero timestamps by run id",
+            vec![finished_run(LOW, 0), finished_run(HIGH, 0)],
+            [HIGH, LOW],
+        ),
+    ] {
+        let picker = hub_picker(&[], &[], &runs);
+        let run_values = picker
+            .items
+            .iter()
+            .filter_map(|item| item.value.strip_prefix("run:"))
+            .collect::<Vec<_>>();
+        assert_eq!(run_values, expected, "{case}");
+    }
 }

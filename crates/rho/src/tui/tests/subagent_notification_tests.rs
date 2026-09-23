@@ -1,5 +1,5 @@
 use crate::tui::{
-    send_confirm::PendingConfirmSend, tests::test_app, ComposerMode, GoalState, InlineChoice,
+    send_confirm::PendingConfirmSend, tests::test_app, App, ComposerMode, GoalState, InlineChoice,
     InlineChoiceModal, InlineChoiceOption, InlineChoicePending, QueuedPrompt,
 };
 
@@ -12,32 +12,33 @@ fn queued_prompt() -> QueuedPrompt {
     }
 }
 
+// Covers: idle subagent notifications must wait while a user prompt is queued,
+// a goal owns the next turn, or a turn is already running.
+// Owner: idle subagent delivery policy
 #[test]
-fn waiting_user_prompt_keeps_subagent_notifications_out_of_the_editable_queue() {
+fn busy_app_states_block_idle_subagent_delivery() {
+    let cases: [(&str, fn(&mut App)); 3] = [
+        ("queued user prompt", |app| {
+            app.pending.push_follow_up(queued_prompt())
+        }),
+        ("active goal", |app| {
+            app.goal = Some(GoalState::new("finish the task".into()))
+        }),
+        ("running turn", App::begin_provider_turn_ui),
+    ];
+    for (case, setup) in cases {
+        let mut app = test_app();
+        setup(&mut app);
+        assert!(!app.should_deliver_idle_subagent_completions(), "{case}");
+    }
+
+    // The queued prompt stays editable; clearing it unblocks delivery.
     let mut app = test_app();
     app.pending.push_follow_up(queued_prompt());
-
-    assert!(!app.should_deliver_idle_subagent_completions());
+    app.should_deliver_idle_subagent_completions();
     assert_eq!(app.pending.queued_prompts().len(), 1);
-
     app.pending.clear_follow_ups();
     assert!(app.should_deliver_idle_subagent_completions());
-}
-
-#[test]
-fn active_goal_keeps_subagent_notifications_for_the_goal_turn() {
-    let mut app = test_app();
-    app.goal = Some(GoalState::new("finish the task".into()));
-
-    assert!(!app.should_deliver_idle_subagent_completions());
-}
-
-#[test]
-fn running_turn_cannot_start_synthetic_notification_delivery() {
-    let mut app = test_app();
-    app.begin_provider_turn_ui();
-
-    assert!(!app.should_deliver_idle_subagent_completions());
 }
 
 // Covers: idle subagent delivery must not overwrite a confirm-send modal and

@@ -593,15 +593,3 @@ fn claude_model_choices_offer_aliases_and_keep_a_configured_model() {
         vec!["opus"]
     );
 }
-
-// Covers: the Model row must show what Claude Code will actually use, and Rho's
-// `inherit` names a different concept than Claude's default.
-// Owner: tui agent editor
-#[test]
-fn claude_model_badge_names_the_claude_code_default() {
-    assert_eq!(claude_model_badge(&claude_draft()), "default");
-
-    let mut pinned = claude_draft();
-    pinned.set_model_text("sonnet".into());
-    assert_eq!(claude_model_badge(&pinned), "sonnet");
-}

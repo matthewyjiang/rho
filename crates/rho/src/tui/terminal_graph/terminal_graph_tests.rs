@@ -542,70 +542,55 @@ fn art_text(graph: &Graph) -> String {
         .join("\n")
 }
 
-fn assert_wrapped_label_visible(art: &str) {
-    assert!(
-        art.contains("when the renderer") && art.contains("width failure"),
-        "expected every wrapped word to remain visible:\n{art}"
-    );
-}
-
-// Covers: LR forward labels wrap in the inter-column gap, including below a
-// sibling in the same rank, without occupied cells dropping later rows.
-// Owner: terminal graph LR placement.
+// Covers: wrapped edge labels keep every word visible: LR forward labels in the
+// inter-column gap (including below a same-rank sibling), TD back-edge labels in
+// the left gutter without clipping off the top, and LR back-route labels above
+// the top lane instead of stacking into node boxes.
+// Owner: terminal graph LR/TD label placement.
 #[test]
-fn wraps_lr_forward_edge_labels_without_dropping_words() {
+fn wraps_edge_labels_without_dropping_words() {
     let style = NodeStyle::default();
-    let graph = Graph::from_parts(
-        vec![
-            Node::rectangular("start", style),
-            Node::rectangular("top", style),
-            Node::rectangular("end", style),
-        ],
-        vec![Edge::directed(0, 1), labeled_edge(0, 2, WRAPPED_EDGE_LABEL)],
-        Direction::LeftRight,
-        RankOrdering::PreserveInput,
-    )
-    .unwrap();
-
-    assert_wrapped_label_visible(&art_text(&graph));
-}
-
-// Covers: TD back-edge labels wrap in the left gutter without clipping
-// off the canvas top or stopping on occupied cells.
-// Owner: terminal graph TD placement.
-#[test]
-fn wraps_td_back_edge_labels_without_dropping_words() {
-    let style = NodeStyle::default();
-    let graph = Graph::from_parts(
+    let two_nodes = || {
         vec![
             Node::rectangular("start", style),
             Node::rectangular("end", style),
-        ],
-        vec![Edge::directed(0, 1), labeled_edge(1, 0, WRAPPED_EDGE_LABEL)],
-        Direction::TopDown,
-        RankOrdering::PreserveInput,
-    )
-    .unwrap();
-
-    assert_wrapped_label_visible(&art_text(&graph));
-}
-
-// Covers: LR back-route labels wrap above the top lane instead of stacking
-// into node boxes that silently truncate the remaining words.
-// Owner: terminal graph LR placement.
-#[test]
-fn wraps_lr_back_edge_labels_without_dropping_words() {
-    let style = NodeStyle::default();
-    let graph = Graph::from_parts(
-        vec![
-            Node::rectangular("start", style),
-            Node::rectangular("end", style),
-        ],
-        vec![Edge::directed(0, 1), labeled_edge(1, 0, WRAPPED_EDGE_LABEL)],
-        Direction::LeftRight,
-        RankOrdering::PreserveInput,
-    )
-    .unwrap();
-
-    assert_wrapped_label_visible(&art_text(&graph));
+        ]
+    };
+    for (case, nodes, labeled, direction) in [
+        (
+            "LR forward",
+            vec![
+                Node::rectangular("start", style),
+                Node::rectangular("top", style),
+                Node::rectangular("end", style),
+            ],
+            labeled_edge(0, 2, WRAPPED_EDGE_LABEL),
+            Direction::LeftRight,
+        ),
+        (
+            "TD back",
+            two_nodes(),
+            labeled_edge(1, 0, WRAPPED_EDGE_LABEL),
+            Direction::TopDown,
+        ),
+        (
+            "LR back",
+            two_nodes(),
+            labeled_edge(1, 0, WRAPPED_EDGE_LABEL),
+            Direction::LeftRight,
+        ),
+    ] {
+        let graph = Graph::from_parts(
+            nodes,
+            vec![Edge::directed(0, 1), labeled],
+            direction,
+            RankOrdering::PreserveInput,
+        )
+        .unwrap();
+        let art = art_text(&graph);
+        assert!(
+            art.contains("when the renderer") && art.contains("width failure"),
+            "{case}: expected every wrapped word to remain visible:\n{art}"
+        );
+    }
 }

@@ -6,79 +6,47 @@ use tempfile::tempdir;
 use super::*;
 
 #[test]
-fn finds_mention_at_cursor() {
-    assert_eq!(
-        active_file_mention("review @src/tu please", 14),
+fn active_file_mention_at_cursor() {
+    let mention = |start, end, query: &str| {
         Some(FileMention {
-            start: 7,
-            end: 14,
-            query: "src/tu".into(),
+            start,
+            end,
+            query: query.into(),
             source: PathTokenSource::Mention,
         })
-    );
-}
-
-#[test]
-fn mention_at_mid_token_replaces_through_token_end() {
-    assert_eq!(
-        active_file_mention("review @src/lib.rs later", 11),
-        Some(FileMention {
-            start: 7,
-            end: 18,
-            query: "src".into(),
-            source: PathTokenSource::Mention,
-        })
-    );
-}
-
-#[test]
-fn mention_starts_after_newline() {
-    assert_eq!(
-        active_file_mention("review\n@src", 11),
-        Some(FileMention {
-            start: 7,
-            end: 11,
-            query: "src".into(),
-            source: PathTokenSource::Mention,
-        })
-    );
-}
-
-#[test]
-fn text_after_mention_is_not_part_of_query() {
-    assert_eq!(active_file_mention("review @src later", 17), None);
-}
-
-#[test]
-fn email_like_tokens_do_not_open_file_mentions() {
-    assert_eq!(active_file_mention("email a@b", 9), None);
-}
-
-#[test]
-fn mention_offsets_survive_multibyte_characters_before_the_token() {
-    // "héllo @w" — é is two bytes, so byte offsets and char offsets diverge.
-    assert_eq!(
-        active_file_mention("héllo @w", 8),
-        Some(FileMention {
-            start: 6,
-            end: 8,
-            query: "w".into(),
-            source: PathTokenSource::Mention,
-        })
-    );
-}
-
-#[test]
-fn cursor_past_the_input_still_finds_the_trailing_token() {
-    assert_eq!(
-        active_file_mention("review @src", 99),
-        Some(FileMention {
-            start: 7,
-            end: 11,
-            query: "src".into(),
-            source: PathTokenSource::Mention,
-        })
-    );
+    };
+    for (case, input, cursor, expected) in [
+        (
+            "cursor at token end",
+            "review @src/tu please",
+            14,
+            mention(7, 14, "src/tu"),
+        ),
+        (
+            "mid-token replaces through token end",
+            "review @src/lib.rs later",
+            11,
+            mention(7, 18, "src"),
+        ),
+        (
+            "starts after newline",
+            "review\n@src",
+            11,
+            mention(7, 11, "src"),
+        ),
+        ("text after mention", "review @src later", 17, None),
+        ("email-like token", "email a@b", 9, None),
+        // é is two bytes, so byte offsets and char offsets diverge.
+        ("multibyte before token", "héllo @w", 8, mention(6, 8, "w")),
+        (
+            "cursor past input",
+            "review @src",
+            99,
+            mention(7, 11, "src"),
+        ),
+    ] {
+        assert_eq!(active_file_mention(input, cursor), expected, "{case}");
+    }
 }
 
 #[test]

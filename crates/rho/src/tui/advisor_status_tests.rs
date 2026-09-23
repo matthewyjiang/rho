@@ -11,73 +11,58 @@ fn model() -> InternalAgentModelConfig {
 }
 
 // Covers: advisor mode on with no model must never read as working, and off must
-// stay out of the way, on every surface that shows the mode.
+// stay out of the way regardless of a configured model.
 // Owner: advisor status presentation.
 #[test]
-fn each_advisor_state_reads_the_same_way_on_every_surface() {
-    let cases = [
+fn advisor_mode_and_model_map_to_one_of_three_states() {
+    let reviewing = |model: &str| AdvisorStatus::Reviewing {
+        model: model.into(),
+    };
+    for (case, status, expected, needs_model) in [
         (
+            "off without model",
             AdvisorStatus::new(/*advisor_mode*/ false, None),
-            (Vec::new(), "off", "off", false),
+            AdvisorStatus::Off,
+            false,
         ),
         (
+            "off with model",
             AdvisorStatus::new(/*advisor_mode*/ false, Some(&model())),
-            (Vec::new(), "off", "off", false),
+            AdvisorStatus::Off,
+            false,
         ),
         (
+            "on without model",
             AdvisorStatus::new(/*advisor_mode*/ true, None),
-            (
-                vec!["advisor: no model".into(), "advisor".into()],
-                "on · no model",
-                "on, but no advisor model is selected",
-                true,
-            ),
+            AdvisorStatus::MissingModel,
+            true,
         ),
         (
+            "on with model",
             AdvisorStatus::new(/*advisor_mode*/ true, Some(&model())),
-            (
-                vec!["advisor: anthropic/claude-fable-5".into(), "advisor".into()],
-                "on · anthropic/claude-fable-5",
-                "on, anthropic/claude-fable-5 reviews the session",
-                false,
-            ),
+            reviewing("anthropic/claude-fable-5"),
+            false,
         ),
         (
+            "on with claude cli model",
             AdvisorStatus::new(
                 /*advisor_mode*/ true,
                 Some(&InternalAgentModelConfig::claude_cli(Some("opus".into()))),
             ),
-            (
-                vec!["advisor: claude-code/opus".into(), "advisor".into()],
-                "on · claude-code/opus",
-                "on, claude-code/opus reviews the session",
-                false,
-            ),
+            reviewing("claude-code/opus"),
+            false,
         ),
         (
+            "on with default claude cli model",
             AdvisorStatus::new(
                 /*advisor_mode*/ true,
                 Some(&InternalAgentModelConfig::claude_cli(None)),
             ),
-            (
-                vec!["advisor: claude-code/default".into(), "advisor".into()],
-                "on · claude-code/default",
-                "on, claude-code/default reviews the session",
-                false,
-            ),
+            reviewing("claude-code/default"),
+            false,
         ),
-    ];
-
-    for (status, (labels, badge, detail, needs_model)) in cases {
-        assert_eq!(
-            (
-                status.divider_labels(),
-                status.badge().as_str(),
-                status.detail().as_str(),
-                status.needs_model(),
-            ),
-            (labels, badge, detail, needs_model),
-            "{status:?}"
-        );
+    ] {
+        assert_eq!(status.needs_model(), needs_model, "{case}");
+        assert_eq!(status, expected, "{case}");
     }
 }

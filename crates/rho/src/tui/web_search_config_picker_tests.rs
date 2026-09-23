@@ -46,14 +46,10 @@ fn main_picker_rows_stay_stable_across_mode_and_backend() {
     }
 }
 
-fn openai_rows(connection: OpenAiSearchConnection) -> Vec<(Option<String>, String)> {
+fn openai_rows(connection: OpenAiSearchConnection) -> Vec<String> {
     let store = MemoryCredentialStore::default();
     let config = config_with(WebSearchMode::Backend, SearchBackend::OpenAi, connection);
-    backend_picker(SearchBackend::OpenAi, &config, &store)
-        .items
-        .into_iter()
-        .map(|item| (item.section, item.value))
-        .collect()
+    picker_values(&backend_picker(SearchBackend::OpenAi, &config, &store))
 }
 
 // Covers: OpenAI page always shows Codex and API settings, regardless of connection
@@ -61,23 +57,11 @@ fn openai_rows(connection: OpenAiSearchConnection) -> Vec<(Option<String>, Strin
 #[test]
 fn openai_page_shows_codex_and_api_settings() {
     let expected = vec![
-        (None, WEB_SEARCH_OPENAI_CONNECTION_VALUE.to_string()),
-        (
-            Some("Codex".into()),
-            WEB_SEARCH_CODEX_ENDPOINT_VALUE.to_string(),
-        ),
-        (
-            Some("OpenAI API".into()),
-            WebSearchUrlField::OpenAiApiBase.value().to_string(),
-        ),
-        (
-            Some("OpenAI API".into()),
-            WebSearchUrlField::OpenAiApiBase.reset_value().to_string(),
-        ),
-        (
-            Some("OpenAI API".into()),
-            WEB_SEARCH_OPENAI_KEY_VALUE.to_string(),
-        ),
+        WEB_SEARCH_OPENAI_CONNECTION_VALUE.to_string(),
+        WEB_SEARCH_CODEX_ENDPOINT_VALUE.to_string(),
+        WebSearchUrlField::OpenAiApiBase.value().to_string(),
+        WebSearchUrlField::OpenAiApiBase.reset_value().to_string(),
+        WEB_SEARCH_OPENAI_KEY_VALUE.to_string(),
     ];
     assert_eq!(openai_rows(OpenAiSearchConnection::Api), expected);
     assert_eq!(openai_rows(OpenAiSearchConnection::Codex), expected);

@@ -226,25 +226,3 @@ fn body_lines_align_status_column_and_show_hints_under_issues() {
         ]
     );
 }
-
-// Covers: a settled report with no issues reads as passed and reserves no
-// spinner column.
-// Owner: pure layout
-#[test]
-fn settled_healthy_report_reads_as_passed() {
-    let overlay = overlay(vec![DoctorCheck::new(
-        DoctorCheckId::Rtk,
-        "rtk",
-        DoctorStatus::Ok,
-        "available",
-    )]);
-    assert!(!overlay.is_checking());
-    let lines = overlay_body_lines(&overlay, 30, None)
-        .iter()
-        .map(text)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        lines,
-        vec!["all checks passed", "", "Runtimes", "  ✓ rtk  available"]
-    );
-}

@@ -4,31 +4,32 @@ use ratatui::text::Line;
 use super::*;
 
 #[test]
-fn extracts_forward_selection_across_rendered_lines() {
-    let selection = TextSelection {
-        anchor: SelectionPosition { line: 4, column: 2 },
-        focus: SelectionPosition { line: 5, column: 3 },
-    };
-    let lines = vec![Line::raw("  alpha   "), Line::raw("beta")];
-
-    assert_eq!(
-        selection.selected_text(&lines, 4),
-        Some("alpha\nbeta".into())
-    );
-}
-
-#[test]
-fn extracts_backward_selection_in_reading_order() {
-    let selection = TextSelection {
-        anchor: SelectionPosition { line: 8, column: 4 },
-        focus: SelectionPosition { line: 7, column: 2 },
-    };
-    let lines = vec![Line::raw("  first"), Line::raw("second")];
-
-    assert_eq!(
-        selection.selected_text(&lines, 7),
-        Some("first\nsecon".into())
-    );
+fn extracts_multiline_selection_in_reading_order() {
+    for (case, anchor, focus, lines, first_line, expected) in [
+        (
+            "forward",
+            SelectionPosition { line: 4, column: 2 },
+            SelectionPosition { line: 5, column: 3 },
+            [Line::raw("  alpha   "), Line::raw("beta")],
+            4,
+            "alpha\nbeta",
+        ),
+        (
+            "backward",
+            SelectionPosition { line: 8, column: 4 },
+            SelectionPosition { line: 7, column: 2 },
+            [Line::raw("  first"), Line::raw("second")],
+            7,
+            "first\nsecon",
+        ),
+    ] {
+        let selection = TextSelection { anchor, focus };
+        assert_eq!(
+            selection.selected_text(&lines, first_line),
+            Some(expected.into()),
+            "{case}"
+        );
+    }
 }
 
 #[test]

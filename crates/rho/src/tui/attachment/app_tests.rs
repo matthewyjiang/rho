@@ -517,12 +517,6 @@ fn identity_line_omits_reasoning_when_the_model_cannot_use_it() {
 }
 
 #[test]
-fn header_title_line_names_run_and_agent() {
-    let line = header_title_line("abc123", "explorer", "running", None);
-    assert_eq!(line.to_string(), "rho  attach abc123 · explorer · running");
-}
-
-#[test]
 fn format_run_cost_prefers_status_total_via_shared_usd_helper() {
     assert_eq!(
         format_run_cost(

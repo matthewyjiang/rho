@@ -245,8 +245,10 @@ async fn caps_streamed_output_at_the_configured_limit() {
     assert_eq!(streamed.concat(), format!("abcdef{TRUNCATION_NOTICE}"));
 }
 
+// Covers: the persisted shell display must keep the command output, not just the header.
+// Owner: tui inline shell persistence
 #[test]
-fn display_text_preserves_output_and_context_state() {
+fn display_text_preserves_command_output() {
     let output = ShellOutput {
         shell: "bash".into(),
         command: "printf hello".into(),
@@ -257,8 +259,10 @@ fn display_text_preserves_output_and_context_state() {
     };
 
     assert_eq!(
-        display_text(&output, /*included_in_context*/ true),
-        "✓ $ printf hello\nhello"
+        display_text(&output, /*included_in_context*/ true)
+            .lines()
+            .last(),
+        Some("hello")
     );
 }
 

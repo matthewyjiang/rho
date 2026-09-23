@@ -509,44 +509,56 @@ fn preferred_cached_default_prefers_descriptor_default_when_present() {
     });
 }
 
-// Covers: Meta default is muse-spark-1.2 with empty cache and prefers it when cached
+// Covers: baked provider defaults resolve with an empty cache and stay the
+// default when the live /models cache also lists older models
 // Owner: model catalog
 #[test]
-fn meta_default_is_muse_spark_1_2() {
-    with_empty_provider_models_cache("meta-default-empty", || {
-        assert_eq!(
-            default_model_for_provider("meta").as_deref(),
-            Some("muse-spark-1.2")
-        );
-        let selection = resolve_model_selection_for_provider(
-            "meta",
-            "muse-spark-1.2",
-            SelectionAuthContext::none(),
-        )
-        .unwrap();
-        assert_eq!(selection.model, "muse-spark-1.2");
-    });
-
-    with_cached_provider_models(
-        "meta",
-        vec![
-            provider_model("meta", "muse-spark-1.1"),
-            provider_model("meta", "muse-spark-1.2"),
-        ],
-        || {
+fn baked_provider_defaults_survive_empty_and_cached_models() {
+    for (provider, default, older, auth) in [
+        ("meta", "muse-spark-1.2", "muse-spark-1.1", "meta-api-key"),
+        ("minimax", "MiniMax-M3", "MiniMax-M2.7", "minimax-api-key"),
+    ] {
+        with_empty_provider_models_cache(&format!("{provider}-default-empty"), || {
             assert_eq!(
-                default_model_for_provider("meta").as_deref(),
-                Some("muse-spark-1.2")
+                default_model_for_provider(provider).as_deref(),
+                Some(default),
+                "{provider}"
             );
-            let available = available_models_for_auths(&["meta-api-key".into()]);
-            let meta_models = available
-                .iter()
-                .filter(|entry| entry.provider == "meta")
-                .map(|entry| entry.model.as_str())
-                .collect::<Vec<_>>();
-            assert_eq!(meta_models, vec!["muse-spark-1.1", "muse-spark-1.2"]);
-        },
-    );
+            let selection = resolve_model_selection_for_provider(
+                provider,
+                default,
+                SelectionAuthContext::none(),
+            )
+            .unwrap();
+            assert_eq!(
+                (selection.model.as_str(), selection.auth.as_str()),
+                (default, auth),
+                "{provider}"
+            );
+        });
+
+        with_cached_provider_models(
+            provider,
+            vec![
+                provider_model(provider, older),
+                provider_model(provider, default),
+            ],
+            || {
+                assert_eq!(
+                    default_model_for_provider(provider).as_deref(),
+                    Some(default),
+                    "{provider}"
+                );
+                let available = available_models_for_auths(&[auth.into()]);
+                let provider_models = available
+                    .iter()
+                    .filter(|entry| entry.provider == provider)
+                    .map(|entry| entry.model.as_str())
+                    .collect::<Vec<_>>();
+                assert_eq!(provider_models, vec![older, default], "{provider}");
+            },
+        );
+    }
 }
 
 // Covers: OpenCode Go has no baked default when the live /models cache is empty
@@ -556,40 +568,6 @@ fn opencode_go_has_no_default_model_when_cache_is_empty() {
     with_empty_provider_models_cache("opencode-go-default-empty", || {
         assert_eq!(default_model_for_provider("opencode-go"), None);
     });
-}
-
-// Covers: MiniMax default is MiniMax-M3 with an empty cache and when cached
-// Owner: model catalog
-#[test]
-fn minimax_default_is_minimax_m3() {
-    with_empty_provider_models_cache("minimax-default-empty", || {
-        assert_eq!(
-            default_model_for_provider("minimax").as_deref(),
-            Some("MiniMax-M3")
-        );
-        let selection = resolve_model_selection_for_provider(
-            "minimax",
-            "MiniMax-M3",
-            SelectionAuthContext::none(),
-        )
-        .unwrap();
-        assert_eq!(selection.model, "MiniMax-M3");
-        assert_eq!(selection.auth, "minimax-api-key");
-    });
-
-    with_cached_provider_models(
-        "minimax",
-        vec![
-            provider_model("minimax", "MiniMax-M2.7"),
-            provider_model("minimax", "MiniMax-M3"),
-        ],
-        || {
-            assert_eq!(
-                default_model_for_provider("minimax").as_deref(),
-                Some("MiniMax-M3")
-            );
-        },
-    );
 }
 
 // Covers: login groups derive single-provider rows and keep cross-provider merges

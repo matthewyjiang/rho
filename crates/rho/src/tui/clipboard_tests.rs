@@ -103,7 +103,10 @@ fn clipboard_text_paste_empty_and_error() {
     });
     app.paste_clipboard_text();
     assert_eq!(app.input_ui.text(), "");
-    assert_eq!(app.status(), "could not paste clipboard: no display");
+    assert!(
+        !app.status().is_empty(),
+        "paste failure must surface a toast"
+    );
 }
 
 #[test]

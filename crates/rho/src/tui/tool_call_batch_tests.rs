@@ -81,35 +81,31 @@ fn late_stream_preview_is_ignored_after_start() {
     assert!(batch.previews.is_empty());
 }
 
+// Covers: latest_mut targets the last entry in model order (not call-id order),
+// whether that entry is still a preview or already running.
 #[test]
-fn latest_is_last_model_order_entry_when_later_entry_is_still_a_preview() {
-    let mut batch = ToolCallBatch::default();
-    let first = call_id("z-model-first");
-    let second = call_id("a-model-second");
-    batch.preview(0, Some(first.clone()), Some(card("first")));
-    batch.preview(1, Some(second), Some(card("second")));
-    batch.started(first.clone(), card("first running"));
+fn latest_is_last_model_order_entry() {
+    for (case, promote_second) in [("second still a preview", false), ("second promoted", true)] {
+        let mut batch = ToolCallBatch::default();
+        let first = call_id("z-model-first");
+        let second = call_id("a-model-second");
+        batch.preview(0, Some(first.clone()), Some(card("first")));
+        batch.preview(1, Some(second.clone()), Some(card("second")));
+        batch.started(first.clone(), card("first running"));
+        if promote_second {
+            batch.started(second.clone(), card("second running"));
+        }
 
-    batch.latest_mut().unwrap().expanded = true;
+        batch.latest_mut().unwrap().expanded = true;
 
-    assert!(!batch.running[&first].expanded);
-    assert!(batch.previews[&1].expanded);
-}
-
-#[test]
-fn latest_is_last_model_order_entry_after_promotion() {
-    let mut batch = ToolCallBatch::default();
-    let first = call_id("z-model-first");
-    let second = call_id("a-model-second");
-    batch.preview(0, Some(first.clone()), Some(card("first")));
-    batch.preview(1, Some(second.clone()), Some(card("second")));
-    batch.started(first, card("first running"));
-    batch.started(second.clone(), card("second running"));
-
-    batch.latest_mut().unwrap().expanded = true;
-
-    assert!(!batch.running[&call_id("z-model-first")].expanded);
-    assert!(batch.running[&second].expanded);
+        assert!(!batch.running[&first].expanded, "{case}");
+        let second_expanded = if promote_second {
+            batch.running[&second].expanded
+        } else {
+            batch.previews[&1].expanded
+        };
+        assert!(second_expanded, "{case}");
+    }
 }
 
 #[test]

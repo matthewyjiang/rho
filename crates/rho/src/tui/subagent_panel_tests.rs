@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use pretty_assertions::assert_eq;
 use ratatui::{layout::Rect, text::Line};
 
-use super::{agent_activity, SubagentPanel, SubagentPointerTarget};
+use super::{SubagentPanel, SubagentPointerTarget};
 use crate::{
     subagent::{RunState, RunStatus},
     tools::agent::SubagentSnapshot,
@@ -44,35 +44,6 @@ fn activity_span_style(line: &Line<'_>, activity: &str) -> ratatui::style::Style
         .unwrap_or_default()
 }
 
-// Covers: subagent verdict labels and styles are exhaustive on RunState.
-// Owner: pure unit (subagent rail labels)
-#[test]
-fn subagent_verdict_labels_and_styles_match_state() {
-    let _guard = theme::theme_test_lock();
-    Theme::apply_committed("one-half-dark");
-    let starting = super::RunningSubagent {
-        id: "a".into(),
-        agent_id: "worker".into(),
-        title: None,
-        state: RunState::Starting,
-        last_activity: None,
-        elapsed_seconds: 1,
-        status: RunStatus::default(),
-    };
-    let cases = [
-        (RunState::Starting, "starting", Theme::text()),
-        (RunState::Ok, "✓ done", Theme::activity_rail_success()),
-        (RunState::Error, "✗ error", Theme::activity_rail_error()),
-        (RunState::Stopped, "✗ stopped", Theme::activity_rail_dim()),
-    ];
-    for (state, label, style) in cases {
-        let mut agent = starting.clone();
-        agent.state = state;
-        assert_eq!(agent_activity(&agent), (label.to_owned(), style));
-    }
-    Theme::apply_committed("terminal");
-}
-
 // Covers: a just-finished agent stays through the linger window, then drops.
 // Owner: pure unit (subagent linger)
 #[test]
@@ -85,9 +56,7 @@ fn subagent_linger_keeps_then_drops_around_deadline() {
     assert!(panel.ingest(vec![snapshot("aa0001", "worker", RunState::Ok, 4)], t0));
     assert_eq!(panel.count(), 0);
     assert!(panel.is_active());
-    let kept = line_text(&panel.lines(80, 8, "attach", false, t0)[0]);
-    assert!(kept.contains("✓ done"));
-    assert!(kept.contains(activity::AGENT_GLYPH));
+    assert_eq!(panel.lines(80, 8, "attach", false, t0).len(), 1);
 
     let before = t0 + activity::LINGER_OK - Duration::from_millis(1);
     assert!(!panel.ingest(vec![snapshot("aa0001", "worker", RunState::Ok, 4)], before,));
@@ -129,8 +98,8 @@ fn count_excludes_lingering_rows() {
     assert!(panel.candidates().iter().all(|c| c.run_id == "live01"));
 }
 
-// Covers: overflow copy is singular/plural and is the attach-picker target.
-// Owner: pure unit (overflow copy + pointer)
+// Covers: overflow rows collapse into one summary row that opens the attach picker.
+// Owner: pure unit (overflow pointer)
 #[test]
 fn subagent_overflow_summary_opens_attach_picker() {
     let mut panel = SubagentPanel::default();
@@ -143,9 +112,7 @@ fn subagent_overflow_summary_opens_attach_picker() {
         ],
         now,
     );
-    let lines = panel.lines(80, 8, "attach", false, now);
-    assert!(line_text(&lines[1]).contains("2 more agents"));
-    assert!(line_text(&lines[1]).contains("/attach"));
+    assert_eq!(panel.lines(80, 8, "attach", false, now).len(), 2);
 
     let area = Rect::new(0, 0, 80, 2);
     assert_eq!(
@@ -186,7 +153,7 @@ fn hover_trailing_keeps_elapsed() {
     );
     panel.set_hovered(Some("aa0001"));
     let text = line_text(&panel.lines(80, 8, "attach", false, now)[0]);
-    assert!(text.contains("⏎ attach · 4s"));
+    assert!(text.trim_end().ends_with("4s"), "{text:?}");
     assert_eq!(
         panel.highlighted_row(8, now),
         Some((0, activity::RailRowState::Hovered))

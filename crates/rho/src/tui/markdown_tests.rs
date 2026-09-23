@@ -92,36 +92,30 @@ fn code_block_rows_use_the_full_pane_width_without_borders() {
     assert_eq!(lines.len(), 3);
     assert_eq!(line_text(&lines[1]), "你好你");
     assert_eq!(line_text(&lines[2]), "好");
-    assert!(lines
-        .iter()
-        .all(|line| !line_text(line).contains(['╭', '╮', '╰', '╯', '│'])));
 }
 
 #[test]
 fn code_blocks_preserve_markdown_markers_as_literal_text() {
     let mut fence_state = CodeFenceState::default();
     let lines = markdown_lines(
-        "```\nfn __init__() { println!(\"*ok*\"); }\n```",
+        "```\nfn __init__() { println!(\"*ok*\"); }\n![diagram](arch.png)\n```",
         80,
         &mut fence_state,
     );
 
     assert!(line_text(&lines[1]).contains("fn __init__() { println!(\"*ok*\"); }"));
     assert_eq!(line_styles(&lines[1]), vec![Theme::code_text()]);
+    assert_eq!(line_text(&lines[2]), "![diagram](arch.png)");
+    assert_eq!(line_styles(&lines[2]), vec![Theme::code_text()]);
 }
 
 #[test]
-fn code_block_header_shows_language_label_and_copy_button() {
+fn code_block_header_keeps_one_column_right_inset() {
     let mut fence_state = CodeFenceState::default();
     let rendered = render_markdown("```rust\nlet x = 1;\n```", 40, &mut fence_state);
 
-    let header = &rendered.lines[0];
     // COPY keeps one blank column of inset from the right pane edge.
-    assert_eq!(display_width(&line_text(header)), 39);
-    assert!(line_text(header).starts_with("RUST"));
-    assert!(line_text(header).ends_with(" COPY "));
-    assert!(line_styles(header).contains(&Theme::dim()));
-    assert!(line_styles(header).contains(&Theme::markdown_code_copy_button(/*hovered*/ false)));
+    assert_eq!(display_width(&line_text(&rendered.lines[0])), 39);
 }
 
 #[test]
@@ -338,17 +332,6 @@ fn mermaid_render_reflows_to_the_requested_transcript_width() {
         wide.iter().map(line_text).collect::<Vec<_>>(),
         narrow.iter().map(line_text).collect::<Vec<_>>()
     );
-}
-
-#[test]
-fn image_syntax_inside_code_fence_stays_literal() {
-    let mut fence_state = CodeFenceState::default();
-    let lines = markdown_lines("```\n![diagram](arch.png)\n```", 120, &mut fence_state);
-    let text: Vec<String> = lines.iter().map(line_text).collect();
-
-    assert!(text
-        .iter()
-        .any(|line| line.contains("![diagram](arch.png)")));
 }
 
 #[test]

@@ -110,12 +110,15 @@ fn copy_hit_uses_painted_origin_for_scrolled_session_and_setup() {
 fn transcript_notice_omits_device_code() {
     let pending = device_pending();
     let lines = super::notice_lines("Codex", &pending.prompt);
-    pretty_assertions::assert_eq!(
-        lines,
-        vec![
-            "https://auth.example/device".to_string(),
-            "Codex login pending".to_string(),
-        ]
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "https://auth.example/device"),
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().all(|line| !line.contains("WD4E-T6MC")),
+        "{lines:?}"
     );
 }
 

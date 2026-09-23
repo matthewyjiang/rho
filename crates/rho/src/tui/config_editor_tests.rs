@@ -73,54 +73,40 @@ fn editor_cursor_navigation_is_unicode_safe() {
     assert_eq!(editor.cursor, 3);
 }
 
-#[test]
-fn subagent_toggle_persists_for_the_next_session() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    let repository = ConfigRepository::new(Some(path));
-
-    let enabled = toggle(&repository, ConfigToggle::EnableSubagents).unwrap();
-
-    assert!(!enabled);
-    assert!(!repository.load().unwrap().enable_subagents);
-}
-
-// Covers: toggling cache miss notices must persist for the next session.
+// Covers: toggling a config flag must persist the flipped value for the next session.
 // Owner: config editor
 #[test]
-fn cache_miss_notices_toggle_persists() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    let repository = ConfigRepository::new(Some(path));
+fn toggles_persist_for_the_next_session() {
+    let cases: [(&str, ConfigToggle, bool, fn(&crate::config::Config) -> bool); 4] = [
+        (
+            "subagents",
+            ConfigToggle::EnableSubagents,
+            false,
+            |config| config.enable_subagents,
+        ),
+        (
+            "cache miss notices",
+            ConfigToggle::CacheMissNotices,
+            true,
+            |config| config.cache_miss_notices,
+        ),
+        ("zen mode", ConfigToggle::ZenMode, true, |config| {
+            config.zen_mode
+        }),
+        (
+            "xai image generation",
+            ConfigToggle::XaiImageGeneration,
+            false,
+            |config| config.xai_image_generation,
+        ),
+    ];
+    for (case, key, expected, persisted) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let repository = ConfigRepository::new(Some(dir.path().join("config.toml")));
 
-    let enabled = toggle(&repository, ConfigToggle::CacheMissNotices).unwrap();
-
-    assert!(enabled);
-    assert!(repository.load().unwrap().cache_miss_notices);
-}
-
-#[test]
-fn zen_mode_toggle_persists() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    let repository = ConfigRepository::new(Some(path));
-
-    let enabled = toggle(&repository, ConfigToggle::ZenMode).unwrap();
-
-    assert!(enabled);
-    assert!(repository.load().unwrap().zen_mode);
-}
-
-#[test]
-fn xai_image_generation_toggle_persists() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    let repository = ConfigRepository::new(Some(path));
-
-    let enabled = toggle(&repository, ConfigToggle::XaiImageGeneration).unwrap();
-
-    assert!(!enabled);
-    assert!(!repository.load().unwrap().xai_image_generation);
+        assert_eq!(toggle(&repository, key).unwrap(), expected, "{case}");
+        assert_eq!(persisted(&repository.load().unwrap()), expected, "{case}");
+    }
 }
 
 #[test]

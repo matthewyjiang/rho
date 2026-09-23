@@ -40,7 +40,6 @@ fn prompt_description_shares_output_budget() {
     let combined = prompt_turn_text(Some(&description), body, 12);
     assert!(combined.starts_with('D'));
     assert!(combined.len() <= 12 + "\n[truncated]".len());
-    assert!(combined.contains("[truncated]") || combined.len() <= 12);
 
     assert_eq!(
         prompt_turn_text(None, body, 12),

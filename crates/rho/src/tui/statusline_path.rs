@@ -211,24 +211,32 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn home_relative_windows_paths_use_backslash_segments() {
-        assert_eq!(path_display_separator(r"~/work\company\api-gateway"), '\\');
-        assert_eq!(
-            shorten_path_display(r"~/work\company\services\api-gateway", 18),
-            r"~/…\api-gateway"
-        );
-        assert_eq!(
-            shorten_path_display(r"~/work\company\services\api-gateway", 24),
-            r"~/…\services\api-gateway"
-        );
-    }
-
-    #[test]
-    fn unix_home_relative_paths_keep_forward_slash() {
-        assert_eq!(path_display_separator("~/work/company/api-gateway"), '/');
-        assert_eq!(
-            shorten_path_display("~/work/company/services/api-gateway", 18),
-            "~/…/api-gateway"
-        );
+    fn home_relative_paths_keep_their_separator() {
+        for (case, path, width, separator, expected) in [
+            (
+                "windows narrow",
+                r"~/work\company\services\api-gateway",
+                18,
+                '\\',
+                r"~/…\api-gateway",
+            ),
+            (
+                "windows wide",
+                r"~/work\company\services\api-gateway",
+                24,
+                '\\',
+                r"~/…\services\api-gateway",
+            ),
+            (
+                "unix",
+                "~/work/company/services/api-gateway",
+                18,
+                '/',
+                "~/…/api-gateway",
+            ),
+        ] {
+            assert_eq!(path_display_separator(path), separator, "{case}");
+            assert_eq!(shorten_path_display(path, width), expected, "{case}");
+        }
     }
 }

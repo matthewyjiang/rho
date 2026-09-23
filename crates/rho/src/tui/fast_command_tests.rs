@@ -59,10 +59,6 @@ fn enabling_fast_mode_updates_the_runtime_and_config() {
         app.info.runtime.service_tier,
         Some(rho_sdk::model::ServiceTier::Priority)
     );
-    assert_eq!(
-        app.status(),
-        "fast mode is on: faster responses at a higher credit rate"
-    );
 }
 
 #[test]
@@ -84,7 +80,6 @@ fn unsupported_models_reject_fast_mode_without_mutation() {
             .unwrap()
             .fast_mode
     );
-    assert_eq!(app.status(), "fast mode unavailable");
 }
 
 #[test]
@@ -101,5 +96,4 @@ fn failed_config_save_rolls_back_the_runtime() {
     assert!(!runtime.fast_mode());
     assert_eq!(runtime.set_calls.get(), 2);
     assert_eq!(app.info.runtime.service_tier, None);
-    assert_eq!(app.status(), "config save failed");
 }

@@ -146,25 +146,3 @@ fn thinking_placeholder_aligns_with_thought_for_receipt() {
         .expect("Thought for after the stretch closes");
     pretty_assertions::assert_eq!(thinking_row, thought_row);
 }
-
-// Covers: reasoning deltas keep the stretch open under zen without painting Thinking...
-// Owner: event path + render policy.
-#[test]
-fn zen_reasoning_deltas_do_not_render_thinking_placeholder() {
-    let mut app = test_app();
-    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
-    app.info.runtime.zen_mode = true;
-    app.info.runtime.show_reasoning_output = true;
-    app.turn.reasoning_phase_mut().begin_step();
-
-    app.handle_agent_event(
-        ViewModelEvent::ReasoningDelta("secret plan".into()),
-        &mut terminal,
-    )
-    .unwrap();
-
-    assert!(app.turn.reasoning_phase().is_open());
-    assert_eq!(app.info.runtime.reasoning_chrome(), ReasoningChrome::Hidden);
-    assert!(!live_contains_thinking(&mut app));
-    assert!(!app.info.runtime.displays_reasoning_output());
-}

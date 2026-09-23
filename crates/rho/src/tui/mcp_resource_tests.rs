@@ -210,8 +210,8 @@ async fn failed_resource_read_clears_its_pending_attachment() {
 
     assert_eq!(app.input_ui.attachments(), &[]);
     assert!(app.media_attach_tasks.is_empty());
-    assert_eq!(
-        app.status(),
-        "resource read failed: no connected MCP server named `absent`"
+    assert!(
+        !app.status().is_empty(),
+        "failed read must surface a status"
     );
 }

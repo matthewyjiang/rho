@@ -74,51 +74,35 @@ fn tool_card_at_line_maps_header_body_spacer_and_neighbors() {
     }
 }
 
-// Covers: ctrl+o prefers the last toggleable pending card
+// Covers: ctrl+o targets the latest pending card, and does not skip past a
+// non-expandable one to an older finished card
 // Owner: attach tool hit-test
 #[test]
-fn latest_toggle_target_prefers_pending() {
-    let finished = Entry::Tool(tool_entry(long_card()));
-    let pending = tool_entry(long_card());
-    let painted = PaintedHistory::paint(
-        [
-            HistoryItem::Transcript {
-                index: 0,
-                entry: &finished,
-            },
-            HistoryItem::Pending {
-                key: "live",
-                tool: &pending,
-            },
-        ],
-        80,
-        10,
-    );
-    assert_eq!(
-        latest_toggle_target(&painted.cards),
-        Some(ToggleTarget::Pending("live".into()))
-    );
-}
-
-// Covers: ctrl+o must not skip a non-expandable latest pending card
-// Owner: attach tool hit-test
-#[test]
-fn latest_toggle_target_does_not_skip_non_expandable_pending() {
-    let finished = Entry::Tool(tool_entry(long_card()));
-    let pending = tool_entry(short_card());
-    let painted = PaintedHistory::paint(
-        [
-            HistoryItem::Transcript {
-                index: 0,
-                entry: &finished,
-            },
-            HistoryItem::Pending {
-                key: "live",
-                tool: &pending,
-            },
-        ],
-        80,
-        10,
-    );
-    assert_eq!(latest_toggle_target(&painted.cards), None);
+fn latest_toggle_target_uses_the_latest_pending_card() {
+    for (case, pending_card, expected) in [
+        (
+            "expandable pending",
+            long_card(),
+            Some(ToggleTarget::Pending("live".into())),
+        ),
+        ("non-expandable pending", short_card(), None),
+    ] {
+        let finished = Entry::Tool(tool_entry(long_card()));
+        let pending = tool_entry(pending_card);
+        let painted = PaintedHistory::paint(
+            [
+                HistoryItem::Transcript {
+                    index: 0,
+                    entry: &finished,
+                },
+                HistoryItem::Pending {
+                    key: "live",
+                    tool: &pending,
+                },
+            ],
+            80,
+            10,
+        );
+        assert_eq!(latest_toggle_target(&painted.cards), expected, "{case}");
+    }
 }

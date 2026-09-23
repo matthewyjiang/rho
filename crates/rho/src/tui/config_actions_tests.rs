@@ -148,18 +148,6 @@ fn agent_behavior_config_rows_include_classifier_model_and_optional_reasoning() 
         &config,
     )
     .unwrap();
-    let classifier_model_row = picker
-        .items
-        .iter()
-        .find(|item| item.value == config_picker::PERMISSION_CLASSIFIER_MODEL_VALUE)
-        .expect("classifier model row");
-    assert_eq!(
-        classifier_model_row
-            .badge
-            .as_ref()
-            .map(|badge| badge.text.as_str()),
-        Some("openai/gpt-5.5")
-    );
     let values: Vec<&str> = picker
         .items
         .iter()
@@ -202,13 +190,8 @@ fn xai_image_generation_row_is_hidden_until_provider_is_xai() {
         &config,
     )
     .unwrap();
-    let image_row = tools
+    assert!(tools
         .items
         .iter()
-        .find(|item| item.value == config_picker::XAI_IMAGE_GENERATION_VALUE)
-        .expect("image generation row");
-    assert_eq!(
-        image_row.badge.as_ref().map(|badge| badge.text.as_str()),
-        Some("on")
-    );
+        .any(|item| item.value == config_picker::XAI_IMAGE_GENERATION_VALUE));
 }

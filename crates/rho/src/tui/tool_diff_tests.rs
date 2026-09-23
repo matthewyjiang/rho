@@ -5,20 +5,24 @@ use crate::tui::theme::{SyntaxRole, Theme};
 
 #[test]
 fn sizes_gutter_to_the_widest_line_number() {
-    let rows = vec![
-        DiffRow::new(DiffRowKind::Context, Some(9), "keep"),
-        DiffRow::new(DiffRowKind::Added, Some(1204), "new"),
-        DiffRow::new(DiffRowKind::File, None, "src/lib.rs"),
-    ];
-
-    assert_eq!(gutter_width(&rows), 4);
-}
-
-#[test]
-fn drops_the_gutter_when_no_row_is_numbered() {
-    let rows = vec![DiffRow::new(DiffRowKind::Added, None, "new")];
-
-    assert_eq!(gutter_width(&rows), 0);
+    for (case, rows, expected) in [
+        (
+            "widest numbered row wins",
+            vec![
+                DiffRow::new(DiffRowKind::Context, Some(9), "keep"),
+                DiffRow::new(DiffRowKind::Added, Some(1204), "new"),
+                DiffRow::new(DiffRowKind::File, None, "src/lib.rs"),
+            ],
+            4,
+        ),
+        (
+            "no numbered rows drops the gutter",
+            vec![DiffRow::new(DiffRowKind::Added, None, "new")],
+            0,
+        ),
+    ] {
+        assert_eq!(gutter_width(&rows), expected, "{case}");
+    }
 }
 
 // Covers: single-file write/edit header path seeds highlighting

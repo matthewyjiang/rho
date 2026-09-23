@@ -59,25 +59,22 @@ fn unknown_language_has_no_highlighter() {
     assert!(BlockHighlighter::for_language("no-such-language").is_none());
 }
 
-// Covers: TypeScript fence tags resolve after two-face syntax dump
+// Covers: TypeScript fence tags and common aliases resolve to dump-native grammars
 // Owner: pure unit (syntax language lookup)
 #[test]
-fn typescript_fence_tokens_resolve() {
+fn fence_tokens_and_aliases_resolve() {
     warm_syntax_set();
-    for token in ["ts", "tsx", "typescript"] {
-        assert!(
-            BlockHighlighter::for_language(token).is_some(),
-            "expected highlighter for fence token {token}"
-        );
-    }
-}
-
-// Covers: common alias tags map onto dump-native grammars
-// Owner: pure unit (syntax language lookup)
-#[test]
-fn common_fence_aliases_resolve() {
-    warm_syntax_set();
-    for token in ["jsx", "shell", "console", "toml", "ps1", "powershell"] {
+    for token in [
+        "ts",
+        "tsx",
+        "typescript",
+        "jsx",
+        "shell",
+        "console",
+        "toml",
+        "ps1",
+        "powershell",
+    ] {
         assert!(
             BlockHighlighter::for_language(token).is_some(),
             "expected highlighter for fence token {token}"

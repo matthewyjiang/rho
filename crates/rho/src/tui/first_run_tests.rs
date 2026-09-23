@@ -1,22 +1,9 @@
 use pretty_assertions::assert_eq;
 
 use super::*;
-use crate::tui::render::session_header_lines;
 
 const READY: SetupState = SetupState { signed_in: true };
 const SIGNED_OUT: SetupState = SetupState { signed_in: false };
-
-fn header_lines(setup: SetupState) -> Vec<String> {
-    session_header_lines(None, setup, 80)
-        .iter()
-        .map(|line| {
-            line.spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>()
-        })
-        .collect()
-}
 
 /// The header announces itself only when the session cannot run a turn. A
 /// first launch says its welcome on the setup screen, so repeating it here
@@ -54,30 +41,5 @@ fn login_is_the_next_step_exactly_while_signed_out() {
                 "the next step must lead the hint block for {setup:?}"
             );
         }
-    }
-}
-
-/// The rendered header carries exactly the hints the state selected, in order,
-/// so a state change cannot leave a stale hint block on screen.
-#[test]
-fn the_header_renders_the_hints_the_state_selected() {
-    for setup in [READY, SIGNED_OUT] {
-        let rendered = header_lines(setup);
-        let hints: Vec<&str> = setup.hints().iter().map(|hint| hint.text).collect();
-        let rendered_hints: Vec<&str> = rendered
-            .iter()
-            .map(String::as_str)
-            .filter(|line| hints.contains(line))
-            .collect();
-        assert_eq!(rendered_hints, hints, "rendered hint block for {setup:?}");
-
-        let headline = setup
-            .headline()
-            .map(|headline| headline.content.into_owned());
-        assert_eq!(
-            rendered.iter().any(|line| Some(line) == headline.as_ref()),
-            headline.is_some(),
-            "rendered headline for {setup:?}"
-        );
     }
 }

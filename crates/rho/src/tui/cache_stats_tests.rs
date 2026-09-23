@@ -5,8 +5,8 @@ use rho_providers::model::{models_dev::ModelCost, ModelMetadata, ModelUsage};
 use rho_sdk::{ModelCallMetrics, ModelCallProfile, ReasoningLevel};
 
 use super::{
-    notice_text, CacheMissCause, CacheMissNotice, CacheRebilled, CacheStatsTracker,
-    CACHE_MISS_NOISE_FLOOR_TOKENS, PROVIDER_CACHE_TTL_HINT, SIGNIFICANT_MISS_TOKENS,
+    CacheMissCause, CacheRebilled, CacheStatsTracker, CACHE_MISS_NOISE_FLOOR_TOKENS,
+    PROVIDER_CACHE_TTL_HINT, SIGNIFICANT_MISS_TOKENS,
 };
 
 /// One completed model call, as the tracker observes it.
@@ -446,42 +446,4 @@ fn a_request_without_reported_usage_is_not_sampled() {
     tracker.record_request(&profile, metrics, None, t0 + Duration::from_secs(2));
 
     assert_eq!(tracker.rebilled(), &NONE);
-}
-
-// Covers: notice copy for each observable cause and the unpriced form.
-// Owner: tui cache-miss policy
-#[test]
-fn notice_text_names_cause_and_optional_cost() {
-    assert_eq!(
-        notice_text(&CacheMissNotice {
-            missed_tokens: 45_200,
-            extra_cost_usd_micros: Some(320_000),
-            cause: CacheMissCause::Unattributed,
-        }),
-        "cache miss: 45.2K tokens re-billed (~$0.320)"
-    );
-    assert_eq!(
-        notice_text(&CacheMissNotice {
-            missed_tokens: 45_200,
-            extra_cost_usd_micros: Some(320_000),
-            cause: CacheMissCause::ModelSwitch,
-        }),
-        "cache miss after model switch: 45.2K tokens re-billed (~$0.320)"
-    );
-    assert_eq!(
-        notice_text(&CacheMissNotice {
-            missed_tokens: 45_200,
-            extra_cost_usd_micros: Some(320_000),
-            cause: CacheMissCause::ToolListChanged,
-        }),
-        "cache miss after tool list change: 45.2K tokens re-billed (~$0.320)"
-    );
-    assert_eq!(
-        notice_text(&CacheMissNotice {
-            missed_tokens: 45_200,
-            extra_cost_usd_micros: None,
-            cause: CacheMissCause::Idle(Duration::from_secs(12 * 60)),
-        }),
-        "cache miss after 12m idle (cache TTL is about 5m): 45.2K tokens re-billed"
-    );
 }

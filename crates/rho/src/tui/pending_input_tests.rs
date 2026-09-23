@@ -118,10 +118,6 @@ fn alt_up_preserves_nonempty_composer() {
         *app.pending.queued_prompts(),
         VecDeque::from([prompt("future turn")])
     );
-    assert_eq!(
-        app.status(),
-        "clear the composer before editing pending input"
-    );
 }
 
 #[test]

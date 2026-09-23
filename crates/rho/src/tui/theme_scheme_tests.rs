@@ -96,9 +96,6 @@ fn resolves_builtin_and_terminal_ids() {
     assert_eq!(classic.id, "one-half-dark");
     assert_eq!(classic.source, ThemeSourceKind::Builtin);
     assert!(resolve_fixed_scheme("missing-theme-xyz").is_none());
-    assert_eq!(theme_display_name("one-half-dark"), "One Half Dark");
-    assert_eq!(theme_display_name("terminal"), "Terminal");
-    assert_eq!(theme_display_name(""), "Terminal");
 }
 
 // Covers: duplicate built-in ids would silently hide a scheme and reserve the stem

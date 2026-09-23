@@ -98,7 +98,7 @@ async fn assemble_awaiting_catalog(
 }
 
 // Covers: the advisor tool must appear only when advisor mode is on and an
-// advisor model is configured. Steering stays off the system prompt.
+// advisor model is configured. The system prompt does not depend on the mode.
 // Owner: root tool/prompt assembly.
 #[tokio::test]
 async fn the_advisor_tool_needs_both_the_mode_and_a_model() {
@@ -114,13 +114,15 @@ async fn the_advisor_tool_needs_both_the_mode_and_a_model() {
         let config = advisor_config(advisor_mode, with_model);
 
         let (registered, prompt) = assemble(&config, cwd.path()).await;
+        // Toggling the mode mid-session must not require a different prompt.
+        let (_, mode_off_prompt) = assemble(&advisor_config(false, with_model), cwd.path()).await;
 
         assert_eq!(
             registered, expected,
             "advisor_mode={advisor_mode} with_model={with_model}"
         );
-        assert!(
-            !prompt.contains("Do not call advisor as your first action"),
+        assert_eq!(
+            prompt, mode_off_prompt,
             "system prompt must stay advisor-agnostic; advisor_mode={advisor_mode} with_model={with_model}"
         );
     }
@@ -162,56 +164,6 @@ async fn the_advisor_receives_the_executor_system_prompt() {
     };
     let store = tools.advisor().expect("advisor store");
     assert_eq!(store.system_prompt(), Some(text));
-}
-
-// Covers: the executor system prompt is a single form that does not encode
-// advisor registration. Mid-session toggles must not rely on swapping prompts.
-// Owner: root tool/prompt assembly.
-#[tokio::test]
-async fn system_prompt_stays_advisor_agnostic() {
-    let cwd = tempfile::tempdir().unwrap();
-
-    for advisor_mode in [false, true] {
-        let config = advisor_config(advisor_mode, /*with_model*/ true);
-        let diagnostics = RuntimeDiagnostics::new(&config);
-        let agent = bound_agent(&config);
-
-        let prompt = assemble_tools_and_prompt(ToolsAndPromptOptions {
-            catalog: None,
-            config: &config,
-            config_path: cwd.path().join("config.toml"),
-            cwd: cwd.path(),
-            no_system_prompt: false,
-            no_tools: false,
-            no_subagents: true,
-            questionnaire_enabled: false,
-            mcp_elicitation: crate::tools::mcp::McpElicitationSupport::Unavailable,
-            mcp_sampling: super::McpSamplingSupport::Unavailable,
-            mcp_attach: super::McpAttach::Connect,
-            await_catalog_names: false,
-            defer_mcp_connect: false,
-            diagnostics: &diagnostics,
-            agent: &agent,
-        })
-        .await
-        .unwrap()
-        .prompt
-        .system;
-
-        let text = match prompt {
-            SystemPrompt::Custom(text) => text,
-            SystemPrompt::None => String::new(),
-            _ => String::new(),
-        };
-        assert!(
-            !text.contains("Do not call advisor as your first action"),
-            "advisor_mode={advisor_mode}"
-        );
-        assert!(
-            !text.contains("You have access to an `advisor` tool"),
-            "advisor_mode={advisor_mode}"
-        );
-    }
 }
 
 // Covers: the assembled system prompt names the model this run actually bound,

@@ -13,33 +13,30 @@ fn blocked_evaluation() -> GoalEvaluation {
 }
 
 #[test]
-fn parses_met_unmet_and_fenced_evaluations() {
-    assert_eq!(
-        parse_evaluation(r#"{"state":"Met","reason":"tests pass","human_steps":[]}"#).unwrap(),
-        GoalEvaluation::Met {
-            reason: "tests pass".into(),
-        }
-    );
-    assert_eq!(
-        parse_evaluation(
-            "```json\n{\"state\":\"Unmet\",\"reason\":\"lint still fails\",\"human_steps\":[]}\n```"
-        )
-        .unwrap(),
-        GoalEvaluation::Unmet {
-            reason: "lint still fails".into(),
-        }
-    );
-}
-
-#[test]
-fn parses_blocked_evaluation_with_human_steps() {
-    assert_eq!(
-        parse_evaluation(
-            r#"{"state":"Blocked","reason":"repository work is complete","human_steps":[{"action":"publish release v1.0.0","reason":"requires the user's release credentials"}]}"#
-        )
-        .unwrap(),
-        blocked_evaluation()
-    );
+fn parses_evaluations() {
+    for (case, input, expected) in [
+        (
+            "met",
+            r#"{"state":"Met","reason":"tests pass","human_steps":[]}"#,
+            GoalEvaluation::Met {
+                reason: "tests pass".into(),
+            },
+        ),
+        (
+            "fenced unmet",
+            "```json\n{\"state\":\"Unmet\",\"reason\":\"lint still fails\",\"human_steps\":[]}\n```",
+            GoalEvaluation::Unmet {
+                reason: "lint still fails".into(),
+            },
+        ),
+        (
+            "blocked with human steps",
+            r#"{"state":"Blocked","reason":"repository work is complete","human_steps":[{"action":"publish release v1.0.0","reason":"requires the user's release credentials"}]}"#,
+            blocked_evaluation(),
+        ),
+    ] {
+        assert_eq!(parse_evaluation(input).unwrap(), expected, "{case}");
+    }
 }
 
 #[test]

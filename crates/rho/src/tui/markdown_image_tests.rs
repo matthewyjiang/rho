@@ -33,15 +33,13 @@ fn skips_images_inside_code_fences() {
 }
 
 #[test]
-fn skips_links_that_are_not_images() {
-    let text = "[docs](https://example.com) and plain text";
-
-    assert!(collect_markdown_image_sources(text).is_empty());
-}
-
-#[test]
-fn requires_a_target() {
-    assert!(collect_markdown_image_sources("![alt]()").is_empty());
+fn ignores_non_images_and_empty_targets() {
+    for (case, text) in [
+        ("plain link", "[docs](https://example.com) and plain text"),
+        ("empty target", "![alt]()"),
+    ] {
+        assert!(collect_markdown_image_sources(text).is_empty(), "{case}");
+    }
 }
 
 #[test]

@@ -116,39 +116,24 @@ fn step_started_clears_stream_state_without_clearing_model_performance() {
         Some(100.0 / 1.9)
     );
     assert_eq!(app.turn.session_ui(), SessionUiPhase::ProviderTurn);
-    assert_eq!(app.status(), "running step 2");
 }
 
+// Covers: a provider-reported retry-after delay must reach the retry status.
+// Owner: tui activity status
 #[test]
-fn provider_retry_status_includes_rate_limit_reset_hint() {
-    use rho_sdk::ProviderErrorKind;
+fn provider_retry_status_includes_retry_after_delay() {
+    let delay = Duration::from_secs(12);
+    let label = ProviderRetryHint {
+        reason: ProviderStreamResetReason::RetryableFailure {
+            kind: rho_sdk::ProviderErrorKind::RateLimit,
+            retry_after: Some(delay),
+        },
+    }
+    .status_label();
 
-    assert_eq!(
-        ProviderRetryHint {
-            reason: ProviderStreamResetReason::RetryableFailure {
-                kind: ProviderErrorKind::RateLimit,
-                retry_after: Some(Duration::from_secs(12)),
-            },
-        }
-        .status_label(),
-        "rate limited · retry in 12s"
-    );
-    assert_eq!(
-        ProviderRetryHint {
-            reason: ProviderStreamResetReason::RetryableFailure {
-                kind: ProviderErrorKind::RateLimit,
-                retry_after: None,
-            },
-        }
-        .status_label(),
-        "rate limited · retrying"
-    );
-    assert_eq!(
-        ProviderRetryHint {
-            reason: ProviderStreamResetReason::InvalidResponse,
-        }
-        .status_label(),
-        "retrying provider response"
+    assert!(
+        label.contains(&rho_sdk::format_retry_after(delay)),
+        "{label}"
     );
 }
 

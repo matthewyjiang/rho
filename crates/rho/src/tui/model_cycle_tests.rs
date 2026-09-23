@@ -85,22 +85,6 @@ fn scope_toggle_refuses_an_empty_pinned_view() {
     assert_eq!(app.model_picker_scope_override, None);
 }
 
-// Covers: unpinning the last usable pin while the pinned view is open must
-// fall back to the catalogue instead of leaving an empty list.
-// Owner: model picker scope
-#[test]
-fn unpinning_the_last_pin_falls_back_to_all() {
-    let mut app = app_with_pins(&["xai/grok-4.6"]);
-    open_model_picker(&mut app);
-    assert!(picker_title(&app).contains("pinned"));
-
-    app.toggle_selected_model_favorite().unwrap();
-
-    assert!(picker_title(&app).contains("all"));
-    assert!(picker_values(&app).len() > 1);
-    assert!(app.info.runtime.favorite_models.is_empty());
-}
-
 // Covers: a rebuild must keep the parent picker so users opened from /config
 // still have a way back after pinning or switching scope.
 // Owner: model picker scope

@@ -270,7 +270,8 @@ fn preserves_indentation_in_match_preview() {
     );
 }
 
-// Covers: path pointing at a file must search that file, not return no matches
+// Covers: path pointing at a file must search that file, and a glob still
+// filters it, instead of returning no matches
 // Owner: pure unit (grep path handling)
 #[test]
 fn file_path_searches_the_named_file() {
@@ -279,51 +280,33 @@ fn file_path_searches_the_named_file() {
     let body = "needle nested\n";
     write(&dir, "src/lib.rs", body);
     let tag = compute_file_hash(body);
-    let content = call_grep(&dir, json!({"pattern": "needle", "path": "src/lib.rs"})).unwrap();
-    assert_eq!(
-        content,
-        format!(
-            "\
+    let matched = format!(
+        "\
 [src/lib.rs#{tag}]
 1 | needle nested
 
 1 matches in 1 files"
-        )
-    );
-}
-
-// Covers: named-file path plus glob must still search a matching file
-// Owner: pure unit (grep path handling)
-#[test]
-fn file_path_applies_glob_to_the_named_file() {
-    let dir = TempDir::new().unwrap();
-    write(&dir, "src/other.rs", "needle other\n");
-    let body = "needle nested\n";
-    write(&dir, "src/lib.rs", body);
-    let tag = compute_file_hash(body);
-
-    let matched = call_grep(
-        &dir,
-        json!({"pattern": "needle", "path": "src/lib.rs", "glob": "*.rs"}),
-    )
-    .unwrap();
-    assert_eq!(
-        matched,
-        format!(
-            "\
-[src/lib.rs#{tag}]
-1 | needle nested
-
-1 matches in 1 files"
-        )
     );
 
-    let missed = call_grep(
-        &dir,
-        json!({"pattern": "needle", "path": "src/lib.rs", "glob": "*.txt"}),
-    )
-    .unwrap();
-    assert_eq!(missed, "no matches for 'needle' under src/lib.rs");
+    for (case, args, expected) in [
+        (
+            "no glob",
+            json!({"pattern": "needle", "path": "src/lib.rs"}),
+            matched.clone(),
+        ),
+        (
+            "matching glob",
+            json!({"pattern": "needle", "path": "src/lib.rs", "glob": "*.rs"}),
+            matched,
+        ),
+        (
+            "non-matching glob",
+            json!({"pattern": "needle", "path": "src/lib.rs", "glob": "*.txt"}),
+            "no matches for 'needle' under src/lib.rs".to_string(),
+        ),
+    ] {
+        assert_eq!(call_grep(&dir, args).unwrap(), expected, "{case}");
+    }
 }
 
 // Covers: narrowed path= must emit workspace-relative chain headers edit accepts

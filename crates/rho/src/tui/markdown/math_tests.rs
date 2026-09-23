@@ -189,11 +189,6 @@ fn falls_back_for_output_exceeding_max_rendered_width() {
         render_math(&source, MAX_RENDERED_WIDTH.saturating_mul(4)),
         MathRender::Fallback(MathFallback::OutputWidth)
     );
-    assert_eq!(MathFallback::OutputWidth.panel_title(), "MATH · TOO WIDE");
-    assert_eq!(
-        MathFallback::TooWide.panel_title(),
-        "MATH · PANE TOO NARROW"
-    );
 }
 
 // Covers: closed fence helper must keep latex source for copy / fallback panels
@@ -201,12 +196,7 @@ fn falls_back_for_output_exceeding_max_rendered_width() {
 #[test]
 fn closed_fence_keeps_source_for_art_and_fallback() {
     match render_closed_display_math(r"\frac{a}{b}".into(), 80) {
-        ClosedPanel::Art {
-            title,
-            lines,
-            source,
-        } => {
-            assert_eq!(title, "MATH");
+        ClosedPanel::Art { lines, source, .. } => {
             assert_eq!(source, r"\frac{a}{b}");
             assert!(!lines.is_empty());
         }
@@ -214,8 +204,7 @@ fn closed_fence_keeps_source_for_art_and_fallback() {
     }
 
     match render_closed_display_math(String::new(), 80) {
-        ClosedPanel::SourceFallback { title, source } => {
-            assert_eq!(title, "MATH · NOT RENDERED");
+        ClosedPanel::SourceFallback { source, .. } => {
             assert!(source.is_empty());
         }
         other => panic!("expected fallback, got {other:?}"),

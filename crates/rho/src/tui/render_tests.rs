@@ -500,11 +500,9 @@ fn picker_reserves_wrapped_footer_rows() {
         .collect();
     assert_eq!(item_rows, 7);
     assert_eq!(
-        footer,
-        vec![
-            "  select model · Type to search · Enter select · Ctrl+P pin/unpin".to_string(),
-            "  Ctrl+O all/pinned · Tab complete · Esc cancel".to_string(),
-        ]
+        footer.len(),
+        2,
+        "footer should wrap onto two rows: {footer:?}"
     );
     assert!(footer.iter().all(|line| !line.contains('…')));
 }

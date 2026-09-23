@@ -18,44 +18,32 @@ fn attached_document() -> ChatMedia {
     })
 }
 
-fn assert_goal_command_takes_media(command: &str) {
-    let mut app = test_app();
-    app.input_ui
-        .push_ready_attachment(attached_document(), None);
-    app.input_ui.with_text_mut(|text| text.push_str(command));
-    let invocation = commands::parse_command(command).unwrap().unwrap();
-
-    let submission = app.take_command_submission(
-        invocation,
-        TurnPrompt::standard(command.to_owned(), command.to_owned()),
-    );
-
-    assert_eq!(submission.media_len(), 1);
-    assert!(app.input_ui.attachments().is_empty());
-    assert!(app.input_ui.text().is_empty());
-}
-
 // Covers: status and early-return goal commands must not leave attachments in composer state.
 // Owner: slash-command submission ownership
 #[test]
-fn goal_status_takes_queued_media() {
-    assert_goal_command_takes_media("/goal");
-}
+fn goal_commands_take_queued_media() {
+    let overlong = format!("/goal {}", "x".repeat(goal::MAX_GOAL_CHARS + 1));
+    for (case, command) in [
+        ("status", "/goal"),
+        ("clear", "/goal clear"),
+        ("resume", "/goal resume"),
+        ("invalid overlong", overlong.as_str()),
+    ] {
+        let mut app = test_app();
+        app.input_ui
+            .push_ready_attachment(attached_document(), None);
+        app.input_ui.with_text_mut(|text| text.push_str(command));
+        let invocation = commands::parse_command(command).unwrap().unwrap();
 
-#[test]
-fn goal_clear_takes_queued_media() {
-    assert_goal_command_takes_media("/goal clear");
-}
+        let submission = app.take_command_submission(
+            invocation,
+            TurnPrompt::standard(command.to_owned(), command.to_owned()),
+        );
 
-#[test]
-fn goal_resume_takes_queued_media() {
-    assert_goal_command_takes_media("/goal resume");
-}
-
-#[test]
-fn invalid_overlong_goal_takes_queued_media() {
-    let condition = "x".repeat(goal::MAX_GOAL_CHARS + 1);
-    assert_goal_command_takes_media(&format!("/goal {condition}"));
+        assert_eq!(submission.media_len(), 1, "{case}");
+        assert!(app.input_ui.attachments().is_empty(), "{case}");
+        assert!(app.input_ui.text().is_empty(), "{case}");
+    }
 }
 
 fn held_turn(display: &str) -> HeldTurn {
