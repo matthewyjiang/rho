@@ -45,13 +45,11 @@ impl App {
             // Read-only agents open their full prompt; the fact sheet only
             // shows an excerpt.
             self.agent_editor_session = None;
-            let (policy, text) = match &entry.definition.prompt {
-                PromptPolicy::Extend(text) => ("extends system prompt", text),
-                PromptPolicy::Replace(text) => ("replaces system prompt", text),
-            };
+            let (policy, text) =
+                crate::tui::agent_picker::prompt_policy_parts(&entry.definition.prompt);
             self.open_text_view_over_picker(
                 format!("{} prompt · {policy}", entry.definition.id),
-                text.clone(),
+                text.to_owned(),
             );
             return Ok(());
         }

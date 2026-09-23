@@ -15,7 +15,7 @@ use super::{
         classify_panel_key, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
         OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
     },
-    render::wrap_line_at_whitespace,
+    render::wrap_text_lines,
     theme::Theme,
     App, ComposerMode, UiPicker,
 };
@@ -93,14 +93,6 @@ impl App {
         if !matches!(self.input_ui.composer(), ComposerMode::TextView(_)) {
             return false;
         }
-        let key = match key.code {
-            // Enter reads as "done reading" here, same as Esc.
-            crossterm::event::KeyCode::Enter => crossterm::event::KeyEvent::new(
-                crossterm::event::KeyCode::Esc,
-                crossterm::event::KeyModifiers::NONE,
-            ),
-            _ => key,
-        };
         match classify_panel_key(key) {
             PanelKey::Close => {
                 self.close_text_view_overlay();
@@ -136,16 +128,5 @@ fn text_view_lines(text: &str, width: usize) -> Vec<Line<'static>> {
     if text.is_empty() {
         return vec![Line::from(Span::styled("(empty)", Theme::dim()))];
     }
-    text.lines()
-        .flat_map(|line| {
-            if line.is_empty() {
-                vec![Line::raw("")]
-            } else {
-                wrap_line_at_whitespace(line, width)
-                    .into_iter()
-                    .map(|part| Line::from(Span::styled(part.to_owned(), Theme::text())))
-                    .collect()
-            }
-        })
-        .collect()
+    wrap_text_lines(text, width, Theme::text())
 }

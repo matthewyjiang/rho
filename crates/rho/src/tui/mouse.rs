@@ -9,6 +9,7 @@ use ratatui::{
 
 use super::{
     copy_interaction::{selection_position, selection_position_clamped, CopyHit},
+    overlay_panel::PanelScrollTarget,
     paste_burst::word_range_at,
     picker::PickerMouseEvent,
     text_selection::{screen_lines, CopyNotice, TextSelection},
@@ -67,7 +68,15 @@ impl App {
         let size = terminal.size()?;
         let screen = Rect::new(0, 0, size.width, size.height);
         let now = Instant::now();
-        if matches!(self.input_ui.composer(), ComposerMode::Computer(_)) {
+        // Scroll-only panels swallow every pointer event; only the wheel acts.
+        let scroll_only_panel: Option<fn(&mut Self, Rect, PanelScrollTarget) -> bool> =
+            match self.input_ui.composer() {
+                ComposerMode::Computer(_) => Some(Self::scroll_computer_overlay),
+                ComposerMode::Hooks(_) => Some(Self::scroll_hooks_overlay),
+                ComposerMode::TextView(_) => Some(Self::scroll_text_view_overlay),
+                _ => None,
+            };
+        if let Some(scroll) = scroll_only_panel {
             self.clear_selections();
             self.clear_hovered_copy_buttons();
             self.clear_rail_pointer_state();
@@ -77,42 +86,7 @@ impl App {
                 MouseEventKind::ScrollDown => super::HISTORY_MOUSE_SCROLL_LINES as isize,
                 _ => 0,
             };
-            self.scroll_computer_overlay(
-                screen,
-                super::overlay_panel::PanelScrollTarget::Delta(delta),
-            );
-            return Ok(());
-        }
-        if matches!(self.input_ui.composer(), ComposerMode::Hooks(_)) {
-            self.clear_selections();
-            self.clear_hovered_copy_buttons();
-            self.clear_rail_pointer_state();
-            self.history.set_scrollbar_drag(None);
-            let delta = match kind {
-                MouseEventKind::ScrollUp => -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
-                MouseEventKind::ScrollDown => super::HISTORY_MOUSE_SCROLL_LINES as isize,
-                _ => 0,
-            };
-            self.scroll_hooks_overlay(
-                screen,
-                super::overlay_panel::PanelScrollTarget::Delta(delta),
-            );
-            return Ok(());
-        }
-        if matches!(self.input_ui.composer(), ComposerMode::TextView(_)) {
-            self.clear_selections();
-            self.clear_hovered_copy_buttons();
-            self.clear_rail_pointer_state();
-            self.history.set_scrollbar_drag(None);
-            let delta = match kind {
-                MouseEventKind::ScrollUp => -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
-                MouseEventKind::ScrollDown => super::HISTORY_MOUSE_SCROLL_LINES as isize,
-                _ => 0,
-            };
-            self.scroll_text_view_overlay(
-                screen,
-                super::overlay_panel::PanelScrollTarget::Delta(delta),
-            );
+            scroll(self, screen, PanelScrollTarget::Delta(delta));
             return Ok(());
         }
         if matches!(self.input_ui.composer(), ComposerMode::Info(_)) {

@@ -18,7 +18,7 @@ use super::overlay_layout::{
 };
 use super::{PickerBadge, PickerBadgePlacement, PickerDetail, PickerItem, UiPicker};
 use crate::tui::{
-    render::{display_width, styled_line, truncate_one_line, LineFill},
+    render::{display_width, fit_line, styled_line, truncate_one_line, LineFill},
     theme::Theme,
 };
 
@@ -402,7 +402,10 @@ fn detail_viewport_rows(
             index
                 .checked_sub(badge_rows)
                 .and_then(|detail_index| detail.get(detail_index))
-                .map_or_else(|| padded_plain("", width), |line| pad_line(line, width))
+                .map_or_else(
+                    || padded_plain("", width),
+                    |line| fit_line(line.clone(), width),
+                )
         })
         .collect::<Vec<_>>();
     rows.resize_with(viewport_rows, || {
@@ -711,32 +714,6 @@ fn content_row(inner_width: usize, content: Line<'static>) -> Line<'static> {
         spans.push(Span::raw(" ".repeat(inner_width - content_width)));
     }
     spans.push(Span::styled("│", Theme::dim()));
-    Line::from(spans)
-}
-
-/// Clip a styled row to `width` columns and pad it so the gutter aligns.
-fn pad_line(line: &Line<'static>, width: usize) -> Line<'static> {
-    let width = width.max(1);
-    let mut spans = Vec::with_capacity(line.spans.len() + 1);
-    let mut used = 0usize;
-    for span in &line.spans {
-        if used >= width {
-            break;
-        }
-        let text = span.content.as_ref();
-        let span_width = display_width(text);
-        if used + span_width <= width {
-            spans.push(span.clone());
-            used += span_width;
-        } else {
-            let clipped = truncate_one_line(text, width - used);
-            used += display_width(&clipped);
-            spans.push(Span::styled(clipped, span.style));
-        }
-    }
-    if used < width {
-        spans.push(Span::raw(" ".repeat(width - used)));
-    }
     Line::from(spans)
 }
 

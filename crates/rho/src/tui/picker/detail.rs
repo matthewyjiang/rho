@@ -14,7 +14,10 @@ use ratatui::{
 
 use super::{rows::picker_badge_style, PickerBadge};
 use crate::tui::{
-    render::{display_width, truncate_keep_end, truncate_one_line, wrap_line_at_whitespace},
+    render::{
+        clip_line, display_width, truncate_keep_end, truncate_one_line, wrap_line_at_whitespace,
+        wrap_text_lines,
+    },
     theme::Theme,
 };
 
@@ -196,7 +199,7 @@ impl DetailSheet {
 pub(in crate::tui) fn detail_lines(detail: &PickerDetail, width: usize) -> Vec<Line<'static>> {
     let width = width.max(1);
     match detail {
-        PickerDetail::Text(text) => text_lines(text, width, Theme::dim()),
+        PickerDetail::Text(text) => wrap_text_lines(text, width, Theme::dim()),
         PickerDetail::Sheet(sheet) => sheet_lines(sheet, width)
             .into_iter()
             .map(|line| clip_line(line, width))
@@ -204,35 +207,15 @@ pub(in crate::tui) fn detail_lines(detail: &PickerDetail, width: usize) -> Vec<L
     }
 }
 
-/// Drop whatever runs past `width`. Block layouts already aim to fit; this
-/// keeps degenerate widths (a few columns) from breaking the pane border.
-fn clip_line(line: Line<'static>, width: usize) -> Line<'static> {
-    let mut used = 0usize;
-    let mut spans = Vec::with_capacity(line.spans.len());
-    for span in line.spans {
-        let span_width = display_width(&span.content);
-        if used + span_width <= width {
-            used += span_width;
-            spans.push(span);
-            continue;
-        }
-        let room = width - used;
-        if room > 0 {
-            let clipped = truncate_one_line(&span.content, room);
-            spans.push(Span::styled(clipped, span.style));
-        }
-        break;
-    }
-    Line::from(spans)
-}
-
 fn sheet_lines(sheet: &DetailSheet, width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     for block in &sheet.blocks {
         match block {
             DetailBlock::Title { text, tag } => lines.push(title_line(text, tag.as_ref(), width)),
-            DetailBlock::Paragraph(text) => lines.extend(text_lines(text, width, Theme::text())),
-            DetailBlock::Muted(text) => lines.extend(text_lines(text, width, Theme::dim())),
+            DetailBlock::Paragraph(text) => {
+                lines.extend(wrap_text_lines(text, width, Theme::text()))
+            }
+            DetailBlock::Muted(text) => lines.extend(wrap_text_lines(text, width, Theme::dim())),
             DetailBlock::Excerpt { text, rows } => lines.extend(excerpt_lines(text, *rows, width)),
             DetailBlock::Fields(fields) => lines.extend(field_lines(fields, width)),
             DetailBlock::Heading { label, status } => {
@@ -247,24 +230,6 @@ fn sheet_lines(sheet: &DetailSheet, width: usize) -> Vec<Line<'static>> {
         lines.push(Line::raw(""));
     }
     lines
-}
-
-fn text_lines(text: &str, width: usize, style: Style) -> Vec<Line<'static>> {
-    if text.is_empty() {
-        return vec![Line::raw("")];
-    }
-    text.lines()
-        .flat_map(|line| {
-            if line.is_empty() {
-                vec![Line::raw("")]
-            } else {
-                wrap_line_at_whitespace(line, width)
-                    .into_iter()
-                    .map(|part| Line::from(Span::styled(part.to_owned(), style)))
-                    .collect()
-            }
-        })
-        .collect()
 }
 
 /// Whitespace-collapsed `text` wrapped to at most `rows` rows. A cut shows as

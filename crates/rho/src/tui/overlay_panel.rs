@@ -13,7 +13,7 @@ use super::{
     copy_interaction::CopyHit,
     display_width,
     picker::{clamp_overlay_scroll, OverlayScrollbarState},
-    render::truncate_one_line,
+    render::{fit_line, truncate_one_line},
     scrollbar::track_span,
     styled_line, LineFill, Theme,
 };
@@ -99,7 +99,7 @@ pub(super) fn render_overlay_panel(
         .skip(scroll)
         .take(body_rows)
         .cloned()
-        .map(|line| fit_body_line(line, content_width))
+        .map(|line| fit_line(line, content_width))
         .collect::<Vec<_>>();
     body_view.resize_with(body_rows, || padded_plain("", content_width));
     if let Some(scrollbar) = scrollbar {
@@ -260,30 +260,6 @@ fn layout_for_outer(outer: Rect) -> OverlayPanelLayout {
         inner_width,
         body_rows,
     }
-}
-
-fn fit_body_line(line: Line<'static>, width: usize) -> Line<'static> {
-    let mut used = 0;
-    let mut spans = Vec::new();
-    for span in line.spans {
-        if used >= width {
-            break;
-        }
-        let span_width = display_width(span.content.as_ref());
-        if used + span_width <= width {
-            used += span_width;
-            spans.push(span);
-            continue;
-        }
-        let truncated = truncate_one_line(span.content.as_ref(), width - used);
-        used += display_width(&truncated);
-        spans.push(Span::styled(truncated, span.style));
-        break;
-    }
-    if used < width {
-        spans.push(Span::raw(" ".repeat(width - used)));
-    }
-    Line::from(spans)
 }
 
 fn append_scrollbar_column(rows: &mut [Line<'static>], scrollbar: OverlayScrollbarState) {

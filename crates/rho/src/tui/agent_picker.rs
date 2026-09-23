@@ -100,9 +100,8 @@ const PROMPT_EXCERPT_ROWS: usize = 3;
 
 pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) -> UiPicker {
     let mut entries = catalog.iter_with_internal().collect::<Vec<_>>();
-    // Group by source (stable within a group) so section headers answer
-    // "which of these can I change?" at a glance.
-    entries.sort_by_key(|entry| AgentGroup::of(entry.metadata.origin));
+    // Stable, so catalog order holds within a section.
+    entries.sort_by_key(|entry| agent_section(entry.metadata.origin).0);
     let items = entries
         .into_iter()
         .map(|entry| agent_item(entry, &models))
@@ -116,93 +115,97 @@ pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) ->
         })
 }
 
-/// Nav sections, in display order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum AgentGroup {
+/// What the user may do with an agent. One source of truth for the nav
+/// section, the Enter verb, and the origin markers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AgentAccess {
     Editable,
-    Workflow,
-    Shared,
-    BuiltIn,
     Internal,
+    ReadOnly,
 }
 
-impl AgentGroup {
+impl AgentAccess {
     fn of(origin: AgentOrigin) -> Self {
         match origin {
             AgentOrigin::RhoHome | AgentOrigin::Project => Self::Editable,
-            AgentOrigin::Workflow => Self::Workflow,
-            AgentOrigin::AgentsHome => Self::Shared,
-            AgentOrigin::BuiltIn => Self::BuiltIn,
             AgentOrigin::Internal => Self::Internal,
+            AgentOrigin::BuiltIn | AgentOrigin::AgentsHome | AgentOrigin::Workflow => {
+                Self::ReadOnly
+            }
         }
     }
 
-    fn section(self) -> &'static str {
+    fn selection_verb(self) -> &'static str {
         match self {
-            Self::Editable => "YOURS",
-            Self::Workflow => "WORKFLOW",
-            Self::Shared => "SHARED",
-            Self::BuiltIn => "BUILT IN",
-            Self::Internal => "INTERNAL",
+            Self::Editable => "edit",
+            Self::Internal => "configure",
+            Self::ReadOnly => "view prompt",
         }
+    }
+
+    fn tone(self) -> PickerBadgeTone {
+        match self {
+            Self::Editable => PickerBadgeTone::Editable,
+            Self::Internal => PickerBadgeTone::Warning,
+            Self::ReadOnly => PickerBadgeTone::Muted,
+        }
+    }
+
+    /// One-glyph nav marker; editable agents get the accent.
+    fn marker(self) -> PickerBadge {
+        PickerBadge {
+            text: "●".into(),
+            tone: self.tone(),
+        }
+    }
+
+    /// Right-aligned tag on the detail title.
+    fn tag(self) -> PickerBadge {
+        let text = match self {
+            Self::Editable => "● editable",
+            Self::Internal => "● internal",
+            Self::ReadOnly => "● read-only",
+        };
+        PickerBadge {
+            text: text.into(),
+            tone: self.tone(),
+        }
+    }
+}
+
+/// Nav section and its display rank. Sorting by rank groups the catalog so
+/// headers answer "which of these can I change?" at a glance.
+fn agent_section(origin: AgentOrigin) -> (u8, &'static str) {
+    match origin {
+        AgentOrigin::RhoHome | AgentOrigin::Project => (0, "YOURS"),
+        AgentOrigin::Workflow => (1, "WORKFLOW"),
+        AgentOrigin::AgentsHome => (2, "SHARED"),
+        AgentOrigin::BuiltIn => (3, "BUILT IN"),
+        AgentOrigin::Internal => (4, "INTERNAL"),
     }
 }
 
 fn agent_item(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> PickerItem {
     let definition = &entry.definition;
-    let selection_verb = match entry.metadata.origin {
-        AgentOrigin::Internal => Some("configure"),
-        AgentOrigin::RhoHome | AgentOrigin::Project => Some("edit"),
-        AgentOrigin::BuiltIn | AgentOrigin::AgentsHome | AgentOrigin::Workflow => {
-            Some("view prompt")
-        }
-    };
+    let access = AgentAccess::of(entry.metadata.origin);
     PickerItem {
-        section: Some(AgentGroup::of(entry.metadata.origin).section().into()),
+        section: Some(agent_section(entry.metadata.origin).1.into()),
         label: definition.id.to_string(),
-        detail: Some(agent_detail(entry, models).into()),
+        detail: Some(agent_detail(entry, access, models).into()),
         preview: None,
-        badge: Some(agent_badge(entry.metadata.origin)),
+        badge: Some(access.marker()),
         value: definition.id.to_string(),
-        selection_verb,
+        selection_verb: Some(access.selection_verb()),
         allow_filter_completion: true,
     }
 }
 
-/// One-glyph origin marker for the nav list. Editable agents get the accent
-/// so they stand out; everything else recedes.
-fn agent_badge(origin: AgentOrigin) -> PickerBadge {
-    let tone = match origin {
-        AgentOrigin::RhoHome | AgentOrigin::Project => PickerBadgeTone::Editable,
-        AgentOrigin::Internal => PickerBadgeTone::Warning,
-        AgentOrigin::BuiltIn | AgentOrigin::AgentsHome | AgentOrigin::Workflow => {
-            PickerBadgeTone::Muted
-        }
-    };
-    PickerBadge {
-        text: "●".into(),
-        tone,
-    }
-}
-
-/// Right-aligned tag on the detail title: what the user may do with it.
-fn agent_access_tag(origin: AgentOrigin) -> PickerBadge {
-    let (text, tone) = match origin {
-        AgentOrigin::RhoHome | AgentOrigin::Project => ("● editable", PickerBadgeTone::Editable),
-        AgentOrigin::Internal => ("● internal", PickerBadgeTone::Warning),
-        AgentOrigin::BuiltIn | AgentOrigin::AgentsHome | AgentOrigin::Workflow => {
-            ("● read-only", PickerBadgeTone::Muted)
-        }
-    };
-    PickerBadge {
-        text: text.into(),
-        tone,
-    }
-}
-
-fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> DetailSheet {
+fn agent_detail(
+    entry: &AgentCatalogEntry,
+    access: AgentAccess,
+    models: &AgentModelView<'_>,
+) -> DetailSheet {
     let definition = &entry.definition;
-    let origin = entry.metadata.origin;
     let mut fields = vec![
         DetailField::new(
             "Runtime",
@@ -214,25 +217,17 @@ fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> Detai
         agent_tools_field(definition),
     ];
     if let AgentRuntimeSpec::ClaudeCli(config) = &definition.runtime {
-        fields.push(DetailField::new(
-            "Claude config",
-            if config.inherit_claude_config {
-                "inherit"
-            } else {
-                "closed"
-            },
-            if config.inherit_claude_config {
-                DetailTone::Normal
-            } else {
-                DetailTone::Muted
-            },
-        ));
+        fields.push(if config.inherit_claude_config {
+            DetailField::new("Claude config", "inherit", DetailTone::Normal)
+        } else {
+            DetailField::new("Claude config", "closed", DetailTone::Muted)
+        });
     }
     fields.push(agent_source_field(entry));
 
     let mut blocks = vec![DetailBlock::Title {
         text: definition.id.to_string(),
-        tag: Some(agent_access_tag(origin)),
+        tag: Some(access.tag()),
     }];
     if !definition.description.is_empty() {
         blocks.push(DetailBlock::Paragraph(definition.description.to_string()));
@@ -320,10 +315,7 @@ fn agent_source_field(entry: &AgentCatalogEntry) -> DetailField {
 /// Collapsed prompt: a heading with the policy and size, then a short
 /// excerpt. The full text lives behind Enter (editor or read-only view).
 fn agent_prompt_blocks(definition: &crate::agent::AgentDefinition) -> Vec<DetailBlock> {
-    let (policy, text) = match &definition.prompt {
-        PromptPolicy::Extend(text) => ("extends system prompt", text.as_str()),
-        PromptPolicy::Replace(text) => ("replaces system prompt", text.as_str()),
-    };
+    let (policy, text) = prompt_policy_parts(&definition.prompt);
     let status = match text.lines().count() {
         0 => policy.to_string(),
         1 => format!("{policy} · 1 line"),
@@ -342,6 +334,14 @@ fn agent_prompt_blocks(definition: &crate::agent::AgentDefinition) -> Vec<Detail
         rows: PROMPT_EXCERPT_ROWS,
     });
     blocks
+}
+
+/// Human policy label and body of an agent prompt.
+pub(super) fn prompt_policy_parts(prompt: &PromptPolicy) -> (&'static str, &str) {
+    match prompt {
+        PromptPolicy::Extend(text) => ("extends system prompt", text),
+        PromptPolicy::Replace(text) => ("replaces system prompt", text),
+    }
 }
 
 /// Whether this agent's picker offers Claude Code.
