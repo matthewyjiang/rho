@@ -463,8 +463,8 @@ impl ToolEntry {
     pub(in crate::tui) fn visible_in_zen(&self) -> bool {
         matches!(
             &self.presentation,
-            crate::presentation::Presentation::Message(message)
-                if matches!(message.visibility, crate::presentation::MessageVisibility::Conversation)
+            crate::presentation::Presentation::Notification(message)
+                if matches!(message.visibility, crate::presentation::NotificationVisibility::Conversation)
         )
     }
 

@@ -20,7 +20,7 @@ fn live_labels(batch: &ToolCallBatch) -> Vec<String> {
         .map(|entry| match &entry.presentation {
             crate::presentation::Presentation::Card(card)
             | crate::presentation::Presentation::SummaryCard(card) => card.header_text(),
-            crate::presentation::Presentation::Message(_) => panic!("expected live tool card"),
+            crate::presentation::Presentation::Notification(_) => panic!("expected live tool card"),
         })
         .collect()
 }

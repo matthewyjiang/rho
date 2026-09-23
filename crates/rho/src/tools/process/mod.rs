@@ -17,7 +17,7 @@ mod types;
 
 pub(crate) use exact::{ExactProcessExit, WorkflowCommandTool};
 pub use manager::ProcessManager;
-pub(crate) use notify::{notification_prompts, ProcessNotification};
+pub(crate) use notify::{notification_prompt, ProcessNotification};
 pub(crate) use output::decode_header_value;
 pub(crate) use platform::{prepare_child_command, ProcessTree};
 pub use tools::Process;

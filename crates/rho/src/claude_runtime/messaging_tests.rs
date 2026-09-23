@@ -37,7 +37,7 @@ async fn follow_ups_keep_their_own_delivery_receipts() {
             *card,
             parent_message_card(
                 body.into(),
-                MessageDelivery::Queued,
+                NotificationDelivery::Queued,
                 "written to Claude stdin; awaiting its next turn".into(),
             )
         );

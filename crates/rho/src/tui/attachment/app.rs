@@ -385,7 +385,7 @@ impl AttachmentApp {
                 // monotonic even when transcript indexes shift on reindexing.
                 self.insert_finished_presentation(
                     AttachmentEntryKey::Message(self.finished_tool_index.len()),
-                    crate::presentation::Presentation::Message(message),
+                    crate::presentation::Presentation::Notification(message),
                     /*expanded*/ false,
                 );
             }

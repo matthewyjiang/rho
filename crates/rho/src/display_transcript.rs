@@ -9,14 +9,16 @@
 use rho_sdk::model::Message;
 use serde::{Deserialize, Serialize};
 
-use crate::presentation::MessageCard;
+use crate::presentation::NotificationCard;
 
 const PREFIX: &str = "[rho boundary transcript v1]";
 const FAMILY: &str = "[rho boundary transcript ";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum DisplayRow {
-    Message(Box<MessageCard>),
+    /// Saved as `Message`; the name predates non-agent notifications.
+    #[serde(rename = "Message")]
+    Notification(Box<NotificationCard>),
     Notice(String),
 }
 
@@ -50,16 +52,16 @@ impl DisplayTranscript {
         self.0
             .iter()
             .map(|row| match row {
-                DisplayRow::Message(card) => {
-                    let reference = card
-                        .reference
-                        .as_deref()
-                        .map(|id| format!(" · {id}"))
-                        .unwrap_or_default();
-                    format!(
-                        "{}\n{} → {}{reference}\n{}",
-                        card.title, card.sender, card.recipient, card.body
-                    )
+                DisplayRow::Notification(card) => {
+                    let subtitle = card.subtitle.clone().unwrap_or_else(|| {
+                        let reference = card
+                            .reference
+                            .as_deref()
+                            .map(|id| format!(" · {id}"))
+                            .unwrap_or_default();
+                        format!("{} → {}{reference}", card.sender, card.recipient)
+                    });
+                    format!("{}\n{subtitle}\n{}", card.title, card.body)
                 }
                 DisplayRow::Notice(text) => text.clone(),
             })

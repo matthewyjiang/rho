@@ -3,7 +3,10 @@
 use crate::{
     app::{interactive_runtime::ComputerNotice, subagent_messaging::NoticeDelivery},
     display_transcript::{DisplayRow, DisplayTranscript},
-    presentation::{MessageCard, MessageDelivery, MessagePreview, MessageTone, MessageVisibility},
+    presentation::{
+        NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
+        NotificationVisibility,
+    },
     subagent::RunState,
 };
 
@@ -47,7 +50,7 @@ impl TurnBoundaryBatch {
                     NoticeDelivery::NextTurn => AgentEvent::Update,
                     NoticeDelivery::ParentActionRequired => AgentEvent::ActionRequired,
                 };
-                rows.push(DisplayRow::Message(Box::new(message_card(
+                rows.push(DisplayRow::Notification(Box::new(agent_card(
                     agent,
                     &notice.run_id,
                     &notice.agent_id,
@@ -77,7 +80,7 @@ impl TurnBoundaryBatch {
                     .cloned()
                     .collect::<Vec<_>>()
                     .join("\n\n");
-                let mut card = message_card(
+                let mut card = agent_card(
                     agent,
                     &snapshot.id,
                     &snapshot.agent_id,
@@ -95,7 +98,7 @@ impl TurnBoundaryBatch {
                 {
                     card.details.push(format!("model: {}", model.describe()));
                 }
-                rows.push(DisplayRow::Message(Box::new(card)));
+                rows.push(DisplayRow::Notification(Box::new(card)));
             }
         }
         if !self.workflow_notifications.is_empty() {
@@ -105,10 +108,14 @@ impl TurnBoundaryBatch {
             rows.push(DisplayRow::Notice(display));
         }
         if !self.process_notifications.is_empty() {
-            let (input, display) =
-                crate::tools::process::notification_prompts(&self.process_notifications);
-            model.push(input);
-            rows.push(DisplayRow::Notice(display));
+            model.push(crate::tools::process::notification_prompt(
+                &self.process_notifications,
+            ));
+            rows.extend(
+                self.process_notifications
+                    .iter()
+                    .map(|notification| DisplayRow::Notification(Box::new(notification.card()))),
+            );
         }
         if let Some(notice) = &self.runtime_context {
             model.push(notice.model.clone());
@@ -135,14 +142,14 @@ enum AgentEvent {
     Stopped,
 }
 
-fn message_card(
+fn agent_card(
     agent: &InteractiveRuntime,
     run_id: &str,
     sender: &str,
     title: Option<&str>,
     event: AgentEvent,
     body: String,
-) -> MessageCard {
+) -> NotificationCard {
     let task = title
         .filter(|title| !title.trim().is_empty())
         .map(str::to_owned)
@@ -154,25 +161,38 @@ fn message_card(
         })
         .unwrap_or_else(|| "Delegated task".into());
     let (label, tone, preview) = match event {
-        AgentEvent::Update => ("Update", MessageTone::Accent, MessagePreview::Truncated),
+        AgentEvent::Update => (
+            "Update",
+            NotificationTone::Accent,
+            NotificationPreview::Truncated,
+        ),
         AgentEvent::ActionRequired => (
             "Action requested",
-            MessageTone::Warning,
-            MessagePreview::Full,
+            NotificationTone::Warning,
+            NotificationPreview::Full,
         ),
-        AgentEvent::Completed => ("Completed", MessageTone::Success, MessagePreview::Truncated),
-        AgentEvent::Failed => ("Failed", MessageTone::Error, MessagePreview::Full),
-        AgentEvent::Stopped => ("Stopped", MessageTone::Accent, MessagePreview::Truncated),
+        AgentEvent::Completed => (
+            "Completed",
+            NotificationTone::Success,
+            NotificationPreview::Truncated,
+        ),
+        AgentEvent::Failed => ("Failed", NotificationTone::Error, NotificationPreview::Full),
+        AgentEvent::Stopped => (
+            "Stopped",
+            NotificationTone::Accent,
+            NotificationPreview::Truncated,
+        ),
     };
-    MessageCard {
+    NotificationCard {
         title: format!("{label} · {task}"),
         sender: sender.into(),
         recipient: "parent".into(),
-        delivery: MessageDelivery::Received,
+        delivery: NotificationDelivery::Received,
         tone,
         preview,
-        visibility: MessageVisibility::Conversation,
+        visibility: NotificationVisibility::Conversation,
         reference: Some(run_id.into()),
+        subtitle: None,
         body,
         details: vec![format!("task: {task}")],
     }

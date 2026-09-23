@@ -13,24 +13,25 @@ fn notification_display_preserves_ownership() {
     use crate::{
         display_transcript::{DisplayRow, DisplayTranscript},
         presentation::{
-            MessageCard, MessageDelivery, MessagePreview, MessageTone, MessageVisibility,
-            Presentation,
+            NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
+            NotificationVisibility, Presentation,
         },
     };
-    let card = MessageCard {
+    let card = NotificationCard {
         title: "Update · Inspect replayability".into(),
         sender: "worker".into(),
         recipient: "parent".into(),
-        delivery: MessageDelivery::Received,
-        tone: MessageTone::Accent,
-        preview: MessagePreview::Truncated,
-        visibility: MessageVisibility::Conversation,
+        delivery: NotificationDelivery::Received,
+        tone: NotificationTone::Accent,
+        preview: NotificationPreview::Truncated,
+        visibility: NotificationVisibility::Conversation,
         reference: Some("abc123".into()),
+        subtitle: None,
         body: "First finding\nSecond finding".into(),
         details: vec!["attach: rho attach abc123".into()],
     };
     let display =
-        DisplayTranscript(vec![DisplayRow::Message(Box::new(card.clone()))]).display_message();
+        DisplayTranscript(vec![DisplayRow::Notification(Box::new(card.clone()))]).display_message();
     let Message::System(encoded) = &display else {
         panic!("expected display envelope")
     };
@@ -40,7 +41,10 @@ fn notification_display_preserves_ownership() {
         panic!("expected separate human input and incoming card");
     };
     assert_eq!(user, encoded);
-    assert_eq!(tool.presentation, Presentation::Message(Box::new(card)));
+    assert_eq!(
+        tool.presentation,
+        Presentation::Notification(Box::new(card))
+    );
 }
 
 // Covers: restored tool screenshots must not be presented as human messages.
@@ -154,8 +158,8 @@ fn transcript_pairs_tool_results_by_id() {
 fn transcript_restores_message_receipts() {
     use crate::{
         presentation::{
-            MessageCard, MessageDelivery, MessagePreview, MessageTone, MessageVisibility,
-            Presentation,
+            NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
+            NotificationVisibility, Presentation,
         },
         tools::agent::message_receipt::MessageReceipt,
     };
@@ -192,15 +196,16 @@ fn transcript_restores_message_receipts() {
         };
         assert_eq!(
             tool.presentation,
-            Presentation::Message(Box::new(MessageCard {
+            Presentation::Notification(Box::new(NotificationCard {
                 title: title.into(),
                 sender: "parent".into(),
                 recipient: recipient.into(),
-                delivery: MessageDelivery::Queued,
-                tone: MessageTone::Accent,
-                preview: MessagePreview::Truncated,
-                visibility: MessageVisibility::Activity,
+                delivery: NotificationDelivery::Queued,
+                tone: NotificationTone::Accent,
+                preview: NotificationPreview::Truncated,
+                visibility: NotificationVisibility::Activity,
                 reference: Some("abc123".into()),
+                subtitle: None,
                 body: body.trim().into(),
                 details: vec![format!("task: {title}")],
             }))

@@ -139,8 +139,8 @@ pub(super) fn paint_entry_sections(
     max_tool_output_lines: usize,
 ) -> CardSections {
     match &tool.presentation {
-        crate::presentation::Presentation::Message(message) => {
-            super::message_card_render::message_card_sections(
+        crate::presentation::Presentation::Notification(message) => {
+            super::notification_card_render::notification_card_sections(
                 message,
                 width,
                 max_tool_output_lines,

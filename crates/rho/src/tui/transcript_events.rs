@@ -368,7 +368,7 @@ impl App {
                         rho_tools::tool_card::ToolHeader::Call { .. }
                         | rho_tools::tool_card::ToolHeader::StatusFirst { .. } => None,
                     },
-                    crate::presentation::Presentation::Message(_) => None,
+                    crate::presentation::Presentation::Notification(_) => None,
                 };
                 self.refresh_git_after_command(command);
                 let expanded = self.turn.tool_finished(&call_id);

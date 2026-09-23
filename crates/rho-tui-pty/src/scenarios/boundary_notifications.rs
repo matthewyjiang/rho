@@ -33,6 +33,11 @@ pub(super) const SCENARIO: Scenario = Scenario::new(
             timeout: STREAM,
         },
         Step::Custom(assert_no_early_completion),
+        // The delivered process renders as a card with its outcome and command.
+        Step::WaitText {
+            text: "Failed (exit 7) · exit 7",
+            timeout: STREAM,
+        },
         Step::ExitCommand,
     ],
     /*smoke*/ true,

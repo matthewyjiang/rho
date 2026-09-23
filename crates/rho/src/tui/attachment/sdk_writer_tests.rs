@@ -30,15 +30,16 @@ fn attachment_stream_round_trips_view_events() {
         .unwrap();
     // Message metadata must survive view projection and the on-disk journal,
     // not just the in-memory tool card.
-    let message = Box::new(crate::presentation::MessageCard {
+    let message = Box::new(crate::presentation::NotificationCard {
         title: "Inspect routing".into(),
         sender: "parent".into(),
         recipient: "reviewer".into(),
-        delivery: crate::presentation::MessageDelivery::Queued,
-        tone: crate::presentation::MessageTone::Neutral,
-        preview: crate::presentation::MessagePreview::Truncated,
-        visibility: crate::presentation::MessageVisibility::Activity,
+        delivery: crate::presentation::NotificationDelivery::Queued,
+        tone: crate::presentation::NotificationTone::Neutral,
+        preview: crate::presentation::NotificationPreview::Truncated,
+        visibility: crate::presentation::NotificationVisibility::Activity,
         reference: None,
+        subtitle: None,
         body: "Check the queued route.\nKeep the full body.".into(),
         details: vec!["run: abc123".into()],
     });
@@ -46,7 +47,7 @@ fn attachment_stream_round_trips_view_events() {
         &mut writer.adapter,
         ViewModelEvent::ToolFinished {
             call_id: rho_sdk::ToolCallId::from_string("message-call").unwrap(),
-            presentation: crate::presentation::Presentation::Message(message.clone()),
+            presentation: crate::presentation::Presentation::Notification(message.clone()),
             image_asset: None,
         },
     )
@@ -64,7 +65,7 @@ fn attachment_stream_round_trips_view_events() {
             AttachmentEvent::AssistantTextDelta("found it".into()),
             AttachmentEvent::ToolFinished {
                 key: Some("message-call".into()),
-                presentation: crate::presentation::Presentation::Message(message),
+                presentation: crate::presentation::Presentation::Notification(message),
             },
         ]
     );

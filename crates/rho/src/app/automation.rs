@@ -722,7 +722,7 @@ impl RunReporter {
                         .record_attachment(crate::run_artifacts::AttachmentEvent::Message(
                             Box::new(crate::presentation::parent_message_card(
                                 message.into_string(),
-                                crate::presentation::MessageDelivery::Received,
+                                crate::presentation::NotificationDelivery::Received,
                                 "applied to conversation history".into(),
                             )),
                         ));
