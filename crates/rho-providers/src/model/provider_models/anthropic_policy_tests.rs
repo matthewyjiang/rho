@@ -95,6 +95,7 @@ fn per_message_effort_is_limited_to_documented_model_families() {
         ("claude-mythos-5", false),
         ("claude-opus-5", true),
         ("claude-opus-5-20260724", true),
+        ("claude-opus-5-5", true),
         ("claude-opus-4-8", false),
         ("claude-sonnet-5", false),
     ];

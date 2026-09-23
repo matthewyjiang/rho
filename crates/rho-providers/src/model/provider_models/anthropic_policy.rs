@@ -296,23 +296,21 @@ fn off_thinking(model: &str, disabled_leaf: Option<bool>) -> OffThinking {
 /// add prefixes that product has verified against live traffic — do not grow
 /// this into a second capability registry.
 fn off_when_unadvertised(model: &str) -> OffThinking {
-    // Always-thinking families first: `claude-opus-5-5` also matches the
-    // `claude-opus-5` prefix below.
-    if model_has_prefix(
-        model,
-        &[
-            "claude-opus-5-5",
-            "claude-fable-5",
-            "claude-mythos-5",
-            "claude-mythos-preview",
-        ],
-    ) {
-        OffThinking::Unsupported
-    } else if model_has_prefix(model, &["claude-opus-5", "claude-sonnet-5"]) {
-        OffThinking::Disabled
-    } else {
-        OffThinking::Omit
-    }
+    // The longest matching prefix wins, so `claude-opus-5-5` (always thinking)
+    // overrides `claude-opus-5` regardless of row order.
+    const OFF_BY_PREFIX: &[(&str, OffThinking)] = &[
+        ("claude-opus-5", OffThinking::Disabled),
+        ("claude-sonnet-5", OffThinking::Disabled),
+        ("claude-opus-5-5", OffThinking::Unsupported),
+        ("claude-fable-5", OffThinking::Unsupported),
+        ("claude-mythos-5", OffThinking::Unsupported),
+        ("claude-mythos-preview", OffThinking::Unsupported),
+    ];
+    OFF_BY_PREFIX
+        .iter()
+        .filter(|(prefix, _)| model_has_prefix(model, &[prefix]))
+        .max_by_key(|(prefix, _)| prefix.len())
+        .map_or(OffThinking::Omit, |(_, off)| *off)
 }
 
 fn model_has_prefix(model: &str, prefixes: &[&str]) -> bool {
@@ -329,7 +327,8 @@ fn model_has_prefix(model: &str, prefixes: &[&str]) -> bool {
 ///
 /// Temporary id-prefix shim until `/v1/models` advertises per-turn effort.
 /// Sending that payload to an unsupported model, including Claude Fable 5,
-/// returns 400. Keep this list to families Anthropic documents.
+/// returns 400. Keep this list to families Anthropic documents; the
+/// `claude-opus-5` prefix intentionally also covers the documented Opus 5.5.
 pub(crate) fn supports_per_message_effort(model: &str) -> bool {
     model_has_prefix(
         model,
