@@ -345,6 +345,8 @@ async fn establish_session(
                 StreamableHttpClientTransportConfig::with_uri(url.clone()).custom_headers(headers);
             match http_client {
                 McpHttpClient::Default => {
+                    // rmcp builds its own reqwest client; install the TLS provider first.
+                    rho_providers::ensure_rustls_ring_provider();
                     let transport = StreamableHttpClientTransport::from_config(config);
                     Ok(handler.serve(transport).await?)
                 }

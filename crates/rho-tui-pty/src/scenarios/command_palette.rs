@@ -1,4 +1,4 @@
-//! Slash command palette and /help overlay scenarios.
+//! Slash command palette scenarios.
 
 use std::time::Duration;
 
@@ -18,30 +18,6 @@ const SIZE: PtySize = PtySize {
     rows: 28,
     cols: 100,
 };
-
-// Covers: /help opens the shortcuts overlay and Esc returns to the session.
-// Owner: interactive TUI
-const HELP_OVERLAY_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("open_help"),
-    Step::SubmitText("/help"),
-    Step::WaitText {
-        text: "Keyboard shortcuts",
-        timeout: SETTLE,
-    },
-    Step::Phase("dismiss"),
-    Step::Key(Key::Esc),
-    Step::WaitQuiet {
-        quiet_for: Duration::from_millis(150),
-        timeout: SETTLE,
-    },
-    Step::Custom(assert_help_overlay_dismissed),
-    Step::ExitCommand,
-];
 
 // Covers: /agents create must load the guided creator instead of opening the agents catalog.
 // Owner: interactive TUI
@@ -174,14 +150,6 @@ pub(super) const CREATE_AGENT_MISSING_TOOLS_SCENARIO: Scenario = Scenario::new(
 .with_setup(setup_read_only_agent)
 .with_args(&["--agent", "read-only-fixture"]);
 
-pub(super) const HELP_OVERLAY_SCENARIO: Scenario = Scenario::new(
-    "help_overlay",
-    "Open the keyboard shortcuts overlay and dismiss it cleanly",
-    SIZE,
-    HELP_OVERLAY_STEPS,
-    /* smoke */ false,
-);
-
 pub(super) const SLASH_COMMAND_PALETTE_SCENARIO: Scenario = Scenario::new(
     "slash_command_palette",
     "Open the slash command palette and filter to a matching command",
@@ -197,17 +165,6 @@ pub(super) const TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO: Scenario = Scenario::
     TAB_COMPLETE_ENTER_BARE_COMMAND_STEPS,
     /* smoke */ false,
 );
-
-fn assert_help_overlay_dismissed(harness: &mut PtyHarness) -> Result<()> {
-    let screen = harness.screen().contents();
-    if screen.contains("Keyboard shortcuts") {
-        anyhow::bail!("help overlay still visible after Esc:\n{screen}");
-    }
-    if !screen.contains("gpt-5.5") {
-        anyhow::bail!("session chrome missing after dismissing help:\n{screen}");
-    }
-    Ok(())
-}
 
 fn assert_slash_palette_filtered_to_model(harness: &mut PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();

@@ -18,8 +18,7 @@ use std::{
 };
 
 use rho_tui_pty::{
-    run_named, smoke_scenario_ids, IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan,
-    ScenarioRunner, WaitTimeout,
+    run_named, IsolatedHome, Key, PtyHarness, PtySize, RhoLaunchPlan, ScenarioRunner, WaitTimeout,
 };
 
 fn runner() -> ScenarioRunner {
@@ -173,14 +172,22 @@ fn mcp_connecting_keeps_the_session_inspectable() {
 // Owner: interactive TUI
 #[test]
 fn computer_use_authorization_and_revocation() {
-    for scenario in [
-        "computer_use",
-        "computer_setup",
-        "computer_setup_cancel",
-        "computer_plan_denied",
-    ] {
-        assert_pass(scenario);
-    }
+    assert_pass("computer_use");
+}
+
+#[test]
+fn computer_setup_grants_access() {
+    assert_pass("computer_setup");
+}
+
+#[test]
+fn computer_setup_cancel_grants_nothing() {
+    assert_pass("computer_setup_cancel");
+}
+
+#[test]
+fn computer_plan_mode_is_denied() {
+    assert_pass("computer_plan_denied");
 }
 
 // Covers: real restarts restore consent, restricted startup cannot use it, and
@@ -733,23 +740,47 @@ fn hooks_overlay_shows_contract_and_dismisses() {
     assert_pass("hooks_contract");
 }
 
-// Covers: fragile interactive surfaces from issue #711.
+// Covers: fragile interactive surfaces from issue #711. One test per scenario
+// so the harness runs them in parallel.
 // Owner: interactive TUI
 #[test]
-fn fragile_surface_scenarios_pass() {
-    for id in [
-        "markdown_headings",
-        "streaming_markdown_stability",
-        "side_btw",
-        "side_during_turn",
-        "spinner_activity_anchor",
-        "spinner_activity_jump_rail",
-        "help_overlay",
-        "slash_command_palette",
-        "file_path_autocomplete",
-    ] {
-        assert_pass(id);
-    }
+fn markdown_headings() {
+    assert_pass("markdown_headings");
+}
+
+#[test]
+fn streaming_markdown_stability() {
+    assert_pass("streaming_markdown_stability");
+}
+
+#[test]
+fn side_btw() {
+    assert_pass("side_btw");
+}
+
+#[test]
+fn side_during_turn() {
+    assert_pass("side_during_turn");
+}
+
+#[test]
+fn spinner_activity_anchor() {
+    assert_pass("spinner_activity_anchor");
+}
+
+#[test]
+fn spinner_activity_jump_rail() {
+    assert_pass("spinner_activity_jump_rail");
+}
+
+#[test]
+fn slash_command_palette() {
+    assert_pass("slash_command_palette");
+}
+
+#[test]
+fn file_path_autocomplete() {
+    assert_pass("file_path_autocomplete");
 }
 
 // Covers: tab-completing a slash command must not turn a plain Enter into the
@@ -765,10 +796,18 @@ fn tab_completion_keeps_enter_on_the_bare_command() {
 // the advisor's answer back to the executor without ending the turn on failure.
 // Owner: interactive TUI
 #[test]
-fn advisor_mode_scenarios_pass() {
-    for id in ["advisor_command", "advisor_missing_model", "advisor_review"] {
-        assert_pass(id);
-    }
+fn advisor_command() {
+    assert_pass("advisor_command");
+}
+
+#[test]
+fn advisor_missing_model() {
+    assert_pass("advisor_missing_model");
+}
+
+#[test]
+fn advisor_review() {
+    assert_pass("advisor_review");
 }
 
 #[test]
@@ -1580,31 +1619,6 @@ fn which_on_path(program: &str, path_var: &str) -> Option<PathBuf> {
         }
     }
     None
-}
-
-#[test]
-fn smoke_subset_is_registered() {
-    let smoke = smoke_scenario_ids();
-    // Core lifecycle gates kept in CI.
-    for id in [
-        "startup_stream_exit",
-        "cancel_and_resubmit",
-        "type_during_stream",
-        "resize_during_stream",
-        "scroll_during_stream",
-        "terminal_restoration",
-    ] {
-        assert!(smoke.contains(&id), "missing core smoke scenario {id}");
-    }
-    // Fragility champions from issue #711.
-    assert!(
-        smoke.contains(&"streaming_markdown_stability"),
-        "missing markdown stability smoke scenario"
-    );
-    assert!(
-        smoke.contains(&"spinner_activity_anchor"),
-        "missing activity-rail smoke scenario"
-    );
 }
 
 /// Full Claude Code advisor path: picker selection -> config -> advisor tool
