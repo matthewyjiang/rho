@@ -1,8 +1,10 @@
-//! Message cards. Routing and task selection belong to the presenter.
+//! Notification cards. Routing and task selection belong to the presenter.
 
 use ratatui::text::{Line, Span};
 
-use crate::presentation::{MessageCard, MessageDelivery, MessagePreview, MessageTone};
+use crate::presentation::{
+    NotificationCard, NotificationDelivery, NotificationPreview, NotificationTone,
+};
 
 use super::{
     markdown::{push_wrapped_markdown_without_copy_button_from_fence_state, CodeFenceState},
@@ -11,21 +13,21 @@ use super::{
     tool_card_render::CardSections,
 };
 
-pub(super) fn message_card_sections(
-    message: &MessageCard,
+pub(super) fn notification_card_sections(
+    message: &NotificationCard,
     width: usize,
     preview_lines: usize,
     expanded: bool,
 ) -> CardSections {
-    let received = matches!(message.delivery, MessageDelivery::Received);
+    let received = matches!(message.delivery, NotificationDelivery::Received);
     let rail_width = if received { 2 } else { 0 };
     let content_width = width.saturating_sub(rail_width + 2).max(1);
     let tone = match message.tone {
-        MessageTone::Neutral => Theme::tool_primary(),
-        MessageTone::Accent => Theme::accent(),
-        MessageTone::Success => Theme::success(),
-        MessageTone::Warning => Theme::warning(),
-        MessageTone::Error => Theme::error(),
+        NotificationTone::Neutral => Theme::tool_primary(),
+        NotificationTone::Accent => Theme::accent(),
+        NotificationTone::Success => Theme::success(),
+        NotificationTone::Warning => Theme::warning(),
+        NotificationTone::Error => Theme::error(),
     };
     let mut lines = vec![Line::from(vec![
         Span::styled(if received { "↰ " } else { "↳ " }, tone),
@@ -34,29 +36,35 @@ pub(super) fn message_card_sections(
             tone,
         ),
     ])];
-    let delivery = match message.delivery {
-        MessageDelivery::Queued => "queued",
-        MessageDelivery::Received => "received",
-    };
-    let mut routing = format!("{} → {} · {delivery}", message.sender, message.recipient);
-    if let Some(reference) = &message.reference {
-        routing.push_str(&format!(" · {reference}"));
-    }
-    push_indented(&mut lines, &routing, content_width, Theme::dim());
+    let subtitle = message.subtitle.clone().unwrap_or_else(|| {
+        let delivery = match message.delivery {
+            NotificationDelivery::Queued => "queued",
+            NotificationDelivery::Received => "received",
+        };
+        let mut routing = format!("{} → {} · {delivery}", message.sender, message.recipient);
+        if let Some(reference) = &message.reference {
+            routing.push_str(&format!(" · {reference}"));
+        }
+        routing
+    });
+    push_indented(&mut lines, &subtitle, content_width, Theme::dim());
 
     let mut body = Vec::new();
-    push_wrapped_markdown_without_copy_button_from_fence_state(
-        &mut body,
-        &safe_message_text(&message.body),
-        content_width,
-        &mut CodeFenceState::default(),
-    );
+    // Empty bodies (e.g. a silent process) would otherwise render a blank row.
+    if !message.body.trim().is_empty() {
+        push_wrapped_markdown_without_copy_button_from_fence_state(
+            &mut body,
+            &safe_message_text(&message.body),
+            content_width,
+            &mut CodeFenceState::default(),
+        );
+    }
     for line in &mut body {
         line.spans.insert(0, Span::raw("  "));
     }
     let budget = preview_lines.max(1);
     let hidden = body.len().saturating_sub(budget);
-    let show_full_body = expanded || matches!(message.preview, MessagePreview::Full);
+    let show_full_body = expanded || matches!(message.preview, NotificationPreview::Full);
     if !show_full_body {
         body.truncate(budget);
     }
@@ -122,5 +130,5 @@ fn safe_message_text(text: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "message_card_render_tests.rs"]
+#[path = "notification_card_render_tests.rs"]
 mod tests;

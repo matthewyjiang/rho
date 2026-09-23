@@ -9,7 +9,9 @@ pub(crate) enum Presentation {
     Card(rho_tools::tool_card::ToolCard),
     /// Facts-only receipt when collapsed; expansion reveals the full body.
     SummaryCard(rho_tools::tool_card::ToolCard),
-    Message(Box<MessageCard>),
+    /// Saved as `message`; the name predates non-agent notifications.
+    #[serde(rename = "message")]
+    Notification(Box<NotificationCard>),
 }
 
 impl From<rho_tools::tool_card::ToolCard> for Presentation {
@@ -18,21 +20,28 @@ impl From<rho_tools::tool_card::ToolCard> for Presentation {
     }
 }
 
+/// Something that arrived for the reader: an agent message, a delegated-run
+/// result, or a finished background process. Sources supply the data; the
+/// renderer stays source-agnostic.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct MessageCard {
+pub(crate) struct NotificationCard {
     pub title: String,
     pub sender: String,
     pub recipient: String,
-    pub delivery: MessageDelivery,
+    pub delivery: NotificationDelivery,
     #[serde(default)]
-    pub tone: MessageTone,
+    pub tone: NotificationTone,
     #[serde(default)]
-    pub preview: MessagePreview,
+    pub preview: NotificationPreview,
     #[serde(default)]
-    pub visibility: MessageVisibility,
+    pub visibility: NotificationVisibility,
     /// Optional generic identity label displayed alongside routing information.
     #[serde(default)]
     pub reference: Option<String>,
+    /// Replaces the sender/recipient routing line when routing is constant
+    /// for the card's source (for example, background processes).
+    #[serde(default)]
+    pub subtitle: Option<String>,
     pub body: String,
     pub details: Vec<String>,
 }
@@ -40,18 +49,19 @@ pub(crate) struct MessageCard {
 /// Incoming parent text, with delivery details supplied by the runtime owner.
 pub(crate) fn parent_message_card(
     body: String,
-    delivery: MessageDelivery,
+    delivery: NotificationDelivery,
     detail: String,
-) -> MessageCard {
-    MessageCard {
+) -> NotificationCard {
+    NotificationCard {
         title: "Message from parent".into(),
         sender: "parent".into(),
         recipient: "agent".into(),
         delivery,
-        tone: MessageTone::Neutral,
-        preview: MessagePreview::Full,
-        visibility: MessageVisibility::Conversation,
+        tone: NotificationTone::Neutral,
+        preview: NotificationPreview::Full,
+        visibility: NotificationVisibility::Conversation,
         reference: None,
+        subtitle: None,
         body,
         details: vec![detail],
     }
@@ -59,14 +69,14 @@ pub(crate) fn parent_message_card(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum MessageDelivery {
+pub(crate) enum NotificationDelivery {
     Queued,
     Received,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum MessageTone {
+pub(crate) enum NotificationTone {
     #[default]
     Neutral,
     Accent,
@@ -77,7 +87,7 @@ pub(crate) enum MessageTone {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum MessagePreview {
+pub(crate) enum NotificationPreview {
     #[default]
     Truncated,
     Full,
@@ -85,7 +95,7 @@ pub(crate) enum MessagePreview {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum MessageVisibility {
+pub(crate) enum NotificationVisibility {
     #[default]
     Activity,
     Conversation,

@@ -380,7 +380,7 @@ impl InteractiveToolPresenter {
     ) -> FinishedToolPresentation {
         if let Some(message) = message_format::finished_message(view, content, ok) {
             return FinishedToolPresentation {
-                presentation: crate::presentation::Presentation::Message(message),
+                presentation: crate::presentation::Presentation::Notification(message),
                 image_asset: None,
             };
         }

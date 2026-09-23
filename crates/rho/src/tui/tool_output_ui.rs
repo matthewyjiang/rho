@@ -26,7 +26,7 @@ pub(super) fn tool_output_toggleable(
 ) -> bool {
     let width = width.max(1);
     match &tool.presentation {
-        crate::presentation::Presentation::Message(_) => true,
+        crate::presentation::Presentation::Notification(_) => true,
         crate::presentation::Presentation::Card(card) => {
             card_is_toggleable(card, width, max_tool_output_lines, tool.expanded)
         }

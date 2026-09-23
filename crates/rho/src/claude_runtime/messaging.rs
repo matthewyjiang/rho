@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 
 use crate::cli_runtime::drain::{FollowUp, FollowUpSource};
 use crate::cli_runtime::stream_effect::StreamEffect;
-use crate::presentation::{parent_message_card, MessageDelivery};
+use crate::presentation::{parent_message_card, NotificationDelivery};
 use crate::run_artifacts::AttachmentEvent;
 
 /// How many parent messages may wait while Claude is mid-turn.
@@ -120,7 +120,7 @@ impl ClaudeFollowUpSource {
             written: Some(StreamEffect::Attachment(AttachmentEvent::Message(
                 Box::new(parent_message_card(
                     text,
-                    MessageDelivery::Queued,
+                    NotificationDelivery::Queued,
                     "written to Claude stdin; awaiting its next turn".into(),
                 )),
             ))),

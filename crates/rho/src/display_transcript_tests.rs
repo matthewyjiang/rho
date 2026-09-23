@@ -6,16 +6,19 @@ use super::*;
 // Owner: on-disk display compatibility, independent of the current encoder.
 #[test]
 fn saved_v1_card_decodes_without_losing_metadata() {
-    use crate::presentation::{MessageDelivery, MessagePreview, MessageTone, MessageVisibility};
-    let expected = DisplayTranscript(vec![DisplayRow::Message(Box::new(MessageCard {
+    use crate::presentation::{
+        NotificationDelivery, NotificationPreview, NotificationTone, NotificationVisibility,
+    };
+    let expected = DisplayTranscript(vec![DisplayRow::Notification(Box::new(NotificationCard {
         title: "Update · Inspect replayability".into(),
         sender: "worker".into(),
         recipient: "parent".into(),
-        delivery: MessageDelivery::Received,
-        tone: MessageTone::Accent,
-        preview: MessagePreview::Truncated,
-        visibility: MessageVisibility::Conversation,
+        delivery: NotificationDelivery::Received,
+        tone: NotificationTone::Accent,
+        preview: NotificationPreview::Truncated,
+        visibility: NotificationVisibility::Conversation,
         reference: Some("abc123".into()),
+        subtitle: None,
         body: "Schema inspected.\nReady for the next step.".into(),
         details: vec![
             "task: Inspect replayability".into(),

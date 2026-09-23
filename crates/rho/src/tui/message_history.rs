@@ -16,8 +16,8 @@ pub(super) fn transcript_entries(
         .0
         .into_iter()
         .map(|row| match row {
-            DisplayRow::Message(card) => Entry::Tool(ToolEntry::new(
-                Presentation::Message(card),
+            DisplayRow::Notification(card) => Entry::Tool(ToolEntry::new(
+                Presentation::Notification(card),
                 /*expanded*/ false,
                 /*image*/ None,
                 /*started_at*/ None,

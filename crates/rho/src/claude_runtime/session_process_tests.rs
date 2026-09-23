@@ -151,7 +151,7 @@ cat >/dev/null
         let expected = if authenticated {
             vec![(
                 "Inspect **routing** next.\nKeep the tests.",
-                crate::presentation::MessageDelivery::Queued,
+                crate::presentation::NotificationDelivery::Queued,
             )]
         } else {
             Vec::new()

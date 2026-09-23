@@ -314,6 +314,10 @@ impl ProcessManager {
                             super::notify::output_excerpt_budget(),
                         ),
                         terminal_detail: record.detail.clone(),
+                        elapsed: record
+                            .completed
+                            .unwrap_or_else(Instant::now)
+                            .saturating_duration_since(record.started),
                     },
                 ))
             })
