@@ -8,7 +8,11 @@ pub(crate) use super::openai_shared::{
         collect_codex_sse_response, handle_codex_sse_line, handle_codex_sse_value,
         is_codex_turn_complete, CodexSseResponse, CodexSseState, CodexTransport,
     },
-    compact::{parse_compact_response, retained_system_messages, CompactUserRetention},
+    compact::{
+        parse_compact_response, replacement_from_compact_output,
+        retained_system_and_recent_user_messages, retained_system_messages, CompactUserRetention,
+        RETAINED_USER_MESSAGE_TOKEN_BUDGET,
+    },
     convert::{
         codex_input_items, codex_input_items_for_target, codex_reasoning_param,
         lower_codex_history_message, to_responses_lite_tool, to_responses_tool, ToolAsync,

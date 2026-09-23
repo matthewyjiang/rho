@@ -4,7 +4,7 @@ use super::XaiProvider;
 use crate::model::{ModelError, ModelRequest};
 use crate::protocol::openai_responses::{retained_system_messages, CompactUserRetention};
 use crate::providers::native_compaction::{
-    native_compact_failure, native_compact_from_http, CompactParsePolicy,
+    native_compact_failure, native_compact_from_http, CompactBodyFormat, CompactParsePolicy,
 };
 use crate::providers::responses_http::ResponsesEndpoint;
 use rho_sdk::provider::ModelRequestOptions;
@@ -48,9 +48,10 @@ impl XaiProvider {
         Ok(native_compact_from_http(
             http_result,
             &cancellation,
+            CompactBodyFormat::Json,
             CompactParsePolicy {
                 identity,
-                retained_system_messages: &retained_system_messages,
+                retained_messages: &retained_system_messages,
                 portable_handoff_notice: COMPACT_PORTABLE_HANDOFF_NOTICE,
                 user_retention: CompactUserRetention::CompactionItemOnly,
                 assistant_context: &[],

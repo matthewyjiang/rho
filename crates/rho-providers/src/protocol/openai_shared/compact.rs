@@ -29,6 +29,43 @@ pub(crate) fn retained_system_messages(messages: &[Message]) -> Vec<Message> {
         .collect()
 }
 
+/// Token budget for user messages the client retains around a
+/// `compaction_trigger` compaction. Codex uses the same 64k budget
+/// (`RETAINED_MESSAGE_TOKEN_BUDGET` in codex-rs `compact_remote_v2.rs`), which
+/// mirrors the server-side default of `/responses/compact`.
+pub(crate) const RETAINED_USER_MESSAGE_TOKEN_BUDGET: u64 = 64_000;
+
+/// System prompts plus the newest user messages that fit `user_token_budget`,
+/// in original order.
+///
+/// Trigger-based compaction returns only the compaction item, so the client
+/// keeps recent user turns itself. Selection walks newest-first and stops at
+/// the first user message that does not fit, so retained turns stay contiguous.
+pub(crate) fn retained_system_and_recent_user_messages(
+    messages: &[Message],
+    user_token_budget: u64,
+) -> Vec<Message> {
+    let mut remaining = user_token_budget;
+    let mut keep_user = vec![false; messages.len()];
+    for (index, message) in messages.iter().enumerate().rev() {
+        if !matches!(message, Message::User(_)) {
+            continue;
+        }
+        let tokens = rho_sdk::model::context::estimate_message_tokens(message);
+        let Some(left) = remaining.checked_sub(tokens) else {
+            break;
+        };
+        remaining = left;
+        keep_user[index] = true;
+    }
+    messages
+        .iter()
+        .zip(keep_user)
+        .filter(|(message, keep_user)| matches!(message, Message::System(_)) || *keep_user)
+        .map(|(message, _)| message.clone())
+        .collect()
+}
+
 /// Whether compact `output` user messages are kept in replacement history.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CompactUserRetention {
@@ -41,7 +78,7 @@ pub(crate) enum CompactUserRetention {
 /// Parses a unary `/responses/compact` JSON body into replacement history + usage.
 pub(crate) fn parse_compact_response(
     identity: ModelIdentity,
-    retained_system_messages: &[Message],
+    retained_messages: &[Message],
     body: &Value,
     portable_handoff_notice: &str,
     user_retention: CompactUserRetention,
@@ -56,7 +93,7 @@ pub(crate) fn parse_compact_response(
     let usage = super::usage::extract_usage(body).unwrap_or_default();
     let messages = replacement_from_compact_output(
         identity,
-        retained_system_messages,
+        retained_messages,
         output,
         portable_handoff_notice,
         user_retention,
@@ -65,9 +102,12 @@ pub(crate) fn parse_compact_response(
     Ok((messages, usage))
 }
 
+/// Builds replacement history: host-retained messages (system prompts and, for
+/// trigger compaction, recent user turns), then any server-returned user
+/// messages allowed by `user_retention`, then the compaction marker.
 pub(crate) fn replacement_from_compact_output<'a>(
     identity: ModelIdentity,
-    retained_system_messages: impl IntoIterator<Item = &'a Message>,
+    retained_messages: impl IntoIterator<Item = &'a Message>,
     output_items: &[Value],
     portable_handoff_notice: &str,
     user_retention: CompactUserRetention,
@@ -77,13 +117,14 @@ pub(crate) fn replacement_from_compact_output<'a>(
     let mut replacement = Vec::new();
 
     // System prompts stay host-owned; the compact endpoint returns conversation
-    // items, not the instructions channel.
-    for message in retained_system_messages {
+    // items, not the instructions channel. Trigger compaction also retains
+    // recent user turns client-side.
+    for message in retained_messages {
         debug_assert!(
-            matches!(message, Message::System(_)),
-            "retained_system_messages must only contain system messages"
+            matches!(message, Message::System(_) | Message::User(_)),
+            "retained_messages must only contain system or user messages"
         );
-        if matches!(message, Message::System(_)) {
+        if matches!(message, Message::System(_) | Message::User(_)) {
             replacement.push(message.clone());
         }
     }
