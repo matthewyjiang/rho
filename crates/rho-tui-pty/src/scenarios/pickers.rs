@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Result;
 
@@ -148,7 +148,7 @@ pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
     },
     Step::SubmitText("/agents"),
     Step::WaitText {
-        text: "(editable)",
+        text: "● editable",
         timeout: SETTLE,
     },
     Step::TypeText("editable-fixture"),
@@ -194,6 +194,41 @@ pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+/// Enter on a read-only agent opens its full prompt in a panel; Esc returns
+/// to the agents picker. The fact sheet only shows a short excerpt, so this
+/// is the one place a built-in's full prompt is readable.
+pub(super) const VIEW_READ_ONLY_AGENT_PROMPT_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/agents"),
+    Step::WaitText {
+        text: "BUILT IN",
+        timeout: SETTLE,
+    },
+    Step::TypeText("reviewer"),
+    Step::WaitText {
+        text: "● read-only",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "reviewer prompt",
+        timeout: SETTLE,
+    },
+    // Past the three-row excerpt: only the full view reaches this sentence.
+    Step::AssertText("Do not modify files."),
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "Loaded agents",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::ExitCommand,
+];
+
 /// Tools is a multi-select: Space toggles a row and the picker stays open, Esc
 /// returns to the field list with the toggled draft, and Save persists it.
 /// Starts from `tools: all`, so removing `shell` must expand the policy to the
@@ -207,7 +242,7 @@ pub(super) const EDIT_USER_AGENT_TOOLS_STEPS: &[Step] = &[
     },
     Step::SubmitText("/agents"),
     Step::WaitText {
-        text: "(editable)",
+        text: "● editable",
         timeout: SETTLE,
     },
     Step::TypeText("editable-fixture"),
@@ -325,12 +360,6 @@ fn assert_tools_badge_excludes_shell(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
-/// Word near the end of the goal-judge prompt body. On the default scenario
-/// size it sits below the first detail viewport and becomes visible after
-/// paging the detail pane. A single word cannot be split by detail wrapping,
-/// which broke the previous multi-word phrase when the pane width changed.
-const HIDDEN_DETAIL_MARKER: &str = "array";
-
 fn assert_wide_popup_divider_is_stable(harness: &mut PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
     let divider_columns = screen
@@ -352,40 +381,22 @@ fn assert_wide_popup_divider_is_stable(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
-fn assert_hidden_detail_marker_absent(harness: &mut PtyHarness) -> Result<()> {
-    if harness.screen().contains_text(HIDDEN_DETAIL_MARKER) {
-        anyhow::bail!("detail marker was already visible before scrolling");
+/// At the default size every fact and the prompt heading are visible without
+/// scrolling. The prompt excerpt below them may run past the fold.
+fn assert_agent_facts_fit_without_scrolling(harness: &mut PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    for fact in ["Runtime", "Model", "Reasoning", "Tools", "Source", "PROMPT"] {
+        if !screen.contains(fact) {
+            anyhow::bail!("agent fact {fact:?} is not visible without scrolling:\n{screen}");
+        }
     }
     Ok(())
-}
-
-fn scroll_detail_until_marker_visible(harness: &mut PtyHarness) -> Result<()> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Instant::now() < deadline {
-        harness.poll(Duration::from_millis(30));
-        if harness.screen().contains_text(HIDDEN_DETAIL_MARKER) {
-            return Ok(());
-        }
-        harness.inject_key(&Key::PageDown)?;
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    harness.poll(Duration::from_millis(50));
-    if harness.screen().contains_text(HIDDEN_DETAIL_MARKER) {
-        return Ok(());
-    }
-    anyhow::bail!(
-        "detail marker never became visible after PageDown scrolling\n{}",
-        harness.screen().contents()
-    )
 }
 
 fn assert_narrow_agents_popup(harness: &mut PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
     if !screen.contains("Loaded agents") {
         anyhow::bail!("narrow agents popup missing title:\n{screen}");
-    }
-    if !screen.contains("goal-judge") {
-        anyhow::bail!("narrow agents popup missing navigation list:\n{screen}");
     }
     // Side-by-side layout joins the column divider to the frame with `┬`;
     // stacked layout has none. Counting `│` no longer works because pane
@@ -396,36 +407,22 @@ fn assert_narrow_agents_popup(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
-fn assert_narrow_agents_popup_keeps_scrolled_detail(harness: &mut PtyHarness) -> Result<()> {
+/// The stacked narrow layout gives detail fewer rows, so the prompt body
+/// starts below the fold. Internal agents have no read-only prompt view, so
+/// End must reach the full prompt's last sentence, not an excerpt, and hide
+/// the title.
+fn assert_narrow_detail_scrolled_to_end(harness: &mut PtyHarness) -> Result<()> {
     assert_narrow_agents_popup(harness)?;
     let screen = harness.screen().contents();
-    // Resize must clamp, not jump back to the detail top. After rewrap the exact
-    // marker line may leave the viewport, but the opening description should stay
-    // hidden while lower prompt body text remains visible.
-    if screen.contains("Internal agent that evaluates goal completion") {
-        anyhow::bail!(
-            "narrow resize reset detail scroll to the top instead of clamping it:\n{screen}"
-        );
-    }
-    if !screen.contains("agent-actionable work")
-        && !screen.contains("completion condition")
-        && !screen.contains(HIDDEN_DETAIL_MARKER)
+    if !screen.contains(GOAL_JUDGE_PROMPT_TAIL) || screen.contains("Internal agent that evaluates")
     {
-        anyhow::bail!(
-            "narrow resize lost scrolled detail content instead of clamping it:\n{screen}"
-        );
+        anyhow::bail!("narrow detail did not scroll to the end of the full prompt:\n{screen}");
     }
     Ok(())
 }
 
-fn assert_narrow_agents_popup_shows_detail_top(harness: &mut PtyHarness) -> Result<()> {
-    assert_narrow_agents_popup(harness)?;
-    let screen = harness.screen().contents();
-    if !screen.contains("Internal agent that evaluates") {
-        anyhow::bail!("narrow agents popup missing stacked detail after Home:\n{screen}");
-    }
-    Ok(())
-}
+/// Last word of the goal-judge prompt, unique within it.
+const GOAL_JUDGE_PROMPT_TAIL: &str = "Unmet.";
 
 pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -435,12 +432,10 @@ pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
     },
     Step::SubmitText("/agents"),
     Step::WaitText {
-        text: "goal-judge",
+        text: "INTERNAL",
         timeout: SETTLE,
     },
-    // The list is alphabetical, so it opens on the first internal agent. This
-    // scenario inspects goal-judge, whose prompt is long enough to scroll.
-    Step::Key(Key::Down),
+    Step::TypeText("goal-judge"),
     Step::WaitText {
         text: "Internal agent that evaluates goal completion",
         timeout: SETTLE,
@@ -448,12 +443,7 @@ pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
     Step::AssertText("↑↓"),
     Step::AssertText("PgUp/PgDn"),
     Step::Custom(assert_wide_popup_divider_is_stable),
-    Step::Custom(assert_hidden_detail_marker_absent),
-    Step::Phase("scroll_detail"),
-    // Scroll keys page the navigation list until the detail pane takes focus.
-    Step::Key(Key::Right),
-    Step::Custom(scroll_detail_until_marker_visible),
-    Step::AssertText(HIDDEN_DETAIL_MARKER),
+    Step::Custom(assert_agent_facts_fit_without_scrolling),
     Step::Key(Key::Enter),
     Step::WaitText {
         text: "Use conversation model",
@@ -462,22 +452,30 @@ pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
     Step::AssertText("select model for goal-judge"),
     Step::Key(Key::Esc),
     Step::WaitText {
-        text: "goal-judge",
+        text: "Loaded agents",
         timeout: SETTLE,
     },
     Step::Phase("narrow_layout"),
-    Step::Resize { rows: 32, cols: 50 },
+    Step::Resize { rows: 24, cols: 50 },
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(150),
         timeout: SETTLE,
     },
-    Step::Custom(assert_narrow_agents_popup_keeps_scrolled_detail),
-    Step::Key(Key::Home),
+    Step::Custom(assert_narrow_agents_popup),
+    // Scroll keys page the navigation list until the detail pane takes focus.
+    Step::Key(Key::Right),
+    Step::Key(Key::End),
     Step::WaitText {
-        text: "Internal agent that evaluates",
+        text: GOAL_JUDGE_PROMPT_TAIL,
         timeout: SETTLE,
     },
-    Step::Custom(assert_narrow_agents_popup_shows_detail_top),
+    Step::Custom(assert_narrow_detail_scrolled_to_end),
+    // Home returns the focused detail pane to the title.
+    Step::Key(Key::Home),
+    Step::WaitText {
+        text: "Internal agent that evaluates goal",
+        timeout: SETTLE,
+    },
     Step::Key(Key::Esc),
     Step::ExitCommand,
 ];

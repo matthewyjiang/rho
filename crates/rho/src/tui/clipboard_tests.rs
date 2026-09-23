@@ -399,3 +399,40 @@ async fn completion_targets_pending_id_and_pending_attachments_cannot_submit() {
 
     app.cancel_all_pending_attachments();
 }
+
+// Covers: an open panel overlay owns the pointer. Limits and Doctor used to
+// take only the wheel, so a right click behind them pasted into the hidden
+// composer.
+// Owner: panel overlay mouse routing
+#[test]
+fn panel_overlays_swallow_right_click_paste() {
+    for name in ["limits", "doctor"] {
+        let mut app = test_app();
+        match name {
+            "limits" => app.start_limits_command(),
+            _ => app.start_doctor_command().unwrap(),
+        }
+        let paste_calls = Arc::new(AtomicUsize::new(0));
+        app.clipboard = Box::new(FakeClipboard {
+            text: "hello from clip".into(),
+            paste_error: None,
+            paste_calls: paste_calls.clone(),
+        });
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+
+        app.handle_mouse_event(
+            MouseEventKind::Down(MouseButton::Right),
+            10,
+            10,
+            &mut terminal,
+        )
+        .unwrap();
+
+        assert_eq!(paste_calls.load(Ordering::Relaxed), 0, "{name}");
+        assert_eq!(app.input_ui.text(), "", "{name}");
+        assert!(
+            matches!(app.input_ui.composer(), super::ComposerMode::Panel(_)),
+            "{name}"
+        );
+    }
+}

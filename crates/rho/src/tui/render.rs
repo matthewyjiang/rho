@@ -1,8 +1,10 @@
 mod entry_render;
+mod styled_text;
 
 pub(super) use entry_render::{
     apply_markdown_images, entry_lines, render_entry_with_options, TrailingBlank,
 };
+pub(super) use styled_text::{clip_line, fit_line, wrap_text_lines};
 
 use super::{
     changelog_command::changelog_lines,
@@ -200,10 +202,10 @@ fn list_picker_lines(
     lines.push(Line::raw(""));
     if picker.has_item_details() {
         let detail = picker
-            .selected_item()
-            .and_then(|item| item.detail.as_deref())
+            .selected_detail()
+            .map(super::picker::PickerDetail::plain_text)
             .unwrap_or_default();
-        let detail = truncate_one_line(detail, width.saturating_sub(2));
+        let detail = truncate_one_line(&detail, width.saturating_sub(2));
         let detail = if width > 2 {
             format!("  {detail}")
         } else {

@@ -75,12 +75,15 @@ impl App {
                 PickerItem {
                     section: None,
                     label: preview,
-                    detail: Some(format!(
-                        "checkpoint time: {}\ntracked files: {}\noutcome: {:?}",
-                        checkpoint.finalized_at,
-                        checkpoint.files.len(),
-                        checkpoint.outcome
-                    )),
+                    detail: Some(
+                        format!(
+                            "checkpoint time: {}\ntracked files: {}\noutcome: {:?}",
+                            checkpoint.finalized_at,
+                            checkpoint.files.len(),
+                            checkpoint.outcome
+                        )
+                        .into(),
+                    ),
                     preview: None,
                     badge: (!checkpoint.limitations.is_empty()).then_some(PickerBadge {
                         text: "limited".into(),
@@ -134,7 +137,7 @@ impl App {
             } else {
                 "Confirm workspace rewind".into()
             },
-            detail: Some(detail),
+            detail: Some(detail.into()),
             preview: None,
             badge: blocked.then_some(PickerBadge {
                 text: "partial".into(),

@@ -37,7 +37,7 @@ fn model_item(model: &CursorModel) -> PickerItem {
     PickerItem {
         section: Some(model.display_family()),
         label: model.id.clone(),
-        detail: Some(model.display_name.clone()),
+        detail: Some(model.display_name.clone().into()),
         preview: None,
         badge: model_badge(model),
         value: model.id.clone(),

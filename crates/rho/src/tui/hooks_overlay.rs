@@ -19,7 +19,7 @@ use super::{
     panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
     render::{display_width, wrap_line_at_whitespace},
     theme::Theme,
-    App, ComposerMode,
+    App, ComposerMode, PanelOverlay,
 };
 use crate::hooks::{HookContractView, HookReport};
 
@@ -43,15 +43,15 @@ pub(super) struct HooksOverlay {
 impl App {
     pub(super) fn show_hooks_report(&mut self, report: HookReport) {
         self.input_ui
-            .set_composer(ComposerMode::Hooks(HooksOverlay {
+            .set_composer(ComposerMode::Panel(PanelOverlay::Hooks(HooksOverlay {
                 report,
                 scroll: PanelScroll::default(),
-            }));
+            })));
         self.set_status_quiet("hooks");
     }
 
     pub(super) fn hooks_overlay_frame(&self, area: Rect) -> Option<OverlayPanelFrame> {
-        let ComposerMode::Hooks(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::Hooks(overlay)) = self.input_ui.composer() else {
             return None;
         };
         let lines = hooks_body_lines(&overlay.report, hooks_body_width(area));
@@ -65,19 +65,22 @@ impl App {
     }
 
     pub(super) fn scroll_hooks_overlay(&mut self, area: Rect, target: PanelScrollTarget) -> bool {
-        if !matches!(self.input_ui.composer(), ComposerMode::Hooks(_)) {
+        if !matches!(
+            self.input_ui.composer(),
+            ComposerMode::Panel(PanelOverlay::Hooks(_))
+        ) {
             return false;
         }
         let body_len = self.hooks_body_len(area);
         let body_rows = overlay_panel_layout(area, body_len).body_rows;
-        if let ComposerMode::Hooks(overlay) = self.input_ui.composer_mut() {
+        if let ComposerMode::Panel(PanelOverlay::Hooks(overlay)) = self.input_ui.composer_mut() {
             overlay.scroll.apply(target, body_len, body_rows);
         }
         true
     }
 
     pub(super) fn clamp_hooks_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
-        if let (ComposerMode::Hooks(overlay), Ok(size)) =
+        if let (ComposerMode::Panel(PanelOverlay::Hooks(overlay)), Ok(size)) =
             (self.input_ui.composer(), terminal.size())
         {
             let target = PanelScrollTarget::Absolute(overlay.scroll.offset());
@@ -90,7 +93,10 @@ impl App {
         key: crossterm::event::KeyEvent,
         terminal: &ratatui::DefaultTerminal,
     ) -> bool {
-        if !matches!(self.input_ui.composer(), ComposerMode::Hooks(_)) {
+        if !matches!(
+            self.input_ui.composer(),
+            ComposerMode::Panel(PanelOverlay::Hooks(_))
+        ) {
             return false;
         }
         match classify_panel_key(key) {
@@ -110,7 +116,7 @@ impl App {
     }
 
     fn hooks_body_len(&self, area: Rect) -> usize {
-        let ComposerMode::Hooks(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::Hooks(overlay)) = self.input_ui.composer() else {
             return 0;
         };
         hooks_body_lines(&overlay.report, hooks_body_width(area)).len()

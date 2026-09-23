@@ -67,40 +67,8 @@ impl App {
         let size = terminal.size()?;
         let screen = Rect::new(0, 0, size.width, size.height);
         let now = Instant::now();
-        if matches!(self.input_ui.composer(), ComposerMode::Computer(_)) {
-            self.clear_selections();
-            self.clear_hovered_copy_buttons();
-            self.clear_rail_pointer_state();
-            self.history.set_scrollbar_drag(None);
-            let delta = match kind {
-                MouseEventKind::ScrollUp => -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
-                MouseEventKind::ScrollDown => super::HISTORY_MOUSE_SCROLL_LINES as isize,
-                _ => 0,
-            };
-            self.scroll_computer_overlay(
-                screen,
-                super::overlay_panel::PanelScrollTarget::Delta(delta),
-            );
-            return Ok(());
-        }
-        if matches!(self.input_ui.composer(), ComposerMode::Hooks(_)) {
-            self.clear_selections();
-            self.clear_hovered_copy_buttons();
-            self.clear_rail_pointer_state();
-            self.history.set_scrollbar_drag(None);
-            let delta = match kind {
-                MouseEventKind::ScrollUp => -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
-                MouseEventKind::ScrollDown => super::HISTORY_MOUSE_SCROLL_LINES as isize,
-                _ => 0,
-            };
-            self.scroll_hooks_overlay(
-                screen,
-                super::overlay_panel::PanelScrollTarget::Delta(delta),
-            );
-            return Ok(());
-        }
-        if matches!(self.input_ui.composer(), ComposerMode::Info(_)) {
-            self.handle_info_overlay_mouse(kind, screen, column, row, now);
+        // An open panel owns pointer input; nothing behind it reacts.
+        if self.handle_panel_overlay_mouse(kind, screen, column, row, now) {
             return Ok(());
         }
         // The side overlay owns pointer input while open. Do not let clicks,
@@ -145,20 +113,6 @@ impl App {
         match kind {
             MouseEventKind::ScrollUp => {
                 self.input_ui.cancel_pointer_click_sequence();
-                if self.scroll_limits_overlay_wheel(
-                    size.width,
-                    size.height,
-                    -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
-                ) {
-                    return Ok(());
-                }
-                if self.scroll_doctor_overlay_wheel(
-                    size.width,
-                    size.height,
-                    -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
-                ) {
-                    return Ok(());
-                }
                 if self.route_picker_mouse(
                     PickerMouseEvent::Wheel(-1),
                     column,
@@ -181,20 +135,6 @@ impl App {
             }
             MouseEventKind::ScrollDown => {
                 self.input_ui.cancel_pointer_click_sequence();
-                if self.scroll_limits_overlay_wheel(
-                    size.width,
-                    size.height,
-                    super::HISTORY_MOUSE_SCROLL_LINES as isize,
-                ) {
-                    return Ok(());
-                }
-                if self.scroll_doctor_overlay_wheel(
-                    size.width,
-                    size.height,
-                    super::HISTORY_MOUSE_SCROLL_LINES as isize,
-                ) {
-                    return Ok(());
-                }
                 if self.route_picker_mouse(
                     PickerMouseEvent::Wheel(1),
                     column,

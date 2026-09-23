@@ -60,9 +60,11 @@ mod frame_context;
 mod frame_scheduler;
 mod goal;
 mod line_editor;
+mod panel_overlay;
 mod subagent_inbox;
 mod subagent_questionnaires;
 mod text_input;
+mod text_view_overlay;
 mod web_search_config;
 
 fn plural_suffix(count: usize) -> &'static str {

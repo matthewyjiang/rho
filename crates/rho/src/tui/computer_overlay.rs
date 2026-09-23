@@ -9,7 +9,7 @@ use super::{
     },
     panel_text::{heading_with_status, indented_wrapped_lines},
     theme::Theme,
-    App, ComposerMode,
+    App, ComposerMode, PanelOverlay,
 };
 use crate::tools::computer_use::{desktop_warning, ComputerUseControl, ComputerUseStatus};
 
@@ -21,7 +21,9 @@ pub(super) struct ComputerOverlay {
 impl App {
     pub(super) fn show_computer_status(&mut self) {
         self.input_ui
-            .set_composer(ComposerMode::Computer(ComputerOverlay::default()));
+            .set_composer(ComposerMode::Panel(PanelOverlay::Computer(
+                ComputerOverlay::default(),
+            )));
     }
 
     fn computer_status_lines(&self, width: usize) -> Vec<Line<'static>> {
@@ -159,7 +161,7 @@ impl App {
     }
 
     pub(super) fn computer_overlay_frame(&self, area: Rect) -> Option<OverlayPanelFrame> {
-        let ComposerMode::Computer(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::Computer(overlay)) = self.input_ui.composer() else {
             return None;
         };
         // Reserve the shared panel's scrollbar column before wrapping text.
@@ -189,21 +191,24 @@ impl App {
         area: Rect,
         target: PanelScrollTarget,
     ) -> bool {
-        if !matches!(self.input_ui.composer(), ComposerMode::Computer(_)) {
+        if !matches!(
+            self.input_ui.composer(),
+            ComposerMode::Panel(PanelOverlay::Computer(_))
+        ) {
             return false;
         }
         let body_len = self
             .computer_status_lines(overlay_panel_inner_width(area).saturating_sub(1))
             .len();
         let body_rows = overlay_panel_layout(area, body_len).body_rows;
-        if let ComposerMode::Computer(overlay) = self.input_ui.composer_mut() {
+        if let ComposerMode::Panel(PanelOverlay::Computer(overlay)) = self.input_ui.composer_mut() {
             overlay.scroll.apply(target, body_len, body_rows);
         }
         true
     }
 
     pub(super) fn clamp_computer_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
-        if let (ComposerMode::Computer(overlay), Ok(size)) =
+        if let (ComposerMode::Panel(PanelOverlay::Computer(overlay)), Ok(size)) =
             (self.input_ui.composer(), terminal.size())
         {
             let target = PanelScrollTarget::Absolute(overlay.scroll.offset());
@@ -216,7 +221,10 @@ impl App {
         key: crossterm::event::KeyEvent,
         terminal: &ratatui::DefaultTerminal,
     ) -> bool {
-        if !matches!(self.input_ui.composer(), ComposerMode::Computer(_)) {
+        if !matches!(
+            self.input_ui.composer(),
+            ComposerMode::Panel(PanelOverlay::Computer(_))
+        ) {
             return false;
         }
         if key.code == crossterm::event::KeyCode::Char('r') && key.modifiers.is_empty() {

@@ -12,6 +12,7 @@ use std::{
 };
 
 mod action;
+mod detail;
 mod input;
 mod lifecycle;
 mod overlay;
@@ -22,6 +23,7 @@ pub(in crate::tui) mod runner;
 pub(in crate::tui) mod standalone;
 
 pub(in crate::tui) use action::{ConfigParentRow, DuringTurnSelect, PickerAction, PickerTurn};
+pub(in crate::tui) use detail::{DetailBlock, DetailField, DetailSheet, DetailTone, PickerDetail};
 pub(in crate::tui) use input::{
     apply_picker_key, overlay_scroll_targets, PickerKeyEffect, PickerMouseEvent,
 };
@@ -79,11 +81,11 @@ struct PickerMatchCache {
 
 #[derive(Clone, Debug, Default)]
 struct DetailWrapCache {
-    selected: usize,
     width: usize,
-    detail_len: usize,
-    detail_ptr: usize,
-    lines: Vec<String>,
+    /// The detail `lines` were built from. Compared by value, so edited or
+    /// reordered items can never serve stale rows.
+    detail: Option<PickerDetail>,
+    lines: Vec<ratatui::text::Line<'static>>,
 }
 
 /// Filter text and match-list index used to restore a refreshed picker.
@@ -138,7 +140,7 @@ pub(super) struct UiPicker {
 pub(super) struct PickerItem {
     pub(super) label: String,
     pub(super) section: Option<String>,
-    pub(super) detail: Option<String>,
+    pub(super) detail: Option<PickerDetail>,
     pub(super) preview: Option<String>,
     pub(super) badge: Option<PickerBadge>,
     pub(super) value: String,
@@ -148,7 +150,7 @@ pub(super) struct PickerItem {
     pub(super) allow_filter_completion: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct PickerBadge {
     pub(super) text: String,
     pub(super) tone: PickerBadgeTone,
@@ -162,6 +164,8 @@ pub(super) enum PickerBadgeTone {
     Favorite,
     Healthy,
     Warning,
+    /// Present but secondary; recedes next to other tones.
+    Muted,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -463,27 +467,21 @@ impl UiPicker {
         )
     }
 
-    pub(super) fn wrapped_detail_lines(&self, detail_width: usize) -> Ref<'_, Vec<String>> {
+    pub(super) fn wrapped_detail_lines(
+        &self,
+        detail_width: usize,
+    ) -> Ref<'_, Vec<ratatui::text::Line<'static>>> {
         let detail = self.selected_detail();
-        let detail_len = detail.len();
-        let detail_ptr = detail.as_ptr() as usize;
         let width = detail_width.max(1);
         let stale = {
             let cache = self.detail_wrap_cache.borrow();
-            cache.selected != self.selected
-                || cache.width != width
-                || cache.detail_len != detail_len
-                || cache.detail_ptr != detail_ptr
-                || cache.lines.is_empty() && !detail.is_empty()
+            cache.width != width || cache.detail.as_ref() != detail || cache.lines.is_empty()
         };
         if stale {
-            let lines = overlay_detail_lines(detail, width);
             *self.detail_wrap_cache.borrow_mut() = DetailWrapCache {
-                selected: self.selected,
                 width,
-                detail_len,
-                detail_ptr,
-                lines,
+                detail: detail.cloned(),
+                lines: overlay_detail_lines(detail, width),
             };
         }
         Ref::map(self.detail_wrap_cache.borrow(), |cache| &cache.lines)
@@ -496,10 +494,8 @@ impl UiPicker {
         self.selected_item()?.badge.as_ref()
     }
 
-    pub(super) fn selected_detail(&self) -> &str {
-        self.selected_item()
-            .and_then(|item| item.detail.as_deref())
-            .unwrap_or_default()
+    pub(super) fn selected_detail(&self) -> Option<&PickerDetail> {
+        self.selected_item().and_then(|item| item.detail.as_ref())
     }
 
     pub(super) fn confirm_action_label(&self) -> &str {
@@ -796,7 +792,11 @@ fn fuzzy_item_score(item: &PickerItem, filter: &str) -> Option<i64> {
 
 fn picker_haystack(item: &PickerItem) -> String {
     let section = item.section.as_deref().unwrap_or_default();
-    let detail = item.detail.as_deref().unwrap_or_default();
+    let detail = item
+        .detail
+        .as_ref()
+        .map(PickerDetail::plain_text)
+        .unwrap_or_default();
     let preview = item.preview.as_deref().unwrap_or_default();
     let badge = item
         .badge

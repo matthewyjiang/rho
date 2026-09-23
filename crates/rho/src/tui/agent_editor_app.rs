@@ -42,9 +42,15 @@ impl App {
             AgentOrigin::RhoHome | AgentOrigin::Project
         ) && entry.metadata.path.is_some();
         if !editable {
+            // Read-only agents open their full prompt; the fact sheet only
+            // shows an excerpt.
             self.agent_editor_session = None;
-            self.input_ui.set_composer(ComposerMode::Input);
-            self.set_status("ready");
+            let (policy, text) =
+                crate::tui::agent_picker::prompt_policy_parts(&entry.definition.prompt);
+            self.open_text_view_over_picker(
+                format!("{} prompt · {policy}", entry.definition.id),
+                text.to_owned(),
+            );
             return Ok(());
         }
 

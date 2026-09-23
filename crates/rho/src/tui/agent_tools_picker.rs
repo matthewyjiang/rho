@@ -38,7 +38,7 @@ fn tool_row(name: &str, detail: impl Into<String>, on: bool, value: String) -> P
     PickerItem {
         section: None,
         label: name.into(),
-        detail: Some(detail.into()),
+        detail: Some(super::picker::PickerDetail::Text(detail.into())),
         preview: None,
         badge: on.then(on_badge),
         value,

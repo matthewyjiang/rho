@@ -32,7 +32,7 @@ async fn opening_doctor_does_not_queue_model_context() {
     assert!(app.pending.queued_prompts().is_empty());
     assert!(matches!(
         app.input_ui.composer(),
-        super::super::ComposerMode::Doctor(_)
+        super::super::ComposerMode::Panel(super::super::PanelOverlay::Doctor(_))
     ));
     assert!(app.pending_doctor_probes.is_empty());
     assert!(

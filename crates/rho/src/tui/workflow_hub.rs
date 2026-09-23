@@ -47,7 +47,7 @@ fn item(
     PickerItem {
         section: section.map(str::to_owned),
         label: label.into(),
-        detail: Some(detail.into()),
+        detail: Some(super::picker::PickerDetail::Text(detail.into())),
         preview: None,
         badge: badge_text.map(|(text, tone)| badge(text, tone)),
         value: value.into(),

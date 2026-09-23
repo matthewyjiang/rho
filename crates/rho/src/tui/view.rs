@@ -23,8 +23,8 @@ use super::{
 };
 use super::{
     history_cache::{HistoryLineSlice, HistoryRenderSettings},
-    App, CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, LineFill, ReasoningChrome,
-    SessionHeaderCache, StreamKind, Theme,
+    App, CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, LineFill, PanelOverlay,
+    ReasoningChrome, SessionHeaderCache, StreamKind, Theme,
 };
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
@@ -445,39 +445,7 @@ impl App {
                 );
                 Some(overlay.cursor)
             }),
-            ComposerMode::Limits(_) => self.limits_overlay_frame(area, now).map(|overlay| {
-                frame.render_widget(Clear, overlay.outer);
-                frame.render_widget(
-                    Paragraph::new(overlay.lines).style(Theme::surface()),
-                    overlay.outer,
-                );
-                overlay.cursor
-            }),
-            ComposerMode::Doctor(_) => self.doctor_overlay_frame(area, now).map(|overlay| {
-                frame.render_widget(Clear, overlay.outer);
-                frame.render_widget(
-                    Paragraph::new(overlay.lines).style(Theme::surface()),
-                    overlay.outer,
-                );
-                overlay.cursor
-            }),
-            ComposerMode::Computer(_) => self.computer_overlay_frame(area).map(|overlay| {
-                frame.render_widget(Clear, overlay.outer);
-                frame.render_widget(
-                    Paragraph::new(overlay.lines).style(Theme::surface()),
-                    overlay.outer,
-                );
-                overlay.cursor
-            }),
-            ComposerMode::Hooks(_) => self.hooks_overlay_frame(area).map(|overlay| {
-                frame.render_widget(Clear, overlay.outer);
-                frame.render_widget(
-                    Paragraph::new(overlay.lines).style(Theme::surface()),
-                    overlay.outer,
-                );
-                overlay.cursor
-            }),
-            ComposerMode::Info(_) => self.info_overlay_frame(area).map(|overlay| {
+            ComposerMode::Panel(panel) => self.panel_overlay_frame(area, now).map(|overlay| {
                 frame.render_widget(Clear, overlay.outer);
                 let body = overlay.body();
                 let scroll = overlay.scroll();
@@ -485,12 +453,15 @@ impl App {
                     Paragraph::new(overlay.lines).style(Theme::surface()),
                     overlay.outer,
                 );
-                if let Some(selection) = self.info_text_selection() {
-                    highlight_selection(frame.buffer_mut(), body, scroll, selection);
-                }
-                // The notice is painted with the composer, under this panel.
-                if let Some(notice) = self.history.copy_notice() {
-                    render_copy_notice(frame, area, notice, now);
+                // Info is the one panel with drag-to-copy selection.
+                if let PanelOverlay::Info(_) = panel {
+                    if let Some(selection) = self.info_text_selection() {
+                        highlight_selection(frame.buffer_mut(), body, scroll, selection);
+                    }
+                    // The notice is painted with the composer, under this panel.
+                    if let Some(notice) = self.history.copy_notice() {
+                        render_copy_notice(frame, area, notice, now);
+                    }
                 }
                 overlay.cursor
             }),

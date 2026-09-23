@@ -174,7 +174,7 @@ fn entry(keys: impl Into<String>, summary: &str, detail: impl Into<String>) -> P
     PickerItem {
         section: None,
         label: keys.clone(),
-        detail: Some(detail.into()),
+        detail: Some(super::picker::PickerDetail::Text(detail.into())),
         preview: None,
         badge: Some(PickerBadge {
             text: summary.into(),

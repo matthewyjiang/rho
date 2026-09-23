@@ -50,7 +50,7 @@ fn session_item(session: SessionSummary, now: u64) -> PickerItem {
     PickerItem {
         section: None,
         label: title,
-        detail: Some(detail),
+        detail: Some(detail.into()),
         preview,
         badge: None,
         value: session.id,

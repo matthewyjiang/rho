@@ -177,10 +177,7 @@ fn candidate_item(candidate: &AttachCandidate) -> PickerItem {
     PickerItem {
         section: Some(candidate.agent_id.clone()),
         label: title.to_owned(),
-        detail: Some(format!(
-            "{activity}\nelapsed {elapsed}\nrole {}",
-            candidate.agent_id
-        )),
+        detail: Some(format!("{activity}\nelapsed {elapsed}\nrole {}", candidate.agent_id).into()),
         preview: None,
         badge: Some(PickerBadge {
             text: activity.to_owned(),

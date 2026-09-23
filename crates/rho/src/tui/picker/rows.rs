@@ -28,6 +28,7 @@ pub(in crate::tui) fn picker_badge_style(tone: PickerBadgeTone) -> Style {
         PickerBadgeTone::Selected => Theme::warning(),
         PickerBadgeTone::Favorite | PickerBadgeTone::Healthy => Theme::success(),
         PickerBadgeTone::Warning => Theme::warning(),
+        PickerBadgeTone::Muted => Theme::dim(),
     }
 }
 

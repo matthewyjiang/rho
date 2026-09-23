@@ -111,10 +111,9 @@ pub(super) fn auth_mode_picker(
         items.push(PickerItem {
             section: None,
             label: mode.login_label.into(),
-            detail: Some(format!(
-                "Use {} for {}.",
-                mode.login_label, descriptor.display_name
-            )),
+            detail: Some(
+                format!("Use {} for {}.", mode.login_label, descriptor.display_name).into(),
+            ),
             preview: None,
             badge: (mode.id == active_auth).then(|| PickerBadge {
                 text: "active".into(),
@@ -156,10 +155,7 @@ pub(super) fn refresh_model_list_picker(available_auths: &[String]) -> UiPicker 
         .map(|descriptor| PickerItem {
             section: None,
             label: descriptor.display_name.into(),
-            detail: Some(format!(
-                "Refresh cached {} models.",
-                descriptor.display_name
-            )),
+            detail: Some(format!("Refresh cached {} models.", descriptor.display_name).into()),
             preview: None,
             badge: None,
             value: descriptor.name.into(),
@@ -237,7 +233,7 @@ fn provider_picker_for_targets(verb: &str, targets: Vec<catalog::LoginTarget>) -
             PickerItem {
                 section: None,
                 label,
-                detail: Some(target.label),
+                detail: Some(target.label.into()),
                 preview: None,
                 badge: None,
                 value: target.auth,

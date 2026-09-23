@@ -23,7 +23,7 @@ use super::{
     panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
     render::display_width,
     theme::Theme,
-    App, ComposerMode,
+    App, ComposerMode, PanelOverlay,
 };
 use crate::doctor::{
     build_report, plan_probes, probe_checks, run_probe, DoctorCheck, DoctorInputs, DoctorProbeGate,
@@ -112,17 +112,20 @@ impl App {
                 .push(PendingDoctorProbe { id, handle });
         }
         self.input_ui
-            .set_composer(ComposerMode::Doctor(DoctorOverlay {
+            .set_composer(ComposerMode::Panel(PanelOverlay::Doctor(DoctorOverlay {
                 report,
                 scroll: PanelScroll::default(),
                 checking_started: Instant::now(),
-            }));
+            })));
         self.set_status("doctor");
         Ok(())
     }
 
     pub(super) fn doctor_overlay_open(&self) -> bool {
-        matches!(self.input_ui.composer(), ComposerMode::Doctor(_))
+        matches!(
+            self.input_ui.composer(),
+            ComposerMode::Panel(PanelOverlay::Doctor(_))
+        )
     }
 
     /// Close the overlay and drop its probes. Key handling is synchronous, so
@@ -185,7 +188,7 @@ impl App {
         area: Rect,
         now: Instant,
     ) -> Option<OverlayPanelFrame> {
-        let ComposerMode::Doctor(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::Doctor(overlay)) = self.input_ui.composer() else {
             return None;
         };
         let spinner = overlay
@@ -224,24 +227,16 @@ impl App {
         }
     }
 
-    pub(super) fn scroll_doctor_overlay_wheel(
-        &mut self,
-        width: u16,
-        height: u16,
-        delta: isize,
-    ) -> bool {
+    pub(super) fn scroll_doctor_overlay(&mut self, area: Rect, target: PanelScrollTarget) -> bool {
         if !self.doctor_overlay_open() {
             return false;
         }
-        self.apply_doctor_scroll_area(
-            Rect::new(0, 0, width, height),
-            PanelScrollTarget::Delta(delta),
-        );
+        self.apply_doctor_scroll_area(area, target);
         true
     }
 
     pub(super) fn clamp_doctor_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
-        let ComposerMode::Doctor(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::Doctor(overlay)) = self.input_ui.composer() else {
             return;
         };
         let scroll = overlay.scroll.offset();
@@ -270,7 +265,7 @@ impl App {
     }
 
     fn doctor_scroll_metrics(&self, area: Rect) -> Option<(usize, usize)> {
-        let ComposerMode::Doctor(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::Doctor(overlay)) = self.input_ui.composer() else {
             return None;
         };
         let inner_width = overlay_panel_inner_width(area);
@@ -281,7 +276,7 @@ impl App {
 
     fn doctor_overlay_mut(&mut self) -> Option<&mut DoctorOverlay> {
         match self.input_ui.composer_mut() {
-            ComposerMode::Doctor(overlay) => Some(overlay),
+            ComposerMode::Panel(PanelOverlay::Doctor(overlay)) => Some(overlay),
             _ => None,
         }
     }

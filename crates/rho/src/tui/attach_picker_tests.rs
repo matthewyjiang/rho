@@ -49,7 +49,12 @@ fn attach_row_uses_role_title_and_activity() {
             item.badge.as_ref().map(|badge| badge.text.as_str()),
             Some(activity)
         );
-        assert!(!item.detail.as_deref().unwrap_or_default().contains(&run_id));
+        assert!(!item
+            .detail
+            .as_ref()
+            .map(|detail| detail.plain_text())
+            .unwrap_or_default()
+            .contains(&run_id));
     }
 }
 

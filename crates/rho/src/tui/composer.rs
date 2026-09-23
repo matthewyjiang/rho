@@ -82,11 +82,7 @@ impl App {
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
-            | ComposerMode::Limits(_)
-            | ComposerMode::Doctor(_)
-            | ComposerMode::Computer(_)
-            | ComposerMode::Hooks(_)
-            | ComposerMode::Info(_)
+            | ComposerMode::Panel(_)
             | ComposerMode::Side
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => {}
@@ -119,11 +115,7 @@ impl App {
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
-            | ComposerMode::Limits(_)
-            | ComposerMode::Doctor(_)
-            | ComposerMode::Computer(_)
-            | ComposerMode::Hooks(_)
-            | ComposerMode::Info(_)
+            | ComposerMode::Panel(_)
             | ComposerMode::Side
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => false,
@@ -143,11 +135,7 @@ impl App {
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
             | ComposerMode::Picker(_)
-            | ComposerMode::Limits(_)
-            | ComposerMode::Doctor(_)
-            | ComposerMode::Computer(_)
-            | ComposerMode::Hooks(_)
-            | ComposerMode::Info(_)
+            | ComposerMode::Panel(_)
             | ComposerMode::Side
             | ComposerMode::InlineChoice(_)
             | ComposerMode::InteractivePending(_) => false,
@@ -715,11 +703,7 @@ impl App {
             ComposerMode::Side => {}
             ComposerMode::Approval(_)
             | ComposerMode::Picker(_)
-            | ComposerMode::Limits(_)
-            | ComposerMode::Doctor(_)
-            | ComposerMode::Computer(_)
-            | ComposerMode::Hooks(_)
-            | ComposerMode::Info(_)
+            | ComposerMode::Panel(_)
             | ComposerMode::InteractivePending(_)
             | ComposerMode::InlineChoice(_) => {}
         }

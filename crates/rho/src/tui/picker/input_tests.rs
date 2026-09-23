@@ -167,7 +167,8 @@ fn overlay_picker_with_detail() -> UiPicker {
         (0..40)
             .map(|i| format!("line {i}"))
             .collect::<Vec<_>>()
-            .join("\n"),
+            .join("\n")
+            .into(),
     );
     let mut second = item("beta");
     second.detail = Some("short".into());

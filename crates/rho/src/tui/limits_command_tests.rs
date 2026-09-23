@@ -50,7 +50,7 @@ fn opening_limits_does_not_queue_model_context() {
     assert!(app.pending.queued_prompts().is_empty());
     assert!(matches!(
         app.input_ui.composer(),
-        super::super::ComposerMode::Limits(_)
+        super::super::ComposerMode::Panel(super::super::PanelOverlay::Limits(_))
     ));
     assert!(
         app.history
