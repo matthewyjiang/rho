@@ -407,16 +407,22 @@ fn assert_narrow_agents_popup(harness: &mut PtyHarness) -> Result<()> {
     Ok(())
 }
 
-/// The stacked narrow layout gives detail fewer rows, so the prompt heading
-/// starts below the fold; End must bring it into view and hide the title.
+/// The stacked narrow layout gives detail fewer rows, so the prompt body
+/// starts below the fold. Internal agents have no read-only prompt view, so
+/// End must reach the full prompt's last sentence, not an excerpt, and hide
+/// the title.
 fn assert_narrow_detail_scrolled_to_end(harness: &mut PtyHarness) -> Result<()> {
     assert_narrow_agents_popup(harness)?;
     let screen = harness.screen().contents();
-    if !screen.contains("PROMPT") || screen.contains("Internal agent that evaluates") {
-        anyhow::bail!("narrow detail did not scroll to its end:\n{screen}");
+    if !screen.contains(GOAL_JUDGE_PROMPT_TAIL) || screen.contains("Internal agent that evaluates")
+    {
+        anyhow::bail!("narrow detail did not scroll to the end of the full prompt:\n{screen}");
     }
     Ok(())
 }
+
+/// Last word of the goal-judge prompt, unique within it.
+const GOAL_JUDGE_PROMPT_TAIL: &str = "Unmet.";
 
 pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -460,7 +466,7 @@ pub(super) const OPEN_AGENTS_PICKER_STEPS: &[Step] = &[
     Step::Key(Key::Right),
     Step::Key(Key::End),
     Step::WaitText {
-        text: "PROMPT",
+        text: GOAL_JUDGE_PROMPT_TAIL,
         timeout: SETTLE,
     },
     Step::Custom(assert_narrow_detail_scrolled_to_end),

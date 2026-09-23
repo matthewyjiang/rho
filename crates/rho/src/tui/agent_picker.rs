@@ -235,7 +235,7 @@ fn agent_detail(
     blocks.push(DetailBlock::Rule);
     blocks.push(DetailBlock::Fields(fields));
     blocks.push(DetailBlock::Rule);
-    blocks.extend(agent_prompt_blocks(definition));
+    blocks.extend(agent_prompt_blocks(definition, access));
     DetailSheet { blocks }
 }
 
@@ -312,9 +312,15 @@ fn agent_source_field(entry: &AgentCatalogEntry) -> DetailField {
     }
 }
 
-/// Collapsed prompt: a heading with the policy and size, then a short
-/// excerpt. The full text lives behind Enter (editor or read-only view).
-fn agent_prompt_blocks(definition: &crate::agent::AgentDefinition) -> Vec<DetailBlock> {
+/// Prompt heading with the policy and size, then the body. Editable and
+/// read-only agents show a short excerpt because Enter opens the full text
+/// (editor or read-only view). Enter on an internal agent configures its
+/// model instead, so the scrollable detail pane is the only place its full
+/// prompt can appear, and it shows all of it.
+fn agent_prompt_blocks(
+    definition: &crate::agent::AgentDefinition,
+    access: AgentAccess,
+) -> Vec<DetailBlock> {
     let (policy, text) = prompt_policy_parts(&definition.prompt);
     let status = match text.lines().count() {
         0 => policy.to_string(),
@@ -329,9 +335,12 @@ fn agent_prompt_blocks(definition: &crate::agent::AgentDefinition) -> Vec<Detail
         blocks.push(DetailBlock::Muted("(no prompt body)".into()));
         return blocks;
     }
-    blocks.push(DetailBlock::Excerpt {
-        text: text.to_string(),
-        rows: PROMPT_EXCERPT_ROWS,
+    blocks.push(match access {
+        AgentAccess::Internal => DetailBlock::Muted(text.to_string()),
+        AgentAccess::Editable | AgentAccess::ReadOnly => DetailBlock::Excerpt {
+            text: text.to_string(),
+            rows: PROMPT_EXCERPT_ROWS,
+        },
     });
     blocks
 }
