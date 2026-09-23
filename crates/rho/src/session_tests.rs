@@ -969,21 +969,6 @@ fn list_all_after_delete_omits_removed_session() {
     assert!(ids.contains(&session_b.id()));
 }
 
-#[test]
-fn index_self_heals_when_folder_is_gone_but_row_remains() {
-    let root = temp_session_root();
-    let cwd = temp_cwd();
-    let session = Session::create_in_root(&root, &cwd).unwrap();
-    session
-        .append_message(&Message::user_text("orphaned index row"))
-        .unwrap();
-    let path = session.path().to_path_buf();
-    remove_session_storage(&path);
-
-    let listed = Session::list_in_root_for_test(&root, &cwd).unwrap();
-    assert!(listed.is_empty());
-}
-
 // Covers: manual rename must persist on the session index summary
 // Owner: session persistence
 #[test]

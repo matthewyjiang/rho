@@ -43,28 +43,24 @@ fn a_variable_missing_from_the_parent_is_simply_absent() {
 }
 
 #[test]
-fn the_recursion_marker_is_always_set() {
-    let environment = child_environment(&[], reader(&[]));
+fn the_recursion_marker_is_always_set_and_cannot_be_overridden() {
+    let marker = super::super::IN_HOOK_ENV;
+    let empty_allowlist: &[String] = &[];
+    let marker_allowlist = [marker.to_owned()];
+    for (case, allowlist, ambient) in [
+        ("no allowlist", empty_allowlist, &[][..]),
+        (
+            "allowlisted marker",
+            &marker_allowlist[..],
+            &[(marker, "0")][..],
+        ),
+    ] {
+        let environment = child_environment(allowlist, reader(ambient));
 
-    assert_eq!(
-        environment
-            .get(super::super::IN_HOOK_ENV)
-            .map(String::as_str),
-        Some("1")
-    );
-}
-
-#[test]
-fn an_allowlist_cannot_override_the_recursion_marker() {
-    let environment = child_environment(
-        &[super::super::IN_HOOK_ENV.to_owned()],
-        reader(&[(super::super::IN_HOOK_ENV, "0")]),
-    );
-
-    assert_eq!(
-        environment
-            .get(super::super::IN_HOOK_ENV)
-            .map(String::as_str),
-        Some("1")
-    );
+        assert_eq!(
+            environment.get(marker).map(String::as_str),
+            Some("1"),
+            "{case}"
+        );
+    }
 }

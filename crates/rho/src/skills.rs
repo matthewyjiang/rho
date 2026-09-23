@@ -334,33 +334,29 @@ mod tests {
 
     use super::*;
 
+    // Covers: every embedded skill is discoverable with no user skill dirs,
+    // with its model-invocation gate intact.
+    // Owner: skill discovery.
     #[test]
-    fn discovers_embedded_rho_config_skill() {
+    fn discovers_embedded_skills() {
         let root = TempDir::new().unwrap();
-
         let skills = discover_with_home(root.path(), None);
-        let skill = skills
-            .iter()
-            .find(|skill| skill.name == "rho-config")
-            .unwrap();
 
-        assert_eq!(skill.source, SkillSource::BuiltIn);
-        assert!(skill.contents.contains("config.toml"));
-    }
-
-    #[test]
-    fn discovers_embedded_rho_agent_creator_skill() {
-        let root = TempDir::new().unwrap();
-
-        let skills = discover_with_home(root.path(), None);
-        let skill = skills
-            .iter()
-            .find(|skill| skill.name == "rho-agent-creator")
-            .unwrap();
-
-        assert_eq!(skill.source, SkillSource::BuiltIn);
-        assert!(skill.disable_model_invocation);
-        assert!(skill.contents.contains("questionnaire"));
+        for (name, disable_model_invocation) in [
+            ("rho-config", false),
+            ("rho-agent-creator", true),
+            ("rho-workflow-authoring", false),
+        ] {
+            let skill = skills
+                .iter()
+                .find(|skill| skill.name == name)
+                .unwrap_or_else(|| panic!("{name} not discovered"));
+            assert_eq!(skill.source, SkillSource::BuiltIn, "{name}");
+            assert_eq!(
+                skill.disable_model_invocation, disable_model_invocation,
+                "{name}"
+            );
+        }
     }
 
     #[test]
@@ -596,7 +592,7 @@ description: "a \"quoted\" description"
             },
             Case {
                 name: "nested metadata and optional fields",
-                frontmatter: "name: quote-skill\ndescription: desc\nlicense: MIT\ncompatibility: needs git\nmetadata:\n  author: example-org\n  version: \"1.0\"\nallowed-tools: Bash(git:*) Read\n",
+                frontmatter: "name: quote-skill\ndescription: desc\nlicense: MIT\ncompatibility: needs git\nmetadata:\n  author: example-org\n  version: 1.0\n  requires:\n    bins: [\"bitbucket-cli\"]\nallowed-tools: Bash(git:*) Read\n",
                 expected: Ok(Expected {
                     name: "quote-skill",
                     description: "desc",
@@ -625,24 +621,6 @@ description: "a \"quoted\" description"
                 name: "missing description",
                 frontmatter: "name: quote-skill\n",
                 expected: Err("description"),
-            },
-            Case {
-                name: "nested metadata mapping is accepted",
-                frontmatter: "name: quote-skill\ndescription: desc\nmetadata:\n  requires:\n    bins: [\"bitbucket-cli\"]\n",
-                expected: Ok(Expected {
-                    name: "quote-skill",
-                    description: "desc",
-                    disable_model_invocation: false,
-                }),
-            },
-            Case {
-                name: "numeric metadata scalar is accepted",
-                frontmatter: "name: quote-skill\ndescription: desc\nmetadata:\n  version: 1.0\n",
-                expected: Ok(Expected {
-                    name: "quote-skill",
-                    description: "desc",
-                    disable_model_invocation: false,
-                }),
             },
             Case {
                 name: "invalid disable-model-invocation type",

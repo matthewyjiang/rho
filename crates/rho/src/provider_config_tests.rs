@@ -130,46 +130,29 @@ fn set_endpoint_updates_supported_providers_and_rejects_others() {
     );
 }
 
-// Covers: Token Plan uses the built-in default API base with no config override
+// Covers: built-in hosts resolve their default API base with no config override
 // Owner: provider config
 #[test]
-fn qwen_token_plan_resolves_default_endpoint_without_config() {
+fn built_in_providers_resolve_default_endpoint_without_config() {
     let config = Config::default();
 
-    assert_eq!(
-        config
-            .resolved_provider_endpoint("qwen-token-plan")
-            .unwrap()
-            .as_str(),
-        rho_providers::provider::QWEN_TOKEN_PLAN_API_BASE
-    );
-}
-
-// Covers: Meta Model API uses the built-in default API base with no config override
-// Owner: provider config
-#[test]
-fn meta_resolves_default_endpoint_without_config() {
-    let config = Config::default();
-
-    assert_eq!(
-        config.resolved_provider_endpoint("meta").unwrap().as_str(),
-        rho_providers::provider::META_API_BASE
-    );
-}
-
-// Covers: MiniMax uses the built-in Anthropic-compatible API base with no config override
-// Owner: provider config
-#[test]
-fn minimax_resolves_default_endpoint_without_config() {
-    let config = Config::default();
-
-    assert_eq!(
-        config
-            .resolved_provider_endpoint("minimax")
-            .unwrap()
-            .as_str(),
-        rho_providers::provider::MINIMAX_API_BASE
-    );
+    for (provider, expected) in [
+        (
+            "qwen-token-plan",
+            rho_providers::provider::QWEN_TOKEN_PLAN_API_BASE,
+        ),
+        ("meta", rho_providers::provider::META_API_BASE),
+        ("minimax", rho_providers::provider::MINIMAX_API_BASE),
+    ] {
+        assert_eq!(
+            config
+                .resolved_provider_endpoint(provider)
+                .unwrap()
+                .as_str(),
+            expected,
+            "{provider}"
+        );
+    }
 }
 
 // Covers: user-defined OpenAI-compatible hosts keep their configured base URL

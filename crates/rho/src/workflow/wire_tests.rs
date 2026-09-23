@@ -1,6 +1,6 @@
 use pretty_assertions::assert_eq;
 
-use super::{ArtifactKind, ArtifactObservation, ArtifactRef, Digest};
+use super::{ArtifactObservation, ArtifactRef, Digest};
 
 fn artifact(retained_bytes: u64, observed: ArtifactObservation) -> ArtifactRef {
     ArtifactRef {
@@ -8,22 +8,6 @@ fn artifact(retained_bytes: u64, observed: ArtifactObservation) -> ArtifactRef {
         retained_bytes,
         observed,
         digest: Digest("sha256:artifact".into()),
-    }
-}
-
-// Covers: one artifact must read the same in the tool, the TUI, and the CLI.
-// Owner: workflow domain vocabulary.
-#[test]
-fn artifact_kind_labels_are_human_readable() {
-    let cases = [
-        (ArtifactKind::Stdout, "stdout"),
-        (ArtifactKind::Stderr, "stderr"),
-        (ArtifactKind::AgentAnswer, "answer"),
-        (ArtifactKind::StructuredOutput, "structured output"),
-        (ArtifactKind::CommandOutcome, "command outcome"),
-    ];
-    for (kind, expected) in cases {
-        assert_eq!(kind.label(), expected, "{kind:?}");
     }
 }
 

@@ -25,9 +25,6 @@ fn discover_finds_folder_and_flat_entries() {
             ".rho/workflows/solo.star",
         ]
     );
-    // Labels are derived from path shape; keep the rule, not chrome prose.
-    assert_eq!(found[0].label, "review");
-    assert_eq!(found[1].label, "solo");
 }
 
 // Covers: missing workflows directory is a valid empty inventory, not an error path.

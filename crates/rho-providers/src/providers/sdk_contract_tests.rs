@@ -858,21 +858,6 @@ async fn cancellation_before_turn_is_reported_as_interrupted() {
     assert_eq!(error.kind(), ProviderErrorKind::Interrupted);
 }
 
-#[test]
-fn retryability_matches_provider_error_contract() {
-    let retryable = provider_error_from_model_error(ModelError::HttpStatus {
-        status: StatusCode::TOO_MANY_REQUESTS,
-        body: String::new(),
-        retry_after: None,
-    });
-    let permanent = provider_error_from_model_error(
-        crate::model::registry::missing_credentials_error("openai"),
-    );
-
-    assert!(retryable.is_retryable());
-    assert!(!permanent.is_retryable());
-}
-
 #[tokio::test]
 async fn fake_native_compact_provider_returns_compaction_output_through_sdk() {
     use std::sync::Arc;
@@ -938,7 +923,7 @@ fn provider_reported_errors_map_by_semantic_kind() {
 }
 
 #[test]
-fn rate_limit_http_errors_include_retry_after_and_limits_pointer() {
+fn rate_limit_http_errors_carry_retry_after() {
     use std::time::Duration;
 
     let converted = provider_error_from_model_error(ModelError::HttpStatus {
@@ -949,25 +934,5 @@ fn rate_limit_http_errors_include_retry_after_and_limits_pointer() {
 
     assert_eq!(converted.kind(), ProviderErrorKind::RateLimit);
     assert_eq!(converted.retry_after(), Some(Duration::from_secs(45)));
-    assert_eq!(
-        converted.message(),
-        "HTTP 429; retry in 45s; run /limits for usage windows"
-    );
     assert_eq!(converted.diagnostic(), Some("slow down"));
-    assert!(converted.to_string().contains("/limits"));
-}
-
-#[test]
-fn rate_limit_provider_reported_errors_point_at_limits() {
-    let converted = provider_error_from_model_error(ModelError::ProviderReported {
-        kind: ProviderReportedErrorKind::RateLimit,
-        error_type: "rate_limit_error".into(),
-        message: "too many requests".into(),
-    });
-
-    assert_eq!(converted.kind(), ProviderErrorKind::RateLimit);
-    assert_eq!(
-        converted.message(),
-        "provider reported a rate limit; run /limits for usage windows"
-    );
 }

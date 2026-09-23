@@ -19,60 +19,23 @@ fn cycles_only_through_supported_levels() {
     );
 }
 
+// Unsupported levels round up to the next supported level without disabling
+// reasoning, and only fall back down when above the highest supported level.
 #[test]
-fn normalizes_unsupported_levels_up_without_disabling_reasoning() {
-    let supported = [
-        ReasoningLevel::Off,
-        ReasoningLevel::Low,
-        ReasoningLevel::High,
-        ReasoningLevel::Max,
-    ];
+fn normalizes_to_the_nearest_supported_level() {
+    use ReasoningLevel::{High, Low, Max, Medium, Minimal, Off, Xhigh};
 
-    assert_eq!(
-        ReasoningLevel::Minimal.normalize(Some(&supported)),
-        ReasoningLevel::Low
-    );
-    assert_eq!(
-        ReasoningLevel::Medium.normalize(Some(&supported)),
-        ReasoningLevel::High
-    );
-    assert_eq!(
-        ReasoningLevel::Xhigh.normalize(Some(&supported)),
-        ReasoningLevel::Max
-    );
-    assert_eq!(
-        ReasoningLevel::Off.normalize(Some(&[ReasoningLevel::Low])),
-        ReasoningLevel::Off
-    );
-}
-
-#[test]
-fn normalizes_above_the_highest_supported_non_off_level_down() {
-    let supported = [
-        ReasoningLevel::Off,
-        ReasoningLevel::Low,
-        ReasoningLevel::High,
-        ReasoningLevel::Xhigh,
-    ];
-
-    assert_eq!(
-        ReasoningLevel::Max.normalize(Some(&supported)),
-        ReasoningLevel::Xhigh
-    );
-}
-
-#[test]
-fn codex_levels_without_minimal_round_up_to_low() {
-    let supported = [
-        ReasoningLevel::Off,
-        ReasoningLevel::Low,
-        ReasoningLevel::Medium,
-        ReasoningLevel::High,
-        ReasoningLevel::Xhigh,
-    ];
-
-    assert_eq!(
-        ReasoningLevel::Minimal.normalize(Some(&supported)),
-        ReasoningLevel::Low
-    );
+    let sparse: &[ReasoningLevel] = &[Off, Low, High, Max];
+    let no_max: &[ReasoningLevel] = &[Off, Low, High, Xhigh];
+    let codex: &[ReasoningLevel] = &[Off, Low, Medium, High, Xhigh];
+    for (case, level, supported, expected) in [
+        ("minimal rounds up", Minimal, sparse, Low),
+        ("medium rounds up", Medium, sparse, High),
+        ("xhigh rounds up", Xhigh, sparse, Max),
+        ("off stays off", Off, &[Low][..], Off),
+        ("above highest rounds down", Max, no_max, Xhigh),
+        ("codex without minimal", Minimal, codex, Low),
+    ] {
+        assert_eq!(level.normalize(Some(supported)), expected, "{case}");
+    }
 }

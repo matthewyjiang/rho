@@ -47,26 +47,19 @@ fn the_advisor_model_never_falls_back_to_the_conversation_model() {
     );
 }
 
-// Covers: unset advisor reasoning keeps the reserved definition default.
+// Covers: unset advisor reasoning keeps the reserved definition default; an
+// explicit override wins over it.
 // Owner: advisor tool configuration
 #[test]
-fn advisor_reasoning_defaults_to_the_definition_level() {
-    assert_eq!(
-        advisor_effective_reasoning(&advisor_selection()),
-        ReasoningLevel::Medium
-    );
-}
-
-// Covers: an explicit advisor reasoning override wins over the definition default.
-// Owner: advisor tool configuration
-#[test]
-fn advisor_reasoning_override_wins() {
-    let mut selection = advisor_selection();
-    selection.reasoning = Some(ReasoningLevel::High);
-    assert_eq!(
-        advisor_effective_reasoning(&selection),
-        ReasoningLevel::High
-    );
+fn advisor_reasoning_prefers_the_override_over_the_definition_level() {
+    for (case, reasoning, expected) in [
+        ("unset", None, ReasoningLevel::Medium),
+        ("override", Some(ReasoningLevel::High), ReasoningLevel::High),
+    ] {
+        let mut selection = advisor_selection();
+        selection.reasoning = reasoning;
+        assert_eq!(advisor_effective_reasoning(&selection), expected, "{case}");
+    }
 }
 
 #[test]

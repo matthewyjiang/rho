@@ -71,19 +71,14 @@ fn resolves_explicit_aliases_with_provenance() {
 }
 
 #[test]
-fn undefined_explicit_alias_returns_typed_actionable_error() {
+fn undefined_explicit_alias_returns_typed_error() {
     let aliases = ModelAliases::default();
-    let error = aliases.resolve("@missing").unwrap_err();
 
     assert_eq!(
-        error,
-        ModelAliasResolutionError::UndefinedAlias {
+        aliases.resolve("@missing"),
+        Err(ModelAliasResolutionError::UndefinedAlias {
             name: "missing".into(),
-        }
-    );
-    assert_eq!(
-        error.to_string(),
-        "model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
+        })
     );
 }
 

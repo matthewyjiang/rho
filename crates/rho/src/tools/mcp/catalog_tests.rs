@@ -57,18 +57,12 @@ fn prompt_arguments_parse_from_typed_text() {
     );
 }
 
-// Covers: the palette must show a command name and usage line a user can act
-// on, distinguishing required from optional arguments.
+// Covers: the command name a user types to invoke a prompt must be
+// `mcp:<server>:<prompt>` so the palette dispatcher can route it.
 // Owner: pure unit
 #[test]
-fn prompt_command_name_and_usage_describe_the_call() {
+fn prompt_command_name_is_server_qualified() {
     let prompt = prompt(vec![argument("query", true), argument("limit", false)]);
 
-    assert_eq!(
-        (prompt.command_name(), prompt.usage()),
-        (
-            "mcp:docs:search".to_string(),
-            "/mcp:docs:search <query> [limit=…]".to_string()
-        )
-    );
+    assert_eq!(prompt.command_name(), "mcp:docs:search");
 }

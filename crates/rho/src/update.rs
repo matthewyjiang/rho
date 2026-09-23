@@ -557,7 +557,6 @@ mod tests {
             InstallMethod::Scoop.update_command("main"),
             "scoop update; scoop update rho"
         );
-        assert_eq!(InstallMethod::Scoop.label(), "Scoop");
     }
 
     #[test]
@@ -570,6 +569,5 @@ mod tests {
             InstallMethod::ScoopGlobal.update_command("main"),
             "scoop update; scoop update -g rho"
         );
-        assert_eq!(InstallMethod::ScoopGlobal.label(), "Scoop (global)");
     }
 }

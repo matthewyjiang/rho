@@ -15,12 +15,17 @@ fn draft(runtime: AgentRuntimeSpec) -> AgentDefinition {
     }
 }
 
-fn on_labels(picker: &UiPicker) -> Vec<&str> {
+/// Values of the rows marked on, with the per-tool row prefix stripped.
+fn on_values(picker: &UiPicker) -> Vec<&str> {
     picker
         .items
         .iter()
         .filter(|item| item.badge.is_some())
-        .map(|item| item.label.as_str())
+        .map(|item| {
+            item.value
+                .strip_prefix(AGENT_TOOL_ROW_PREFIX)
+                .unwrap_or(item.value.as_str())
+        })
         .collect()
 }
 
@@ -44,7 +49,7 @@ fn tools_picker_marks_current_allow_list_per_runtime() {
                 model: ModelPolicy::Inherit,
                 reasoning: None,
             },
-            expected_on: std::iter::once("all")
+            expected_on: std::iter::once(AGENT_TOOL_ALL)
                 .chain(BUILTIN_TOOL_CAPABILITIES.iter().map(ToolCapability::as_str))
                 .collect(),
             expected_len: BUILTIN_TOOL_CAPABILITIES.len() + 1,
@@ -80,13 +85,13 @@ fn tools_picker_marks_current_allow_list_per_runtime() {
                 tools: vec![CursorTool::Grep],
                 model: None,
             }),
-            expected_on: vec!["grep"],
+            expected_on: vec![CursorTool::Grep.as_flag()],
             expected_len: CursorTool::ALL.len(),
         },
     ];
     for case in cases {
         let picker = agent_tools_picker(&draft(case.runtime));
-        assert_eq!(on_labels(&picker), case.expected_on, "{}", case.name);
+        assert_eq!(on_values(&picker), case.expected_on, "{}", case.name);
         assert_eq!(picker.items.len(), case.expected_len, "{}", case.name);
         assert!(picker.space_confirms_selection(), "{}", case.name);
     }

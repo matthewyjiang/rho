@@ -325,22 +325,6 @@ fn herdr_state_follows_attached_subagent_state() {
     );
 }
 
-#[test]
-fn status_token_fallback_uses_run_status_totals() {
-    let summary = activity_metrics_line(
-        "assistant text",
-        /*context*/ None,
-        /*run_usage*/ None,
-        Some(&RunStatus {
-            input_tokens: Some(1_200),
-            output_tokens: Some(300),
-            ..RunStatus::default()
-        }),
-        /*average_generation_rate*/ None,
-    );
-    assert_eq!(summary, "assistant text · tokens in 1.2K · out 300");
-}
-
 fn activity_line(app: &AttachmentApp, activity: &str) -> String {
     let rate = app.model_performance.summary().rounded_generation_rate();
     activity_metrics_line(

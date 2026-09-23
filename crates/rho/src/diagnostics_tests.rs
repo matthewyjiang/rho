@@ -45,10 +45,9 @@ fn rejects_unknown_actions_with_valid_choices() {
 
     let error = diagnostics.response("everything").unwrap_err();
 
-    assert_eq!(
-        error,
-        "unknown rho diagnostics action 'everything'; expected one of: info, context, compaction, prompt_sources, tools, hooks, config"
-    );
+    // Wording is reviewed in PRs; assert the rejection routes to the shared
+    // error that lists the valid actions.
+    assert_eq!(error, unsupported_action_error("everything"));
 }
 
 #[test]

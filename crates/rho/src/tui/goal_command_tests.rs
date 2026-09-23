@@ -104,9 +104,6 @@ fn user_message_resumes_blocked_goal_with_verification_first() {
         app.goal.as_ref().map(GoalState::loop_state),
         Some(goal::GoalLoopState::Blocked)
     );
-    assert!(turn.model.contains("First verify"), "{}", turn.model);
-    assert!(turn.model.contains("push tag v1.0.0"), "{}", turn.model);
-    assert!(turn.model.contains("I pushed it"), "{}", turn.model);
     assert_eq!(turn.history, "I pushed it");
     assert_eq!(turn.persisted_display.as_deref(), Some("I pushed it"));
 

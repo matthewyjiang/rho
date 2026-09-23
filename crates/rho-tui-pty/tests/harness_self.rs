@@ -19,7 +19,7 @@ fn wait_for_text_and_exit_against_printf() {
     let env = default_clean_env();
     let mut harness = PtyHarness::spawn_command(
         Path::new("/bin/sh"),
-        &["-c", "printf 'hello-from-pty\\n'; sleep 0.2"],
+        &["-c", "printf 'hello-from-pty\\n'"],
         PtySize::new(12, 40),
         &env,
         None,
@@ -81,24 +81,6 @@ fn child_nonzero_exit_is_observed() {
         .wait_for_exit(WaitTimeout::secs(2, "exit 7"))
         .unwrap();
     assert_eq!(code, 7);
-}
-
-#[test]
-fn kill_on_drop_reaps_child() {
-    let env = default_clean_env();
-    let mut harness = PtyHarness::spawn_command(
-        Path::new("/bin/sh"),
-        &["-c", "sleep 30"],
-        PtySize::new(6, 20),
-        &env,
-        None,
-        "kill-on-drop",
-    )
-    .unwrap();
-    assert!(harness.is_running());
-    drop(harness);
-    // If kill-on-drop failed, this test would leave a sleep process. We only assert
-    // that constructing/dropping does not panic; process cleanup is covered by Drop.
 }
 
 #[test]

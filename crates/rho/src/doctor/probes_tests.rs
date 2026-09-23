@@ -146,37 +146,39 @@ fn timed_out_or_failed_active_endpoint_fails_ci() {
     assert_eq!(unused[0].status, DoctorStatus::Info);
 }
 
-// Covers: finished outcomes become the rows their placeholders reserved.
+// Covers: finished outcomes become the rows their placeholders reserved,
+// with the status each outcome implies.
 // Owner: pure unit
 #[test]
 fn outcomes_map_to_rows() {
-    let rtk = probe_checks(&DoctorProbeOutcome::Rtk { available: false }, "openai");
-    assert_eq!(
-        rtk,
-        vec![
-            DoctorCheck::new(DoctorCheckId::Rtk, "rtk", DoctorStatus::Info, "unavailable")
-                .with_hint("optional shell-command rewriting helper")
-        ]
-    );
-
-    let endpoint = probe_checks(
-        &DoctorProbeOutcome::ProviderEndpoint {
-            provider: "ollama".into(),
-            health: ProviderModelHealth::ReachableWithModels { model_count: 1 },
-        },
-        "ollama",
-    );
-    assert_eq!(
-        endpoint,
-        vec![DoctorCheck::new(
-            DoctorCheckId::ProviderEndpoint {
-                provider: "ollama".into()
+    let rows = |checks: Vec<DoctorCheck>| {
+        checks
+            .into_iter()
+            .map(|check| (check.id, check.status))
+            .collect::<Vec<_>>()
+    };
+    for (case, outcome, expected) in [
+        (
+            "rtk unavailable",
+            DoctorProbeOutcome::Rtk { available: false },
+            vec![(DoctorCheckId::Rtk, DoctorStatus::Info)],
+        ),
+        (
+            "active endpoint reachable",
+            DoctorProbeOutcome::ProviderEndpoint {
+                provider: "ollama".into(),
+                health: ProviderModelHealth::ReachableWithModels { model_count: 1 },
             },
-            "Ollama connection",
-            DoctorStatus::Ok,
-            "reachable, 1 model",
-        )]
-    );
+            vec![(
+                DoctorCheckId::ProviderEndpoint {
+                    provider: "ollama".into(),
+                },
+                DoctorStatus::Ok,
+            )],
+        ),
+    ] {
+        assert_eq!(rows(probe_checks(&outcome, "ollama")), expected, "{case}");
+    }
 }
 
 // Covers: a hung `rtk --version` child must be killed and reaped instead of

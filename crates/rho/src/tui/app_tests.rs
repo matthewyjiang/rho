@@ -818,7 +818,6 @@ fn editing_input_exits_history_navigation() {
 
     assert_eq!(app.input_ui.text(), "previous!");
     assert_eq!(app.input_ui.history_cursor(), None);
-    assert_eq!(app.input_ui.history_cursor(), None);
 }
 
 #[test]

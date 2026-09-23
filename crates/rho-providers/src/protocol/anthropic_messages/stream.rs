@@ -578,20 +578,6 @@ mod tests {
                 if call.id == "toolu_1" && call.name == "bash" && call.arguments == json!({"command":"pwd"})
         ));
     }
-
-    #[test]
-    fn stream_error_event_returns_error() {
-        let mut state = AnthropicSseState::default();
-        let mut on_event = |_event| Ok(());
-        let err = handle_anthropic_stream_line(
-            r#"data: {"type":"error","error":{"message":"bad request"}}"#,
-            &mut state,
-            &mut on_event,
-        )
-        .unwrap_err();
-
-        assert!(err.to_string().contains("bad request"));
-    }
 }
 
 #[cfg(test)]

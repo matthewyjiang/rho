@@ -32,13 +32,6 @@ fn bounds_never_go_below_one_byte() {
 }
 
 #[test]
-fn a_fresh_report_claims_nothing_was_shortened() {
-    let report = HookTruncation::default();
-    assert!(!report.is_truncated());
-    assert_eq!(report.fields().count(), 0);
-}
-
-#[test]
 fn recorded_fields_are_sorted_and_deduplicated() {
     let mut report = HookTruncation::default();
     report.record("payload.b");

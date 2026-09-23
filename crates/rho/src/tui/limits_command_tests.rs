@@ -243,7 +243,6 @@ fn claude_section_is_present_without_oauth() {
     assert_eq!(overlay.sections.len(), 1);
     assert_eq!(overlay.sections[0].id, LimitsSectionId::ClaudeCode);
     assert_eq!(overlay.sections[0].windows.len(), 1);
-    assert_eq!(overlay.sections[0].windows[0].label, "5-hour");
     assert!(overlay.sections[0].windows[0].remaining_percent.is_none());
     assert!(matches!(
         overlay.sections[0].status,

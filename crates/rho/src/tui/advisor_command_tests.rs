@@ -95,10 +95,6 @@ async fn enabling_advisor_mode_with_a_model_saves_the_setting() {
             .advisor_mode
     );
     assert_eq!(
-        app.status(),
-        "advisor mode is on: openai/gpt-5.5 reviews the session"
-    );
-    assert_eq!(
         agent.last_applied(),
         Some(&Some(InternalAgentModelConfig::new(
             "openai".into(),

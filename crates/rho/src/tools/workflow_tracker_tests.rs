@@ -112,9 +112,8 @@ fn start_and_notification_prompts_include_run_identity() {
             outputs: vec![("collect".into(), r#"{"ok":true}"#.into())],
         },
     }]);
-    assert!(model.contains("[workflow notification]"));
     assert!(model.contains("abc-123"));
     assert!(model.contains("collect"));
     assert!(model.contains(r#"{"ok":true}"#));
-    assert!(display.contains("finished"));
+    assert!(display.contains("abc-123"));
 }

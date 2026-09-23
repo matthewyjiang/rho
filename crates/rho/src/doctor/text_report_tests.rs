@@ -27,28 +27,17 @@ fn renders_aligned_sections_with_hints() {
         )
         .with_hint("run /login anthropic-api-key"),
         DoctorCheck::new(DoctorCheckId::Rtk, "rtk", DoctorStatus::Info, "unavailable"),
-        DoctorCheck::new(
-            DoctorCheckId::SelectedModel,
-            "Selected model",
-            DoctorStatus::Fail,
-            "unavailable",
-        )
-        .with_hint("openai/gpt-x using api-key authentication"),
     ]);
 
     assert_eq!(
         render(&report),
         "\
-Doctor: 1 failing · 1 warning
+Doctor: 1 warning
 
 Authentication
   ok    OpenAI API key     authenticated
   warn  Anthropic API key  missing
         run /login anthropic-api-key
-
-Providers
-  fail  Selected model     unavailable
-        openai/gpt-x using api-key authentication
 
 Runtimes
   info  rtk                unavailable

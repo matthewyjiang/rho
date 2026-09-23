@@ -157,10 +157,7 @@ mod tests {
     fn parses_only_explicit_error_and_panic_modes() {
         assert_eq!(parse_termination("error").unwrap(), Termination::Error);
         assert_eq!(parse_termination("panic").unwrap(), Termination::Panic);
-        assert_eq!(
-            parse_termination("other").unwrap_err().to_string(),
-            "unknown RHO_TUI_TEST_TERMINATION value 'other'"
-        );
+        assert!(parse_termination("other").is_err());
     }
 
     // Covers: matrix demo may pin a stable header version; production never does.

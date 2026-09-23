@@ -136,74 +136,45 @@ fn history_recall_restores_shell_mode_from_prefixed_entries() {
     assert_eq!(app.input_ui.text(), "echo hi");
 }
 
+// Covers: a paste burst flushed by a non-burst key must parse shell prefixes
+// exactly like typed characters, leaving only the command body in the composer.
 #[test]
-fn paste_burst_flushed_bang_enters_shell_mode_like_typed_char() {
+fn paste_burst_flushed_bang_prefix_enters_shell_mode() {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::time::Duration;
 
-    let mut app = test_app();
-    let start = Instant::now();
-    assert!(
-        app.handle_paste_burst_key_at(KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE), start)
-    );
-    // Non-burst key flushes pending text through insert_paste -> insert_input_text.
-    assert!(!app.handle_paste_burst_key_at(
-        KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
-        start + Duration::from_millis(20),
-    ));
-    assert_eq!(
-        app.input_ui.shell_mode(),
-        Some(InlineShellMode::IncludeInContext)
-    );
-    assert_eq!(app.input_ui.text(), "");
-    assert_eq!(app.input_ui.cursor(), 0);
-}
-
-#[test]
-fn paste_burst_flushed_double_bang_enters_local_shell_mode() {
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use std::time::Duration;
-
-    let mut app = test_app();
-    let start = Instant::now();
-    assert!(
-        app.handle_paste_burst_key_at(KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE), start)
-    );
-    assert!(app.handle_paste_burst_key_at(
-        KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE),
-        start + Duration::from_millis(1),
-    ));
-    assert!(!app.handle_paste_burst_key_at(
-        KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
-        start + Duration::from_millis(20),
-    ));
-    assert_eq!(
-        app.input_ui.shell_mode(),
-        Some(InlineShellMode::ExcludeFromContext)
-    );
-    assert_eq!(app.input_ui.text(), "");
-}
-
-#[test]
-fn paste_burst_flushed_bang_command_keeps_body_without_prefix() {
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use std::time::Duration;
-
-    let mut app = test_app();
-    let start = Instant::now();
-    for (i, ch) in ['!', 'e', 'c', 'h', 'o'].into_iter().enumerate() {
-        assert!(app.handle_paste_burst_key_at(
-            KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE),
-            start + Duration::from_millis(i as u64),
-        ));
+    let cases = [
+        ("bang", "!", InlineShellMode::IncludeInContext, ""),
+        ("double bang", "!!", InlineShellMode::ExcludeFromContext, ""),
+        (
+            "bang command",
+            "!echo",
+            InlineShellMode::IncludeInContext,
+            "echo",
+        ),
+    ];
+    for (case, burst, mode, body) in cases {
+        let mut app = test_app();
+        let start = Instant::now();
+        for (i, ch) in burst.chars().enumerate() {
+            assert!(
+                app.handle_paste_burst_key_at(
+                    KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE),
+                    start + Duration::from_millis(i as u64),
+                ),
+                "{case}"
+            );
+        }
+        // Non-burst key flushes pending text through insert_paste -> insert_input_text.
+        assert!(
+            !app.handle_paste_burst_key_at(
+                KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+                start + Duration::from_millis(20),
+            ),
+            "{case}"
+        );
+        assert_eq!(app.input_ui.shell_mode(), Some(mode), "{case}");
+        assert_eq!(app.input_ui.text(), body, "{case}");
+        assert_eq!(app.input_ui.cursor(), body.len(), "{case}");
     }
-    assert!(!app.handle_paste_burst_key_at(
-        KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
-        start + Duration::from_millis(20),
-    ));
-    assert_eq!(
-        app.input_ui.shell_mode(),
-        Some(InlineShellMode::IncludeInContext)
-    );
-    assert_eq!(app.input_ui.text(), "echo");
 }

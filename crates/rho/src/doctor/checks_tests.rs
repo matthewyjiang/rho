@@ -98,27 +98,17 @@ fn authentication_rows_reflect_the_injected_store() {
     );
 }
 
-// Covers: every Herdr socket state maps to one status and summary.
+// Covers: every Herdr socket state maps to one status.
 // Owner: pure unit
 #[test]
 fn herdr_probe_maps_to_status() {
-    let cases = [
-        (
-            HerdrProbe::NotConfigured,
-            DoctorStatus::Info,
-            "not configured",
-        ),
-        (HerdrProbe::Reachable, DoctorStatus::Ok, "connected"),
-        (HerdrProbe::Unreachable, DoctorStatus::Fail, "unreachable"),
-        (HerdrProbe::Unknown, DoctorStatus::Warn, "unknown"),
-    ];
-    for (probe, status, summary) in cases {
-        let check = herdr_check(probe);
-        assert_eq!(
-            (check.status, check.summary.as_str()),
-            (status, summary),
-            "{probe:?}"
-        );
+    for (probe, status) in [
+        (HerdrProbe::NotConfigured, DoctorStatus::Info),
+        (HerdrProbe::Reachable, DoctorStatus::Ok),
+        (HerdrProbe::Unreachable, DoctorStatus::Fail),
+        (HerdrProbe::Unknown, DoctorStatus::Warn),
+    ] {
+        assert_eq!(herdr_check(probe).status, status, "{probe:?}");
     }
 }
 

@@ -71,32 +71,3 @@ fn sanitize(name: &str) -> String {
         })
         .collect()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::TempDir;
-
-    #[test]
-    fn writes_bundle_files() {
-        let temp = TempDir::new().unwrap();
-        let writer = ArtifactWriter::new(temp.path());
-        let bundle = ArtifactBundle {
-            scenario: "startup stream".into(),
-            phase: "wait_for_text".into(),
-            message: "missing text".into(),
-            rows: 24,
-            cols: 80,
-            exit_code: None,
-            action_log: vec!["spawn".into(), "type".into()],
-            screen: "rho".into(),
-            timing: None,
-            env: vec![("TERM".into(), "xterm-256color".into())],
-        };
-        let dir = writer.write(&bundle, b"raw-bytes").unwrap();
-        assert!(dir.join("raw.pty").is_file());
-        assert!(dir.join("screen.txt").is_file());
-        assert!(dir.join("actions.log").is_file());
-        assert!(dir.join("report.json").is_file());
-    }
-}

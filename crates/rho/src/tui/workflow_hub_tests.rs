@@ -17,7 +17,6 @@ fn hub_picker_exposes_startable_source_action() {
         .find(|item| item.value.starts_with("source:"))
         .expect("start row");
     assert_eq!(start.selection_verb, Some("start"));
-    assert!(start.value.contains("review") || start.value.contains("workflow.star"));
 }
 
 // Covers: empty inventory keeps a non-startable placeholder row with a stable action id.

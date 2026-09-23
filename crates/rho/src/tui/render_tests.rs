@@ -110,26 +110,26 @@ fn truncate_keep_end_matches_expected_outputs() {
 }
 
 #[test]
-fn complete_visual_prefix_preserves_trailing_newline_state() {
-    assert_eq!(complete_visual_prefix_byte_index("a\n", 10), "a\n".len());
-    assert_eq!(
-        complete_visual_prefix_byte_index("a\n\n", 10),
-        "a\n\n".len()
-    );
-    assert_eq!(complete_visual_prefix_byte_index("a\nb", 10), "a\n".len());
-}
-
-#[test]
-fn complete_visual_prefix_keeps_multibyte_boundaries() {
-    assert_eq!(complete_visual_prefix_byte_index("éa", 2), "éa".len());
-    assert_eq!(complete_visual_prefix_byte_index("éab", 2), "éa".len());
-}
-
-#[test]
-fn complete_visual_prefix_wraps_at_exact_width() {
-    assert_eq!(complete_visual_prefix_byte_index("abc", 3), 3);
-    assert_eq!(complete_visual_prefix_byte_index("abcd", 3), 3);
-    assert_eq!(complete_visual_prefix_byte_index("abcdef", 3), 6);
+fn complete_visual_prefix_stops_at_last_complete_visual_row() {
+    let cases = [
+        ("trailing newline", "a\n", 10, "a\n".len()),
+        ("repeated trailing newline", "a\n\n", 10, "a\n\n".len()),
+        ("partial row after newline", "a\nb", 10, "a\n".len()),
+        ("multibyte fills row", "éa", 2, "éa".len()),
+        ("multibyte partial row", "éab", 2, "éa".len()),
+        ("exact width", "abc", 3, 3),
+        ("one past exact width", "abcd", 3, 3),
+        ("two exact rows", "abcdef", 3, 6),
+        ("whitespace boundary", "hello wide", 8, "hello ".len()),
+        ("fits in one row", "hello wide", 10, "hello wide".len()),
+    ];
+    for (case, text, width, expected) in cases {
+        assert_eq!(
+            complete_visual_prefix_byte_index(text, width),
+            expected,
+            "{case}"
+        );
+    }
 }
 
 // Covers: soft wrap must not put the break space at the start of the next line.
@@ -157,18 +157,6 @@ fn wrapped_text_prefers_whitespace_boundaries() {
             "text {text:?} width {width}"
         );
     }
-}
-
-#[test]
-fn complete_visual_prefix_prefers_whitespace_boundaries() {
-    assert_eq!(
-        complete_visual_prefix_byte_index("hello wide", 8),
-        "hello ".len()
-    );
-    assert_eq!(
-        complete_visual_prefix_byte_index("hello wide", 10),
-        "hello wide".len()
-    );
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use std::{
     path::Path,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::AtomicBool,
     time::{Duration, Instant},
 };
 
@@ -250,24 +250,19 @@ printf '\033[2J\033[HCurrent session\n0%% used\nCurrent week (all models)\n0%% u
 // Owner: OS or process
 #[test]
 fn abort_flag_stops_a_hung_child() {
-    let abort = std::sync::Arc::new(AtomicBool::new(false));
-    let abort_for_thread = abort.clone();
+    // The probe spawns the child before its first abort check, so a raised
+    // flag exercises spawn, cancel, and kill-on-drop without racing a timer.
+    let abort = AtomicBool::new(true);
     let started = Instant::now();
-    let worker = std::thread::spawn(move || {
-        let env = vec![("TERM".into(), "xterm-256color".into())];
-        let cwd = tempfile::TempDir::new().unwrap();
-        read_usage_from_binary(
-            Path::new("/bin/sleep"),
-            &["30"],
-            &env,
-            cwd.path(),
-            abort_for_thread.as_ref(),
-            TEST_BUDGET,
-        )
-    });
-    std::thread::sleep(Duration::from_millis(80));
-    abort.store(true, Ordering::Relaxed);
-    let result = worker.join().expect("probe thread");
+    let cwd = tempfile::TempDir::new().unwrap();
+    let result = read_usage_from_binary(
+        Path::new("/bin/sleep"),
+        &["30"],
+        &[("TERM".into(), "xterm-256color".into())],
+        cwd.path(),
+        &abort,
+        TEST_BUDGET,
+    );
     let elapsed = started.elapsed();
     assert!(elapsed < Duration::from_secs(5), "{elapsed:?}");
     assert!(

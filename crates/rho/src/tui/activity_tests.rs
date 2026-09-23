@@ -4,9 +4,9 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
-// Covers: rail rows pack identity · activity  elapsed, drop activity before
-// chopping identity, stay within the pane on narrow hover trailing, and use
-// the pane width instead of a 52-col clamp.
+// Covers: rail rows keep identity · activity  elapsed when they fit, use the
+// pane width instead of a 52-col clamp, drop activity before chopping
+// identity, and stay within the pane on narrow hover trailing.
 // Owner: pure layout
 #[test]
 fn rail_row_layout_assembles_columns() {
@@ -17,7 +17,9 @@ fn rail_row_layout_assembles_columns() {
         activity: &'static str,
         trailing: &'static str,
         width: usize,
-        expected: &'static [&'static str],
+        identity_intact: bool,
+        activity_shown: bool,
+        trailing_intact: bool,
     }
     let cases = [
         Case {
@@ -26,9 +28,9 @@ fn rail_row_layout_assembles_columns() {
             activity: "running",
             trailing: "4s",
             width: 80,
-            expected: &[
-                "  └ ", "sleep", " ", "aaaaaaaa", "  ·  ", "running", "  ", "4s",
-            ],
+            identity_intact: true,
+            activity_shown: true,
+            trailing_intact: true,
         },
         Case {
             name: "long identity uses the pane width",
@@ -41,17 +43,9 @@ fn rail_row_layout_assembles_columns() {
             activity: "read",
             trailing: "12s",
             width: 80,
-            expected: &[
-                "  └ ",
-                "◉ ",
-                "explorer",
-                "  ",
-                "TUI Redundancy and Simplification Audit",
-                "  ·  ",
-                "read",
-                "  ",
-                "12s",
-            ],
+            identity_intact: true,
+            activity_shown: true,
+            trailing_intact: true,
         },
         Case {
             name: "narrow row drops activity and keeps elapsed",
@@ -59,7 +53,9 @@ fn rail_row_layout_assembles_columns() {
             activity: "running",
             trailing: "12s",
             width: 18,
-            expected: &["  └ ", "very-lon…", "  ", "12s"],
+            identity_intact: false,
+            activity_shown: false,
+            trailing_intact: true,
         },
         Case {
             name: "narrow hover trailing stays within the pane",
@@ -67,7 +63,9 @@ fn rail_row_layout_assembles_columns() {
             activity: "read",
             trailing: "⏎ attach · 4s",
             width: 10,
-            expected: &["  └ ", "  ", "⏎ a…"],
+            identity_intact: false,
+            activity_shown: false,
+            trailing_intact: false,
         },
     ];
     for case in cases {
@@ -98,16 +96,17 @@ fn rail_row_layout_assembles_columns() {
             display_width(&full)
         );
         assert_eq!(
-            &texts[..case.expected.len()],
-            case.expected,
-            "{}",
-            case.name
-        );
-        assert!(
-            texts[case.expected.len()..]
-                .iter()
-                .all(|text| text.chars().all(|ch| ch == ' ')),
-            "{}",
+            (
+                full.contains(&case.identity.concat()),
+                texts.contains(&case.activity),
+                full.trim_end().ends_with(case.trailing),
+            ),
+            (
+                case.identity_intact,
+                case.activity_shown,
+                case.trailing_intact
+            ),
+            "{}: {full:?}",
             case.name
         );
     }
@@ -123,53 +122,34 @@ fn bottom_follow_activity_inset_only_when_activity_and_pinned() {
     );
 }
 
-// Covers: jump chip copy reflects attention state (response ready / input needed).
-// Owner: pure unit (chip copy policy)
-#[test]
-fn jump_to_bottom_text_reflects_chip_state() {
-    let binding = "ctrl+e";
-    assert_eq!(
-        jump_to_bottom_text(80, binding, false, JumpChipState::Neutral),
-        "↓ jump to bottom  ctrl+e"
-    );
-    assert_eq!(
-        jump_to_bottom_text(80, binding, false, JumpChipState::ResponseReady),
-        "↓ response ready  ctrl+e"
-    );
-    assert_eq!(
-        jump_to_bottom_text(80, binding, false, JumpChipState::ApprovalNeeded),
-        "↓ approval needed  ctrl+e"
-    );
-    assert_eq!(
-        jump_to_bottom_text(80, binding, false, JumpChipState::InputNeeded),
-        "↓ input needed  ctrl+e"
-    );
-}
-
-// Covers: attention states degrade to their compact form before dropping to
-// the bare shortcut, so the cue survives narrow terminals.
+// Covers: the jump chip degrades full -> compact -> bare shortcut as width
+// shrinks, for every attention state.
 // Owner: pure unit (chip width degradation)
 #[test]
-fn jump_to_bottom_attention_states_have_compact_forms() {
+fn jump_to_bottom_text_degrades_by_width() {
     let binding = "ctrl+e";
-    // "↓ bottom ctrl+e" is one cell too wide here; neutral falls to shortcut.
-    assert_eq!(
-        jump_to_bottom_text(14, binding, false, JumpChipState::Neutral),
-        "↓ ctrl+e"
-    );
-    // "↓ ready ctrl+e" fits exactly.
-    assert_eq!(
-        jump_to_bottom_text(14, binding, false, JumpChipState::ResponseReady),
-        "↓ ready ctrl+e"
-    );
-    assert_eq!(
-        jump_to_bottom_text(14, binding, false, JumpChipState::ApprovalNeeded),
-        "↓ ask ctrl+e"
-    );
-    assert_eq!(
-        jump_to_bottom_text(14, binding, false, JumpChipState::InputNeeded),
-        "↓ input ctrl+e"
-    );
+    let shortcut = format!("↓ {binding}");
+    for state in [
+        JumpChipState::Neutral,
+        JumpChipState::ResponseReady,
+        JumpChipState::ApprovalNeeded,
+        JumpChipState::InputNeeded,
+    ] {
+        let (full_action, compact_action) = state.labels();
+        let full = format!("↓ {full_action}  {binding}");
+        let compact = format!("↓ {compact_action} {binding}");
+        for (rung, width, expected) in [
+            ("full", display_width(&full), &full),
+            ("compact", display_width(&full) - 1, &compact),
+            ("shortcut", display_width(&compact) - 1, &shortcut),
+        ] {
+            assert_eq!(
+                &jump_to_bottom_text(width, binding, false, state),
+                expected,
+                "{state:?} {rung}"
+            );
+        }
+    }
 }
 
 // Covers: every attention compact label is no wider than neutral's, so any
@@ -272,48 +252,41 @@ fn from_parent_and_background_selects_variant() {
 // Owner: pure unit (activity label assembly)
 #[test]
 fn activity_label_trails_elapsed_then_drops_it() {
-    let spinner = LoadingSpinner::FRAMES[0];
-    let parent = ActivityStatus::Parent {
-        phase: ActivityPhase::Responding,
-        retry: None,
-        background: counts(0, 0),
-    };
-    let with_agents = ActivityStatus::Parent {
-        phase: ActivityPhase::Responding,
-        retry: None,
-        background: counts(2, 0),
-    };
-    let agents_only = ActivityStatus::Background(counts(2, 0));
-    let jobs_only = ActivityStatus::Background(counts(0, 1));
-
-    let parent_timed = format!("{spinner} responding · 15.0s");
-    let parent_plain = format!("{spinner} responding");
-    let agents_timed = format!("{spinner} responding  ·  2 agents · 15.0s");
-    let agents_plain = format!("{spinner} responding  ·  2 agents");
-    let only_timed = format!("{spinner} 2 agents working · 15.0s");
-    let jobs_timed = format!("{spinner} 1 job running · 15.0s");
     let elapsed = Some(Duration::from_secs(15));
-
-    assert_eq!(activity_label(80, parent, elapsed), parent_timed);
-    assert_eq!(
-        activity_label(display_width(&parent_plain), parent, elapsed),
-        parent_plain
-    );
-    assert_eq!(activity_label(80, with_agents, elapsed), agents_timed);
-    assert_eq!(
-        activity_label(display_width(&agents_plain), with_agents, elapsed),
-        agents_plain
-    );
-    assert_eq!(activity_label(80, agents_only, elapsed), only_timed);
-    assert_eq!(activity_label(80, jobs_only, elapsed), jobs_timed);
-    assert_eq!(activity_label(80, parent, None), parent_plain);
+    for status in [
+        ActivityStatus::Parent {
+            phase: ActivityPhase::Responding,
+            retry: None,
+            background: counts(0, 0),
+        },
+        ActivityStatus::Parent {
+            phase: ActivityPhase::Responding,
+            retry: None,
+            background: counts(2, 0),
+        },
+        ActivityStatus::Background(counts(2, 0)),
+        ActivityStatus::Background(counts(0, 1)),
+    ] {
+        let widest = activity_status_labels(status).remove(0);
+        let timed = activity_label(80, status, elapsed);
+        assert!(
+            timed.starts_with(&widest) && timed.len() > widest.len(),
+            "{status:?}: {timed:?} should trail elapsed after {widest:?}"
+        );
+        assert_eq!(
+            activity_label(display_width(&widest), status, elapsed),
+            widest,
+            "{status:?}: elapsed drops first"
+        );
+        assert_eq!(activity_label(80, status, None), widest, "{status:?}");
+    }
 }
 
-// Covers: mixed background counts compress agents+jobs before dropping to a
-// bare spinner, with singular/plural nouns on the wide rungs.
+// Covers: every status ladder shrinks strictly rung by rung and bottoms out at
+// the bare spinner, so narrow panes always find a fitting label.
 // Owner: pure unit (activity label assembly)
 #[test]
-fn activity_status_labels_compress_background_counts() {
+fn activity_status_labels_shrink_to_bare_spinner() {
     let spinner = LoadingSpinner::FRAMES[0];
     let cases = [
         (
@@ -322,12 +295,7 @@ fn activity_status_labels_compress_background_counts() {
                 retry: None,
                 background: counts(2, 1),
             },
-            vec![
-                format!("{spinner} running tool  ·  2 agents · 1 job"),
-                format!("{spinner} running tool · 2+1"),
-                format!("{spinner} 2+1"),
-                spinner.into(),
-            ],
+            4,
         ),
         (
             ActivityStatus::Parent {
@@ -335,42 +303,26 @@ fn activity_status_labels_compress_background_counts() {
                 retry: None,
                 background: counts(0, 3),
             },
-            vec![
-                format!("{spinner} running tool  ·  3 jobs"),
-                format!("{spinner} running tool · 3"),
-                format!("{spinner} 3"),
-                spinner.into(),
-            ],
+            4,
         ),
-        (
-            ActivityStatus::Background(counts(1, 0)),
-            vec![
-                format!("{spinner} 1 agent working"),
-                format!("{spinner} 1 agent"),
-                format!("{spinner} 1"),
-                spinner.into(),
-            ],
-        ),
-        (
-            ActivityStatus::Background(counts(0, 1)),
-            vec![
-                format!("{spinner} 1 job running"),
-                format!("{spinner} 1 job"),
-                format!("{spinner} 1"),
-                spinner.into(),
-            ],
-        ),
-        (
-            ActivityStatus::Background(counts(2, 1)),
-            vec![
-                format!("{spinner} 2 agents · 1 job"),
-                format!("{spinner} 2+1"),
-                spinner.into(),
-            ],
-        ),
+        (ActivityStatus::Background(counts(1, 0)), 4),
+        (ActivityStatus::Background(counts(0, 1)), 4),
+        (ActivityStatus::Background(counts(2, 1)), 3),
     ];
-    for (status, expected) in cases {
-        assert_eq!(activity_status_labels(status), expected);
+    for (status, rungs) in cases {
+        let labels = activity_status_labels(status);
+        assert_eq!(labels.len(), rungs, "{status:?}: {labels:?}");
+        assert!(
+            labels
+                .windows(2)
+                .all(|pair| display_width(&pair[1]) < display_width(&pair[0])),
+            "{status:?}: {labels:?}"
+        );
+        assert_eq!(
+            labels.last().map(String::as_str),
+            Some(spinner),
+            "{status:?}"
+        );
     }
 }
 
@@ -431,12 +383,4 @@ fn select_capped_rail_rows_prioritizes_live_then_failures() {
     let (indices, hidden) = select_capped_rail_rows(&lingering, 8, |row| row.live, |row| row.fail);
     assert_eq!(indices, [1]);
     assert_eq!(hidden, Some(2));
-}
-
-// Covers: overflow copy is singular for one hidden row and plural otherwise.
-// Owner: pure unit (overflow copy)
-#[test]
-fn overflow_label_singular_and_plural() {
-    assert_eq!(overflow_label(1, "agent", "agents"), "1 more agent");
-    assert_eq!(overflow_label(2, "job", "jobs"), "2 more jobs");
 }

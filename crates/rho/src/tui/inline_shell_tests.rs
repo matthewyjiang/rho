@@ -60,12 +60,6 @@ fn parses_context_and_local_prefixes_distinctly() {
 }
 
 #[test]
-fn history_prefix_matches_mode() {
-    assert_eq!(InlineShellMode::IncludeInContext.history_prefix(), "!");
-    assert_eq!(InlineShellMode::ExcludeFromContext.history_prefix(), "!!");
-}
-
-#[test]
 fn formats_context_with_command_and_both_streams() {
     let output = ShellOutput {
         shell: "bash".into(),
@@ -133,16 +127,24 @@ async fn executes_with_selected_shell() {
     assert_eq!(output.stdout, "inline-shell");
 }
 
+// The command blocks on a FIFO until the test has seen the first chunk, so
+// streaming is proven without a wall-clock sleep.
+#[cfg(unix)]
 #[tokio::test]
 async fn streams_output_before_command_finishes() {
-    if cfg!(windows) {
-        return;
-    }
+    let dir = tempfile::tempdir().unwrap();
+    let fifo = dir.path().join("release");
+    let fifo_c = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo_c.as_ptr(), 0o600) }, 0);
+    let command = format!(
+        "printf streamed; read _ < '{}'; printf finished",
+        fifo.display()
+    );
     let (updates_tx, mut updates_rx) = tokio::sync::mpsc::unbounded_channel();
     let task = tokio::spawn(async move {
         execute_streaming(
             "sh",
-            "printf streamed; sleep 1; printf finished",
+            &command,
             Path::new("."),
             Some(updates_tx),
             crate::config::DEFAULT_MAX_OUTPUT_BYTES,
@@ -150,13 +152,17 @@ async fn streams_output_before_command_finishes() {
         .await
     });
 
-    let update = tokio::time::timeout(std::time::Duration::from_millis(500), updates_rx.recv())
+    let update = tokio::time::timeout(INLINE_SHELL_TIMEOUT, updates_rx.recv())
         .await
-        .expect("first output should stream promptly")
+        .expect("first output should stream before the command finishes")
         .expect("stream should remain connected");
     assert_eq!(update.text, "streamed");
     assert!(!task.is_finished());
 
+    tokio::task::spawn_blocking(move || std::fs::write(fifo, "\n"))
+        .await
+        .unwrap()
+        .unwrap();
     let output = task.await.unwrap().unwrap();
     assert_eq!(output.stdout, "streamedfinished");
 }

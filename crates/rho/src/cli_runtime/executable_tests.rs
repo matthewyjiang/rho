@@ -266,9 +266,22 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
         std::fs::read_to_string(out).expect("shim output missing")
     }
 
+    /// Temp dir holding a prompt file under a directory name with a space,
+    /// so shim forwarding must keep the path as one dequoted argument.
+    fn prompt_file_with_spaces(directory: &std::path::Path) -> String {
+        let run_dir = directory.join("run dir");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let prompt_file = run_dir.join("system-prompt.txt");
+        std::fs::write(&prompt_file, "multi\nline").unwrap();
+        prompt_file.to_string_lossy().into_owned()
+    }
+
+    // One shim process covers spaces, a prompt path with spaces, shell
+    // metacharacters, quotes, percent, and non-ASCII argv.
     #[tokio::test]
     async fn cmd_shim_round_trips_special_argv() {
         let directory = tempfile::tempdir().unwrap();
+        let prompt_path = prompt_file_with_spaces(directory.path());
         let shim = directory.path().join("agent.cmd");
         let out = directory.path().join("argv.txt");
         write_cmd_recorder(&shim, &out);
@@ -277,11 +290,16 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
         assert_eq!(exe.kind(), CliInvocationKind::CmdScript);
 
         let args = [
+            "-p",
+            "--system-prompt-file",
+            prompt_path.as_str(),
             "auth",
             "a b",
             "a&b",
             "c|d",
             "e(f)",
+            "x^y",
+            "p>q",
             "wow!",
             "100%sure",
             r#"say "hi""#,
@@ -291,65 +309,15 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
         let body = run_and_read(&mut command, &out).await;
         // Native-boundary argv (PowerShell -File after %* forward), not raw %1.
         let lines: Vec<&str> = body.lines().collect();
-        assert_eq!(
-            lines,
-            vec![
-                "auth",
-                "a b",
-                "a&b",
-                "c|d",
-                "e(f)",
-                "wow!",
-                "100%sure",
-                "say \"hi\"",
-                "模型",
-            ],
-            "{body}"
-        );
+        assert_eq!(lines, args, "{body}");
     }
 
-    #[tokio::test]
-    async fn cmd_shim_round_trips_prompt_file_path_and_metacharacters() {
-        let directory = tempfile::tempdir().unwrap();
-        let run_dir = directory.path().join("run dir");
-        std::fs::create_dir_all(&run_dir).unwrap();
-        let prompt_file = run_dir.join("system-prompt.txt");
-        std::fs::write(&prompt_file, "multi\nline").unwrap();
-
-        let shim = directory.path().join("agent.cmd");
-        let out = directory.path().join("argv.txt");
-        write_cmd_recorder(&shim, &out);
-
-        let exe = CliExecutable::from_path(&shim);
-        let prompt_path = prompt_file.to_string_lossy().into_owned();
-        let args = [
-            "-p",
-            "--system-prompt-file",
-            prompt_path.as_str(),
-            "a&b",
-            "c|d",
-            "e(f)",
-            "x^y",
-            "p>q",
-            "wow!",
-        ];
-        let mut command = exe.try_command(args).unwrap();
-        let body = run_and_read(&mut command, &out).await;
-        let lines: Vec<&str> = body.lines().collect();
-        assert_eq!(lines[0], "-p", "{body}");
-        assert_eq!(lines[1], "--system-prompt-file", "{body}");
-        // Path with spaces must round-trip as one dequoted argument.
-        assert_eq!(lines[2], prompt_path, "{body}");
-        assert_eq!(
-            &lines[3..],
-            ["a&b", "c|d", "e(f)", "x^y", "p>q", "wow!"],
-            "{body}"
-        );
-    }
-
+    // One shim process covers the same argv classes plus `%PATH%`, `<`, and a
+    // trailing empty argument.
     #[tokio::test]
     async fn ps1_shim_round_trips_special_argv() {
         let directory = tempfile::tempdir().unwrap();
+        let prompt_path = prompt_file_with_spaces(directory.path());
         let shim = directory.path().join("agent.ps1");
         let out = directory.path().join("argv.txt");
         write_ps1_recorder(&shim, &out);
@@ -358,13 +326,20 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
         assert_eq!(exe.kind(), CliInvocationKind::PowerShellScript);
 
         let args = [
+            "-p",
+            "--system-prompt-file",
+            prompt_path.as_str(),
             "auth",
             "a b",
             "a&b",
             "c|d",
             "e(f)",
+            "x^y",
+            "p>q",
+            "r<s",
             "wow!",
             "100%sure",
+            "%PATH%",
             r#"say "hi""#,
             "模型",
             "",
@@ -372,59 +347,7 @@ foreach ($a in $args) {{ $out += $a }}\r\n\
         let mut command = exe.try_command(args).unwrap();
         let body = run_and_read(&mut command, &out).await;
         let lines: Vec<&str> = body.lines().collect();
-        assert_eq!(
-            lines,
-            vec![
-                "auth",
-                "a b",
-                "a&b",
-                "c|d",
-                "e(f)",
-                "wow!",
-                "100%sure",
-                "say \"hi\"",
-                "模型",
-                "",
-            ],
-            "{body}"
-        );
-    }
-
-    #[tokio::test]
-    async fn ps1_shim_round_trips_prompt_file_path_with_spaces() {
-        let directory = tempfile::tempdir().unwrap();
-        let run_dir = directory.path().join("run dir");
-        std::fs::create_dir_all(&run_dir).unwrap();
-        let prompt_file = run_dir.join("system-prompt.txt");
-        std::fs::write(&prompt_file, "multi\nline").unwrap();
-
-        let shim = directory.path().join("agent.ps1");
-        let out = directory.path().join("argv.txt");
-        write_ps1_recorder(&shim, &out);
-
-        let exe = CliExecutable::from_path(&shim);
-        let prompt_path = prompt_file.to_string_lossy().into_owned();
-        let args = [
-            "-p",
-            "--system-prompt-file",
-            prompt_path.as_str(),
-            "a&b",
-            "%PATH%",
-            "x^y",
-            "p>q",
-            "r<s",
-        ];
-        let mut command = exe.try_command(args).unwrap();
-        let body = run_and_read(&mut command, &out).await;
-        let lines: Vec<&str> = body.lines().collect();
-        assert_eq!(lines[0], "-p", "{body}");
-        assert_eq!(lines[1], "--system-prompt-file", "{body}");
-        assert_eq!(lines[2], prompt_path, "{body}");
-        assert_eq!(
-            &lines[3..],
-            ["a&b", "%PATH%", "x^y", "p>q", "r<s"],
-            "{body}"
-        );
+        assert_eq!(lines, args, "{body}");
     }
 
     #[tokio::test]

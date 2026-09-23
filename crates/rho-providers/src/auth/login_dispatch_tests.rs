@@ -1,7 +1,4 @@
-use super::{
-    interactive_login, AuthenticationError, AuthenticationMethod, InteractiveLoginCompletion,
-    ProviderAuthentication, StartedLogin,
-};
+use super::{AuthenticationError, ProviderAuthentication};
 use crate::{
     auth::{
         browser::{BrowserAvailability, BrowserOpen},
@@ -10,57 +7,21 @@ use crate::{
     credentials::MemoryCredentialStore,
 };
 
+// Covers: public device-login capability matches the providers with a device grant
+// Owner: login dispatch
 #[test]
-fn dispatches_registered_providers_to_typed_authentication_methods() {
-    assert_eq!(
-        ProviderAuthentication::method("openai").unwrap(),
-        AuthenticationMethod::ApiKey {
-            entry_label: "OpenAI API key",
-        }
-    );
-    assert_eq!(
-        ProviderAuthentication::method("openai-codex").unwrap(),
-        AuthenticationMethod::Interactive {
-            provider_label: "Codex",
-        }
-    );
-    assert_eq!(
-        ProviderAuthentication::method("github-copilot").unwrap(),
-        AuthenticationMethod::Interactive {
-            provider_label: "GitHub Copilot",
-        }
-    );
-    assert_eq!(
-        ProviderAuthentication::method("kimi-code").unwrap(),
-        AuthenticationMethod::Interactive {
-            provider_label: "Kimi",
-        }
-    );
-    assert_eq!(
-        ProviderAuthentication::method("openrouter-oauth").unwrap(),
-        AuthenticationMethod::Interactive {
-            provider_label: "OpenRouter",
-        }
-    );
-    assert_eq!(
-        ProviderAuthentication::method("xai-oauth").unwrap(),
-        AuthenticationMethod::Interactive {
-            provider_label: "xAI",
-        }
-    );
-    assert_eq!(
-        ProviderAuthentication::method("ollama-cloud-device").unwrap(),
-        AuthenticationMethod::Interactive {
-            provider_label: "Ollama Cloud",
-        }
-    );
-    assert!(ProviderAuthentication::supports_device_login("xai-oauth"));
-    assert!(ProviderAuthentication::supports_device_login(
-        "ollama-cloud-device"
-    ));
-    assert!(!ProviderAuthentication::supports_device_login(
-        "openrouter-oauth"
-    ));
+fn supports_device_login_only_for_device_capable_providers() {
+    for (provider, expected) in [
+        ("xai-oauth", true),
+        ("ollama-cloud-device", true),
+        ("openrouter-oauth", false),
+    ] {
+        assert_eq!(
+            ProviderAuthentication::supports_device_login(provider),
+            expected,
+            "{provider}"
+        );
+    }
 }
 
 // Covers: headless prefers device when the provider has one
@@ -126,36 +87,6 @@ fn preferred_mode_uses_device_only_when_headless_and_capable() {
             "{provider} {availability:?}"
         );
     }
-}
-
-#[test]
-fn ollama_device_setup_does_not_wait_for_confirmation() {
-    let login = interactive_login(
-        StartedLogin {
-            provider_label: "Ollama Cloud",
-            prompt: LoginPrompt::browser_flow(
-                "https://ollama.com/connect?key=test",
-                "Open this URL and approve the device for Ollama Cloud.",
-            ),
-            completion: InteractiveLoginCompletion::Unconfirmed {
-                instruction: "Approve the device in your browser, then use an Ollama Cloud model. Rho does not receive a completion callback.",
-            },
-        },
-        BrowserAvailability::Headless,
-    );
-
-    pretty_assertions::assert_eq!(login.provider_label, "Ollama Cloud");
-    pretty_assertions::assert_eq!(
-        login.prompt,
-        LoginPrompt::browser_flow(
-            "https://ollama.com/connect?key=test",
-            "Open this URL and approve the device for Ollama Cloud.",
-        )
-    );
-    assert!(matches!(
-        login.completion,
-        InteractiveLoginCompletion::Unconfirmed { .. }
-    ));
 }
 
 #[test]

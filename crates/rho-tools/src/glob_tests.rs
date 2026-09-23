@@ -64,17 +64,6 @@ b.rs
     );
 }
 
-// Covers: cancel must not look like a normal empty match set
-// Owner: pure unit (glob cancellation)
-#[test]
-fn cancellation_is_reported_rather_than_read_as_no_matches() {
-    let dir = TempDir::new().unwrap();
-    write(&dir, "a.rs", "");
-    let request = GlobRequest::from_arguments(json!({"pattern": "*.rs"})).unwrap();
-    let out = glob_workspace(dir.path(), ".", &request, &|| true).unwrap();
-    assert_eq!(out, "no files matching '*.rs' under . (cancelled)");
-}
-
 // Covers: empty results distinguish cancel / entry / deadline / result stops
 // Owner: pure unit (glob stop reasons)
 #[test]

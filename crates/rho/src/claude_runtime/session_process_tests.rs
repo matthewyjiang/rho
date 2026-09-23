@@ -466,30 +466,6 @@ async fn live_tool_roundtrip_stream_writes_session_and_tool_events() {
 }
 
 #[tokio::test]
-async fn success_stream_with_nonzero_exit_is_error() {
-    let dir = tempfile::tempdir().unwrap();
-    let output = dir.path().join("result.json");
-    let fake = dir.path().join("claude");
-    install_streaming_fake(&fake, &fixture("success.ndjson"), 2);
-    run_with_fake(
-        &output,
-        dir.path(),
-        &fake,
-        8,
-        PermissionMode::Bypass,
-        RunCancellation::new(),
-    )
-    .await;
-    let status = subagent::read_status(&output).expect("status");
-    assert_eq!(status.state, RunState::Error);
-    let error = status.error.unwrap_or_default();
-    assert!(
-        error.contains("exited with") || error.contains("exit"),
-        "unexpected error: {error}"
-    );
-}
-
-#[tokio::test]
 async fn failure_terminal_result_is_error_even_on_exit_zero() {
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("result.json");

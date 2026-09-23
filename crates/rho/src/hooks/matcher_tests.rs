@@ -67,35 +67,25 @@ fn a_blank_pattern_is_rejected() {
 }
 
 #[test]
-fn only_a_single_trailing_star_is_supported() {
-    assert_eq!(
-        ToolMatcher::new(vec!["*_file".into()], canonical_tool_names()),
-        Err(ToolMatcherError::UnsupportedGlob {
-            pattern: "*_file".into()
-        })
-    );
-    assert_eq!(
-        ToolMatcher::new(vec!["re*d*".into()], canonical_tool_names()),
-        Err(ToolMatcherError::UnsupportedGlob {
-            pattern: "re*d*".into()
-        })
-    );
-}
-
-#[test]
-fn a_name_outside_the_canonical_list_fails_at_load() {
-    assert_eq!(
-        ToolMatcher::new(vec!["Bash".into()], canonical_tool_names()),
-        Err(ToolMatcherError::UnknownTool {
-            pattern: "Bash".into()
-        })
-    );
-    assert_eq!(
-        ToolMatcher::new(vec!["shell".into()], canonical_tool_names()),
-        Err(ToolMatcherError::UnknownTool {
-            pattern: "shell".into()
-        })
-    );
+fn an_unsupported_glob_or_unknown_name_fails_at_load() {
+    let unsupported = |pattern: &str| ToolMatcherError::UnsupportedGlob {
+        pattern: pattern.into(),
+    };
+    let unknown = |pattern: &str| ToolMatcherError::UnknownTool {
+        pattern: pattern.into(),
+    };
+    for (case, pattern, expected) in [
+        ("leading star", "*_file", unsupported("*_file")),
+        ("inner star", "re*d*", unsupported("re*d*")),
+        ("wrong case", "Bash", unknown("Bash")),
+        ("non-canonical name", "shell", unknown("shell")),
+    ] {
+        assert_eq!(
+            ToolMatcher::new(vec![pattern.into()], canonical_tool_names()),
+            Err(expected),
+            "{case}"
+        );
+    }
 }
 
 #[test]

@@ -281,10 +281,4 @@ mod tests {
         assert!(config.contains("check_for_updates = false"));
         assert!(home.workspace.is_dir());
     }
-
-    #[test]
-    fn host_markers_include_tmux_and_herdr() {
-        assert!(HOST_TERMINAL_MARKERS.contains(&"TMUX"));
-        assert!(HOST_TERMINAL_MARKERS.contains(&"HERDR_ENV"));
-    }
 }

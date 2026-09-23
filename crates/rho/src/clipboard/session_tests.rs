@@ -2,23 +2,33 @@ use pretty_assertions::assert_eq;
 
 use super::SessionKind;
 
+// Covers: remote markers (SSH or Mosh) win over WSL, and WSL wins over local.
+// Owner: clipboard session policy (pure unit).
 #[test]
-fn remote_markers_win_over_wsl() {
-    let session = SessionKind::detect_from(
-        |name| matches!(name, "SSH_CONNECTION" | "WSL_DISTRO_NAME"),
-        || true,
-    );
-    assert_eq!(session, SessionKind::Remote);
-}
-
-#[test]
-fn wsl_is_detected_without_remote_markers() {
-    let session = SessionKind::detect_from(|_| false, || true);
-    assert_eq!(session, SessionKind::Wsl);
-}
-
-#[test]
-fn mosh_counts_as_remote() {
-    let session = SessionKind::detect_from(|name| name == "MOSH_IP", || false);
-    assert_eq!(session, SessionKind::Remote);
+fn detects_session_kind_by_precedence() {
+    for (case, env, is_wsl, expected) in [
+        (
+            "remote wins over wsl",
+            &["SSH_CONNECTION", "WSL_DISTRO_NAME"][..],
+            true,
+            SessionKind::Remote,
+        ),
+        (
+            "wsl without remote markers",
+            &[][..],
+            true,
+            SessionKind::Wsl,
+        ),
+        (
+            "mosh counts as remote",
+            &["MOSH_IP"][..],
+            false,
+            SessionKind::Remote,
+        ),
+        ("local otherwise", &[][..], false, SessionKind::Local),
+    ] {
+        let session =
+            SessionKind::detect_from(|name| env.iter().any(|marker| *marker == name), || is_wsl);
+        assert_eq!(session, expected, "{case}");
+    }
 }

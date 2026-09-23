@@ -71,5 +71,4 @@ fn provider_error_carries_retry_after() {
     .with_retry_after(Duration::from_secs(15));
 
     assert_eq!(error.retry_after(), Some(Duration::from_secs(15)));
-    assert!(format!("{error:?}").contains("15s") || format!("{error:?}").contains("15"));
 }

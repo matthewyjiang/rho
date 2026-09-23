@@ -366,36 +366,45 @@ fn git_branch_is_cached_until_explicit_refresh() {
     assert_ne!(refreshed, initial);
 }
 
+// Covers: path shortening keeps the most trailing segments that fit, drops
+// the root when needed, and keeps the end of an overlong last segment.
+// Owner: statusline path layout
 #[test]
 fn shorten_path_keeps_trailing_segments() {
-    assert_eq!(
-        shorten_path_display("~/work/company/services/api-gateway", 24),
-        "~/…/services/api-gateway"
-    );
-    assert_eq!(
-        shorten_path_display("~/work/company/services/api-gateway", 18),
-        "~/…/api-gateway"
-    );
-    assert_eq!(
-        shorten_path_display("/tmp/claude-1000/home-emgym-herdr-work", 23),
-        "…/home-emgym-herdr-work"
-    );
-    assert_eq!(
-        shorten_path_display("/tmp/claude-1000/projects/api-gateway", 20),
-        "/…/api-gateway"
-    );
-}
-
-#[test]
-fn shorten_path_keeps_end_when_last_segment_is_long() {
-    let shortened = shorten_path_display("~/work/company/very-long-service-name", 14);
-    assert!(shortened.starts_with('…'), "{shortened}");
-    assert!(
-        shortened.ends_with("service-name") || shortened.ends_with("name"),
-        "{shortened}"
-    );
-    assert!(display_width(&shortened) <= 14, "{shortened}");
-    assert!(!shortened.starts_with("~/work"), "{shortened}");
+    for (case, path, width, expected) in [
+        (
+            "rooted two segments",
+            "~/work/company/services/api-gateway",
+            24,
+            "~/…/services/api-gateway",
+        ),
+        (
+            "rooted last segment",
+            "~/work/company/services/api-gateway",
+            18,
+            "~/…/api-gateway",
+        ),
+        (
+            "unrooted last segment",
+            "/tmp/claude-1000/home-emgym-herdr-work",
+            23,
+            "…/home-emgym-herdr-work",
+        ),
+        (
+            "absolute last segment",
+            "/tmp/claude-1000/projects/api-gateway",
+            20,
+            "/…/api-gateway",
+        ),
+        (
+            "overlong last segment keeps end",
+            "~/work/company/very-long-service-name",
+            14,
+            "…-service-name",
+        ),
+    ] {
+        assert_eq!(shorten_path_display(path, width), expected, "{case}");
+    }
 }
 
 #[test]
