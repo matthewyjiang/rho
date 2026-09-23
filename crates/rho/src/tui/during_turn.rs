@@ -98,22 +98,7 @@ impl App {
         if self.handle_running_picker_key(key, terminal).await? {
             return Ok(false);
         }
-        if self.handle_limits_overlay_key(key, terminal) {
-            return Ok(false);
-        }
-        if self.handle_computer_overlay_key(key, terminal) {
-            return Ok(false);
-        }
-        if self.handle_doctor_overlay_key(key, terminal) {
-            return Ok(false);
-        }
-        if self.handle_hooks_overlay_key(key, terminal) {
-            return Ok(false);
-        }
-        if self.handle_text_view_overlay_key(key, terminal) {
-            return Ok(false);
-        }
-        if self.handle_info_overlay_key(key, terminal) {
+        if self.handle_panel_overlay_key(key, terminal) {
             return Ok(false);
         }
         if self.handle_side_chat_key(key, terminal) {

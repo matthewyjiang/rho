@@ -16,7 +16,7 @@ use super::{
     tool_card_hover::{ToolCardHit, ToolCardTarget},
     tool_output_ui::expandable_tool_entry,
     view::LiveHistory,
-    App, ComposerMode,
+    App, ComposerMode, PanelOverlay,
 };
 
 /// Max gap between presses that still counts as a double-click in the composer.
@@ -69,13 +69,15 @@ impl App {
         let screen = Rect::new(0, 0, size.width, size.height);
         let now = Instant::now();
         // Scroll-only panels swallow every pointer event; only the wheel acts.
-        let scroll_only_panel: Option<fn(&mut Self, Rect, PanelScrollTarget) -> bool> =
-            match self.input_ui.composer() {
-                ComposerMode::Computer(_) => Some(Self::scroll_computer_overlay),
-                ComposerMode::Hooks(_) => Some(Self::scroll_hooks_overlay),
-                ComposerMode::TextView(_) => Some(Self::scroll_text_view_overlay),
-                _ => None,
-            };
+        let scroll_only_panel: Option<fn(&mut Self, Rect, PanelScrollTarget) -> bool> = match self
+            .input_ui
+            .composer()
+        {
+            ComposerMode::Panel(PanelOverlay::Computer(_)) => Some(Self::scroll_computer_overlay),
+            ComposerMode::Panel(PanelOverlay::Hooks(_)) => Some(Self::scroll_hooks_overlay),
+            ComposerMode::Panel(PanelOverlay::TextView(_)) => Some(Self::scroll_text_view_overlay),
+            _ => None,
+        };
         if let Some(scroll) = scroll_only_panel {
             self.clear_selections();
             self.clear_hovered_copy_buttons();
@@ -89,7 +91,10 @@ impl App {
             scroll(self, screen, PanelScrollTarget::Delta(delta));
             return Ok(());
         }
-        if matches!(self.input_ui.composer(), ComposerMode::Info(_)) {
+        if matches!(
+            self.input_ui.composer(),
+            ComposerMode::Panel(PanelOverlay::Info(_))
+        ) {
             self.handle_info_overlay_mouse(kind, screen, column, row, now);
             return Ok(());
         }

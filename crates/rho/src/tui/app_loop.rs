@@ -5,7 +5,8 @@ use ratatui::DefaultTerminal;
 
 use super::{
     media_attach, mouse_capture, ActivityPhase, ActivityStatus, App, BackgroundCounts,
-    ComposerMode, ExitReceipt, HerdrState, HerdrUserWait, InteractiveRuntime, ViewModelEvent,
+    ComposerMode, ExitReceipt, HerdrState, HerdrUserWait, InteractiveRuntime, PanelOverlay,
+    ViewModelEvent,
 };
 
 impl App {
@@ -379,11 +380,11 @@ impl App {
                 .is_some_and(|overlay| overlay.is_visible(now))
             || matches!(
                 self.input_ui.composer(),
-                ComposerMode::Limits(overlay) if overlay.is_checking()
+                ComposerMode::Panel(PanelOverlay::Limits(overlay)) if overlay.is_checking()
             )
             || matches!(
                 self.input_ui.composer(),
-                ComposerMode::Doctor(overlay) if overlay.is_checking()
+                ComposerMode::Panel(PanelOverlay::Doctor(overlay)) if overlay.is_checking()
             )
             || self.side_chat_busy()
             || self.history.scrollbar_hovered()
@@ -417,12 +418,7 @@ impl App {
             ComposerMode::Questionnaire(_) => Some(HerdrUserWait::Questionnaire),
             ComposerMode::Input
             | ComposerMode::Picker(_)
-            | ComposerMode::Limits(_)
-            | ComposerMode::Doctor(_)
-            | ComposerMode::Computer(_)
-            | ComposerMode::Hooks(_)
-            | ComposerMode::TextView(_)
-            | ComposerMode::Info(_)
+            | ComposerMode::Panel(_)
             | ComposerMode::Side
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
@@ -482,12 +478,7 @@ impl App {
     ) -> std::io::Result<()> {
         self.flush_pending_paste_burst();
         self.clamp_overlay_detail_scroll(terminal);
-        self.clamp_limits_overlay_scroll(terminal);
-        self.clamp_doctor_overlay_scroll(terminal);
-        self.clamp_computer_overlay_scroll(terminal);
-        self.clamp_hooks_overlay_scroll(terminal);
-        self.clamp_text_view_overlay_scroll(terminal);
-        self.clamp_info_overlay_scroll(terminal);
+        self.clamp_panel_overlay_scroll(terminal);
         self.clear_selections();
         self.clear_hovered_copy_buttons();
         self.subagent_panel.clear_pointer_state();

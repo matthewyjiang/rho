@@ -17,7 +17,7 @@ use super::{
     },
     render::wrap_text_lines,
     theme::Theme,
-    App, ComposerMode, UiPicker,
+    App, ComposerMode, PanelOverlay, UiPicker,
 };
 
 const FOOTER: &str = "↑↓ scroll · PgUp/PgDn · Enter/Esc back";
@@ -46,16 +46,18 @@ impl App {
         };
         self.set_status_quiet(title.clone());
         self.input_ui
-            .set_composer(ComposerMode::TextView(Box::new(TextViewOverlay {
-                title,
-                text,
-                scroll: PanelScroll::default(),
-                parent: Box::new(parent),
-            })));
+            .set_composer(ComposerMode::Panel(PanelOverlay::TextView(Box::new(
+                TextViewOverlay {
+                    title,
+                    text,
+                    scroll: PanelScroll::default(),
+                    parent: Box::new(parent),
+                },
+            ))));
     }
 
     pub(super) fn text_view_overlay_frame(&self, area: Rect) -> Option<OverlayPanelFrame> {
-        let ComposerMode::TextView(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::TextView(overlay)) = self.input_ui.composer() else {
             return None;
         };
         let lines = text_view_lines(&overlay.text, text_view_body_width(area));
@@ -73,7 +75,8 @@ impl App {
         area: Rect,
         target: PanelScrollTarget,
     ) -> bool {
-        let ComposerMode::TextView(overlay) = self.input_ui.composer_mut() else {
+        let ComposerMode::Panel(PanelOverlay::TextView(overlay)) = self.input_ui.composer_mut()
+        else {
             return false;
         };
         let body_len = text_view_lines(&overlay.text, text_view_body_width(area)).len();
@@ -83,7 +86,7 @@ impl App {
     }
 
     pub(super) fn clamp_text_view_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
-        if let (ComposerMode::TextView(overlay), Ok(size)) =
+        if let (ComposerMode::Panel(PanelOverlay::TextView(overlay)), Ok(size)) =
             (self.input_ui.composer(), terminal.size())
         {
             let target = PanelScrollTarget::Absolute(overlay.scroll.offset());
@@ -96,7 +99,10 @@ impl App {
         key: crossterm::event::KeyEvent,
         terminal: &ratatui::DefaultTerminal,
     ) -> bool {
-        if !matches!(self.input_ui.composer(), ComposerMode::TextView(_)) {
+        if !matches!(
+            self.input_ui.composer(),
+            ComposerMode::Panel(PanelOverlay::TextView(_))
+        ) {
             return false;
         }
         match classify_panel_key(key) {
@@ -116,7 +122,8 @@ impl App {
     }
 
     fn close_text_view_overlay(&mut self) {
-        let ComposerMode::TextView(overlay) = self.input_ui.take_composer() else {
+        let ComposerMode::Panel(PanelOverlay::TextView(overlay)) = self.input_ui.take_composer()
+        else {
             return;
         };
         self.set_status_quiet(overlay.parent.title.clone());

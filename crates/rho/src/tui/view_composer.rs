@@ -57,12 +57,7 @@ impl App {
         let style = match self.input_ui.composer() {
             ComposerMode::Input => Theme::reasoning_input_border(self.info.runtime.reasoning),
             ComposerMode::Picker(_)
-            | ComposerMode::Limits(_)
-            | ComposerMode::Doctor(_)
-            | ComposerMode::Computer(_)
-            | ComposerMode::Hooks(_)
-            | ComposerMode::TextView(_)
-            | ComposerMode::Info(_)
+            | ComposerMode::Panel(_)
             | ComposerMode::Side
             | ComposerMode::Questionnaire(_)
             | ComposerMode::Approval(_)
@@ -205,13 +200,9 @@ impl App {
                 approval_lines(approval, width, viewport_height),
                 Position { x: 0, y: 0 },
             ),
-            ComposerMode::Limits(_)
-            | ComposerMode::Doctor(_)
-            | ComposerMode::Computer(_)
-            | ComposerMode::Hooks(_)
-            | ComposerMode::TextView(_)
-            | ComposerMode::Info(_)
-            | ComposerMode::Side => ComposerFrame::new(Vec::new(), Position { x: 0, y: 0 }),
+            ComposerMode::Panel(_) | ComposerMode::Side => {
+                ComposerFrame::new(Vec::new(), Position { x: 0, y: 0 })
+            }
         }
     }
 

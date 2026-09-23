@@ -33,10 +33,13 @@ fn opening_info_paints_local_fields_before_probes() {
     let mut app = super::super::tests::test_app();
     app.execute_info_command().unwrap();
 
-    assert!(matches!(app.input_ui.composer(), ComposerMode::Info(_)));
+    assert!(matches!(
+        app.input_ui.composer(),
+        ComposerMode::Panel(PanelOverlay::Info(_))
+    ));
     assert!(app.pending_info_runtimes.is_none());
     assert!(app.pending_info_tree.is_none());
-    let ComposerMode::Info(overlay) = app.input_ui.composer() else {
+    let ComposerMode::Panel(PanelOverlay::Info(overlay)) = app.input_ui.composer() else {
         unreachable!("overlay just opened");
     };
     assert_eq!(
@@ -71,7 +74,7 @@ async fn finished_runtime_probe_fills_the_open_overlay() {
 
     assert!(app.poll_info_refresh().await.unwrap());
     assert!(app.pending_info_runtimes.is_none());
-    let ComposerMode::Info(overlay) = app.input_ui.composer() else {
+    let ComposerMode::Panel(PanelOverlay::Info(overlay)) = app.input_ui.composer() else {
         panic!("probe closed the overlay");
     };
     assert_eq!(
@@ -95,7 +98,7 @@ fn info_opened_during_a_turn_defers_the_tree_read_until_idle() {
 
     assert!(app.info_tree_deferred);
     assert!(app.pending_info_tree.is_none());
-    let ComposerMode::Info(overlay) = app.input_ui.composer() else {
+    let ComposerMode::Panel(PanelOverlay::Info(overlay)) = app.input_ui.composer() else {
         panic!("overlay did not open");
     };
     assert!(!overlay.info.tree_loading());
@@ -104,7 +107,7 @@ fn info_opened_during_a_turn_defers_the_tree_read_until_idle() {
     app.end_busy_ui();
     assert!(app.start_deferred_info_tree());
     assert!(!app.info_tree_deferred);
-    let ComposerMode::Info(overlay) = app.input_ui.composer() else {
+    let ComposerMode::Panel(PanelOverlay::Info(overlay)) = app.input_ui.composer() else {
         panic!("overlay closed before the deferred read");
     };
     assert!(overlay.info.tree_loading());
@@ -138,7 +141,10 @@ async fn closing_info_clears_probe_handles() {
     app.close_info_overlay();
 
     assert!(app.pending_info_runtimes.is_none());
-    assert!(!matches!(app.input_ui.composer(), ComposerMode::Info(_)));
+    assert!(!matches!(
+        app.input_ui.composer(),
+        ComposerMode::Panel(PanelOverlay::Info(_))
+    ));
     tokio::task::yield_now().await;
 }
 
@@ -155,7 +161,10 @@ fn copy_key_writes_the_report_without_closing() {
 
     app.copy_info_report(Instant::now());
 
-    assert!(matches!(app.input_ui.composer(), ComposerMode::Info(_)));
+    assert!(matches!(
+        app.input_ui.composer(),
+        ComposerMode::Panel(PanelOverlay::Info(_))
+    ));
     let text = copied.lock().expect("clipboard lock").clone();
     assert!(
         text.contains("openai"),
@@ -215,5 +224,8 @@ fn drag_copies_the_selected_span() {
         !text.contains("Workspace"),
         "drag copied the whole report:\n{text}"
     );
-    assert!(matches!(app.input_ui.composer(), ComposerMode::Info(_)));
+    assert!(matches!(
+        app.input_ui.composer(),
+        ComposerMode::Panel(PanelOverlay::Info(_))
+    ));
 }

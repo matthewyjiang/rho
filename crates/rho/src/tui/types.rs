@@ -206,13 +206,21 @@ pub(super) enum ComposerMode {
     InlineChoice(InlineChoiceModal),
     Questionnaire(QuestionnaireComposer),
     Approval(ApprovalComposer),
+    Panel(PanelOverlay),
+    Side,
+}
+
+/// Single-pane overlays drawn with the shared panel chrome. They own the
+/// keyboard, block turns and setup escape, and render centered, so composer
+/// policy treats them as one mode; each variant owns its own content and keys.
+#[derive(Debug)]
+pub(super) enum PanelOverlay {
     Limits(limits_command::LimitsOverlay),
     Doctor(doctor_overlay::DoctorOverlay),
     Computer(super::computer_overlay::ComputerOverlay),
     Hooks(super::hooks_overlay::HooksOverlay),
     TextView(Box<super::text_view_overlay::TextViewOverlay>),
     Info(Box<super::info_overlay::InfoOverlay>),
-    Side,
 }
 
 impl ComposerMode {
@@ -231,12 +239,7 @@ impl ComposerMode {
             | Self::InlineChoice(_)
             | Self::Questionnaire(_)
             | Self::Approval(_)
-            | Self::Limits(_)
-            | Self::Doctor(_)
-            | Self::Computer(_)
-            | Self::Hooks(_)
-            | Self::TextView(_)
-            | Self::Info(_)
+            | Self::Panel(_)
             | Self::Side => true,
         }
     }
@@ -260,12 +263,7 @@ impl ComposerMode {
             | Self::InlineChoice(_)
             | Self::Questionnaire(_)
             | Self::Approval(_)
-            | Self::Limits(_)
-            | Self::Doctor(_)
-            | Self::Computer(_)
-            | Self::Hooks(_)
-            | Self::TextView(_)
-            | Self::Info(_)
+            | Self::Panel(_)
             | Self::Side => false,
         }
     }
@@ -273,13 +271,7 @@ impl ComposerMode {
     pub(super) fn is_centered_overlay(&self) -> bool {
         match self {
             Self::Picker(picker) => picker.is_overlay(),
-            Self::Limits(_)
-            | Self::Doctor(_)
-            | Self::Computer(_)
-            | Self::Hooks(_)
-            | Self::TextView(_)
-            | Self::Info(_)
-            | Self::Side => true,
+            Self::Panel(_) | Self::Side => true,
             _ => false,
         }
     }

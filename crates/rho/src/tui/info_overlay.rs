@@ -17,7 +17,7 @@ use super::{
         OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
     },
     text_selection::TextSelection,
-    App, ComposerMode,
+    App, ComposerMode, PanelOverlay,
 };
 
 const TITLE: &str = "Info";
@@ -33,11 +33,13 @@ pub(super) struct InfoOverlay {
 impl App {
     pub(super) fn show_info_overlay(&mut self, info: RuntimeInfo) {
         self.input_ui
-            .set_composer(ComposerMode::Info(Box::new(InfoOverlay {
-                info,
-                scroll: PanelScroll::default(),
-                selection: None,
-            })));
+            .set_composer(ComposerMode::Panel(PanelOverlay::Info(Box::new(
+                InfoOverlay {
+                    info,
+                    scroll: PanelScroll::default(),
+                    selection: None,
+                },
+            ))));
         self.set_status_quiet("info");
     }
 
@@ -61,7 +63,7 @@ impl App {
     }
 
     pub(super) fn info_overlay_frame(&self, area: Rect) -> Option<OverlayPanelFrame> {
-        let ComposerMode::Info(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer() else {
             return None;
         };
         let lines = runtime_info_lines(&overlay.info, info_body_width(area));
@@ -75,26 +77,30 @@ impl App {
     }
 
     pub(super) fn info_text_selection(&self) -> Option<TextSelection> {
-        let ComposerMode::Info(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer() else {
             return None;
         };
         overlay.selection
     }
 
     pub(super) fn scroll_info_overlay(&mut self, area: Rect, target: PanelScrollTarget) -> bool {
-        if !matches!(self.input_ui.composer(), ComposerMode::Info(_)) {
+        if !matches!(
+            self.input_ui.composer(),
+            ComposerMode::Panel(PanelOverlay::Info(_))
+        ) {
             return false;
         }
         let body_len = self.info_body_len(area);
         let body_rows = overlay_panel_layout(area, body_len).body_rows;
-        if let ComposerMode::Info(overlay) = self.input_ui.composer_mut() {
+        if let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() {
             overlay.scroll.apply(target, body_len, body_rows);
         }
         true
     }
 
     pub(super) fn clamp_info_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
-        if let (ComposerMode::Info(overlay), Ok(size)) = (self.input_ui.composer(), terminal.size())
+        if let (ComposerMode::Panel(PanelOverlay::Info(overlay)), Ok(size)) =
+            (self.input_ui.composer(), terminal.size())
         {
             let target = PanelScrollTarget::Absolute(overlay.scroll.offset());
             self.scroll_info_overlay(Rect::new(0, 0, size.width, size.height), target);
@@ -106,7 +112,10 @@ impl App {
         key: KeyEvent,
         terminal: &ratatui::DefaultTerminal,
     ) -> bool {
-        if !matches!(self.input_ui.composer(), ComposerMode::Info(_)) {
+        if !matches!(
+            self.input_ui.composer(),
+            ComposerMode::Panel(PanelOverlay::Info(_))
+        ) {
             return false;
         }
         if is_copy_key(key) {
@@ -180,7 +189,10 @@ impl App {
     }
 
     pub(super) fn close_info_overlay(&mut self) {
-        if matches!(self.input_ui.composer(), ComposerMode::Info(_)) {
+        if matches!(
+            self.input_ui.composer(),
+            ComposerMode::Panel(PanelOverlay::Info(_))
+        ) {
             self.input_ui.set_composer(ComposerMode::Input);
         }
         self.info_tree_deferred = false;
@@ -188,7 +200,10 @@ impl App {
     }
 
     pub(super) async fn poll_info_refresh(&mut self) -> anyhow::Result<bool> {
-        if !matches!(self.input_ui.composer(), ComposerMode::Info(_)) {
+        if !matches!(
+            self.input_ui.composer(),
+            ComposerMode::Panel(PanelOverlay::Info(_))
+        ) {
             // Approvals and other composer replacements do not go through close.
             self.cancel_info_refresh().await;
             return Ok(false);
@@ -248,7 +263,10 @@ impl App {
             return false;
         }
         self.info_tree_deferred = false;
-        if !matches!(self.input_ui.composer(), ComposerMode::Info(_)) {
+        if !matches!(
+            self.input_ui.composer(),
+            ComposerMode::Panel(PanelOverlay::Info(_))
+        ) {
             return false;
         }
         let Some(session_id) = self.info.session.session_id.clone() else {
@@ -276,7 +294,7 @@ impl App {
     }
 
     fn copy_info_report(&mut self, now: Instant) {
-        let ComposerMode::Info(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer() else {
             return;
         };
         let text = info_copy_text(&overlay.info);
@@ -310,7 +328,7 @@ impl App {
     }
 
     fn apply_info_runtimes(&mut self, lines: Vec<String>) {
-        let ComposerMode::Info(overlay) = self.input_ui.composer_mut() else {
+        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() else {
             return;
         };
         overlay.info.set_external_runtimes(lines);
@@ -322,7 +340,7 @@ impl App {
         tree: Option<crate::session::tree::SessionTreeFacts>,
         error: Option<String>,
     ) {
-        let ComposerMode::Info(overlay) = self.input_ui.composer_mut() else {
+        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() else {
             return;
         };
         overlay.info.set_tree(tree, error);
@@ -330,34 +348,34 @@ impl App {
     }
 
     fn mark_info_tree_loading(&mut self) {
-        let ComposerMode::Info(overlay) = self.input_ui.composer_mut() else {
+        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() else {
             return;
         };
         overlay.info.begin_tree_load();
     }
 
     fn info_tree_loading(&self) -> bool {
-        let ComposerMode::Info(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer() else {
             return false;
         };
         overlay.info.tree_loading()
     }
 
     fn set_info_selection(&mut self, selection: Option<TextSelection>) {
-        if let ComposerMode::Info(overlay) = self.input_ui.composer_mut() {
+        if let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() {
             overlay.selection = selection;
         }
     }
 
     fn info_selection_mut(&mut self) -> Option<&mut TextSelection> {
-        let ComposerMode::Info(overlay) = self.input_ui.composer_mut() else {
+        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() else {
             return None;
         };
         overlay.selection.as_mut()
     }
 
     fn take_info_selection(&mut self) -> Option<TextSelection> {
-        let ComposerMode::Info(overlay) = self.input_ui.composer_mut() else {
+        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() else {
             return None;
         };
         overlay.selection.take()
@@ -368,7 +386,7 @@ impl App {
     }
 
     fn info_body_lines(&self, area: Rect) -> Vec<ratatui::text::Line<'static>> {
-        let ComposerMode::Info(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer() else {
             return Vec::new();
         };
         runtime_info_lines(&overlay.info, info_body_width(area))

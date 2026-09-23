@@ -16,7 +16,7 @@ use super::{
     panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
     render::display_width,
     theme::Theme,
-    App, ComposerMode,
+    App, ComposerMode, PanelOverlay,
 };
 use crate::usage_limits::{
     fetch_usage_provider, now_unix, usage_provider_is_connected, UsageFailure, UsageLimitWindow,
@@ -214,7 +214,10 @@ impl App {
     }
 
     pub(super) fn limits_overlay_open(&self) -> bool {
-        matches!(self.input_ui.composer(), ComposerMode::Limits(_))
+        matches!(
+            self.input_ui.composer(),
+            ComposerMode::Panel(PanelOverlay::Limits(_))
+        )
     }
 
     pub(super) fn close_limits_overlay(&mut self) {
@@ -260,7 +263,7 @@ impl App {
         area: Rect,
         now: Instant,
     ) -> Option<OverlayPanelFrame> {
-        let ComposerMode::Limits(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::Limits(overlay)) = self.input_ui.composer() else {
             return None;
         };
         let spinner = overlay
@@ -337,7 +340,7 @@ impl App {
     }
 
     fn limits_scroll_metrics(&self, area: Rect) -> Option<(usize, usize)> {
-        let ComposerMode::Limits(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::Limits(overlay)) = self.input_ui.composer() else {
             return None;
         };
         let inner_width = overlay_panel_inner_width(area);
@@ -348,7 +351,7 @@ impl App {
 
     fn limits_overlay_mut(&mut self) -> Option<&mut LimitsOverlay> {
         match self.input_ui.composer_mut() {
-            ComposerMode::Limits(overlay) => Some(overlay),
+            ComposerMode::Panel(PanelOverlay::Limits(overlay)) => Some(overlay),
             _ => None,
         }
     }
@@ -376,7 +379,8 @@ impl App {
             },
             crate::claude_runtime::rate_limit::now_unix(),
         );
-        self.input_ui.set_composer(ComposerMode::Limits(overlay));
+        self.input_ui
+            .set_composer(ComposerMode::Panel(PanelOverlay::Limits(overlay)));
     }
 
     fn spawn_missing_usage_fetches(
@@ -487,7 +491,7 @@ impl App {
     }
 
     pub(super) fn clamp_limits_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
-        let ComposerMode::Limits(overlay) = self.input_ui.composer() else {
+        let ComposerMode::Panel(PanelOverlay::Limits(overlay)) = self.input_ui.composer() else {
             return;
         };
         let scroll = overlay.scroll.offset();
