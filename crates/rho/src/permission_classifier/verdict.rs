@@ -46,7 +46,7 @@ pub(crate) const CLASSIFIER_SCREEN_INSTRUCTION: &str = "\
 Screen this pending capability request.
 
 Respond with exactly one lowercase word and nothing else: `allow` or \
-`escalate`.
+`escalate`. No punctuation or explanation.
 
 Answer `allow` only when the request is plainly routine and clearly anchored to \
 what the user asked for. Answer `escalate` whenever you are unsure, so a \

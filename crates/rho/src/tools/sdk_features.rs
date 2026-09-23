@@ -14,10 +14,7 @@ use rho_sdk::{
     CapabilityKind, CapabilityRequest, CapabilitySource, HostChoice, HostInputRequest,
     HostQuestion, SelectionMode,
 };
-use rho_tools::{
-    sdk_support::required_string,
-    tool::{truncate, Tool as _},
-};
+use rho_tools::{sdk_support::required_string, tool::truncate};
 
 pub(super) fn skill_bundle(max_output_bytes: usize) -> super::sdk_registry::StaticToolBundle {
     super::sdk_registry::StaticToolBundle::new(vec![Arc::new(SdkSkillTool::new(max_output_bytes))])
@@ -107,7 +104,21 @@ pub(super) struct SdkSkillTool {
 
 impl SdkTool for SdkSkillTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
-        super::skill::Skill.spec()
+        rho_sdk::model::ToolSpec {
+            name: "skill".into(),
+            description: "Load the full SKILL.md for a skill listed under available skills, by its exact name. Returns the file contents, including frontmatter; for file-backed skills, relative paths inside it resolve against the skill's directory. Unknown names return an error. Output beyond the tool-output limit is truncated.".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The skill name to load"
+                    }
+                },
+                "required": ["name"],
+                "additionalProperties": false
+            }),
+        }
     }
 
     fn security(&self) -> ToolSecurity {
