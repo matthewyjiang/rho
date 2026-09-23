@@ -3,8 +3,9 @@ use tempfile::TempDir;
 use tokio::sync::watch;
 
 use super::{RuntimeLabel, StatusSink};
-use crate::cli_runtime::stream_effect::{
-    StatusPatch, StreamEffect, TerminalClassification, TerminalResult,
+use crate::cli_runtime::{
+    stream_effect::{StreamEffect, TerminalClassification, TerminalResult},
+    stream_format::{reasoning_effects, text_effects},
 };
 
 use crate::{
@@ -81,6 +82,8 @@ async fn sink_writes_prompt_and_starting_status() {
     ));
 }
 
+// Covers: paired attachment/status effects must not duplicate text in live or saved status.
+// Owner: shared CLI status sink for Claude and Cursor.
 #[tokio::test]
 async fn sink_applies_stream_effects_and_finalizes_success() {
     let directory = TempDir::new().unwrap();
@@ -98,30 +101,37 @@ async fn sink_applies_stream_effects_and_finalizes_success() {
 
     sink.mark_running();
     sink.apply_effect(StreamEffect::Attachment(AttachmentEvent::StepStarted));
-    sink.apply_effect(StreamEffect::Status(StatusPatch {
-        last_activity: Some("assistant".into()),
-        state: Some(RunState::Running),
-        ..StatusPatch::default()
-    }));
-    sink.apply_effect(StreamEffect::Attachment(
-        AttachmentEvent::AssistantTextDelta("hello".into()),
-    ));
+    for (effects, expected_text) in [
+        (reasoning_effects("thinking\n"), "thinking\n"),
+        (text_effects("hel"), "thinking\nhel"),
+        (text_effects("lo"), "thinking\nhello"),
+    ] {
+        for effect in effects {
+            sink.apply_effect(effect);
+        }
+        assert_eq!(rx.borrow().last_text.as_deref(), Some(expected_text));
+    }
     sink.finalize_success_from_stream(&success_terminal()).await;
 
     let status = subagent::read_status(&output).expect("status");
     assert_eq!(status.state, RunState::Ok);
     assert_eq!(status.result.as_deref(), Some("done"));
+    assert_eq!(status.last_text.as_deref(), Some("thinking\nhello"));
     assert_eq!(status.claude_session_id.as_deref(), Some("sess"));
     assert_eq!(status.total_cost_usd, Some(0.12));
     assert_eq!(rx.borrow().state, RunState::Ok);
 
-    let events = read_attachment_events(&output);
-    assert!(events
-        .iter()
-        .any(|event| matches!(event, AttachmentEvent::Completed)));
-    assert!(events.iter().any(
-        |event| matches!(event, AttachmentEvent::AssistantTextDelta(text) if text == "hello")
-    ));
+    assert_eq!(
+        read_attachment_events(&output),
+        vec![
+            AttachmentEvent::Prompt("prompt".into()),
+            AttachmentEvent::StepStarted,
+            AttachmentEvent::ReasoningDelta("thinking\n".into()),
+            AttachmentEvent::AssistantTextDelta("hel".into()),
+            AttachmentEvent::AssistantTextDelta("lo".into()),
+            AttachmentEvent::Completed,
+        ]
+    );
 }
 
 #[tokio::test]

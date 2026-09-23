@@ -93,12 +93,9 @@ impl StatusSink {
     pub(crate) fn apply_effect(&mut self, effect: StreamEffect) {
         match effect {
             StreamEffect::Attachment(event) => {
-                // CLI runtimes mirror reasoning into `last_text` as well as
-                // answer text, unlike the Rho reporter, which keeps thinking
-                // out of the status file.
-                if let AttachmentEvent::AssistantTextDelta(text)
-                | AttachmentEvent::ReasoningDelta(text) = &event
-                {
+                // Answer text reaches `last_text` through its status patch.
+                // Reasoning has no text patch, so mirror only that here.
+                if let AttachmentEvent::ReasoningDelta(text) = &event {
                     if !text.is_empty() {
                         self.inner.append_last_text(text);
                     }
