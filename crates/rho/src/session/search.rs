@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 
 pub(crate) use super::search_scope::Scope;
-use super::{search_index, search_scope::Workspace};
+use super::{search_index, workspace_scope::Workspace};
 
 #[path = "search_response.rs"]
 mod response;

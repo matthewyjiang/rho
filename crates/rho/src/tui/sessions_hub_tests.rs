@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 
 use pretty_assertions::assert_eq;
 
-use super::{directory_groups, directory_picker, hub_picker, DirectoryGroup, SessionsHubTarget};
+use super::{directory_picker, hub_picker, DirectoryGroup, HubGroup, SessionsHubTarget};
 use crate::session::{SessionSummary, SessionTarget};
+use crate::tui::sessions_hub_groups::Worktree;
 
 fn summary(id: &str, cwd: &str, updated_at: u64) -> SessionSummary {
     SessionSummary {
@@ -27,69 +28,34 @@ fn group(cwd: &str, display: &str, sessions: Vec<SessionSummary>) -> DirectoryGr
     }
 }
 
-// Covers: the hub lists the current directory first while other directories
-// keep newest-first order, which decides what the picker opens on.
-// Owner: sessions hub grouping
-#[test]
-fn directory_groups_put_the_current_directory_first() {
-    let sessions = vec![
-        summary("s-newest", "/work/other", 300),
-        summary("s-current", "/work/current", 200),
-        summary("s-older", "/work/other", 100),
-        summary("s-third", "/work/third", 50),
-    ];
-
-    let groups = directory_groups(sessions, Path::new("/work/current"));
-
-    let cwds = groups
-        .iter()
-        .map(|group| group.cwd.clone())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        cwds,
-        vec![
-            PathBuf::from("/work/current"),
-            PathBuf::from("/work/other"),
-            PathBuf::from("/work/third"),
-        ]
-    );
-    assert_eq!(
-        groups[1]
-            .sessions
-            .iter()
-            .map(|session| session.id.as_str())
-            .collect::<Vec<_>>(),
-        vec!["s-newest", "s-older"]
-    );
-}
-
 // Covers: picker rows retain exact workspace identity even when two workspaces
-// use the same session id.
+// use the same session id, and missing directories never inline sessions.
 // Owner: sessions hub picker state
 #[test]
 fn hub_picker_builds_typed_workspace_targets() {
     let groups = vec![
-        group(
+        HubGroup::Directory(group(
             "/work/current",
             "~/current",
             vec![summary("same-session", "/work/current", 200)],
-        ),
-        group(
+        )),
+        HubGroup::Directory(group(
             "/work/other",
             "~/other",
             vec![summary("same-session", "/work/other", 100)],
-        ),
+        )),
+        HubGroup::Missing(vec![group(
+            "/gone",
+            "/gone",
+            vec![summary("same-session", "/gone", 50)],
+        )]),
     ];
     let current = SessionTarget::new("same-session", "/work/current");
 
-    let build = hub_picker(
-        &groups,
-        Some(&current),
-        Path::new("/work/current"),
-        1_000,
-        Some((2, 1)),
-    );
+    let build = hub_picker(&groups, Some(&current), Path::new("/work/current"), 1_000);
 
+    // Missing directories get the leading cleanup row and a directory row,
+    // but never list their sessions inline.
     assert_eq!(
         build.targets,
         vec![
@@ -98,6 +64,7 @@ fn hub_picker_builds_typed_workspace_targets() {
             SessionsHubTarget::Session(SessionTarget::new("same-session", "/work/current")),
             SessionsHubTarget::Directory(PathBuf::from("/work/other")),
             SessionsHubTarget::Session(SessionTarget::new("same-session", "/work/other")),
+            SessionsHubTarget::Directory(PathBuf::from("/gone")),
         ]
     );
 }
@@ -125,6 +92,50 @@ fn directory_picker_lists_only_that_directorys_sessions() {
         vec![
             SessionsHubTarget::Session(SessionTarget::new("a-session", "/work/other")),
             SessionsHubTarget::Session(SessionTarget::new("b-session", "/work/other")),
+        ]
+    );
+}
+
+// Covers: inside a multi-worktree repo, only the current worktree lists its
+// sessions inline; sibling worktrees collapse to one browsable row each.
+// Owner: sessions hub picker
+#[test]
+fn hub_picker_collapses_sibling_worktrees() {
+    let worktree = |name: &str, session: &str| Worktree {
+        name: name.into(),
+        directory: group(
+            &format!("/repo/{name}"),
+            &format!("/repo/{name}"),
+            vec![summary(session, &format!("/repo/{name}"), 100)],
+        ),
+    };
+    let groups = vec![HubGroup::Repo {
+        display: "/repo".into(),
+        worktrees: vec![worktree("wt-a", "a-session"), worktree("wt-b", "b-session")],
+    }];
+
+    let build = hub_picker(&groups, None, Path::new("/repo/wt-a"), 1_000);
+
+    assert_eq!(
+        build.targets,
+        vec![
+            SessionsHubTarget::Directory(PathBuf::from("/repo/wt-a")),
+            SessionsHubTarget::Session(SessionTarget::new("a-session", "/repo/wt-a")),
+            SessionsHubTarget::Directory(PathBuf::from("/repo/wt-b")),
+        ]
+    );
+    let rows = build
+        .picker
+        .items
+        .iter()
+        .map(|item| (item.section.as_deref(), item.label.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows,
+        vec![
+            (Some("/repo"), "wt-a · 1"),
+            (Some("/repo"), "title a-session"),
+            (Some("/repo"), "wt-b · 1"),
         ]
     );
 }

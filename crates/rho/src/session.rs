@@ -42,6 +42,7 @@ mod tree_tests;
 #[path = "session_version_tests.rs"]
 mod version_tests;
 pub(crate) mod workspace_checkpoint;
+mod workspace_scope;
 
 #[cfg(test)]
 use layout::encode_cwd;
@@ -54,6 +55,7 @@ use persistence::{read_entries, summarize_session_file, SessionEntry, SESSION_VE
 
 pub use delete::{is_cross_project, DeleteOptions, DeleteOutcome};
 pub(crate) use delete::{CleanupOutcome, WorkspaceDeleteOutcome};
+pub(crate) use workspace_scope::Workspace;
 
 #[derive(Clone, Debug)]
 pub struct Session {

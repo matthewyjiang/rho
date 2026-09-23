@@ -20,7 +20,7 @@ use crate::sqlite_support::{OwnerOnlySqlite, ParentDirectoryPrivacy};
 use super::{
     layout::{self, SessionUnit},
     search_evidence::extract,
-    search_scope::Workspace,
+    workspace_scope::Workspace,
 };
 
 #[cfg(test)]
