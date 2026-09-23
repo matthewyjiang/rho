@@ -57,6 +57,7 @@ fn subagent_verdict_labels_and_styles_match_state() {
         state: RunState::Starting,
         last_activity: None,
         elapsed_seconds: 1,
+        status: RunStatus::default(),
     };
     let cases = [
         (RunState::Starting, "starting", Theme::text()),

@@ -34,7 +34,7 @@ rho attach
 rho attach abc123
 ```
 
-`rho attach` with no id opens a picker of subagents from the current directory. It starts on running runs. Ctrl-R includes finished transcripts. `/attach` does the same inside the TUI.
+`rho attach` with no id opens a picker of subagents from the current directory. It starts on running runs. Ctrl-R includes finished transcripts. `/attach` does the same inside the TUI. Each run's badge is coloured by outcome (running, done, error, stopped). The side pane shows a run card: model and reasoning, elapsed time, tokens and cost when reported, the delegated task, and the newest output, final result, or error.
 
 In the in-place view, Up, Down, Page Up, Page Down, Home, and End scroll. Tab, Shift-Tab, Left, and Right cycle other running subagents. Click a truncated tool card, or press Ctrl+O, to expand or collapse it. `q` or Escape returns to the composer. Ctrl-C quits Rho. If the parent hits an approval, questionnaire, or turn completion while you are attached, the footer notes it. The view does not yank you back.
 

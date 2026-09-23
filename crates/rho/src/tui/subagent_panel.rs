@@ -18,7 +18,7 @@ use crate::{
 
 const OPEN_ATTACH_PICKER_ID: &str = "/attach";
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 struct RunningSubagent {
     id: String,
     agent_id: String,
@@ -26,6 +26,8 @@ struct RunningSubagent {
     state: RunState,
     last_activity: Option<String>,
     elapsed_seconds: u64,
+    /// Full status for the `/attach` run card. Not rendered by the rail.
+    status: subagent::RunStatus,
 }
 
 /// A clickable subagent row resolved from a pointer position.
@@ -86,8 +88,9 @@ impl SubagentPanel {
                 agent_id: snapshot.agent_id,
                 title: snapshot.title,
                 state: snapshot.status.state,
-                last_activity: snapshot.status.last_activity,
+                last_activity: snapshot.status.last_activity.clone(),
                 elapsed_seconds: snapshot.elapsed.as_secs(),
+                status: snapshot.status,
             })
             .collect();
         self.rail.ingest(agents, now)
@@ -141,10 +144,9 @@ impl SubagentPanel {
             .map(|agent| super::attach_picker::AttachCandidate {
                 run_id: agent.id.clone(),
                 agent_id: agent.agent_id.clone(),
-                title: agent.title.clone(),
-                last_activity: agent.last_activity.clone(),
-                state: agent.state,
                 elapsed_seconds: agent.elapsed_seconds,
+                status: agent.status.clone(),
+                prompt: None,
             })
             .collect()
     }

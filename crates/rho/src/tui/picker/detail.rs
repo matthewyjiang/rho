@@ -80,14 +80,31 @@ pub(in crate::tui) enum DetailBlock {
     Paragraph(String),
     /// Wrapped secondary text, drawn dim.
     Muted(String),
-    /// Dim text clipped to `rows` wrapped rows, ending in an ellipsis when cut.
-    Excerpt { text: String, rows: usize },
+    /// Wrapped secondary text in the error colour, for failures.
+    Error(String),
+    /// Dim text clipped to `rows` wrapped rows. `anchor` picks which end
+    /// survives; the cut side shows an ellipsis.
+    Excerpt {
+        text: String,
+        rows: usize,
+        anchor: ExcerptAnchor,
+    },
     /// Label/value rows sharing one value column.
     Fields(Vec<DetailField>),
     /// Accent heading with dim status text after it.
     Heading { label: String, status: String },
     /// Horizontal rule separating groups.
     Rule,
+}
+
+/// Which end of an [`DetailBlock::Excerpt`] stays visible when it is cut.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::tui) enum ExcerptAnchor {
+    /// Keep the opening rows, for summaries and prompts.
+    #[default]
+    Start,
+    /// Keep the closing rows, for streaming output where the newest text matters.
+    End,
 }
 
 /// One label/value row. `note` trails the value in dim text.
@@ -170,6 +187,7 @@ impl DetailSheet {
                 }
                 DetailBlock::Paragraph(text)
                 | DetailBlock::Muted(text)
+                | DetailBlock::Error(text)
                 | DetailBlock::Excerpt { text, .. } => parts.push(text.clone()),
                 DetailBlock::Fields(fields) => {
                     for field in fields {
@@ -208,7 +226,10 @@ fn sheet_lines(sheet: &DetailSheet, width: usize) -> Vec<Line<'static>> {
                 lines.extend(wrap_text_lines(text, width, Theme::text()))
             }
             DetailBlock::Muted(text) => lines.extend(wrap_text_lines(text, width, Theme::dim())),
-            DetailBlock::Excerpt { text, rows } => lines.extend(excerpt_lines(text, *rows, width)),
+            DetailBlock::Error(text) => lines.extend(wrap_text_lines(text, width, Theme::error())),
+            DetailBlock::Excerpt { text, rows, anchor } => {
+                lines.extend(excerpt_lines(text, *rows, *anchor, width))
+            }
             DetailBlock::Fields(fields) => lines.extend(field_lines(fields, width)),
             DetailBlock::Heading { label, status } => {
                 lines.push(heading_line(label, status, width));
@@ -224,10 +245,19 @@ fn sheet_lines(sheet: &DetailSheet, width: usize) -> Vec<Line<'static>> {
     lines
 }
 
-/// Whitespace-collapsed `text` wrapped to at most `rows` rows. A cut shows as
-/// a trailing ellipsis on the last row.
-fn excerpt_lines(text: &str, rows: usize, width: usize) -> Vec<Line<'static>> {
+/// Whitespace-collapsed `text` wrapped to at most `rows` rows. A start-anchored
+/// cut ends the last row in an ellipsis; an end-anchored cut opens the first
+/// row with one.
+fn excerpt_lines(
+    text: &str,
+    rows: usize,
+    anchor: ExcerptAnchor,
+    width: usize,
+) -> Vec<Line<'static>> {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if anchor == ExcerptAnchor::End {
+        return tail_excerpt_lines(&flat, rows, width);
+    }
     let wrapped = wrap_line_at_whitespace(&flat, width);
     let cut = wrapped.len() > rows;
     wrapped
@@ -240,6 +270,28 @@ fn excerpt_lines(text: &str, rows: usize, width: usize) -> Vec<Line<'static>> {
                 // Reserve one column so the ellipsis always fits.
                 let kept = truncate_one_line(part, width.saturating_sub(1).max(1));
                 format!("{}…", kept.trim_end_matches('…').trim_end())
+            } else {
+                part.to_owned()
+            };
+            Line::from(Span::styled(text, Theme::dim()))
+        })
+        .collect()
+}
+
+fn tail_excerpt_lines(flat: &str, rows: usize, width: usize) -> Vec<Line<'static>> {
+    // Wrap one column narrower so the leading ellipsis never pushes a row
+    // past `width`.
+    let wrapped = wrap_line_at_whitespace(flat, width.saturating_sub(1).max(1));
+    let cut = wrapped.len() > rows;
+    let skip = wrapped.len().saturating_sub(rows);
+    wrapped
+        .into_iter()
+        .skip(skip)
+        .enumerate()
+        .map(|(index, part)| {
+            let part = part.trim();
+            let text = if cut && index == 0 {
+                format!("…{part}")
             } else {
                 part.to_owned()
             };

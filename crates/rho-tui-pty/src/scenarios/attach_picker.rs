@@ -30,6 +30,15 @@ pub(super) const ATTACH_PICKER_STEPS: &[Step] = &[
     },
     Step::AssertText("SUBAGENTS"),
     Step::AssertText("worker"),
+    // The run card shows what the run was asked, read from its journal.
+    Step::Phase("run_card"),
+    Step::WaitText {
+        text: "fixture delay",
+        timeout: SETTLE,
+    },
+    Step::AssertText("TASK"),
+    Step::AssertText("LATEST"),
+    Step::AssertText("Elapsed"),
     Step::Key(Key::Esc),
     Step::WaitQuiet {
         quiet_for: std::time::Duration::from_millis(150),
@@ -40,7 +49,7 @@ pub(super) const ATTACH_PICKER_STEPS: &[Step] = &[
 
 pub(super) const ATTACH_PICKER_SCENARIO: Scenario = Scenario::new(
     "attach_picker",
-    "Open /attach and list a running subagent by role",
+    "Open /attach, list a running subagent by role, and show its run card",
     DEFAULT_SIZE,
     ATTACH_PICKER_STEPS,
     /*smoke*/ false,
