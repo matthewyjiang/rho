@@ -302,19 +302,11 @@ impl App {
         }
     }
 
-    pub(super) fn scroll_limits_overlay_wheel(
-        &mut self,
-        width: u16,
-        height: u16,
-        delta: isize,
-    ) -> bool {
+    pub(super) fn scroll_limits_overlay(&mut self, area: Rect, target: PanelScrollTarget) -> bool {
         if !self.limits_overlay_open() {
             return false;
         }
-        self.apply_limits_scroll_area(
-            Rect::new(0, 0, width, height),
-            PanelScrollTarget::Delta(delta),
-        );
+        self.apply_limits_scroll_area(area, target);
         true
     }
 

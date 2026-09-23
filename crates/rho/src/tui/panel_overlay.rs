@@ -7,10 +7,13 @@
 
 use std::time::Instant;
 
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyEvent, MouseEventKind};
 use ratatui::{layout::Rect, DefaultTerminal};
 
-use super::{overlay_panel::OverlayPanelFrame, App, ComposerMode, PanelOverlay};
+use super::{
+    overlay_panel::{OverlayPanelFrame, PanelScrollTarget},
+    App, ComposerMode, PanelOverlay, HISTORY_MOUSE_SCROLL_LINES,
+};
 
 impl App {
     fn panel_overlay(&self) -> Option<&PanelOverlay> {
@@ -64,6 +67,63 @@ impl App {
             PanelOverlay::Hooks(_) => self.hooks_overlay_frame(area),
             PanelOverlay::TextView(_) => self.text_view_overlay_frame(area),
             PanelOverlay::Info(_) => self.info_overlay_frame(area),
+        }
+    }
+
+    /// Routes a pointer event to the open panel. `true` means a panel is open
+    /// and consumed it: Info handles selection and copy; the rest scroll on
+    /// the wheel and swallow clicks so controls hidden behind stay inert.
+    pub(super) fn handle_panel_overlay_mouse(
+        &mut self,
+        kind: MouseEventKind,
+        screen: Rect,
+        column: u16,
+        row: u16,
+        now: Instant,
+    ) -> bool {
+        match self.panel_overlay() {
+            None => return false,
+            Some(PanelOverlay::Info(_)) => {
+                self.handle_info_overlay_mouse(kind, screen, column, row, now);
+                return true;
+            }
+            Some(_) => {}
+        }
+        self.clear_selections();
+        self.clear_hovered_copy_buttons();
+        self.clear_rail_pointer_state();
+        self.history.set_scrollbar_drag(None);
+        let lines = HISTORY_MOUSE_SCROLL_LINES as isize;
+        let delta = match kind {
+            MouseEventKind::ScrollUp => -lines,
+            MouseEventKind::ScrollDown => lines,
+            _ => return true,
+        };
+        self.scroll_panel_overlay(screen, PanelScrollTarget::Delta(delta));
+        true
+    }
+
+    fn scroll_panel_overlay(&mut self, area: Rect, target: PanelScrollTarget) {
+        match self.panel_overlay() {
+            None => {}
+            Some(PanelOverlay::Limits(_)) => {
+                self.scroll_limits_overlay(area, target);
+            }
+            Some(PanelOverlay::Doctor(_)) => {
+                self.scroll_doctor_overlay(area, target);
+            }
+            Some(PanelOverlay::Computer(_)) => {
+                self.scroll_computer_overlay(area, target);
+            }
+            Some(PanelOverlay::Hooks(_)) => {
+                self.scroll_hooks_overlay(area, target);
+            }
+            Some(PanelOverlay::TextView(_)) => {
+                self.scroll_text_view_overlay(area, target);
+            }
+            Some(PanelOverlay::Info(_)) => {
+                self.scroll_info_overlay(area, target);
+            }
         }
     }
 }

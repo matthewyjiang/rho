@@ -9,14 +9,13 @@ use ratatui::{
 
 use super::{
     copy_interaction::{selection_position, selection_position_clamped, CopyHit},
-    overlay_panel::PanelScrollTarget,
     paste_burst::word_range_at,
     picker::PickerMouseEvent,
     text_selection::{screen_lines, CopyNotice, TextSelection},
     tool_card_hover::{ToolCardHit, ToolCardTarget},
     tool_output_ui::expandable_tool_entry,
     view::LiveHistory,
-    App, ComposerMode, PanelOverlay,
+    App, ComposerMode,
 };
 
 /// Max gap between presses that still counts as a double-click in the composer.
@@ -68,34 +67,8 @@ impl App {
         let size = terminal.size()?;
         let screen = Rect::new(0, 0, size.width, size.height);
         let now = Instant::now();
-        // Scroll-only panels swallow every pointer event; only the wheel acts.
-        let scroll_only_panel: Option<fn(&mut Self, Rect, PanelScrollTarget) -> bool> = match self
-            .input_ui
-            .composer()
-        {
-            ComposerMode::Panel(PanelOverlay::Computer(_)) => Some(Self::scroll_computer_overlay),
-            ComposerMode::Panel(PanelOverlay::Hooks(_)) => Some(Self::scroll_hooks_overlay),
-            ComposerMode::Panel(PanelOverlay::TextView(_)) => Some(Self::scroll_text_view_overlay),
-            _ => None,
-        };
-        if let Some(scroll) = scroll_only_panel {
-            self.clear_selections();
-            self.clear_hovered_copy_buttons();
-            self.clear_rail_pointer_state();
-            self.history.set_scrollbar_drag(None);
-            let delta = match kind {
-                MouseEventKind::ScrollUp => -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
-                MouseEventKind::ScrollDown => super::HISTORY_MOUSE_SCROLL_LINES as isize,
-                _ => 0,
-            };
-            scroll(self, screen, PanelScrollTarget::Delta(delta));
-            return Ok(());
-        }
-        if matches!(
-            self.input_ui.composer(),
-            ComposerMode::Panel(PanelOverlay::Info(_))
-        ) {
-            self.handle_info_overlay_mouse(kind, screen, column, row, now);
+        // An open panel owns pointer input; nothing behind it reacts.
+        if self.handle_panel_overlay_mouse(kind, screen, column, row, now) {
             return Ok(());
         }
         // The side overlay owns pointer input while open. Do not let clicks,
@@ -140,20 +113,6 @@ impl App {
         match kind {
             MouseEventKind::ScrollUp => {
                 self.input_ui.cancel_pointer_click_sequence();
-                if self.scroll_limits_overlay_wheel(
-                    size.width,
-                    size.height,
-                    -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
-                ) {
-                    return Ok(());
-                }
-                if self.scroll_doctor_overlay_wheel(
-                    size.width,
-                    size.height,
-                    -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
-                ) {
-                    return Ok(());
-                }
                 if self.route_picker_mouse(
                     PickerMouseEvent::Wheel(-1),
                     column,
@@ -176,20 +135,6 @@ impl App {
             }
             MouseEventKind::ScrollDown => {
                 self.input_ui.cancel_pointer_click_sequence();
-                if self.scroll_limits_overlay_wheel(
-                    size.width,
-                    size.height,
-                    super::HISTORY_MOUSE_SCROLL_LINES as isize,
-                ) {
-                    return Ok(());
-                }
-                if self.scroll_doctor_overlay_wheel(
-                    size.width,
-                    size.height,
-                    super::HISTORY_MOUSE_SCROLL_LINES as isize,
-                ) {
-                    return Ok(());
-                }
                 if self.route_picker_mouse(
                     PickerMouseEvent::Wheel(1),
                     column,
