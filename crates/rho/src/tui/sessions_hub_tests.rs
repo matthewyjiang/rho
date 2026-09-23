@@ -2,10 +2,9 @@ use std::path::{Path, PathBuf};
 
 use pretty_assertions::assert_eq;
 
-use super::{
-    directory_picker, hub_picker, DirectoryGroup, GroupKind, RepoGroup, SessionsHubTarget,
-};
+use super::{directory_picker, hub_picker, DirectoryGroup, HubGroup, SessionsHubTarget};
 use crate::session::{SessionSummary, SessionTarget};
+use crate::tui::sessions_hub_groups::Worktree;
 
 fn summary(id: &str, cwd: &str, updated_at: u64) -> SessionSummary {
     SessionSummary {
@@ -25,46 +24,38 @@ fn group(cwd: &str, display: &str, sessions: Vec<SessionSummary>) -> DirectoryGr
     DirectoryGroup {
         cwd: PathBuf::from(cwd),
         display: display.to_string(),
-        name: display.to_string(),
         sessions,
     }
 }
 
-fn lone(directory: DirectoryGroup) -> RepoGroup {
-    RepoGroup {
-        display: directory.display.clone(),
-        kind: GroupKind::Directory,
-        directories: vec![directory],
-    }
-}
-
 // Covers: picker rows retain exact workspace identity even when two workspaces
-// use the same session id.
+// use the same session id, and missing directories never inline sessions.
 // Owner: sessions hub picker state
 #[test]
 fn hub_picker_builds_typed_workspace_targets() {
     let groups = vec![
-        lone(group(
+        HubGroup::Directory(group(
             "/work/current",
             "~/current",
             vec![summary("same-session", "/work/current", 200)],
         )),
-        lone(group(
+        HubGroup::Directory(group(
             "/work/other",
             "~/other",
             vec![summary("same-session", "/work/other", 100)],
         )),
+        HubGroup::Missing(vec![group(
+            "/gone",
+            "/gone",
+            vec![summary("same-session", "/gone", 50)],
+        )]),
     ];
     let current = SessionTarget::new("same-session", "/work/current");
 
-    let build = hub_picker(
-        &groups,
-        Some(&current),
-        Path::new("/work/current"),
-        1_000,
-        Some((2, 1)),
-    );
+    let build = hub_picker(&groups, Some(&current), Path::new("/work/current"), 1_000);
 
+    // Missing directories get the leading cleanup row and a directory row,
+    // but never list their sessions inline.
     assert_eq!(
         build.targets,
         vec![
@@ -73,6 +64,7 @@ fn hub_picker_builds_typed_workspace_targets() {
             SessionsHubTarget::Session(SessionTarget::new("same-session", "/work/current")),
             SessionsHubTarget::Directory(PathBuf::from("/work/other")),
             SessionsHubTarget::Session(SessionTarget::new("same-session", "/work/other")),
+            SessionsHubTarget::Directory(PathBuf::from("/gone")),
         ]
     );
 }
@@ -109,25 +101,20 @@ fn directory_picker_lists_only_that_directorys_sessions() {
 // Owner: sessions hub picker
 #[test]
 fn hub_picker_collapses_sibling_worktrees() {
-    let mut current = group(
-        "/repo/wt-a",
-        "/repo/wt-a",
-        vec![summary("a-session", "/repo/wt-a", 200)],
-    );
-    current.name = "wt-a".into();
-    let mut sibling = group(
-        "/repo/wt-b",
-        "/repo/wt-b",
-        vec![summary("b-session", "/repo/wt-b", 100)],
-    );
-    sibling.name = "wt-b".into();
-    let repos = vec![RepoGroup {
+    let worktree = |name: &str, session: &str| Worktree {
+        name: name.into(),
+        directory: group(
+            &format!("/repo/{name}"),
+            &format!("/repo/{name}"),
+            vec![summary(session, &format!("/repo/{name}"), 100)],
+        ),
+    };
+    let groups = vec![HubGroup::Repo {
         display: "/repo".into(),
-        kind: GroupKind::Repo,
-        directories: vec![current, sibling],
+        worktrees: vec![worktree("wt-a", "a-session"), worktree("wt-b", "b-session")],
     }];
 
-    let build = hub_picker(&repos, None, Path::new("/repo/wt-a"), 1_000, None);
+    let build = hub_picker(&groups, None, Path::new("/repo/wt-a"), 1_000);
 
     assert_eq!(
         build.targets,

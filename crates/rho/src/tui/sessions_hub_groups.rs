@@ -1,9 +1,9 @@
 //! `/sessions` hub grouping: sessions by directory, directories by repository.
 //!
-//! Worktrees of one Git repository share a [`RepoGroup`] so a repo with many
-//! checkouts reads as one block instead of one top-level section per checkout.
+//! Worktrees of one Git repository share a [`HubGroup::Repo`] so a repo with
+//! many checkouts reads as one block instead of one section per checkout.
 //! Deleted directories cannot name their repository, so they collect in one
-//! collapsed group at the end. Placement comes from an injected resolver,
+//! [`HubGroup::Missing`] at the end. Placement comes from an injected resolver,
 //! keeping this module free of filesystem access.
 
 use std::{
@@ -18,10 +18,28 @@ use crate::session::{is_cross_project, SessionSummary, Workspace};
 pub(super) struct DirectoryGroup {
     pub(super) cwd: PathBuf,
     pub(super) display: String,
-    /// Short name within its repository, such as the worktree folder name.
-    /// Equals `display` when the directory is not grouped under a repository.
-    pub(super) name: String,
     pub(super) sessions: Vec<SessionSummary>,
+}
+
+/// One directory inside a multi-worktree repository.
+pub(super) struct Worktree {
+    /// Worktree folder name, plus the subpath for nested directories.
+    pub(super) name: String,
+    pub(super) directory: DirectoryGroup,
+}
+
+/// One hub section.
+pub(super) enum HubGroup {
+    /// A single directory: a non-Git directory, or a repository with only one
+    /// directory holding sessions.
+    Directory(DirectoryGroup),
+    /// Several directories sharing one Git repository.
+    Repo {
+        display: String,
+        worktrees: Vec<Worktree>,
+    },
+    /// Directories that no longer exist.
+    Missing(Vec<DirectoryGroup>),
 }
 
 /// Where a session directory belongs in the hub.
@@ -30,32 +48,9 @@ pub(super) enum Placement {
     Repo(Workspace),
     /// Outside Git, listed as its own group.
     Lone,
-    /// The directory no longer exists. Its repository cannot be resolved, so it
-    /// joins the shared missing-directories group.
+    /// The directory no longer exists.
     Missing,
 }
-
-/// How a hub group lists its directories.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum GroupKind {
-    /// One directory, sessions listed inline.
-    Directory,
-    /// Several worktrees of one repository. Only the current directory lists
-    /// its sessions inline; the rest collapse to one row each.
-    Repo,
-    /// Directories that no longer exist, collapsed to one row each.
-    Missing,
-}
-
-/// Directories shown under one hub section.
-pub(super) struct RepoGroup {
-    pub(super) display: String,
-    pub(super) kind: GroupKind,
-    pub(super) directories: Vec<DirectoryGroup>,
-}
-
-/// Section title for directories that no longer exist.
-const MISSING_SECTION: &str = "MISSING DIRECTORIES";
 
 /// Groups sessions by directory, keeping the input's newest-first order both
 /// across groups and inside each group. The current directory always sorts
@@ -73,10 +68,8 @@ pub(super) fn directory_groups(
         }
         let index = groups.len();
         indexes.insert(session.cwd.clone(), index);
-        let display = compact_cwd(&session.cwd);
         groups.push(DirectoryGroup {
-            name: display.clone(),
-            display,
+            display: compact_cwd(&session.cwd),
             cwd: session.cwd.clone(),
             sessions: vec![session],
         });
@@ -91,77 +84,72 @@ pub(super) fn directory_groups(
     groups
 }
 
-/// A directory plus its own workspace: group members share a repository but
-/// may sit in different worktrees.
-type Member = (DirectoryGroup, Option<Workspace>);
-
-#[derive(Clone, PartialEq, Eq, Hash)]
-enum GroupKey {
-    Repo(PathBuf),
-    Lone(PathBuf),
-    Missing,
+/// One hub section in first-seen order. Repositories point into a separate
+/// member list so later worktrees can join a section already placed.
+enum Slot {
+    Directory(DirectoryGroup),
+    Repo(usize),
 }
 
-/// Groups directories for the hub while keeping [`directory_groups`] order,
-/// so the current directory's repository comes first and the current
-/// directory leads it. Missing directories collect into one group at the end.
-pub(super) fn repo_groups(
+/// Groups directories into hub sections while keeping [`directory_groups`]
+/// order, so the current directory's section comes first and the current
+/// directory leads it. Missing directories collect into one final group.
+pub(super) fn hub_groups(
     sessions: Vec<SessionSummary>,
     current_cwd: &Path,
     place: impl Fn(&Path) -> Placement,
-) -> Vec<RepoGroup> {
-    let mut groups: Vec<(GroupKey, Vec<Member>)> = Vec::new();
-    let mut indexes = HashMap::<GroupKey, usize>::new();
+) -> Vec<HubGroup> {
+    let mut slots = Vec::new();
+    // Members keep their own workspace: they share a repository but may sit
+    // in different worktrees.
+    let mut repos: Vec<Vec<(DirectoryGroup, Workspace)>> = Vec::new();
+    let mut repo_indexes = HashMap::<PathBuf, usize>::new();
+    let mut missing = Vec::new();
     for directory in directory_groups(sessions, current_cwd) {
-        let (key, workspace) = match place(&directory.cwd) {
-            Placement::Repo(workspace) => (GroupKey::Repo(workspace.repo.clone()), Some(workspace)),
-            Placement::Lone => (GroupKey::Lone(directory.cwd.clone()), None),
-            Placement::Missing => (GroupKey::Missing, None),
-        };
-        match indexes.get(&key) {
-            Some(&index) => groups[index].1.push((directory, workspace)),
-            None => {
-                indexes.insert(key.clone(), groups.len());
-                groups.push((key, vec![(directory, workspace)]));
+        match place(&directory.cwd) {
+            Placement::Missing => missing.push(directory),
+            Placement::Lone => slots.push(Slot::Directory(directory)),
+            Placement::Repo(workspace) => {
+                let index = *repo_indexes
+                    .entry(workspace.repo.clone())
+                    .or_insert_with(|| {
+                        slots.push(Slot::Repo(repos.len()));
+                        repos.push(Vec::new());
+                        repos.len() - 1
+                    });
+                repos[index].push((directory, workspace));
             }
         }
     }
-    // Missing directories are cleanup candidates, not places to work: last.
-    groups.sort_by_key(|(key, _)| matches!(key, GroupKey::Missing));
-    groups
+    let mut groups = slots
         .into_iter()
-        .map(|(key, members)| {
-            let (display, kind) = match &key {
-                GroupKey::Missing => (MISSING_SECTION.to_owned(), GroupKind::Missing),
-                // A repository with one directory reads best as that directory.
-                GroupKey::Repo(repo) if members.len() > 1 => {
-                    (compact_cwd(repo_checkout(repo)), GroupKind::Repo)
-                }
-                GroupKey::Repo(_) | GroupKey::Lone(_) => {
-                    (members[0].0.display.clone(), GroupKind::Directory)
-                }
-            };
-            let directories = members
-                .into_iter()
-                .map(|(mut directory, workspace)| {
-                    match (kind, workspace) {
-                        (GroupKind::Repo, Some(workspace)) => {
-                            directory.name = name_in_worktree(&directory.cwd, &workspace);
-                        }
-                        // Keep full paths: siblings share no common root.
-                        (GroupKind::Missing, _) => directory.name = directory.display.clone(),
-                        (GroupKind::Repo | GroupKind::Directory, _) => {}
-                    }
-                    directory
-                })
-                .collect();
-            RepoGroup {
-                display,
-                kind,
-                directories,
-            }
+        .map(|slot| match slot {
+            Slot::Directory(directory) => HubGroup::Directory(directory),
+            Slot::Repo(index) => repo_group(std::mem::take(&mut repos[index])),
         })
-        .collect()
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        groups.push(HubGroup::Missing(missing));
+    }
+    groups
+}
+
+/// A repository whose sessions all sit in one directory reads best as that
+/// directory.
+fn repo_group(mut members: Vec<(DirectoryGroup, Workspace)>) -> HubGroup {
+    if members.len() == 1 {
+        return HubGroup::Directory(members.remove(0).0);
+    }
+    HubGroup::Repo {
+        display: compact_cwd(repo_checkout(&members[0].1.repo)),
+        worktrees: members
+            .into_iter()
+            .map(|(directory, workspace)| Worktree {
+                name: name_in_worktree(&directory.cwd, &workspace.worktree),
+                directory,
+            })
+            .collect(),
+    }
 }
 
 /// Folder that holds a repository's `.git` directory, or the Git directory
@@ -174,8 +162,7 @@ fn repo_checkout(repo: &Path) -> &Path {
 }
 
 /// Worktree folder name, plus the path below it when the directory is nested.
-fn name_in_worktree(cwd: &Path, workspace: &Workspace) -> String {
-    let worktree = &workspace.worktree;
+fn name_in_worktree(cwd: &Path, worktree: &Path) -> String {
     let root = worktree.file_name().map_or_else(
         || compact_cwd(worktree),
         |name| name.to_string_lossy().into_owned(),

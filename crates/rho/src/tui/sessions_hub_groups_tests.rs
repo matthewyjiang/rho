@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use pretty_assertions::assert_eq;
 
-use super::{directory_groups, repo_groups, GroupKind, Placement};
+use super::{directory_groups, hub_groups, HubGroup, Placement};
 use crate::session::{SessionSummary, Workspace};
 
 fn summary(id: &str, cwd: &str, updated_at: u64) -> SessionSummary {
@@ -83,7 +83,7 @@ fn place(cwd: &Path) -> Placement {
 // directories keep their full path, and missing directories collect last.
 // Owner: sessions hub grouping
 #[test]
-fn repo_groups_merge_worktrees_and_collect_missing_directories() {
+fn hub_groups_merge_worktrees_and_collect_missing_directories() {
     let sessions = vec![
         summary("gone-a", "/gone/wt-x", 700),
         summary("plain", "/plain", 600),
@@ -94,35 +94,47 @@ fn repo_groups_merge_worktrees_and_collect_missing_directories() {
         summary("a", "/repo/wt-a", 200),
     ];
 
-    let repos = repo_groups(sessions, Path::new("/repo/wt-a"), place);
+    let groups = hub_groups(sessions, Path::new("/repo/wt-a"), place);
 
-    let shape = repos
+    let names = |directories: &[super::DirectoryGroup]| {
+        directories
+            .iter()
+            .map(|directory| directory.display.clone())
+            .collect::<Vec<_>>()
+    };
+    let shape = groups
         .iter()
-        .map(|repo| {
-            (
-                repo.display.as_str(),
-                repo.kind,
-                repo.directories
+        .map(|group| match group {
+            HubGroup::Directory(directory) => ("directory", directory.display.clone(), vec![]),
+            HubGroup::Repo { display, worktrees } => (
+                "repo",
+                display.clone(),
+                worktrees
                     .iter()
-                    .map(|directory| directory.name.as_str())
-                    .collect::<Vec<_>>(),
-            )
+                    .map(|worktree| worktree.name.clone())
+                    .collect(),
+            ),
+            HubGroup::Missing(missing) => ("missing", String::new(), names(missing)),
         })
         .collect::<Vec<_>>();
     assert_eq!(
         shape,
         vec![
             (
-                "/repo",
-                GroupKind::Repo,
-                vec!["wt-a", "wt-b", "wt-a/crates/x"]
+                "repo",
+                "/repo".to_string(),
+                vec![
+                    "wt-a".to_string(),
+                    "wt-b".to_string(),
+                    "wt-a/crates/x".to_string()
+                ]
             ),
-            ("/plain", GroupKind::Directory, vec!["/plain"]),
-            ("/solo", GroupKind::Directory, vec!["/solo"]),
+            ("directory", "/plain".to_string(), vec![]),
+            ("directory", "/solo".to_string(), vec![]),
             (
-                "MISSING DIRECTORIES",
-                GroupKind::Missing,
-                vec!["/gone/wt-x", "/gone/wt-y"]
+                "missing",
+                String::new(),
+                vec!["/gone/wt-x".to_string(), "/gone/wt-y".to_string()]
             ),
         ]
     );

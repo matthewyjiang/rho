@@ -15,6 +15,11 @@ pub(crate) struct Workspace {
 }
 
 impl Workspace {
+    /// Whether the directory sits inside a Git checkout.
+    pub(crate) fn is_git(&self) -> bool {
+        self.repo != self.worktree
+    }
+
     /// Resolve Git administrative paths without running project configuration,
     /// hooks or subprocesses. A non-Git directory is its own local scope.
     pub(crate) fn resolve(cwd: &Path) -> Self {

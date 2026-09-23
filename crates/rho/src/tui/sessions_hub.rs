@@ -1,5 +1,5 @@
 //! In-app `/sessions` hub: browse, resume, and delete saved sessions from
-//! every directory, grouped by the directory they belong to.
+//! every directory, grouped by directory and by Git repository.
 
 use std::{
     collections::HashSet,
@@ -8,7 +8,7 @@ use std::{
 
 use ratatui::DefaultTerminal;
 
-use super::sessions_hub_groups::{repo_groups, DirectoryGroup, GroupKind, Placement, RepoGroup};
+use super::sessions_hub_groups::{hub_groups, DirectoryGroup, HubGroup, Placement};
 use super::{
     picker::OverlayChrome, session_picker, statusline::path::compact_cwd, App, ComposerMode, Entry,
     InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, InteractiveRuntime,
@@ -88,8 +88,11 @@ fn target_value(index: usize) -> String {
     format!("{TARGET_PREFIX}{index}")
 }
 
+/// `label` names the row: "All sessions" under a directory's own section, or
+/// the directory's short name inside a shared section.
 fn directory_row(
     section: &str,
+    label: &str,
     group: &DirectoryGroup,
     current_cwd: &Path,
     now: u64,
@@ -103,12 +106,6 @@ fn directory_row(
         .max()
         .unwrap_or_default();
     let updated = session_picker::format_updated_ago(newest, now);
-    // Lone directories name their section; worktrees name their row.
-    let label = if group.name == section {
-        "All sessions"
-    } else {
-        group.name.as_str()
-    };
     PickerItem {
         section: Some(section.to_owned()),
         label: format!("{label} · {}", group.sessions.len()),
@@ -173,11 +170,9 @@ fn session_row(
     }
 }
 
-fn cleanup_missing_workspaces_row(
-    session_count: usize,
-    directory_count: usize,
-    value: String,
-) -> PickerItem {
+fn cleanup_missing_workspaces_row(missing: &[DirectoryGroup], value: String) -> PickerItem {
+    let session_count = missing.iter().map(|group| group.sessions.len()).sum();
+    let directory_count = missing.len();
     PickerItem {
         section: Some("CLEAN UP".into()),
         label: "Delete sessions for missing directories".into(),
@@ -213,61 +208,97 @@ fn manage_sessions_picker(title: impl Into<String>, items: Vec<PickerItem>) -> U
         .with_restore_status("sessions")
 }
 
+/// Section title for directories that no longer exist.
+const MISSING_SECTION: &str = "MISSING DIRECTORIES";
+
+/// Root list builder: section rows plus the target behind each row.
+struct HubRows<'a> {
+    items: Vec<PickerItem>,
+    targets: Vec<SessionsHubTarget>,
+    current_session: Option<&'a SessionTarget>,
+    current_cwd: &'a Path,
+    now: u64,
+}
+
+impl HubRows<'_> {
+    fn next_value(&mut self, target: SessionsHubTarget) -> String {
+        self.targets.push(target);
+        target_value(self.targets.len() - 1)
+    }
+
+    fn directory(&mut self, section: &str, label: &str, group: &DirectoryGroup) {
+        let value = self.next_value(SessionsHubTarget::Directory(group.cwd.clone()));
+        let row = directory_row(section, label, group, self.current_cwd, self.now, value);
+        self.items.push(row);
+    }
+
+    fn sessions(&mut self, section: &str, group: &DirectoryGroup) {
+        for session in &group.sessions {
+            let value = self.next_value(SessionsHubTarget::Session(session.target()));
+            let row = session_row(
+                Some(section),
+                session,
+                self.current_session,
+                self.current_cwd,
+                self.now,
+                value,
+            );
+            self.items.push(row);
+        }
+    }
+}
+
 /// Root list: one section per group, current directory first. Single
 /// directories list their sessions inline; multi-worktree repositories inline
-/// only the current directory; missing directories never inline.
+/// only the current directory; missing directories get a cleanup row and
+/// never inline.
 pub(super) fn hub_picker(
-    repos: &[RepoGroup],
+    groups: &[HubGroup],
     current_session: Option<&SessionTarget>,
     current_cwd: &Path,
     now: u64,
-    missing: Option<(usize, usize)>,
 ) -> SessionsPickerBuild {
-    let mut items = Vec::new();
-    let mut targets = Vec::new();
-    if let Some((session_count, directory_count)) = missing {
-        targets.push(SessionsHubTarget::CleanupMissingWorkspaces);
-        items.push(cleanup_missing_workspaces_row(
-            session_count,
-            directory_count,
-            target_value(targets.len() - 1),
-        ));
+    let mut rows = HubRows {
+        items: Vec::new(),
+        targets: Vec::new(),
+        current_session,
+        current_cwd,
+        now,
+    };
+    // Cleanup leads the list so stale directories are noticed first.
+    let missing = groups.iter().find_map(|group| match group {
+        HubGroup::Missing(missing) => Some(missing),
+        HubGroup::Directory(_) | HubGroup::Repo { .. } => None,
+    });
+    if let Some(missing) = missing {
+        let value = rows.next_value(SessionsHubTarget::CleanupMissingWorkspaces);
+        rows.items
+            .push(cleanup_missing_workspaces_row(missing, value));
     }
-    for repo in repos {
-        let section = repo.display.as_str();
-        for group in &repo.directories {
-            targets.push(SessionsHubTarget::Directory(group.cwd.clone()));
-            items.push(directory_row(
-                section,
-                group,
-                current_cwd,
-                now,
-                target_value(targets.len() - 1),
-            ));
-            let inline = match repo.kind {
-                GroupKind::Directory => true,
-                GroupKind::Repo => !is_cross_project(&group.cwd, current_cwd),
-                GroupKind::Missing => false,
-            };
-            if !inline {
-                continue;
+    for group in groups {
+        match group {
+            HubGroup::Directory(directory) => {
+                rows.directory(&directory.display, "All sessions", directory);
+                rows.sessions(&directory.display, directory);
             }
-            for session in &group.sessions {
-                targets.push(SessionsHubTarget::Session(session.target()));
-                items.push(session_row(
-                    Some(section),
-                    session,
-                    current_session,
-                    current_cwd,
-                    now,
-                    target_value(targets.len() - 1),
-                ));
+            HubGroup::Repo { display, worktrees } => {
+                for worktree in worktrees {
+                    rows.directory(display, &worktree.name, &worktree.directory);
+                    if !is_cross_project(&worktree.directory.cwd, current_cwd) {
+                        rows.sessions(display, &worktree.directory);
+                    }
+                }
+            }
+            HubGroup::Missing(missing) => {
+                for directory in missing {
+                    rows.directory(MISSING_SECTION, &directory.display, directory);
+                }
             }
         }
     }
     SessionsPickerBuild {
-        picker: manage_sessions_picker("Sessions", items),
-        targets,
+        picker: manage_sessions_picker("Sessions", rows.items),
+        targets: rows.targets,
     }
 }
 
@@ -349,33 +380,25 @@ impl App {
                 missing_directories.insert(cwd.clone());
             }
         }
-        let missing_session_count = sessions
-            .iter()
-            .filter(|session| missing_directories.contains(&session.cwd))
-            .count();
-        let missing_directory_count = missing_directories.len();
         // Resolving a deleted directory would walk its surviving ancestors
         // into an unrelated repository, so missing directories never resolve.
-        let repos = repo_groups(sessions, &self.info.runtime.cwd, |cwd| {
+        let groups = hub_groups(sessions, &self.info.runtime.cwd, |cwd| {
             if missing_directories.contains(cwd) {
                 return Placement::Missing;
             }
             let workspace = Workspace::resolve(cwd);
-            if workspace.repo == workspace.worktree {
-                Placement::Lone
-            } else {
+            if workspace.is_git() {
                 Placement::Repo(workspace)
+            } else {
+                Placement::Lone
             }
         });
-        let missing =
-            (missing_session_count > 0).then_some((missing_session_count, missing_directory_count));
         let current = self.current_session_target();
         let build = hub_picker(
-            &repos,
+            &groups,
             current.as_ref(),
             &self.info.runtime.cwd,
             session_picker::now_unix_secs(),
-            missing,
         );
         self.sessions_hub_state.open_root(build.targets);
         self.input_ui
@@ -434,10 +457,8 @@ impl App {
             self.set_status("no saved sessions for this directory");
             return Ok(());
         }
-        let display = compact_cwd(cwd);
         let group = DirectoryGroup {
-            name: display.clone(),
-            display,
+            display: compact_cwd(cwd),
             cwd: cwd.to_path_buf(),
             sessions,
         };
