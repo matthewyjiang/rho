@@ -221,6 +221,10 @@ impl App {
                     self.finish_media_attach(outcome);
                     needs_redraw = true;
                 }
+                output = super::sessions_hub_tasks::next_sessions_task(&mut self.pending_sessions_task) => {
+                    self.finish_sessions_task(output)?;
+                    needs_redraw = true;
+                }
                 _ = tokio::time::sleep(timeout) => {
                     needs_redraw |= self.questionnaire_timeout_running();
                     needs_redraw |= self.tick_questionnaire_timeout();

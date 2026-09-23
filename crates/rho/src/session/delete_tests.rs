@@ -144,3 +144,56 @@ fn target_batch_does_not_delete_session_created_after_preview() {
     assert!(!reviewed_path.exists());
     assert!(later_path.exists());
 }
+
+// Covers: a batch keeps going past a session it cannot delete, and drops the
+// index rows of the ones it did delete even though that happens at batch end.
+// Owner: session deletion
+#[test]
+fn batch_delete_skips_blocked_session_and_drops_deleted_index_rows() {
+    let sessions = tempfile::tempdir().unwrap();
+    let subagents = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let ids = [
+        "00000000-0000-0000-0000-000000000131",
+        "00000000-0000-0000-0000-000000000132",
+        "00000000-0000-0000-0000-000000000133",
+    ];
+    for id in &ids {
+        drop(create_session(sessions.path(), workspace.path(), id));
+    }
+    // An open session holds its active lease, which blocks its delete.
+    let blocked = Session::open_by_id_in_root(sessions.path(), workspace.path(), ids[1])
+        .unwrap()
+        .0;
+
+    let outcome = delete_targets_in_roots(
+        sessions.path(),
+        subagents.path(),
+        &ids.map(|id| SessionTarget::new(id, workspace.path())),
+        &DeleteOptions::default(),
+    )
+    .unwrap();
+
+    let deleted = outcome
+        .deleted
+        .iter()
+        .map(|item| item.id.as_str())
+        .collect::<Vec<_>>();
+    let failed = outcome
+        .failures
+        .iter()
+        .map(|item| item.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!((deleted, failed), (vec![ids[0], ids[2]], vec![ids[1]]));
+    drop(blocked);
+    // Read the index directly: listing would reconcile leftover rows away.
+    let index = rusqlite::Connection::open(sessions.path().join("index.sqlite3")).unwrap();
+    let indexed = index
+        .prepare("select id from sessions order by id")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(indexed, vec![ids[1].to_string()]);
+}

@@ -15,6 +15,7 @@ use super::statusline::path::compact_cwd;
 use crate::session::{is_cross_project, SessionSummary, Workspace};
 
 /// Sessions of one workspace directory, newest first, plus its display path.
+#[derive(Debug)]
 pub(super) struct DirectoryGroup {
     pub(super) cwd: PathBuf,
     pub(super) display: String,
@@ -22,6 +23,7 @@ pub(super) struct DirectoryGroup {
 }
 
 /// One directory inside a multi-worktree repository.
+#[derive(Debug)]
 pub(super) struct Worktree {
     /// Worktree folder name, plus the subpath for nested directories.
     pub(super) name: String,
@@ -29,6 +31,7 @@ pub(super) struct Worktree {
 }
 
 /// One hub section.
+#[derive(Debug)]
 pub(super) enum HubGroup {
     /// A single directory: a non-Git directory, or a repository with only one
     /// directory holding sessions.
@@ -40,6 +43,18 @@ pub(super) enum HubGroup {
     },
     /// Directories that no longer exist.
     Missing(Vec<DirectoryGroup>),
+}
+
+/// The group for directory `cwd`, wherever it sits in the hub.
+pub(super) fn find_directory<'a>(groups: &'a [HubGroup], cwd: &Path) -> Option<&'a DirectoryGroup> {
+    groups.iter().find_map(|group| match group {
+        HubGroup::Directory(directory) => (directory.cwd == cwd).then_some(directory),
+        HubGroup::Repo { worktrees, .. } => worktrees
+            .iter()
+            .map(|worktree| &worktree.directory)
+            .find(|directory| directory.cwd == cwd),
+        HubGroup::Missing(directories) => directories.iter().find(|directory| directory.cwd == cwd),
+    })
 }
 
 /// Where a session directory belongs in the hub.

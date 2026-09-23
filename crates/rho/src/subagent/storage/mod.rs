@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rusqlite::{params, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use super::{create_private_directory, normalize_id, secure_directory};
 use index::{
@@ -165,40 +165,62 @@ impl RunPlacement {
     }
 }
 
+/// Open run-index handle for deleting parent sessions.
+///
+/// Reuse one handle across a batch of deletes: every open and close of the WAL
+/// index pays a checkpoint fsync, which made per-session cleanup cost several
+/// milliseconds each before any file was removed.
+#[derive(Debug)]
+pub(crate) struct RunIndexCleanup {
+    connection: Connection,
+}
+
+impl RunIndexCleanup {
+    pub(crate) fn open(subagents_root: &Path) -> anyhow::Result<Self> {
+        prepare_private_directory(subagents_root)?;
+        let connection = initialize_index(&subagents_root.join(INDEX_FILE_NAME))?;
+        Ok(Self { connection })
+    }
+
+    /// Claim exclusive cleanup for `parent_session_id` so new reservations
+    /// that record that parent fail until the guard is released.
+    pub(crate) fn lock_parent(
+        &self,
+        parent_session_id: &str,
+    ) -> anyhow::Result<ParentRunCleanupGuard<'_>> {
+        let transaction =
+            Transaction::new_unchecked(&self.connection, TransactionBehavior::Immediate)?;
+        acquire_parent_lock(&transaction, parent_session_id, unix_timestamp_secs())?;
+        transaction.commit()?;
+        Ok(ParentRunCleanupGuard {
+            connection: &self.connection,
+            parent_session_id: parent_session_id.to_string(),
+        })
+    }
+}
+
 /// Exclusive cleanup claim for one parent session's indexed runs.
 ///
-/// While held, reservations that record this parent fail fast. Dropping without
-/// [`Self::clear_index_and_unlock`] only releases the claim so a failed delete
-/// does not leave the parent permanently blocked. Crashed holders expire after
-/// [`index::PARENT_LOCK_TTL_SECS`] and become stealable.
+/// While held, reservations that record this parent fail fast. Dropping the
+/// guard releases the claim, so hold it until the parent's files are gone and
+/// a failed delete never leaves the parent blocked. Crashed holders expire
+/// after [`index::PARENT_LOCK_TTL_SECS`] and become stealable.
 #[derive(Debug)]
-pub(crate) struct ParentRunCleanupGuard {
-    subagents_root: PathBuf,
+pub(crate) struct ParentRunCleanupGuard<'a> {
+    connection: &'a Connection,
     parent_session_id: String,
-    released: bool,
 }
 
-impl ParentRunCleanupGuard {
+impl ParentRunCleanupGuard<'_> {
     /// Remove index rows for this parent while retaining the cleanup claim.
     pub(crate) fn clear_index(&self) -> anyhow::Result<()> {
-        clear_parent_index_rows(&self.subagents_root, &self.parent_session_id)
-    }
-
-    #[cfg(test)]
-    /// Remove index rows for this parent and release the cleanup claim.
-    pub(crate) fn clear_index_and_unlock(mut self) -> anyhow::Result<()> {
-        clear_parent_index_rows(&self.subagents_root, &self.parent_session_id)?;
-        self.released = true;
-        Ok(())
+        clear_parent_index_rows(self.connection, &self.parent_session_id)
     }
 }
 
-impl Drop for ParentRunCleanupGuard {
+impl Drop for ParentRunCleanupGuard<'_> {
     fn drop(&mut self) {
-        if self.released {
-            return;
-        }
-        let _ = unlock_parent(&self.subagents_root, &self.parent_session_id);
+        let _ = unlock_parent(self.connection, &self.parent_session_id);
     }
 }
 
@@ -303,32 +325,6 @@ fn release_run_directory_in_root(
     )?;
     transaction.commit()?;
     Ok(())
-}
-
-/// Claim exclusive cleanup for `parent_session_id` so new reservations that
-/// record that parent fail until the guard is released.
-pub(crate) fn lock_parent_for_cleanup(
-    subagents_root: &Path,
-    parent_session_id: &str,
-) -> anyhow::Result<ParentRunCleanupGuard> {
-    lock_parent_for_cleanup_in_root(subagents_root, parent_session_id)
-}
-
-fn lock_parent_for_cleanup_in_root(
-    subagents_root: &Path,
-    parent_session_id: &str,
-) -> anyhow::Result<ParentRunCleanupGuard> {
-    prepare_private_directory(subagents_root)?;
-    let index_path = subagents_root.join(INDEX_FILE_NAME);
-    let mut connection = initialize_index(&index_path)?;
-    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    acquire_parent_lock(&transaction, parent_session_id, unix_timestamp_secs())?;
-    transaction.commit()?;
-    Ok(ParentRunCleanupGuard {
-        subagents_root: subagents_root.to_path_buf(),
-        parent_session_id: parent_session_id.to_string(),
-        released: false,
-    })
 }
 
 pub(crate) fn resolve_run_directory(id: &str) -> anyhow::Result<PathBuf> {

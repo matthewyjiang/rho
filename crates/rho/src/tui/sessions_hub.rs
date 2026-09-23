@@ -1,20 +1,18 @@
 //! In-app `/sessions` hub: browse, resume, and delete saved sessions from
 //! every directory, grouped by directory and by Git repository.
 
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use ratatui::DefaultTerminal;
 
-use super::sessions_hub_groups::{hub_groups, DirectoryGroup, HubGroup, Placement};
+use super::sessions_hub_groups::{find_directory, DirectoryGroup, HubGroup};
+use super::sessions_hub_tasks::{plural, DeleteOrigin, SessionsDelete};
 use super::{
     picker::OverlayChrome, session_picker, statusline::path::compact_cwd, App, ComposerMode, Entry,
     InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, InteractiveRuntime,
-    PickerBadge, PickerBadgeTone, PickerItem, PickerKeyHints, PickerLayout, Session, UiPicker,
+    PickerBadge, PickerBadgeTone, PickerCursor, PickerItem, PickerKeyHints, PickerLayout, UiPicker,
 };
-use crate::session::{is_cross_project, DeleteOptions, SessionSummary, SessionTarget, Workspace};
+use crate::session::{is_cross_project, Session, SessionSummary, SessionTarget};
 
 const TARGET_PREFIX: &str = "sessions-target:";
 
@@ -38,18 +36,39 @@ pub(super) struct SessionsPickerBuild {
     pub(super) targets: Vec<SessionsHubTarget>,
 }
 
+/// Open hub state. `groups` is the last loaded listing: drilling into a
+/// directory and building prompts reads it instead of disk.
 #[derive(Debug, Default)]
 pub(super) struct SessionsHubState {
     location: SessionsLocation,
     targets: Vec<SessionsHubTarget>,
     root_targets: Vec<SessionsHubTarget>,
+    groups: Vec<HubGroup>,
+    /// The hub shows a placeholder until the first listing lands.
+    loading: bool,
 }
 
 impl SessionsHubState {
-    fn open_root(&mut self, targets: Vec<SessionsHubTarget>) {
+    fn open_root(&mut self, targets: Vec<SessionsHubTarget>, groups: Vec<HubGroup>) {
+        self.loading = false;
         self.location = SessionsLocation::Root;
         self.root_targets.clone_from(&targets);
         self.targets = targets;
+        self.groups = groups;
+    }
+
+    fn directory(&self, cwd: &Path) -> Option<&DirectoryGroup> {
+        find_directory(&self.groups, cwd)
+    }
+
+    fn missing_directories(&self) -> &[DirectoryGroup] {
+        self.groups
+            .iter()
+            .find_map(|group| match group {
+                HubGroup::Missing(missing) => Some(missing.as_slice()),
+                HubGroup::Directory(_) | HubGroup::Repo { .. } => None,
+            })
+            .unwrap_or_default()
     }
 
     fn open_directory(&mut self, cwd: PathBuf, targets: Vec<SessionsHubTarget>) {
@@ -76,11 +95,11 @@ impl SessionsHubState {
     }
 }
 
-fn count_label(count: usize) -> String {
+fn directory_count_label(count: usize) -> String {
     if count == 1 {
-        "1 session".to_string()
+        "1 directory".to_string()
     } else {
-        format!("{count} sessions")
+        format!("{count} directories")
     }
 }
 
@@ -177,13 +196,9 @@ fn cleanup_missing_workspaces_row(missing: &[DirectoryGroup], value: String) -> 
         section: Some("CLEAN UP".into()),
         label: "Delete sessions for missing directories".into(),
         detail: None,
-        preview: Some(if directory_count == 1 {
-            "1 directory".to_string()
-        } else {
-            format!("{directory_count} directories")
-        }),
+        preview: Some(directory_count_label(directory_count)),
         badge: Some(PickerBadge {
-            text: count_label(session_count),
+            text: plural(session_count, "session"),
             tone: PickerBadgeTone::Warning,
         }),
         value,
@@ -345,54 +360,59 @@ impl App {
             .map(|id| SessionTarget::new(id.clone(), self.info.runtime.cwd.clone()))
     }
 
-    pub(super) fn execute_sessions_command(
-        &mut self,
-        terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<()> {
-        // The first listing can parse many transcripts to build the session
-        // index, so show progress before the synchronous work.
+    /// `/sessions`: open the hub at once and list sessions in the background.
+    pub(super) fn execute_sessions_command(&mut self) {
+        if self.refuse_while_sessions_delete_runs() {
+            return;
+        }
+        self.sessions_hub_state.clear();
+        self.sessions_hub_state.loading = true;
+        self.input_ui.set_composer(ComposerMode::Picker(
+            manage_sessions_picker("Sessions", Vec::new()).with_empty_message("loading sessions…"),
+        ));
         self.set_status("loading sessions");
-        terminal.draw(|frame| self.draw(frame))?;
-        self.open_sessions_hub_or_report();
-        Ok(())
+        self.start_sessions_load();
     }
 
-    pub(super) fn open_sessions_hub_or_report(&mut self) {
-        if let Err(error) = self.open_sessions_hub() {
-            self.sessions_hub_state.clear();
-            self.input_ui.set_composer(ComposerMode::Input);
-            self.insert_entry(&Entry::Error(format!("could not open sessions: {error}")));
-            self.set_status("sessions failed");
+    /// Fill the loading hub with the listing. Dropped when the user closed
+    /// the hub first, so a late listing never reopens it.
+    pub(super) fn fill_sessions_hub(&mut self, groups: anyhow::Result<Vec<HubGroup>>) {
+        let hub_waiting = self.sessions_hub_state.loading
+            && matches!(self.input_ui.composer(), ComposerMode::Picker(picker) if picker.is_manage_sessions());
+        if !hub_waiting {
+            return;
+        }
+        match groups {
+            Ok(groups) => {
+                // Keep anything typed into the search box while loading.
+                let cursor = match self.input_ui.composer() {
+                    ComposerMode::Picker(picker) => Some(picker.cursor()),
+                    _ => None,
+                };
+                self.show_sessions_hub(groups);
+                if let (Some(cursor), ComposerMode::Picker(picker)) =
+                    (cursor.as_ref(), self.input_ui.composer_mut())
+                {
+                    picker.restore_cursor(cursor);
+                }
+            }
+            Err(error) => {
+                self.sessions_hub_state.clear();
+                self.input_ui.set_composer(ComposerMode::Input);
+                self.insert_entry(&Entry::Error(format!("could not open sessions: {error}")));
+                self.set_status("sessions failed");
+            }
         }
     }
 
-    pub(super) fn open_sessions_hub(&mut self) -> anyhow::Result<()> {
-        let sessions = Session::list_all()?;
-        if sessions.is_empty() {
+    /// Show the root hub for `groups`.
+    fn show_sessions_hub(&mut self, groups: Vec<HubGroup>) {
+        if groups.is_empty() {
             self.sessions_hub_state.clear();
             self.input_ui.set_composer(ComposerMode::Input);
             self.set_status("no saved sessions");
-            return Ok(());
+            return;
         }
-        let mut missing_directories = HashSet::new();
-        for cwd in sessions.iter().map(|session| &session.cwd) {
-            if !missing_directories.contains(cwd) && Session::workspace_directory_is_missing(cwd)? {
-                missing_directories.insert(cwd.clone());
-            }
-        }
-        // Resolving a deleted directory would walk its surviving ancestors
-        // into an unrelated repository, so missing directories never resolve.
-        let groups = hub_groups(sessions, &self.info.runtime.cwd, |cwd| {
-            if missing_directories.contains(cwd) {
-                return Placement::Missing;
-            }
-            let workspace = Workspace::resolve(cwd);
-            if workspace.is_git() {
-                Placement::Repo(workspace)
-            } else {
-                Placement::Lone
-            }
-        });
         let current = self.current_session_target();
         let build = hub_picker(
             &groups,
@@ -400,11 +420,30 @@ impl App {
             &self.info.runtime.cwd,
             session_picker::now_unix_secs(),
         );
-        self.sessions_hub_state.open_root(build.targets);
+        self.sessions_hub_state.open_root(build.targets, groups);
         self.input_ui
             .set_composer(ComposerMode::Picker(build.picker));
         self.set_status("sessions");
-        Ok(())
+    }
+
+    /// Rebuild the open hub from a fresh listing after a delete, keeping the
+    /// open directory and cursor.
+    pub(super) fn refresh_sessions_hub(&mut self, groups: Vec<HubGroup>) {
+        let location = self.sessions_hub_state.location();
+        let cursor = match self.input_ui.composer() {
+            ComposerMode::Picker(picker) => Some(picker.cursor()),
+            _ => None,
+        };
+        self.show_sessions_hub(groups);
+        if let SessionsLocation::Directory(cwd) = location {
+            if matches!(self.input_ui.composer(), ComposerMode::Picker(_)) {
+                self.open_directory_sessions(&cwd, cursor.as_ref());
+            }
+        } else if let (Some(cursor), ComposerMode::Picker(picker)) =
+            (cursor.as_ref(), self.input_ui.composer_mut())
+        {
+            picker.restore_cursor(cursor);
+        }
     }
 
     pub(super) async fn submit_sessions_selection(
@@ -436,35 +475,29 @@ impl App {
                     self.set_status("start Rho in that directory to resume this session");
                     return Ok(());
                 }
+                // The session may be in the batch being deleted.
+                if self.refuse_while_sessions_delete_runs() {
+                    return Ok(());
+                }
                 self.submit_resume_target(&target, terminal, agent).await
             }
-            SessionsHubTarget::Directory(cwd) => self.open_directory_sessions(&cwd),
+            SessionsHubTarget::Directory(cwd) => {
+                self.open_directory_sessions(&cwd, None);
+                Ok(())
+            }
         }
     }
 
-    fn open_directory_sessions(&mut self, cwd: &Path) -> anyhow::Result<()> {
-        self.open_directory_sessions_restored(cwd, None)
-    }
-
-    pub(super) fn open_directory_sessions_restored(
-        &mut self,
-        cwd: &Path,
-        cursor: Option<&super::PickerCursor>,
-    ) -> anyhow::Result<()> {
-        let sessions = Session::list(cwd)?;
-        if sessions.is_empty() {
+    /// Drill into one directory's sessions from the loaded listing.
+    fn open_directory_sessions(&mut self, cwd: &Path, cursor: Option<&PickerCursor>) {
+        let current = self.current_session_target();
+        let Some(group) = self.sessions_hub_state.directory(cwd) else {
             self.sessions_hub_state.navigate_back();
             self.set_status("no saved sessions for this directory");
-            return Ok(());
-        }
-        let group = DirectoryGroup {
-            display: compact_cwd(cwd),
-            cwd: cwd.to_path_buf(),
-            sessions,
+            return;
         };
-        let current = self.current_session_target();
         let mut build = directory_picker(
-            &group,
+            group,
             current.as_ref(),
             &self.info.runtime.cwd,
             session_picker::now_unix_secs(),
@@ -475,13 +508,15 @@ impl App {
         self.sessions_hub_state
             .open_directory(cwd.to_path_buf(), build.targets);
         self.open_child_picker(build.picker);
-        Ok(())
     }
 
     pub(super) fn prompt_delete_selected_sessions_item(&mut self) -> anyhow::Result<()> {
         let Some(value) = self.selected_sessions_item_value() else {
             return Ok(());
         };
+        if self.refuse_while_sessions_delete_runs() {
+            return Ok(());
+        }
         let Some(target) = self.sessions_hub_state.target(&value) else {
             self.set_status("sessions selection expired; reopen /sessions");
             return Ok(());
@@ -502,9 +537,11 @@ impl App {
     }
 
     fn prompt_delete_directory_sessions(&mut self, cwd: &Path) -> anyhow::Result<()> {
+        // List fresh so "all sessions" includes any saved since the hub
+        // loaded. One workspace is an index query, well under a millisecond.
         let targets = Session::list(cwd)?
-            .into_iter()
-            .map(|session| session.target())
+            .iter()
+            .map(SessionSummary::target)
             .collect::<Vec<_>>();
         let count = targets.len();
         let display = compact_cwd(cwd);
@@ -512,7 +549,7 @@ impl App {
             format!("Delete all sessions in {display}?"),
             format!(
                 "Removes {} saved in this directory, with transcripts, cached web content, and their subagent runs. The current session is kept. Usage history is kept.",
-                count_label(count)
+                plural(count, "session")
             ),
             vec![
                 InlineChoiceOption::available(
@@ -541,26 +578,25 @@ impl App {
     }
 
     fn prompt_cleanup_missing_session_directories(&mut self) -> anyhow::Result<()> {
-        let candidates = Session::list_missing_workspaces()?;
-        if candidates.is_empty() {
+        if self.refuse_while_sessions_delete_runs() {
+            return Ok(());
+        }
+        let missing = self.sessions_hub_state.missing_directories();
+        let targets = missing
+            .iter()
+            .flat_map(|group| group.sessions.iter().map(SessionSummary::target))
+            .collect::<Vec<_>>();
+        let directory_count = missing.len();
+        if targets.is_empty() {
             self.set_status("no sessions need cleanup");
             return Ok(());
         }
-        let directory_count = candidates
-            .iter()
-            .map(|session| session.cwd.clone())
-            .collect::<HashSet<_>>()
-            .len();
         let choice = InlineChoice::new(
             "Delete sessions for missing directories?",
             format!(
                 "Permanently removes {} saved for {} that no longer exist, with transcripts, cached web content, and their subagent runs. Usage history is kept.",
-                count_label(candidates.len()),
-                if directory_count == 1 {
-                    "1 directory".to_string()
-                } else {
-                    format!("{directory_count} directories")
-                }
+                plural(targets.len(), "session"),
+                directory_count_label(directory_count)
             ),
             vec![
                 InlineChoiceOption::available(
@@ -580,12 +616,7 @@ impl App {
         )?;
         self.open_session_choice(
             choice,
-            InlineChoicePending::CleanupMissingSessionDirectories {
-                targets: candidates
-                    .into_iter()
-                    .map(|session| session.target())
-                    .collect(),
-            },
+            InlineChoicePending::CleanupMissingSessionDirectories { targets },
             "confirm session cleanup",
         )
     }
@@ -611,86 +642,28 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn submit_cleanup_missing_session_directories_choice(
+    /// Answer a session delete confirmation. On "delete", the picker returns
+    /// at once and the delete runs in the background.
+    pub(super) fn submit_sessions_delete_choice(
         &mut self,
         value: &str,
-        targets: &[SessionTarget],
+        request: SessionsDelete,
         parent: Option<Box<UiPicker>>,
-    ) -> anyhow::Result<()> {
+    ) {
+        let origin = match parent.as_deref() {
+            Some(picker) if picker.is_resume_session() => DeleteOrigin::Resume,
+            _ => DeleteOrigin::Hub,
+        };
+        self.restore_session_choice_parent(parent);
         if value != "delete" {
-            self.restore_session_choice_parent(parent);
-            return Ok(());
+            return;
         }
-        let outcome = Session::cleanup_missing_targets(
-            targets,
-            DeleteOptions {
-                force: false,
-                protected_session: self.current_session_target(),
-            },
-        )?;
-        for failure in &outcome.failures {
-            self.insert_entry(&Entry::Error(format!(
-                "could not delete session {} ({}): {}",
-                session_picker::short_session_id(&failure.id),
-                compact_cwd(&failure.cwd),
-                failure.error
-            )));
+        // Prompts refuse while a delete runs; this catches one confirmed
+        // after a delete started behind the open prompt.
+        if self.refuse_while_sessions_delete_runs() {
+            return;
         }
-        let mut notice = format!("cleaned up {}", count_label(outcome.deleted.len()));
-        if !outcome.failures.is_empty() {
-            notice.push_str(&format!(", {} failed", outcome.failures.len()));
-        }
-        if outcome.restored_workspaces > 0 {
-            notice.push_str(&format!(
-                ", {} skipped after restore",
-                outcome.restored_workspaces
-            ));
-        }
-        self.refresh_sessions_location(parent.as_deref())?;
-        self.set_status(notice);
-        Ok(())
-    }
-
-    pub(super) fn submit_delete_directory_sessions_choice(
-        &mut self,
-        value: &str,
-        cwd: &Path,
-        targets: &[SessionTarget],
-        parent: Option<Box<UiPicker>>,
-    ) -> anyhow::Result<()> {
-        if value != "delete" {
-            self.restore_session_choice_parent(parent);
-            return Ok(());
-        }
-
-        let display = compact_cwd(cwd);
-        let outcome = Session::delete_targets(
-            targets,
-            DeleteOptions {
-                force: false,
-                protected_session: self.current_session_target(),
-            },
-        )?;
-        for failure in &outcome.failures {
-            self.insert_entry(&Entry::Error(format!(
-                "could not delete session {}: {}",
-                session_picker::short_session_id(&failure.id),
-                failure.error
-            )));
-        }
-        let mut notice = format!(
-            "deleted {} in {display}",
-            count_label(outcome.deleted.len())
-        );
-        if !outcome.kept_protected.is_empty() {
-            notice.push_str(", kept the current session");
-        }
-        if !outcome.failures.is_empty() {
-            notice.push_str(&format!(", {} failed", outcome.failures.len()));
-        }
-        self.refresh_sessions_location(parent.as_deref())?;
-        self.set_status(notice);
-        Ok(())
+        self.start_sessions_delete(request, origin);
     }
 
     pub(super) fn restore_session_choice_parent(&mut self, parent: Option<Box<UiPicker>>) {
@@ -702,25 +675,6 @@ impl App {
         let status = parent.restore_status();
         self.input_ui.set_composer(ComposerMode::Picker(*parent));
         self.set_status(status);
-    }
-
-    pub(super) fn refresh_sessions_location(
-        &mut self,
-        previous: Option<&UiPicker>,
-    ) -> anyhow::Result<()> {
-        let location = self.sessions_hub_state.location();
-        let cursor = previous.map(UiPicker::cursor);
-        self.open_sessions_hub()?;
-        if let SessionsLocation::Directory(cwd) = location {
-            if matches!(self.input_ui.composer(), ComposerMode::Picker(_)) {
-                self.open_directory_sessions_restored(&cwd, cursor.as_ref())?;
-            }
-        } else if let (Some(cursor), ComposerMode::Picker(picker)) =
-            (cursor.as_ref(), self.input_ui.composer_mut())
-        {
-            picker.restore_cursor(cursor);
-        }
-        Ok(())
     }
 
     fn selected_sessions_item_value(&self) -> Option<String> {

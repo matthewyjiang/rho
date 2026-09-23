@@ -161,6 +161,7 @@ mod session_picker;
 mod session_title;
 mod sessions_hub;
 mod sessions_hub_groups;
+mod sessions_hub_tasks;
 mod setup_screen;
 mod shell_palette;
 mod side_chat;
@@ -597,6 +598,8 @@ struct App {
     pending_auto_classifier_demote: bool,
     agent_editor_session: Option<agent_editor::AgentEditSession>,
     sessions_hub_state: sessions_hub::SessionsHubState,
+    /// Session list or delete running off the event loop.
+    pending_sessions_task: Option<sessions_hub_tasks::PendingSessionsTask>,
     pending_session_title: Option<PendingSessionTitle>,
     /// Set by `/title` so auto-title generation cannot overwrite a manual name.
     session_title_locked: bool,
