@@ -14,8 +14,8 @@ impl Tool for ListDir {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "list_dir".into(),
-            description: "Lists a directory.".into(),
-            input_schema: json!({"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+            description: "Lists the immediate entries of one directory, sorted by name, one per line. Directory names end with `/`. Not recursive, and it does not skip hidden or ignored entries; use `glob` to find files by pattern across a tree. Output beyond the tool-output limit is truncated.".into(),
+            input_schema: json!({"type":"object","properties":{"path":{"type":"string","description":"Directory to list, absolute or relative to the working directory."}},"required":["path"]}),
         }
     }
 

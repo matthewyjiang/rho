@@ -18,6 +18,11 @@ use crate::provider_backend::stream_timeout::provider_client;
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const DEFAULT_MAX_TOKENS: u32 = 4096;
+/// First-party output ceiling while neither catalog knows the model. Thinking
+/// counts against `max_tokens` even when its text is omitted, so a
+/// thinking-off-sized fallback truncates always-thinking Claude models. Hosted
+/// Messages adapters keep [`DEFAULT_MAX_TOKENS`] because their caps are unknown.
+const ANTHROPIC_COLD_CATALOG_MAX_TOKENS: u32 = 32_000;
 pub(crate) const ANTHROPIC_ANSWER_RESERVE_TOKENS: u32 = 1_024;
 
 mod per_message_effort;
@@ -125,7 +130,11 @@ impl AnthropicProvider {
                     .and_then(|metadata| metadata.max_output_tokens)
             })
             .and_then(|tokens| u32::try_from(tokens).ok())
-            .unwrap_or(DEFAULT_MAX_TOKENS)
+            .unwrap_or(if self.identity_provider == "anthropic" {
+                ANTHROPIC_COLD_CATALOG_MAX_TOKENS
+            } else {
+                DEFAULT_MAX_TOKENS
+            })
     }
 
     /// Ceiling used to clamp `budget_tokens`. Latched on the first request so a

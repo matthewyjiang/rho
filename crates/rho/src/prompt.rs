@@ -148,7 +148,6 @@ fn system_prompt_template_with_home_and_plugin_skills(
     text.push_str(
         r#"
 Use tools only when needed. For questions answerable from context, reply directly.
-Web access is available through tool schemas; invoke it only when needed and retrieve stored content handles selectively.
 
 Use structured tool calls when available. Do not write tool calls in prose.
 
@@ -337,8 +336,7 @@ pub(crate) fn model_switch_context(
 pub(crate) fn advisor_enabled_context(spec: &ToolSpec, model: &PromptModel) -> (String, String) {
     let model = format!(
         "[advisor mode on]\n\n\
-The `advisor` tool is now available and consults {}. \
-Do not skip it when the live tool list includes it.\n\n\
+The `advisor` tool is now available and consults {}.\n\n\
 {}\n",
         model.describe(),
         tool_schema_block(spec),
@@ -784,17 +782,6 @@ mod tests {
             !prompt.contains(&format!("\n{injected}")),
             "raw injected sentence must not appear after a newline"
         );
-    }
-
-    #[test]
-    fn keeps_web_access_guidance_concise_and_lazy() {
-        let project = TempDir::new().unwrap();
-
-        let prompt = system_prompt_with_home(&[], project.path(), None).text;
-
-        assert!(prompt.contains("Web access is available through tool schemas"));
-        assert!(!prompt.contains("GitHub URLs are cloned locally instead of scraped"));
-        assert!(!prompt.contains("BRAVE_SEARCH_API_KEY"));
     }
 
     #[test]

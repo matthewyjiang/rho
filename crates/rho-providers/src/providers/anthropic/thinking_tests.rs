@@ -183,6 +183,12 @@ fn off_follows_disabled_leaf_then_model_gap_table() {
             Ok(Some(AnthropicThinkingConfig::Disabled)),
         ),
         (
+            "opus 5.5 cannot disable",
+            "claude-opus-5-5",
+            adaptive_full_effort(),
+            Err(()),
+        ),
+        (
             "fable cannot disable",
             "claude-fable-5",
             adaptive_full_effort(),

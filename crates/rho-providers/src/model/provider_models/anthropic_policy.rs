@@ -296,13 +296,20 @@ fn off_thinking(model: &str, disabled_leaf: Option<bool>) -> OffThinking {
 /// add prefixes that product has verified against live traffic — do not grow
 /// this into a second capability registry.
 fn off_when_unadvertised(model: &str) -> OffThinking {
-    if model_has_prefix(model, &["claude-opus-5", "claude-sonnet-5"]) {
-        OffThinking::Disabled
-    } else if model_has_prefix(
+    // Always-thinking families first: `claude-opus-5-5` also matches the
+    // `claude-opus-5` prefix below.
+    if model_has_prefix(
         model,
-        &["claude-fable-5", "claude-mythos-5", "claude-mythos-preview"],
+        &[
+            "claude-opus-5-5",
+            "claude-fable-5",
+            "claude-mythos-5",
+            "claude-mythos-preview",
+        ],
     ) {
         OffThinking::Unsupported
+    } else if model_has_prefix(model, &["claude-opus-5", "claude-sonnet-5"]) {
+        OffThinking::Disabled
     } else {
         OffThinking::Omit
     }

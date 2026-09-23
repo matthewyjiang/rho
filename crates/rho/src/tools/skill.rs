@@ -18,7 +18,7 @@ impl Tool for Skill {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "skill".into(),
-            description: "Load the full SKILL.md content for an available skill by name.".into(),
+            description: "Load the full SKILL.md for a skill listed under available skills, by its exact name. Returns the file contents, including frontmatter; relative paths inside it resolve against the skill's directory. Unknown names return an error. Output beyond the tool-output limit is truncated.".into(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
