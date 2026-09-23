@@ -171,7 +171,7 @@ fn overflowing_panes_render_scrollbars() {
         .map(|index| PickerItem {
             section: None,
             label: format!("agent-{index:02}"),
-            detail: Some(long_detail()),
+            detail: Some(long_detail().into()),
             preview: None,
             badge: None,
             value: format!("agent-{index:02}"),

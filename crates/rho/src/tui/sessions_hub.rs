@@ -147,7 +147,7 @@ fn directory_row(
         detail: Some(format!(
             "{}\n{counted} · newest {updated}\nEnter shows only this directory. Press d to delete every session here.",
             group.display
-        )),
+        ).into()),
         preview: None,
         badge: is_current.then(|| PickerBadge {
             text: "current dir".into(),
@@ -205,7 +205,7 @@ fn session_row(
     PickerItem {
         section: section.map(str::to_owned),
         label: title,
-        detail: Some(detail),
+        detail: Some(detail.into()),
         preview,
         badge: is_current.then(|| PickerBadge {
             text: "current".into(),
@@ -239,7 +239,7 @@ fn cleanup_missing_workspaces_row(
             } else {
                 format!("{directory_count} directories")
             }
-        )),
+        ).into()),
         preview: None,
         badge: Some(PickerBadge {
             text: count_label(session_count),

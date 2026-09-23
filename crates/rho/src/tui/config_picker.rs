@@ -76,7 +76,7 @@ fn sectioned_item(
     PickerItem {
         section: section.map(str::to_string),
         label: label.into(),
-        detail: Some(detail.into()),
+        detail: Some(super::picker::PickerDetail::Text(detail.into())),
         preview: None,
         badge: badge_text.map(badge),
         value: value.into(),

@@ -210,6 +210,7 @@ pub(super) enum ComposerMode {
     Doctor(doctor_overlay::DoctorOverlay),
     Computer(super::computer_overlay::ComputerOverlay),
     Hooks(super::hooks_overlay::HooksOverlay),
+    TextView(Box<super::text_view_overlay::TextViewOverlay>),
     Info(Box<super::info_overlay::InfoOverlay>),
     Side,
 }
@@ -234,6 +235,7 @@ impl ComposerMode {
             | Self::Doctor(_)
             | Self::Computer(_)
             | Self::Hooks(_)
+            | Self::TextView(_)
             | Self::Info(_)
             | Self::Side => true,
         }
@@ -262,6 +264,7 @@ impl ComposerMode {
             | Self::Doctor(_)
             | Self::Computer(_)
             | Self::Hooks(_)
+            | Self::TextView(_)
             | Self::Info(_)
             | Self::Side => false,
         }
@@ -274,6 +277,7 @@ impl ComposerMode {
             | Self::Doctor(_)
             | Self::Computer(_)
             | Self::Hooks(_)
+            | Self::TextView(_)
             | Self::Info(_)
             | Self::Side => true,
             _ => false,

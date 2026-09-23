@@ -245,7 +245,7 @@ fn field_item(
     PickerItem {
         section: None,
         label: label.into(),
-        detail: Some(detail.into()),
+        detail: Some(super::picker::PickerDetail::Text(detail.into())),
         preview: None,
         badge: badge_text.map(badge),
         value: value.into(),
@@ -664,7 +664,7 @@ fn auth_choice_picker(draft: &AgentDefinition, available_auths: &[String]) -> Ui
         PickerItem {
             section: None,
             label,
-            detail: Some(format!("Pin auth profile {id}.")),
+            detail: Some(format!("Pin auth profile {id}.").into()),
             preview: None,
             badge: selected.then(|| badge("selected")),
             value: format!("{prefix}{id}"),

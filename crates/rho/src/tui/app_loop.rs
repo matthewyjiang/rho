@@ -421,6 +421,7 @@ impl App {
             | ComposerMode::Doctor(_)
             | ComposerMode::Computer(_)
             | ComposerMode::Hooks(_)
+            | ComposerMode::TextView(_)
             | ComposerMode::Info(_)
             | ComposerMode::Side
             | ComposerMode::SecretInput(_)
@@ -485,6 +486,7 @@ impl App {
         self.clamp_doctor_overlay_scroll(terminal);
         self.clamp_computer_overlay_scroll(terminal);
         self.clamp_hooks_overlay_scroll(terminal);
+        self.clamp_text_view_overlay_scroll(terminal);
         self.clamp_info_overlay_scroll(terminal);
         self.clear_selections();
         self.clear_hovered_copy_buttons();

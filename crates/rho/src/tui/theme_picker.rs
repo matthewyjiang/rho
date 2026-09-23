@@ -38,7 +38,7 @@ pub(super) fn theme_picker(current_id: &str) -> UiPicker {
             PickerItem {
                 section: None,
                 label: entry.name().to_string(),
-                detail: Some(entry.detail()),
+                detail: Some(entry.detail().into()),
                 preview: None,
                 badge,
                 value: entry.id().to_string(),

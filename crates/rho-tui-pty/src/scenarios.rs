@@ -123,6 +123,7 @@ use pickers::{
     setup_edit_user_agent, setup_pinned_models, CYCLE_AND_PINNED_MODEL_PICKER_STEPS,
     EDIT_USER_AGENT_STEPS, EDIT_USER_AGENT_TOOLS_STEPS, OPENAI_AND_XAI_KEY_ENV, OPENAI_KEY_ENV,
     OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS, OPEN_WORKFLOW_HUB_EMPTY_STEPS,
+    VIEW_READ_ONLY_AGENT_PROMPT_STEPS,
 };
 use process_rail::{
     PENDING_INPUT_BELOW_ACTIVITY_SCENARIO, PROCESS_RAIL_PEEK_SCENARIO, PROCESS_RAIL_SCENARIO,
@@ -789,26 +790,29 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     )
     .with_env(OPENAI_KEY_ENV),
-    Scenario {
-        id: "edit_user_agent",
-        description: "Edit and save a user-defined agent through the agents picker",
-        size: DEFAULT_SIZE,
-        setup: Some(setup_edit_user_agent),
-        env: &[],
-        args: &[],
-        steps: EDIT_USER_AGENT_STEPS,
-        smoke: false,
-    },
-    Scenario {
-        id: "edit_user_agent_tools",
-        description: "Toggle tools in the agent editor multi-select and persist the narrowed list",
-        size: DEFAULT_SIZE,
-        setup: Some(setup_edit_user_agent),
-        env: &[],
-        args: &[],
-        steps: EDIT_USER_AGENT_TOOLS_STEPS,
-        smoke: false,
-    },
+    Scenario::new(
+        "edit_user_agent",
+        "Edit and save a user-defined agent through the agents picker",
+        DEFAULT_SIZE,
+        EDIT_USER_AGENT_STEPS,
+        false,
+    )
+    .with_setup(setup_edit_user_agent),
+    Scenario::new(
+        "edit_user_agent_tools",
+        "Toggle tools in the agent editor multi-select and persist the narrowed list",
+        DEFAULT_SIZE,
+        EDIT_USER_AGENT_TOOLS_STEPS,
+        false,
+    )
+    .with_setup(setup_edit_user_agent),
+    Scenario::new(
+        "view_read_only_agent_prompt",
+        "Open a built-in agent's full prompt from the agents picker and return",
+        DEFAULT_SIZE,
+        VIEW_READ_ONLY_AGENT_PROMPT_STEPS,
+        false,
+    ),
     Scenario::new(
         "first_run_setup",
         "Walk a first launch through the full-screen sign-in and model steps",

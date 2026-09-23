@@ -316,7 +316,7 @@ fn claude_code_rows(current: &InternalAgentSelection) -> Vec<PickerItem> {
             claude_models::CLAUDE_CODE_SOURCE_LABEL,
             model.unwrap_or(claude_models::CLAUDE_DEFAULT_MODEL_BADGE),
         ),
-        detail: Some(detail),
+        detail: Some(detail.into()),
         preview: None,
         badge: (selected_model == Some(model)).then_some(PickerBadge {
             text: "selected".into(),
@@ -432,11 +432,14 @@ fn model_catalog(
             PickerItem {
                 section: None,
                 label: value.clone(),
-                detail: Some(if pinned {
-                    format!("Press {pin_key} to unpin this model.")
-                } else {
-                    format!("Press {pin_key} to pin this model to the top of model pickers.")
-                }),
+                detail: Some(
+                    if pinned {
+                        format!("Press {pin_key} to unpin this model.")
+                    } else {
+                        format!("Press {pin_key} to pin this model to the top of model pickers.")
+                    }
+                    .into(),
+                ),
                 preview: None,
                 badge,
                 value,

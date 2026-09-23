@@ -16,9 +16,9 @@ use super::overlay_layout::{
     picker_overlay_layout, OverlayLayout, OverlayOrientation, OverlayPanes, OverlayScrollbarState,
     BOTTOM_BORDER_ROWS, FOOTER_CHROME_ROWS, HEADER_CHROME_ROWS, SEPARATOR,
 };
-use super::{PickerBadge, PickerBadgePlacement, PickerItem, UiPicker};
+use super::{PickerBadge, PickerBadgePlacement, PickerDetail, PickerItem, UiPicker};
 use crate::tui::{
-    render::{display_width, styled_line, truncate_one_line, wrap_line_at_whitespace, LineFill},
+    render::{display_width, styled_line, truncate_one_line, LineFill},
     theme::Theme,
 };
 
@@ -56,7 +56,7 @@ struct OverlayContent<'a> {
     selected: usize,
     selected_position: usize,
     match_count: usize,
-    detail: &'a [String],
+    detail: &'a [Line<'static>],
     detail_badge: Option<&'a PickerBadge>,
     show_nav_badges: bool,
     detail_focused: bool,
@@ -83,7 +83,7 @@ pub(in crate::tui) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> Ov
         .detail_viewport()
         .map(|viewport| picker.wrapped_detail_lines(viewport.width));
     let empty_detail = Vec::new();
-    let detail: &[String] = detail_holder
+    let detail: &[Line<'static>] = detail_holder
         .as_ref()
         .map_or(&empty_detail, |lines| lines.as_slice());
     let footer = picker.action_footer();
@@ -129,8 +129,15 @@ pub(in crate::tui) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> Ov
     }
 }
 
-pub(in crate::tui) fn overlay_detail_lines(detail: &str, detail_width: usize) -> Vec<String> {
-    detail_wrapped_lines(detail, detail_width.max(1))
+/// Wrapped, styled detail rows for the pane. No detail renders one blank row.
+pub(in crate::tui) fn overlay_detail_lines(
+    detail: Option<&PickerDetail>,
+    detail_width: usize,
+) -> Vec<Line<'static>> {
+    detail.map_or_else(
+        || vec![Line::raw("")],
+        |detail| super::detail::detail_lines(detail, detail_width.max(1)),
+    )
 }
 
 pub(in crate::tui) fn filter_cursor_x(filter: &str, inner_width: usize) -> u16 {
@@ -374,7 +381,7 @@ fn detail_badge_row(badge: &PickerBadge, width: usize) -> Line<'static> {
 }
 
 fn detail_viewport_rows(
-    detail: &[String],
+    detail: &[Line<'static>],
     badge: Option<&PickerBadge>,
     detail_scroll: usize,
     width: usize,
@@ -392,11 +399,10 @@ fn detail_viewport_rows(
             if let Some(badge) = badge.filter(|_| index == 0) {
                 return detail_badge_row(badge, width);
             }
-            let text = index
+            index
                 .checked_sub(badge_rows)
                 .and_then(|detail_index| detail.get(detail_index))
-                .map_or("", String::as_str);
-            Line::from(Span::styled(pad_text(text, width), Theme::dim()))
+                .map_or_else(|| padded_plain("", width), |line| pad_line(line, width))
         })
         .collect::<Vec<_>>();
     rows.resize_with(viewport_rows, || {
@@ -412,26 +418,6 @@ fn detail_viewport_rows(
         }
     }
     rows
-}
-
-fn detail_wrapped_lines(detail: &str, width: usize) -> Vec<String> {
-    let width = width.max(1);
-    if detail.is_empty() {
-        return vec![String::new()];
-    }
-    detail
-        .lines()
-        .flat_map(|line| {
-            if line.is_empty() {
-                vec![String::new()]
-            } else {
-                wrap_line_at_whitespace(line, width)
-                    .into_iter()
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>()
-            }
-        })
-        .collect()
 }
 
 fn footer_line(layout: OverlayLayout, content: &OverlayContent<'_>) -> Line<'static> {
@@ -725,6 +711,32 @@ fn content_row(inner_width: usize, content: Line<'static>) -> Line<'static> {
         spans.push(Span::raw(" ".repeat(inner_width - content_width)));
     }
     spans.push(Span::styled("│", Theme::dim()));
+    Line::from(spans)
+}
+
+/// Clip a styled row to `width` columns and pad it so the gutter aligns.
+fn pad_line(line: &Line<'static>, width: usize) -> Line<'static> {
+    let width = width.max(1);
+    let mut spans = Vec::with_capacity(line.spans.len() + 1);
+    let mut used = 0usize;
+    for span in &line.spans {
+        if used >= width {
+            break;
+        }
+        let text = span.content.as_ref();
+        let span_width = display_width(text);
+        if used + span_width <= width {
+            spans.push(span.clone());
+            used += span_width;
+        } else {
+            let clipped = truncate_one_line(text, width - used);
+            used += display_width(&clipped);
+            spans.push(Span::styled(clipped, span.style));
+        }
+    }
+    if used < width {
+        spans.push(Span::raw(" ".repeat(width - used)));
+    }
     Line::from(spans)
 }
 

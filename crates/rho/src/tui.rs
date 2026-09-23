@@ -63,6 +63,7 @@ mod line_editor;
 mod subagent_inbox;
 mod subagent_questionnaires;
 mod text_input;
+mod text_view_overlay;
 mod web_search_config;
 
 fn plural_suffix(count: usize) -> &'static str {

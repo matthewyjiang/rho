@@ -99,7 +99,7 @@ fn mode_item(report: &McpSessionReport, config_path: &std::path::Path) -> Picker
     PickerItem {
         section: Some("STATUS".into()),
         label: "Session".into(),
-        detail: Some(detail),
+        detail: Some(detail.into()),
         preview: None,
         badge: Some(PickerBadge {
             text: status,
@@ -152,7 +152,7 @@ fn server_item(server: &McpServerReport, catalog: &McpCatalog) -> PickerItem {
     PickerItem {
         section: Some("SERVERS".into()),
         label: server.identity.clone(),
-        detail: Some(detail),
+        detail: Some(detail.into()),
         preview: None,
         badge: Some(PickerBadge {
             text: server.status().as_str().into(),

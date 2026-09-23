@@ -110,6 +110,9 @@ impl App {
         if self.handle_hooks_overlay_key(key, terminal) {
             return Ok(false);
         }
+        if self.handle_text_view_overlay_key(key, terminal) {
+            return Ok(false);
+        }
         if self.handle_info_overlay_key(key, terminal) {
             return Ok(false);
         }

@@ -200,10 +200,10 @@ fn list_picker_lines(
     lines.push(Line::raw(""));
     if picker.has_item_details() {
         let detail = picker
-            .selected_item()
-            .and_then(|item| item.detail.as_deref())
+            .selected_detail()
+            .map(super::picker::PickerDetail::plain_text)
             .unwrap_or_default();
-        let detail = truncate_one_line(detail, width.saturating_sub(2));
+        let detail = truncate_one_line(&detail, width.saturating_sub(2));
         let detail = if width > 2 {
             format!("  {detail}")
         } else {

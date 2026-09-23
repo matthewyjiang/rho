@@ -9,7 +9,7 @@ use crate::{
 
 use super::{
     model_picker::{ClaudeCodeRows, ConversationModelRow, InternalAgentSelection},
-    picker::OverlayChrome,
+    picker::{DetailBlock, DetailField, DetailSheet, DetailTone, OverlayChrome},
     ComposerMode, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, RuntimeModelView,
     UiPicker,
 };
@@ -93,9 +93,18 @@ impl<'a> From<&'a crate::config::Config> for AgentModelView<'a> {
     }
 }
 
+/// Wrapped rows of prompt text the collapsed detail shows before Enter opens
+/// the full prompt. Sized so the fact sheet plus excerpt fits a 24-row
+/// terminal's detail pane.
+const PROMPT_EXCERPT_ROWS: usize = 3;
+
 pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) -> UiPicker {
-    let items = catalog
-        .iter_with_internal()
+    let mut entries = catalog.iter_with_internal().collect::<Vec<_>>();
+    // Group by source (stable within a group) so section headers answer
+    // "which of these can I change?" at a glance.
+    entries.sort_by_key(|entry| AgentGroup::of(entry.metadata.origin));
+    let items = entries
+        .into_iter()
         .map(|entry| agent_item(entry, &models))
         .collect();
     UiPicker::view_agent("Loaded agents", items)
@@ -107,134 +116,232 @@ pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) ->
         })
 }
 
+/// Nav sections, in display order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum AgentGroup {
+    Editable,
+    Workflow,
+    Shared,
+    BuiltIn,
+    Internal,
+}
+
+impl AgentGroup {
+    fn of(origin: AgentOrigin) -> Self {
+        match origin {
+            AgentOrigin::RhoHome | AgentOrigin::Project => Self::Editable,
+            AgentOrigin::Workflow => Self::Workflow,
+            AgentOrigin::AgentsHome => Self::Shared,
+            AgentOrigin::BuiltIn => Self::BuiltIn,
+            AgentOrigin::Internal => Self::Internal,
+        }
+    }
+
+    fn section(self) -> &'static str {
+        match self {
+            Self::Editable => "YOURS",
+            Self::Workflow => "WORKFLOW",
+            Self::Shared => "SHARED",
+            Self::BuiltIn => "BUILT IN",
+            Self::Internal => "INTERNAL",
+        }
+    }
+}
+
 fn agent_item(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> PickerItem {
     let definition = &entry.definition;
     let selection_verb = match entry.metadata.origin {
         AgentOrigin::Internal => Some("configure"),
         AgentOrigin::RhoHome | AgentOrigin::Project => Some("edit"),
-        AgentOrigin::BuiltIn | AgentOrigin::AgentsHome | AgentOrigin::Workflow => Some("close"),
+        AgentOrigin::BuiltIn | AgentOrigin::AgentsHome | AgentOrigin::Workflow => {
+            Some("view prompt")
+        }
     };
     PickerItem {
-        section: None,
+        section: Some(AgentGroup::of(entry.metadata.origin).section().into()),
         label: definition.id.to_string(),
-        detail: Some(agent_detail(entry, models)),
+        detail: Some(agent_detail(entry, models).into()),
         preview: None,
-        badge: agent_badge(entry.metadata.origin),
+        badge: Some(agent_badge(entry.metadata.origin)),
         value: definition.id.to_string(),
         selection_verb,
         allow_filter_completion: true,
     }
 }
 
-/// Badge for the agents picker: internal agents show "(internal)", editable
-/// user agents (RhoHome or Project) show "(editable)", others have none.
-fn agent_badge(origin: AgentOrigin) -> Option<PickerBadge> {
-    match origin {
-        AgentOrigin::Internal => Some(PickerBadge {
-            text: "(internal)".to_string(),
-            tone: PickerBadgeTone::Internal,
-        }),
-        AgentOrigin::RhoHome | AgentOrigin::Project => Some(PickerBadge {
-            text: "(editable)".to_string(),
-            tone: PickerBadgeTone::Editable,
-        }),
-        AgentOrigin::BuiltIn | AgentOrigin::AgentsHome | AgentOrigin::Workflow => None,
+/// One-glyph origin marker for the nav list. Editable agents get the accent
+/// so they stand out; everything else recedes.
+fn agent_badge(origin: AgentOrigin) -> PickerBadge {
+    let tone = match origin {
+        AgentOrigin::RhoHome | AgentOrigin::Project => PickerBadgeTone::Editable,
+        AgentOrigin::Internal => PickerBadgeTone::Warning,
+        AgentOrigin::BuiltIn | AgentOrigin::AgentsHome | AgentOrigin::Workflow => {
+            PickerBadgeTone::Muted
+        }
+    };
+    PickerBadge {
+        text: "●".into(),
+        tone,
     }
 }
 
-fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> String {
+/// Right-aligned tag on the detail title: what the user may do with it.
+fn agent_access_tag(origin: AgentOrigin) -> PickerBadge {
+    let (text, tone) = match origin {
+        AgentOrigin::RhoHome | AgentOrigin::Project => ("● editable", PickerBadgeTone::Editable),
+        AgentOrigin::Internal => ("● internal", PickerBadgeTone::Warning),
+        AgentOrigin::BuiltIn | AgentOrigin::AgentsHome | AgentOrigin::Workflow => {
+            ("● read-only", PickerBadgeTone::Muted)
+        }
+    };
+    PickerBadge {
+        text: text.into(),
+        tone,
+    }
+}
+
+fn agent_detail(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> DetailSheet {
     let definition = &entry.definition;
-    let source = match entry.metadata.origin {
-        AgentOrigin::Internal => "internal".to_string(),
-        AgentOrigin::BuiltIn => "built in".to_string(),
-        AgentOrigin::AgentsHome => "~/.agents/agents".to_string(),
-        AgentOrigin::RhoHome => "~/.rho/agents".to_string(),
-        AgentOrigin::Project => "project".to_string(),
-        AgentOrigin::Workflow => "workflow".to_string(),
-    };
-    let path = entry
-        .metadata
-        .path
-        .as_deref()
-        .map(crate::paths::display)
-        .unwrap_or_else(|| "embedded in rho".to_string());
-    let model = if entry.metadata.origin == AgentOrigin::Internal {
-        match models.internal_agents.get(definition.id.as_str()) {
-            Some(selection) => format!("{}\nModel source: override", selection.display_reference()),
-            None if internal_agent_requires_model(definition.id.as_str()) => {
-                "not selected\nModel source: none; this agent has no conversation fallback"
-                    .to_string()
-            }
-            None => format!(
-                "{}\nModel source: conversation fallback",
-                rho_providers::provider::model_reference(models.provider, models.model)
-            ),
-        }
-    } else {
-        match definition.model_policy().as_ref() {
-            ModelPolicy::Inherit => "inherit".to_string(),
-            ModelPolicy::Prefer(selection) => format!("prefer {}", model_name(selection)),
-            ModelPolicy::Require(selection) => format!("require {}", model_name(selection)),
-            ModelPolicy::Select(selection) => format!("select {}", model_name(selection)),
-        }
-    };
-    let reasoning = if entry.metadata.origin == AgentOrigin::Internal {
-        match models.internal_agents.get(definition.id.as_str()) {
+    let origin = entry.metadata.origin;
+    let mut fields = vec![
+        DetailField::new(
+            "Runtime",
+            definition.runtime.runtime().to_string(),
+            DetailTone::Normal,
+        ),
+        agent_model_field(entry, models),
+        agent_reasoning_field(entry, models),
+        agent_tools_field(definition),
+    ];
+    if let AgentRuntimeSpec::ClaudeCli(config) = &definition.runtime {
+        fields.push(DetailField::new(
+            "Claude config",
+            if config.inherit_claude_config {
+                "inherit"
+            } else {
+                "closed"
+            },
+            if config.inherit_claude_config {
+                DetailTone::Normal
+            } else {
+                DetailTone::Muted
+            },
+        ));
+    }
+    fields.push(agent_source_field(entry));
+
+    let mut blocks = vec![DetailBlock::Title {
+        text: definition.id.to_string(),
+        tag: Some(agent_access_tag(origin)),
+    }];
+    if !definition.description.is_empty() {
+        blocks.push(DetailBlock::Paragraph(definition.description.to_string()));
+    }
+    blocks.push(DetailBlock::Rule);
+    blocks.push(DetailBlock::Fields(fields));
+    blocks.push(DetailBlock::Rule);
+    blocks.extend(agent_prompt_blocks(definition));
+    DetailSheet { blocks }
+}
+
+fn agent_model_field(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> DetailField {
+    let definition = &entry.definition;
+    if entry.metadata.origin == AgentOrigin::Internal {
+        return match models.internal_agents.get(definition.id.as_str()) {
             Some(selection) => {
-                effective_internal_agent_reasoning(definition.id.as_str(), selection).to_string()
+                DetailField::new("Model", selection.display_reference(), DetailTone::Normal)
+                    .with_note("override")
             }
-            None => definition
-                .reasoning()
-                .map(|level| level.to_string())
-                .unwrap_or_else(|| "inherit".to_string()),
+            None if internal_agent_requires_model(definition.id.as_str()) => {
+                DetailField::new("Model", "not selected", DetailTone::Warning)
+                    .with_note("no conversation fallback")
+            }
+            None => DetailField::new(
+                "Model",
+                rho_providers::provider::model_reference(models.provider, models.model),
+                DetailTone::Muted,
+            )
+            .with_note("conversation model"),
+        };
+    }
+    match definition.model_policy().as_ref() {
+        ModelPolicy::Inherit => DetailField::new("Model", "inherit", DetailTone::Muted),
+        ModelPolicy::Prefer(selection) => {
+            DetailField::new("Model", model_name(selection), DetailTone::Normal).with_note("prefer")
         }
+        ModelPolicy::Require(selection) => {
+            DetailField::new("Model", model_name(selection), DetailTone::Normal)
+                .with_note("require")
+        }
+        ModelPolicy::Select(selection) => {
+            DetailField::new("Model", model_name(selection), DetailTone::Normal)
+        }
+    }
+}
+
+fn agent_reasoning_field(entry: &AgentCatalogEntry, models: &AgentModelView<'_>) -> DetailField {
+    let definition = &entry.definition;
+    let configured = (entry.metadata.origin == AgentOrigin::Internal)
+        .then(|| models.internal_agents.get(definition.id.as_str()))
+        .flatten();
+    let level = match configured {
+        Some(selection) => {
+            Some(effective_internal_agent_reasoning(definition.id.as_str(), selection).to_string())
+        }
+        None => definition.reasoning().map(|level| level.to_string()),
+    };
+    match level {
+        Some(level) => DetailField::new("Reasoning", level, DetailTone::Normal),
+        None => DetailField::new("Reasoning", "inherit", DetailTone::Muted),
+    }
+}
+
+fn agent_tools_field(definition: &crate::agent::AgentDefinition) -> DetailField {
+    let summary = definition.tools_summary();
+    let tone = if summary == "none" {
+        DetailTone::Muted
     } else {
-        definition
-            .reasoning()
-            .map(|level| level.to_string())
-            .unwrap_or_else(|| "inherit".to_string())
+        DetailTone::Normal
     };
-    let tools = definition.tools_summary();
-    let inherit_claude_config = match &definition.runtime {
-        AgentRuntimeSpec::ClaudeCli(config) => Some(if config.inherit_claude_config {
-            "yes"
-        } else {
-            "no"
-        }),
-        AgentRuntimeSpec::Rho { .. } | AgentRuntimeSpec::Cursor(_) => None,
-    };
-    let runtime = definition.runtime.runtime().to_string();
-    let prompt = match &definition.prompt {
-        PromptPolicy::Extend(text) if text.is_empty() => "extend system prompt".to_string(),
-        PromptPolicy::Extend(text) => {
-            format!("extend system prompt\n\nPrompt extension\n{text}")
-        }
-        PromptPolicy::Replace(text) => {
-            format!("replace system prompt\n\nReplacement prompt\n{text}")
-        }
-    };
+    DetailField::new("Tools", summary, tone)
+}
 
-    // Every internal agent is reserved, but only some may run on Claude Code,
-    // so the line has to name this agent's own runtime freedom.
-    let restrictions = match entry.metadata.origin {
-        AgentOrigin::Internal if internal_agent_accepts_claude_runtime(definition.id.as_str()) => {
-            "\n\nRestrictions\nreserved; cannot be overridden, and runs on rho or claude code"
+/// The file path when there is one (the nav section already names the
+/// source kind), kept to one row with its tail visible.
+fn agent_source_field(entry: &AgentCatalogEntry) -> DetailField {
+    match entry.metadata.path.as_deref() {
+        Some(path) => {
+            DetailField::new("Source", crate::paths::display(path), DetailTone::Normal).keep_end()
         }
-        AgentOrigin::Internal => "\n\nRestrictions\nreserved; cannot be overridden or delegated",
-        AgentOrigin::BuiltIn
-        | AgentOrigin::AgentsHome
-        | AgentOrigin::RhoHome
-        | AgentOrigin::Project
-        | AgentOrigin::Workflow => "",
-    };
-    let inherit_section = inherit_claude_config
-        .map(|value| format!("\n\nInherit Claude config\n{value}"))
-        .unwrap_or_default();
+        None => DetailField::new("Source", "embedded in rho", DetailTone::Muted),
+    }
+}
 
-    format!(
-        "Description\n{}\n\nPrompt\n{prompt}\n\nSource\n{source}\n{path}\n\nRuntime\n{runtime}\n\nModel\n{model}\n\nReasoning\n{reasoning}\n\nTools\n{tools}{inherit_section}{restrictions}",
-        definition.description
-    )
+/// Collapsed prompt: a heading with the policy and size, then a short
+/// excerpt. The full text lives behind Enter (editor or read-only view).
+fn agent_prompt_blocks(definition: &crate::agent::AgentDefinition) -> Vec<DetailBlock> {
+    let (policy, text) = match &definition.prompt {
+        PromptPolicy::Extend(text) => ("extends system prompt", text.as_str()),
+        PromptPolicy::Replace(text) => ("replaces system prompt", text.as_str()),
+    };
+    let status = match text.lines().count() {
+        0 => policy.to_string(),
+        1 => format!("{policy} · 1 line"),
+        lines => format!("{policy} · {lines} lines"),
+    };
+    let mut blocks = vec![DetailBlock::Heading {
+        label: "PROMPT".into(),
+        status,
+    }];
+    if text.trim().is_empty() {
+        blocks.push(DetailBlock::Muted("(no prompt body)".into()));
+        return blocks;
+    }
+    blocks.push(DetailBlock::Excerpt {
+        text: text.to_string(),
+        rows: PROMPT_EXCERPT_ROWS,
+    });
+    blocks
 }
 
 /// Whether this agent's picker offers Claude Code.
@@ -383,3 +490,7 @@ impl super::App {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "agent_picker_tests.rs"]
+mod tests;

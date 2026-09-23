@@ -27,7 +27,7 @@ impl App {
                     items.push(PickerItem {
                         section: prompt.clone(),
                         label: format!("└─ {preview}"),
-                        detail: Some(assistant.text.clone()),
+                        detail: Some(assistant.text.clone().into()),
                         preview: None,
                         badge: None,
                         // Snapshot the payload so incoming stream updates cannot change

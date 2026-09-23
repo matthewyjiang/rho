@@ -477,6 +477,14 @@ impl App {
                 );
                 overlay.cursor
             }),
+            ComposerMode::TextView(_) => self.text_view_overlay_frame(area).map(|overlay| {
+                frame.render_widget(Clear, overlay.outer);
+                frame.render_widget(
+                    Paragraph::new(overlay.lines).style(Theme::surface()),
+                    overlay.outer,
+                );
+                overlay.cursor
+            }),
             ComposerMode::Info(_) => self.info_overlay_frame(area).map(|overlay| {
                 frame.render_widget(Clear, overlay.outer);
                 let body = overlay.body();
