@@ -220,11 +220,18 @@ struct CompleteStreamPrefix {
     ends_with_wrap: bool,
 }
 
+/// End of the last soft-wrapped row that later text cannot reflow.
+///
+/// Rows followed by more text are complete. A trailing row that fills the
+/// width is complete only once it ends in whitespace: otherwise it may end
+/// mid-word, and the next character would pull that word onto the next row.
 fn complete_word_wrap_prefix(text: &str, width: usize) -> CompleteStreamPrefix {
     wrap_markdown_line_ranges(text, width)
         .into_iter()
         .rfind(|range| {
-            range.end < text.len() || display_width(&text[range.clone()]) >= width.max(1)
+            range.end < text.len()
+                || (text.ends_with(char::is_whitespace)
+                    && display_width(&text[range.clone()]) >= width.max(1))
         })
         .map(|range| CompleteStreamPrefix {
             byte_index: range.end,
