@@ -559,3 +559,18 @@ fn returned_fragments_are_append_only() {
     assert_eq!(stream.finish().unwrap().text.as_str(), "g");
     assert_eq!(stream.emitted_text(), "abc\ndef\ng");
 }
+
+#[test]
+fn markdown_drain_holds_row_that_fills_width_mid_word() {
+    // "for genera" fills width 10 exactly, but "ting" may still follow and
+    // move the word to the next row. Committing it early split the word.
+    let mut stream = AppendOnlyStream::default();
+
+    stream.push_delta("for genera");
+    assert_eq!(stream.drain_renderable_markdown(10, false), None);
+
+    stream.push_delta("ting");
+    let fragment = stream.drain_renderable_markdown(10, false).unwrap();
+    assert_eq!(fragment.text.as_str(), "for ");
+    assert_eq!(stream.pending_text(), "generating");
+}
