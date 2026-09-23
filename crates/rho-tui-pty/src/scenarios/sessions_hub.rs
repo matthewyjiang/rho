@@ -136,8 +136,9 @@ pub(super) const SESSIONS_HUB_STEPS: &[Step] = &[
         text: "Esc back",
         timeout: SETTLE,
     },
+    // Foreign sessions stay listed but cannot be resumed from here.
     Step::WaitText {
-        text: "Start Rho in this directory to resume",
+        text: "Enter unavailable",
         timeout: SETTLE,
     },
     Step::Key(Key::Enter),
@@ -153,7 +154,7 @@ pub(super) const SESSIONS_HUB_STEPS: &[Step] = &[
     Step::Key(Key::Up),
     Step::Key(Key::Up),
     // Rows label sessions by stored title, so confirm the saved session by
-    // selecting it and reading its last user message in the detail pane.
+    // its last user message in the row preview.
     Step::Key(Key::Down),
     Step::WaitText {
         text: "last: sessions hub target",

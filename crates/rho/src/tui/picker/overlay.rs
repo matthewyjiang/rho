@@ -16,7 +16,10 @@ use super::overlay_layout::{
     picker_overlay_layout, OverlayLayout, OverlayOrientation, OverlayPanes, OverlayScrollbarState,
     BOTTOM_BORDER_ROWS, FOOTER_CHROME_ROWS, HEADER_CHROME_ROWS, SEPARATOR,
 };
-use super::{PickerBadge, PickerBadgePlacement, PickerDetail, PickerItem, UiPicker};
+use super::{
+    rows::{label_column_width, RowWidthMode},
+    PickerBadge, PickerBadgePlacement, PickerDetail, PickerItem, UiPicker,
+};
 use crate::tui::{
     render::{display_width, fit_line, styled_line, truncate_one_line, LineFill},
     theme::Theme,
@@ -207,7 +210,12 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
                 layout.inner_width,
                 detail_rows_budget,
             );
-            let nav_rows = nav_item_rows(&content, layout.nav_width(), nav_rows_budget);
+            let nav_rows = nav_item_rows(
+                &content,
+                layout.nav_width(),
+                nav_rows_budget,
+                RowWidthMode::FillPane,
+            );
             if detail_rows_budget > 0 && nav_rows_budget > 0 {
                 vec![detail_rows, nav_rows]
             } else if detail_rows_budget > 0 {
@@ -257,7 +265,12 @@ fn side_by_side_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec
     else {
         return Vec::new();
     };
-    let nav_rows = nav_item_rows(content, nav_width, nav_viewport_rows);
+    let nav_rows = nav_item_rows(
+        content,
+        nav_width,
+        nav_viewport_rows,
+        RowWidthMode::FillPane,
+    );
     let detail_rows = detail_viewport_rows(
         content.detail,
         content.detail_badge,
@@ -281,7 +294,15 @@ fn side_by_side_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec
 }
 
 fn nav_only_body(layout: OverlayLayout, content: &OverlayContent<'_>) -> Vec<Line<'static>> {
-    let mut rows = nav_item_rows(content, layout.nav_width(), layout.nav_viewport_rows());
+    let width = layout.nav_width();
+    // With the whole width to itself, the nav list shows item previews on each
+    // row behind an aligned label column, like the inline list does.
+    let width_mode = if content.items.iter().any(|item| item.preview.is_some()) {
+        RowWidthMode::AlignedColumn(label_column_width(content.items, width))
+    } else {
+        RowWidthMode::FillPane
+    };
+    let mut rows = nav_item_rows(content, width, layout.nav_viewport_rows(), width_mode);
     rows.truncate(layout.body_rows);
     while rows.len() < layout.body_rows {
         rows.push(Line::raw(""));
@@ -293,6 +314,7 @@ fn nav_item_rows(
     content: &OverlayContent<'_>,
     width: usize,
     viewport_rows: usize,
+    width_mode: RowWidthMode,
 ) -> Vec<Line<'static>> {
     if viewport_rows == 0 {
         return Vec::new();
@@ -318,9 +340,9 @@ fn nav_item_rows(
         content.selected,
         super::rows::RowLayout {
             width: content_width,
-            width_mode: super::rows::RowWidthMode::FillPane,
+            width_mode,
             show_badges: content.show_nav_badges,
-            show_preview: false,
+            show_preview: matches!(width_mode, RowWidthMode::AlignedColumn(_)),
             fill: LineFill::PadToWidth,
         },
         content.hovered_nav_row,

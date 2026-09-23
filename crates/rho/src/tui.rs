@@ -160,6 +160,7 @@ mod session_actions;
 mod session_picker;
 mod session_title;
 mod sessions_hub;
+mod sessions_hub_groups;
 mod setup_screen;
 mod shell_palette;
 mod side_chat;
