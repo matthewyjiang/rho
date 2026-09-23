@@ -174,7 +174,10 @@ fn abandoned_live_legacy_run_is_deletable_only_without_a_writer() {
         store.delete_run(run_id).unwrap_err(),
         WorkflowError::Corrupt { .. }
     ));
+    // Close the handle, not just the lock: Windows refuses to rename a run
+    // directory while any file inside it is still open.
     writer.unlock().unwrap();
+    drop(writer);
 
     store.delete_run(run_id).unwrap();
     assert_eq!(store.list_run_inventory().unwrap(), vec![]);
