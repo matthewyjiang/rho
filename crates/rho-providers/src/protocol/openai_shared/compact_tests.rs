@@ -170,18 +170,53 @@ fn parse_compact_response_malformed_output_is_invalid() {
     assert!(matches!(error, ModelError::InvalidResponse(_)));
 }
 
+// Covers: host retention keeps every system prompt and the newest contiguous
+// user turns within budget, in original order.
+// Owner: Responses compaction protocol
 #[test]
-fn retained_system_messages_filters_non_system() {
+fn retained_messages_keep_systems_and_newest_users_within_budget() {
     let messages = [
         Message::System("sys".into()),
-        Message::user_text("hi"),
-        Message::System("sys2".into()),
+        Message::user_text("old"),
         Message::assistant_text("yo"),
+        Message::System("sys2".into()),
+        Message::user_text("mid"),
+        Message::user_text("new"),
     ];
-    let retained = retained_system_messages(&messages);
-    assert_eq!(retained.len(), 2);
-    assert!(matches!(&retained[0], Message::System(text) if text == "sys"));
-    assert!(matches!(&retained[1], Message::System(text) if text == "sys2"));
+    let one_user = rho_sdk::model::context::estimate_message_tokens(&Message::user_text("new"));
+    let cases = [
+        ("systems only", None, vec!["sys", "sys2"]),
+        ("zero budget", Some(0), vec!["sys", "sys2"]),
+        ("one user", Some(one_user), vec!["sys", "sys2", "new"]),
+        (
+            "two users",
+            Some(one_user * 2),
+            vec!["sys", "sys2", "mid", "new"],
+        ),
+        (
+            "all users",
+            Some(u64::MAX),
+            vec!["sys", "old", "sys2", "mid", "new"],
+        ),
+    ];
+    for (name, budget, expected) in cases {
+        let retained = match budget {
+            None => retained_system_messages(&messages),
+            Some(budget) => retained_system_and_recent_user_messages(&messages, budget),
+        };
+        let texts = retained
+            .iter()
+            .map(|message| match message {
+                Message::System(text) => text.as_str(),
+                Message::User(blocks) => match blocks.as_slice() {
+                    [ContentBlock::Text(text)] => text.as_str(),
+                    _ => panic!("{name}: unexpected user blocks"),
+                },
+                other => panic!("{name}: unexpected retained {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(texts, expected, "{name}");
+    }
 }
 
 #[test]

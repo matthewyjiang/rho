@@ -44,6 +44,13 @@ impl ResponsesWireContract {
         }
     }
 
+    pub(super) fn native_compaction(self) -> NativeCompactionWire {
+        match self {
+            Self::OpenAiStandard => NativeCompactionWire::CompactEndpoint,
+            Self::CodexStandard => NativeCompactionWire::CompactionTrigger,
+        }
+    }
+
     pub(super) fn uses_codex_websocket(self) -> bool {
         match self {
             Self::OpenAiStandard => false,
@@ -70,6 +77,17 @@ impl ResponsesWireContract {
         };
         to_responses_tool(tool, strictness, hosted_web_search, async_mode)
     }
+}
+
+/// How a Responses endpoint variant performs server-side compaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum NativeCompactionWire {
+    /// Unary `POST /responses/compact` returning a JSON `output` array.
+    CompactEndpoint,
+    /// Streaming `POST /responses` whose input ends with `compaction_trigger`
+    /// (Codex "remote compaction v2"). The Codex backend returns 404 for
+    /// `/responses/compact`.
+    CompactionTrigger,
 }
 
 /// Credential-derived Responses identity and wire contract.
@@ -299,6 +317,24 @@ pub(super) fn build_responses_compact_body(
     body["instructions"] = json!(instructions);
     body["input"] = json!(input);
     attach_prompt_cache_and_reasoning(&mut body, prompt_cache_key, reasoning);
+    Ok(body)
+}
+
+/// Builds a [`NativeCompactionWire::CompactionTrigger`] body: the compact body
+/// streamed to `/responses` with a trailing `compaction_trigger` input item.
+///
+/// The server answers with exactly one `compaction` output item.
+pub(super) fn build_compaction_trigger_body(
+    profile: &ResponsesProfile,
+    reasoning_profile: &OpenAiReasoningProfile,
+    request: ModelRequest<'_>,
+) -> Result<Value, ModelError> {
+    let mut body = build_responses_compact_body(profile, reasoning_profile, request)?;
+    body["stream"] = json!(true);
+    body["input"]
+        .as_array_mut()
+        .ok_or_else(|| ModelError::InvalidResponse("compact body input is not an array".into()))?
+        .push(json!({"type": "compaction_trigger"}));
     Ok(body)
 }
 
