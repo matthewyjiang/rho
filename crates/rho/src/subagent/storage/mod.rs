@@ -37,14 +37,14 @@ pub(crate) struct IndexedRun {
 }
 
 /// An indexed workspace run for attach listing.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RunningRun {
     pub id: String,
     pub agent_id: String,
-    pub title: Option<String>,
-    pub last_activity: Option<String>,
-    pub state: super::RunState,
     pub elapsed_seconds: u64,
+    pub status: super::RunStatus,
+    /// Task the run was launched with, from the attachment journal.
+    pub prompt: Option<String>,
 }
 
 fn list_indexed_runs_in_root(
@@ -101,11 +101,10 @@ fn list_workspace_runs_in_root(rho_root: &Path, cwd: &Path) -> anyhow::Result<Ve
             .unwrap_or(0);
         runs.push(RunningRun {
             id: indexed.id,
-            agent_id: status.agent_id.unwrap_or_else(|| "agent".into()),
-            title: status.title,
-            last_activity: status.last_activity,
-            state: status.state,
+            agent_id: status.agent_id.clone().unwrap_or_else(|| "agent".into()),
             elapsed_seconds,
+            status,
+            prompt: crate::run_artifacts::read_prompt(&indexed.directory),
         });
     }
     Ok(runs)

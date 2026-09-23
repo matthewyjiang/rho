@@ -1,6 +1,6 @@
 use std::{
     fs::File,
-    io::{Read, Seek, Write},
+    io::{BufRead, Read, Seek, Write},
     path::{Path, PathBuf},
 };
 
@@ -77,6 +77,19 @@ impl AttachmentWriter {
         self.file.write_all(&line)?;
         self.file.flush()?;
         Ok(())
+    }
+}
+
+/// Task prompt a run was launched with: the journal's first event, which the
+/// sink writes before anything else. `None` when the journal is missing,
+/// unreadable, or starts with another event.
+pub(crate) fn read_prompt(run_directory: &Path) -> Option<String> {
+    let file = File::open(run_directory.join(subagent::ATTACHMENT_FILE_NAME)).ok()?;
+    let mut first = String::new();
+    std::io::BufReader::new(file).read_line(&mut first).ok()?;
+    match serde_json::from_str(&first).ok()? {
+        AttachmentEvent::Prompt(prompt) => Some(prompt),
+        _ => None,
     }
 }
 

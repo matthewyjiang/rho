@@ -23,7 +23,9 @@ pub(in crate::tui) mod runner;
 pub(in crate::tui) mod standalone;
 
 pub(in crate::tui) use action::{ConfigParentRow, DuringTurnSelect, PickerAction, PickerTurn};
-pub(in crate::tui) use detail::{DetailBlock, DetailField, DetailSheet, DetailTone, PickerDetail};
+pub(in crate::tui) use detail::{
+    DetailBlock, DetailField, DetailSheet, DetailTone, ExcerptAnchor, PickerDetail,
+};
 pub(in crate::tui) use input::{
     apply_picker_key, overlay_scroll_targets, PickerKeyEffect, PickerMouseEvent,
 };
@@ -164,6 +166,8 @@ pub(super) enum PickerBadgeTone {
     Favorite,
     Healthy,
     Warning,
+    /// Failed state; the strongest alarm tone.
+    Error,
     /// Present but secondary; recedes next to other tones.
     Muted,
 }

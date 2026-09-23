@@ -9,7 +9,7 @@ use crate::{
 
 use super::{
     model_picker::{ClaudeCodeRows, ConversationModelRow, InternalAgentSelection},
-    picker::{DetailBlock, DetailField, DetailSheet, DetailTone, OverlayChrome},
+    picker::{DetailBlock, DetailField, DetailSheet, DetailTone, ExcerptAnchor, OverlayChrome},
     ComposerMode, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, RuntimeModelView,
     UiPicker,
 };
@@ -340,6 +340,7 @@ fn agent_prompt_blocks(
         AgentAccess::Editable | AgentAccess::ReadOnly => DetailBlock::Excerpt {
             text: text.to_string(),
             rows: PROMPT_EXCERPT_ROWS,
+            anchor: ExcerptAnchor::Start,
         },
     });
     blocks

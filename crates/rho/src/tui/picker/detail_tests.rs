@@ -32,7 +32,35 @@ fn excerpt_clips_to_row_budget_with_visible_cut() {
         ("aaaa bbbb cccc dddd", 1, 9, vec!["aaaa bb…"]),
     ];
     for (text, rows, width, expected) in cases {
-        let lines = excerpt_lines(text, rows, width);
+        let lines = excerpt_lines(text, rows, ExcerptAnchor::Start, width);
+        assert_eq!(
+            texts(&lines),
+            expected,
+            "{text:?} rows={rows} width={width}"
+        );
+        for line in texts(&lines) {
+            assert!(display_width(&line) <= width, "{line:?} exceeds {width}");
+        }
+    }
+}
+
+// Covers: streaming output keeps its newest rows, and the cut shows at the top
+// without pushing any row past the pane width.
+// Owner: picker detail layout
+#[test]
+fn end_anchored_excerpt_keeps_the_tail() {
+    let cases = [
+        // (text, rows, width, expected)
+        ("one two", 3, 20, vec!["one two"]),
+        (
+            "alpha beta gamma delta epsilon",
+            2,
+            12,
+            vec!["…gamma delta", "epsilon"],
+        ),
+    ];
+    for (text, rows, width, expected) in cases {
+        let lines = excerpt_lines(text, rows, ExcerptAnchor::End, width);
         assert_eq!(
             texts(&lines),
             expected,
@@ -97,6 +125,7 @@ fn sheet_rows_fit_every_width() {
             DetailBlock::Excerpt {
                 text: "You classify requests. ".repeat(10),
                 rows: 3,
+                anchor: ExcerptAnchor::Start,
             },
         ],
     });
