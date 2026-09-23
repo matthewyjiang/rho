@@ -116,18 +116,25 @@ pub(super) fn merge_live_candidates(
     missing
 }
 
+/// Swap in the finished status for runs that left the live set while the
+/// picker is open, so the card shows the result, error, tokens, and finish
+/// time. The prompt is kept. A run with no terminal status on disk becomes
+/// `Stopped` with its last live snapshot.
 pub(super) fn retire_departed_live_runs(
     candidates: &mut [AttachCandidate],
     live_ids: &std::collections::HashSet<String>,
     previously_live: &std::collections::HashSet<String>,
-    mut terminal_state: impl FnMut(&str) -> RunState,
+    mut terminal_status: impl FnMut(&str) -> Option<RunStatus>,
 ) {
     for candidate in candidates {
         if previously_live.contains(&candidate.run_id)
             && !live_ids.contains(&candidate.run_id)
             && !candidate.state().is_terminal()
         {
-            candidate.status.state = terminal_state(&candidate.run_id);
+            match terminal_status(&candidate.run_id) {
+                Some(status) => candidate.status = status,
+                None => candidate.status.state = RunState::Stopped,
+            }
         }
     }
 }
@@ -137,14 +144,10 @@ fn journal_prompt(run_id: &str) -> Option<String> {
     crate::run_artifacts::read_prompt(&directory)
 }
 
-fn finished_run_state(run_id: &str) -> RunState {
-    let Ok(directory) = subagent::resolve_run_directory(run_id) else {
-        return RunState::Stopped;
-    };
+fn finished_run_status(run_id: &str) -> Option<RunStatus> {
+    let directory = subagent::resolve_run_directory(run_id).ok()?;
     subagent::read_status(&directory.join(subagent::RESULT_FILE_NAME))
-        .map(|status| status.state)
-        .filter(|state| state.is_terminal())
-        .unwrap_or(RunState::Stopped)
+        .filter(|status| status.state.is_terminal())
 }
 
 pub(super) fn candidate_agent_id<'a>(
@@ -468,7 +471,7 @@ impl App {
             &mut self.attach_disk_candidates,
             &live_ids,
             &self.attach_seen_live,
-            finished_run_state,
+            finished_run_status,
         );
         self.attach_seen_live.extend(live_ids);
         self.attach_disk_candidates.clone()

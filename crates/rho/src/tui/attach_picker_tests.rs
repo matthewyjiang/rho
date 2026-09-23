@@ -309,46 +309,37 @@ fn finished_run_agent_id_comes_from_candidates() {
     assert_eq!(candidate_agent_id(&[], "aaaaaa"), None);
 }
 
-// Covers: a run that leaves the live panel must not stay listed as running.
+// Covers: a run that leaves the live panel while /attach is open must show its
+// finished result, not a stale running snapshot.
 // Owner: attach picker
 #[test]
-fn departed_live_run_uses_real_terminal_state() {
+fn departed_live_run_takes_finished_status() {
     let mut candidates = vec![
         candidate("aaaaaa", RunState::Running),
         candidate("bbbbbb", RunState::Running),
         candidate("cccccc", RunState::Running),
-        candidate("dddddd", RunState::Running),
     ];
-    let previously_live = [
-        "aaaaaa".into(),
-        "bbbbbb".into(),
-        "cccccc".into(),
-        "dddddd".into(),
-    ]
-    .into();
-    let live_ids = ["dddddd".into()].into();
+    candidates[0].prompt = Some("do the thing".into());
+    let previously_live = ["aaaaaa".into(), "bbbbbb".into(), "cccccc".into()].into();
+    let live_ids = ["cccccc".into()].into();
+    let finished = RunStatus {
+        state: RunState::Ok,
+        title: Some("aaaaaa".into()),
+        result: Some("done".into()),
+        finished_at: Some(42),
+        ..RunStatus::default()
+    };
 
-    retire_departed_live_runs(
-        &mut candidates,
-        &live_ids,
-        &previously_live,
-        |run_id| match run_id {
-            "aaaaaa" => RunState::Ok,
-            "bbbbbb" => RunState::Error,
-            _ => RunState::Stopped,
-        },
-    );
+    retire_departed_live_runs(&mut candidates, &live_ids, &previously_live, |run_id| {
+        (run_id == "aaaaaa").then(|| finished.clone())
+    });
 
-    assert_eq!(
-        candidates
-            .iter()
-            .map(|run| (run.run_id.as_str(), run.state()))
-            .collect::<Vec<_>>(),
-        [
-            ("aaaaaa", RunState::Ok),
-            ("bbbbbb", RunState::Error),
-            ("cccccc", RunState::Stopped),
-            ("dddddd", RunState::Running),
-        ]
-    );
+    let mut expected = vec![
+        candidate("aaaaaa", RunState::Ok),
+        candidate("bbbbbb", RunState::Stopped),
+        candidate("cccccc", RunState::Running),
+    ];
+    expected[0].status = finished;
+    expected[0].prompt = Some("do the thing".into());
+    assert_eq!(candidates, expected);
 }
