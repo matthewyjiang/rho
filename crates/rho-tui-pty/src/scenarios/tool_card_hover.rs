@@ -65,8 +65,11 @@ fn row_containing(harness: &mut PtyHarness, needle: &str) -> Result<u16> {
     }
 }
 
+/// Last line of the 40-line hover fixture; hidden while the card is collapsed.
+const EXPANDED_ONLY_LINE: &str = "hover fixture line 40";
+
 fn prompt_row(harness: &mut PtyHarness) -> Result<u16> {
-    row_containing(harness, "more lines, Ctrl+O to expand")
+    row_containing(harness, "more lines")
 }
 
 // Covers: hovering a collapsed tool card lifts its text ink on pointer entry
@@ -130,19 +133,20 @@ fn assert_hover_lift_and_click_expand(harness: &mut PtyHarness) -> Result<()> {
     harness.mouse(MouseButton::Left, column, sgr_row, true)?;
     harness.poll(Duration::from_millis(100));
     harness.mouse(MouseButton::Left, column, sgr_row, false)?;
+    // Only the expanded card paints its last body line.
     harness.wait_for_text(
-        "Ctrl+O to collapse",
+        EXPANDED_ONLY_LINE,
         WaitTimeout::secs(2, "click expanded the tool card"),
     )?;
 
     // The lift must survive the click with no pointer motion. The expanded
-    // card fills most of the viewport, so track its collapse-prompt row and
+    // card fills most of the viewport, so track its last body row and
     // leave the card for the statusline row below the history area. Capture
     // the lifted look while the pointer still rests on the card, then require
     // the away-move to change it; if the click had dropped the lift, there
     // would be nothing left to change.
-    let prompt_row_after_click = row_containing(harness, "Ctrl+O to collapse")?;
-    let lifted = row_look(harness, prompt_row_after_click);
+    let body_row_after_click = row_containing(harness, EXPANDED_ONLY_LINE)?;
+    let lifted = row_look(harness, body_row_after_click);
     let lifted_first = lifted
         .first()
         .copied()
@@ -151,7 +155,7 @@ fn assert_hover_lift_and_click_expand(harness: &mut PtyHarness) -> Result<()> {
     harness.mouse_move(column, statusline_row + 1)?;
     wait_for_row_look(
         harness,
-        prompt_row_after_click,
+        body_row_after_click,
         &|look| *look != lifted_first,
         "click toggle dropped the hover lift until the pointer moved",
     )?;
@@ -167,7 +171,7 @@ pub(super) const TOOL_CARD_HOVER_STEPS: &[Step] = &[
     Step::Phase("hover_lift_and_click_expand"),
     Step::SubmitText("fixture hover tool"),
     Step::WaitText {
-        text: "more lines, Ctrl+O to expand",
+        text: "more lines",
         timeout: STREAM,
     },
     Step::WaitText {
