@@ -61,14 +61,6 @@ impl PickerDetail {
             Self::Sheet(sheet) => Cow::Owned(sheet.plain_text()),
         }
     }
-
-    /// Cheap change fingerprint for the wrap cache.
-    pub(super) fn content_len(&self) -> usize {
-        match self {
-            Self::Text(text) => text.len(),
-            Self::Sheet(sheet) => sheet.blocks.len(),
-        }
-    }
 }
 
 /// Ordered detail blocks for one item.

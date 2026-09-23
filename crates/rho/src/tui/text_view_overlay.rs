@@ -33,10 +33,16 @@ pub(super) struct TextViewOverlay {
 
 impl App {
     /// Replaces the open picker with a read-only text panel. Closing the panel
-    /// restores that picker.
+    /// restores that picker. Without an open picker there is nothing to
+    /// return to, so the composer is left as it was.
     pub(super) fn open_text_view_over_picker(&mut self, title: String, text: String) {
-        let ComposerMode::Picker(parent) = self.input_ui.take_composer() else {
-            unreachable!("text view requires an active parent picker")
+        let parent = match self.input_ui.take_composer() {
+            ComposerMode::Picker(parent) => parent,
+            other => {
+                debug_assert!(false, "text view requires an open parent picker");
+                self.input_ui.set_composer(other);
+                return;
+            }
         };
         self.set_status_quiet(title.clone());
         self.input_ui
@@ -130,3 +136,7 @@ fn text_view_lines(text: &str, width: usize) -> Vec<Line<'static>> {
     }
     wrap_text_lines(text, width, Theme::text())
 }
+
+#[cfg(test)]
+#[path = "text_view_overlay_tests.rs"]
+mod tests;

@@ -278,3 +278,25 @@ fn scroll_nav_to_jumps_viewport_without_selection() {
     picker.scroll_nav_to(100, viewport);
     assert_eq!(picker.nav_window_start(viewport), 15);
 }
+
+// Covers: the wrapped-detail cache keys on detail content, so replacing an
+// item's detail in place never serves the previous item's rows.
+// Owner: picker detail layout
+#[test]
+fn detail_cache_refreshes_when_detail_changes_in_place() {
+    let mut first = item("alpha");
+    first.detail = Some("before".into());
+    let mut picker = UiPicker::new("list", vec![first], PickerAction::ViewAgent);
+    let text = |picker: &UiPicker| {
+        picker.wrapped_detail_lines(40)[0]
+            .spans
+            .iter()
+            .map(|span| span.content.to_string())
+            .collect::<String>()
+    };
+    assert_eq!(text(&picker), "before");
+
+    // Same length, same slot: the old length+pointer key would miss this.
+    picker.items[0].detail = Some("after!".into());
+    assert_eq!(text(&picker), "after!");
+}

@@ -81,10 +81,10 @@ struct PickerMatchCache {
 
 #[derive(Clone, Debug, Default)]
 struct DetailWrapCache {
-    selected: usize,
     width: usize,
-    detail_len: usize,
-    detail_ptr: usize,
+    /// The detail `lines` were built from. Compared by value, so edited or
+    /// reordered items can never serve stale rows.
+    detail: Option<PickerDetail>,
     lines: Vec<ratatui::text::Line<'static>>,
 }
 
@@ -472,25 +472,16 @@ impl UiPicker {
         detail_width: usize,
     ) -> Ref<'_, Vec<ratatui::text::Line<'static>>> {
         let detail = self.selected_detail();
-        let detail_len = detail.map_or(0, PickerDetail::content_len);
-        let detail_ptr = detail.map_or(0, |detail| std::ptr::from_ref(detail) as usize);
         let width = detail_width.max(1);
         let stale = {
             let cache = self.detail_wrap_cache.borrow();
-            cache.selected != self.selected
-                || cache.width != width
-                || cache.detail_len != detail_len
-                || cache.detail_ptr != detail_ptr
-                || cache.lines.is_empty()
+            cache.width != width || cache.detail.as_ref() != detail || cache.lines.is_empty()
         };
         if stale {
-            let lines = overlay_detail_lines(detail, width);
             *self.detail_wrap_cache.borrow_mut() = DetailWrapCache {
-                selected: self.selected,
                 width,
-                detail_len,
-                detail_ptr,
-                lines,
+                detail: detail.cloned(),
+                lines: overlay_detail_lines(detail, width),
             };
         }
         Ref::map(self.detail_wrap_cache.borrow(), |cache| &cache.lines)
