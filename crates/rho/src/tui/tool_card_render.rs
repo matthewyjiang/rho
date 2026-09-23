@@ -255,9 +255,8 @@ pub(super) fn paint_card_sections(
         hidden_rows = total_rows.saturating_sub(shown);
     }
 
-    let show_expand_prompt = !expanded && hidden_rows > 0;
-    let show_collapse_prompt = expanded && total_rows > budget;
-    let has_prompt = show_expand_prompt || show_collapse_prompt;
+    // Keybinds live in the help window; the card only says what is hidden.
+    let has_prompt = !expanded && hidden_rows > 0;
     // For each group, whether a later TreeFact still needs the trunk. Mid
     // branches stay ├ and plain rows between them keep │ so multi-file File
     // headers connect through their body content.
@@ -278,7 +277,7 @@ pub(super) fn paint_card_sections(
         match &mut group {
             ChildGroup::TreeFact(fact_lines) => {
                 // Last tree branch uses └ even when plain body hangs under it.
-                // A following expand/collapse prompt keeps mid ├, matching facts.
+                // A following "more lines" prompt keeps mid ├, matching facts.
                 let is_last_tree = !later_has_tree[index] && !has_prompt;
                 rewrite_tree_fact(fact_lines, is_last_tree);
             }
@@ -297,19 +296,10 @@ pub(super) fn paint_card_sections(
 
     let last_fact_is_end = prefix_groups > 0 && !later_has_tree[prefix_groups - 1] && !has_prompt;
 
-    if show_expand_prompt {
-        let prompt = format!("... {hidden_rows} more lines, Ctrl+O to expand");
+    if has_prompt {
         push_wrapped_text(
             &mut body,
-            &prompt,
-            width,
-            Theme::dim(),
-            LineFill::PadToWidth,
-        );
-    } else if show_collapse_prompt {
-        push_wrapped_text(
-            &mut body,
-            "Ctrl+O to collapse",
+            &format!("... {hidden_rows} more lines"),
             width,
             Theme::dim(),
             LineFill::PadToWidth,

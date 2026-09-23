@@ -117,7 +117,7 @@ Delivered messages appear in left-rail transcript cards, distinct from human inp
 Each card shows the task, sender, run ID, event type, and message body. Bodies use
 the same Markdown formatting as assistant replies, including headings, emphasis,
 and code blocks. Updates and results use the configured tool-output preview
-length; Ctrl+O expands the full
+length; clicking a card (or Ctrl+O on the latest one) expands the full
 body and run details. Action requests and failed results show their full body
 without expansion. Incoming cards remain visible in Zen mode. The event label
 distinguishes an update from a completed, failed, or stopped run; receiving an

@@ -73,14 +73,15 @@ pub(super) fn notification_card_sections(
             push_indented(&mut body, detail, content_width, Theme::dim());
         }
     }
-    let hint = if expanded {
-        "Ctrl+O collapse".to_string()
-    } else if hidden > 0 && !show_full_body {
-        format!("… {hidden} more lines · Ctrl+O expand")
-    } else {
-        "Ctrl+O details".to_string()
-    };
-    push_indented(&mut body, &hint, content_width, Theme::dim());
+    // Keybinds live in the help window; the card only says what is hidden.
+    if hidden > 0 && !show_full_body {
+        push_indented(
+            &mut body,
+            &format!("… {hidden} more lines"),
+            content_width,
+            Theme::dim(),
+        );
+    }
     if received {
         for line in lines.iter_mut().chain(body.iter_mut()) {
             line.spans.insert(0, Span::styled("│ ", tone));

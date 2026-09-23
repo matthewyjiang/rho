@@ -278,7 +278,7 @@ pub struct ToolCardDisplayPlan {
     pub hidden_rows: usize,
     /// Whether Ctrl-O can toggle expand/collapse.
     pub expandable: bool,
-    /// Show "ctrl+o to collapse" when expanded past the budget.
+    /// Expanded past the budget, so collapsing would hide rows.
     pub show_collapse_prompt: bool,
 }
 
@@ -381,8 +381,7 @@ impl ToolCard {
     /// - `expandable` is true whenever the toggle has something to reveal or
     ///   hide: hidden rows when collapsed, or an over-budget card when expanded.
     /// - When collapsed and `hidden_rows > 0`, caller shows
-    ///   `... {hidden_rows} more lines, ctrl+o to expand`.
-    /// - When expanded and `show_collapse_prompt`, show `ctrl+o to collapse`.
+    ///   `... {hidden_rows} more lines`.
     pub fn display_plan(&self, max_lines: usize, expanded: bool) -> ToolCardDisplayPlan {
         let budget = max_lines.max(1);
         let fact_count = self.facts.len();
