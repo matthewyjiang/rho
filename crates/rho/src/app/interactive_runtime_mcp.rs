@@ -15,6 +15,20 @@ impl InteractiveRuntime {
         self.pending_mcp.is_some() || self.pending_catalog_names.is_some()
     }
 
+    /// Whether a startup hydrate finished and is waiting for
+    /// [`Self::poll_startup_hydrates`]. Unlike [`Self::startup_hydrate_pending`],
+    /// this stays false while the work is still in flight, so the UI only
+    /// redraws when there is something to apply.
+    pub(crate) fn startup_hydrate_ready(&self) -> bool {
+        self.pending_mcp
+            .as_ref()
+            .is_some_and(tokio::task::JoinHandle::is_finished)
+            || self
+                .pending_catalog_names
+                .as_ref()
+                .is_some_and(tokio::task::JoinHandle::is_finished)
+    }
+
     pub(crate) fn cancel_startup_hydrates(&mut self) {
         if let Some(handle) = self.pending_mcp.take() {
             handle.abort();

@@ -160,6 +160,43 @@ fn startup_first_frame_paints_session_chrome() {
     assert_pass("startup_first_frame");
 }
 
+// Covers: an idle session must not redraw every tick while a startup hydrate
+// (the models.dev catalog fetch) is still in flight. Treating "in flight" as
+// "ready to apply" made rho repaint ~10x/s until the fetch finished, which
+// also kept PTY quiet-window waits from settling under load.
+// Owner: interactive TUI event loop
+#[test]
+fn idle_session_does_not_redraw_while_catalog_fetch_is_in_flight() {
+    // A proxy that accepts and never answers holds the fetch open for the test.
+    let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
+    std::thread::spawn(move || {
+        let _held: Vec<_> = proxy.incoming().collect();
+    });
+    let home = IsolatedHome::new().unwrap();
+    let plan = RhoLaunchPlan::matrix(
+        PathBuf::from(env!("CARGO_BIN_EXE_rho")),
+        &home,
+        PtySize {
+            rows: 28,
+            cols: 100,
+        },
+    )
+    .with_env("HTTPS_PROXY", proxy_url);
+    let mut harness = PtyHarness::spawn(&plan).unwrap();
+    harness
+        .wait_for_text("gpt-5.5", WaitTimeout::secs(10, "startup"))
+        .unwrap();
+    // Well under the 5s fetch timeout, so the fetch is still pending throughout.
+    harness
+        .wait_for_quiet(
+            Duration::from_millis(1_000),
+            WaitTimeout::secs(3, "idle with catalog fetch in flight"),
+        )
+        .unwrap();
+    assert_eq!(harness.quit_with_exit_command().unwrap(), 0);
+}
+
 // Covers: /mcp must open and report in-flight servers while connect is still running.
 // Owner: interactive TUI
 #[test]
