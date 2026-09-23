@@ -118,6 +118,12 @@ fn usage_screen_classification() {
         ),
         ("complete", format!("{windows}Esc to cancel\n"), "Ready"),
         (
+            // Captured from Claude 2.1.280 at the old 36-row probe size.
+            "top scrolled off",
+            "  Resets 9:09pm (America/Los_Angeles)\n  Current week (all models)\n  ██████   12% used\n  Resets Sep 26, 7:59am (America/Los_Angeles)\n  Current week (Fable)\n  █████████▌   19% used\n  Resets Sep 26, 7:59am (America/Los_Angeles)\n  Esc to cancel\n".into(),
+            "Clipped",
+        ),
+        (
             "rate limit named without a failure notice",
             format!("rate limited\n{windows}Esc to cancel\n"),
             "Ready",
@@ -197,6 +203,12 @@ fn probe_error_failure_reason() {
             UsageFailure::Other,
         ),
         (UsageProbeError::Unparseable, UsageFailure::Other),
+        (
+            UsageProbeError::PanelClipped {
+                screen: String::new(),
+            },
+            UsageFailure::Other,
+        ),
         (
             UsageProbeError::TimeoutScreen {
                 what: "panel",

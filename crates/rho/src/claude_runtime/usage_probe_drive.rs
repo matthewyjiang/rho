@@ -30,7 +30,13 @@ const PROMPT_WAIT: Duration = Duration::from_secs(60);
 const TRUST_DOWN: &[u8] = b"\x1b[B";
 const TRUST_ENTER: &[u8] = b"\r";
 const TRUST_RETRY: Duration = Duration::from_millis(400);
-const PTY_ROWS: u16 = 36;
+/// The probe reads the visible viewport only (no scrollback), so the whole
+/// `/usage` panel must fit. Claude 2.1.280 paints it from row 7 to row 54 at
+/// 140 columns (prompt echo, Session stats, three windows, the "What's
+/// contributing" breakdown, skills table, and usage credits); the old 36 rows
+/// scrolled "Current session" off the top. 100 rows leaves room for Claude to
+/// add sections; a clipped panel still fails loudly as `PanelClipped`.
+const PTY_ROWS: u16 = 100;
 const PTY_COLS: u16 = 140;
 const PROMPT_SETTLE: Duration = Duration::from_millis(50);
 const ENTER_SETTLE: Duration = Duration::from_millis(80);
@@ -148,6 +154,12 @@ fn wait_for_usage(
                 ready_since = None;
                 if now >= *grow_until.get_or_insert(now + budget.grow) {
                     return Err(UsageProbeError::Unparseable);
+                }
+            }
+            UsageScreen::Clipped => {
+                ready_since = None;
+                if now >= *grow_until.get_or_insert(now + budget.grow) {
+                    return Err(UsageProbeError::PanelClipped { screen });
                 }
             }
             UsageScreen::NoPanel | UsageScreen::Refreshing => {
