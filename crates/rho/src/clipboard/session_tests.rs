@@ -27,8 +27,7 @@ fn detects_session_kind_by_precedence() {
         ),
         ("local otherwise", &[][..], false, SessionKind::Local),
     ] {
-        let session =
-            SessionKind::detect_from(|name| env.iter().any(|marker| *marker == name), || is_wsl);
+        let session = SessionKind::detect_from(|name| env.contains(&name), || is_wsl);
         assert_eq!(session, expected, "{case}");
     }
 }

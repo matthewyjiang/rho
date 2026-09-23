@@ -77,7 +77,8 @@ fn editor_cursor_navigation_is_unicode_safe() {
 // Owner: config editor
 #[test]
 fn toggles_persist_for_the_next_session() {
-    let cases: [(&str, ConfigToggle, bool, fn(&crate::config::Config) -> bool); 4] = [
+    type ReadFlag = fn(&crate::config::Config) -> bool;
+    let cases: [(&str, ConfigToggle, bool, ReadFlag); 4] = [
         (
             "subagents",
             ConfigToggle::EnableSubagents,

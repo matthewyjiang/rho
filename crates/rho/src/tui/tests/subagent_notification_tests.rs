@@ -18,7 +18,8 @@ fn queued_prompt() -> QueuedPrompt {
 // Owner: idle subagent delivery policy
 #[test]
 fn busy_app_states_block_idle_subagent_delivery() {
-    let cases: [(&str, fn(&mut App)); 4] = [
+    type MakeBusy = fn(&mut App);
+    let cases: [(&str, MakeBusy); 4] = [
         ("queued user prompt", |app| {
             app.pending.push_follow_up(queued_prompt())
         }),
