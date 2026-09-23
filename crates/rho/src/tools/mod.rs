@@ -21,7 +21,6 @@ mod sdk_features;
 mod sessions;
 pub(crate) use sdk_features::message_parent_bundle;
 pub mod sdk_registry;
-pub mod skill;
 #[cfg(debug_assertions)]
 pub(crate) mod tui_fixture;
 pub mod web;

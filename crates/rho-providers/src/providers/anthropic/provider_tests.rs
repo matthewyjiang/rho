@@ -386,6 +386,67 @@ fn thinking_budget_stays_latched_when_max_tokens_hydrates() {
     );
 }
 
+// Covers: a hydrate that lowers max_tokens below the latched ceiling must
+// shrink the budget, or budget_tokens >= max_tokens is a 400.
+// Owner: anthropic request body thinking budget
+#[test]
+fn thinking_budget_shrinks_when_max_tokens_hydrates_lower() {
+    let mut provider =
+        test_provider_with_capabilities("claude-sonnet-4-5", &enabled_capabilities());
+    provider.set_max_tokens_override(32_000);
+    request_body(&provider, ReasoningLevel::Max).unwrap();
+    provider.set_max_tokens_override(8_192);
+    let lowered = request_body(&provider, ReasoningLevel::Max).unwrap();
+
+    assert_eq!(
+        (lowered.max_tokens, lowered.thinking),
+        (
+            8_192,
+            Some(AnthropicThinkingConfig::Enabled {
+                budget_tokens: 8_192 - ANTHROPIC_ANSWER_RESERVE_TOKENS,
+            })
+        )
+    );
+}
+
+// Covers: with neither catalog hydrated, first-party Anthropic must size
+// max_tokens for always-thinking models while hosted adapters stay small.
+// Owner: anthropic request body max_tokens fallback
+#[test]
+fn cold_catalog_max_tokens_depends_on_provider_construction() {
+    let provider_models_cache = tempfile::tempdir().unwrap();
+    let models_dev_cache = tempfile::tempdir().unwrap();
+    let cold_max_tokens = |provider: AnthropicProvider| {
+        crate::model::provider_models::with_provider_models_cache_dir_for_tests(
+            provider_models_cache.path().to_path_buf(),
+            || {
+                crate::model::models_dev::with_models_dev_cache_dir_for_tests(
+                    models_dev_cache.path().to_path_buf(),
+                    || provider.max_tokens(),
+                )
+            },
+        )
+    };
+    let first_party = AnthropicProvider::new_with_transport(
+        "claude-opus-5-5".into(),
+        "key".into(),
+        provider_client(),
+        "https://example.test/v1".into(),
+    );
+    let hosted = AnthropicProvider::new_with_identity(
+        "minimax-m3".into(),
+        "key".into(),
+        provider_client(),
+        "https://example.test/v1".into(),
+        "minimax",
+    );
+
+    assert_eq!(
+        (cold_max_tokens(first_party), cold_max_tokens(hosted)),
+        (ANTHROPIC_COLD_CATALOG_MAX_TOKENS, DEFAULT_MAX_TOKENS)
+    );
+}
+
 // Covers: the prior user write and the new tail are both marked; a trailing
 // per-request text suffix stays unmarked.
 // Owner: anthropic request body cache breakpoints

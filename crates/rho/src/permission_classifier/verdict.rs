@@ -46,7 +46,7 @@ pub(crate) const CLASSIFIER_SCREEN_INSTRUCTION: &str = "\
 Screen this pending capability request.
 
 Respond with exactly one lowercase word and nothing else: `allow` or \
-`escalate`. No reasoning, no punctuation, no explanation.
+`escalate`. No punctuation or explanation.
 
 Answer `allow` only when the request is plainly routine and clearly anchored to \
 what the user asked for. Answer `escalate` whenever you are unsure, so a \
@@ -58,7 +58,7 @@ pub(crate) const CLASSIFIER_REVIEW_INSTRUCTION: &str = "\
 Review this pending capability request.
 
 Weigh what the capability does in the real world and whether it is anchored to \
-explicit user intent. Think it through step by step first.
+explicit user intent.
 
 End your response with the JSON verdict on its own, one of:
   {\"decision\":\"allow\"}

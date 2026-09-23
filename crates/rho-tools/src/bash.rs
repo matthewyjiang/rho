@@ -2,7 +2,6 @@ use crate::cancellation::RunCancellation;
 use crate::shell_process::{self, ProcessSupervisor, ShellArgs};
 use crate::tool::*;
 use rho_sdk::{ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits};
-use serde_json::json;
 use tokio::process::Command;
 
 pub struct Bash {
@@ -17,18 +16,7 @@ impl Bash {
 
 impl Tool for Bash {
     fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "bash".into(),
-            description: "Runs a bash command in the current working directory.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "command": {"type": "string"},
-                    "timeout_seconds": {"type": "integer", "minimum": 1}
-                },
-                "required": ["command"]
-            }),
-        }
+        shell_process::shell_tool_spec("bash", "Runs a bash command with `bash -lc`")
     }
 
     fn call<'a>(

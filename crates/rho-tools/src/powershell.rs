@@ -2,7 +2,6 @@ use crate::cancellation::RunCancellation;
 use crate::shell_process::{self, ProcessSupervisor, ShellArgs};
 use crate::tool::*;
 use rho_sdk::{ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits};
-use serde_json::json;
 use tokio::process::Command;
 
 pub struct PowerShell {
@@ -17,18 +16,10 @@ impl PowerShell {
 
 impl Tool for PowerShell {
     fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "powershell".into(),
-            description: "Runs a PowerShell command in the current working directory.".into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "command": {"type": "string"},
-                    "timeout_seconds": {"type": "integer", "minimum": 1}
-                },
-                "required": ["command"]
-            }),
-        }
+        shell_process::shell_tool_spec(
+            "powershell",
+            "Runs a PowerShell command with `powershell.exe -NoProfile -NonInteractive -Command`",
+        )
     }
 
     fn call<'a>(

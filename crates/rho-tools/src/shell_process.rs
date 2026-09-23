@@ -7,7 +7,7 @@
 use crate::cancellation::RunCancellation;
 use crate::process_env::apply_process_environment;
 use crate::process_stream::{capture_failure_notice, StreamKind};
-use crate::tool::{truncate, ToolError, ToolResult};
+use crate::tool::{truncate, ToolError, ToolResult, ToolSpec};
 use rho_sdk::{ExecutableSelection, ProcessEnvironment, ProcessExecution, ProcessInvocation};
 use serde::Deserialize;
 use std::{ffi::OsString, process::Stdio, time::Duration, time::Instant};
@@ -50,6 +50,28 @@ pub fn parent_path_for(environment: &ProcessEnvironment) -> Option<OsString> {
         _ => false,
     };
     inherits_path.then(|| std::env::var_os("PATH")).flatten()
+}
+
+/// Spec for a shell tool whose `launch` clause names how the command runs.
+/// Execution rules shared by every shell live here with [`ShellArgs`].
+pub(crate) fn shell_tool_spec(name: &str, launch: &str) -> ToolSpec {
+    ToolSpec {
+        name: name.into(),
+        description: format!(
+            "{launch} in the session working directory and returns stdout, stderr, and the exit code when nonzero. \
+Each call is a fresh process: `cd`, variables, and other shell state do not carry over to the next call. \
+The call blocks until the command exits; there is no timeout unless `timeout_seconds` is set, and a timeout kills the whole process tree. \
+Output beyond the tool-output limit is truncated."
+        ),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Command text to run."},
+                "timeout_seconds": {"type": "integer", "minimum": 1, "description": "Kill the command after this many seconds. Omit for no limit."}
+            },
+            "required": ["command"]
+        }),
+    }
 }
 
 /// Arguments accepted by the application shell tools.

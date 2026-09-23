@@ -18,6 +18,15 @@ use crate::provider_backend::stream_timeout::provider_client;
 const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub const DEFAULT_MAX_TOKENS: u32 = 4096;
+/// First-party output ceiling while neither catalog knows the model. Thinking
+/// counts against `max_tokens` even when its text is omitted, so a
+/// thinking-off-sized fallback truncates always-thinking Claude models.
+///
+/// Sized to the smallest `max_output_tokens` on any current `/v1/models` row
+/// (claude-opus-4-1: 32,000; Claude 4.5+ and 5.x rows report 64k-128k), so a
+/// later hydrate raises rather than lowers it. Hosted Messages adapters keep
+/// [`DEFAULT_MAX_TOKENS`] because their caps are unknown.
+const ANTHROPIC_COLD_CATALOG_MAX_TOKENS: u32 = 32_000;
 pub(crate) const ANTHROPIC_ANSWER_RESERVE_TOKENS: u32 = 1_024;
 
 mod per_message_effort;
@@ -29,6 +38,8 @@ pub struct AnthropicProvider {
     api_base: String,
     identity_provider: &'static str,
     model: String,
+    /// `max_tokens` sent while neither model catalog knows the model.
+    cold_max_tokens: u32,
     /// Fixed max-tokens for tests; `None` resolves from the model catalog per request.
     max_tokens_override: Option<u32>,
     /// Test-only thinking snapshot. Production resolves per request so a
@@ -36,7 +47,8 @@ pub struct AnthropicProvider {
     thinking_override: Option<thinking::ThinkingSource>,
     /// First live `max_tokens` used to clamp a thinking budget. Later catalog
     /// hydrates may raise the request `max_tokens`, but the budget stays put so
-    /// a hydrate cannot rewrite thinking params and bust the message cache.
+    /// a hydrate cannot rewrite thinking params and bust the message cache. See
+    /// [`Self::thinking_budget_ceiling`] for a hydrate that lowers it.
     thinking_budget_ceiling: OnceLock<u32>,
     /// Per-conversation prefix effort and later shifts, keyed by prompt cache
     /// key, so a mid-session change does not rewrite top-level effort.
@@ -57,6 +69,7 @@ impl AnthropicProvider {
             api_base: ANTHROPIC_API_BASE.into(),
             identity_provider: "anthropic",
             model,
+            cold_max_tokens: ANTHROPIC_COLD_CATALOG_MAX_TOKENS,
             max_tokens_override: Some(DEFAULT_MAX_TOKENS),
             thinking_override,
             session_headers: super::opencode_go::SessionHeaders::new("anthropic"),
@@ -76,15 +89,24 @@ impl AnthropicProvider {
         self.max_tokens_override = Some(tokens);
     }
 
+    /// First-party Anthropic API.
     pub(crate) fn new_with_transport(
         model: String,
         api_key: String,
         client: reqwest::Client,
         api_base: String,
     ) -> Self {
-        Self::new_with_identity(model, api_key, client, api_base, "anthropic")
+        Self::with_cold_max_tokens(
+            model,
+            api_key,
+            client,
+            api_base,
+            "anthropic",
+            ANTHROPIC_COLD_CATALOG_MAX_TOKENS,
+        )
     }
 
+    /// Hosted Anthropic Messages adapter registered under `identity_provider`.
     pub(crate) fn new_with_identity(
         model: String,
         api_key: String,
@@ -92,12 +114,31 @@ impl AnthropicProvider {
         api_base: String,
         identity_provider: &'static str,
     ) -> Self {
+        Self::with_cold_max_tokens(
+            model,
+            api_key,
+            client,
+            api_base,
+            identity_provider,
+            DEFAULT_MAX_TOKENS,
+        )
+    }
+
+    fn with_cold_max_tokens(
+        model: String,
+        api_key: String,
+        client: reqwest::Client,
+        api_base: String,
+        identity_provider: &'static str,
+        cold_max_tokens: u32,
+    ) -> Self {
         Self {
             client,
             api_key,
             api_base,
             identity_provider,
             model,
+            cold_max_tokens,
             max_tokens_override: None,
             thinking_override: None,
             session_headers: super::opencode_go::SessionHeaders::new(identity_provider),
@@ -125,14 +166,16 @@ impl AnthropicProvider {
                     .and_then(|metadata| metadata.max_output_tokens)
             })
             .and_then(|tokens| u32::try_from(tokens).ok())
-            .unwrap_or(DEFAULT_MAX_TOKENS)
+            .unwrap_or(self.cold_max_tokens)
     }
 
     /// Ceiling used to clamp `budget_tokens`. Latched on the first request so a
     /// later catalog hydrate can still raise `max_tokens` without rewriting the
-    /// thinking params that sit next to the cached message prefix.
+    /// thinking params that sit next to the cached message prefix. A hydrate
+    /// that lowers `max_tokens` below the latch wins: a budget at or above
+    /// `max_tokens` is a 400, which is worse than one cache miss.
     fn thinking_budget_ceiling(&self, live_max_tokens: u32) -> u32 {
-        *self.thinking_budget_ceiling.get_or_init(|| live_max_tokens)
+        (*self.thinking_budget_ceiling.get_or_init(|| live_max_tokens)).min(live_max_tokens)
     }
 
     fn request_body(

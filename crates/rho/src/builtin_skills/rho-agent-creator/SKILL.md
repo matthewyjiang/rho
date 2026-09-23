@@ -91,7 +91,7 @@ For `runtime: claude-cli`, do **not** invent or guess Claude model IDs from memo
 
 1. **Use default (`claude-opus-5`)** - emit `model: claude-opus-5`. Always say the default id in the label/help so the user knows exactly what will be written.
 2. **`claude-sonnet-5`** - emit `model: claude-sonnet-5`
-3. **`claude-fable-5`** - emit `model: claude-fable-5`
+3. **`claude-fable-5-1`** - emit `model: claude-fable-5-1`
 4. **Inherit Claude default** - omit `model` (and omit `model-policy`, or use `inherit` without a model). Explain this leaves model selection to the installed `claude` binary, not Rho.
 5. **Other** - let the user type any non-empty model string with no whitespace (Claude model id or Claude alias). Emit that exact string as `model`. Do not rewrite, normalize, or "correct" it.
 
@@ -99,7 +99,7 @@ Recommended preset ids only (do not expand this list from memory):
 
 - `claude-opus-5` (default when the user accepts the default)
 - `claude-sonnet-5`
-- `claude-fable-5`
+- `claude-fable-5-1`
 
 Never emit `provider` or `auth`. Prefer omitting `model-policy` when a model is set (parser treats that as select). If you emit `model-policy`, only `inherit` or `select` are valid. Reject empty model values. Do not combine `model-policy: inherit` with an explicit `model`, and do not use `model-policy: select` without `model`. Claude models are not Rho `@alias` values (`@name` is rejected).
 
