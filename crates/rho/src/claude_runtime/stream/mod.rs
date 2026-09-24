@@ -25,6 +25,7 @@
 mod blocks;
 mod events;
 mod format;
+mod input_json;
 mod presentation;
 mod protocol;
 mod rate_limit_display;
@@ -721,8 +722,7 @@ impl StreamMapper {
         if !tool.push_input_json(partial_json) {
             return Vec::new();
         }
-        let tool = tool.clone();
-        tool_updated_effects(&tool_id, &tool, self.cwd.as_deref())
+        tool_updated_effects(&tool_id, tool, self.cwd.as_deref())
     }
 
     fn map_content_block_delta(
