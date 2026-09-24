@@ -1,7 +1,5 @@
 use std::{str::FromStr, sync::Arc};
 
-use base64::Engine as _;
-
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
