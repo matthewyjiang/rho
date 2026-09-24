@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 use crate::{provider::CatalogReasoningPolicy, reasoning::ReasoningLevel};
 
-use super::{ImageInput, ModelCost, ModelMetadata, ReasoningOffBehavior};
+use super::{CachedRow, ImageInput, ModelCost, ModelMetadata, ReasoningOffBehavior};
 
 /// models.dev root object: provider id -> provider document.
 #[derive(Clone, Debug, Default)]
@@ -148,14 +148,15 @@ impl ModelsDevCatalog {
     }
 }
 
-pub(super) fn model_metadata_from_catalog(
+/// Cache row for one catalog model; `None` when the catalog has no such row.
+pub(super) fn cached_row_from_catalog(
     api: &ModelsDevCatalog,
     provider: &str,
     model: &str,
     reasoning_policy: CatalogReasoningPolicy,
-) -> Option<ModelMetadata> {
+) -> Option<CachedRow> {
     let (provider_doc, model) = api.model(provider, model)?;
-    Some(ModelMetadata {
+    let metadata = ModelMetadata {
         display_name: model
             .name
             .as_deref()
@@ -181,19 +182,11 @@ pub(super) fn model_metadata_from_catalog(
         reasoning_capabilities_known: reasoning_capabilities_known(model, reasoning_policy),
         reasoning_metadata_complete: reasoning_metadata_complete(model, reasoning_policy),
         sdk_package: resolved_sdk_package(provider_doc, model),
+    };
+    Some(CachedRow {
+        metadata,
+        image_input: model.modalities.image_input(),
     })
-}
-
-/// Image input support for one catalog row; `Unknown` when the row is absent.
-pub(super) fn image_input_from_catalog(
-    api: &ModelsDevCatalog,
-    provider: &str,
-    model: &str,
-) -> ImageInput {
-    api.model(provider, model)
-        .map_or(ImageInput::Unknown, |(_, model)| {
-            model.modalities.image_input()
-        })
 }
 
 /// models.dev provider `npm`, overridden by per-model `provider.npm` or `npm`.

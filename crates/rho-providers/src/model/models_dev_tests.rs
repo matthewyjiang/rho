@@ -14,7 +14,26 @@ fn catalog(api: &Value) -> super::document::ModelsDevCatalog {
 }
 
 fn upstream_metadata_from_api(api: &Value, provider: &str, model: &str) -> Option<ModelMetadata> {
-    super::upstream_metadata_from_api(&catalog(api), provider, model)
+    upstream_row_from_api(&catalog(api), provider, model).map(|row| row.metadata)
+}
+
+fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
+    cached_upstream_row(provider, model, CacheFreshness::AllowStale).map(|row| row.metadata)
+}
+
+fn current_cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
+    cached_upstream_row(provider, model, CacheFreshness::CurrentOnly).map(|row| row.metadata)
+}
+
+fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &ModelMetadata) {
+    write_cached_model_metadata_for_tests(provider, model, metadata);
+}
+
+fn row(metadata: ModelMetadata) -> CachedRow {
+    CachedRow {
+        metadata,
+        image_input: ImageInput::Unknown,
+    }
 }
 
 fn deprecated_provider_models_from_api(api: &Value, provider: &str) -> HashSet<String> {
@@ -1312,9 +1331,10 @@ fn batch_metadata_writes_inserts_all_records() {
             ..ModelMetadata::default()
         };
 
+        let (row_a, row_b) = (row(meta_a), row(meta_b));
         let written = write_cached_upstream_model_metadata_batch([
-            ("provider-x", "model-1", &meta_a, ImageInput::Unknown),
-            ("provider-x", "model-2", &meta_b, ImageInput::Unknown),
+            ("provider-x", "model-1", &row_a),
+            ("provider-x", "model-2", &row_b),
         ]);
         assert_eq!(written, 2);
 
@@ -1366,12 +1386,8 @@ fn batch_metadata_writes_returns_zero_on_commit_failure() {
             ..ModelMetadata::default()
         };
 
-        let written = write_cached_upstream_model_metadata_batch([(
-            "provider-x",
-            "model-1",
-            &meta,
-            ImageInput::Unknown,
-        )]);
+        let written =
+            write_cached_upstream_model_metadata_batch([("provider-x", "model-1", &row(meta))]);
         assert_eq!(written, 0, "must report 0 written rows when commit fails");
 
         assert!(
