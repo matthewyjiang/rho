@@ -19,9 +19,8 @@ use crate::provider::{CatalogConstruction, CatalogLookupMode, ProviderDescriptor
 use super::{
     document::{self, ModelsDevCatalog},
     fetch_models_dev_api, model_metadata_needs_refresh, open_models_dev_cache,
-    upstream_image_input_from_api, upstream_metadata_from_api,
-    write_cached_upstream_model_metadata_batch, MODEL_ID_CATALOG_CACHE_PROVIDER,
-    MODEL_METADATA_CACHE_VERSION,
+    upstream_row_from_api, write_cached_upstream_model_metadata_batch, CachedRow,
+    MODEL_ID_CATALOG_CACHE_PROVIDER, MODEL_METADATA_CACHE_VERSION,
 };
 
 /// How long a successful full-catalog snapshot stays current across launches.
@@ -120,23 +119,16 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
     let mut touched_providers = HashSet::new();
     for descriptor in crate::provider::builtin_providers() {
         for model_id in catalog_model_ids_for_provider(api, descriptor) {
-            if let Some(metadata) = extract_complete_upstream_metadata(api, descriptor, &model_id) {
+            if let Some(row) = extract_complete_upstream_row(api, descriptor, &model_id) {
                 touched_providers.insert(descriptor.name.to_string());
-                let image_input = upstream_image_input_from_api(api, descriptor.name, &model_id);
-                entries.push((descriptor.name.to_string(), model_id, metadata, image_input));
+                entries.push((descriptor.name.to_string(), model_id, row));
             }
         }
         // Provider-facing ids that are not catalog keys still need a cache row.
         if descriptor.id == ProviderId::KimiCode {
-            if let Some(metadata) = extract_complete_upstream_metadata(api, descriptor, "k3") {
+            if let Some(row) = extract_complete_upstream_row(api, descriptor, "k3") {
                 touched_providers.insert(descriptor.name.to_string());
-                let image_input = upstream_image_input_from_api(api, descriptor.name, "k3");
-                entries.push((
-                    descriptor.name.to_string(),
-                    "k3".to_string(),
-                    metadata,
-                    image_input,
-                ));
+                entries.push((descriptor.name.to_string(), "k3".to_string(), row));
             }
         }
     }
@@ -154,19 +146,13 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
             slug
         };
         for model_id in provider.models.keys() {
-            let Some(metadata) =
-                document::model_metadata_from_catalog(api, slug, model_id, host.catalog_reasoning)
+            let Some(row) =
+                document::cached_row_from_catalog(api, slug, model_id, host.catalog_reasoning)
             else {
                 continue;
             };
             touched_providers.insert(cache_provider.to_string());
-            let image_input = document::image_input_from_catalog(api, slug, model_id);
-            entries.push((
-                cache_provider.to_string(),
-                model_id.clone(),
-                metadata,
-                image_input,
-            ));
+            entries.push((cache_provider.to_string(), model_id.clone(), row));
         }
     }
     let extra = needed_extra_catalog_docs();
@@ -174,26 +160,24 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
         let policy = CatalogLookupMode::MODEL_ID_HYDRATE_REASONING;
         for (slug, provider) in api.iter_providers() {
             for model_id in provider.models.keys() {
-                let Some(metadata) =
-                    document::model_metadata_from_catalog(api, slug, model_id, policy)
-                        .filter(|metadata| metadata.reasoning_metadata_complete)
+                let Some(row) = document::cached_row_from_catalog(api, slug, model_id, policy)
+                    .filter(|row| row.metadata.reasoning_metadata_complete)
                 else {
                     continue;
                 };
                 entries.push((
                     MODEL_ID_CATALOG_CACHE_PROVIDER.to_string(),
                     format!("{slug}/{model_id}"),
-                    metadata,
-                    document::image_input_from_catalog(api, slug, model_id),
+                    row,
                 ));
             }
         }
     }
-    let written = write_cached_upstream_model_metadata_batch(entries.iter().map(
-        |(provider, model, metadata, image_input)| {
-            (provider.as_str(), model.as_str(), metadata, *image_input)
-        },
-    ));
+    let written = write_cached_upstream_model_metadata_batch(
+        entries
+            .iter()
+            .map(|(provider, model, row)| (provider.as_str(), model.as_str(), row)),
+    );
     if written > 0 {
         if extra.full_tree {
             // Display names are cached under the host that looks them up, not
@@ -310,16 +294,16 @@ fn extra_catalog_docs_cover(needed: &ExtraCatalogDocs, stored: &ExtraCatalogDocs
 /// construction follows the catalog's npm mapping also keep
 /// reasoning-incomplete rows, because the builder needs `sdk_package` even
 /// when reasoning levels stay unknown.
-fn extract_complete_upstream_metadata(
+fn extract_complete_upstream_row(
     api: &ModelsDevCatalog,
     descriptor: &ProviderDescriptor,
     model: &str,
-) -> Option<super::ModelMetadata> {
+) -> Option<CachedRow> {
     let keep_sdk_only_rows =
         descriptor.runtime.catalog_construction() == CatalogConstruction::PreferModelsDevNpm;
-    upstream_metadata_from_api(api, descriptor.name, model).filter(|metadata| {
-        metadata.reasoning_metadata_complete
-            || (keep_sdk_only_rows && metadata.sdk_package.is_some())
+    upstream_row_from_api(api, descriptor.name, model).filter(|row| {
+        row.metadata.reasoning_metadata_complete
+            || (keep_sdk_only_rows && row.metadata.sdk_package.is_some())
     })
 }
 

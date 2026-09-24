@@ -574,6 +574,7 @@ macro_rules! impl_sdk_model_provider {
     };
     // Shadows `$request` with a copy whose messages passed image gating. The
     // gated history binds to `$messages` so it outlives the borrowed request.
+    // Every arm that hands a `ModelRequest` to the transport must gate first.
     (@gate_images $self:ident, $request:ident, $messages:ident) => {
         let $messages = $crate::providers::image_input::gate_images(
             &$self.model_identity(),
