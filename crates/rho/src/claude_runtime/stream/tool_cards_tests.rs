@@ -7,8 +7,8 @@ use rho_tools::tool_card::{
     DiffRow, DiffRowKind, ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus,
 };
 
-use super::super::input_json::MAX_INPUT_JSON_CHARS;
 use super::{finished_card, started_card, StartedClaudeTool, MAX_TOOL_PAYLOAD_CHARS};
+use crate::claude_runtime::stream::input_json::MAX_INPUT_JSON_CHARS;
 
 fn tool(name: &str, input: serde_json::Value) -> StartedClaudeTool {
     StartedClaudeTool::from_name_input(Some(name), Some(&input))

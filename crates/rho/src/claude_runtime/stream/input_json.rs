@@ -18,9 +18,8 @@ pub(super) const MAX_INPUT_JSON_CHARS: usize = MAX_TOOL_PAYLOAD_CHARS.saturating
 
 /// Buffers at or under this size re-parse on every fragment, so early fields
 /// such as `command` or `file_path` show progressively on the running card.
-/// Past it, parses wait for a top-level field boundary: bounded card input is
-/// capped at the same size, so re-parsing a growing body changes nothing the
-/// card can show.
+/// Past it, parses wait for a top-level field boundary: running cards read
+/// only small fields, which are complete long before a large body finishes.
 const EAGER_PARSE_CHARS: usize = MAX_TOOL_PAYLOAD_CHARS;
 
 /// Concatenated fragments plus the scanner state at the end of the buffer.
@@ -28,6 +27,9 @@ const EAGER_PARSE_CHARS: usize = MAX_TOOL_PAYLOAD_CHARS;
 pub(super) struct StreamedInputJson {
     raw: String,
     scan: JsonScan,
+    /// The top-level object closed; `raw` is released and later fragments
+    /// are ignored.
+    closed: bool,
 }
 
 impl StreamedInputJson {
@@ -35,7 +37,7 @@ impl StreamedInputJson {
     /// parsed object when this fragment made a re-parse worthwhile and the
     /// buffer (possibly with a small closer) parses.
     pub(super) fn push(&mut self, fragment: &str) -> Option<Value> {
-        if fragment.is_empty() {
+        if fragment.is_empty() || self.closed {
             return None;
         }
         let room = MAX_INPUT_JSON_CHARS.saturating_sub(self.raw.len());
@@ -51,7 +53,12 @@ impl StreamedInputJson {
         if !due {
             return None;
         }
-        parse_assembled_input(&self.raw)
+        let parsed = parse_assembled_input(&self.raw);
+        if crossed_boundary && self.scan.depth == 0 {
+            self.closed = true;
+            self.raw = String::new();
+        }
+        parsed
     }
 
     #[cfg(test)]

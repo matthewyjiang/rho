@@ -34,16 +34,18 @@ fn large_body_parses_at_field_boundaries_only() {
         Some(json!({"file_path": "a.rs"}))
     );
     streamed.push(r#","content":""#);
-    let mut parsed_mid_body = 0;
     for chunk in body.as_bytes().chunks(100) {
         let fragment = std::str::from_utf8(chunk).expect("ascii chunk");
-        if streamed.push(fragment).is_some() && streamed.len() > EAGER_PARSE_CHARS {
-            parsed_mid_body += 1;
+        let parsed = streamed.push(fragment);
+        if streamed.len() > EAGER_PARSE_CHARS {
+            assert_eq!(parsed, None, "parsed mid-body at {} bytes", streamed.len());
         }
     }
-    assert_eq!(parsed_mid_body, 0);
     assert_eq!(
         streamed.push(r#""}"#),
         Some(json!({"file_path": "a.rs", "content": body}))
     );
+    // Closing the object releases the buffer; trailing fragments are ignored.
+    assert_eq!(streamed.len(), 0);
+    assert_eq!(streamed.push(r#"{"file_path":"b.rs"}"#), None);
 }
