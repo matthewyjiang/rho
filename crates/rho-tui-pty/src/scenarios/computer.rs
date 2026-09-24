@@ -71,6 +71,12 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
             timeout: SETTLE,
         },
         Step::Resize { rows: 24, cols: 60 },
+        // Let rho repaint for the new size before typing; a submit that races
+        // the resize can lose its Enter.
+        Step::WaitQuiet {
+            quiet_for: Duration::from_millis(150),
+            timeout: SETTLE,
+        },
         Step::SubmitText("/computer setup"),
         Step::WaitText {
             text: "Grant desktop access?",
@@ -126,6 +132,10 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
         Step::Resize {
             rows: 40,
             cols: 120,
+        },
+        Step::WaitQuiet {
+            quiet_for: Duration::from_millis(150),
+            timeout: SETTLE,
         },
         Step::SubmitText("/computer on"),
         Step::WaitText {
