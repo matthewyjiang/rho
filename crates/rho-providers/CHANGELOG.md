@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.11.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.10.0...rho-providers-v2.11.0) (2026-09-24)
+
+
+### Features
+
+* **tools:** let the model actually see images from read_file, skipping text-only models ([#1267](https://github.com/matthewyjiang/rho/issues/1267)) ([c6e5005](https://github.com/matthewyjiang/rho/commit/c6e50052f5e50d55fa54e6514d9848197939405b))
+
+
+### Bug Fixes
+
+* **anthropic:** stop Opus 5.5 reasoning-off requests from 400ing and clean up dated prompts ([#1259](https://github.com/matthewyjiang/rho/issues/1259)) ([feefb38](https://github.com/matthewyjiang/rho/commit/feefb38d31e18097b4be2bd48734592975f98f8b))
+* **build:** clear release and windows compile warnings ([#1250](https://github.com/matthewyjiang/rho/issues/1250)) ([1a6a7bd](https://github.com/matthewyjiang/rho/commit/1a6a7bd85dd53eb045441a3ea5b305182e3e2fe4))
+* **openai:** restore native codex compaction via compaction_trigger ([#1254](https://github.com/matthewyjiang/rho/issues/1254)) ([7eb2ee9](https://github.com/matthewyjiang/rho/commit/7eb2ee90ade51ffbda23737f87de266c12426074))
+
 ## [2.10.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.9.0...rho-providers-v2.10.0) (2026-09-22)
 
 

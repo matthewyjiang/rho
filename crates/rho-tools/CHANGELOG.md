@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.5.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.4.0...rho-agent-tools-v1.5.0) (2026-09-24)
+
+
+### Features
+
+* **tools:** let the model actually see images from read_file, skipping text-only models ([#1267](https://github.com/matthewyjiang/rho/issues/1267)) ([c6e5005](https://github.com/matthewyjiang/rho/commit/c6e50052f5e50d55fa54e6514d9848197939405b))
+* **tui:** drop Ctrl+O hints from expandable cards ([#1261](https://github.com/matthewyjiang/rho/issues/1261)) ([367dfd4](https://github.com/matthewyjiang/rho/commit/367dfd47eaf231c6b692310738288f93965b3104))
+
+
+### Bug Fixes
+
+* **anthropic:** stop Opus 5.5 reasoning-off requests from 400ing and clean up dated prompts ([#1259](https://github.com/matthewyjiang/rho/issues/1259)) ([feefb38](https://github.com/matthewyjiang/rho/commit/feefb38d31e18097b4be2bd48734592975f98f8b))
+
 ## [1.4.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.3.2...rho-agent-tools-v1.4.0) (2026-09-21)
 
 
