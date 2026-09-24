@@ -5,7 +5,7 @@ use std::{
     fs,
     io::Write,
     os::unix::fs::symlink,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
 };
 
@@ -16,6 +16,26 @@ fn installation_root() -> TempDir {
     // Hard links need the built executable's filesystem. Unlike a copy, they
     // never open an executable for writing where a parallel fork can inherit it.
     TempDir::new_in(Path::new(env!("CARGO_BIN_EXE_rho")).parent().unwrap()).unwrap()
+}
+
+/// Stub `cargo`/`pacman` probes answering per `RHO_TEST_PACKAGE_OWNER`; unset
+/// means neither owns the binary. Keeps tests off the host's real package
+/// managers (a real `cargo install --list` costs ~1s per launch).
+fn package_manager_stubs(root: &Path) -> PathBuf {
+    let tools = root.join("tools");
+    fs::create_dir(&tools).unwrap();
+    for tool in ["cargo", "pacman"] {
+        // Keep probe executables read-only during parallel process launches too.
+        symlink(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/uninstall-package-manager.sh"
+            ),
+            tools.join(tool),
+        )
+        .unwrap();
+    }
+    tools
 }
 
 // Covers: a script override must not permit deleting a package-owned binary,
@@ -31,21 +51,9 @@ fn package_ownership_overrides_script_deletion_hint() {
         let temp = installation_root();
         let home = temp.path().canonicalize().unwrap();
         let bin = home.join(".local/bin/rho");
-        let tools = home.join("tools");
         fs::create_dir_all(bin.parent().unwrap()).unwrap();
-        fs::create_dir(&tools).unwrap();
+        let tools = package_manager_stubs(&home);
         fs::hard_link(env!("CARGO_BIN_EXE_rho"), &bin).unwrap();
-        for tool in ["cargo", "pacman"] {
-            // Keep probe executables read-only during parallel process launches too.
-            symlink(
-                concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/tests/fixtures/uninstall-package-manager.sh"
-                ),
-                tools.join(tool),
-            )
-            .unwrap();
-        }
         // pacman probing is Linux-only, matching production detection.
         if owner == "pacman" && !cfg!(target_os = "linux") {
             continue;
@@ -94,6 +102,7 @@ fn uninstall_requires_consent_and_preserves_unselected_data() {
         let data = home.join(".rho");
         let shared = home.join(".agents/keep");
         let project = root.path().join("project");
+        let tools = package_manager_stubs(root.path());
         fs::create_dir_all(bin.parent().unwrap()).unwrap();
         fs::create_dir_all(&data).unwrap();
         fs::create_dir_all(shared.parent().unwrap()).unwrap();
@@ -109,6 +118,8 @@ fn uninstall_requires_consent_and_preserves_unselected_data() {
             .arg("uninstall")
             .args(&flags)
             .env("HOME", &home)
+            .env("PATH", &tools)
+            .env_remove("RHO_TEST_PACKAGE_OWNER")
             .env_remove("RHO_HOME")
             .env_remove("RHO_INSTALL_METHOD")
             .env_remove("RHO_INSTALL_DIR")

@@ -6,17 +6,45 @@ fn check(id: DoctorCheckId, status: DoctorStatus) -> DoctorCheck {
     DoctorCheck::new(id, "label", status, status.word())
 }
 
-// Covers: the headline names failures, warnings, and pending probes, and only
-// claims a pass when nothing is pending.
+// Covers: the report tallies failures, warnings, and pending probes, and is
+// still checking only while a probe is pending.
 // Owner: pure unit
 #[test]
-fn headline_counts_issues_and_pending_probes() {
+fn summary_counts_issues_and_pending_probes() {
     use DoctorStatus::{Checking, Fail, Info, Ok, Warn};
-    let cases: [(&[DoctorStatus], &str); 4] = [
-        (&[Ok, Info], "all checks passed"),
-        (&[Ok, Checking, Checking], "checking 2"),
-        (&[Fail, Warn, Warn], "1 failing · 2 warnings"),
-        (&[Fail, Checking], "1 failing · checking 1"),
+    let cases: [(&[DoctorStatus], DoctorSummary); 4] = [
+        (
+            &[Ok, Info],
+            DoctorSummary {
+                ok: 1,
+                info: 1,
+                ..DoctorSummary::default()
+            },
+        ),
+        (
+            &[Ok, Checking, Checking],
+            DoctorSummary {
+                ok: 1,
+                checking: 2,
+                ..DoctorSummary::default()
+            },
+        ),
+        (
+            &[Fail, Warn, Warn],
+            DoctorSummary {
+                fail: 1,
+                warn: 2,
+                ..DoctorSummary::default()
+            },
+        ),
+        (
+            &[Fail, Checking],
+            DoctorSummary {
+                fail: 1,
+                checking: 1,
+                ..DoctorSummary::default()
+            },
+        ),
     ];
     for (statuses, expected) in cases {
         let report = DoctorReport::from_checks(
@@ -25,7 +53,11 @@ fn headline_counts_issues_and_pending_probes() {
                 .map(|status| check(DoctorCheckId::SelectedModel, *status))
                 .collect(),
         );
-        assert_eq!(report.headline(), expected, "statuses={statuses:?}");
+        assert_eq!(
+            (report.summary(), report.is_checking()),
+            (expected, expected.checking > 0),
+            "statuses={statuses:?}"
+        );
     }
 }
 

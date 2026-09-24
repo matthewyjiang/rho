@@ -139,54 +139,48 @@ fn preserves_blank_lines_and_multibyte_boundaries() {
 }
 
 #[test]
-fn markdown_drain_waits_for_complete_emphasis_before_wrapping() {
-    let mut stream = AppendOnlyStream::default();
+fn markdown_drain_waits_for_complete_constructs() {
+    for (case, first, rest, width, emitted, rendered) in [
+        (
+            "emphasis",
+            "**hel",
+            "lo** ",
+            5,
+            "**hello**",
+            Some(vec!["hello"]),
+        ),
+        ("link", "[x]", "(y) ", 4, "[x](y)", Some(vec!["x: y"])),
+        (
+            "inline code",
+            "`hel",
+            "lo` ",
+            5,
+            "`hello`",
+            Some(vec!["hello"]),
+        ),
+        ("code fence line", "```", "rust\n", 3, "```rust\n", None),
+    ] {
+        let mut stream = AppendOnlyStream::default();
 
-    stream.push_delta("**hel");
-    assert_eq!(stream.drain_renderable_markdown(5, false), None);
+        stream.push_delta(first);
+        assert_eq!(
+            stream.drain_renderable_markdown(width, false),
+            None,
+            "{case}"
+        );
 
-    stream.push_delta("lo** ");
-    let fragment = stream.drain_renderable_markdown(5, false).unwrap();
-    assert_eq!(fragment.text.as_str(), "**hello**");
-    assert_eq!(
-        rendered_markdown_text(fragment.render_text(), 5, false),
-        vec!["hello"]
-    );
-    assert_eq!(stream.emitted_text(), "**hello**");
-}
-
-#[test]
-fn markdown_drain_waits_for_complete_link_before_wrapping() {
-    let mut stream = AppendOnlyStream::default();
-
-    stream.push_delta("[x]");
-    assert_eq!(stream.drain_renderable_markdown(4, false), None);
-
-    stream.push_delta("(y) ");
-    let fragment = stream.drain_renderable_markdown(4, false).unwrap();
-    assert_eq!(fragment.text.as_str(), "[x](y)");
-    assert_eq!(
-        rendered_markdown_text(fragment.render_text(), 4, false),
-        vec!["x: y"]
-    );
-    assert_eq!(stream.emitted_text(), "[x](y)");
-}
-
-#[test]
-fn markdown_drain_waits_for_complete_inline_code_before_wrapping() {
-    let mut stream = AppendOnlyStream::default();
-
-    stream.push_delta("`hel");
-    assert_eq!(stream.drain_renderable_markdown(5, false), None);
-
-    stream.push_delta("lo` ");
-    let fragment = stream.drain_renderable_markdown(5, false).unwrap();
-    assert_eq!(fragment.text.as_str(), "`hello`");
-    assert_eq!(
-        rendered_markdown_text(fragment.render_text(), 5, false),
-        vec!["hello"]
-    );
-    assert_eq!(stream.emitted_text(), "`hello`");
+        stream.push_delta(rest);
+        let fragment = stream.drain_renderable_markdown(width, false).unwrap();
+        assert_eq!(fragment.text.as_str(), emitted, "{case}");
+        if let Some(rendered) = rendered {
+            assert_eq!(
+                rendered_markdown_text(fragment.render_text(), width, false),
+                rendered,
+                "{case}"
+            );
+        }
+        assert_eq!(stream.emitted_text(), emitted, "{case}");
+    }
 }
 
 #[test]
@@ -226,19 +220,6 @@ fn markdown_drain_resumes_wrapping_once_hash_prefix_is_not_a_heading() {
 }
 
 #[test]
-fn markdown_drain_waits_for_complete_code_fence_line() {
-    let mut stream = AppendOnlyStream::default();
-
-    stream.push_delta("```");
-    assert_eq!(stream.drain_renderable_markdown(3, false), None);
-
-    stream.push_delta("rust\n");
-    let fragment = stream.drain_renderable_markdown(3, false).unwrap();
-    assert_eq!(fragment.text.as_str(), "```rust\n");
-    assert_eq!(stream.emitted_text(), "```rust\n");
-}
-
-#[test]
 fn markdown_drain_allows_markers_inside_code_blocks() {
     let mut stream = AppendOnlyStream::default();
 
@@ -250,30 +231,28 @@ fn markdown_drain_allows_markers_inside_code_blocks() {
 
 #[test]
 fn markdown_drain_uses_rendered_width_for_trailing_spaces_and_exact_wraps() {
-    let mut stream = AppendOnlyStream::default();
+    for (case, input, width, in_code_block, expected) in [
+        ("prose", "abc ", 3, false, "abc"),
+        ("code block content", "abcd ", 4, true, "abcd"),
+    ] {
+        let mut stream = AppendOnlyStream::default();
 
-    stream.push_delta("abc ");
-    let fragment = stream.drain_renderable_markdown(3, false).unwrap();
-    assert_eq!(fragment.text.as_str(), "abc");
-    assert_eq!(
-        rendered_markdown_text(fragment.render_text(), 3, false),
-        vec!["abc"]
-    );
-    assert_eq!(stream.drain_renderable_markdown(3, false), None);
-}
-
-#[test]
-fn markdown_drain_uses_code_block_content_width() {
-    let mut stream = AppendOnlyStream::default();
-
-    stream.push_delta("abcd ");
-    let fragment = stream.drain_renderable_markdown(4, true).unwrap();
-    assert_eq!(fragment.text.as_str(), "abcd");
-    assert_eq!(
-        rendered_markdown_text(fragment.render_text(), 4, true),
-        vec!["abcd"]
-    );
-    assert_eq!(stream.drain_renderable_markdown(4, true), None);
+        stream.push_delta(input);
+        let fragment = stream
+            .drain_renderable_markdown(width, in_code_block)
+            .unwrap();
+        assert_eq!(fragment.text.as_str(), expected, "{case}");
+        assert_eq!(
+            rendered_markdown_text(fragment.render_text(), width, in_code_block),
+            vec![expected],
+            "{case}"
+        );
+        assert_eq!(
+            stream.drain_renderable_markdown(width, in_code_block),
+            None,
+            "{case}"
+        );
+    }
 }
 
 #[test]
@@ -297,23 +276,18 @@ fn markdown_drain_waits_when_second_raw_url_is_incomplete() {
 }
 
 #[test]
-fn markdown_drain_allows_complete_literal_brackets() {
-    let mut stream = AppendOnlyStream::default();
+fn markdown_drain_allows_literal_markdown_characters() {
+    for (case, input, expected) in [
+        ("complete brackets", "arr[0] ", "arr[0]"),
+        ("unmatched marker", "* item ", "* item"),
+    ] {
+        let mut stream = AppendOnlyStream::default();
 
-    stream.push_delta("arr[0] ");
-    let fragment = stream.drain_renderable_markdown(6, false).unwrap();
-    assert_eq!(fragment.text.as_str(), "arr[0]");
-    assert_eq!(stream.emitted_text(), "arr[0]");
-}
-
-#[test]
-fn markdown_drain_allows_literal_unmatched_markers() {
-    let mut stream = AppendOnlyStream::default();
-
-    stream.push_delta("* item ");
-    let fragment = stream.drain_renderable_markdown(6, false).unwrap();
-    assert_eq!(fragment.text.as_str(), "* item");
-    assert_eq!(stream.emitted_text(), "* item");
+        stream.push_delta(input);
+        let fragment = stream.drain_renderable_markdown(6, false).unwrap();
+        assert_eq!(fragment.text.as_str(), expected, "{case}");
+        assert_eq!(stream.emitted_text(), expected, "{case}");
+    }
 }
 
 #[test]

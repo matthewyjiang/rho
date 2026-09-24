@@ -14,9 +14,13 @@ fn generous() -> TranscriptBudget {
     }
 }
 
+// Covers: the advisor model sees every role in session order with its own
+// header; interrupted replies are covered by the empty-args test.
+// Owner: advisor transcript renderer
 #[test]
-fn renders_requests_replies_tool_calls_and_results_in_order() {
+fn renders_every_role_in_session_order() {
     let messages = vec![
+        Message::System("session rules".into()),
         Message::user_text("fix the failing test"),
         Message::assistant(AssistantMessage::from_content(vec![
             ContentBlock::Text("Looking at the suite.".into()),
@@ -46,6 +50,10 @@ fn renders_requests_replies_tool_calls_and_results_in_order() {
          You are a coding agent.\n\
          \n\
          # Session transcript\n\
+         \n\
+         ## system\n\
+         \n\
+         session rules\n\
          \n\
          ## user\n\
          \n\
@@ -151,39 +159,6 @@ fn keeps_empty_object_args_on_the_call_line() {
          Interrupted mid-call.\n\
          tool call (incomplete): advisor {}\n\
          tool call (incomplete): advisor\n\
-         tool call (incomplete): grep\n\
-         arguments: {\"pattern\":\n"
-    );
-}
-
-#[test]
-fn renders_system_messages_and_interrupted_replies() {
-    let messages = vec![
-        Message::System("session rules".into()),
-        Message::AbortedAssistant(Box::new(AbortedAssistant {
-            content: vec![ContentBlock::Text("Partway through.".into())],
-            tool_calls: vec![PartialToolCall {
-                id: Some("call-9".into()),
-                name: Some("grep".into()),
-                arguments: "{\"pattern\":".into(),
-            }],
-            ..AbortedAssistant::default()
-        })),
-    ];
-
-    let rendered = render_transcript(None, &messages, generous());
-
-    assert_eq!(
-        rendered,
-        "# Session transcript\n\
-         \n\
-         ## system\n\
-         \n\
-         session rules\n\
-         \n\
-         ## assistant (interrupted)\n\
-         \n\
-         Partway through.\n\
          tool call (incomplete): grep\n\
          arguments: {\"pattern\":\n"
     );

@@ -325,22 +325,6 @@ fn herdr_state_follows_attached_subagent_state() {
     );
 }
 
-#[test]
-fn status_token_fallback_uses_run_status_totals() {
-    let summary = activity_metrics_line(
-        "assistant text",
-        /*context*/ None,
-        /*run_usage*/ None,
-        Some(&RunStatus {
-            input_tokens: Some(1_200),
-            output_tokens: Some(300),
-            ..RunStatus::default()
-        }),
-        /*average_generation_rate*/ None,
-    );
-    assert_eq!(summary, "assistant text · tokens in 1.2K · out 300");
-}
-
 fn activity_line(app: &AttachmentApp, activity: &str) -> String {
     let rate = app.model_performance.summary().rounded_generation_rate();
     activity_metrics_line(
@@ -514,12 +498,6 @@ fn identity_line_omits_reasoning_when_the_model_cannot_use_it() {
             "claude-code (no model pinned; Claude Code chooses) · high · claude-cli · turn 2"
         );
     });
-}
-
-#[test]
-fn header_title_line_names_run_and_agent() {
-    let line = header_title_line("abc123", "explorer", "running", None);
-    assert_eq!(line.to_string(), "rho  attach abc123 · explorer · running");
 }
 
 #[test]

@@ -619,38 +619,43 @@ mod tests {
         );
     }
 
+    // Covers: the /info context row shows consumption without a reported
+    // limit, uses metadata when usage is absent, and falls back to the
+    // caller's "not reported" row when nothing is known.
+    // Owner: /info context row
     #[test]
-    fn context_details_show_tokens_without_a_reported_limit() {
-        // Covers: unknown context window must not hide consumption
-        // Owner: /info context row
-        assert_eq!(
-            format_context_row(Some(&ContextUsage::estimated(123_456, None)), None,),
-            Some("123,456 tokens (estimated)".into())
-        );
-        // A reported limit keeps the familiar tokens/limit/percent form.
-        assert_eq!(
-            format_context_row(Some(&ContextUsage::estimated(50_000, Some(200_000))), None,),
-            Some("50,000 / 200,000 tokens (25.0%, estimated)".into())
-        );
-    }
-
-    #[test]
-    fn context_row_falls_back_when_nothing_is_known() {
-        // Covers: no usage and no window must fall back to the caller's
-        // "not reported" row instead of naming a limit nobody reported.
-        // Owner: /info context row
-        assert_eq!(format_context_row(None, None), None);
-        // Metadata alone still supplies the window when usage is absent.
-        assert_eq!(
-            format_context_row(
+    fn context_row_formats_usage_and_limit_combinations() {
+        let metadata = ModelMetadata {
+            advertised_context_window: Some(200_000),
+            ..ModelMetadata::default()
+        };
+        for (case, usage, metadata, expected) in [
+            (
+                "tokens without a reported limit",
+                Some(ContextUsage::estimated(123_456, None)),
                 None,
-                Some(&ModelMetadata {
-                    advertised_context_window: Some(200_000),
-                    ..ModelMetadata::default()
-                }),
+                Some("123,456 tokens (estimated)"),
             ),
-            Some("unknown / 200,000 tokens (model limit)".into())
-        );
+            (
+                "tokens with a reported limit",
+                Some(ContextUsage::estimated(50_000, Some(200_000))),
+                None,
+                Some("50,000 / 200,000 tokens (25.0%, estimated)"),
+            ),
+            ("nothing known", None, None, None),
+            (
+                "metadata window without usage",
+                None,
+                Some(&metadata),
+                Some("unknown / 200,000 tokens (model limit)"),
+            ),
+        ] {
+            assert_eq!(
+                format_context_row(usage.as_ref(), metadata),
+                expected.map(String::from),
+                "{case}"
+            );
+        }
     }
 
     #[test]

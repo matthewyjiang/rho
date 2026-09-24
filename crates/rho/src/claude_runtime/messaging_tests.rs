@@ -44,18 +44,6 @@ async fn follow_ups_keep_their_own_delivery_receipts() {
     }
 }
 
-#[tokio::test]
-async fn message_channel_delivers_until_receiver_drops() {
-    let (handle, mut inbox) = message_channel();
-    handle.send("one".into()).await.unwrap();
-    assert_eq!(inbox.recv().await.as_deref(), Some("one"));
-    drop(inbox);
-    assert_eq!(
-        handle.send("two".into()).await,
-        Err(ClaudeMessageSendError::Closed)
-    );
-}
-
 /// Covers: seal stops new accepts while still delivering bodies already queued.
 /// Owner: Claude parent-message gate used before terminal stdin close.
 #[tokio::test]

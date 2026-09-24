@@ -25,60 +25,30 @@ fn questionnaire_timeout_requires_positive_whole_seconds() {
     }
 }
 
-// Covers: unknown top-level config keys are a hard load error
+// Covers: unknown config keys at any level are a hard load error
 // Owner: config load
 #[test]
-fn unknown_top_level_keys_are_rejected() {
-    let error = parse_settings("provder = \"openai\"\nmodel = \"gpt-5.5\"\n").unwrap_err();
-    let message = format!("{error:#}");
-    assert!(
-        message.contains("unknown field `provder`"),
-        "unexpected error: {message}"
-    );
-}
-
-// Covers: unknown nested config keys are a hard load error
-// Owner: config load
-#[test]
-fn unknown_nested_keys_are_rejected() {
-    let error = parse_settings(
-        r#"
-[display]
-max_tool_output_liness = 3
-"#,
-    )
-    .unwrap_err();
-    let message = format!("{error:#}");
-    assert!(
-        message.contains("unknown field `max_tool_output_liness`"),
-        "unexpected error: {message}"
-    );
-}
-
-// Covers: unknown providers / ollama / internal_agent fields are hard errors
-// Owner: config load
-#[test]
-fn unknown_provider_and_internal_agent_keys_are_rejected() {
-    for (toml, field) in [
+fn unknown_keys_are_rejected() {
+    for (case, toml, field) in [
         (
-            r#"
-[providers]
-unknown = {}
-"#,
-            "unknown",
+            "top level",
+            "provder = \"openai\"\nmodel = \"gpt-5.5\"\n",
+            "provder",
         ),
         (
-            r#"
-[providers.ollama]
-bad_key = "x"
-"#,
+            "nested table",
+            "[display]\nmax_tool_output_liness = 3\n",
+            "max_tool_output_liness",
+        ),
+        ("provider name", "[providers]\nunknown = {}\n", "unknown"),
+        (
+            "provider field",
+            "[providers.ollama]\nbad_key = \"x\"\n",
             "bad_key",
         ),
         (
-            r#"
-[internal_agents.reviewer]
-bad_key = "x"
-"#,
+            "internal agent field",
+            "[internal_agents.reviewer]\nbad_key = \"x\"\n",
             "bad_key",
         ),
     ] {
@@ -86,7 +56,7 @@ bad_key = "x"
         let message = format!("{error:#}");
         assert!(
             message.contains(&format!("unknown field `{field}`")),
-            "expected unknown field `{field}` in: {message}"
+            "{case}: expected unknown field `{field}` in: {message}"
         );
     }
 }

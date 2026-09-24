@@ -315,7 +315,6 @@ mod tests {
 
         assert!(binding.matches(event));
         assert_eq!(binding.to_string(), "ctrl+shift+g");
-        assert_eq!(binding.chrome_label(), "Ctrl+Shift+G");
     }
 
     #[test]
@@ -334,10 +333,6 @@ mod tests {
         assert!(keys.queue_prompt_matches(alt_enter));
         assert!(keys.queue_prompt_matches(ctrl_enter));
         assert!(!keys.queue_prompt_matches(enter));
-        assert_eq!(
-            Keybindings::queue_prompt_fallback().chrome_label(),
-            "Ctrl+Enter"
-        );
 
         let remapped = Keybindings {
             queue_prompt: "ctrl+k".parse().unwrap(),

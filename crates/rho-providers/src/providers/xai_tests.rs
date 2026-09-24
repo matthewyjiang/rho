@@ -101,157 +101,84 @@ fn responses_body_preserves_tools_cache_key_and_supported_reasoning() {
     assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
 }
 
+// Covers: hosted tools replace their client forms only when enabled, and
+// hosted x_search is always sent in place of any client x_search.
+// Owner: xai responses wire body
 #[test]
-fn responses_body_uses_hosted_web_search_and_adds_hosted_x_search() {
-    let tools = [
+fn responses_body_maps_client_tools_to_enabled_hosted_tools() {
+    fn client_tool(name: &str) -> ToolSpec {
         ToolSpec {
-            name: "web_search".into(),
-            description: "search the web".into(),
+            name: name.into(),
+            description: format!("client {name}"),
             input_schema: json!({"type": "object"}),
-        },
-        ToolSpec {
-            name: "x_search".into(),
-            description: "ignored client form".into(),
-            input_schema: json!({"type": "object"}),
-        },
-        ToolSpec {
-            name: "image_generation".into(),
-            description: "ignored client form".into(),
-            input_schema: json!({"type": "object"}),
-        },
-    ];
+        }
+    }
+    fn function_tool(name: &str) -> Value {
+        json!({
+            "type": "function",
+            "name": name,
+            "description": format!("client {name}"),
+            "parameters": {"type": "object"},
+            "strict": false,
+        })
+    }
+
     let profile = reasoning::XaiReasoningProfile::from_metadata("grok-4.5", None);
-    let body = build_xai_responses_body(
-        "xai",
-        "grok-4.5",
-        &profile,
-        ModelRequest {
-            messages: &[Message::user_text("what are people saying?")],
-            tools: &tools,
-            cancellation: Default::default(),
-            reasoning_level: ReasoningLevel::Off,
-            prompt_cache_key: None,
-        },
-        XaiHostedTools::ALL,
-    )
-    .unwrap();
-
-    assert_eq!(
-        body["tools"],
-        json!([
-            { "type": "web_search" },
-            { "type": "x_search" },
-            { "type": "image_generation" },
-        ])
-    );
-}
-
-#[test]
-fn responses_body_keeps_function_web_search_when_hosted_disabled() {
-    let tools = [ToolSpec {
-        name: "web_search".into(),
-        description: "search the web".into(),
-        input_schema: json!({"type": "object"}),
-    }];
-    let profile = reasoning::XaiReasoningProfile::from_metadata("grok-4.5", None);
-    let body = build_xai_responses_body(
-        "xai",
-        "grok-4.5",
-        &profile,
-        ModelRequest {
-            messages: &[Message::user_text("find docs")],
-            tools: &tools,
-            cancellation: Default::default(),
-            reasoning_level: ReasoningLevel::Medium,
-            prompt_cache_key: None,
-        },
-        XaiHostedTools {
-            web_search: false,
-            image_generation: true,
-        },
-    )
-    .unwrap();
-
-    assert_eq!(
-        body["tools"],
-        json!([
-            {
-                "type": "function",
-                "name": "web_search",
-                "description": "search the web",
-                "parameters": {"type": "object"},
-                "strict": false,
+    for (case, tools, hosted, expected) in [
+        (
+            "all hosted replaces client forms",
+            vec![
+                client_tool("web_search"),
+                client_tool("x_search"),
+                client_tool("image_generation"),
+            ],
+            XaiHostedTools::ALL,
+            json!([
+                { "type": "web_search" },
+                { "type": "x_search" },
+                { "type": "image_generation" },
+            ]),
+        ),
+        (
+            "hosted web search disabled keeps the function",
+            vec![client_tool("web_search")],
+            XaiHostedTools {
+                web_search: false,
+                image_generation: true,
             },
-            { "type": "x_search" },
-            { "type": "image_generation" },
-        ])
-    );
-}
-
-#[test]
-fn responses_body_always_includes_hosted_x_search() {
-    let profile = reasoning::XaiReasoningProfile::from_metadata("grok-4.5", None);
-    let body = build_xai_responses_body(
-        "xai",
-        "grok-4.5",
-        &profile,
-        ModelRequest {
-            messages: &[Message::user_text("hello")],
-            tools: &[],
-            cancellation: Default::default(),
-            reasoning_level: ReasoningLevel::Off,
-            prompt_cache_key: None,
-        },
-        XaiHostedTools::ALL,
-    )
-    .unwrap();
-
-    assert_eq!(
-        body["tools"],
-        json!([{ "type": "x_search" }, { "type": "image_generation" }])
-    );
-    assert_eq!(body["tool_choice"], "auto");
-}
-
-#[test]
-fn responses_body_omits_hosted_image_generation_when_disabled() {
-    let tools = [ToolSpec {
-        name: "image_generation".into(),
-        description: "client form kept when hosted is off".into(),
-        input_schema: json!({"type": "object"}),
-    }];
-    let profile = reasoning::XaiReasoningProfile::from_metadata("grok-4.5", None);
-    let body = build_xai_responses_body(
-        "xai",
-        "grok-4.5",
-        &profile,
-        ModelRequest {
-            messages: &[Message::user_text("hello")],
-            tools: &tools,
-            cancellation: Default::default(),
-            reasoning_level: ReasoningLevel::Off,
-            prompt_cache_key: None,
-        },
-        XaiHostedTools {
-            web_search: true,
-            image_generation: false,
-        },
-    )
-    .unwrap();
-
-    assert_eq!(
-        body["tools"],
-        json!([
-            {
-                "type": "function",
-                "name": "image_generation",
-                "description": "client form kept when hosted is off",
-                "parameters": {"type": "object"},
-                "strict": false,
+            json!([
+                function_tool("web_search"),
+                { "type": "x_search" },
+                { "type": "image_generation" },
+            ]),
+        ),
+        (
+            "hosted image generation disabled keeps the function",
+            vec![client_tool("image_generation")],
+            XaiHostedTools {
+                web_search: true,
+                image_generation: false,
             },
-            { "type": "x_search" },
-        ])
-    );
+            json!([function_tool("image_generation"), { "type": "x_search" }]),
+        ),
+    ] {
+        let body = build_xai_responses_body(
+            "xai",
+            "grok-4.5",
+            &profile,
+            ModelRequest {
+                messages: &[Message::user_text("hello")],
+                tools: &tools,
+                cancellation: Default::default(),
+                reasoning_level: ReasoningLevel::Off,
+                prompt_cache_key: None,
+            },
+            hosted,
+        )
+        .unwrap();
+
+        assert_eq!(body["tools"], expected, "{case}");
+    }
 }
 
 #[test]

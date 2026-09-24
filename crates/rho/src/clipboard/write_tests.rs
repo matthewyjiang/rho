@@ -42,34 +42,30 @@ fn join_host_errors_keeps_both_messages() {
     assert_eq!(error.to_string(), "clip.exe missing; native failed");
 }
 
+// Covers: doctor marks text copy healthy only when a confirmed clipboard path
+// exists; remote OSC 52 is intended, while local/WSL OSC 52 fallback is degraded.
+// Owner: clipboard doctor probe (pure unit).
 #[test]
-fn remote_probe_uses_intended_osc_52_path() {
-    let probe = probe_text_write_with(SessionKind::Remote, |_| false, || false);
-    assert_eq!(probe.status, "osc 52");
-    assert!(probe.healthy);
-    assert!(probe.detail.contains("Remote session"));
-}
-
-#[test]
-fn local_probe_marks_confirmed_native_as_healthy() {
-    let probe = probe_text_write_with(SessionKind::Local, |_| false, || true);
-    assert_eq!(probe.status, "native");
-    assert!(probe.healthy);
-}
-
-#[test]
-fn local_probe_marks_osc_only_as_degraded() {
-    let probe = probe_text_write_with(SessionKind::Local, |_| false, || false);
-    assert_eq!(probe.status, "osc 52 fallback");
-    assert!(!probe.healthy);
-}
-
-#[test]
-fn wsl_probe_prefers_windows_host_when_clip_exists() {
-    let probe = probe_text_write_with(SessionKind::Wsl, |command| command == "clip.exe", || false);
-    assert_eq!(probe.status, "windows host");
-    assert!(probe.healthy);
-    assert!(probe.detail.contains("clip.exe"));
+fn text_write_probe_health_follows_available_backends() {
+    for (case, session, has_clip_exe, native, healthy) in [
+        ("remote osc 52", SessionKind::Remote, false, false, true),
+        ("local native", SessionKind::Local, false, true, true),
+        (
+            "local osc 52 fallback",
+            SessionKind::Local,
+            false,
+            false,
+            false,
+        ),
+        ("wsl windows host", SessionKind::Wsl, true, false, true),
+    ] {
+        let probe = probe_text_write_with(
+            session,
+            |command| has_clip_exe && command == "clip.exe",
+            || native,
+        );
+        assert_eq!(probe.healthy, healthy, "{case}");
+    }
 }
 
 // Covers: empty native clipboard is a successful no-op paste, not an error toast.

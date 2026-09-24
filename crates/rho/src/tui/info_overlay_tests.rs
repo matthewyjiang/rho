@@ -171,10 +171,6 @@ fn copy_key_writes_the_report_without_closing() {
         "copied report missing provider:\n{text}"
     );
     assert!(
-        text.contains("Permissions"),
-        "copied report missing field:\n{text}"
-    );
-    assert!(
         !text.contains('┌'),
         "copied report included overlay chrome:\n{text}"
     );

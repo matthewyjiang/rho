@@ -12,19 +12,16 @@ fn tokens(expires_in: Option<u64>, expires_at_unix: Option<i64>) -> KimiTokens {
 }
 
 #[test]
-fn refresh_threshold_uses_half_the_original_lifetime() {
-    let tokens = tokens(Some(3_600), Some(now_unix() + 1_000));
-
-    assert!(token_is_expiring(&tokens));
-}
-
-#[test]
-fn refresh_threshold_has_a_five_minute_minimum() {
-    let fresh = tokens(Some(600), Some(now_unix() + 400));
-    let expiring = tokens(Some(600), Some(now_unix() + 200));
-
-    assert!(!token_is_expiring(&fresh));
-    assert!(token_is_expiring(&expiring));
+fn refresh_threshold_is_half_lifetime_with_five_minute_minimum() {
+    let now = now_unix();
+    for (case, expires_in, expires_at, expected) in [
+        ("half of one hour", 3_600, now + 1_000, true),
+        ("minimum keeps fresh", 600, now + 400, false),
+        ("minimum marks expiring", 600, now + 200, true),
+    ] {
+        let tokens = tokens(Some(expires_in), Some(expires_at));
+        assert_eq!(token_is_expiring(&tokens), expected, "{case}");
+    }
 }
 
 #[test]

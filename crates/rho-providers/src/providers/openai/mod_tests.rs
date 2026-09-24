@@ -551,8 +551,8 @@ fn completed_response_text_preserves_url_annotations() {
     let text = extract_sse_text(body).unwrap();
 
     assert!(text.contains("Rust shipped today."));
-    assert!(text.contains("Sources:"));
-    assert!(text.contains("Rust Blog: https://blog.rust-lang.org/release"));
+    assert!(text.contains("Rust Blog"));
+    assert!(text.contains("https://blog.rust-lang.org/release"));
 }
 
 #[test]

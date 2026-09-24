@@ -224,24 +224,21 @@ async fn running_escape_action_picks_one_owner() {
 // Owner: tui running Esc policy
 #[tokio::test]
 async fn approval_escape_denies_and_aborts_first() {
-    let mut app = test_app();
-    app.begin_provider_turn_ui();
-    app.open_approval(pending_approval()).await;
-    assert_eq!(
-        app.running_escape_action(),
-        Some(RunningEscapeAction::DenyApprovalAndAbort)
-    );
-
-    let mut app = test_app();
-    app.begin_provider_turn_ui();
-    app.pending_inline_shells
-        .push(PendingShellTask::test_task("hello"));
-    app.open_approval(pending_approval()).await;
-    assert_eq!(
-        app.running_escape_action(),
-        Some(RunningEscapeAction::DenyApprovalAndAbort)
-    );
-    let _ = app.cancel_inline_shells();
+    for (case, background_shell) in [("approval only", false), ("over background shell", true)] {
+        let mut app = test_app();
+        app.begin_provider_turn_ui();
+        if background_shell {
+            app.pending_inline_shells
+                .push(PendingShellTask::test_task("hello"));
+        }
+        app.open_approval(pending_approval()).await;
+        assert_eq!(
+            app.running_escape_action(),
+            Some(RunningEscapeAction::DenyApprovalAndAbort),
+            "{case}"
+        );
+        let _ = app.cancel_inline_shells();
+    }
 }
 
 // Covers: empty composer advertises abort only when Esc would abort.

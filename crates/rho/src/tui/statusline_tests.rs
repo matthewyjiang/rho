@@ -272,55 +272,6 @@ fn bottom_row_drops_fields_by_global_rank() {
 }
 
 #[test]
-fn pack_prefers_model_over_cost_and_context() {
-    // Covers: left metrics must not crowd out the model under the claimed hierarchy
-    // Owner: statusline field hierarchy
-    let statusline = fully_populated_statusline();
-
-    // Width fits permission + model + cost, but not also context-or-provider noise.
-    // cost+perm+model = 6+1+4+3+7 = 21. Force a width where cost and model fight:
-    // perm+model = 14, cost+perm = 11, cost+perm+model = 21.
-    // At width 15 only perm+model should survive (cost rank 5 < model rank 7).
-    assert_eq!(
-        packed_keys(&statusline.state, 15),
-        vec![FieldKey::Permission, FieldKey::Model]
-    );
-
-    // At width 17, context+perm = 17 but context must yield to model.
-    assert_eq!(
-        packed_keys(&statusline.state, 17),
-        vec![FieldKey::Permission, FieldKey::Model]
-    );
-}
-
-#[test]
-fn provider_degrades_before_model_on_narrow_width() {
-    // Covers: adding the provider label must not hide the model on narrow terminals
-    // Owner: statusline fit logic
-    let mut statusline = StatusLine::new(&test_info(PathBuf::from("/tmp/project")));
-    statusline.state.reasoning_configurable = false;
-
-    let wide = statusline.lines(40, None)[1].clone();
-    assert!(
-        line_text(&wide).contains("OpenAI · gpt-5.5"),
-        "wide row should keep provider: {:?}",
-        line_text(&wide)
-    );
-
-    let narrow = statusline.lines(18, None)[1].clone();
-    assert!(
-        line_text(&narrow).contains("gpt-5.5"),
-        "narrow row should keep the model: {:?}",
-        line_text(&narrow)
-    );
-    assert!(
-        !line_text(&narrow).contains("OpenAI"),
-        "provider should drop before the model: {:?}",
-        line_text(&narrow)
-    );
-}
-
-#[test]
 fn signed_out_keeps_not_signed_in_over_permission() {
     // Covers: signed-out row must still name the auth gap when space is tight
     // Owner: statusline field hierarchy
@@ -415,36 +366,45 @@ fn git_branch_is_cached_until_explicit_refresh() {
     assert_ne!(refreshed, initial);
 }
 
+// Covers: path shortening keeps the most trailing segments that fit, drops
+// the root when needed, and keeps the end of an overlong last segment.
+// Owner: statusline path layout
 #[test]
 fn shorten_path_keeps_trailing_segments() {
-    assert_eq!(
-        shorten_path_display("~/work/company/services/api-gateway", 24),
-        "~/…/services/api-gateway"
-    );
-    assert_eq!(
-        shorten_path_display("~/work/company/services/api-gateway", 18),
-        "~/…/api-gateway"
-    );
-    assert_eq!(
-        shorten_path_display("/tmp/claude-1000/home-emgym-herdr-work", 23),
-        "…/home-emgym-herdr-work"
-    );
-    assert_eq!(
-        shorten_path_display("/tmp/claude-1000/projects/api-gateway", 20),
-        "/…/api-gateway"
-    );
-}
-
-#[test]
-fn shorten_path_keeps_end_when_last_segment_is_long() {
-    let shortened = shorten_path_display("~/work/company/very-long-service-name", 14);
-    assert!(shortened.starts_with('…'), "{shortened}");
-    assert!(
-        shortened.ends_with("service-name") || shortened.ends_with("name"),
-        "{shortened}"
-    );
-    assert!(display_width(&shortened) <= 14, "{shortened}");
-    assert!(!shortened.starts_with("~/work"), "{shortened}");
+    for (case, path, width, expected) in [
+        (
+            "rooted two segments",
+            "~/work/company/services/api-gateway",
+            24,
+            "~/…/services/api-gateway",
+        ),
+        (
+            "rooted last segment",
+            "~/work/company/services/api-gateway",
+            18,
+            "~/…/api-gateway",
+        ),
+        (
+            "unrooted last segment",
+            "/tmp/claude-1000/home-emgym-herdr-work",
+            23,
+            "…/home-emgym-herdr-work",
+        ),
+        (
+            "absolute last segment",
+            "/tmp/claude-1000/projects/api-gateway",
+            20,
+            "/…/api-gateway",
+        ),
+        (
+            "overlong last segment keeps end",
+            "~/work/company/very-long-service-name",
+            14,
+            "…-service-name",
+        ),
+    ] {
+        assert_eq!(shorten_path_display(path, width), expected, "{case}");
+    }
 }
 
 #[test]

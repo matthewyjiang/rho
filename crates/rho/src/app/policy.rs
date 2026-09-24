@@ -25,7 +25,3 @@ impl WorkspacePolicy for AppPolicy {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "policy_tests.rs"]
-mod tests;

@@ -21,7 +21,8 @@ fn model(
 }
 
 // Covers: Cursor editor rows group by display-name family, keep the raw id as
-// the value, and expose flags as badges plus an Other sentinel.
+// the value, and expose flags as badges (no-ZDR as a warning) plus an Other
+// sentinel.
 // Owner: tui agent editor
 #[test]
 fn cursor_model_picker_groups_by_family_and_keeps_ids() {
@@ -54,25 +55,29 @@ fn cursor_model_picker_groups_by_family_and_keeps_ids() {
             (
                 item.section.as_deref(),
                 item.value.as_str(),
-                item.badge.as_ref().map(|badge| badge.text.as_str()),
+                item.badge.as_ref().map(|badge| badge.tone),
             )
         })
         .collect::<Vec<_>>();
     assert_eq!(
         rows,
         vec![
-            (Some("Auto"), "auto", Some("default")),
+            (Some("Auto"), "auto", Some(PickerBadgeTone::Selected)),
             (
                 Some("Claude Fable 5"),
                 "claude-fable-5-thinking-high",
-                Some("no ZDR")
+                Some(PickerBadgeTone::Warning)
             ),
             (
                 Some("Claude Opus 5"),
                 "claude-opus-5-thinking-high-fast",
                 None
             ),
-            (Some("Composer 2.5"), "composer-2.5", Some("current")),
+            (
+                Some("Composer 2.5"),
+                "composer-2.5",
+                Some(PickerBadgeTone::Selected)
+            ),
             (None, CURSOR_MODEL_OTHER, None),
         ]
     );

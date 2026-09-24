@@ -235,25 +235,23 @@ async fn a_nonzero_exit_that_still_writes_a_valid_deny_is_honored() {
 
 #[tokio::test]
 async fn a_reload_cannot_change_the_hook_set_midway_through_a_dispatch() {
+    use std::{future::Future, task::Poll};
+
     let engine = Fixture::new()
-        .hook(
-            "slow",
-            "before_tool_use",
-            "10s",
-            r#"sleep 1; echo '{"version":1,"decision":"deny","reason":"late"}'"#,
-        )
+        .hook("gate", "before_tool_use", "10s", DENY)
         .engine();
     let replacement = HookCatalog::default();
 
     let gate = CommandHookGate::new(Arc::clone(&engine));
-    let dispatch = gate.evaluate(request());
-    tokio::pin!(dispatch);
-    // Start the dispatch, then swap the catalog while it is in flight.
-    let decision = tokio::join!(async { (&mut dispatch).await }, async {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        engine.reload(replacement);
-    })
-    .0;
+    let mut dispatch = std::pin::pin!(gate.evaluate(request()));
+    // The first poll takes the catalog snapshot and starts the hook process;
+    // swap the catalog after that, while the dispatch is still in flight.
+    let first = std::future::poll_fn(|cx| Poll::Ready(dispatch.as_mut().poll(cx))).await;
+    engine.reload(replacement);
+    let decision = match first {
+        Poll::Ready(decision) => decision,
+        Poll::Pending => dispatch.await,
+    };
 
     assert!(
         decision.is_deny(),

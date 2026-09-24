@@ -160,98 +160,90 @@ fn builds_explicit_safe_spawn_args() {
     assert!(!args.iter().any(|arg| arg == "Plan carefully."));
 }
 
+// Covers: each prompt policy reaches Claude under its own file flag (never
+// the other one or an inline flag), and an empty extend passes no prompt.
+// Owner: claude spawn argv
 #[test]
-fn extend_prompt_uses_append_system_prompt_file() {
-    let plan = build_spawn_plan(&request(
-        vec!["Read"],
-        false,
-        None,
-        ClaudePermissionMode::BypassPermissions,
-        4,
-        PromptPolicy::Extend("Extra instructions.".into()),
-    ));
-    assert_eq!(
-        plan.system_prompt,
-        SystemPromptPlan::Extend("Extra instructions.".into())
-    );
-    assert_eq!(
-        plan.system_prompt.file_flag(),
-        Some("--append-system-prompt-file")
-    );
+fn prompt_policy_selects_the_system_prompt_file_flag() {
+    for (case, prompt, expected_plan, expected_flag) in [
+        (
+            "extend",
+            PromptPolicy::Extend("Extra instructions.".into()),
+            SystemPromptPlan::Extend("Extra instructions.".into()),
+            Some(("--append-system-prompt-file", "--system-prompt-file")),
+        ),
+        (
+            "replace",
+            PromptPolicy::Replace("Only this.".into()),
+            SystemPromptPlan::Replace("Only this.".into()),
+            Some(("--system-prompt-file", "--append-system-prompt-file")),
+        ),
+        (
+            "empty extend",
+            PromptPolicy::Extend(String::new()),
+            SystemPromptPlan::Omit,
+            None,
+        ),
+    ] {
+        let plan = build_spawn_plan(&request(
+            vec!["Read"],
+            false,
+            None,
+            ClaudePermissionMode::BypassPermissions,
+            4,
+            prompt,
+        ));
+        assert_eq!(plan.system_prompt, expected_plan, "{case}");
+        assert_eq!(
+            plan.system_prompt.file_flag(),
+            expected_flag.map(|(flag, _)| flag),
+            "{case}"
+        );
 
-    let dir = tempfile::tempdir().unwrap();
-    let output = dir.path().join("result.json");
-    let args = finalized(&plan, &output);
-    let prompt_path = system_prompt_path(&output);
-    assert_eq!(
-        std::fs::read_to_string(&prompt_path).unwrap(),
-        "Extra instructions."
-    );
-    assert!(args.windows(2).any(|pair| {
-        pair[0] == os("--append-system-prompt-file") && pair[1] == prompt_path.as_os_str()
-    }));
-    assert!(!args.iter().any(|arg| arg == "--system-prompt-file"));
-    assert!(!args.iter().any(|arg| arg == "--system-prompt"));
-    assert!(!args.iter().any(|arg| arg == "--append-system-prompt"));
-}
-
-#[test]
-fn replace_prompt_uses_system_prompt_file_exactly() {
-    let plan = build_spawn_plan(&request(
-        vec!["Read"],
-        false,
-        None,
-        ClaudePermissionMode::BypassPermissions,
-        4,
-        PromptPolicy::Replace("Only this.".into()),
-    ));
-    assert_eq!(
-        plan.system_prompt,
-        SystemPromptPlan::Replace("Only this.".into())
-    );
-
-    let dir = tempfile::tempdir().unwrap();
-    let output = dir.path().join("result.json");
-    let args = finalized(&plan, &output);
-    assert!(args
-        .windows(2)
-        .any(|pair| pair[0] == os("--system-prompt-file")));
-    assert!(!args
-        .iter()
-        .any(|arg| *arg == os("--append-system-prompt-file")));
-    assert_eq!(
-        std::fs::read_to_string(system_prompt_path(&output)).unwrap(),
-        "Only this."
-    );
-}
-
-#[test]
-fn empty_extend_omits_system_prompt_entirely() {
-    let plan = build_spawn_plan(&request(
-        vec!["Read"],
-        false,
-        None,
-        ClaudePermissionMode::BypassPermissions,
-        4,
-        PromptPolicy::Extend(String::new()),
-    ));
-    assert_eq!(plan.system_prompt, SystemPromptPlan::Omit);
-    assert!(plan.system_prompt.file_flag().is_none());
-    assert!(plan.system_prompt.text().is_none());
-
-    let dir = tempfile::tempdir().unwrap();
-    let output = dir.path().join("result.json");
-    let args = finalized(&plan, &output);
-    let expected: Vec<std::ffi::OsString> =
-        plan.args.iter().map(std::ffi::OsString::from).collect();
-    assert_eq!(args, expected);
-    assert!(!system_prompt_path(&output).exists());
-    assert!(!args
-        .iter()
-        .any(|arg| arg.to_string_lossy().contains("system-prompt")));
-    assert!(!args
-        .iter()
-        .any(|arg| arg.to_string_lossy().contains("You are a coding agent")));
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("result.json");
+        let args = finalized(&plan, &output);
+        let prompt_path = system_prompt_path(&output);
+        match expected_flag {
+            Some((flag, other_flag)) => {
+                assert_eq!(
+                    std::fs::read_to_string(&prompt_path).unwrap(),
+                    plan.system_prompt.text().unwrap(),
+                    "{case}"
+                );
+                assert!(
+                    args.windows(2)
+                        .any(|pair| pair[0] == os(flag) && pair[1] == prompt_path.as_os_str()),
+                    "{case}: {args:?}"
+                );
+                for absent in [other_flag, "--system-prompt", "--append-system-prompt"] {
+                    assert!(
+                        !args.iter().any(|arg| *arg == os(absent)),
+                        "{case}: {absent}"
+                    );
+                }
+            }
+            None => {
+                assert!(plan.system_prompt.text().is_none(), "{case}");
+                let expected: Vec<std::ffi::OsString> =
+                    plan.args.iter().map(std::ffi::OsString::from).collect();
+                assert_eq!(args, expected, "{case}");
+                assert!(!prompt_path.exists(), "{case}");
+                assert!(
+                    !args
+                        .iter()
+                        .any(|arg| arg.to_string_lossy().contains("system-prompt")),
+                    "{case}"
+                );
+                assert!(
+                    !args
+                        .iter()
+                        .any(|arg| arg.to_string_lossy().contains("You are a coding agent")),
+                    "{case}"
+                );
+            }
+        }
+    }
 }
 
 #[test]

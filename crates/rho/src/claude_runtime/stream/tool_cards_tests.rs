@@ -431,7 +431,9 @@ fn push_input_json_caps_retained_fragments_and_keeps_path() {
     let content = "x".repeat(super::MAX_INPUT_JSON_CHARS + 64);
     let raw = format!(r#"{{"file_path":"/tmp/ws/huge.rs","content":"{content}"}}"#);
     assert!(raw.len() > super::MAX_INPUT_JSON_CHARS);
-    let cases = [raw.len(), 1024];
+    // Whole payload, and chunks that cross the cap mid-stream. Chunks stay
+    // coarse: each push re-parses the assembled buffer.
+    let cases = [raw.len(), 16 * 1024];
     for chunk_size in cases {
         let mut started = StartedClaudeTool::from_name_input(Some("Write"), Some(&json!({})));
         if chunk_size >= raw.len() {

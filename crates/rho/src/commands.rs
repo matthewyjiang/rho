@@ -645,13 +645,37 @@ mod tests {
     }
 
     #[test]
-    fn parses_model_command_with_arguments() {
-        let invocation = parse_command("/model gpt-5.5").unwrap().unwrap();
-
-        assert_eq!(invocation.id, CommandId::Model);
-        assert_eq!(invocation.name, "model");
-        assert_eq!(invocation.raw_args, " gpt-5.5");
-        assert_eq!(invocation.args, "gpt-5.5");
+    fn parses_commands_with_arguments() {
+        let cases = [
+            (
+                "/model gpt-5.5",
+                CommandId::Model,
+                "model",
+                " gpt-5.5",
+                "gpt-5.5",
+            ),
+            (
+                "/side what is this lock",
+                CommandId::Side,
+                "side",
+                " what is this lock",
+                "what is this lock",
+            ),
+            (
+                "/title My Session",
+                CommandId::Title,
+                "title",
+                " My Session",
+                "My Session",
+            ),
+        ];
+        for (input, id, name, raw_args, args) in cases {
+            let invocation = parse_command(input).unwrap().unwrap();
+            assert_eq!(invocation.id, id, "{input}");
+            assert_eq!(invocation.name, name, "{input}");
+            assert_eq!(invocation.raw_args, raw_args, "{input}");
+            assert_eq!(invocation.args, args, "{input}");
+        }
     }
 
     #[test]
@@ -690,37 +714,6 @@ mod tests {
                 Err(CommandParseError::Unknown("nope".into()))
             );
         }
-    }
-
-    #[test]
-    fn parses_side_command_with_arguments() {
-        let invocation = parse_command("/side what is this lock").unwrap().unwrap();
-
-        assert_eq!(invocation.id, CommandId::Side);
-        assert_eq!(invocation.name, "side");
-        assert_eq!(invocation.args, "what is this lock");
-    }
-
-    #[test]
-    fn parses_title_command_with_arguments() {
-        let invocation = parse_command("/title My Session").unwrap().unwrap();
-
-        assert_eq!(invocation.id, CommandId::Title);
-        assert_eq!(invocation.name, "title");
-        assert_eq!(invocation.raw_args, " My Session");
-        assert_eq!(invocation.args, "My Session");
-    }
-
-    // Covers: the palette lists commands in name order, which decides what the
-    // unfiltered short list shows first.
-    // Owner: command table
-    #[test]
-    fn command_palette_stays_alphabetical() {
-        let names = COMMANDS.iter().map(|spec| spec.name).collect::<Vec<_>>();
-        let mut sorted = names.clone();
-        sorted.sort_unstable();
-
-        assert_eq!(names, sorted);
     }
 
     // Covers: alias names must dispatch as their target command and stay

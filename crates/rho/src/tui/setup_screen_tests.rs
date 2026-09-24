@@ -1,6 +1,6 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pretty_assertions::assert_eq;
-use ratatui::{backend::TestBackend, layout::Rect, Terminal};
+use ratatui::layout::Rect;
 use rho_providers::{auth::login_prompt::LoginPrompt, model::catalog::LoginTarget};
 
 use super::*;
@@ -8,41 +8,6 @@ use crate::tui::{
     custom_provider_login::CustomHostStep, login::SecretInput, tests::test_app,
     text_input::TextInput, ComposerMode, PendingLoginComposer,
 };
-
-fn step_text(step: SetupStep) -> Vec<String> {
-    step_lines(step, 74)
-        .iter()
-        .map(|line| {
-            line.spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>()
-        })
-        .collect()
-}
-
-/// The rendered step list is what tells the user where they are: one row per
-/// step, in order, each carrying its own marker. Earlier steps read as done,
-/// the active one as current, and later ones as pending.
-#[test]
-fn the_step_list_renders_one_marked_row_per_step() {
-    let cases = [
-        (SetupStep::SignIn, [StepState::Current, StepState::Pending]),
-        (
-            SetupStep::ChooseModel,
-            [StepState::Done, StepState::Current],
-        ),
-    ];
-
-    for (step, states) in cases {
-        let expected: Vec<String> = states
-            .iter()
-            .zip(STEP_LABELS)
-            .map(|(state, label)| format!("{} {label}", state.marker()))
-            .collect();
-        assert_eq!(step_text(step), expected, "step rows at {step:?}");
-    }
-}
 
 /// The content column stays centred and never runs past the terminal, so a
 /// narrow pane keeps the copy on screen instead of clipping it away.
@@ -165,54 +130,6 @@ fn setup_copy_button_hits_painted_origin_not_session_composer() {
         ),
         None,
         "session composer rect must not steal the setup copy hit"
-    );
-}
-
-// Covers: first-run setup COPY hover uses the painted body origin, not session composer
-// Owner: setup screen
-#[test]
-fn setup_copy_button_hover_follows_pointer() {
-    let mut app = test_app();
-    app.enter_setup(SetupStep::SignIn);
-    app.input_ui
-        .set_composer(ComposerMode::InteractivePending(pending_login()));
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    let area = Rect {
-        x: 0,
-        y: 0,
-        width: 80,
-        height: 24,
-    };
-    let origin = setup_composer_origin(area, SetupStep::SignIn);
-    let frame = app.composer_frame(origin.width as usize, origin.height as usize);
-    let hit = frame.copy_hit.expect("copy button");
-    let column = origin.x.saturating_add(hit.columns.start as u16 + 1);
-    let on_row = origin.y.saturating_add(hit.row as u16);
-
-    app.handle_mouse_event(MouseEventKind::Moved, column, on_row, &mut terminal)
-        .unwrap();
-    pretty_assertions::assert_eq!(app.input_ui.hovered_composer_copy(), true);
-    let hovered = app.setup_body_lines(origin.width as usize, origin.height);
-    pretty_assertions::assert_eq!(
-        hovered
-            .get(hit.row)
-            .and_then(|line| line.spans.last())
-            .expect("copy span")
-            .style,
-        Theme::markdown_code_copy_button(/*hovered*/ true)
-    );
-
-    app.handle_mouse_event(MouseEventKind::Moved, origin.x, origin.y, &mut terminal)
-        .unwrap();
-    pretty_assertions::assert_eq!(app.input_ui.hovered_composer_copy(), false);
-    let unhovered = app.setup_body_lines(origin.width as usize, origin.height);
-    pretty_assertions::assert_eq!(
-        unhovered
-            .get(hit.row)
-            .and_then(|line| line.spans.last())
-            .expect("copy span")
-            .style,
-        Theme::markdown_code_copy_button(/*hovered*/ false)
     );
 }
 

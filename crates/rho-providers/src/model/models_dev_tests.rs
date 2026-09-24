@@ -154,29 +154,28 @@ fn deprecated_provider_models_only_returns_exact_deprecation_flags() {
 
 #[test]
 fn models_dev_parses_the_catalog_name_and_rejects_blank_ones() {
-    for (name, expected) in [
-        (json!("GPT-5.6 Sol"), Some("GPT-5.6 Sol".to_string())),
-        (json!("  GPT-5.6 Sol  "), Some("GPT-5.6 Sol".to_string())),
-        (json!("   "), None),
-        (json!(null), None),
-        (json!(7), None),
+    for (case, model, expected) in [
+        (
+            "plain",
+            json!({ "name": "GPT-5.6 Sol" }),
+            Some("GPT-5.6 Sol"),
+        ),
+        (
+            "trimmed",
+            json!({ "name": "  GPT-5.6 Sol  " }),
+            Some("GPT-5.6 Sol"),
+        ),
+        ("blank", json!({ "name": "   " }), None),
+        ("null", json!({ "name": null }), None),
+        ("non-string", json!({ "name": 7 }), None),
+        ("missing", json!({}), None),
     ] {
-        let api = json!({
-            "openai": { "models": { "gpt-5.6-sol": { "name": name } } }
-        });
+        let api = json!({ "openai": { "models": { "gpt-5.6-sol": model } } });
 
         let metadata = model_metadata_from_api(&api, "openai", "gpt-5.6-sol").unwrap();
 
-        assert_eq!(metadata.display_name, expected);
+        assert_eq!(metadata.display_name.as_deref(), expected, "{case}");
     }
-
-    let nameless = json!({ "openai": { "models": { "gpt-5.6-sol": {} } } });
-    assert_eq!(
-        model_metadata_from_api(&nameless, "openai", "gpt-5.6-sol")
-            .unwrap()
-            .display_name,
-        None
-    );
 }
 
 // Covers: models.dev npm inherits from the provider document unless a model overrides it
@@ -475,12 +474,6 @@ fn exact_catalog_toggle_does_not_imply_off() {
                         {"type": "effort", "values": ["low", "medium", "high"]}
                     ]
                 },
-                "grok-4.6": {
-                    "reasoning": true,
-                    "reasoning_options": [
-                        {"type": "effort", "values": ["low", "medium", "high"]}
-                    ]
-                },
                 "grok-4.3": {
                     "reasoning": true,
                     "reasoning_options": [
@@ -504,16 +497,6 @@ fn exact_catalog_toggle_does_not_imply_off() {
     );
     assert_eq!(
         model_metadata_from_api(&api, "xai", "grok-4.5")
-            .unwrap()
-            .supported_reasoning_levels,
-        Some(vec![
-            ReasoningLevel::Low,
-            ReasoningLevel::Medium,
-            ReasoningLevel::High,
-        ])
-    );
-    assert_eq!(
-        model_metadata_from_api(&api, "xai", "grok-4.6")
             .unwrap()
             .supported_reasoning_levels,
         Some(vec![

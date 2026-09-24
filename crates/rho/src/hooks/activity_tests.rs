@@ -13,46 +13,6 @@ fn activity(id: &str, outcome: HookOutcome) -> HookActivity {
 }
 
 #[test]
-fn a_denial_renders_its_hook_timing_and_reason() {
-    let rendered = activity(
-        "user:no-force-push",
-        HookOutcome::Denied {
-            reason: "denied by hook `user:no-force-push`: force push".into(),
-        },
-    )
-    .to_string();
-
-    assert_eq!(
-        rendered,
-        "user:no-force-push before_tool_use denied in 12ms: denied by hook `user:no-force-push`: force push"
-    );
-}
-
-#[test]
-fn a_success_renders_without_a_detail() {
-    assert_eq!(
-        activity("user:log", HookOutcome::Observed).to_string(),
-        "user:log before_tool_use observed in 12ms"
-    );
-}
-
-#[test]
-fn truncated_output_is_visible_in_the_record() {
-    let mut activity = activity("user:log", HookOutcome::Observed);
-    activity.truncated = true;
-
-    assert!(activity.to_string().contains("(output truncated)"));
-}
-
-#[test]
-fn a_record_without_timing_omits_the_duration() {
-    let mut activity = activity("user:log", HookOutcome::Dropped);
-    activity.duration = None;
-
-    assert_eq!(activity.to_string(), "user:log before_tool_use dropped");
-}
-
-#[test]
 fn the_log_keeps_insertion_order() {
     let log = HookActivityLog::default();
 

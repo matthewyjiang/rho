@@ -243,53 +243,54 @@ fn model_call_completed(
     }
 }
 
-// Covers: attach journals resolved generation tokens and time from metrics.
+// Covers: attach journals resolved generation tokens and time from metrics, and
+// omits model-call lines without both.
 // Owner: attach SDK writer
 #[test]
-fn model_call_completed_journals_resolved_tokens_and_time() {
-    let mut adapter = SdkEventAdapter::default();
-    assert_eq!(
-        translate_run_event(
-            &mut adapter,
-            &model_call_completed(Some(100), Some(Duration::from_secs(2)), None),
-        ),
+fn model_call_completed_journals_only_resolved_tokens_and_time() {
+    use rho_sdk::model::GenerationOutputTokens;
+    let journaled = |generation_output_tokens| {
         vec![AttachmentEvent::ModelCallCompleted {
-            generation_output_tokens: 100,
+            generation_output_tokens,
             generation_time_ms: 2_000,
         }]
-    );
-
-    assert_eq!(
-        translate_run_event(
-            &mut adapter,
-            &model_call_completed(
+    };
+    let two_secs = Some(Duration::from_secs(2));
+    for (case, event, expected) in [
+        (
+            "output tokens fallback",
+            model_call_completed(Some(100), two_secs, None),
+            journaled(100),
+        ),
+        (
+            "reported generation tokens win",
+            model_call_completed(
                 Some(100),
-                Some(Duration::from_secs(2)),
-                Some(rho_sdk::model::GenerationOutputTokens::Reported(80)),
+                two_secs,
+                Some(GenerationOutputTokens::Reported(80)),
             ),
+            journaled(80),
         ),
-        vec![AttachmentEvent::ModelCallCompleted {
-            generation_output_tokens: 80,
-            generation_time_ms: 2_000,
-        }]
-    );
-}
-
-// Covers: attach omits model-call lines without both resolved tokens and time.
-// Owner: attach SDK writer
-#[test]
-fn model_call_completed_without_tokens_or_time_is_not_journaled() {
-    let mut adapter = SdkEventAdapter::default();
-    assert!(translate_run_event(
-        &mut adapter,
-        &model_call_completed(
-            Some(100),
-            Some(Duration::from_secs(2)),
-            Some(rho_sdk::model::GenerationOutputTokens::Unavailable),
+        (
+            "unavailable generation tokens",
+            model_call_completed(
+                Some(100),
+                two_secs,
+                Some(GenerationOutputTokens::Unavailable),
+            ),
+            Vec::new(),
         ),
-    )
-    .is_empty());
-    assert!(
-        translate_run_event(&mut adapter, &model_call_completed(Some(100), None, None),).is_empty()
-    );
+        (
+            "missing generation time",
+            model_call_completed(Some(100), None, None),
+            Vec::new(),
+        ),
+    ] {
+        let mut adapter = SdkEventAdapter::default();
+        assert_eq!(
+            translate_run_event(&mut adapter, &event),
+            expected,
+            "{case}"
+        );
+    }
 }

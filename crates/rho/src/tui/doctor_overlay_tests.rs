@@ -208,43 +208,44 @@ fn body_lines_align_status_column_and_show_hints_under_issues() {
         .map(text)
         .collect::<Vec<_>>();
 
-    assert_eq!(
-        lines,
-        vec![
-            "1 warning · checking 1",
-            "",
-            "Authentication",
-            "  ✓ OpenAI API key     authenticated",
-            "  ! Anthropic API key  missing",
-            "    run /login anthropic-api-key",
-            "",
-            "Providers                     ⠋ checking",
-            "  ⠋ Ollama connection  checking",
-            "",
-            "Workspace",
-            "  ✓ Configuration      writable",
-        ]
+    let row = |label: &str| {
+        lines
+            .iter()
+            .position(|line| line.contains(label))
+            .unwrap_or_else(|| panic!("missing {label} row: {lines:#?}"))
+    };
+    // Every check row starts its detail in the same column.
+    let detail_columns = [
+        ("OpenAI API key", "authenticated"),
+        ("Anthropic API key", "missing"),
+        ("Ollama connection", "checking"),
+        ("Configuration", "writable"),
+    ]
+    .map(|(label, detail)| {
+        let line = &lines[row(label)];
+        display_width(&line[..line.rfind(detail).unwrap()])
+    });
+    assert!(
+        detail_columns.iter().all(|&col| col == detail_columns[0]),
+        "{lines:#?}"
     );
-}
-
-// Covers: a settled report with no issues reads as passed and reserves no
-// spinner column.
-// Owner: pure layout
-#[test]
-fn settled_healthy_report_reads_as_passed() {
-    let overlay = overlay(vec![DoctorCheck::new(
-        DoctorCheckId::Rtk,
-        "rtk",
-        DoctorStatus::Ok,
-        "available",
-    )]);
-    assert!(!overlay.is_checking());
-    let lines = overlay_body_lines(&overlay, 30, None)
-        .iter()
-        .map(text)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        lines,
-        vec!["all checks passed", "", "Runtimes", "  ✓ rtk  available"]
+    // The pending probe row and its section header carry the spinner frame.
+    let pending = row("Ollama connection");
+    assert!(lines[pending].contains('⠋'), "{lines:#?}");
+    assert!(lines[pending - 1].contains('⠋'), "{lines:#?}");
+    // Hints render directly under issues only, never under healthy rows.
+    assert!(
+        lines[row("Anthropic API key") + 1].contains("run /login anthropic-api-key"),
+        "{lines:#?}"
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("/home/dev/.rho/config.toml")),
+        "{lines:#?}"
+    );
+    assert!(
+        lines.iter().all(|line| display_width(line) <= 40),
+        "{lines:#?}"
     );
 }

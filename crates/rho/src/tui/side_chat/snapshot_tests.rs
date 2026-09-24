@@ -29,14 +29,3 @@ fn frozen_snapshot_keeps_parent_turn_text_and_stays_frozen() {
     pretty_assertions::assert_eq!(snapshot.contains("later-only"), false);
     assert_ne!(snapshot, frozen_parent_snapshot(&messages));
 }
-
-// Covers: an empty parent session still produces a snapshot so the first
-// aside can start without special-casing None.
-// Owner: side-chat snapshot
-#[test]
-fn frozen_snapshot_from_empty_history_is_stable() {
-    let first = frozen_parent_snapshot(&[]);
-    let second = frozen_parent_snapshot(&[]);
-    pretty_assertions::assert_eq!(first, second);
-    assert!(!first.is_empty());
-}

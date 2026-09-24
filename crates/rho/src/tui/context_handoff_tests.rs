@@ -55,23 +55,3 @@ fn parses_decisions() {
     );
     assert_eq!(decision_from_value("nope"), None);
 }
-
-#[test]
-fn compact_then_continue_pipeline_order() {
-    // Decision mapping for the unified executor:
-    // UseSource => source -> materialize
-    // CompactThenContinue => source? -> materialize -> compact -> target?
-    // ContinueDirect => materialize -> target?
-    assert_eq!(
-        decision_from_value(ACTION_COMPACT),
-        Some(ContextHandoffDecision::CompactThenContinue)
-    );
-    assert_eq!(
-        decision_from_value(ACTION_USE_SOURCE),
-        Some(ContextHandoffDecision::UseSourceModel)
-    );
-    assert_eq!(
-        decision_from_value(ACTION_CONTINUE),
-        Some(ContextHandoffDecision::ContinueDirect)
-    );
-}

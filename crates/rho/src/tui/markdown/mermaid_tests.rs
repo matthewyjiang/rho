@@ -176,16 +176,6 @@ fn rejects_blank_malformed_unsafe_and_link_bearing_sources() {
     }
 }
 
-// Covers: conversion must refuse a sequence with no participants
-// Owner: mermaid model conversion
-#[test]
-fn empty_sequence_stays_unsupported() {
-    assert_eq!(
-        render_mermaid("sequenceDiagram", 240),
-        MermaidRender::Fallback(MermaidFallback::Unsupported)
-    );
-}
-
 // Covers: everyday extras must keep their approximated structure, not just paint
 // Owner: mermaid model conversion
 #[test]
@@ -339,15 +329,20 @@ fn renders_unicode_labels_without_mismeasuring_or_reordering_cells() {
     }
 }
 
-// Covers: empty gitGraph, gantt, and mindmap stay unsupported like empty sequence
+// Covers: conversion must refuse diagrams with no participants, commits, tasks, or nodes
 // Owner: mermaid model conversion
 #[test]
-fn empty_gitgraph_gantt_and_mindmap_stay_unsupported() {
-    for source in ["gitGraph", "gantt\ntitle Plan", "mindmap"] {
+fn empty_diagrams_stay_unsupported() {
+    for (case, source) in [
+        ("sequence", "sequenceDiagram"),
+        ("gitgraph", "gitGraph"),
+        ("gantt", "gantt\ntitle Plan"),
+        ("mindmap", "mindmap"),
+    ] {
         assert_eq!(
             render_mermaid(source, 240),
             MermaidRender::Fallback(MermaidFallback::Unsupported),
-            "{source}"
+            "{case}"
         );
     }
 }

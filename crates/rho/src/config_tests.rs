@@ -430,32 +430,34 @@ model = "gpt-5.5"
     assert_eq!(config.current_model_alias(), None);
 }
 
+// Covers: an alias to an unknown provider fails load whether or not it is used.
+// Owner: config load
 #[test]
 fn model_alias_targeting_unknown_provider_is_a_config_error() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-[model]
-model = "@deep"
+    for (case, model, alias) in [("used", "@deep", "deep"), ("unused", "gpt-5.5", "unused")] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            format!(
+                "[model]\nmodel = \"{model}\"\n\n[model.aliases]\n{alias} = \"nonexistent/model-x\"\n"
+            ),
+        )
+        .unwrap();
 
-[model.aliases]
-deep = "nonexistent/model-x"
-"#,
-    )
-    .unwrap();
+        let error = Config::load_with_store(
+            path,
+            &rho_providers::credentials::MemoryCredentialStore::default(),
+        )
+        .unwrap_err();
 
-    let error = Config::load_with_store(
-        path,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap_err();
-
-    assert!(
-        format!("{error:#}").contains("model alias 'deep' targets unknown provider 'nonexistent'"),
-        "{error:#}"
-    );
+        assert!(
+            format!("{error:#}").contains(&format!(
+                "model alias '{alias}' targets unknown provider 'nonexistent'"
+            )),
+            "{case}: {error:#}"
+        );
+    }
 }
 
 #[test]
@@ -498,35 +500,6 @@ fn undefined_title_model_alias_names_reference_site() {
         format!("{error:#}").contains(
             "internal agent 'session-title' model: model alias '@missing' is not defined; define it in [model.aliases] or use a concrete model reference"
         ),
-        "{error:#}"
-    );
-}
-
-#[test]
-fn unused_model_alias_targeting_unknown_provider_is_a_config_error() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.toml");
-    std::fs::write(
-        &path,
-        r#"
-[model]
-model = "gpt-5.5"
-
-[model.aliases]
-unused = "nonexistent/model-x"
-"#,
-    )
-    .unwrap();
-
-    let error = Config::load_with_store(
-        path,
-        &rho_providers::credentials::MemoryCredentialStore::default(),
-    )
-    .unwrap_err();
-
-    assert!(
-        format!("{error:#}")
-            .contains("model alias 'unused' targets unknown provider 'nonexistent'"),
         "{error:#}"
     );
 }

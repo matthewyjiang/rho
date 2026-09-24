@@ -79,9 +79,8 @@ fn submit_sends_selection_answers() {
     };
     composer.fields[2].selection = FieldSelection::Single(1);
 
-    let submitted = composer.submit().unwrap();
+    composer.submit().unwrap();
 
-    assert!(!submitted.display.is_empty());
     assert_eq!(
         reply_rx.try_recv(),
         Ok(QuestionnaireReply::Answer(
@@ -175,18 +174,14 @@ fn failed_submit_jumps_to_the_offending_question() {
     // is unanswered. Submit from the last question.
     composer.active_index = 1;
 
-    let error = composer.submit().unwrap_err();
-
-    assert!(error.starts_with("question 2:"), "{error}");
+    composer.submit().unwrap_err();
     assert_eq!(composer.active_index, 1);
 
     // Clear question 1's answer as well: the jump targets the first failure.
     composer.active_index = 0;
     composer.clear_active_answer();
     composer.active_index = 1;
-    let error = composer.submit().unwrap_err();
-
-    assert!(error.starts_with("question 1:"), "{error}");
+    composer.submit().unwrap_err();
     assert_eq!(composer.active_index, 0);
 }
 

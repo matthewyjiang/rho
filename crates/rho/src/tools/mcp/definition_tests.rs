@@ -41,8 +41,13 @@ fn stdio() -> McpTransport {
 // Owner: MCP tool declaration mapping.
 #[test]
 fn annotations_and_output_schema_shape_the_exported_tool() {
+    // One description line, plus one line per server behavior hint.
+    let hint_lines = |description: &str| description.lines().count() - 1;
+
     let plain = McpToolDefinition::from_remote("docs", "search", &remote(None, false));
-    assert_eq!(plain.spec.description, "MCP server `docs`: find things");
+    assert!(plain.spec.description.contains("`docs`"));
+    assert!(plain.spec.description.contains("find things"));
+    assert_eq!(hint_lines(&plain.spec.description), 0);
     assert_eq!(plain.expectation.output_schema, None);
 
     let annotated = McpToolDefinition::from_remote(
@@ -50,10 +55,9 @@ fn annotations_and_output_schema_shape_the_exported_tool() {
         "search",
         &remote(Some(annotations(true, false, true)), true),
     );
-    assert_eq!(
-        annotated.spec.description,
-        "MCP server `docs`, Search: find things\nServer hint: this tool only reads.\nServer hint: this tool reaches systems outside this machine."
-    );
+    assert!(annotated.spec.description.contains("Search"));
+    assert!(annotated.spec.description.contains("find things"));
+    assert_eq!(hint_lines(&annotated.spec.description), 2);
     assert_eq!(
         annotated.expectation.output_schema,
         Some(serde_json::json!({"type": "object"}))
@@ -64,10 +68,7 @@ fn annotations_and_output_schema_shape_the_exported_tool() {
         "search",
         &remote(Some(annotations(false, true, false)), false),
     );
-    assert!(destructive
-        .spec
-        .description
-        .contains("may make destructive changes"));
+    assert_eq!(hint_lines(&destructive.spec.description), 1);
 }
 
 // Covers: a read-only hint must change only how a call is presented. It must
@@ -91,10 +92,18 @@ fn read_only_hint_changes_presentation_only() {
         (Some(&OperationKind::Read), Some(&OperationKind::Execute))
     );
     assert_eq!(
-        read_only
-            .presentation
-            .metadata(&stdio())
-            .presentation_notices(),
-        ["Server hint: this tool only reads"]
+        (
+            read_only
+                .presentation
+                .metadata(&stdio())
+                .presentation_notices()
+                .len(),
+            writing
+                .presentation
+                .metadata(&stdio())
+                .presentation_notices()
+                .len(),
+        ),
+        (1, 0)
     );
 }

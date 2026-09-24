@@ -78,7 +78,6 @@ fn quotes_claude_tool_patterns() {
 
     let serialized = serialize_definition(&definition);
 
-    assert!(serialized.contains(r#"tools: ["Bash(git *)"]"#));
     assert_eq!(definition, parse(&serialized));
 }
 

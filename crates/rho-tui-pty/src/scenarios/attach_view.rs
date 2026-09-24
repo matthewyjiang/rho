@@ -27,6 +27,11 @@ fn cycle_to_the_other_running_subagent(harness: &mut PtyHarness) -> anyhow::Resu
     Ok(())
 }
 
+/// Must match `APPROVAL_RELEASE` in `crates/rho-providers/src/providers/tui_fixture/attach.rs`.
+fn release_parent_approval(harness: &mut PtyHarness) -> anyhow::Result<()> {
+    super::release_fixture(harness, ".rho-fixture-release-attach-approval")
+}
+
 fn setup_supervised(home: &IsolatedHome) -> anyhow::Result<()> {
     std::fs::write(
         &home.config_path,
@@ -223,6 +228,7 @@ const ATTACH_VIEW_PARENT_APPROVAL_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Phase("parent_approval_badges_without_yanking"),
+    Step::Custom(release_parent_approval),
     Step::WaitText {
         text: "parent approval waiting",
         timeout: STREAM,

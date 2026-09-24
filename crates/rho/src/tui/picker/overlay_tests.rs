@@ -162,40 +162,6 @@ fn overlay_empty_match_state_is_visible() {
     );
 }
 
-// Covers: a detail-free overlay spends its full width on rows, aligning labels
-// into a column and showing each item's preview after it.
-// Owner: tui picker_overlay nav-only rows
-#[test]
-fn nav_only_overlay_aligns_labels_and_shows_previews() {
-    let mut picker = sample_picker("", "");
-    for (item, preview) in picker.items.iter_mut().zip(["2m ago", "1h ago"]) {
-        item.detail = None;
-        item.preview = Some(preview.into());
-    }
-    let frame = render_picker_overlay(&picker, Rect::new(0, 0, 60, 12));
-    let rows = frame
-        .lines
-        .iter()
-        .map(|line| {
-            line.spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>()
-        })
-        .filter(|row| row.contains("explorer") || row.contains("worker"))
-        .map(|row| row.trim_end_matches(['│', ' ']).to_owned())
-        .collect::<Vec<_>>();
-    let label_column = " ".repeat(12 - "explorer".len());
-    let worker_pad = " ".repeat(12 - "worker".len());
-    assert_eq!(
-        rows,
-        vec![
-            format!("│→ explorer{label_column}  internal  2m ago"),
-            format!("│  worker{worker_pad}  1h ago"),
-        ]
-    );
-}
-
 // Covers: overflowing panes must render a scrollbar so overflow is visible;
 // panes that fit stay bar-free.
 // Owner: tui picker_overlay geometry

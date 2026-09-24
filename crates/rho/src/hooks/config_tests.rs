@@ -126,42 +126,31 @@ timout = "1s"
 
 #[test]
 fn an_unknown_event_names_the_hook_and_the_field() {
-    let error = error(&format!(
-        r#"
+    for (id, event) in [
+        ("bad-event", "before_tool"),
+        ("inject", "user_prompt_accepted"),
+    ] {
+        let error = error(&format!(
+            r#"
 version = 1
 
 [[hook]]
-id = "bad-event"
-on = "before_tool"
+id = "{id}"
+on = "{event}"
 command = ["{PROGRAM}"]
 timeout = "1s"
 "#
-    ));
+        ));
 
-    assert_eq!(error.hook_id.as_deref(), Some("bad-event"));
-    assert_eq!(error.field.as_deref(), Some("on"));
-    assert!(error.message.contains("unknown event 'before_tool'"));
-    assert!(error.message.contains("before_tool_use"));
-}
-
-#[test]
-fn an_unknown_event_name_is_rejected() {
-    let error = error(&format!(
-        r#"
-version = 1
-
-[[hook]]
-id = "inject"
-on = "user_prompt_accepted"
-command = ["{PROGRAM}"]
-timeout = "1s"
-"#
-    ));
-
-    assert_eq!(error.field.as_deref(), Some("on"));
-    assert!(error
-        .message
-        .contains("unknown event 'user_prompt_accepted'"));
+        assert_eq!(error.hook_id.as_deref(), Some(id), "{event}");
+        assert_eq!(error.field.as_deref(), Some("on"), "{event}");
+        assert!(
+            error.message.contains(&format!("unknown event '{event}'")),
+            "{event}: {}",
+            error.message
+        );
+        assert!(error.message.contains("before_tool_use"), "{event}");
+    }
 }
 
 // Covers: workflow lifecycle hook names must load without adding workflow policy to the SDK.

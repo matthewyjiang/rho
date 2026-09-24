@@ -1,6 +1,6 @@
 use pretty_assertions::assert_eq;
 
-use super::{activity_label, sanitize_title};
+use super::sanitize_title;
 
 // Covers: title-model prose is rejected rather than displayed as a truncated title.
 // Owner: title sanitizer
@@ -22,14 +22,4 @@ fn sanitize_title_cleans_labels_and_rejects_prose() {
     ] {
         assert_eq!(sanitize_title(input).as_deref(), expected, "input: {input:?}");
     }
-}
-
-// Covers: rail and picker share one activity mapping.
-// Owner: title display
-#[test]
-fn activity_label_maps_tool_and_assistant_text() {
-    assert_eq!(activity_label(Some("assistant text")), "responding");
-    assert_eq!(activity_label(Some("tool: read")), "read");
-    assert_eq!(activity_label(Some("starting")), "starting");
-    assert_eq!(activity_label(None), "working");
 }

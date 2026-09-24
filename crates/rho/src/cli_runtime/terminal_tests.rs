@@ -9,25 +9,20 @@ enum ExitResult {
     Failure,
 }
 
+// Builds exit statuses without spawning processes.
 fn exit_status(result: ExitResult) -> std::process::ExitStatus {
+    let code = match result {
+        ExitResult::Success => 0,
+        ExitResult::Failure => 1,
+    };
     #[cfg(unix)]
     {
-        let program = match result {
-            ExitResult::Success => "true",
-            ExitResult::Failure => "false",
-        };
-        std::process::Command::new(program).status().unwrap()
+        // Raw wait status: the exit code lives in the high byte.
+        std::os::unix::process::ExitStatusExt::from_raw(code << 8)
     }
     #[cfg(windows)]
     {
-        let code = match result {
-            ExitResult::Success => "0",
-            ExitResult::Failure => "1",
-        };
-        std::process::Command::new("cmd")
-            .args(["/C", &format!("exit {code}")])
-            .status()
-            .unwrap()
+        std::os::windows::process::ExitStatusExt::from_raw(code)
     }
 }
 

@@ -2,7 +2,6 @@ use pretty_assertions::assert_eq;
 use tempfile::TempDir;
 
 use super::*;
-use crate::tool::ToolContext;
 
 fn test_cwd() -> TempDir {
     tempfile::tempdir().unwrap()
@@ -264,41 +263,4 @@ async fn structural_put_then_cut_cleanup_from_fresh_read() {
     assert!(final_text.contains("keep-0"));
     assert!(final_text.contains("line-1"));
     assert!(final_text.contains("line-50") || final_text.contains("keep-7"));
-}
-
-// Covers: Edit.spec remains the schema owner for SDK registration
-// Owner: edit tool surface
-#[test]
-fn edit_spec_stays_compact_and_named_edit() {
-    let spec = Edit.spec();
-    assert_eq!(spec.name, "edit");
-}
-
-// Covers: App Tool call path still works as a harness (not the product contract)
-// Owner: App Tool harness
-#[tokio::test]
-async fn app_tool_harness_call_still_applies() {
-    let dir = test_cwd();
-    let ctx = ToolContext {
-        cwd: dir.path().to_path_buf(),
-        max_output_bytes: 12_000,
-    };
-    let original = "a\nb\n";
-    std::fs::write(dir.path().join("t.txt"), original).unwrap();
-    let tag = compute_file_hash(original);
-    let result = Edit
-        .call(
-            serde_json::json!({
-                "input": format!("[t.txt#{tag}]\nPUT 1.=1:\n+A\n")
-            }),
-            ctx,
-            "harness".into(),
-        )
-        .await
-        .unwrap();
-    assert!(result.ok);
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("t.txt")).unwrap(),
-        "A\nb\n"
-    );
 }

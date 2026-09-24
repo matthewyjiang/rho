@@ -284,6 +284,8 @@ async fn discover(
     headers: &HashMap<HeaderName, HeaderValue>,
     store: store::McpOAuthCredentialStore,
 ) -> anyhow::Result<AuthorizationManager> {
+    // rmcp builds its own reqwest client here; install the TLS provider first.
+    rho_providers::ensure_rustls_ring_provider();
     let mut manager = AuthorizationManager::new(url)
         .await
         .context("could not start OAuth discovery")?;

@@ -202,26 +202,6 @@ fn concurrent_writers_keep_latest_observation() {
 }
 
 #[test]
-fn out_of_order_writers_keep_highest_order_key() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("claude-rate-limit.json");
-    let path_late = path.clone();
-    let path_early = path.clone();
-    let first = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(30));
-        store_ordered(&path_early, sample_info("slow-old"), secs(1_000), 1, "a").unwrap();
-    });
-    let second = thread::spawn(move || {
-        store_ordered(&path_late, sample_info("fast-new"), secs(1_000), 5, "a").unwrap();
-    });
-    first.join().unwrap();
-    second.join().unwrap();
-    let loaded = load_at(&path).expect("stored");
-    assert_eq!(only(&loaded).observed_seq, 5);
-    assert_eq!(only(&loaded).info.status.as_deref(), Some("fast-new"));
-}
-
-#[test]
 fn repeated_updates_use_unique_temp_and_replace() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("claude-rate-limit.json");

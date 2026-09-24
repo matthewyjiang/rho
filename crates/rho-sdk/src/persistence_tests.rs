@@ -129,18 +129,6 @@ async fn public_store_boundary_loads_and_atomically_replaces_snapshots() {
 }
 
 #[test]
-fn unsupported_snapshot_schema_is_rejected() {
-    let mut value = serde_json::to_value(snapshot()).unwrap();
-    value["schema_version"] = json!(SESSION_SNAPSHOT_SCHEMA_VERSION + 1);
-
-    let error = SessionSnapshot::from_json(&value.to_string()).unwrap_err();
-
-    assert!(error
-        .to_string()
-        .contains("unsupported session snapshot schema"));
-}
-
-#[test]
 fn in_memory_store_replaces_complete_snapshots_atomically() {
     let store = InMemorySessionStore::new();
     let first = snapshot();

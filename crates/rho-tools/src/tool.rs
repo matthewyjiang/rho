@@ -145,36 +145,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compact_display_path_renders_cwd_as_dot() {
+    fn compact_display_path_normalizes_against_cwd() {
         let cwd = Path::new("/home/emgym/rho");
 
-        assert_eq!(compact_display_path(cwd, "/home/emgym/rho/."), ".");
-        assert_eq!(compact_display_path(cwd, "."), ".");
+        for (case, input, expected) in [
+            ("absolute cwd", "/home/emgym/rho/.", "."),
+            ("relative cwd", ".", "."),
+            (
+                "absolute child with parent segment",
+                "/home/emgym/rho/src/../Cargo.toml",
+                "Cargo.toml",
+            ),
+            ("relative child", "./src", "src"),
+        ] {
+            assert_eq!(compact_display_path(cwd, input), expected, "{case}");
+        }
     }
 
     #[test]
-    fn compact_display_path_normalizes_relative_children() {
-        let cwd = Path::new("/home/emgym/rho");
-
-        assert_eq!(
-            compact_display_path(cwd, "/home/emgym/rho/src/../Cargo.toml"),
-            "Cargo.toml"
-        );
-        assert_eq!(compact_display_path(cwd, "./src"), "src");
-    }
-
-    #[test]
-    fn truncate_keeps_ascii_prefix() {
-        assert_eq!(truncate("abcdef".into(), 3), "abc\n[truncated]");
-    }
-
-    #[test]
-    fn truncate_does_not_split_utf8_character() {
-        assert_eq!(truncate("aébc".into(), 2), "a\n[truncated]");
-    }
-
-    #[test]
-    fn truncate_allows_exact_utf8_boundary() {
-        assert_eq!(truncate("aébc".into(), 3), "aé\n[truncated]");
+    fn truncate_cuts_on_char_boundaries() {
+        for (case, input, max, expected) in [
+            ("ascii prefix", "abcdef", 3, "abc\n[truncated]"),
+            ("mid utf8 character", "aébc", 2, "a\n[truncated]"),
+            ("exact utf8 boundary", "aébc", 3, "aé\n[truncated]"),
+        ] {
+            assert_eq!(truncate(input.into(), max), expected, "{case}");
+        }
     }
 }

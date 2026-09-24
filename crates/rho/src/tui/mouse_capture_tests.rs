@@ -9,17 +9,15 @@ const ENABLE_PROCESSED_INPUT: u32 = 0x0004;
 
 #[test]
 fn enables_mouse_input_and_clears_quick_edit() {
-    let current = ENABLE_QUICK_EDIT_MODE | ENABLE_PROCESSED_INPUT;
-    let mode = windows_mouse_input_mode(current);
-
-    assert_eq!(
-        mode,
-        ENABLE_PROCESSED_INPUT | ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT | ENABLE_EXTENDED_FLAGS
-    );
-}
-
-#[test]
-fn is_idempotent_when_already_configured() {
     let configured = ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT | ENABLE_EXTENDED_FLAGS;
-    assert_eq!(windows_mouse_input_mode(configured), configured);
+    for (case, current, expected) in [
+        (
+            "quick edit cleared, other bits kept",
+            ENABLE_QUICK_EDIT_MODE | ENABLE_PROCESSED_INPUT,
+            ENABLE_PROCESSED_INPUT | configured,
+        ),
+        ("already configured is idempotent", configured, configured),
+    ] {
+        assert_eq!(windows_mouse_input_mode(current), expected, "{case}");
+    }
 }

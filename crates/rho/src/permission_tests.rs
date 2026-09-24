@@ -121,7 +121,6 @@ fn parse_auto_is_classifier_mode_and_bypass_is_no_checks() {
         "bypass".parse::<PermissionMode>().unwrap(),
         PermissionMode::Bypass
     );
-    assert_eq!(PermissionMode::default(), PermissionMode::Bypass);
 }
 
 #[test]

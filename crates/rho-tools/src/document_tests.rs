@@ -113,10 +113,10 @@ fn rejects_paths_over_the_input_byte_cap() {
 fn rejects_unsupported_binary_data() {
     let error = extract_document_from_bytes("archive.zip", b"PK\x03\x04\0binary").unwrap_err();
 
-    assert_eq!(
-        error.to_string(),
-        "unsupported document format for 'archive.zip'"
-    );
+    assert!(matches!(
+        error,
+        DocumentExtractionError::UnsupportedFormat { name } if name == "archive.zip"
+    ));
 }
 
 // Covers: untrusted filenames must not inject control characters into tool output or chat chips.

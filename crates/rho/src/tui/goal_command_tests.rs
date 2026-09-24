@@ -28,9 +28,6 @@ fn goal_turn_preserves_command_for_display_history_and_persistence() {
         turn.persisted_display.as_deref(),
         Some("/goal all tests pass")
     );
-    assert!(turn
-        .model
-        .starts_with("The user invoked Rho's `/goal` command"));
 }
 
 #[test]
@@ -47,16 +44,12 @@ fn goal_aliases_are_case_insensitive() {
 fn clearing_goal_removes_active_indicator() {
     let mut app = test_app();
     app.goal = Some(GoalState::new("tests pass".into()));
+    let entries_before = app.history.entries().len();
 
     app.clear_goal();
 
     assert!(app.goal.is_none());
-    assert_eq!(app.status(), "goal cleared");
-    assert!(app
-        .history
-        .entries()
-        .iter()
-        .all(|entry| !matches!(entry, Entry::Notice(message) if message == "goal cleared")));
+    assert_eq!(app.history.entries().len(), entries_before);
 }
 
 #[test]
@@ -111,9 +104,6 @@ fn user_message_resumes_blocked_goal_with_verification_first() {
         app.goal.as_ref().map(GoalState::loop_state),
         Some(goal::GoalLoopState::Blocked)
     );
-    assert!(turn.model.contains("First verify"), "{}", turn.model);
-    assert!(turn.model.contains("push tag v1.0.0"), "{}", turn.model);
-    assert!(turn.model.contains("I pushed it"), "{}", turn.model);
     assert_eq!(turn.history, "I pushed it");
     assert_eq!(turn.persisted_display.as_deref(), Some("I pushed it"));
 

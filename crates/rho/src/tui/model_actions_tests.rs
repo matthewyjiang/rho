@@ -15,39 +15,45 @@ use crate::{
     tui::{tests::test_app, ComposerMode, Entry, StreamKind},
 };
 
-#[test]
-fn model_refresh_prefers_the_active_available_auth_mode() {
-    let descriptor = rho_providers::provider::provider_descriptor("openrouter").unwrap();
-    let available = vec!["openrouter-api-key".into(), "openrouter-oauth".into()];
-
-    assert_eq!(
-        super::refresh_auth_for_provider(descriptor, "openrouter-oauth", &available),
-        "openrouter-oauth"
-    );
-}
-
-// Covers: /config refresh must send a stored key instead of probing anonymously
+// Covers: /config refresh keeps the active auth when available, sends a stored
+// key instead of probing anonymously, and otherwise falls back to an available mode
 // Owner: model list refresh
 #[test]
-fn model_refresh_prefers_a_stored_key_over_keyless() {
-    let descriptor = rho_providers::provider::provider_descriptor("ollama").unwrap();
-    let available = vec!["none".into(), "ollama-api-key".into()];
-
-    assert_eq!(
-        super::refresh_auth_for_provider(descriptor, "none", &available),
-        "ollama-api-key"
-    );
-}
-
-#[test]
-fn model_refresh_falls_back_to_an_available_auth_mode() {
-    let descriptor = rho_providers::provider::provider_descriptor("openrouter").unwrap();
-    let available = vec!["openrouter-oauth".into()];
-
-    assert_eq!(
-        super::refresh_auth_for_provider(descriptor, "openrouter-api-key", &available),
-        "openrouter-oauth"
-    );
+fn model_refresh_selects_an_available_auth_mode() {
+    for (case, provider, preferred, available, expected) in [
+        (
+            "active available auth wins",
+            "openrouter",
+            "openrouter-oauth",
+            &["openrouter-api-key", "openrouter-oauth"][..],
+            "openrouter-oauth",
+        ),
+        (
+            "stored key beats keyless",
+            "ollama",
+            "none",
+            &["none", "ollama-api-key"][..],
+            "ollama-api-key",
+        ),
+        (
+            "falls back to an available mode",
+            "openrouter",
+            "openrouter-api-key",
+            &["openrouter-oauth"][..],
+            "openrouter-oauth",
+        ),
+    ] {
+        let descriptor = rho_providers::provider::provider_descriptor(provider).unwrap();
+        let available = available
+            .iter()
+            .map(|auth| auth.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            super::refresh_auth_for_provider(descriptor, preferred, &available),
+            expected,
+            "{case}"
+        );
+    }
 }
 
 fn aliases(entries: &[(&str, &str)]) -> ModelAliases {

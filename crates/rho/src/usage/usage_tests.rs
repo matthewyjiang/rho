@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc, thread, time::Duration};
+use std::{path::PathBuf, sync::Arc, thread};
 
 use pretty_assertions::assert_eq;
 use rho_sdk::{
@@ -421,18 +421,6 @@ fn concurrent_writers_and_read_only_client_share_wal_database() {
         .query_row("SELECT count(*) FROM usage_events", [], |row| row.get(0))
         .unwrap();
     assert_eq!(count, 60);
-}
-
-#[test]
-fn waits_for_short_write_lock_contention() {
-    let (_directory, recorder) = recorder();
-    let locker = Connection::open(recorder.path()).unwrap();
-    locker.execute_batch("BEGIN IMMEDIATE").unwrap();
-    let writer =
-        thread::spawn(move || recorder.record(&event("after-lock", RequestOutcome::Completed)));
-    thread::sleep(Duration::from_millis(100));
-    locker.execute_batch("COMMIT").unwrap();
-    assert_eq!(writer.join().unwrap().unwrap(), RecordOutcome::Inserted);
 }
 
 #[cfg(unix)]

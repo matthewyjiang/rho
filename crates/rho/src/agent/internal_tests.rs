@@ -18,24 +18,37 @@ fn selection(
     config
 }
 
-// Covers: unset override keeps the reserved definition default.
+// Covers: an unset override keeps the reserved definition default; an
+// explicit override wins over it.
 // Owner: internal agent reasoning
 #[test]
-fn effective_reasoning_defaults_to_the_definition_level() {
-    assert_eq!(
-        effective_internal_agent_reasoning(
+fn effective_reasoning_prefers_the_override_over_the_definition_level() {
+    for (case, id, reasoning, expected) in [
+        (
+            "advisor default",
             ADVISOR_AGENT_ID,
-            &selection("openai", "gpt-test", None)
+            None,
+            ReasoningLevel::Medium,
         ),
-        ReasoningLevel::Medium
-    );
-    assert_eq!(
-        effective_internal_agent_reasoning(
+        (
+            "title default",
             SESSION_TITLE_AGENT_ID,
-            &selection("openai", "gpt-test", None)
+            None,
+            ReasoningLevel::Low,
         ),
-        ReasoningLevel::Low
-    );
+        (
+            "advisor override",
+            ADVISOR_AGENT_ID,
+            Some(ReasoningLevel::High),
+            ReasoningLevel::High,
+        ),
+    ] {
+        assert_eq!(
+            effective_internal_agent_reasoning(id, &selection("openai", "gpt-test", reasoning)),
+            expected,
+            "{case}"
+        );
+    }
 }
 
 // Covers: the permission classifier cannot fall back to executor model or Claude runtime
@@ -51,37 +64,27 @@ fn permission_classifier_requires_own_rho_model_with_low_reasoning() {
     );
 }
 
-// Covers: an explicit override wins over the definition default.
+// Covers: model select carries an explicit previous override onto the next
+// model and keeps None when the user never set reasoning.
 // Owner: internal agent reasoning
 #[test]
-fn effective_reasoning_override_wins() {
-    assert_eq!(
-        effective_internal_agent_reasoning(
-            ADVISOR_AGENT_ID,
-            &selection("openai", "gpt-test", Some(ReasoningLevel::High))
+fn carry_reasoning_keeps_only_an_explicit_override() {
+    let next = selection("openai", "gpt-next", None);
+    let unset = selection("openai", "gpt-prev", None);
+    let explicit = selection("anthropic", "claude-prev", Some(ReasoningLevel::High));
+    for (case, previous, expected) in [
+        ("no previous", None, None),
+        ("unset previous", Some(&unset), None),
+        (
+            "explicit previous",
+            Some(&explicit),
+            Some(ReasoningLevel::High),
         ),
-        ReasoningLevel::High
-    );
-}
-
-// Covers: model select keeps None when the user never set reasoning.
-// Owner: internal agent reasoning
-#[test]
-fn carry_reasoning_leaves_unset_overrides_unset() {
-    let next = selection("openai", "gpt-next", None);
-    let previous = selection("openai", "gpt-prev", None);
-    assert_eq!(carry_internal_agent_reasoning(&next, Some(&previous)), None);
-    assert_eq!(carry_internal_agent_reasoning(&next, None), None);
-}
-
-// Covers: an explicit previous override is carried onto the next model.
-// Owner: internal agent reasoning
-#[test]
-fn carry_reasoning_keeps_an_explicit_override() {
-    let next = selection("openai", "gpt-next", None);
-    let previous = selection("anthropic", "claude-prev", Some(ReasoningLevel::High));
-    assert_eq!(
-        carry_internal_agent_reasoning(&next, Some(&previous)),
-        Some(ReasoningLevel::High)
-    );
+    ] {
+        assert_eq!(
+            carry_internal_agent_reasoning(&next, previous),
+            expected,
+            "{case}"
+        );
+    }
 }

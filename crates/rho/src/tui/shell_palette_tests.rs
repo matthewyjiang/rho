@@ -138,6 +138,13 @@ fn tab_completes_one_component_of_the_word_under_cursor() {
             palette_after_tab: None,
         },
         Case {
+            name: "a directory word with one entry descends one level",
+            files: &["crates/rho/src/lib.rs"],
+            typed: "cat crates/",
+            text_after_tab: "cat crates/rho/",
+            palette_after_tab: None,
+        },
+        Case {
             name: "a directory word lists its own entries, not the whole tree",
             files: &["src/a.rs", "src/nested/deep.rs"],
             typed: "cat src/",
@@ -186,25 +193,6 @@ fn tab_completes_one_component_of_the_word_under_cursor() {
             case.name
         );
         assert!(app.input_ui.shell_mode().is_some(), "{}", case.name);
-    }
-}
-
-// Covers: repeated Tab walks a nested path one directory per press and ends
-// on the file with a space, instead of jumping to the leaf in one go.
-// Owner: TUI shell palette policy.
-#[test]
-fn repeated_tab_descends_one_directory_per_press() {
-    let (mut app, _workspace) = shell_app(&["crates/rho/src/lib.rs"], "cat cr");
-    let expected = [
-        "cat crates/",
-        "cat crates/rho/",
-        "cat crates/rho/src/",
-        "cat crates/rho/src/lib.rs ",
-    ];
-    for text in expected {
-        assert!(app.handle_file_palette_key(key(KeyCode::Tab)).unwrap());
-        assert_eq!(app.input_ui.text(), text);
-        assert_eq!(open_paths(&mut app), None, "each step had one match");
     }
 }
 

@@ -122,7 +122,7 @@ impl App {
                     .as_ref()
                     .is_some_and(|handle| handle.is_finished())
                 || self.prompt_history.load_finished()
-                || agent.startup_hydrate_pending();
+                || agent.startup_hydrate_ready();
             needs_redraw |= self.poll_background(terminal, agent, first_frame).await?;
             needs_redraw |= background_ready;
             needs_redraw |= self.update_activity_panels(agent)?;

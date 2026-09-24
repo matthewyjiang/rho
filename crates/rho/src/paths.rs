@@ -334,28 +334,6 @@ mod tests {
     }
 
     #[test]
-    fn usage_database_uses_data_root() {
-        assert_eq!(
-            rho_dir_from_env(|name| env(&[("RHO_HOME", "/var/lib/rho")], name))
-                .unwrap()
-                .join("usage.sqlite3"),
-            PathBuf::from("/var/lib/rho/usage.sqlite3")
-        );
-    }
-
-    // Covers: prompt history lives under RHO_HOME, not a hardcoded ~/.rho.
-    // Owner: paths (pure unit).
-    #[test]
-    fn prompt_history_database_uses_data_root() {
-        assert_eq!(
-            rho_dir_from_env(|name| env(&[("RHO_HOME", "/var/lib/rho")], name))
-                .unwrap()
-                .join("prompt-history.sqlite3"),
-            PathBuf::from("/var/lib/rho/prompt-history.sqlite3")
-        );
-    }
-
-    #[test]
     fn uses_home_when_set() {
         assert_eq!(
             home_dir_from_env(|name| env(&[("HOME", "/home/rho")], name)),

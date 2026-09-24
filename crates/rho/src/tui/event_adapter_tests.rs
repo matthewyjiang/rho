@@ -70,23 +70,43 @@ fn translates_streaming_and_usage_events_without_rendering_state() {
 }
 
 #[test]
-fn provider_retry_resets_the_current_provider_stream() {
+fn provider_stream_reset_carries_reason_into_view_model() {
+    use crate::tui::activity::ProviderRetryHint;
+
     let mut adapter = SdkEventAdapter::default();
 
-    for reason in [
-        ProviderStreamResetReason::InvalidResponse,
-        ProviderStreamResetReason::RetryableFailure {
-            kind: rho_sdk::ProviderErrorKind::Unavailable,
-            retry_after: None,
-        },
+    for (case, reason) in [
+        (
+            "invalid response",
+            ProviderStreamResetReason::InvalidResponse,
+        ),
+        (
+            "retryable failure",
+            ProviderStreamResetReason::RetryableFailure {
+                kind: rho_sdk::ProviderErrorKind::Unavailable,
+                retry_after: None,
+            },
+        ),
+        (
+            "rate limit with retry-after",
+            ProviderStreamResetReason::RetryableFailure {
+                kind: rho_sdk::ProviderErrorKind::RateLimit,
+                retry_after: Some(Duration::from_secs(12)),
+            },
+        ),
     ] {
-        assert!(matches!(
-            only_event(adapter.translate(RunEvent::ProviderStreamReset {
-                reason,
-                detail: "retrying".into(),
-            })),
-            ViewEvent::Update(ViewModelEvent::ProviderStreamReset(_))
-        ));
+        let event = only_event(adapter.translate(RunEvent::ProviderStreamReset {
+            reason,
+            detail: "retrying".into(),
+        }));
+        assert!(
+            matches!(
+                event,
+                ViewEvent::Update(ViewModelEvent::ProviderStreamReset(hint))
+                    if hint == ProviderRetryHint { reason }
+            ),
+            "{case}"
+        );
     }
 }
 
@@ -130,83 +150,55 @@ fn provider_native_web_search_maps_to_tool_finished_view() {
 }
 
 #[test]
-fn provider_native_hosted_tool_activity_maps_to_tool_finished_view() {
-    let mut adapter = SdkEventAdapter::default();
-
-    let ViewEvent::Update(ViewModelEvent::ToolFinished {
-        presentation: crate::presentation::Presentation::Card(card),
-        ..
-    }) = only_event(adapter.translate(RunEvent::HostedToolActivity {
-        name: "x_search".into(),
-        detail: "xAI".into(),
-    }))
-    else {
-        panic!("expected hosted tool activity finished");
+fn hosted_tool_activity_maps_to_tool_finished_view() {
+    let finished = ToolFact::Meta {
+        text: "finished".into(),
     };
-    assert_eq!(card.status, ToolStatus::Ok);
-    assert_eq!(card.family, ToolFamily::Web);
-    assert_eq!(card.header, ToolHeader::call("x_search", None));
-    assert_eq!(
-        card.facts,
-        vec![
-            rho_tools::tool_card::ToolFact::Text { text: "xAI".into() },
-            rho_tools::tool_card::ToolFact::Meta {
-                text: "finished".into(),
-            },
-        ]
-    );
-}
-
-#[test]
-fn unknown_hosted_tool_activity_uses_default_family() {
-    let mut adapter = SdkEventAdapter::default();
-
-    let ViewEvent::Update(ViewModelEvent::ToolFinished {
-        presentation: crate::presentation::Presentation::Card(card),
-        ..
-    }) = only_event(adapter.translate(RunEvent::HostedToolActivity {
-        name: "code_interpreter".into(),
-        detail: "ran analysis".into(),
-    }))
-    else {
-        panic!("expected hosted tool activity finished");
-    };
-    assert_eq!(card.family, ToolFamily::Default);
-    assert_eq!(card.header, ToolHeader::call("code_interpreter", None));
-    assert_eq!(
-        card.facts,
-        vec![
-            rho_tools::tool_card::ToolFact::Text {
-                text: "ran analysis".into(),
-            },
-            rho_tools::tool_card::ToolFact::Meta {
-                text: "finished".into(),
-            },
-        ]
-    );
-}
-
-#[test]
-fn hosted_tool_activity_without_detail_uses_only_finished_fact() {
-    let mut adapter = SdkEventAdapter::default();
-
-    let ViewEvent::Update(ViewModelEvent::ToolFinished {
-        presentation: crate::presentation::Presentation::Card(card),
-        ..
-    }) = only_event(adapter.translate(RunEvent::HostedToolActivity {
-        name: "x_search".into(),
-        detail: String::new(),
-    }))
-    else {
-        panic!("expected hosted tool activity finished");
-    };
-    assert_eq!(card.header, ToolHeader::call("x_search", None));
-    assert_eq!(
-        card.facts,
-        vec![rho_tools::tool_card::ToolFact::Meta {
-            text: "finished".into(),
-        }]
-    );
+    for (case, name, detail, family, facts) in [
+        (
+            "known web tool",
+            "x_search",
+            "xAI",
+            ToolFamily::Web,
+            vec![ToolFact::Text { text: "xAI".into() }, finished.clone()],
+        ),
+        (
+            "unknown tool uses default family",
+            "code_interpreter",
+            "ran analysis",
+            ToolFamily::Default,
+            vec![
+                ToolFact::Text {
+                    text: "ran analysis".into(),
+                },
+                finished.clone(),
+            ],
+        ),
+        (
+            "empty detail keeps only finished fact",
+            "x_search",
+            "",
+            ToolFamily::Web,
+            vec![finished.clone()],
+        ),
+    ] {
+        let mut adapter = SdkEventAdapter::default();
+        let ViewEvent::Update(ViewModelEvent::ToolFinished {
+            presentation: crate::presentation::Presentation::Card(card),
+            ..
+        }) = only_event(adapter.translate(RunEvent::HostedToolActivity {
+            name: name.into(),
+            detail: detail.into(),
+        }))
+        else {
+            panic!("{case}: expected hosted tool activity finished");
+        };
+        assert_eq!(
+            (card.status, card.family, card.header, card.facts),
+            (ToolStatus::Ok, family, ToolHeader::call(name, None), facts),
+            "{case}"
+        );
+    }
 }
 
 #[test]
@@ -624,30 +616,4 @@ fn compaction_cancel_closes_open_tool_block_before_run_cancelled() {
             && card.status == ToolStatus::Interrupted
     ));
     assert!(matches!(&events[1], ViewEvent::Cancelled));
-}
-
-#[test]
-fn rate_limit_stream_reset_carries_retry_after_into_view_model() {
-    use std::time::Duration;
-
-    use crate::tui::activity::ProviderRetryHint;
-
-    let mut adapter = SdkEventAdapter::default();
-    let event = only_event(adapter.translate(RunEvent::ProviderStreamReset {
-        reason: ProviderStreamResetReason::RetryableFailure {
-            kind: rho_sdk::ProviderErrorKind::RateLimit,
-            retry_after: Some(Duration::from_secs(12)),
-        },
-        detail: "retrying".into(),
-    }));
-
-    assert!(matches!(
-        event,
-        ViewEvent::Update(ViewModelEvent::ProviderStreamReset(ProviderRetryHint {
-            reason: ProviderStreamResetReason::RetryableFailure {
-                kind: rho_sdk::ProviderErrorKind::RateLimit,
-                retry_after: Some(delay),
-            },
-        })) if delay == Duration::from_secs(12)
-    ));
 }

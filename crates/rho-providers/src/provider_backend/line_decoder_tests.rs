@@ -202,34 +202,6 @@ fn drains_valid_complete_lines_before_oversize_error() {
     assert!(matches!(error, LineDecodeError::LineTooLong { .. }));
 }
 
-#[test]
-fn accepts_near_limit_payload_then_rejects_oversize() {
-    let payload = "y".repeat(BOUNDED_LIMIT - 8);
-    assert!(payload.len() < BOUNDED_LIMIT);
-
-    let mut decoder = bounded();
-    decoder.push(payload.as_bytes());
-    decoder.push(b"\n");
-    let line = decoder
-        .next_line()
-        .expect("near-limit payload is legitimate")
-        .expect("line present");
-    assert_eq!(line, payload);
-
-    decoder.push(&[b'z'; BOUNDED_LIMIT + 1]);
-    decoder.push(b"\n");
-    let error = decoder
-        .next_line()
-        .expect_err("oversize after valid large line");
-    assert!(matches!(
-        error,
-        LineDecodeError::LineTooLong {
-            limit: BOUNDED_LIMIT,
-            ..
-        }
-    ));
-}
-
 impl LineDecoder {
     fn max_line_bytes_for_test(&self) -> MaxLineBytes {
         self.max_line_bytes

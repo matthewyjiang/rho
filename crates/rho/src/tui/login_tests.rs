@@ -265,95 +265,64 @@ fn first_login_preserves_explicit_reasoning_when_capabilities_are_unknown() {
     });
 }
 
+// Covers: the store picker defaults to the first available backend, and keys
+// (arrows, digits, letter shortcuts) never select an unavailable one.
+// Owner: pure unit (credential store choice)
 #[test]
-fn credential_store_choice_defaults_to_first_available_and_skips_unavailable() {
+fn credential_store_choice_selects_only_available_backends() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use rho_providers::credentials::{CredentialStoreBackend, CredentialStoreProbe};
+    use CredentialStoreBackend::{File, Os};
 
     use super::{credential_store_inline_choice, selected_credential_store_backend};
     use crate::credential_store::StoreChoiceRequest;
 
-    let request = StoreChoiceRequest {
-        os: CredentialStoreProbe {
-            backend: CredentialStoreBackend::Os,
-            available: false,
-            detail: "no keyring".into(),
-        },
-        file: CredentialStoreProbe {
-            backend: CredentialStoreBackend::File,
-            available: true,
-            detail: "ok".into(),
-        },
-    };
-    let mut choice = credential_store_inline_choice(request).expect("file available");
-    assert_eq!(
-        selected_credential_store_backend(&choice),
-        CredentialStoreBackend::File,
-        "default should land on first available backend"
-    );
-
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    choice.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-    assert_eq!(
-        selected_credential_store_backend(&choice),
-        CredentialStoreBackend::File,
-        "navigation must not land on unavailable OS backend"
-    );
-    choice.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(
-        selected_credential_store_backend(&choice),
-        CredentialStoreBackend::File
-    );
-
-    choice.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
-    assert_eq!(
-        selected_credential_store_backend(&choice),
-        CredentialStoreBackend::File
-    );
-    choice.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
-    assert_eq!(
-        selected_credential_store_backend(&choice),
-        CredentialStoreBackend::File
-    );
-    choice.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));
-    assert_eq!(
-        selected_credential_store_backend(&choice),
-        CredentialStoreBackend::File
-    );
-}
-
-#[test]
-fn credential_store_choice_os_shortcut_when_available() {
-    use rho_providers::credentials::{CredentialStoreBackend, CredentialStoreProbe};
-
-    use super::{credential_store_inline_choice, selected_credential_store_backend};
-    use crate::credential_store::StoreChoiceRequest;
-
-    let request = StoreChoiceRequest {
-        os: CredentialStoreProbe {
-            backend: CredentialStoreBackend::Os,
-            available: true,
-            detail: "ok".into(),
-        },
-        file: CredentialStoreProbe {
-            backend: CredentialStoreBackend::File,
-            available: true,
-            detail: "ok".into(),
-        },
-    };
-    let mut choice = credential_store_inline_choice(request).expect("backends");
-    assert_eq!(
-        selected_credential_store_backend(&choice),
-        CredentialStoreBackend::Os
-    );
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    choice.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-    assert_eq!(
-        selected_credential_store_backend(&choice),
-        CredentialStoreBackend::File
-    );
-    choice.handle_key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
-    assert_eq!(
-        selected_credential_store_backend(&choice),
-        CredentialStoreBackend::Os
-    );
+    let cases = [
+        (
+            "os unavailable",
+            false,
+            File,
+            vec![
+                (KeyCode::Up, File),
+                (KeyCode::Down, File),
+                (KeyCode::Char('1'), File),
+                (KeyCode::Char('2'), File),
+                (KeyCode::Char('f'), File),
+            ],
+        ),
+        (
+            "os available",
+            true,
+            Os,
+            vec![(KeyCode::Down, File), (KeyCode::Char('o'), Os)],
+        ),
+    ];
+    for (case, os_available, initial, steps) in cases {
+        let request = StoreChoiceRequest {
+            os: CredentialStoreProbe {
+                backend: Os,
+                available: os_available,
+                detail: "os".into(),
+            },
+            file: CredentialStoreProbe {
+                backend: File,
+                available: true,
+                detail: "ok".into(),
+            },
+        };
+        let mut choice = credential_store_inline_choice(request).expect("file available");
+        assert_eq!(
+            selected_credential_store_backend(&choice),
+            initial,
+            "{case}: initial"
+        );
+        for (key, expected) in steps {
+            choice.handle_key(KeyEvent::new(key, KeyModifiers::NONE));
+            assert_eq!(
+                selected_credential_store_backend(&choice),
+                expected,
+                "{case}: after {key:?}"
+            );
+        }
+    }
 }

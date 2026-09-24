@@ -162,15 +162,17 @@ mod tests {
 
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn command_output_keeps_first_stderr_line_only() {
-        let output = std::process::Command::new("sh")
-            .args([
-                "-c",
-                "printf 'fatal: not a git repository\\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).\\n' >&2; exit 1",
-            ])
-            .output()
-            .expect("shell stderr fixture");
+        use std::os::unix::process::ExitStatusExt;
+
+        let output = Output {
+            // Raw wait status 256 is exit code 1.
+            status: std::process::ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: b"fatal: not a git repository\nStopping at filesystem boundary (GIT_DISCOVERY_ACROSS_FILESYSTEM not set).\n".to_vec(),
+        };
         let error = super::command_output(output).unwrap_err();
         assert_eq!(error.to_string(), "fatal: not a git repository");
     }

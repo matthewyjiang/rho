@@ -35,42 +35,30 @@ fn navigation_skips_unavailable_options() {
 
 #[test]
 fn shortcut_selects_and_submits_option() {
-    let mut choice = InlineChoice::new(
-        "choose",
-        "details",
-        vec![
-            InlineChoiceOption::available("compact", '1', "compact", "first"),
-            InlineChoiceOption::available("direct", '2', "direct", "second"),
-        ],
-    )
-    .unwrap();
+    for (case, modifiers) in [
+        ("plain", KeyModifiers::NONE),
+        ("shift", KeyModifiers::SHIFT),
+    ] {
+        let mut choice = InlineChoice::new(
+            "choose",
+            "details",
+            vec![
+                InlineChoiceOption::available("compact", '1', "compact", "first"),
+                InlineChoiceOption::available("direct", '2', "direct", "second"),
+            ],
+        )
+        .unwrap();
 
-    assert_eq!(
-        choice.handle_key(key(KeyCode::Char('2'))),
-        InlineChoiceKeyOutcome::Selected("direct".into())
-    );
-    assert_eq!(choice.selected_value(), "direct");
-    assert_eq!(
-        choice.handle_key(key(KeyCode::Esc)),
-        InlineChoiceKeyOutcome::Cancelled
-    );
-}
-
-#[test]
-fn shortcut_accepts_shift_modifier() {
-    let mut choice = InlineChoice::new(
-        "choose",
-        "details",
-        vec![
-            InlineChoiceOption::available("compact", '1', "compact", "first"),
-            InlineChoiceOption::available("direct", '2', "direct", "second"),
-        ],
-    )
-    .unwrap();
-
-    assert_eq!(
-        choice.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::SHIFT)),
-        InlineChoiceKeyOutcome::Selected("direct".into())
-    );
-    assert_eq!(choice.selected_value(), "direct");
+        assert_eq!(
+            choice.handle_key(KeyEvent::new(KeyCode::Char('2'), modifiers)),
+            InlineChoiceKeyOutcome::Selected("direct".into()),
+            "{case}"
+        );
+        assert_eq!(choice.selected_value(), "direct", "{case}");
+        assert_eq!(
+            choice.handle_key(key(KeyCode::Esc)),
+            InlineChoiceKeyOutcome::Cancelled,
+            "{case}"
+        );
+    }
 }

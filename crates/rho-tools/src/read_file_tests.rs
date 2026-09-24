@@ -246,6 +246,8 @@ async fn reports_truncated_document_extraction() {
     assert!(output.content.starts_with(&"x".repeat(64)));
 }
 
+// Covers: extraction warnings must reach the model alongside the body
+// Owner: document rendering for read_file
 #[test]
 fn renders_document_warnings() {
     let content = render_extracted_document(&ExtractedDocument {
@@ -256,9 +258,10 @@ fn renders_document_warnings() {
         warnings: vec!["archive contains ignored entries".into()],
     });
 
-    assert_eq!(
-        content,
-        "Document body\n[document warning: archive contains ignored entries]"
+    assert!(content.starts_with("Document body"), "{content}");
+    assert!(
+        content.contains("archive contains ignored entries"),
+        "{content}"
     );
 }
 

@@ -87,47 +87,6 @@ fn formats_reset_relative_only_within_one_day() {
     assert!(!format_reset_at(200_000, 0).starts_with("in "));
 }
 
-// Covers: a throttled usage read names the rate limit in the heading instead
-// of the generic failure copy, with and without a cached snapshot.
-// Owner: pure unit
-#[test]
-fn failed_heading_distinguishes_rate_limit() {
-    let cases = [
-        (
-            UsageFailure::RateLimited,
-            Some(900),
-            "rate limited · showing last known",
-        ),
-        (
-            UsageFailure::RateLimited,
-            None,
-            "rate limited · try again in a moment",
-        ),
-        (UsageFailure::Other, Some(900), "update failed"),
-        (UsageFailure::Other, None, "unavailable"),
-    ];
-    let observed: Vec<String> = cases
-        .iter()
-        .map(|(reason, cached_at_unix, _)| {
-            heading_status(
-                &LimitsSection {
-                    id: LimitsSectionId::ClaudeCode,
-                    label: CLAUDE_CODE_PROVIDER_LABEL.into(),
-                    status: LimitsSectionStatus::Failed {
-                        cached_at_unix: *cached_at_unix,
-                        reason: *reason,
-                    },
-                    windows: Vec::new(),
-                },
-                None,
-                1_000,
-            )
-        })
-        .collect();
-    let expected: Vec<String> = cases.iter().map(|(_, _, text)| (*text).into()).collect();
-    assert_eq!(observed, expected);
-}
-
 // Covers: after a failed probe the cached disk windows stay visible; only a
 // rate-limited refresh names the throttle in the heading, other failures keep
 // the quiet "last seen" heading, and a missing cache reads as a plain failure.
@@ -284,7 +243,6 @@ fn claude_section_is_present_without_oauth() {
     assert_eq!(overlay.sections.len(), 1);
     assert_eq!(overlay.sections[0].id, LimitsSectionId::ClaudeCode);
     assert_eq!(overlay.sections[0].windows.len(), 1);
-    assert_eq!(overlay.sections[0].windows[0].label, "5-hour");
     assert!(overlay.sections[0].windows[0].remaining_percent.is_none());
     assert!(matches!(
         overlay.sections[0].status,

@@ -784,80 +784,51 @@ mod tests {
         );
     }
 
+    // Covers: tool-gated prompt sections appear only when their tool is live,
+    // and the edit section never names the concrete edit tool (mid-session
+    // edit-tool switches keep the system prompt fixed).
+    // Owner: prompt assembly (pure unit).
     #[test]
-    fn includes_txm_math_rendering_guidance() {
+    fn tool_gated_sections_follow_the_tool_list() {
+        // One stable marker per gated section; the wording is reviewed in PRs.
+        const SECTIONS: [(&str, &str); 3] = [
+            ("grep", "`grep` tool"),
+            ("edit", "live file-edit tool"),
+            ("agent", "Work directly by default"),
+        ];
         let project = TempDir::new().unwrap();
+        for (tools, expected) in [
+            (&[][..], &[][..]),
+            (&["grep"][..], &["grep"][..]),
+            (&["edit"][..], &["edit"][..]),
+            (&["apply_patch"][..], &["edit"][..]),
+            (&["str_replace"][..], &["edit"][..]),
+            (&["agent"][..], &["agent"][..]),
+        ] {
+            let specs: Vec<ToolSpec> = tools
+                .iter()
+                .map(|name| ToolSpec {
+                    name: (*name).into(),
+                    description: "tool".into(),
+                    input_schema: serde_json::json!({}),
+                })
+                .collect();
+            let prompt = system_prompt_with_home(&specs, project.path(), None).text;
 
-        let prompt = system_prompt_with_home(&[], project.path(), None).text;
-
-        // Loose markers only: the guidance must mention display and inline math
-        // without locking the exact copy.
-        assert!(prompt.contains("$$ ... $$"));
-        assert!(prompt.contains("Inline `$...$` math"));
-    }
-
-    #[test]
-    fn includes_grep_preference_only_when_grep_tool_is_available() {
-        let project = TempDir::new().unwrap();
-        let grep_tool = ToolSpec {
-            name: "grep".into(),
-            description: "search".into(),
-            input_schema: serde_json::json!({}),
-        };
-
-        let enabled = system_prompt_with_home(&[grep_tool], project.path(), None).text;
-        let disabled = system_prompt_with_home(&[], project.path(), None).text;
-
-        assert!(enabled.contains("Prefer the `grep` tool over shell `rg` or `grep`"));
-        assert!(!enabled.contains("chainable `[path#TAG]`"));
-        assert!(!disabled.contains("Prefer the `grep` tool over shell `rg` or `grep`"));
-    }
-
-    #[test]
-    fn includes_format_agnostic_edit_policy_when_any_edit_tool_is_present() {
-        let project = TempDir::new().unwrap();
-        for tool_name in ["edit", "apply_patch", "str_replace"] {
-            let tool = ToolSpec {
-                name: tool_name.into(),
-                description: "edit".into(),
-                input_schema: serde_json::json!({}),
-            };
-
-            let prompt = system_prompt_with_home(&[tool], project.path(), None).text;
-
-            assert!(
-                prompt.contains("Use the live file-edit tool from the tool list"),
-                "tool {tool_name}"
-            );
-            assert!(
-                !prompt.contains(&format!("Prefer the `{tool_name}` tool")),
-                "tool {tool_name}"
-            );
-            assert!(!prompt.contains("never `PUT 12.:`"), "tool {tool_name}");
-            assert!(
-                !prompt.contains("without chainable body lines"),
-                "tool {tool_name}"
-            );
+            let present: Vec<&str> = SECTIONS
+                .iter()
+                .filter(|(_, marker)| prompt.contains(marker))
+                .map(|(section, _)| *section)
+                .collect();
+            assert_eq!(present, expected, "tools {tools:?}");
+            if expected == ["edit"] {
+                assert!(
+                    !prompt.contains(&format!("`{}`", tools[0])),
+                    "edit section must not name `{}`",
+                    tools[0]
+                );
+            }
         }
-
-        let disabled = system_prompt_with_home(&[], project.path(), None).text;
-        assert!(!disabled.contains("live file-edit tool from the tool list"));
-    }
-
-    #[test]
-    fn includes_subagent_cost_guidance_only_when_agent_tool_is_available() {
-        let project = TempDir::new().unwrap();
-        let agent_tool = ToolSpec {
-            name: "agent".into(),
-            description: "delegate work".into(),
-            input_schema: serde_json::json!({}),
-        };
-
-        let enabled = system_prompt_with_home(&[agent_tool], project.path(), None).text;
-        let disabled = system_prompt_with_home(&[], project.path(), None).text;
-
-        assert!(enabled.contains("Work directly by default"));
-        assert!(!disabled.contains("Work directly by default"));
     }
 
     #[test]
@@ -876,16 +847,6 @@ mod tests {
 
         assert!(!prompt.contains("<available_skills>"));
         assert!(!prompt.contains("rho-skill"));
-    }
-
-    #[test]
-    fn appends_disabled_subagent_instruction() {
-        let mut text = "base".to_string();
-
-        append_subagents_disabled_instruction(&mut text);
-
-        assert!(text.contains("Agent delegation is disabled"));
-        assert!(text.contains("Do not attempt to delegate work"));
     }
 
     fn skill_tool_spec() -> ToolSpec {

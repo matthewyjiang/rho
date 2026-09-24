@@ -2,37 +2,29 @@ use pretty_assertions::assert_eq;
 
 use super::SignInTarget;
 
-#[test]
-fn sign_in_target_routes_claude_code_case_insensitively() {
-    for value in ["claude-code", " Claude-Code "] {
-        assert!(
-            matches!(SignInTarget::parse(value), SignInTarget::ClaudeCode),
-            "{value} must route to the external runtime"
-        );
-    }
-    assert!(matches!(
-        SignInTarget::parse(" anthropic "),
-        SignInTarget::Provider(provider) if provider == "anthropic"
-    ));
-}
-
-// Covers: /login cursor and cursor-agent must not fall through as a provider id
+// Covers: /login claude-code, cursor, and cursor-agent route to their external
+// runtimes case-insensitively instead of falling through as a provider id
 // Owner: login routing
 #[test]
-fn sign_in_target_parses_cursor_and_alias() {
-    for (value, expected_cursor) in [
-        ("cursor", true),
-        (" Cursor ", true),
-        ("cursor-agent", true),
-        ("CURSOR-AGENT", true),
-        ("claude-code", false),
-        ("anthropic", false),
+fn sign_in_target_routes_external_runtimes_case_insensitively() {
+    fn route(target: SignInTarget) -> String {
+        match target {
+            SignInTarget::ClaudeCode => "claude-code".into(),
+            SignInTarget::Cursor => "cursor".into(),
+            SignInTarget::NewCustomHost { .. } => "new-custom-host".into(),
+            SignInTarget::Provider(provider) => format!("provider:{provider}"),
+        }
+    }
+    for (value, expected) in [
+        ("claude-code", "claude-code"),
+        (" Claude-Code ", "claude-code"),
+        ("cursor", "cursor"),
+        (" Cursor ", "cursor"),
+        ("cursor-agent", "cursor"),
+        ("CURSOR-AGENT", "cursor"),
+        (" anthropic ", "provider:anthropic"),
     ] {
-        assert_eq!(
-            matches!(SignInTarget::parse(value), SignInTarget::Cursor),
-            expected_cursor,
-            "{value}"
-        );
+        assert_eq!(route(SignInTarget::parse(value)), expected, "{value:?}");
     }
 }
 

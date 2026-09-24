@@ -413,78 +413,60 @@ mod tests {
         ));
     }
 
+    // Covers: legacy and enriched assistant tool calls stay with their results
+    // in the recent tail.
+    // Owner: compaction partition
     #[test]
     fn partition_does_not_split_assistant_tool_call_group() {
-        let messages = vec![
-            Message::System("system".into()),
-            Message::user_text("x".repeat(1_000)),
-            Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+        let tool_call = || {
+            ContentBlock::ToolCall(ToolCall {
                 id: "call_1".into(),
                 name: "bash".into(),
                 arguments: json!({"command": "echo hi"}),
-            })]),
-            Message::ToolResult(ToolResult {
-                id: "call_1".into(),
-                ok: true,
-                content: "hi".into(),
-            }),
-            Message::user_text("new"),
+            })
+        };
+        let enriched = Message::assistant(rho_providers::model::AssistantMessage {
+            content: vec![tool_call()],
+            provenance: Some(rho_providers::model::ModelIdentity::new(
+                "openai-codex",
+                "openai-responses",
+                "gpt-test",
+            )),
+            reasoning_summary: None,
+            provider_context: Vec::new(),
+        });
+        let cases = [
+            ("legacy", Message::Assistant(vec![tool_call()])),
+            ("enriched", enriched),
         ];
 
-        let partition = partition_messages_for_compaction(&messages, &[], 700).unwrap();
-
-        assert!(matches!(
-            partition.compacted_messages.as_slice(),
-            [Message::User(_)]
-        ));
-        assert!(matches!(
-            partition.recent_messages.as_slice(),
-            [
-                Message::Assistant(_),
-                Message::ToolResult(_),
-                Message::User(_)
-            ]
-        ));
-    }
-
-    #[test]
-    fn partition_does_not_split_enriched_assistant_tool_call_group() {
-        let identity = rho_providers::model::ModelIdentity::new(
-            "openai-codex",
-            "openai-responses",
-            "gpt-test",
-        );
-        let messages = vec![
-            Message::System("system".into()),
-            Message::user_text("x".repeat(1_000)),
-            Message::assistant(rho_providers::model::AssistantMessage {
-                content: vec![ContentBlock::ToolCall(ToolCall {
+        for (case, assistant) in cases {
+            let messages = vec![
+                Message::System("system".into()),
+                Message::user_text("x".repeat(1_000)),
+                assistant.clone(),
+                Message::ToolResult(ToolResult {
                     id: "call_1".into(),
-                    name: "bash".into(),
-                    arguments: json!({"command": "echo hi"}),
-                })],
-                provenance: Some(identity),
-                reasoning_summary: None,
-                provider_context: Vec::new(),
-            }),
-            Message::ToolResult(ToolResult {
-                id: "call_1".into(),
-                ok: true,
-                content: "hi".into(),
-            }),
-            Message::user_text("new"),
-        ];
+                    ok: true,
+                    content: "hi".into(),
+                }),
+                Message::user_text("new"),
+            ];
 
-        let partition = partition_messages_for_compaction(&messages, &[], 700).unwrap();
+            let partition = partition_messages_for_compaction(&messages, &[], 700).unwrap();
 
-        assert!(matches!(
-            partition.recent_messages.as_slice(),
-            [
-                Message::EnrichedAssistant(_),
-                Message::ToolResult(_),
-                Message::User(_)
-            ]
-        ));
+            assert!(
+                matches!(partition.compacted_messages.as_slice(), [Message::User(_)]),
+                "{case}"
+            );
+            assert!(
+                matches!(
+                    partition.recent_messages.as_slice(),
+                    [a, Message::ToolResult(_), Message::User(_)] if *a == assistant
+                ),
+                "{case}"
+            );
+        }
     }
 
     #[test]

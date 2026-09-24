@@ -216,7 +216,6 @@ fn pinned_scope_lists_only_usable_pins() {
             .collect::<Vec<_>>(),
         vec!["xai/grok-4.6"]
     );
-    assert!(pinned.title.contains("pinned"));
 
     runtime.favorite_models.clear();
     let all = model_picker(&runtime, &auths, ModelPickerScope::Pinned);
@@ -231,5 +230,4 @@ fn pinned_scope_lists_only_usable_pins() {
             .collect::<Vec<_>>(),
         "empty pins should keep the whole authenticated catalogue"
     );
-    assert!(all.title.contains("all"));
 }

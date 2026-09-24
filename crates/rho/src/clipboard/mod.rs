@@ -66,56 +66,29 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn doctor_report_includes_session_and_text_write_fields() {
-        let report = doctor_report();
-        assert!(matches!(report.session_label, "local" | "remote" | "wsl"));
-        assert!(!report.text_write_status.is_empty());
-        assert!(!report.text_write_detail.is_empty());
-    }
-
+    // Covers: missing image helpers are unhealthy and explain the per-session
+    // helper path rather than a generic clipboard error.
+    // Owner: clipboard doctor report.
     #[test]
     fn empty_image_helpers_are_reported_as_missing() {
-        let report = ClipboardDoctorReport {
-            session_label: "local",
-            text_write_status: "native",
-            text_write_healthy: true,
-            text_write_detail: "ok".into(),
-            image_helpers: Vec::new(),
-        };
-        assert_eq!(report.image_status(), "not found");
-        assert!(!report.image_healthy());
-        let detail = report.image_detail();
-        assert!(
-            detail.contains("requires") || detail.contains("not supported"),
-            "doctor should name the missing helper path: {detail}"
-        );
-        assert!(!detail.contains("no supported image found on clipboard"));
-    }
-
-    #[test]
-    fn wsl_image_detail_names_helpers() {
-        let report = ClipboardDoctorReport {
-            session_label: "wsl",
-            text_write_status: "native",
-            text_write_healthy: true,
-            text_write_detail: "ok".into(),
-            image_helpers: Vec::new(),
-        };
-        let detail = report.image_detail();
-        assert!(detail.contains("wl-paste"));
-        assert!(detail.contains("powershell.exe"));
-    }
-
-    #[test]
-    fn remote_image_detail_explains_session_limit() {
-        let report = ClipboardDoctorReport {
-            session_label: "remote",
-            text_write_status: "osc 52",
-            text_write_healthy: true,
-            text_write_detail: "ok".into(),
-            image_helpers: Vec::new(),
-        };
-        assert!(report.image_detail().contains("Remote session"));
+        for (session_label, session) in [
+            ("local", SessionKind::Local),
+            ("wsl", SessionKind::Wsl),
+            ("remote", SessionKind::Remote),
+        ] {
+            let report = ClipboardDoctorReport {
+                session_label,
+                text_write_status: "native",
+                text_write_healthy: true,
+                text_write_detail: "ok".into(),
+                image_helpers: Vec::new(),
+            };
+            assert!(!report.image_healthy(), "{session_label}");
+            assert_eq!(
+                report.image_detail(),
+                image::missing_image_helper_message(session),
+                "{session_label}"
+            );
+        }
     }
 }

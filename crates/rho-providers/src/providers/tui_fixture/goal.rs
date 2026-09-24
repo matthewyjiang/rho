@@ -64,7 +64,10 @@ pub(super) async fn intercept(
         return Some(Err(ProviderError::new(
             ProviderErrorKind::Unavailable,
             "deterministic goal delegation retry failure",
-            Retryability::Retryable,
+            // Permanent skips SDK provider backoff; the goal-level retry under
+            // test still fires. The 4s child must outlive the 3s goal retry
+            // delay so a retry that ignores the child is caught.
+            Retryability::Permanent,
         )));
     }
     if is_goal_questionnaire_prompt(prompt)

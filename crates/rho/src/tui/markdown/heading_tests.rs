@@ -14,27 +14,14 @@ fn line_text(line: &Line<'_>) -> String {
 }
 
 #[test]
-fn parses_all_atx_heading_levels() {
-    let cases = [
+fn parses_atx_headings() {
+    for (source, level, content) in [
         ("# one", HeadingLevel::H1, "one"),
         ("## two", HeadingLevel::H2, "two"),
         ("### three", HeadingLevel::H3, "three"),
         ("#### four", HeadingLevel::H4, "four"),
         ("##### five", HeadingLevel::H5, "five"),
         ("###### six", HeadingLevel::H6, "six"),
-    ];
-
-    for (source, level, content) in cases {
-        assert_eq!(
-            parse_atx_heading(source),
-            Some(AtxHeading { level, content })
-        );
-    }
-}
-
-#[test]
-fn accepts_common_atx_spacing_and_closing_hashes() {
-    let cases = [
         ("   ## heading", HeadingLevel::H2, "heading"),
         ("#\theading", HeadingLevel::H1, "heading"),
         ("### heading ###", HeadingLevel::H3, "heading"),
@@ -42,12 +29,11 @@ fn accepts_common_atx_spacing_and_closing_hashes() {
         ("### ###", HeadingLevel::H3, ""),
         ("######", HeadingLevel::H6, ""),
         ("## heading###", HeadingLevel::H2, "heading###"),
-    ];
-
-    for (source, level, content) in cases {
+    ] {
         assert_eq!(
             parse_atx_heading(source),
-            Some(AtxHeading { level, content })
+            Some(AtxHeading { level, content }),
+            "source: {source:?}"
         );
     }
 }

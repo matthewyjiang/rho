@@ -5,7 +5,7 @@ use ratatui::{layout::Rect, text::Line};
 
 use super::{
     command_identity, process_activity, process_trailing_style, ProcessPanel, ProcessPeekTarget,
-    QUIET_LABEL_AFTER, QUIET_WARN_AFTER,
+    QUIET_WARN_AFTER,
 };
 use crate::{
     tools::process::{LiveProcessSummary, State},
@@ -100,86 +100,50 @@ fn process_row_uses_first_command_line_without_id() {
     assert!(!text.contains("550e8400"));
 }
 
-// Covers: process activity column follows live freshness and terminal verdicts.
-// Owner: pure unit (process rail labels)
+// Covers: process activity column styles terminal verdicts by outcome and warns
+// on long-quiet live processes.
+// Owner: pure unit (process rail styles)
 #[test]
-fn process_activity_labels_and_styles_match_state() {
-    let running = summary("id", "sleep", 4);
-    assert_eq!(process_activity(&running).0, "running");
-
-    let mut quiet = running.clone();
-    quiet.quiet_seconds = Some(QUIET_LABEL_AFTER);
-    assert_eq!(
-        process_activity(&quiet).0,
-        format!(
-            "quiet {}",
-            crate::subagent::format_elapsed_secs(QUIET_LABEL_AFTER)
-        )
-    );
-
+fn process_activity_styles_match_state() {
+    let exited = |exit_code| LiveProcessSummary {
+        exit_code,
+        ..with_state(summary("id", "sleep", 4), State::Exited)
+    };
     let cases = [
+        ("running", summary("id", "sleep", 4), Theme::text()),
         (
-            with_state(summary("id", "sleep", 4), State::Starting),
             "starting",
+            with_state(summary("id", "sleep", 4), State::Starting),
             Theme::text(),
         ),
+        ("exit 0", exited(Some(0)), Theme::activity_rail_success()),
+        ("exit 2", exited(Some(2)), Theme::activity_rail_error()),
         (
-            LiveProcessSummary {
-                process_id: "id".into(),
-                command: "sleep".into(),
-                state: State::Exited,
-                elapsed_seconds: 4,
-                quiet_seconds: None,
-                exit_code: Some(0),
-            },
-            "✓ exit 0",
-            Theme::activity_rail_success(),
-        ),
-        (
-            LiveProcessSummary {
-                process_id: "id".into(),
-                command: "sleep".into(),
-                state: State::Exited,
-                elapsed_seconds: 4,
-                quiet_seconds: None,
-                exit_code: Some(2),
-            },
-            "✗ exit 2",
+            "exited without code",
+            exited(None),
             Theme::activity_rail_error(),
         ),
         (
-            LiveProcessSummary {
-                process_id: "id".into(),
-                command: "sleep".into(),
-                state: State::Exited,
-                elapsed_seconds: 4,
-                quiet_seconds: None,
-                exit_code: None,
-            },
-            "✗ exited",
-            Theme::activity_rail_error(),
-        ),
-        (
+            "terminated",
             with_state(summary("id", "sleep", 4), State::Terminated),
-            "✗ terminated",
             Theme::activity_rail_error(),
         ),
         (
+            "timed out",
             with_state(summary("id", "sleep", 4), State::TimedOut),
-            "✗ timed out",
             Theme::activity_rail_error(),
         ),
         (
+            "failed to start",
             with_state(summary("id", "sleep", 4), State::FailedToStart),
-            "✗ failed to start",
             Theme::activity_rail_error(),
         ),
     ];
-    for (process, label, style) in cases {
-        assert_eq!(process_activity(&process), (label.to_owned(), style));
+    for (case, process, style) in cases {
+        assert_eq!(process_activity(&process).1, style, "{case}");
     }
 
-    let mut warned = running;
+    let mut warned = summary("id", "sleep", 4);
     warned.quiet_seconds = Some(QUIET_WARN_AFTER);
     assert_eq!(
         process_trailing_style(&warned),
@@ -248,24 +212,6 @@ fn live_count_excludes_lingering_rows() {
     );
     assert_eq!(panel.live_count(), 1);
     assert_eq!(panel.desired_height(), 2);
-}
-
-// Covers: overflow copy counts hidden jobs.
-// Owner: pure unit (overflow copy)
-#[test]
-fn process_overflow_summary_counts_hidden_jobs() {
-    let mut panel = ProcessPanel::default();
-    let now = Instant::now();
-    panel.ingest(
-        vec![
-            summary("a", "sleep 1", 3),
-            summary("b", "sleep 2", 2),
-            summary("c", "sleep 3", 1),
-        ],
-        now,
-    );
-    let text = line_text(&panel.lines(80, 8, /*continues_below*/ false, now)[1]);
-    assert!(text.contains("2 more jobs"));
 }
 
 // Covers: verdict styles survive the wide-row paint path.
