@@ -1,5 +1,7 @@
 use std::{str::FromStr, sync::Arc};
 
+use base64::Engine as _;
+
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
@@ -259,6 +261,63 @@ async fn allowed_policy_reads_and_reports_metadata() {
         }
     }
     assert!(read_output.is_some());
+}
+
+// Covers: read_file on an image delivers pixels to the model's next turn,
+// not only a TUI card asset
+// Owner: SDK contract
+#[tokio::test]
+async fn read_file_image_reaches_the_next_model_request() {
+    let dir = tempfile::tempdir().unwrap();
+    image::RgbaImage::from_pixel(2, 1, image::Rgba([255, 0, 0, 255]))
+        .save(dir.path().join("red.png"))
+        .unwrap();
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("scripted", "test", "model"),
+        [
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                ToolCall {
+                    id: "call-1".into(),
+                    name: "read_file".into(),
+                    arguments: json!({"path": "red.png"}),
+                },
+            )])),
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "red".into(),
+            )])),
+        ],
+    );
+    let runtime = build_runtime_with_coding_tools(
+        provider.clone(),
+        workspace(&dir),
+        ScopedWorkspacePolicy::new().allow_read_paths(),
+        CodingToolOptions::default(),
+    );
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("what color")).await.unwrap();
+    while let Some(event) = run.next_event().await {
+        if matches!(event, RunEvent::Completed { .. }) {
+            break;
+        }
+    }
+
+    let requests = provider.recorded_requests();
+    let images = requests[1]
+        .messages
+        .iter()
+        .filter_map(rho_sdk::model::Message::as_tool_image_supplement)
+        .flat_map(|supplement| supplement.images().cloned().collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].mime_type, "image/png");
+    let decoded = image::load_from_memory(
+        &base64::engine::general_purpose::STANDARD
+            .decode(&images[0].data)
+            .unwrap(),
+    )
+    .unwrap()
+    .to_rgba8();
+    assert_eq!(decoded.get_pixel(0, 0), &image::Rgba([255, 0, 0, 255]));
 }
 
 #[tokio::test]

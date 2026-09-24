@@ -85,6 +85,40 @@ fn malformed_catalog_rows_stay_lenient() {
     assert!(!bad_option.reasoning_metadata_complete);
 }
 
+// Covers: hydrate carries models.dev `modalities.input` into the cache row
+// that image_input() reads; a missing or malformed list stays unknown
+// instead of guessing text-only
+// Owner: models.dev catalog cache
+#[test]
+fn image_input_follows_advertised_input_modalities() {
+    let api = json!({
+        "anthropic": {
+            "models": {
+                "vision": { "modalities": { "input": ["text", "image", "pdf"] } },
+                "text-only": { "modalities": { "input": ["text"] } },
+                "no-modalities": {},
+                "no-input": { "modalities": { "output": ["text"] } },
+                "malformed": { "modalities": { "input": "image" } }
+            }
+        }
+    });
+
+    let cache = tempfile::tempdir().unwrap();
+    with_models_dev_cache_dir(cache.path().to_path_buf(), || {
+        assert!(hydrate_catalog_from_api(&api) > 0);
+        for (model, expected) in [
+            ("vision", ImageInput::Supported),
+            ("text-only", ImageInput::Unsupported),
+            ("no-modalities", ImageInput::Unknown),
+            ("no-input", ImageInput::Unknown),
+            ("malformed", ImageInput::Unknown),
+            ("uncatalogued", ImageInput::Unknown),
+        ] {
+            assert_eq!(image_input("anthropic", model), expected, "{model}");
+        }
+    });
+}
+
 // Covers: first effort option wins; a missing values list still uses toggle
 // Owner: models.dev catalog parse
 #[test]
@@ -1279,8 +1313,8 @@ fn batch_metadata_writes_inserts_all_records() {
         };
 
         let written = write_cached_upstream_model_metadata_batch([
-            ("provider-x", "model-1", &meta_a),
-            ("provider-x", "model-2", &meta_b),
+            ("provider-x", "model-1", &meta_a, ImageInput::Unknown),
+            ("provider-x", "model-2", &meta_b, ImageInput::Unknown),
         ]);
         assert_eq!(written, 2);
 
@@ -1332,8 +1366,12 @@ fn batch_metadata_writes_returns_zero_on_commit_failure() {
             ..ModelMetadata::default()
         };
 
-        let written =
-            write_cached_upstream_model_metadata_batch([("provider-x", "model-1", &meta)]);
+        let written = write_cached_upstream_model_metadata_batch([(
+            "provider-x",
+            "model-1",
+            &meta,
+            ImageInput::Unknown,
+        )]);
         assert_eq!(written, 0, "must report 0 written rows when commit fails");
 
         assert!(

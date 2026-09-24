@@ -160,6 +160,13 @@ catalog = "anthropic/claude-opus-4-6"
 
 The catalog window can sit above a model's long-context price tier. Rho does not clamp it.
 
+Image input comes from models.dev `modalities.input`. When the catalog lists a model as text-only, Rho replaces images from `read_file`, MCP tools, and attachments with a short text note before sending the request. Models with no catalog row still receive images. Set `image_input` to override the catalog:
+
+```toml
+[models."cliproxyapi/my-text-model"]
+image_input = false
+```
+
 ## Internal agent models
 
 Rho uses reserved internal agents for session titles, `/goal` completion, the [`advisor`](/configuration/advisor-mode) tool, and Auto permission classification. Most roles follow the active conversation provider, model, and auth. Run `/agents`, select the role, and press Enter to choose a model. **Use conversation model** removes that role's override. Changes apply to the next invocation and save at once.

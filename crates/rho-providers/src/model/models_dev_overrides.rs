@@ -6,7 +6,7 @@ use std::{fs, path::PathBuf, sync::OnceLock};
 
 use crate::reasoning::ReasoningLevel;
 
-use super::{ModelCost, ModelMetadata};
+use super::{ImageInput, ModelCost, ModelMetadata};
 
 const BUILTIN_MODEL_OVERRIDES_TOML: &str = include_str!("model_overrides.toml");
 
@@ -130,6 +130,16 @@ pub(super) fn merge_toml_override(
         metadata.reasoning_capabilities_known = true;
     }
     metadata
+}
+
+/// `image_input = true|false` from one `models.toml` model table.
+pub(super) fn local_image_input(table: &toml::map::Map<String, toml::Value>) -> Option<ImageInput> {
+    let supported = table.get("image_input")?.as_bool()?;
+    Some(if supported {
+        ImageInput::Supported
+    } else {
+        ImageInput::Unsupported
+    })
 }
 
 fn toml_reasoning_levels(

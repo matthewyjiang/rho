@@ -19,8 +19,9 @@ use crate::provider::{CatalogConstruction, CatalogLookupMode, ProviderDescriptor
 use super::{
     document::{self, ModelsDevCatalog},
     fetch_models_dev_api, model_metadata_needs_refresh, open_models_dev_cache,
-    upstream_metadata_from_api, write_cached_upstream_model_metadata_batch,
-    MODEL_ID_CATALOG_CACHE_PROVIDER, MODEL_METADATA_CACHE_VERSION,
+    upstream_image_input_from_api, upstream_metadata_from_api,
+    write_cached_upstream_model_metadata_batch, MODEL_ID_CATALOG_CACHE_PROVIDER,
+    MODEL_METADATA_CACHE_VERSION,
 };
 
 /// How long a successful full-catalog snapshot stays current across launches.
@@ -121,14 +122,21 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
         for model_id in catalog_model_ids_for_provider(api, descriptor) {
             if let Some(metadata) = extract_complete_upstream_metadata(api, descriptor, &model_id) {
                 touched_providers.insert(descriptor.name.to_string());
-                entries.push((descriptor.name.to_string(), model_id, metadata));
+                let image_input = upstream_image_input_from_api(api, descriptor.name, &model_id);
+                entries.push((descriptor.name.to_string(), model_id, metadata, image_input));
             }
         }
         // Provider-facing ids that are not catalog keys still need a cache row.
         if descriptor.id == ProviderId::KimiCode {
             if let Some(metadata) = extract_complete_upstream_metadata(api, descriptor, "k3") {
                 touched_providers.insert(descriptor.name.to_string());
-                entries.push((descriptor.name.to_string(), "k3".to_string(), metadata));
+                let image_input = upstream_image_input_from_api(api, descriptor.name, "k3");
+                entries.push((
+                    descriptor.name.to_string(),
+                    "k3".to_string(),
+                    metadata,
+                    image_input,
+                ));
             }
         }
     }
@@ -152,7 +160,13 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
                 continue;
             };
             touched_providers.insert(cache_provider.to_string());
-            entries.push((cache_provider.to_string(), model_id.clone(), metadata));
+            let image_input = document::image_input_from_catalog(api, slug, model_id);
+            entries.push((
+                cache_provider.to_string(),
+                model_id.clone(),
+                metadata,
+                image_input,
+            ));
         }
     }
     let extra = needed_extra_catalog_docs();
@@ -170,15 +184,16 @@ pub(super) fn hydrate_catalog_from_api(api: &ModelsDevCatalog) -> usize {
                     MODEL_ID_CATALOG_CACHE_PROVIDER.to_string(),
                     format!("{slug}/{model_id}"),
                     metadata,
+                    document::image_input_from_catalog(api, slug, model_id),
                 ));
             }
         }
     }
-    let written = write_cached_upstream_model_metadata_batch(
-        entries
-            .iter()
-            .map(|(provider, model, metadata)| (provider.as_str(), model.as_str(), metadata)),
-    );
+    let written = write_cached_upstream_model_metadata_batch(entries.iter().map(
+        |(provider, model, metadata, image_input)| {
+            (provider.as_str(), model.as_str(), metadata, *image_input)
+        },
+    ));
     if written > 0 {
         if extra.full_tree {
             // Display names are cached under the host that looks them up, not
