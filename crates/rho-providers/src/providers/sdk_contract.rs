@@ -444,6 +444,7 @@ macro_rules! impl_sdk_model_provider {
                 request: ::rho_sdk::model::ModelRequest<'a>,
             ) -> ::rho_sdk::provider::ProviderFuture<'a> {
                 ::std::boxed::Box::pin(async move {
+                    $crate::impl_sdk_model_provider!(@gate_images self, request, gated_messages);
                     let cancellation = request.cancellation.clone();
                     $crate::providers::sdk_contract::drive_completion(
                         cancellation,
@@ -484,6 +485,7 @@ macro_rules! impl_sdk_model_provider {
             steering: ::rho_sdk::provider::ProviderSteeringReceiver,
         ) -> ::rho_sdk::provider::ProviderFuture<'a> {
             ::std::boxed::Box::pin(async move {
+                $crate::impl_sdk_model_provider!(@gate_images self, request, gated_messages);
                 let cancellation = request.cancellation.clone();
                 let pending = ::std::sync::Arc::new(::std::sync::Mutex::new(
                     ::std::collections::VecDeque::new(),
@@ -537,6 +539,7 @@ macro_rules! impl_sdk_model_provider {
     };
     (@stream_turn $self:ident, $request:ident, $events:ident, $method:ident, [$($arg:ident),*]) => {
         ::std::boxed::Box::pin(async move {
+            $crate::impl_sdk_model_provider!(@gate_images $self, $request, gated_messages);
             let cancellation = $request.cancellation.clone();
             let pending = ::std::sync::Arc::new(::std::sync::Mutex::new(
                 ::std::collections::VecDeque::new(),
@@ -569,6 +572,18 @@ macro_rules! impl_sdk_model_provider {
             .await
         })
     };
+    // Shadows `$request` with a copy whose messages passed image gating. The
+    // gated history binds to `$messages` so it outlives the borrowed request.
+    (@gate_images $self:ident, $request:ident, $messages:ident) => {
+        let $messages = $crate::providers::image_input::gate_images(
+            &$self.model_identity(),
+            $request.messages,
+        );
+        let $request = ::rho_sdk::model::ModelRequest {
+            messages: &$messages,
+            ..$request
+        };
+    };
     (@native_compact_method) => {};
     (@native_compact_method @native_compact_options) => {
         fn native_compact<'a>(
@@ -590,6 +605,7 @@ macro_rules! impl_sdk_model_provider {
                 return ::std::option::Option::None;
             }
             ::std::option::Option::Some(::std::boxed::Box::pin(async move {
+                $crate::impl_sdk_model_provider!(@gate_images self, request, gated_messages);
                 match self.native_compact_turn(request, options).await {
                     ::std::result::Result::Ok(response) => response.into(),
                     ::std::result::Result::Err(error) => {
@@ -610,6 +626,7 @@ macro_rules! impl_sdk_model_provider {
                 return ::std::option::Option::None;
             }
             ::std::option::Option::Some(::std::boxed::Box::pin(async move {
+                $crate::impl_sdk_model_provider!(@gate_images self, request, gated_messages);
                 match self.native_compact_turn(request).await {
                     ::std::result::Result::Ok(response) => response.into(),
                     ::std::result::Result::Err(error) => {

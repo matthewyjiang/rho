@@ -62,6 +62,28 @@ pub struct ModelMetadata {
     pub sdk_package: Option<String>,
 }
 
+/// Image input support for one model, read with [`image_input`].
+///
+/// `Unknown` means no catalog row or override said either way. Request
+/// shaping treats it like `Supported` so uncatalogued hosts keep today's
+/// behavior; only an explicit `Unsupported` strips images.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-providers): add `image_input: ImageInput` to ModelMetadata and remove the separate models_dev::image_input lookup and its sidecar cache key.
+///
+/// `ModelMetadata` has only public fields, so any new field breaks callers
+/// that build it with a struct literal. Until the major, the value lives
+/// beside the metadata in the same cache row.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageInput {
+    #[default]
+    Unknown,
+    Supported,
+    Unsupported,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningOffBehavior {
@@ -424,6 +446,20 @@ fn metadata_from_catalog_row(
     })
 }
 
+fn upstream_image_input_from_api(
+    api: &document::ModelsDevCatalog,
+    provider: &str,
+    model: &str,
+) -> ImageInput {
+    crate::provider::provider_descriptor(provider).map_or(ImageInput::Unknown, |descriptor| {
+        document::image_input_from_catalog(
+            api,
+            descriptor.metadata_upstream_for_model(model),
+            descriptor.metadata_model(model),
+        )
+    })
+}
+
 fn upstream_metadata_from_api(
     api: &document::ModelsDevCatalog,
     provider: &str,
@@ -500,6 +536,58 @@ fn metadata_has_values(metadata: &ModelMetadata) -> bool {
         || metadata.reasoning_off_behavior != ReasoningOffBehavior::Omit
 }
 
+/// Image input support for the selected model.
+///
+/// A `models.toml` `image_input` value wins. Otherwise this reads the same
+/// cache row [`cached_model_metadata`] resolves, stale or not: modalities
+/// rarely change, and an offline session should still avoid sending images to
+/// a text-only model.
+pub fn image_input(provider: &str, model: &str) -> ImageInput {
+    let local = overrides::local_override_table(provider, model);
+    if let Some(image_input) = local.as_ref().and_then(overrides::local_image_input) {
+        return image_input;
+    }
+    // Mirrors load_model_metadata: a priced alias borrows its source row and
+    // does not inherit the alias id's local table.
+    let (source_model, local) = match priced_catalog_alias(provider, model) {
+        Some((source_model, _)) => (source_model, None),
+        None => (model, local.as_ref()),
+    };
+    let (cache_provider, cache_model) = catalog_source_for(provider, source_model, local);
+    cached_image_input(&cache_provider, &cache_model)
+}
+
+// NEXT_MAJOR(rho-providers): add `image_input: ImageInput` to ModelMetadata and remove the separate models_dev::image_input lookup and its sidecar cache key.
+/// Cache row JSON: the public metadata plus fields it cannot carry until the
+/// next major. `ModelMetadata` ignores the extra key when it reads the row.
+#[derive(Serialize)]
+struct CachedRowRef<'a> {
+    #[serde(flatten)]
+    metadata: &'a ModelMetadata,
+    image_input: ImageInput,
+}
+
+#[derive(Deserialize)]
+struct CachedImageInput {
+    #[serde(default)]
+    image_input: ImageInput,
+}
+
+fn cached_image_input(provider: &str, model: &str) -> ImageInput {
+    let Ok(connection) = open_models_dev_cache() else {
+        return ImageInput::Unknown;
+    };
+    connection
+        .query_row(
+            "select metadata_json from model_metadata where provider = ?1 and model = ?2",
+            params![provider, model],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|contents| serde_json::from_str::<CachedImageInput>(&contents).ok())
+        .map_or(ImageInput::Unknown, |row| row.image_input)
+}
+
 pub(crate) async fn fetch_deprecated_provider_models(provider: &str) -> Option<HashSet<String>> {
     let response = fetch_models_dev_api().await?;
     // Reuse the document for a full hydrate when this process has not already
@@ -556,7 +644,11 @@ async fn fetch_models_dev_api() -> Option<document::ModelsDevCatalog> {
 /// unsplit `slug/model` id from a shared ExactAdvertised tree keyed
 /// `models.dev/tree`. Older snapshots hold slug-keyed rows at the wrong keys
 /// and parse policy, so they must refetch.
-pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 10;
+///
+/// v11: rows gained a sidecar `image_input` key from models.dev
+/// `modalities.input`. Older rows would read `Unknown` forever without a
+/// refetch.
+pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 11;
 
 fn cached_upstream_model_metadata(provider: &str, model: &str) -> Option<ModelMetadata> {
     cached_upstream_model_metadata_with_freshness(provider, model, CacheFreshness::AllowStale)
@@ -603,14 +695,14 @@ fn should_rehydrate_cached_metadata(cache_version: i64, cached: &ModelMetadata) 
 }
 
 fn write_cached_upstream_model_metadata(provider: &str, model: &str, metadata: &ModelMetadata) {
-    write_cached_upstream_model_metadata_raw(provider, model, metadata);
+    write_cached_upstream_model_metadata_raw(provider, model, metadata, ImageInput::Unknown);
     super::display_name::forget_provider_display_names(provider);
 }
 
 /// Writes a batch of model metadata rows in a single SQLite transaction with a prepared statement.
 pub(super) fn write_cached_upstream_model_metadata_batch<'a, I>(entries: I) -> usize
 where
-    I: IntoIterator<Item = (&'a str, &'a str, &'a ModelMetadata)>,
+    I: IntoIterator<Item = (&'a str, &'a str, &'a ModelMetadata, ImageInput)>,
 {
     let Ok(mut connection) = open_models_dev_cache() else {
         return 0;
@@ -630,8 +722,12 @@ where
         ) else {
             return 0;
         };
-        for (provider, model, metadata) in entries {
-            let Ok(contents) = serde_json::to_string(metadata) else {
+        for (provider, model, metadata, image_input) in entries {
+            let row = CachedRowRef {
+                metadata,
+                image_input,
+            };
+            let Ok(contents) = serde_json::to_string(&row) else {
                 continue;
             };
             if stmt
@@ -661,8 +757,9 @@ pub(super) fn write_cached_upstream_model_metadata_raw(
     provider: &str,
     model: &str,
     metadata: &ModelMetadata,
+    image_input: ImageInput,
 ) {
-    write_cached_upstream_model_metadata_batch([(provider, model, metadata)]);
+    write_cached_upstream_model_metadata_batch([(provider, model, metadata, image_input)]);
 }
 
 pub(super) fn open_models_dev_cache() -> rusqlite::Result<Connection> {
@@ -790,6 +887,17 @@ pub fn write_cached_model_metadata_for_tests(
     metadata: &ModelMetadata,
 ) {
     write_cached_upstream_model_metadata(provider, model, metadata);
+}
+
+/// Writes a cache row carrying only `image_input` for tests of request shaping.
+#[doc(hidden)]
+pub fn write_cached_image_input_for_tests(provider: &str, model: &str, image_input: ImageInput) {
+    write_cached_upstream_model_metadata_raw(
+        provider,
+        model,
+        &ModelMetadata::default(),
+        image_input,
+    );
 }
 
 /// Marks the on-disk catalog snapshot current for tests that pre-seed rows.

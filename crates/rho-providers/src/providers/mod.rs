@@ -15,6 +15,8 @@ pub mod factory;
 pub mod fast_mode;
 pub mod github_copilot;
 pub mod google;
+#[doc(hidden)]
+pub mod image_input;
 pub(crate) mod native_compaction;
 pub mod openai;
 pub mod openai_compatible;

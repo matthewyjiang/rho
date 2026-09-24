@@ -4635,6 +4635,7 @@ dependencies = [
 name = "rho-agent-tools"
 version = "1.4.0"
 dependencies = [
+ "base64 0.22.1",
  "calamine",
  "flate2",
  "globset",

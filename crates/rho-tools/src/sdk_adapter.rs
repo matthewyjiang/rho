@@ -19,10 +19,12 @@
 
 use std::sync::Arc;
 
+use base64::Engine as _;
 use serde::Deserialize;
 use serde_json::Value;
 
 use rho_sdk::{
+    model::ImageContent,
     tool::{
         AuthorizedToolContext, OperationKind, PreparedToolInvocation, Tool, ToolAsset, ToolFuture,
         ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
@@ -210,7 +212,15 @@ impl Tool for ReadFileTool {
                         let mut metadata = ToolMetadata::new()
                             .operation(OperationKind::Read)
                             .affected_path(display);
+                        // The same bounded thumbnail feeds the card preview and
+                        // the model. Providers strip it for text-only models.
+                        let mut images = Vec::new();
                         if let Some(image) = output.image {
+                            images.push(ImageContent {
+                                data: base64::engine::general_purpose::STANDARD
+                                    .encode(&image.bytes),
+                                mime_type: image.media_type.to_string(),
+                            });
                             metadata =
                                 metadata.asset(ToolAsset::new(image.media_type, image.bytes));
                         }
@@ -218,7 +228,9 @@ impl Tool for ReadFileTool {
                             metadata = metadata.presentation_notice(error);
                         }
                         let content = truncate(output.content, self.max_output_bytes);
-                        Ok(ToolOutput::text(content).metadata(metadata))
+                        Ok(ToolOutput::text(content)
+                            .metadata(metadata)
+                            .with_images(images))
                     })
                 },
             ))

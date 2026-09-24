@@ -13,7 +13,7 @@ use serde::Deserialize;
 
 use crate::{provider::CatalogReasoningPolicy, reasoning::ReasoningLevel};
 
-use super::{ModelCost, ModelMetadata, ReasoningOffBehavior};
+use super::{ImageInput, ModelCost, ModelMetadata, ReasoningOffBehavior};
 
 /// models.dev root object: provider id -> provider document.
 #[derive(Clone, Debug, Default)]
@@ -46,6 +46,27 @@ pub(super) struct ModelsDevModel {
     reasoning: Option<bool>,
     #[serde(deserialize_with = "de::lenient_or_default")]
     reasoning_options: Option<CatalogReasoningOptions>,
+    #[serde(deserialize_with = "de::lenient_or_default")]
+    modalities: ModelsDevModalities,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+struct ModelsDevModalities {
+    /// Accepted input kinds, such as `text`, `image`, and `pdf`.
+    #[serde(deserialize_with = "de::lenient_or_default")]
+    input: Option<Vec<String>>,
+}
+
+impl ModelsDevModalities {
+    /// An advertised input list is authoritative; a missing one stays unknown.
+    fn image_input(&self) -> ImageInput {
+        match &self.input {
+            None => ImageInput::Unknown,
+            Some(kinds) if kinds.iter().any(|kind| kind == "image") => ImageInput::Supported,
+            Some(_) => ImageInput::Unsupported,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -161,6 +182,18 @@ pub(super) fn model_metadata_from_catalog(
         reasoning_metadata_complete: reasoning_metadata_complete(model, reasoning_policy),
         sdk_package: resolved_sdk_package(provider_doc, model),
     })
+}
+
+/// Image input support for one catalog row; `Unknown` when the row is absent.
+pub(super) fn image_input_from_catalog(
+    api: &ModelsDevCatalog,
+    provider: &str,
+    model: &str,
+) -> ImageInput {
+    api.model(provider, model)
+        .map_or(ImageInput::Unknown, |(_, model)| {
+            model.modalities.image_input()
+        })
 }
 
 /// models.dev provider `npm`, overridden by per-model `provider.npm` or `npm`.
