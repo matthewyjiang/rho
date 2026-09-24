@@ -40,8 +40,10 @@ pub(super) const ATTACH_PICKER_STEPS: &[Step] = &[
     Step::AssertText("LATEST"),
     Step::AssertText("Elapsed"),
     Step::Key(Key::Esc),
-    Step::WaitQuiet {
-        quiet_for: std::time::Duration::from_millis(150),
+    // The running worker keeps the activity spinner animating, so the screen
+    // never goes quiet here; wait for the picker itself to close instead.
+    Step::WaitTextGone {
+        text: "attach subagent",
         timeout: SETTLE,
     },
     Step::ExitCommand,
