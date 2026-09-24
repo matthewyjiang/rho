@@ -9,8 +9,6 @@ use std::path::Path;
 
 use serde_json::Value;
 
-use rho_sdk::floor_char_boundary;
-
 use rho_tools::tool_card::{
     DiffRow, DiffRowKind, ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus,
 };
@@ -24,12 +22,8 @@ use super::format::{
     count_fact, display_path_field, quoted, set_lines_body, string_field, truncate,
     truncate_payload_lines, u64_field, MAX_TOOL_BODY_LINES,
 };
+use super::input_json::StreamedInputJson;
 use crate::cli_runtime::stream_effect::MAX_TOOL_PAYLOAD_CHARS;
-
-/// Raw `input_json_delta` assembly budget. Larger than the presentation cap
-/// so a complete oversized object can be parsed, then reduced by
-/// [`bounded_input`].
-const MAX_INPUT_JSON_CHARS: usize = MAX_TOOL_PAYLOAD_CHARS.saturating_mul(16);
 
 /// Claude tool identity parsed once from the wire name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,8 +93,8 @@ pub(super) struct StartedClaudeTool {
     kind: ClaudeTool,
     name: String,
     pub(super) input: Option<Value>,
-    /// Concatenated `input_json_delta` fragments for this tool.
-    input_json: String,
+    /// Assembled `input_json_delta` fragments for this tool.
+    input_json: StreamedInputJson,
 }
 
 impl StartedClaudeTool {
@@ -110,7 +104,7 @@ impl StartedClaudeTool {
             kind: ClaudeTool::from_name(&name),
             name,
             input: bounded_input(input),
-            input_json: String::new(),
+            input_json: StreamedInputJson::default(),
         }
     }
 
@@ -141,23 +135,7 @@ impl StartedClaudeTool {
 
     /// Append a JSON fragment. Returns true when parsed input changed.
     pub(super) fn push_input_json(&mut self, fragment: &str) -> bool {
-        if fragment.is_empty() {
-            return false;
-        }
-        let room = MAX_INPUT_JSON_CHARS.saturating_sub(self.input_json.len());
-        if room == 0 {
-            return false;
-        }
-        if fragment.len() <= room {
-            self.input_json.push_str(fragment);
-        } else {
-            let end = floor_char_boundary(fragment, room);
-            if end == 0 {
-                return false;
-            }
-            self.input_json.push_str(&fragment[..end]);
-        }
-        let Some(value) = parse_assembled_input(&self.input_json) else {
+        let Some(value) = self.input_json.push(fragment) else {
             return false;
         };
         let Some(input) = bounded_input(Some(&value)) else {
@@ -688,22 +666,6 @@ fn count_nonempty_lines(content: &str) -> Option<u64> {
         .filter(|line| !line.trim().is_empty())
         .count() as u64;
     (count > 0).then_some(count)
-}
-
-/// Parse assembled `input_json_delta` text. Truncated objects keep leading
-/// keys when a small closer produces valid JSON.
-fn parse_assembled_input(raw: &str) -> Option<Value> {
-    if let Ok(value) = serde_json::from_str(raw) {
-        return Some(value);
-    }
-    for suffix in ["}", "\"}"] {
-        if let Ok(value) = serde_json::from_str::<Value>(&format!("{raw}{suffix}")) {
-            if value.is_object() {
-                return Some(value);
-            }
-        }
-    }
-    None
 }
 
 /// Fields at or under this encoded size are presentation metadata and are

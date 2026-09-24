@@ -25,6 +25,7 @@
 mod blocks;
 mod events;
 mod format;
+mod input_json;
 mod presentation;
 mod protocol;
 mod rate_limit_display;

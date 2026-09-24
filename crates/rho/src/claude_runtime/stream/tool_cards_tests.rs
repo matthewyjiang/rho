@@ -7,6 +7,7 @@ use rho_tools::tool_card::{
     DiffRow, DiffRowKind, ToolBody, ToolFact, ToolFamily, ToolHeader, ToolStatus,
 };
 
+use super::super::input_json::MAX_INPUT_JSON_CHARS;
 use super::{finished_card, started_card, StartedClaudeTool, MAX_TOOL_PAYLOAD_CHARS};
 
 fn tool(name: &str, input: serde_json::Value) -> StartedClaudeTool {
@@ -428,12 +429,11 @@ fn oversized_streamed_write_fragments_keep_running_path() {
 // Owner: claude stream tool card mapper
 #[test]
 fn push_input_json_caps_retained_fragments_and_keeps_path() {
-    let content = "x".repeat(super::MAX_INPUT_JSON_CHARS + 64);
+    let content = "x".repeat(MAX_INPUT_JSON_CHARS + 64);
     let raw = format!(r#"{{"file_path":"/tmp/ws/huge.rs","content":"{content}"}}"#);
-    assert!(raw.len() > super::MAX_INPUT_JSON_CHARS);
-    // Whole payload, and chunks that cross the cap mid-stream. Chunks stay
-    // coarse: each push re-parses the assembled buffer.
-    let cases = [raw.len(), 16 * 1024];
+    assert!(raw.len() > MAX_INPUT_JSON_CHARS);
+    // Whole payload, and wire-sized chunks that cross the cap mid-stream.
+    let cases = [raw.len(), 100];
     for chunk_size in cases {
         let mut started = StartedClaudeTool::from_name_input(Some("Write"), Some(&json!({})));
         if chunk_size >= raw.len() {
@@ -445,7 +445,7 @@ fn push_input_json_caps_retained_fragments_and_keeps_path() {
             }
         }
         assert!(
-            started.input_json.len() <= super::MAX_INPUT_JSON_CHARS,
+            started.input_json.len() <= MAX_INPUT_JSON_CHARS,
             "chunk_size {chunk_size}"
         );
         assert_eq!(
