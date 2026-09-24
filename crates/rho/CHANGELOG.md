@@ -1,5 +1,39 @@
 # Changelog
 
+## [2.15.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.14.0...rho-coding-agent-v2.15.0) (2026-09-24)
+
+
+### Features
+
+* **tui:** drop Ctrl+O hints from expandable cards ([#1261](https://github.com/matthewyjiang/rho/issues/1261)) ([367dfd4](https://github.com/matthewyjiang/rho/commit/367dfd47eaf231c6b692310738288f93965b3104))
+* **tui:** make /sessions a full-width list that groups worktrees by repo ([#1256](https://github.com/matthewyjiang/rho/issues/1256)) ([e72a86c](https://github.com/matthewyjiang/rho/commit/e72a86c457aa90d602735e65f626376156c9a1df))
+* **tui:** make the agents menu readable at a glance ([#1255](https://github.com/matthewyjiang/rho/issues/1255)) ([53b1778](https://github.com/matthewyjiang/rho/commit/53b177898c428c95ef300975f8382362f520898b))
+* **tui:** show finished background processes as readable cards ([#1257](https://github.com/matthewyjiang/rho/issues/1257)) ([9df8c29](https://github.com/matthewyjiang/rho/commit/9df8c29adc4954b73bddba0af475ddf4a5b1acb0))
+* **tui:** show what each subagent is doing and how it ended in /attach ([#1263](https://github.com/matthewyjiang/rho/issues/1263)) ([b7a6a0a](https://github.com/matthewyjiang/rho/commit/b7a6a0a71606d40ec820b653c3a916f848bc20a9))
+* **workflows:** add scoped execution and typed workflow results ([#1245](https://github.com/matthewyjiang/rho/issues/1245)) ([541aa40](https://github.com/matthewyjiang/rho/commit/541aa40535197cde9511eb291b11659eead18255))
+
+
+### Bug Fixes
+
+* **anthropic:** stop Opus 5.5 reasoning-off requests from 400ing and clean up dated prompts ([#1259](https://github.com/matthewyjiang/rho/issues/1259)) ([feefb38](https://github.com/matthewyjiang/rho/commit/feefb38d31e18097b4be2bd48734592975f98f8b))
+* **build:** clear release and windows compile warnings ([#1250](https://github.com/matthewyjiang/rho/issues/1250)) ([1a6a7bd](https://github.com/matthewyjiang/rho/commit/1a6a7bd85dd53eb045441a3ea5b305182e3e2fe4))
+* **claude:** keep the 5-hour window in /limits after the /usage panel grew ([#1252](https://github.com/matthewyjiang/rho/issues/1252)) ([beb2022](https://github.com/matthewyjiang/rho/commit/beb202235b42acd90865c248bb1d57aa02a6fd9f))
+* **cli-runtime:** stop duplicating subagent text tails ([#1262](https://github.com/matthewyjiang/rho/issues/1262)) ([7149c96](https://github.com/matthewyjiang/rho/commit/7149c96945deca0ea8763c8fede5abcd535a18f7))
+* **tui:** stop /sessions deletes from freezing the TUI ([#1258](https://github.com/matthewyjiang/rho/issues/1258)) ([a15f650](https://github.com/matthewyjiang/rho/commit/a15f650aaf36f8dcca0b87434a7a3e65989ef4cb))
+* **tui:** stop splitting streamed words at the pane edge ([#1253](https://github.com/matthewyjiang/rho/issues/1253)) ([359e710](https://github.com/matthewyjiang/rho/commit/359e710323327d478abfbec455f601fe73bcd438))
+
+
+### Performance Improvements
+
+* **claude-runtime:** cut streamed tool input parsing from 4s to 5ms on large writes ([#1266](https://github.com/matthewyjiang/rho/issues/1266)) ([9e0bef0](https://github.com/matthewyjiang/rho/commit/9e0bef0c4804124804b03c62c9b1d65a5cd989ab))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.10.0 to 2.11.0
+
 ## [2.14.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.13.0...rho-coding-agent-v2.14.0) (2026-09-22)
 
 
