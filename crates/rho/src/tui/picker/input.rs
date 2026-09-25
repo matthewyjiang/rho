@@ -6,7 +6,7 @@ use super::{
         clamp_overlay_scroll, picker_overlay_layout, OverlayLayout, OverlayPane,
         OverlayScrollTargets, OverlayScrollbarState,
     },
-    OverlayFocus, OverlayScrollbarDrag, UiPicker,
+    OverlayFocus, OverlayScrollbarDrag, TabKey, UiPicker,
 };
 use crate::tui::{scrollbar::HistoryScrollbar, App, ComposerMode, InteractiveRuntime};
 
@@ -178,8 +178,19 @@ pub(in crate::tui) fn apply_picker_key(
             }
             PickerKeyEffect::Handled
         }
-        (KeyModifiers::NONE, KeyCode::Tab) if picker.key_hints.tab_complete => {
-            picker.complete_filter();
+        (KeyModifiers::NONE, KeyCode::Tab) => match picker.key_hints.tab {
+            TabKey::None => PickerKeyEffect::None,
+            TabKey::CompleteFilter => {
+                picker.complete_filter();
+                PickerKeyEffect::Handled
+            }
+            TabKey::CycleItems => {
+                picker.select_next();
+                PickerKeyEffect::Handled
+            }
+        },
+        (_, KeyCode::BackTab) if picker.key_hints.tab == TabKey::CycleItems => {
+            picker.select_previous();
             PickerKeyEffect::Handled
         }
         (KeyModifiers::NONE, KeyCode::Backspace) => {
@@ -392,9 +403,16 @@ impl App {
             }
         };
         if selection_may_change {
-            self.preview_selected_theme_if_active();
+            self.on_picker_selection_may_change();
         }
         true
+    }
+
+    /// Feature follow-ups after a key or click that may move the selection:
+    /// theme preview and `/diff` patch loading.
+    fn on_picker_selection_may_change(&mut self) {
+        self.preview_selected_theme_if_active();
+        self.request_selected_diff();
     }
 
     pub(in crate::tui) async fn handle_picker_key(
@@ -425,7 +443,7 @@ impl App {
             PickerKeyEffect::Handled => {
                 self.input_ui.clear_paste_burst();
                 self.ctrl_c_streak = 0;
-                self.preview_selected_theme_if_active();
+                self.on_picker_selection_may_change();
                 Ok(true)
             }
             PickerKeyEffect::Submit => {
@@ -489,7 +507,7 @@ impl App {
         match effect {
             PickerKeyEffect::None => Ok(true),
             PickerKeyEffect::Handled => {
-                self.preview_selected_theme_if_active();
+                self.on_picker_selection_may_change();
                 Ok(true)
             }
             PickerKeyEffect::Submit => {

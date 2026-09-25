@@ -59,7 +59,7 @@ pub(crate) async fn select(
         .with_layout(PickerLayout::Overlay)
         .with_confirm_verb("edit")
         .with_key_hints(PickerKeyHints {
-            tab_complete: true,
+            tab: super::TabKey::CompleteFilter,
             ..Default::default()
         });
     picker.selected = entries

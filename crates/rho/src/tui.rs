@@ -46,6 +46,8 @@ mod config_picker;
 mod config_row;
 mod context_handoff;
 mod copy_interaction;
+mod diff_pane;
+mod diff_viewer;
 mod divider;
 mod doctor_overlay;
 pub(crate) mod event_adapter;
@@ -250,7 +252,7 @@ use login::SecretInput;
 use paste_burst::PasteBurstEnter;
 use picker::{
     sort_items_by_ascii_label, PickerBadge, PickerBadgePlacement, PickerBadgeTone, PickerCursor,
-    PickerItem, PickerKeyHints, PickerLayout, UiPicker,
+    PickerItem, PickerKeyHints, PickerLayout, TabKey, UiPicker,
 };
 use process_panel::ProcessPanel;
 use prompt_turn::FailedTurn;
@@ -563,6 +565,8 @@ struct App {
         limits_command::LiveUsage,
     >,
     pending_changelog: Option<tokio::task::JoinHandle<changelog_command::ChangelogFetchResult>>,
+    /// Open `/diff` popup state; dropped once its picker closes.
+    diff_viewer: Option<diff_viewer::DiffViewer>,
     web_search_reload_pending: bool,
     compaction_reload_pending: bool,
     pending_web_search_test:

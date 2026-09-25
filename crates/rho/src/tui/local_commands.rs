@@ -1,45 +1,8 @@
-use {
-    crate::commands::CommandInvocation,
-    crate::export,
-    rho_tools::tool_card::{ToolBody, ToolCard, ToolFamily, ToolHeader, ToolStatus},
-};
+use {crate::commands::CommandInvocation, crate::export};
 
-use super::{local_diff, App, Entry, Session, ToolEntry};
+use super::{App, Entry, Session};
 
 impl App {
-    pub(super) fn execute_diff_command(&mut self) -> anyhow::Result<()> {
-        let diff = match local_diff::collect(&self.info.runtime.cwd) {
-            Ok(diff) => diff,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not show git diff: {error}")));
-                self.set_status("git diff unavailable");
-                return Ok(());
-            }
-        };
-        let body = if diff.has_changes {
-            ToolBody::Diff(diff.rows())
-        } else {
-            ToolBody::Lines(diff.lines)
-        };
-        self.insert_entry(&Entry::Tool(ToolEntry::new(
-            ToolCard::new(
-                ToolStatus::Ok,
-                ToolFamily::FileCommand,
-                ToolHeader::call("diff", None),
-            )
-            .with_body(body),
-            true,
-            None,
-            None,
-        )));
-        self.set_status(if diff.has_changes {
-            "worktree diff"
-        } else {
-            "worktree clean"
-        });
-        Ok(())
-    }
-
     pub(super) fn execute_export_command(
         &mut self,
         invocation: &CommandInvocation,

@@ -12,7 +12,7 @@ use ratatui::{
 
 use super::{PickerBadgeTone, PickerItem};
 use crate::tui::{
-    render::{display_width, styled_line, truncate_one_line, LineFill},
+    render::{display_width, styled_line, truncate_keep_end, truncate_one_line, LineFill},
     theme::Theme,
 };
 
@@ -44,6 +44,25 @@ pub(in crate::tui) enum RowWidthMode {
     AlignedColumn(usize),
 }
 
+/// Which end of a label wider than its column survives.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::tui) enum LabelOverflow {
+    /// Keep the start and end in an ellipsis.
+    #[default]
+    KeepStart,
+    /// Keep the end, for paths whose file name matters most.
+    KeepEnd,
+}
+
+impl LabelOverflow {
+    fn truncate(self, label: &str, width: usize) -> String {
+        match self {
+            Self::KeepStart => truncate_one_line(label, width),
+            Self::KeepEnd => truncate_keep_end(label, width),
+        }
+    }
+}
+
 /// Presentation choices for one batch of picker rows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::tui) struct RowLayout {
@@ -52,6 +71,7 @@ pub(in crate::tui) struct RowLayout {
     pub(in crate::tui) show_badges: bool,
     pub(in crate::tui) show_preview: bool,
     pub(in crate::tui) fill: LineFill,
+    pub(in crate::tui) label_overflow: LabelOverflow,
 }
 
 /// Item and section-header rows plus the row index of the selected item.
@@ -247,7 +267,7 @@ fn fill_pane_line(
         .as_ref()
         .map_or(0, |(text, _)| display_width(text).saturating_add(1));
     let label_budget = available.saturating_sub(badge_width);
-    let label = truncate_one_line(&item.label, label_budget);
+    let label = layout.label_overflow.truncate(&item.label, label_budget);
     let mut spans = vec![Span::styled(
         format!(
             "{marker} {label}{}",
@@ -272,7 +292,7 @@ fn aligned_column_line(
 ) -> Line<'static> {
     let width = layout.width;
     let label_width = column.min(width.saturating_sub(2));
-    let label = truncate_one_line(&item.label, label_width);
+    let label = layout.label_overflow.truncate(&item.label, label_width);
     let mut used_width = 2 + label_width;
     let mut spans = vec![Span::styled(
         format!(

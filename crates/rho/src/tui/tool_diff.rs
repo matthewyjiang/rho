@@ -1,8 +1,106 @@
+use ratatui::text::{Line, Span};
 use rho_tools::tool_card::{DiffRow, DiffRowKind, ToolFamily, ToolHeader};
+use unicode_width::UnicodeWidthStr;
 
-use super::syntax::{
-    BlockHighlighter, HighlightSegment, MAX_TOOL_SYNTAX_LINES, MAX_TOOL_SYNTAX_LINE_BYTES,
+use super::{
+    render::{display_width, hard_wrap_styled_spans, pad_spaces},
+    syntax::{
+        spans_from_segments_with_matches, BlockHighlighter, HighlightSegment,
+        MAX_TOOL_SYNTAX_LINES, MAX_TOOL_SYNTAX_LINE_BYTES,
+    },
+    theme::Theme,
 };
+
+/// Where one painted diff row sits: leading indent, number gutter width, and
+/// total row width. Tool cards indent under their tree; the `/diff` popup
+/// paints flush in its pane.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct DiffRowFrame<'a> {
+    pub(super) indent: &'a str,
+    pub(super) gutter: usize,
+    pub(super) width: usize,
+}
+
+/// Draw one content row (context, add, remove, gap) as
+/// `<indent><line no> <sign> <text>`.
+///
+/// The number gutter and sign column are fixed, so wrapped text hangs under the
+/// text column and added/removed rows stay distinguishable without color.
+/// Content lines carry language-aware spans when `syntax` knows the path.
+pub(super) fn push_diff_content_row(
+    lines: &mut Vec<Line<'static>>,
+    row: &DiffRow,
+    frame: DiffRowFrame<'_>,
+    syntax: &mut DiffSyntax,
+) {
+    let DiffRowFrame {
+        indent,
+        gutter,
+        width,
+    } = frame;
+    let highlighted = syntax.paint_row(row);
+    // Unnumbered bodies (patch text without hunk headers) drop the gutter and
+    // its separator so the sign column sits right under the indent.
+    let number = match (gutter, row.line) {
+        (0, _) => String::new(),
+        (_, Some(line)) => format!("{line:>gutter$} "),
+        (_, None) => " ".repeat(gutter + 1),
+    };
+    // Sign cell is one character; a trailing space separates it from content
+    // and sits in the row wash with the rest of the line.
+    let sign = row.kind.sign();
+    let sign_gap = " ";
+    let indent_width = display_width(indent);
+    let prefix_width = indent_width + display_width(&number) + sign.len() + sign_gap.len();
+    let content_width = width.saturating_sub(prefix_width).max(1);
+    let chrome = Theme::tool_diff_chrome(row.kind);
+    // Unhighlighted tokens use the row wash (or add/remove fg if none).
+    let plain = chrome.plain();
+    // Empty cells only need the wash; foreground is irrelevant on spaces.
+    let pad = chrome.washed(ratatui::style::Style::default());
+
+    let mut content_spans = match highlighted {
+        Some(segments) => spans_from_segments_with_matches(&segments, plain, &[]),
+        None => vec![Span::styled(row.text.clone(), plain)],
+    };
+    chrome.paint_content(&mut content_spans);
+
+    let wrapped = hard_wrap_styled_spans(
+        &row.text,
+        &content_spans,
+        content_width,
+        chrome.washed(plain),
+    );
+    for (index, chunk) in wrapped.into_iter().enumerate() {
+        let mut spans = if index == 0 {
+            vec![
+                Span::styled(indent.to_string(), Theme::tool_tree()),
+                Span::styled(number.clone(), chrome.washed(Theme::tool_diff_gutter())),
+                Span::styled(sign.to_string(), chrome.sign),
+                Span::styled(sign_gap.to_string(), pad),
+            ]
+        } else {
+            // Continuations keep the indent clear; wash covers number+sign columns.
+            let mut cont = vec![Span::styled(indent.to_string(), Theme::tool_tree())];
+            let rest = prefix_width.saturating_sub(indent_width);
+            if rest > 0 {
+                cont.push(Span::styled(" ".repeat(rest), pad));
+            }
+            cont
+        };
+        spans.extend(chunk);
+        // Same width rule tool cards have always padded with (tabs count as
+        // one column), so moving the painter changed no card output.
+        let used = spans
+            .iter()
+            .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+            .sum::<usize>();
+        if used < width {
+            spans.push(Span::styled(pad_spaces(width - used), chrome.washed(plain)));
+        }
+        lines.push(Line::from(spans));
+    }
+}
 
 /// Width of the line-number gutter for a diff body.
 ///
@@ -52,6 +150,10 @@ pub(super) fn single_file_path_from_header(
 /// add/remove only touch their own stream (multi-line tokens stay accurate).
 pub(super) struct DiffSyntax {
     path: Option<String>,
+    /// Rows come from an exact per-file parse: the path is fixed and context
+    /// text is always source, never sniffed for headers (a Lua `--- doc`
+    /// comment must not switch languages).
+    pinned: bool,
     old: Option<BlockHighlighter>,
     new: Option<BlockHighlighter>,
     /// Content lines (add/remove/context source) already language-painted.
@@ -62,6 +164,7 @@ impl DiffSyntax {
     pub(super) fn new(fallback_path: Option<&str>) -> Self {
         let mut syntax = Self {
             path: None,
+            pinned: false,
             old: None,
             new: None,
             highlighted_lines: 0,
@@ -72,12 +175,21 @@ impl DiffSyntax {
         syntax
     }
 
+    /// Highlighter for one known file whose rows are exact, such as the
+    /// `/diff` popup's per-file parse. Header lookalikes stay content.
+    pub(super) fn for_file(path: &str) -> Self {
+        let mut syntax = Self::new(Some(path));
+        syntax.pinned = true;
+        syntax
+    }
+
     /// Observe path/skip chrome and highlight content for one row.
     ///
     /// Returns role segments for add/remove/context source lines, or `None` for
     /// chrome, unknown languages, disabled highlight, or past the soft cap.
     pub(super) fn paint_row(&mut self, row: &DiffRow) -> Option<Vec<HighlightSegment>> {
         match row.kind {
+            DiffRowKind::File | DiffRowKind::Meta if self.pinned => None,
             DiffRowKind::File => {
                 self.set_path(&row.text);
                 None
@@ -96,14 +208,18 @@ impl DiffSyntax {
             DiffRowKind::Added => self.paint_content(/*side*/ Side::New, &row.text),
             DiffRowKind::Removed => self.paint_content(/*side*/ Side::Old, &row.text),
             DiffRowKind::Context => {
-                if let Some(path) = path_from_diff_header_line(&row.text) {
-                    self.set_path(path);
-                    return None;
-                }
-                // Keep unified-diff headers and git chrome out of the parse
-                // stream so language state only sees source lines.
-                if is_diff_chrome(&row.text) {
-                    return None;
+                // Loose tool-card bodies mix git chrome into context rows:
+                // follow path headers and keep chrome out of the parse stream
+                // so language state only sees source lines. Pinned rows are
+                // exact, so their text is always source.
+                if !self.pinned {
+                    if let Some(path) = path_from_diff_header_line(&row.text) {
+                        self.set_path(path);
+                        return None;
+                    }
+                    if is_diff_chrome(&row.text) {
+                        return None;
+                    }
                 }
                 if !self.should_paint_content_line(&row.text) {
                     // Long / over-budget lines skip syntect entirely. Restart so

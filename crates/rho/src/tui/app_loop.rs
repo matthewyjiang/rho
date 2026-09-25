@@ -17,6 +17,7 @@ impl App {
         changed |= self.poll_info_refresh().await?;
         changed |= self.poll_side_chat();
         changed |= self.poll_changelog_command().await?;
+        changed |= self.poll_diff_viewer().await;
         changed |= self.poll_web_search_test().await?;
         Ok(changed)
     }
@@ -97,6 +98,7 @@ impl App {
                     .pending_changelog
                     .as_ref()
                     .is_some_and(|handle| handle.is_finished())
+                || self.diff_load_finished()
                 || self
                     .pending_web_search_test
                     .as_ref()
@@ -178,6 +180,7 @@ impl App {
                 || self.pending_info_runtimes.is_some()
                 || self.pending_info_tree.is_some()
                 || self.pending_changelog.is_some()
+                || self.diff_load_pending()
                 || self.pending_web_search_test.is_some()
                 || self.mcp_argument_completions.is_pending()
                 || self.exclusive.wants_fast_ticks()

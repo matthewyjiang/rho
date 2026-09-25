@@ -466,7 +466,7 @@ fn picker_reserves_wrapped_footer_rows() {
     let picker = UiPicker::models("select model", items).with_key_hints(PickerKeyHints {
         pin_toggle: Some("Ctrl+P".into()),
         scope_toggle: Some("Ctrl+O".into()),
-        tab_complete: true,
+        tab: crate::tui::TabKey::CompleteFilter,
         ..Default::default()
     });
 

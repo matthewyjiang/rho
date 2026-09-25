@@ -14,6 +14,11 @@ use crate::tui::{
 const TWO_COLUMN_MIN_INNER_WIDTH: usize = 60;
 const MIN_NAV_WIDTH: usize = 14;
 const MAX_NAV_WIDTH: usize = 28;
+/// Viewer nav cap. Sized from this repo's changed paths over three months
+/// (p50 39 columns, p90 53, basename p90 24): after the marker and a
+/// `M +123 -45` badge, 48 columns keep ~35 for the path, so basenames always
+/// fit and most full paths do.
+const MAX_VIEWER_NAV_WIDTH: usize = 48;
 /// Column rule drawn between the side-by-side panes.
 pub(in crate::tui) const SEPARATOR: &str = " │ ";
 /// Border rows the renderer draws above and below the inner chrome.
@@ -350,6 +355,17 @@ pub(in crate::tui) struct DetailViewport {
     pub(in crate::tui) rows: usize,
 }
 
+/// How an overlay splits its space between the nav list and the detail pane.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::tui) enum OverlayShape {
+    /// Narrow nav; height follows the item count.
+    #[default]
+    Compact,
+    /// Detail is the main content (a diff, a document): the box takes the
+    /// full height and the nav gets room for long labels such as paths.
+    Viewer,
+}
+
 /// Content hints that drive the overlay's outer size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::tui) struct OverlaySizing {
@@ -357,10 +373,11 @@ pub(in crate::tui) struct OverlaySizing {
     /// Item rows plus section headers, counted over the full item set (not the
     /// filtered matches) so the box does not resize while typing.
     pub(in crate::tui) nav_rows: usize,
+    pub(in crate::tui) shape: OverlayShape,
 }
 
 pub(in crate::tui) fn picker_overlay_layout(area: Rect, sizing: OverlaySizing) -> OverlayLayout {
-    layout_for_outer(outer_rect(area, sizing), sizing.has_details)
+    layout_for_outer(outer_rect(area, sizing), sizing)
 }
 
 fn outer_rect(area: Rect, sizing: OverlaySizing) -> Rect {
@@ -394,7 +411,10 @@ fn outer_rect(area: Rect, sizing: OverlaySizing) -> Rect {
             .saturating_add(TOP_BORDER_ROWS)
             .saturating_add(BOTTOM_BORDER_ROWS),
     );
-    let height = desired_height.min(max_height);
+    let height = match sizing.shape {
+        OverlayShape::Compact => desired_height.min(max_height),
+        OverlayShape::Viewer => max_height,
+    };
     let x = area.x.saturating_add(area.width.saturating_sub(width) / 2);
     let y = area
         .y
@@ -402,7 +422,8 @@ fn outer_rect(area: Rect, sizing: OverlaySizing) -> Rect {
     Rect::new(x, y, width, height)
 }
 
-fn layout_for_outer(outer: Rect, has_details: bool) -> OverlayLayout {
+fn layout_for_outer(outer: Rect, sizing: OverlaySizing) -> OverlayLayout {
+    let has_details = sizing.has_details;
     let outer_width = outer.width as usize;
     let outer_height = outer.height as usize;
     let inner_width = outer_width.saturating_sub(2).max(1);
@@ -433,7 +454,12 @@ fn layout_for_outer(outer: Rect, has_details: bool) -> OverlayLayout {
             nav_viewport_rows,
         }
     } else {
-        let nav_width = ((inner_width * 30) / 100).clamp(MIN_NAV_WIDTH, MAX_NAV_WIDTH);
+        let nav_width = match sizing.shape {
+            OverlayShape::Compact => ((inner_width * 30) / 100).clamp(MIN_NAV_WIDTH, MAX_NAV_WIDTH),
+            OverlayShape::Viewer => {
+                ((inner_width * 40) / 100).clamp(MIN_NAV_WIDTH, MAX_VIEWER_NAV_WIDTH)
+            }
+        };
         let separator_width = display_width(SEPARATOR);
         let detail_width = inner_width
             .saturating_sub(nav_width)

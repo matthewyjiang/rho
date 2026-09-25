@@ -460,7 +460,7 @@ fn model_catalog(
         key_hints: PickerKeyHints {
             pin_toggle: Some(pin_key),
             scope_toggle: Some(scope_key),
-            tab_complete: true,
+            tab: super::TabKey::CompleteFilter,
             ..Default::default()
         },
     }
