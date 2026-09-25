@@ -5,7 +5,8 @@ use serde::Serialize;
 #[path = "diagnostics_compaction.rs"]
 mod compaction;
 pub(crate) use compaction::{
-    CompactionContext, CompactionDiagnostics, IdleCompactionCheck, IdleCompactionReason,
+    CompactionContext, CompactionDiagnostics, CompactionTier, CompactionTierReport,
+    IdleCompactionCheck, IdleCompactionReason,
 };
 
 use {
@@ -116,12 +117,25 @@ struct RuntimeState {
     identity: RuntimeIdentity,
     context: Option<ContextUsage>,
     compaction: Option<CompactionDiagnostics>,
+    /// Last compactor tier, kept apart so context refreshes do not drop it.
+    compaction_tier: Option<CompactionTierReport>,
     prompt_sources: Vec<crate::prompt::PromptSource>,
     tools: Vec<String>,
     config: SanitizedConfig,
     /// Live hook state, absent until a session installs a hook runtime.
     #[serde(skip)]
     hooks: Option<crate::hooks::HookInspector>,
+}
+
+impl RuntimeState {
+    /// Context refreshes rebuild `compaction`; the tier lives apart and is
+    /// joined only on read so it has one source of truth.
+    fn compaction_with_tier(&self) -> Option<CompactionDiagnostics> {
+        self.compaction.clone().map(|mut compaction| {
+            compaction.last_tier = self.compaction_tier;
+            compaction
+        })
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -136,6 +150,7 @@ impl RuntimeDiagnostics {
                 identity: RuntimeIdentity::new(&config.provider, &config.model, config.reasoning),
                 context: None,
                 compaction: None,
+                compaction_tier: None,
                 prompt_sources: Vec::new(),
                 tools: Vec::new(),
                 config: config.into(),
@@ -157,6 +172,7 @@ impl RuntimeDiagnostics {
         state.identity.agent_fingerprint = agent_fingerprint;
         state.context = None;
         state.compaction = None;
+        state.compaction_tier = None;
     }
 
     pub fn update_agent(&self, id: &str, fingerprint: &str) {
@@ -170,11 +186,13 @@ impl RuntimeDiagnostics {
     }
 
     pub(crate) fn compaction(&self) -> Option<CompactionDiagnostics> {
-        self.read().compaction.clone()
+        self.read().compaction_with_tier()
     }
 
     pub(crate) fn clear_compaction(&self) {
-        self.write().compaction = None;
+        let mut state = self.write();
+        state.compaction = None;
+        state.compaction_tier = None;
     }
 
     pub(crate) fn record_compaction_context(
@@ -192,8 +210,15 @@ impl RuntimeDiagnostics {
             current,
             last_idle_check,
             last_provider_check: last_provider_check.map(Into::into),
+            last_tier: None,
             completed,
         });
+    }
+
+    /// Records which tier the compactor used. Compactors call this, so it
+    /// covers automatic, manual, and overflow-recovery compactions alike.
+    pub(crate) fn record_compaction_tier(&self, report: CompactionTierReport) {
+        self.write().compaction_tier = Some(report);
     }
 
     pub(crate) fn record_idle_compaction(&self, check: IdleCompactionCheck) {
@@ -269,7 +294,7 @@ impl RuntimeDiagnostics {
         let value = match action {
             "info" => serde_json::to_value(&state.identity),
             "context" => serde_json::to_value(&state.context),
-            "compaction" => serde_json::to_value(&state.compaction),
+            "compaction" => serde_json::to_value(state.compaction_with_tier()),
             "prompt_sources" => serde_json::to_value(&state.prompt_sources),
             "tools" => serde_json::to_value(&state.tools),
             "config" => serde_json::to_value(&state.config),

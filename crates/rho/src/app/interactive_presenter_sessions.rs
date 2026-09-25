@@ -17,6 +17,7 @@ pub(super) fn preview_card(arguments: &Value, status: ToolStatus) -> ToolCard {
             // Match the eight-character session identity used by the sessions CLI.
             string_arg(arguments, "session").map(|id| id.chars().take(8).collect()),
         ),
+        Some("recall") => ("sessions.recall", string_arg(arguments, "recall_id")),
         _ => ("sessions", None),
     };
     ToolCard::new(status, ToolFamily::Default, ToolHeader::call(verb, primary))

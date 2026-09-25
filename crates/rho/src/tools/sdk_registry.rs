@@ -185,6 +185,9 @@ pub struct AppToolSet {
     mcp_catalog: super::mcp::McpCatalog,
     file_view: rho_tools::FileViewPolicy,
     session_search: super::sessions::SessionBinding,
+    /// Present only when the `sessions` tool is installed, since recall is
+    /// the only way to read an elided result back.
+    recall: Option<crate::session::recall::RecallStore>,
 }
 
 impl AppToolSet {
@@ -206,6 +209,7 @@ impl AppToolSet {
             mcp_catalog: super::mcp::McpCatalog::default(),
             file_view: rho_tools::FileViewPolicy::default(),
             session_search: super::sessions::SessionBinding::default(),
+            recall: None,
         }
     }
 
@@ -255,8 +259,11 @@ impl AppToolSet {
             tool_set.add_bundle(super::sdk_features::skill_bundle(config.max_output_bytes));
         }
         if capabilities.contains(&ToolCapability::Sessions) {
+            let recall = crate::session::recall::RecallStore::default();
+            tool_set.recall = Some(recall.clone());
             tool_set.add_bundle(super::sessions::sdk_bundle(
                 tool_set.session_search.clone(),
+                recall,
                 config.max_output_bytes,
             ));
         }
@@ -341,6 +348,20 @@ impl AppToolSet {
 
     pub(crate) fn bind_session_search(&self, id: &str) {
         self.session_search.bind(id);
+    }
+
+    /// Binds where elided tool results are saved, for hosts without an
+    /// interactive session controller. No-op when recall is unavailable.
+    pub(crate) fn bind_recall(&self, storage: Option<&crate::session::Session>) {
+        if let Some(recall) = &self.recall {
+            recall.bind(storage.and_then(crate::session::Session::recall_dir));
+        }
+    }
+
+    /// Recall store for the compactor and session sidecars, or `None` when
+    /// this agent cannot call `sessions` and so could never recall.
+    pub(crate) fn recall_store(&self) -> Option<crate::session::recall::RecallStore> {
+        self.recall.clone()
     }
 
     /// Attach the root interactive session's host-controlled desktop grant.

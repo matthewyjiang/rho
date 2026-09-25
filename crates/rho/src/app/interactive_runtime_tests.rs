@@ -67,6 +67,8 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
         usage_recording: Default::default(),
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         hooks: None,
+        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+        recall: None,
     })
     .unwrap();
     assert_eq!(runtime.diagnostics().compaction_trigger_tokens(), Some(10));
@@ -277,6 +279,7 @@ pub(crate) async fn test_runtime(turns: Vec<ScriptedTurn>) -> InteractiveRuntime
             session,
             None,
             crate::tools::web::WebAccessStore::new(),
+            tools.recall_store(),
             tools.advisor().cloned(),
         ),
         mcp_sampling: crate::tools::mcp::McpSamplingBridge::new(),

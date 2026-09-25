@@ -10,10 +10,12 @@ use rho_sdk::{
 
 use {
     crate::compaction::{
-        build_summary_request_messages, partition_messages_for_compaction,
+        build_summary_request_messages, elide_tool_results, partition_messages_for_compaction,
         replacement_history_from_summary, CompactionConfig,
     },
     crate::config::Config,
+    crate::diagnostics::{CompactionTier, CompactionTierReport, RuntimeDiagnostics},
+    crate::session::recall::RecallStore,
     rho_providers::model::models_dev::cached_model_metadata,
 };
 
@@ -37,6 +39,10 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     /// Borrowed rather than owned because the interactive host rebuilds its
     /// runtime on permission or provider changes and must reuse one pipeline.
     pub(crate) hooks: Option<&'a crate::hooks::HookPipeline>,
+    /// Receives compaction tier reports for `/info` and `rho(action="compaction")`.
+    pub(crate) diagnostics: RuntimeDiagnostics,
+    /// From [`crate::tools::AppToolSet::recall_store`]; `None` disables elision.
+    pub(crate) recall: Option<RecallStore>,
 }
 
 pub(crate) fn build_runtime<P>(options: RuntimeBuildOptions<'_, P>) -> Result<Rho, Error>
@@ -73,15 +79,19 @@ where
         usage_recording,
         hook_host_labels,
         hooks,
+        diagnostics,
+        recall,
     } = options;
-    let (compactor, policy) = build_compaction(
-        Arc::clone(&provider),
+    let (compactor, policy) = build_compaction(CompactionSetup {
+        provider: Arc::clone(&provider),
         tools,
         reasoning,
         compaction,
         context_window,
-        usage_recording.clone(),
-    );
+        usage_recording: usage_recording.clone(),
+        diagnostics,
+        recall,
+    });
     let mut builder = Rho::builder()
         .provider_shared(provider)
         .system_prompt(system_prompt)
@@ -122,14 +132,35 @@ where
     builder.build()
 }
 
+/// Inputs for the host compactor and its automatic policy. Every runtime build
+/// and live refresh constructs the compactor from this one shape.
+pub(crate) struct CompactionSetup<'a> {
+    pub(crate) provider: Arc<dyn ModelProvider>,
+    pub(crate) tools: &'a [Arc<dyn rho_sdk::tool::Tool>],
+    pub(crate) reasoning: rho_sdk::ReasoningLevel,
+    pub(crate) compaction: CompactionConfig,
+    pub(crate) context_window: Option<u64>,
+    pub(crate) usage_recording: ProviderRequestUsageRecording,
+    /// Receives which compaction tier ran.
+    pub(crate) diagnostics: RuntimeDiagnostics,
+    /// Where elided originals are saved. `None` turns elision off, because the
+    /// agent could not recall them.
+    pub(crate) recall: Option<RecallStore>,
+}
+
 pub(crate) fn build_compaction(
-    provider: Arc<dyn ModelProvider>,
-    tools: &[Arc<dyn rho_sdk::tool::Tool>],
-    reasoning: rho_sdk::ReasoningLevel,
-    compaction: CompactionConfig,
-    context_window: Option<u64>,
-    usage_recording: ProviderRequestUsageRecording,
+    setup: CompactionSetup<'_>,
 ) -> (ModelCompactor, Option<CompactionPolicy>) {
+    let CompactionSetup {
+        provider,
+        tools,
+        reasoning,
+        compaction,
+        context_window,
+        usage_recording,
+        diagnostics,
+        recall,
+    } = setup;
     let policy = automatic_compaction_policy(&compaction, context_window);
     let compactor = ModelCompactor {
         provider,
@@ -138,6 +169,8 @@ pub(crate) fn build_compaction(
         reasoning,
         config: compaction,
         context_window,
+        diagnostics,
+        recall,
     };
     (compactor, policy)
 }
@@ -146,21 +179,9 @@ pub(crate) fn build_compaction(
 /// inputs `build_compaction` uses at runtime construction.
 pub(crate) fn refresh_session_compaction(
     session: &rho_sdk::Session,
-    provider: Arc<dyn ModelProvider>,
-    tools: &[Arc<dyn rho_sdk::tool::Tool>],
-    reasoning: rho_sdk::ReasoningLevel,
-    compaction: CompactionConfig,
-    context_window: Option<u64>,
-    usage_recording: ProviderRequestUsageRecording,
+    setup: CompactionSetup<'_>,
 ) -> Result<(), Error> {
-    let (compactor, policy) = build_compaction(
-        provider,
-        tools,
-        reasoning,
-        compaction,
-        context_window,
-        usage_recording,
-    );
+    let (compactor, policy) = build_compaction(setup);
     session.set_compaction(Some(Arc::new(compactor)), policy)
 }
 
@@ -186,6 +207,8 @@ pub(crate) struct ModelCompactor {
     reasoning: rho_sdk::ReasoningLevel,
     config: CompactionConfig,
     context_window: Option<u64>,
+    diagnostics: RuntimeDiagnostics,
+    recall: Option<RecallStore>,
 }
 
 impl Compactor for ModelCompactor {
@@ -211,27 +234,15 @@ impl Compactor for ModelCompactor {
             let cancellation = request.cancellation().clone();
             let mut next_attempt_index = 1usize;
 
-            match self
-                .try_native_compaction(
-                    request.messages(),
-                    request.service_tier(),
-                    cancellation.clone(),
-                    usage_context.clone(),
-                    &mut next_attempt_index,
-                )
-                .await
-            {
-                NativeCompactionResult::Success(output) => return Ok(output),
-                NativeCompactionResult::Cancelled => return Err(Error::Cancelled),
-                // Explicit fallback to portable text-summary compaction.
-                NativeCompactionResult::Unavailable | NativeCompactionResult::Failed => {}
-            }
-
-            // Clone only after native compact is unavailable or failed and fallback needs ownership.
-            let messages = request.messages().to_vec();
+            // Tier 1: elide old tool results. Commit without a model request
+            // when that alone reaches the target; otherwise later tiers see the
+            // elided history.
             let context = request.context_estimate().unwrap_or_else(|| {
                 rho_sdk::ContextEstimate::from_estimated_tokens(
-                    rho_sdk::model::context::estimate_context_tokens(&messages, &self.tool_specs),
+                    rho_sdk::model::context::estimate_context_tokens(
+                        request.messages(),
+                        &self.tool_specs,
+                    ),
                 )
             });
             let target_tokens = self.config.target_tokens_for_context(
@@ -239,10 +250,54 @@ impl Compactor for ModelCompactor {
                 request.trigger(),
                 context,
             );
+            let (elided, elided_tool_results) = match self.elide(&request, target_tokens) {
+                Some(elision) => (Some(elision.messages), elision.originals.len()),
+                None => (None, 0),
+            };
+            let report = |tier| {
+                self.diagnostics
+                    .record_compaction_tier(CompactionTierReport {
+                        tier,
+                        elided_tool_results,
+                    })
+            };
+            if let Some(elided) = &elided {
+                let tokens =
+                    rho_sdk::model::context::estimate_context_tokens(elided, &self.tool_specs);
+                if tokens <= target_tokens {
+                    report(CompactionTier::Elision);
+                    return CompactionOutput::new(elided.clone());
+                }
+            }
+            let messages = elided.as_deref().unwrap_or(request.messages());
+
+            match self
+                .try_native_compaction(
+                    messages,
+                    request.service_tier(),
+                    cancellation.clone(),
+                    usage_context.clone(),
+                    &mut next_attempt_index,
+                )
+                .await
+            {
+                NativeCompactionResult::Success(output) => {
+                    report(CompactionTier::Native);
+                    return Ok(output);
+                }
+                NativeCompactionResult::Cancelled => return Err(Error::Cancelled),
+                // Explicit fallback to portable text-summary compaction.
+                NativeCompactionResult::Unavailable | NativeCompactionResult::Failed => {}
+            }
+
             let Some(partition) =
-                partition_messages_for_compaction(&messages, &self.tool_specs, target_tokens)
+                partition_messages_for_compaction(messages, &self.tool_specs, target_tokens)
             else {
-                return CompactionOutput::new(messages);
+                report(match elided {
+                    Some(_) => CompactionTier::Elision,
+                    None => CompactionTier::Unchanged,
+                });
+                return CompactionOutput::new(messages.to_vec());
             };
             let summary_messages = build_summary_request_messages(&partition.compacted_messages);
             let model_request = ModelRequest {
@@ -280,6 +335,7 @@ impl Compactor for ModelCompactor {
                     message: "compaction model returned no summary text".into(),
                 });
             }
+            report(CompactionTier::TextSummary);
             CompactionOutput::with_usage(
                 replacement_history_from_summary(partition, summary),
                 usage,
@@ -301,6 +357,24 @@ enum NativeCompactionResult {
 }
 
 impl ModelCompactor {
+    /// Elides only when the agent can recall, and only after the originals are
+    /// saved. A failed save skips elision rather than stranding a stub.
+    fn elide(
+        &self,
+        request: &CompactionRequest,
+        target_tokens: u64,
+    ) -> Option<crate::compaction::Elision> {
+        let dir = self.recall.as_ref()?.dir()?;
+        let elision = elide_tool_results(request.messages(), &self.tool_specs, target_tokens)?;
+        match crate::session::recall::save(&dir, &elision.originals) {
+            Ok(()) => Some(elision),
+            Err(error) => {
+                tracing::warn!(%error, "could not save elided tool results; skipping elision");
+                None
+            }
+        }
+    }
+
     async fn try_native_compaction(
         &self,
         messages: &[rho_sdk::model::Message],

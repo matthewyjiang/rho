@@ -74,6 +74,7 @@ impl InteractiveRuntime {
                 context_window,
                 previous_context_window: context_window,
                 usage_recording: self.usage_recording.clone(),
+                diagnostics: self.diagnostics.clone(),
             },
             conversation_switch::SwitchNotice::WithDisplay(&mut record_notice),
         );

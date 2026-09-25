@@ -24,6 +24,7 @@ async fn archive_access_is_authorized_before_search_execution() {
         let binding = SessionBinding::default();
         let tool = Sessions {
             binding: binding.clone(),
+            recall: Default::default(),
             max_output_bytes: rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
             root: Ok(root.path().to_path_buf()),
         };

@@ -11,6 +11,7 @@ use super::{search_index, workspace_scope::Workspace};
 
 #[path = "search_response.rs"]
 mod response;
+pub(super) use response::ensure_budget;
 use response::{Context, Excerpt, Group, Page, ReadResponse};
 
 #[derive(Debug, Deserialize)]

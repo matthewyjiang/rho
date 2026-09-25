@@ -367,6 +367,7 @@ impl SessionHost {
                 context_window,
                 previous_context_window,
                 usage_recording: self.built.runtime.usage_recording(),
+                diagnostics: self.built.diagnostics.clone(),
             },
             SwitchNotice::SessionMessage,
         )
@@ -411,6 +412,7 @@ impl SessionHost {
         auth: String,
         herdr: HerdrReporter,
     ) -> Self {
+        built.tools.bind_recall(Some(&stored));
         Self {
             acp_session_id,
             built,

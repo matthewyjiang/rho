@@ -10,6 +10,8 @@ pub(super) const SESSION_TRANSCRIPT_FILE_NAME: &str = "session.jsonl";
 pub(super) const SESSION_WEB_DIR_NAME: &str = "web";
 /// Delegated run artifact directory inside a folder-layout session.
 pub(super) const SESSION_SUBAGENTS_DIR_NAME: &str = "subagents";
+/// Originals of tool results elided by compaction, inside a folder-layout session.
+pub(super) const SESSION_RECALL_DIR_NAME: &str = "recall";
 
 /// One durable session unit on disk: folder layout or legacy flat transcript.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,6 +69,13 @@ impl SessionUnit {
     pub(super) fn subagents_dir(&self) -> Option<PathBuf> {
         match self {
             Self::Folder { dir } => Some(dir.join(SESSION_SUBAGENTS_DIR_NAME)),
+            Self::LegacyFile { .. } => None,
+        }
+    }
+
+    pub(super) fn recall_dir(&self) -> Option<PathBuf> {
+        match self {
+            Self::Folder { dir } => Some(dir.join(SESSION_RECALL_DIR_NAME)),
             Self::LegacyFile { .. } => None,
         }
     }

@@ -51,6 +51,16 @@ pub(super) fn push_fields(block: &mut CommandBlock, diagnostics: &CompactionDiag
             &format!("{before} → {after} local tokens ({result})"),
         );
     }
+    if let Some(report) = &diagnostics.last_tier {
+        block.push_field(
+            "Last tier",
+            &format!(
+                "{}, {} tool results elided",
+                report.tier.label(),
+                report.elided_tool_results
+            ),
+        );
+    }
     if let Some(check) = &diagnostics.last_idle_check {
         block.push_field(
             "Idle check",

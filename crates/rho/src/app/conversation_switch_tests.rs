@@ -137,6 +137,8 @@ async fn switchable_session(
         usage_recording: Default::default(),
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         hooks: None,
+        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+        recall: None,
     })
     .unwrap();
     let session = runtime
@@ -184,6 +186,7 @@ async fn mid_session_switch_updates_provider_reasoning_and_compaction() {
             context_window: Some(2_000),
             previous_context_window: Some(1_000),
             usage_recording: Default::default(),
+            diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
         },
         SwitchNotice::SessionMessage,
     )
@@ -227,6 +230,7 @@ async fn empty_session_switch_stays_silent() {
             context_window: None,
             previous_context_window: None,
             usage_recording: Default::default(),
+            diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
         },
         SwitchNotice::SessionMessage,
     )
@@ -281,6 +285,7 @@ async fn failed_notice_restores_prompt_provider_and_history() {
             context_window: Some(2_000),
             previous_context_window: Some(1_000),
             usage_recording: Default::default(),
+            diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
         },
         SwitchNotice::WithDisplay(&mut fail_notice),
     )

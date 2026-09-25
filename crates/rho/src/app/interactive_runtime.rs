@@ -51,7 +51,9 @@ use super::{
     interactive_session_controller::{InteractiveSessionController, ReplacementSessionSource},
     policy::AppPolicy,
     provider_controller::ProviderController,
-    runtime_builder::{build_runtime, refresh_session_compaction, RuntimeBuildOptions},
+    runtime_builder::{
+        build_runtime, refresh_session_compaction, CompactionSetup, RuntimeBuildOptions,
+    },
 };
 
 pub(crate) use super::interactive_run_controller::{
@@ -253,6 +255,8 @@ impl InteractiveRuntime {
             usage_recording: self.usage_recording.clone(),
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: self.hooks.as_ref(),
+            diagnostics: self.diagnostics.clone(),
+            recall: self.tools.recall_store(),
         })?;
         let replacement_session = replacement_runtime
             .rebind_session(SessionOptions::from_snapshot(snapshot))
@@ -624,12 +628,16 @@ impl InteractiveRuntime {
     fn refresh_compaction(&mut self) -> Result<(), Error> {
         refresh_session_compaction(
             self.sessions.session(),
-            Arc::clone(self.provider.provider()),
-            self.tools.tools(),
-            self.provider.reasoning(),
-            self.compaction.clone(),
-            self.context_window,
-            self.usage_recording.clone(),
+            CompactionSetup {
+                provider: Arc::clone(self.provider.provider()),
+                tools: self.tools.tools(),
+                reasoning: self.provider.reasoning(),
+                compaction: self.compaction.clone(),
+                context_window: self.context_window,
+                usage_recording: self.usage_recording.clone(),
+                diagnostics: self.diagnostics.clone(),
+                recall: self.tools.recall_store(),
+            },
         )
     }
 
@@ -860,6 +868,8 @@ impl InteractiveRuntime {
             usage_recording: self.usage_recording.clone(),
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: self.hooks.as_ref(),
+            diagnostics: self.diagnostics.clone(),
+            recall: self.tools.recall_store(),
         })?;
         let replacement_session = match lifecycle {
             ReplacementLifecycle::Started | ReplacementLifecycle::AfterReset => {

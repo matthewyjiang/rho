@@ -9,8 +9,8 @@ use rho_sdk::{
     ProviderRequestUsageRecording, Retryability,
 };
 
-use super::{build_compaction, ModelCompactor};
-use crate::compaction::CompactionConfig;
+use super::{build_compaction, CompactionSetup, ModelCompactor};
+use crate::{compaction::CompactionConfig, diagnostics::CompactionTier};
 
 #[derive(Clone, Default)]
 struct RecordingUsage {
@@ -52,18 +52,20 @@ fn compactor(
     usage: RecordingUsage,
     context_window: Option<u64>,
 ) -> ModelCompactor {
-    build_compaction(
-        Arc::new(provider) as Arc<dyn ModelProvider>,
-        &[],
-        rho_sdk::ReasoningLevel::Off,
-        CompactionConfig {
+    build_compaction(CompactionSetup {
+        provider: Arc::new(provider) as Arc<dyn ModelProvider>,
+        tools: &[],
+        reasoning: rho_sdk::ReasoningLevel::Off,
+        compaction: CompactionConfig {
             auto_compact: false,
             threshold_percent: 85,
             target_percent: 20,
         },
         context_window,
-        ProviderRequestUsageRecording::new(usage),
-    )
+        usage_recording: ProviderRequestUsageRecording::new(usage),
+        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+        recall: None,
+    })
     .0
 }
 
@@ -332,4 +334,168 @@ async fn native_compaction_cancellation_is_explicit() {
         events[0].outcome(),
         rho_sdk::ProviderRequestOutcome::Cancelled
     ));
+}
+
+fn elision_history() -> (rho_sdk::model::ToolResult, Vec<Message>) {
+    let old = rho_sdk::model::ToolResult {
+        id: "old".into(),
+        ok: true,
+        content: "x".repeat(40_000),
+    };
+    let history = vec![
+        Message::System("system".into()),
+        Message::user_text("read it"),
+        Message::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall {
+            id: "old".into(),
+            name: "read_file".into(),
+            arguments: serde_json::json!({"path": "big.rs"}),
+        })]),
+        Message::ToolResult(old.clone()),
+        Message::user_text("recent"),
+        Message::assistant_text("ok"),
+    ];
+    (old, history)
+}
+
+fn tiered_compactor(
+    provider: ScriptedProvider,
+    usage: RecordingUsage,
+    recall: Option<crate::session::recall::RecallStore>,
+) -> (ModelCompactor, crate::diagnostics::RuntimeDiagnostics) {
+    let diagnostics = crate::diagnostics::test_diagnostics("test", "test");
+    diagnostics.record_compaction_context(
+        crate::diagnostics::CompactionContext::new(
+            rho_sdk::ContextEstimate::from_estimated_tokens(0),
+            None,
+            &CompactionConfig::default(),
+        ),
+        None,
+        Default::default(),
+    );
+    let compactor = build_compaction(CompactionSetup {
+        provider: Arc::new(provider) as Arc<dyn ModelProvider>,
+        tools: &[],
+        reasoning: rho_sdk::ReasoningLevel::Off,
+        compaction: CompactionConfig::default(),
+        context_window: Some(1_000_000),
+        usage_recording: ProviderRequestUsageRecording::new(usage),
+        diagnostics: diagnostics.clone(),
+        recall,
+    })
+    .0;
+    (compactor, diagnostics)
+}
+
+fn last_tier(diagnostics: &crate::diagnostics::RuntimeDiagnostics) -> Option<CompactionTier> {
+    diagnostics
+        .compaction()
+        .and_then(|compaction| compaction.last_tier)
+        .map(|report| report.tier)
+}
+
+fn summary_provider() -> ScriptedProvider {
+    ScriptedProvider::new(
+        ModelIdentity::new("opencode-go", "openai-responses", "muse-test"),
+        [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+            ContentBlock::Text("summary text".into()),
+        ]))],
+    )
+}
+
+// Covers: elision that reaches the target commits without a model request,
+// records the tier, and saves the original so the stub is recallable.
+// Owner: ModelCompactor tier escalation.
+#[tokio::test]
+async fn elision_that_reaches_target_skips_the_model_and_saves_originals() {
+    let (old, history) = elision_history();
+    let dir = tempfile::tempdir().unwrap();
+    let recall = crate::session::recall::RecallStore::default();
+    recall.bind(Some(dir.path().join("recall")));
+    let usage = RecordingUsage::default();
+    let (compactor, diagnostics) = tiered_compactor(
+        ScriptedProvider::new(
+            ModelIdentity::new("opencode-go", "openai-responses", "muse-test"),
+            Vec::<ScriptedTurn>::new(),
+        ),
+        usage.clone(),
+        Some(recall),
+    );
+
+    let compacted = compactor
+        .compact(CompactionRequest::new(history.clone(), Default::default()))
+        .await
+        .unwrap();
+
+    assert_eq!(usage.events(), Vec::new());
+    assert_eq!(last_tier(&diagnostics), Some(CompactionTier::Elision));
+    let recall_id = crate::compaction::recall_id(&old);
+    assert!(matches!(
+        &compacted.messages()[3],
+        Message::ToolResult(stub) if stub.id == "old" && stub.content.contains(&recall_id)
+    ));
+    let saved: rho_sdk::model::ToolResult = serde_json::from_slice(
+        &std::fs::read(dir.path().join("recall").join(format!("{recall_id}.json"))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved, old);
+}
+
+// Covers: when stubs could not be recalled (no `sessions` tool, or no durable
+// session bound), compaction skips elision and summarizes the original text.
+// Owner: ModelCompactor tier gating.
+#[tokio::test]
+async fn elision_is_skipped_when_results_cannot_be_recalled() {
+    let (_, history) = elision_history();
+    let cases = [
+        ("no sessions tool", None),
+        ("unbound session", Some(Default::default())),
+    ];
+
+    for (case, recall) in cases {
+        let usage = RecordingUsage::default();
+        let (compactor, diagnostics) = tiered_compactor(summary_provider(), usage.clone(), recall);
+
+        compactor
+            .compact(CompactionRequest::new(history.clone(), Default::default()))
+            .await
+            .unwrap();
+
+        assert_eq!(usage.events().len(), 1, "{case}");
+        assert_eq!(
+            last_tier(&diagnostics),
+            Some(CompactionTier::TextSummary),
+            "{case}"
+        );
+    }
+}
+
+// Covers: when elision alone misses the target, the summarizer receives the
+// elided history (stubs, not the original output).
+// Owner: ModelCompactor tier escalation.
+#[tokio::test]
+async fn escalation_summarizes_the_elided_history() {
+    let (old, mut history) = elision_history();
+    // A large verbatim user turn keeps the context above target after elision.
+    history.insert(4, Message::user_text("u".repeat(40_000)));
+    history.insert(5, Message::assistant_text("noted"));
+    let dir = tempfile::tempdir().unwrap();
+    let recall = crate::session::recall::RecallStore::default();
+    recall.bind(Some(dir.path().join("recall")));
+    let provider = summary_provider();
+    let (compactor, diagnostics) =
+        tiered_compactor(provider.clone(), RecordingUsage::default(), Some(recall));
+
+    compactor
+        .compact(CompactionRequest::new(history, Default::default()))
+        .await
+        .unwrap();
+
+    assert_eq!(last_tier(&diagnostics), Some(CompactionTier::TextSummary));
+    let requests = provider.recorded_requests();
+    let [request] = requests.as_slice() else {
+        panic!("expected one summary request, got {}", requests.len());
+    };
+    let prompt = serde_json::to_string(&request.messages).unwrap();
+    assert!(prompt.contains(&crate::compaction::recall_id(&old)));
+    assert!(!prompt.contains(&old.content));
 }

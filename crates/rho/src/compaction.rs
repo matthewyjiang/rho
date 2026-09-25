@@ -5,6 +5,10 @@ use rho_providers::model::{
 use rho_sdk::model::SemanticMessage;
 use rho_tools::tool::{ToolResult, ToolSpec};
 
+#[path = "compaction_elide.rs"]
+mod elide;
+pub(crate) use elide::{elide_tool_results, recall_id, Elision};
+
 const SUMMARY_RESERVE_MIN_TOKENS: u64 = 512;
 const SUMMARY_RESERVE_MAX_TOKENS: u64 = 8_192;
 

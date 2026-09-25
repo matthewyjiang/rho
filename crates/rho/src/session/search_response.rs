@@ -163,7 +163,7 @@ impl ReadResponse {
     }
 }
 
-fn ensure_budget(asked: usize, budget: usize) -> anyhow::Result<()> {
+pub(in crate::session) fn ensure_budget(asked: usize, budget: usize) -> anyhow::Result<()> {
     anyhow::ensure!(
         asked <= budget,
         "sessions output byte budget: limit {budget}, asked {asked}; request a smaller read window"

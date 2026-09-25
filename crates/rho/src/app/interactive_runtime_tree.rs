@@ -47,6 +47,8 @@ impl InteractiveRuntime {
             usage_recording: self.usage_recording.clone(),
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: self.hooks.as_ref(),
+            diagnostics: self.diagnostics.clone(),
+            recall: self.tools.recall_store(),
         })?;
         let replacement_session = replacement_runtime
             .rebind_session(SessionOptions::from_snapshot(snapshot))

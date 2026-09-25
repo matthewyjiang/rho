@@ -17,7 +17,7 @@ use rho_providers::{
 
 use crate::{
     app::{
-        runtime_builder::{configured_context_window, refresh_session_compaction},
+        runtime_builder::{configured_context_window, refresh_session_compaction, CompactionSetup},
         session_assembly::BuiltSession,
     },
     compaction::CompactionConfig,
@@ -132,12 +132,16 @@ pub(super) fn apply_thought_level(
         .map_err(|error| map_session_error(&built.session, error))?;
     if let Err(error) = refresh_session_compaction(
         &built.session,
-        Arc::clone(&built.provider),
-        built.tools.tools(),
-        level,
-        CompactionConfig::from(config),
-        configured_context_window(config),
-        built.runtime.usage_recording(),
+        CompactionSetup {
+            provider: Arc::clone(&built.provider),
+            tools: built.tools.tools(),
+            reasoning: level,
+            compaction: CompactionConfig::from(config),
+            context_window: configured_context_window(config),
+            usage_recording: built.runtime.usage_recording(),
+            diagnostics: built.diagnostics.clone(),
+            recall: built.tools.recall_store(),
+        },
     ) {
         // Restore the previous level so a failed compaction rebuild does
         // not leave the session advertising a level its compactor does
