@@ -72,7 +72,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "std",
 ] }
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
-katex-rs = "0.2.4"
+katex-rs = "0.3.0"
 syntect = { version = "5", default-features = false, features = ["regex-fancy", "parsing", "dump-load"] }
 mermaid-rs-renderer = { version = "=0.3.1", default-features = false }
 arboard = { version = "3.6.1", default-features = false, features = ["wayland-data-control"] }
