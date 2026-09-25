@@ -359,6 +359,9 @@ pub trait Compactor: Send + Sync {
 pub enum CompactionTrigger {
     Automatic,
     Manual,
+    /// The provider rejected a request because it exceeded the context window.
+    /// The runtime retries that request once if compaction reduces history.
+    ContextOverflow,
 }
 
 /// Typed result of manual or automatic compaction.

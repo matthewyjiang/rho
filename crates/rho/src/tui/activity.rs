@@ -249,6 +249,8 @@ impl ProviderRetryHint {
                 (Some(kind), retry_after.filter(|delay| !delay.is_zero()))
             }
             ProviderStreamResetReason::InvalidResponse => (None, None),
+            // Compaction events follow at once and own the status line.
+            ProviderStreamResetReason::ContextOverflow => (None, None),
             // Required while the SDK enum stays `#[non_exhaustive]`.
             _ => (None, None),
         };

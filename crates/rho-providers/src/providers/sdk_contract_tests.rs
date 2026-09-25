@@ -922,6 +922,97 @@ fn provider_reported_errors_map_by_semantic_kind() {
     }
 }
 
+// Covers: each provider's context-window rejection maps to ContextOverflow so
+// the SDK can compact and retry; unrelated 400s stay generic.
+// Owner: provider SDK error mapping
+#[test]
+fn context_window_rejections_map_to_context_overflow() {
+    let http = |status: StatusCode, body: &str| ModelError::HttpStatus {
+        status,
+        body: body.into(),
+        retry_after: None,
+    };
+    let reported = |error_type: &str, message: &str| ModelError::ProviderReported {
+        kind: ProviderReportedErrorKind::InvalidResponse,
+        error_type: error_type.into(),
+        message: message.into(),
+    };
+    let cases = [
+        (
+            "openai chat",
+            http(
+                StatusCode::BAD_REQUEST,
+                r#"{"error":{"message":"This model's maximum context length is 128000 tokens.","code":"context_length_exceeded"}}"#,
+            ),
+            ProviderErrorKind::ContextOverflow,
+        ),
+        (
+            "anthropic http",
+            http(
+                StatusCode::BAD_REQUEST,
+                r#"{"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 201234 tokens > 200000 maximum"}}"#,
+            ),
+            ProviderErrorKind::ContextOverflow,
+        ),
+        (
+            "anthropic stream",
+            reported("invalid_request_error", "prompt is too long: 201234 tokens > 200000 maximum"),
+            ProviderErrorKind::ContextOverflow,
+        ),
+        (
+            "codex stream",
+            reported(
+                "context_length_exceeded",
+                "Your input exceeds the context window of this model.",
+            ),
+            ProviderErrorKind::ContextOverflow,
+        ),
+        (
+            "xai",
+            http(
+                StatusCode::BAD_REQUEST,
+                "This model's maximum prompt length is 131072 but the request contains 140000 tokens.",
+            ),
+            ProviderErrorKind::ContextOverflow,
+        ),
+        (
+            "gemini",
+            http(
+                StatusCode::BAD_REQUEST,
+                "The input token count (1100000) exceeds the maximum number of tokens allowed (1048576).",
+            ),
+            ProviderErrorKind::ContextOverflow,
+        ),
+        (
+            "llama.cpp",
+            http(
+                StatusCode::BAD_REQUEST,
+                r#"{"error":{"type":"exceed_context_size_error","message":"the request exceeds the available context size"}}"#,
+            ),
+            ProviderErrorKind::ContextOverflow,
+        ),
+        (
+            "unrelated 400",
+            http(StatusCode::BAD_REQUEST, "invalid tool schema"),
+            ProviderErrorKind::Other,
+        ),
+        (
+            "server error mentioning context",
+            http(StatusCode::INTERNAL_SERVER_ERROR, "maximum context length"),
+            ProviderErrorKind::Unavailable,
+        ),
+    ];
+
+    for (case, error, kind) in cases {
+        let converted = provider_error_from_model_error(error);
+        assert_eq!(converted.kind(), kind, "{case}");
+        if kind == ProviderErrorKind::ContextOverflow {
+            assert!(!converted.is_retryable(), "{case}");
+            assert!(converted.diagnostic().is_some(), "{case}");
+        }
+    }
+}
+
 #[test]
 fn rate_limit_http_errors_carry_retry_after() {
     use std::time::Duration;
