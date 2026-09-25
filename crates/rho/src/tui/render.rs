@@ -175,6 +175,7 @@ fn list_picker_lines(
         show_badges: true,
         show_preview: true,
         fill: LineFill::Natural,
+        label_overflow: picker.label_overflow,
     };
     let rows = super::picker::picker_item_rows(
         &picker.items,

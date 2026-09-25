@@ -29,6 +29,7 @@ fn aligned_layout(width: usize, column: usize) -> RowLayout {
         show_badges: true,
         show_preview: true,
         fill: crate::tui::LineFill::Natural,
+        label_overflow: LabelOverflow::KeepStart,
     }
 }
 
@@ -101,6 +102,7 @@ fn fill_pane_rows_pad_label_and_keep_badge() {
             show_badges: true,
             show_preview: false,
             fill: crate::tui::LineFill::PadToWidth,
+            label_overflow: LabelOverflow::KeepStart,
         },
         None,
     );

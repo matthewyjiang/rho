@@ -26,7 +26,7 @@ fn action_footer_parts_include_structured_key_hints() {
         PickerAction::ResumeSession,
     )
     .with_key_hints(PickerKeyHints {
-        tab_complete: true,
+        tab: crate::tui::TabKey::CompleteFilter,
         row_delete: true,
         ..Default::default()
     })
@@ -56,7 +56,7 @@ fn action_footer_parts_include_structured_key_hints() {
         .with_key_hints(PickerKeyHints {
             pin_toggle: Some("Ctrl+P".into()),
             scope_toggle: Some("Ctrl+O".into()),
-            tab_complete: true,
+            tab: crate::tui::TabKey::CompleteFilter,
             ..Default::default()
         });
     assert_eq!(

@@ -96,6 +96,27 @@ fn detail_badge_rows_never_exceed_narrow_overlay_widths() {
     }
 }
 
+// Covers: the narrow (stacked) layout must paint detail rows at the detail
+// width; one extra column pushes the right border out of line.
+// Owner: pure unit (overlay row assembly)
+#[test]
+fn stacked_detail_rows_match_the_box_width() {
+    let picker = sample_picker("agent detail", "worker detail");
+    // Wide enough for a real box, under the side-by-side threshold.
+    let frame = render_picker_overlay(&picker, Rect::new(0, 0, 50, 30));
+    let widths = frame
+        .lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| crate::tui::render::display_width(span.content.as_ref()))
+                .sum::<usize>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(widths, vec![frame.outer.width as usize; widths.len()]);
+}
+
 #[test]
 fn clamp_detail_scroll_respects_viewport() {
     assert_eq!(clamp_detail_scroll(100, 12, 5), 7);

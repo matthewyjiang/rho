@@ -30,6 +30,9 @@ pub(in crate::tui) enum PickerAction {
     EditAgent,
     Workflow,
     AttachSubagent,
+    /// Read-only `/diff` viewer. Distinct from `Dismiss` so selection changes
+    /// can load the highlighted file's patch.
+    ViewDiff,
     Dismiss,
 }
 
@@ -76,9 +79,10 @@ impl PickerAction {
     pub(in crate::tui) fn default_confirm_verb(&self) -> &'static str {
         match self {
             PickerAction::Config => "change",
-            PickerAction::Dismiss | PickerAction::ViewMcpServers | PickerAction::ViewAgent => {
-                "close"
-            }
+            PickerAction::Dismiss
+            | PickerAction::ViewMcpServers
+            | PickerAction::ViewAgent
+            | PickerAction::ViewDiff => "close",
             PickerAction::RefreshModelList => "refresh",
             PickerAction::CopyOutput => "copy",
             PickerAction::SelectModel
@@ -134,9 +138,10 @@ impl PickerAction {
             | PickerAction::Config
             | PickerAction::SelectModel
             | PickerAction::SelectTheme => DuringTurnSelect::Apply,
-            PickerAction::Dismiss | PickerAction::ViewMcpServers | PickerAction::ViewAgent => {
-                DuringTurnSelect::CloseOnly
-            }
+            PickerAction::Dismiss
+            | PickerAction::ViewMcpServers
+            | PickerAction::ViewAgent
+            | PickerAction::ViewDiff => DuringTurnSelect::CloseOnly,
             PickerAction::SelectInternalAgentModel | PickerAction::EditAgent => {
                 DuringTurnSelect::Unavailable(
                     "agent editing is unavailable while a model turn is running",
@@ -185,6 +190,7 @@ impl PickerAction {
             | PickerAction::EditAgent
             | PickerAction::Workflow
             | PickerAction::AttachSubagent
+            | PickerAction::ViewDiff
             | PickerAction::Dismiss => None,
         }
     }

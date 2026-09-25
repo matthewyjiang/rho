@@ -125,6 +125,7 @@ impl App {
             info_tree_deferred: false,
             usage_limits_live: std::collections::BTreeMap::new(),
             pending_changelog: None,
+            diff_viewer: None,
             web_search_reload_pending: false,
             compaction_reload_pending: false,
             pending_web_search_test: None,

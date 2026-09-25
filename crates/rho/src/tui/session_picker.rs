@@ -17,7 +17,7 @@ pub(super) fn session_picker(
             .collect(),
     )
     .with_key_hints(super::PickerKeyHints {
-        tab_complete: true,
+        tab: super::TabKey::CompleteFilter,
         row_delete: true,
         ..Default::default()
     })

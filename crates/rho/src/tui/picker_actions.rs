@@ -237,7 +237,7 @@ impl App {
                 self.submit_attach_selection(value);
                 Ok(())
             }
-            PickerAction::Dismiss | PickerAction::ViewMcpServers => Ok(()),
+            PickerAction::Dismiss | PickerAction::ViewMcpServers | PickerAction::ViewDiff => Ok(()),
         }
     }
 
@@ -404,6 +404,7 @@ impl App {
             | PickerAction::SelectTheme
             | PickerAction::EditAgent
             | PickerAction::AttachSubagent
+            | PickerAction::ViewDiff
             | PickerAction::Dismiss => Ok(()),
         }
     }

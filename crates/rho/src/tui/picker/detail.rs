@@ -5,12 +5,13 @@
 //! tag, aligned label/value facts, section headings, muted notes) so the most
 //! important facts fit above the fold instead of one dim wall of text.
 
-use std::borrow::Cow;
+use std::{borrow::Cow, sync::Arc};
 
 use ratatui::{
     style::Style,
     text::{Line, Span},
 };
+use rho_tools::tool_card::DiffRow;
 
 use super::{rows::picker_badge_style, PickerBadge};
 use crate::tui::{
@@ -33,6 +34,20 @@ pub(in crate::tui) enum PickerDetail {
     Text(String),
     /// Structured blocks drawn with hierarchy.
     Sheet(DetailSheet),
+    /// One file's patch, drawn as numbered, highlighted diff rows. Shared so
+    /// the wrap cache cloning and comparing it on every selection never
+    /// copies or walks a large patch (`Arc<T: Eq>` compares pointers first),
+    /// and so the variant stays one pointer wide.
+    Diff(Arc<DiffDetail>),
+}
+
+/// A file's diff for the detail pane. `path` picks the syntax highlighter.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::tui) struct DiffDetail {
+    /// Shown above the rows: the path, or `old → new` for renames.
+    pub(in crate::tui) heading: String,
+    pub(in crate::tui) path: String,
+    pub(in crate::tui) rows: Vec<DiffRow>,
 }
 
 impl From<String> for PickerDetail {
@@ -59,6 +74,7 @@ impl PickerDetail {
         match self {
             Self::Text(text) => Cow::Borrowed(text),
             Self::Sheet(sheet) => Cow::Owned(sheet.plain_text()),
+            Self::Diff(diff) => Cow::Borrowed(&diff.heading),
         }
     }
 }
@@ -214,6 +230,9 @@ pub(in crate::tui) fn detail_lines(detail: &PickerDetail, width: usize) -> Vec<L
             .into_iter()
             .map(|line| clip_line(line, width))
             .collect(),
+        PickerDetail::Diff(diff) => {
+            crate::tui::diff_pane::diff_pane_lines(&diff.heading, &diff.path, &diff.rows, width)
+        }
     }
 }
 

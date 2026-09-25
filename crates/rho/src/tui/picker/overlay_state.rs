@@ -127,6 +127,7 @@ impl UiPicker {
         super::overlay_layout::OverlaySizing {
             has_details: self.has_item_details(),
             nav_rows: super::rows::rows(&self.items, 0..self.items.len()).count(),
+            shape: self.overlay_shape,
         }
     }
 }
