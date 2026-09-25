@@ -165,7 +165,7 @@ impl WorkspaceSearch for GrepSearch {
                 "properties": {
                     "pattern": {"type": "string"},
                     "path": {"type": "string"},
-                    "glob": {"type": "string"},
+                    "glob": {"type": "string", "description": "Filter searched files by glob, like `rg -g`. Without `/` it matches file names at any depth. A leading `!` excludes matches, e.g. `!*_tests.rs`."},
                     "literal": {"type": "boolean"},
                     "case_sensitive": {"type": "boolean"},
                     "include_hidden": {"type": "boolean"},
