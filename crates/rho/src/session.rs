@@ -21,7 +21,7 @@ mod layout;
 #[cfg(test)]
 mod performance_benchmarks;
 mod persistence;
-mod recall;
+pub(crate) mod recall;
 pub(crate) mod search;
 mod search_evidence;
 mod search_index;
@@ -717,6 +717,11 @@ impl Session {
     /// Delegated run artifact directory owned by this folder-layout session.
     pub(crate) fn subagents_dir(&self) -> Option<PathBuf> {
         persistence::SessionUnit::from_path(&self.path)?.subagents_dir()
+    }
+
+    /// Elided tool-result originals owned by this folder-layout session.
+    pub(crate) fn recall_dir(&self) -> Option<PathBuf> {
+        persistence::SessionUnit::from_path(&self.path)?.recall_dir()
     }
 
     pub fn id(&self) -> &str {

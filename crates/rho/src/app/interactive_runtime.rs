@@ -256,6 +256,7 @@ impl InteractiveRuntime {
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: self.hooks.as_ref(),
             diagnostics: self.diagnostics.clone(),
+            recall: self.tools.recall_store(),
         })?;
         let replacement_session = replacement_runtime
             .rebind_session(SessionOptions::from_snapshot(snapshot))
@@ -635,6 +636,7 @@ impl InteractiveRuntime {
                 context_window: self.context_window,
                 usage_recording: self.usage_recording.clone(),
                 diagnostics: self.diagnostics.clone(),
+                recall: self.tools.recall_store(),
             },
         )
     }
@@ -867,6 +869,7 @@ impl InteractiveRuntime {
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: self.hooks.as_ref(),
             diagnostics: self.diagnostics.clone(),
+            recall: self.tools.recall_store(),
         })?;
         let replacement_session = match lifecycle {
             ReplacementLifecycle::Started | ReplacementLifecycle::AfterReset => {

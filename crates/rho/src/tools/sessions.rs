@@ -12,7 +12,30 @@ use rho_sdk::{
     CapabilityKind, CapabilityRequest, CapabilitySource, PathScope,
 };
 
-use crate::session::search::Request;
+use crate::session::{
+    recall::{self, RecallRequest, RecallStore},
+    search::Request,
+};
+
+/// Tool arguments: index-backed prior-session actions, or current-session
+/// recall, which never touches the search index.
+enum Action {
+    Index(Request),
+    Recall(RecallRequest),
+}
+
+impl Action {
+    fn parse(mut arguments: serde_json::Value) -> serde_json::Result<Self> {
+        let recall = arguments.get("action").and_then(serde_json::Value::as_str) == Some("recall");
+        if !recall {
+            return serde_json::from_value(arguments).map(Self::Index);
+        }
+        if let Some(fields) = arguments.as_object_mut() {
+            fields.remove("action");
+        }
+        serde_json::from_value(arguments).map(Self::Recall)
+    }
+}
 
 #[derive(Clone, Default)]
 pub(crate) struct SessionBinding(Arc<RwLock<Option<String>>>);
@@ -25,10 +48,12 @@ impl SessionBinding {
 
 pub(super) fn sdk_bundle(
     binding: SessionBinding,
+    recall: RecallStore,
     max_output_bytes: usize,
 ) -> super::sdk_registry::StaticToolBundle {
     super::sdk_registry::StaticToolBundle::new(vec![Arc::new(Sessions {
         binding,
+        recall,
         max_output_bytes,
         root: crate::paths::rho_dir()
             .map(|path| path.join("sessions"))
@@ -38,6 +63,7 @@ pub(super) fn sdk_bundle(
 
 struct Sessions {
     binding: SessionBinding,
+    recall: RecallStore,
     max_output_bytes: usize,
     root: Result<std::path::PathBuf, String>,
 }
@@ -77,13 +103,21 @@ impl Tool for Sessions {
         context: ToolPreparationContext,
     ) -> ToolPrepareFuture<'a> {
         Box::pin(async move {
-            let request: Request =
-                serde_json::from_value(invocation.into_arguments()).map_err(|error| {
-                    ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
-                })?;
-            request.validate(self.max_output_bytes).map_err(|error| {
-                ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
-            })?;
+            let invalid = |error: String| ToolError::new(ToolErrorKind::InvalidArguments, error);
+            let request = match Action::parse(invocation.into_arguments())
+                .map_err(|error| invalid(error.to_string()))?
+            {
+                Action::Index(request) => request,
+                Action::Recall(request) => {
+                    request
+                        .validate(self.max_output_bytes)
+                        .map_err(|error| invalid(error.to_string()))?;
+                    return Ok(self.prepare_recall(request));
+                }
+            };
+            request
+                .validate(self.max_output_bytes)
+                .map_err(|error| invalid(error.to_string()))?;
             let cwd = context
                 .workspace_root()
                 .ok_or_else(|| {
@@ -143,6 +177,49 @@ impl Tool for Sessions {
                 },
             ))
         })
+    }
+}
+
+impl Sessions {
+    /// Recall reads only this session's recall directory, not the archive.
+    /// Unbound sessions fail clearly and need no read grant.
+    fn prepare_recall(&self, request: RecallRequest) -> PreparedToolInvocation<'_> {
+        let dir = self.recall.dir();
+        let (accesses, capabilities) = match &dir {
+            Some(path) => (
+                vec![ToolResourceAccess::shared(ToolResource::directory_tree(
+                    path,
+                ))],
+                vec![CapabilityRequest::read_path(
+                    path.clone(),
+                    PathScope::UnrestrictedFilesystem,
+                    CapabilitySource::built_in_tool("sessions"),
+                )],
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
+        let max_output_bytes = self.max_output_bytes;
+        PreparedToolInvocation::resource_aware(
+            accesses,
+            capabilities,
+            ToolMetadata::new().operation(OperationKind::Read),
+            move |_| {
+                Box::pin(async move {
+                    tokio::task::spawn_blocking(move || {
+                        let dir = dir.ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "recall is unavailable: this session keeps no saved tool results"
+                            )
+                        })?;
+                        recall::recall(&dir, &request, max_output_bytes)
+                    })
+                    .await
+                    .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?
+                    .map(ToolOutput::text)
+                    .map_err(execution_error)
+                })
+            },
+        )
     }
 }
 

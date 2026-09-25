@@ -31,6 +31,7 @@ New sessions use one folder per session:
   session.jsonl    # append-only transcript
   web/             # web-access sidecar blobs for this session
   subagents/       # delegated run artifacts owned by this session
+  recall/          # originals of tool results elided by compaction
 ```
 
 Rho still opens legacy flat transcripts directly:
@@ -82,7 +83,8 @@ ask for approval or deny that outside-workspace read.
 
 Search and read exclude the current session. `action = "recall"` is the one
 current-session action: it returns the original text of a tool result that
-compaction elided, by the `recall_id` in its stub. See
+compaction elided, by the `recall_id` in its stub. Originals are saved in the
+session folder under `recall/`. See
 [Tool-result elision](/configuration/compaction#tool-result-elision).
 
 In the TUI, search cards show the query, matching-session count, and scope.

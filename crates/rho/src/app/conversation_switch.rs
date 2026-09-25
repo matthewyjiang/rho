@@ -204,6 +204,7 @@ fn refresh_session_compaction(switch: &ConversationSwitch<'_>) -> Result<(), Err
         context_window: switch.context_window,
         usage_recording: switch.usage_recording.clone(),
         diagnostics: switch.diagnostics.clone(),
+        recall: switch.tools.recall_store(),
     });
     switch
         .session
@@ -242,6 +243,7 @@ fn restore_after_failed_step(
             context_window: switch.previous_context_window,
             usage_recording: switch.usage_recording.clone(),
             diagnostics: switch.diagnostics.clone(),
+            recall: switch.tools.recall_store(),
         });
         if let Err(refresh_error) = session.set_compaction(Some(Arc::new(compactor)), policy) {
             return Error::InvalidConfiguration {

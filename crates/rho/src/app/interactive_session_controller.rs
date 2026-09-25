@@ -4,6 +4,7 @@ use rho_sdk::{
 };
 
 use crate::{
+    session::recall::RecallStore,
     session::Session as StoredSession,
     tools::{advisor::AdvisorSessionStore, web::WebAccessStore},
 };
@@ -32,6 +33,8 @@ pub(crate) struct InteractiveSessionController {
     notices: Vec<String>,
     persisted_turn_display: usize,
     web_access: WebAccessStore,
+    /// Present when the agent can recall; see [`RecallStore`].
+    recall: Option<RecallStore>,
     advisor: Option<AdvisorSessionStore>,
     pub(super) prompt: super::active_prompt::ActivePrompt,
 }
@@ -41,6 +44,7 @@ impl InteractiveSessionController {
         session: Session,
         storage: Option<StoredSession>,
         web_access: WebAccessStore,
+        recall: Option<RecallStore>,
         advisor: Option<AdvisorSessionStore>,
     ) -> Self {
         let controller = Self {
@@ -51,17 +55,24 @@ impl InteractiveSessionController {
             notices: Vec::new(),
             persisted_turn_display: 0,
             web_access,
+            recall,
             advisor,
             prompt: super::active_prompt::ActivePrompt::default(),
         };
-        controller.sync_web_access();
+        controller.sync_storage_sidecars();
         controller.sync_advisor_session();
         controller
     }
 
-    fn sync_web_access(&self) {
+    /// Points session sidecars (web blobs, recall originals) at the current
+    /// storage. Every storage change runs through here, so neither can keep
+    /// writing into a retired session or bind one without durable storage.
+    fn sync_storage_sidecars(&self) {
         let root = self.storage.as_ref().and_then(StoredSession::web_dir);
         self.web_access.bind_session(root);
+        if let Some(recall) = &self.recall {
+            recall.bind(self.storage.as_ref().and_then(StoredSession::recall_dir));
+        }
     }
 
     /// Points the advisor at the session now in use. Every session replacement
@@ -110,7 +121,7 @@ impl InteractiveSessionController {
     pub(crate) fn attach_storage(&mut self, storage: StoredSession) {
         self.storage = Some(storage);
         self.persisted_turn_display = 0;
-        self.sync_web_access();
+        self.sync_storage_sidecars();
     }
 
     pub(crate) fn storage(&self) -> Option<&StoredSession> {
@@ -154,7 +165,7 @@ impl InteractiveSessionController {
     pub(crate) fn reset(&mut self) -> anyhow::Result<SessionId> {
         self.session.reset()?;
         self.storage = None;
-        self.sync_web_access();
+        self.sync_storage_sidecars();
         self.persisted_turn_display = 0;
         let session_id = SessionId::new();
         self.pending_session_id = Some(session_id.clone());
@@ -164,7 +175,7 @@ impl InteractiveSessionController {
     pub(crate) fn set_resumed_storage(&mut self, storage: StoredSession) {
         self.storage = Some(storage);
         self.persisted_turn_display = 0;
-        self.sync_web_access();
+        self.sync_storage_sidecars();
     }
 
     pub(crate) fn sync_finished_turn(

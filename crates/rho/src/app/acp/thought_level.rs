@@ -140,6 +140,7 @@ pub(super) fn apply_thought_level(
             context_window: configured_context_window(config),
             usage_recording: built.runtime.usage_recording(),
             diagnostics: built.diagnostics.clone(),
+            recall: built.tools.recall_store(),
         },
     ) {
         // Restore the previous level so a failed compaction rebuild does

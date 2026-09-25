@@ -35,7 +35,7 @@ A check that requests compaction is not proof that it finished. `Completed` coun
 
 ## Tool-result elision
 
-Every compaction first tries a cheap tier that needs no model request. Rho replaces the content of old tool results outside the recent tail with a short stub:
+Compaction first tries a cheap tier that needs no model request. Rho replaces the content of old tool results outside the recent tail with a short stub:
 
 ```text
 [elided tool result: read_file path=src/main.rs · ok · 18342 bytes · recall_id=r3f9c0a1b2d4e5f60; fetch the text with the sessions tool, action=recall]
@@ -43,9 +43,16 @@ Every compaction first tries a cheap tier that needs no model request. Rho repla
 
 Oldest results go first, and elision stops once the context reaches the target. Results under 1 KiB stay verbatim; across local sessions they are about 38% of results but only about 5% of tool-result bytes. Tool results inside the recent tail are never elided. Each tool call keeps exactly one result with the same ID, so the history stays valid for every provider. Images attached to an elided result are removed with it, and the stub counts them.
 
-If elision alone reaches the target, Rho commits the elided history and makes no model request. Otherwise native or text-summary compaction runs on the elided history. Like any compaction, elision invalidates the provider prompt cache from the first changed message on.
+If elision alone reaches the target, Rho commits the elided history and makes no model request. Otherwise native or text-summary compaction runs on the elided history, so the summary sees the stubs rather than the original tool output. This keeps a large history from overflowing the summary request. The tradeoff is that summaries describe old tool results only by tool, arguments, and status. Like any compaction, elision invalidates the provider prompt cache from the first changed message on.
 
-The model can fetch an elided result with the `sessions` tool, `action = "recall"`, and the stub's `recall_id`. Recall reads the current session's saved transcript, returns the original text in character windows (`start`, `chars`) within the tool output limit, and fails with an error for unknown IDs. Recall IDs derive from the tool call ID and content, so they stay stable across resume and branches. Recalled text is marked as untrusted tool output. Sessions without a saved transcript cannot recall.
+Before a stub enters the history, Rho saves the original under the session folder in `recall/<recall_id>.json`. The model fetches it with the `sessions` tool, `action = "recall"`, and the stub's `recall_id`. Recall returns the original text in character windows (`start`, `chars`) within the tool output limit, marks it as untrusted tool output, and fails with an error for unknown IDs. Only text is recallable; images removed with an elided result are not. The recall files sit outside the workspace, so checked permission modes may ask for approval, as they do for other `sessions` reads. Recall IDs derive from the tool call ID and content, so they stay stable across resume and branches.
+
+Elision runs only when the stubs can be recalled. It is skipped, and compaction goes straight to native or text-summary compaction, when:
+
+- the agent does not have the `sessions` tool (for example the built-in `explorer` and `reviewer`)
+- the session is not saved: `--no-save`, subagents, and automation runs
+- the session uses a legacy flat transcript without a session folder
+- saving the originals fails
 
 ## Which compactor runs
 

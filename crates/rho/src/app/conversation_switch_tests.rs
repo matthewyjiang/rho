@@ -138,6 +138,7 @@ async fn switchable_session(
         hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
         hooks: None,
         diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+        recall: None,
     })
     .unwrap();
     let session = runtime

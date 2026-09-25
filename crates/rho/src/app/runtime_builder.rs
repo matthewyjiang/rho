@@ -15,6 +15,7 @@ use {
     },
     crate::config::Config,
     crate::diagnostics::{CompactionTier, CompactionTierReport, RuntimeDiagnostics},
+    crate::session::recall::RecallStore,
     rho_providers::model::models_dev::cached_model_metadata,
 };
 
@@ -40,6 +41,8 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) hooks: Option<&'a crate::hooks::HookPipeline>,
     /// Receives compaction tier reports for `/info` and `rho(action="compaction")`.
     pub(crate) diagnostics: RuntimeDiagnostics,
+    /// From [`crate::tools::AppToolSet::recall_store`]; `None` disables elision.
+    pub(crate) recall: Option<RecallStore>,
 }
 
 pub(crate) fn build_runtime<P>(options: RuntimeBuildOptions<'_, P>) -> Result<Rho, Error>
@@ -77,6 +80,7 @@ where
         hook_host_labels,
         hooks,
         diagnostics,
+        recall,
     } = options;
     let (compactor, policy) = build_compaction(CompactionSetup {
         provider: Arc::clone(&provider),
@@ -86,6 +90,7 @@ where
         context_window,
         usage_recording: usage_recording.clone(),
         diagnostics,
+        recall,
     });
     let mut builder = Rho::builder()
         .provider_shared(provider)
@@ -138,6 +143,9 @@ pub(crate) struct CompactionSetup<'a> {
     pub(crate) usage_recording: ProviderRequestUsageRecording,
     /// Receives which compaction tier ran.
     pub(crate) diagnostics: RuntimeDiagnostics,
+    /// Where elided originals are saved. `None` turns elision off, because the
+    /// agent could not recall them.
+    pub(crate) recall: Option<RecallStore>,
 }
 
 pub(crate) fn build_compaction(
@@ -151,6 +159,7 @@ pub(crate) fn build_compaction(
         context_window,
         usage_recording,
         diagnostics,
+        recall,
     } = setup;
     let policy = automatic_compaction_policy(&compaction, context_window);
     let compactor = ModelCompactor {
@@ -161,6 +170,7 @@ pub(crate) fn build_compaction(
         config: compaction,
         context_window,
         diagnostics,
+        recall,
     };
     (compactor, policy)
 }
@@ -198,6 +208,7 @@ pub(crate) struct ModelCompactor {
     config: CompactionConfig,
     context_window: Option<u64>,
     diagnostics: RuntimeDiagnostics,
+    recall: Option<RecallStore>,
 }
 
 impl Compactor for ModelCompactor {
@@ -239,11 +250,10 @@ impl Compactor for ModelCompactor {
                 request.trigger(),
                 context,
             );
-            let (elided, elided_tool_results) =
-                match elide_tool_results(request.messages(), &self.tool_specs, target_tokens) {
-                    Some(elision) => (Some(elision.messages), elision.elided),
-                    None => (None, 0),
-                };
+            let (elided, elided_tool_results) = match self.elide(&request, target_tokens) {
+                Some(elision) => (Some(elision.messages), elision.originals.len()),
+                None => (None, 0),
+            };
             let report = |tier| {
                 self.diagnostics
                     .record_compaction_tier(CompactionTierReport {
@@ -347,6 +357,24 @@ enum NativeCompactionResult {
 }
 
 impl ModelCompactor {
+    /// Elides only when the agent can recall, and only after the originals are
+    /// saved. A failed save skips elision rather than stranding a stub.
+    fn elide(
+        &self,
+        request: &CompactionRequest,
+        target_tokens: u64,
+    ) -> Option<crate::compaction::Elision> {
+        let dir = self.recall.as_ref()?.dir()?;
+        let elision = elide_tool_results(request.messages(), &self.tool_specs, target_tokens)?;
+        match crate::session::recall::save(&dir, &elision.originals) {
+            Ok(()) => Some(elision),
+            Err(error) => {
+                tracing::warn!(%error, "could not save elided tool results; skipping elision");
+                None
+            }
+        }
+    }
+
     async fn try_native_compaction(
         &self,
         messages: &[rho_sdk::model::Message],

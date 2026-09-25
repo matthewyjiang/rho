@@ -81,6 +81,18 @@ pub(crate) enum CompactionTier {
     Unchanged,
 }
 
+impl CompactionTier {
+    /// Matches the serialized name, for `/info`.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Elision => "elision",
+            Self::Native => "native",
+            Self::TextSummary => "text_summary",
+            Self::Unchanged => "unchanged",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct CompactionTierReport {
     pub tier: CompactionTier,
@@ -94,5 +106,6 @@ pub(crate) struct CompactionDiagnostics {
     pub current: CompactionContext,
     pub last_idle_check: Option<IdleCompactionCheck>,
     pub last_provider_check: Option<ProviderCompactionCheck>,
+    /// Filled on read from the runtime's single tier record.
     pub last_tier: Option<CompactionTierReport>,
 }

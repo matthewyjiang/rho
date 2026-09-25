@@ -25,11 +25,11 @@ const MIN_ELIDED_BYTES: usize = 1024;
 /// Argument summaries identify the call (path, command, pattern), not replay it.
 const ARGUMENT_SUMMARY_CHARS: usize = 80;
 
-/// History after elision and how many results were replaced.
+/// History after elision and the originals it replaced, oldest first.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Elision {
     pub messages: Vec<Message>,
-    pub elided: usize,
+    pub originals: Vec<ToolResult>,
 }
 
 /// Stable handle for one persisted tool result. Hashing the call id with the
@@ -55,21 +55,12 @@ pub(crate) fn elide_tool_results(
     let partition = partition_messages_for_compaction(messages, tools, target_tokens)?;
     let start = partition.leading_messages.len();
     let end = start + partition.compacted_messages.len();
-    let calls = tool_calls(&messages[..end]);
-    let mut supplements = BTreeMap::<String, Vec<usize>>::new();
-    for (index, message) in messages.iter().enumerate().take(end).skip(start) {
-        if let Some(images) = message.as_tool_image_supplement() {
-            supplements
-                .entry(images.tool_call_id().to_owned())
-                .or_default()
-                .push(index);
-        }
-    }
+    let owners = Owners::new(&messages[start..end], start);
 
     let mut output = messages.to_vec();
     let mut dropped = vec![false; messages.len()];
     let mut tokens = estimate_context_tokens(messages, tools);
-    let mut elided = 0;
+    let mut originals = Vec::new();
     for index in start..end {
         if tokens <= target_tokens {
             break;
@@ -77,10 +68,7 @@ pub(crate) fn elide_tool_results(
         let Message::ToolResult(result) = &messages[index] else {
             continue;
         };
-        let images = supplements
-            .get(&result.id)
-            .map(Vec::as_slice)
-            .unwrap_or_default();
+        let images = owners.supplements(index);
         if result.content.len() < MIN_ELIDED_BYTES && images.is_empty() {
             continue;
         }
@@ -92,7 +80,7 @@ pub(crate) fn elide_tool_results(
         let stub = Message::ToolResult(ToolResult {
             id: result.id.clone(),
             ok: result.ok,
-            content: stub_text(result, calls.get(result.id.as_str()), image_count),
+            content: stub_text(result, owners.call(index), image_count),
         });
         tokens = tokens
             .saturating_sub(estimate_message_tokens(&messages[index]))
@@ -102,15 +90,15 @@ pub(crate) fn elide_tool_results(
             dropped[image_index] = true;
         }
         output[index] = stub;
-        elided += 1;
+        originals.push(result.clone());
     }
-    (elided > 0).then(|| Elision {
+    (!originals.is_empty()).then(|| Elision {
         messages: output
             .into_iter()
             .zip(dropped)
             .filter_map(|(message, dropped)| (!dropped).then_some(message))
             .collect(),
-        elided,
+        originals,
     })
 }
 
@@ -119,22 +107,66 @@ struct CallSummary<'a> {
     arguments: &'a Value,
 }
 
-fn tool_calls(messages: &[Message]) -> BTreeMap<&str, CallSummary<'_>> {
-    messages
-        .iter()
-        .filter_map(Message::completed_assistant_content)
-        .flatten()
-        .filter_map(|block| match block {
-            ContentBlock::ToolCall(call) => Some((
-                call.id.as_str(),
-                CallSummary {
-                    name: &call.name,
-                    arguments: &call.arguments,
-                },
-            )),
-            ContentBlock::Text(_) | ContentBlock::Image(_) => None,
-        })
-        .collect()
+/// Positional ownership inside the compacted range. Providers may reuse call
+/// ids across turns (`call_0`), so ids alone are ambiguous: a result belongs to
+/// the nearest preceding call with its id, and an image supplement to the
+/// nearest preceding result for its call id.
+struct Owners<'a> {
+    calls: BTreeMap<usize, CallSummary<'a>>,
+    supplements: BTreeMap<usize, Vec<usize>>,
+}
+
+impl<'a> Owners<'a> {
+    fn new(range: &'a [Message], offset: usize) -> Self {
+        let mut latest_call = BTreeMap::<&str, CallSummary<'a>>::new();
+        let mut latest_result = BTreeMap::<&str, usize>::new();
+        let mut owners = Self {
+            calls: BTreeMap::new(),
+            supplements: BTreeMap::new(),
+        };
+        for (position, message) in range.iter().enumerate() {
+            let index = offset + position;
+            if let Message::ToolResult(result) = message {
+                if let Some(call) = latest_call.get(result.id.as_str()) {
+                    owners.calls.insert(
+                        index,
+                        CallSummary {
+                            name: call.name,
+                            arguments: call.arguments,
+                        },
+                    );
+                }
+                latest_result.insert(&result.id, index);
+            } else if let Some(images) = message.as_tool_image_supplement() {
+                if let Some(&owner) = latest_result.get(images.tool_call_id()) {
+                    owners.supplements.entry(owner).or_default().push(index);
+                }
+            }
+            for block in message.completed_assistant_content().into_iter().flatten() {
+                if let ContentBlock::ToolCall(call) = block {
+                    latest_call.insert(
+                        &call.id,
+                        CallSummary {
+                            name: &call.name,
+                            arguments: &call.arguments,
+                        },
+                    );
+                }
+            }
+        }
+        owners
+    }
+
+    fn call(&self, result_index: usize) -> Option<&CallSummary<'a>> {
+        self.calls.get(&result_index)
+    }
+
+    fn supplements(&self, result_index: usize) -> &[usize] {
+        self.supplements
+            .get(&result_index)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
 }
 
 fn stub_text(result: &ToolResult, call: Option<&CallSummary<'_>>, image_count: usize) -> String {

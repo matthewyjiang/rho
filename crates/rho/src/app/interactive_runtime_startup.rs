@@ -148,6 +148,7 @@ pub(super) async fn initialize(
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: hooks.as_ref(),
             diagnostics: diagnostics.clone(),
+            recall: tools.recall_store(),
         })?;
         let session_options = match resolve_session_options(
             &provider,
@@ -211,6 +212,7 @@ pub(super) async fn initialize(
             session,
             storage,
             tools.web_access().clone(),
+            tools.recall_store(),
             tools.advisor().cloned(),
         ),
         provider: ProviderController::new(provider, sdk_options.runtime.reasoning),

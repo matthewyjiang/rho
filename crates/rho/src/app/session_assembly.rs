@@ -247,6 +247,7 @@ where
                 hook_host_labels,
                 hooks: hooks.as_ref(),
                 diagnostics: diagnostics.clone(),
+                recall: tool_set.recall_store(),
             },
             max_steps,
         )?;

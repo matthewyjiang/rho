@@ -127,6 +127,17 @@ struct RuntimeState {
     hooks: Option<crate::hooks::HookInspector>,
 }
 
+impl RuntimeState {
+    /// Context refreshes rebuild `compaction`; the tier lives apart and is
+    /// joined only on read so it has one source of truth.
+    fn compaction_with_tier(&self) -> Option<CompactionDiagnostics> {
+        self.compaction.clone().map(|mut compaction| {
+            compaction.last_tier = self.compaction_tier;
+            compaction
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RuntimeDiagnostics {
     state: Arc<RwLock<RuntimeState>>,
@@ -175,7 +186,7 @@ impl RuntimeDiagnostics {
     }
 
     pub(crate) fn compaction(&self) -> Option<CompactionDiagnostics> {
-        self.read().compaction.clone()
+        self.read().compaction_with_tier()
     }
 
     pub(crate) fn clear_compaction(&self) {
@@ -199,7 +210,7 @@ impl RuntimeDiagnostics {
             current,
             last_idle_check,
             last_provider_check: last_provider_check.map(Into::into),
-            last_tier: state.compaction_tier,
+            last_tier: None,
             completed,
         });
     }
@@ -207,11 +218,7 @@ impl RuntimeDiagnostics {
     /// Records which tier the compactor used. Compactors call this, so it
     /// covers automatic, manual, and overflow-recovery compactions alike.
     pub(crate) fn record_compaction_tier(&self, report: CompactionTierReport) {
-        let mut state = self.write();
-        state.compaction_tier = Some(report);
-        if let Some(compaction) = state.compaction.as_mut() {
-            compaction.last_tier = Some(report);
-        }
+        self.write().compaction_tier = Some(report);
     }
 
     pub(crate) fn record_idle_compaction(&self, check: IdleCompactionCheck) {
@@ -287,7 +294,7 @@ impl RuntimeDiagnostics {
         let value = match action {
             "info" => serde_json::to_value(&state.identity),
             "context" => serde_json::to_value(&state.context),
-            "compaction" => serde_json::to_value(&state.compaction),
+            "compaction" => serde_json::to_value(state.compaction_with_tier()),
             "prompt_sources" => serde_json::to_value(&state.prompt_sources),
             "tools" => serde_json::to_value(&state.tools),
             "config" => serde_json::to_value(&state.config),

@@ -24,6 +24,7 @@ async fn failed_save_does_not_skip_the_next_turn_display() {
         wrong_session,
         Some(storage.clone()),
         WebAccessStore::new(),
+        /*recall*/ None,
         /*advisor*/ None,
     );
     let failed = PendingTurn::new(
@@ -55,4 +56,40 @@ async fn failed_save_does_not_skip_the_next_turn_display() {
     let (_, histories) =
         StoredSession::open_by_id_with_histories_in_root(root.path(), &cwd, storage.id()).unwrap();
     assert_eq!(histories.display, vec![next]);
+}
+
+// Covers: recall follows the durable storage through every storage change:
+// unbound without storage, bound on attach, cleared by /new's reset, and
+// rebound on resume. A stale binding would stub results into a retired session.
+// Owner: interactive session storage sidecars.
+#[tokio::test]
+async fn recall_binding_follows_storage_changes() {
+    let root = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let runtime = rho_sdk::Rho::builder()
+        .provider(ScriptedProvider::new(
+            ModelIdentity::new("test", "test", "test"),
+            Vec::new(),
+        ))
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let recall = crate::session::recall::RecallStore::default();
+    let mut controller = InteractiveSessionController::new(
+        session,
+        /*storage*/ None,
+        WebAccessStore::new(),
+        Some(recall.clone()),
+        /*advisor*/ None,
+    );
+    let first = StoredSession::create_in_root(root.path(), cwd.path()).unwrap();
+    let second = StoredSession::create_in_root(root.path(), cwd.path()).unwrap();
+
+    assert_eq!(recall.dir(), None);
+    controller.attach_storage(first.clone());
+    assert_eq!(recall.dir(), first.recall_dir());
+    controller.reset().unwrap();
+    assert_eq!(recall.dir(), None);
+    controller.set_resumed_storage(second.clone());
+    assert_eq!(recall.dir(), second.recall_dir());
 }

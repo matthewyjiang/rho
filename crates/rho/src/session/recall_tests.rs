@@ -1,44 +1,37 @@
 use pretty_assertions::assert_eq;
-use rho_providers::model::Message;
 use serde_json::{json, Value};
 use tempfile::TempDir;
 
 use super::*;
-use crate::session::Session;
 
-// Covers: recall resolves a persisted result by id from the current session,
-// pages it by character window, and fails clearly for an unknown id or a
-// session without a transcript.
-// Owner: current-session recall storage lookup.
+// Covers: a saved original is recalled by id and paged by character window;
+// unknown and malformed (path-escaping) ids fail clearly; oversized windows
+// hit the output budget.
+// Owner: recall storage.
 #[test]
-fn recalls_persisted_tool_result_by_id() {
+fn recalls_saved_original_by_id() {
     let root = TempDir::new().unwrap();
-    let cwd = TempDir::new().unwrap();
-    let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+    let dir = root.path().join("recall");
     let result = ToolResult {
         id: "call_0".into(),
         ok: false,
         content: "héllo world".into(),
     };
-    session
-        .append_message(&Message::ToolResult(result.clone()))
-        .unwrap();
+    save(&dir, std::slice::from_ref(&result)).unwrap();
     let id = crate::compaction::recall_id(&result);
-    let recall = |current: &str, recall_id: &str, window| {
-        super::recall(
-            root.path(),
-            cwd.path(),
-            current,
-            recall_id,
-            window,
-            &CancellationToken::new(),
-        )
-        .map(|output| serde_json::from_str::<Value>(&output).unwrap())
-        .map_err(|error| error.to_string())
+    let recall = |recall_id: &str, start: usize, chars: usize, budget: usize| {
+        let request = RecallRequest {
+            recall_id: recall_id.into(),
+            start,
+            chars,
+        };
+        super::recall(&dir, &request, budget)
+            .map(|output| serde_json::from_str::<Value>(&output).unwrap())
+            .map_err(|error| error.to_string())
     };
 
     assert_eq!(
-        recall(session.id(), &id, (1, 4)),
+        recall(&id, 1, 4, 4_096),
         Ok(json!({
             "note": UNTRUSTED,
             "recall_id": id,
@@ -51,14 +44,15 @@ fn recalls_persisted_tool_result_by_id() {
             "next_start": 5,
         }))
     );
-    assert_eq!(
-        recall(session.id(), "rmissing", (0, 10)),
-        Err(
-            "unknown recall_id 'rmissing': no tool result with this id in the current session"
-                .into()
-        )
-    );
-    assert!(recall("no-such-session", &id, (0, 10))
+    for unknown in ["r0000000000000000", "../../etc/passwd"] {
+        assert_eq!(
+            recall(unknown, 0, 10, 4_096),
+            Err(format!(
+                "unknown recall_id '{unknown}': no elided tool result with this id in the current session"
+            ))
+        );
+    }
+    assert!(recall(&id, 0, 10, 16)
         .unwrap_err()
-        .starts_with("current session transcript is not available for recall"));
+        .starts_with("sessions output byte budget: limit 16"));
 }

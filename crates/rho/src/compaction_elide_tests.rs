@@ -65,18 +65,20 @@ fn elides_oldest_large_results_outside_the_tail_until_target() {
         let elision = elide_tool_results(&messages, &[], target).unwrap();
 
         let mut expected = messages.clone();
+        let mut originals = Vec::new();
         for index in &elided_indexes {
             let (original, path, status) = match index {
                 3 => (&old, "src/a.rs", "ok"),
                 _ => (&middle, "src/c.rs", "error"),
             };
             expected[*index] = stub(original, path, status, "");
+            originals.push(original.clone());
         }
         assert_eq!(
             elision,
             Elision {
                 messages: expected,
-                elided: elided_indexes.len(),
+                originals,
             },
             "{case}"
         );
@@ -118,6 +120,9 @@ fn elided_result_drops_its_image_supplement() {
     );
 }
 
+// Covers: nothing below the size floor or outside the tail means no elision,
+// so the compactor escalates without saving recall files.
+// Owner: elision tier selection policy.
 #[test]
 fn returns_none_when_nothing_is_eligible() {
     let messages = vec![
@@ -129,4 +134,43 @@ fn returns_none_when_nothing_is_eligible() {
     ];
 
     assert_eq!(elide_tool_results(&messages, &[], 100), None);
+}
+
+// Covers: providers that reuse call ids (`call_0` every turn). Each result
+// keeps its own call summary, and an image stays with the result it follows,
+// so eliding only the first result neither drops the second's image nor
+// borrows its tool name.
+// Owner: elision tier ownership.
+#[test]
+fn reused_call_ids_pair_by_position() {
+    let first = result("call_0", true, 8_000);
+    let second = result("call_0", true, 10);
+    let image = || ImageContent {
+        mime_type: "image/png".into(),
+        data: "a".repeat(8_000),
+    };
+    let messages = vec![
+        Message::System("system".into()),
+        Message::user_text("go"),
+        call("call_0", "first.rs"),
+        Message::ToolResult(first.clone()),
+        call("call_0", "second.png"),
+        Message::ToolResult(second),
+        Message::tool_image_supplement("read_file", "call_0", vec![image()]).unwrap(),
+        Message::user_text("recent"),
+        Message::assistant_text("y".repeat(4_000)),
+    ];
+    let full = estimate_context_tokens(&messages, &[]);
+
+    let elision = elide_tool_results(&messages, &[], full - 1_000).unwrap();
+
+    let mut expected = messages.clone();
+    expected[3] = stub(&first, "first.rs", "ok", "");
+    assert_eq!(
+        elision,
+        Elision {
+            messages: expected,
+            originals: vec![first],
+        }
+    );
 }

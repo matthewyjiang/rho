@@ -55,8 +55,9 @@ pub(super) fn push_fields(block: &mut CommandBlock, diagnostics: &CompactionDiag
         block.push_field(
             "Last tier",
             &format!(
-                "{:?}, {} tool results elided",
-                report.tier, report.elided_tool_results
+                "{}, {} tool results elided",
+                report.tier.label(),
+                report.elided_tool_results
             ),
         );
     }
