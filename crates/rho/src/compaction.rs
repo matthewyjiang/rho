@@ -15,10 +15,12 @@ pub struct CompactionConfig {
     pub target_percent: u8,
 }
 
+/// Single source of truth for compaction defaults; `Config::default()` derives
+/// its compaction fields from this.
 impl Default for CompactionConfig {
     fn default() -> Self {
         Self {
-            auto_compact: false,
+            auto_compact: true,
             threshold_percent: 85,
             target_percent: 50,
         }

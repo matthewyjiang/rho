@@ -606,7 +606,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "runtime_info",
         "Open runtime details immediately, copy the report, and keep fields readable after a narrow resize",
         PtySize {
-            rows: 40,
+            // Tall enough to show Workspace below the default auto-compaction rows.
+            rows: 50,
             cols: 100,
         },
         RUNTIME_INFO_STEPS,
