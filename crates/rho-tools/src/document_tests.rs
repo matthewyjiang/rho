@@ -206,6 +206,31 @@ fn rejects_pdf_streams_with_chained_flate_filters() {
 }
 
 #[cfg(feature = "document-pdf")]
+// Covers: filters lopdf decodes without a byte budget (Brotli, hex, run-length) must be
+// rejected at byte preflight, before pdf-inspector's unbounded load can expand them.
+// Owner: PDF preflight
+#[test]
+fn rejects_pdf_streams_with_unbudgeted_decode_filters() {
+    for filter in [
+        "BrotliDecode",
+        "ASCIIHexDecode",
+        "AHx",
+        "RunLengthDecode",
+        "RL",
+    ] {
+        let bytes = pdf_fixture_with_filter("(content) Tj", &format!("/{filter}"));
+
+        assert_eq!(
+            pdf::validate_object_nesting(&bytes),
+            Err(format!(
+                "PDF stream filter chain '[{filter}]' is unsupported by bounded extraction"
+            )),
+            "{filter}"
+        );
+    }
+}
+
+#[cfg(feature = "document-pdf")]
 // Covers: modern PDF 1.5 object and cross-reference streams must extract when Flate stays in budget.
 // Owner: PDF extractor
 #[test]

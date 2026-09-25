@@ -8,9 +8,33 @@ use flate2::read::ZlibDecoder;
 pub(in crate::document) const MAX_PDF_EXPANDED_STREAM_BYTES: usize = 64 * 1024 * 1024;
 /// Caps nested PDF arrays/dicts before lopdf parses untrusted bytes.
 ///
-/// lopdf (the version pulled by `pdf-inspector`) bounds nested literal strings but not
-/// array/dictionary depth. This byte scan runs before any parser load.
+/// lopdf's parser applies its own `MAX_NESTING_DEPTH` (also 100). This byte scan
+/// enforces the cap before any parser load so rejection does not depend on the
+/// lopdf version `pdf-inspector` pulls in.
 pub(in crate::document) const MAX_PDF_OBJECT_NESTING_DEPTH: usize = 100;
+
+/// Returns whether a stream filter decodes without a bounded-extraction budget.
+///
+/// Only a lone Flate filter is budgeted (via `bounded_flate_size`). Any chain that
+/// contains Flate, or any other filter lopdf can decode, is rejected so an untrusted
+/// stream cannot expand past `MAX_PDF_EXPANDED_STREAM_BYTES`. Image codecs are not
+/// listed: the text path never decodes them. Add names here when lopdf gains decoders.
+pub(in crate::document) fn is_unbounded_filter(filter: &[u8]) -> bool {
+    matches!(
+        filter,
+        b"FlateDecode"
+            | b"Fl"
+            | b"LZWDecode"
+            | b"LZW"
+            | b"ASCII85Decode"
+            | b"A85"
+            | b"ASCIIHexDecode"
+            | b"AHx"
+            | b"RunLengthDecode"
+            | b"RL"
+            | b"BrotliDecode"
+    )
+}
 
 pub(in crate::document) fn validate_object_nesting(bytes: &[u8]) -> Result<(), String> {
     let mut index = 0;
@@ -242,14 +266,7 @@ fn budget_stream_bytes(dict: &[u8], content: &[u8], remaining: &mut usize) -> Re
             let expanded = bounded_flate_size(content, *remaining)?;
             consume_budget(remaining, expanded)?;
         }
-        filters
-            if filters.iter().any(|filter| {
-                matches!(
-                    filter.as_slice(),
-                    b"LZWDecode" | b"LZW" | b"ASCII85Decode" | b"A85" | b"FlateDecode" | b"Fl"
-                )
-            }) =>
-        {
+        filters if filters.iter().any(|filter| is_unbounded_filter(filter)) => {
             let chain = filters
                 .iter()
                 .map(|filter| String::from_utf8_lossy(filter))
