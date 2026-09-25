@@ -32,7 +32,7 @@ calamine = { version = "0.36", optional = true }
 flate2 = { version = "1", optional = true }
 # Same major as pdf-inspector so preflight and extraction share one lopdf build.
 lopdf = { version = "0.42", optional = true }
-pdf-inspector = { version = "0.1.8", optional = true }
+pdf-inspector = { version = "1.20.0", optional = true }
 quick-xml = { version = "0.41", optional = true }
 zip = { version = "8", default-features = false, features = ["deflate"], optional = true }
 
