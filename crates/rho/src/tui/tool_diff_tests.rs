@@ -162,3 +162,24 @@ fn path_from_diff_header_line_reads_git_headers() {
     assert_eq!(path_from_diff_header_line("+++ /dev/null"), None);
     assert_eq!(path_from_diff_header_line("+added line"), None);
 }
+
+// Covers: an exact per-file diff (the `/diff` popup) must keep highlighting
+// through context lines that look like diff headers, such as a Lua `--- doc`
+// comment, instead of treating them as a path switch and going plain.
+// Owner: pure unit (diff syntax path policy)
+#[test]
+fn pinned_file_keeps_language_through_header_lookalike_context() {
+    crate::tui::syntax::warm_syntax_set();
+    let rows = [
+        DiffRow::new(DiffRowKind::Context, Some(1), "--- @param x number"),
+        DiffRow::new(DiffRowKind::Added, Some(2), "local answer = 42"),
+    ];
+    let mut syntax = DiffSyntax::for_file("mod.lua");
+    for row in &rows {
+        assert!(
+            syntax.paint_row(row).is_some(),
+            "{:?} stays highlighted",
+            row.text
+        );
+    }
+}

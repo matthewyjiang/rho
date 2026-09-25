@@ -135,6 +135,27 @@ fn loads_and_normalizes_compaction_percentages() {
     assert_eq!(config.compact_target_percent, 79);
 }
 
+// Covers: auto compaction defaults on without a [compaction] section, and an
+// explicit opt-out survives load and a `/config` save round-trip.
+// Owner: config load/save
+#[test]
+fn auto_compact_defaults_on_and_explicit_opt_out_round_trips() {
+    let store = rho_providers::credentials::MemoryCredentialStore::default();
+    for (contents, expected) in [("", true), ("[compaction]\nauto_compact = false\n", false)] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, contents).unwrap();
+
+        let config = Config::load_with_store(path.clone(), &store).unwrap();
+        config.save_with_store(path.clone(), &store).unwrap();
+        let reloaded = Config::load_with_store(path, &store).unwrap();
+
+        let threshold = crate::compaction::CompactionConfig::from(&reloaded)
+            .threshold_tokens(/*context_window*/ 200_000);
+        assert_eq!(threshold.is_some(), expected, "config: {contents:?}");
+    }
+}
+
 // Covers: display.cache_miss_notices loads from grouped config and defaults off.
 // Owner: config load
 #[test]

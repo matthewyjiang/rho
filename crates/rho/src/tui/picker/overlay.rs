@@ -67,6 +67,7 @@ struct OverlayContent<'a> {
     /// First visible nav row, owned by the picker's scroll/follow state.
     nav_window_start: usize,
     hovered_nav_row: Option<usize>,
+    label_overflow: super::rows::LabelOverflow,
     footer: &'a str,
     empty_match_message: &'a str,
     chrome: OverlayChromeView<'a>,
@@ -112,6 +113,7 @@ pub(in crate::tui) fn render_picker_overlay(picker: &UiPicker, area: Rect) -> Ov
         detail_scroll: picker.detail_scroll,
         nav_window_start: picker.nav_window_start(layout.nav_viewport_rows()),
         hovered_nav_row: picker.hovered_nav_row(),
+        label_overflow: picker.label_overflow,
         footer: &footer,
         empty_match_message,
         chrome,
@@ -199,15 +201,19 @@ fn overlay_lines(layout: OverlayLayout, content: OverlayContent<'_>) -> Vec<Line
         } => vec![side_by_side_body(layout, &content)],
         OverlayPanes::NavAndDetail {
             orientation: OverlayOrientation::Stacked,
+            detail_width,
             detail_viewport_rows: detail_rows_budget,
             nav_viewport_rows: nav_rows_budget,
             ..
         } => {
+            // `detail_width` already leaves the scrollbar gutter out of the
+            // inner width; painting at `inner_width` overflowed the right
+            // border by that one column.
             let detail_rows = detail_viewport_rows(
                 content.detail,
                 content.detail_badge,
                 content.detail_scroll,
-                layout.inner_width,
+                detail_width,
                 detail_rows_budget,
             );
             let nav_rows = nav_item_rows(
@@ -344,6 +350,7 @@ fn nav_item_rows(
             show_badges: content.show_nav_badges,
             show_preview: matches!(width_mode, RowWidthMode::AlignedColumn(_)),
             fill: LineFill::PadToWidth,
+            label_overflow: content.label_overflow,
         },
         content.hovered_nav_row,
     );

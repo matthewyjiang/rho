@@ -25,6 +25,7 @@ use rho_sdk::{
 };
 use tokio::sync::Notify;
 
+use super::context_overflow::mentions_context_overflow;
 use crate::model::{ModelError, TransportError, TransportFailureKind};
 
 /// Converts an application [`ModelError`] into a sanitized public [`ProviderError`].
@@ -77,6 +78,18 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
             Retryability::Retryable,
         )
         .with_diagnostic(sanitize_diagnostic(&format!("{error_type}: {message}"))),
+        ModelError::ProviderReported {
+            error_type,
+            message,
+            ..
+        } if mentions_context_overflow(&error_type) || mentions_context_overflow(&message) => {
+            context_overflow_error(&format!("{error_type}: {message}"))
+        }
+        ModelError::HttpStatus { status, body, .. }
+            if status.is_client_error() && mentions_context_overflow(&body) =>
+        {
+            context_overflow_error(&body)
+        }
         ModelError::ProviderReported {
             kind,
             error_type,
@@ -160,6 +173,15 @@ pub fn provider_error_from_model_error(error: ModelError) -> ProviderError {
             Retryability::Retryable,
         ),
     }
+}
+
+fn context_overflow_error(diagnostic: &str) -> ProviderError {
+    ProviderError::new(
+        ProviderErrorKind::ContextOverflow,
+        "request exceeds the model context window",
+        Retryability::Permanent,
+    )
+    .with_diagnostic(sanitize_diagnostic(diagnostic))
 }
 
 fn provider_error_from_transport_request(error: TransportError) -> ProviderError {

@@ -18,11 +18,10 @@ use header::push_header_line;
 use super::{
     feed_image::reserve_optional_image_rows,
     render::{
-        display_width, hard_wrap_styled_spans, pad_display_line, pad_spaces, padded_content_width,
-        push_wrapped_text, slice_spans_by_bytes, soft_wrap_visible_ranges, spans_display_width,
-        styled_blank_line, wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
+        display_width, pad_display_line, pad_spaces, padded_content_width, push_wrapped_text,
+        slice_spans_by_bytes, soft_wrap_visible_ranges, spans_display_width, styled_blank_line,
+        wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
     },
-    syntax::spans_from_segments_with_matches,
     theme::Theme,
     tool_diff::{self, DiffSyntax},
     tool_search::SearchSyntax,
@@ -768,11 +767,8 @@ fn fact_spans(fact: &ToolFact, live_elapsed: Option<Duration>) -> Vec<Span<'stat
     }
 }
 
-/// Draw one diff row as `<indent><line no> <sign> <text>`.
-///
-/// The number gutter and sign column are fixed, so wrapped text hangs under the
-/// text column and added/removed rows stay distinguishable without color.
-/// Content lines may carry language-aware spans when a path is known.
+/// Tool-card diff row: File/Meta rows as indented body text, content rows
+/// through the shared painter under the tree content column.
 fn push_diff_row(
     lines: &mut Vec<Line<'static>>,
     row: &DiffRow,
@@ -782,73 +778,29 @@ fn push_diff_row(
 ) {
     // File rows are TreeFact groups in render_child_groups. Fallback keeps path
     // plain if a caller still routes a File row through this helper.
-    let highlighted = syntax.paint_row(row);
-    if row.kind == DiffRowKind::File {
-        push_body_line(lines, &row.plain_text(), width, Theme::tool_path());
-        return;
-    }
-    // Op locators and other annotations are not content lines; drop the sign
-    // column so they read as headers rather than gap markers.
-    if row.kind == DiffRowKind::Meta {
-        push_body_line(lines, &row.text, width, Theme::text());
-        return;
-    }
-
-    // Unnumbered bodies (patch text without hunk headers) drop the gutter and
-    // its separator so the sign column sits right under the tree indent.
-    let number = match (gutter, row.line) {
-        (0, _) => String::new(),
-        (_, Some(line)) => format!("{line:>gutter$} "),
-        (_, None) => " ".repeat(gutter + 1),
-    };
-    // Sign cell is one character; a trailing space separates it from content
-    // and sits in the row wash with the rest of the line.
-    let sign = row.kind.sign();
-    let sign_gap = " ";
-    let prefix_width =
-        display_width(CHILD_CONTENT_INDENT) + display_width(&number) + sign.len() + sign_gap.len();
-    let content_width = width.saturating_sub(prefix_width).max(1);
-    let chrome = Theme::tool_diff_chrome(row.kind);
-    // Unhighlighted tokens use the row wash (or add/remove fg if none).
-    let plain = chrome.plain();
-    // Empty cells only need the wash; foreground is irrelevant on spaces.
-    let pad = chrome.washed(Style::default());
-
-    let mut content_spans = match highlighted {
-        Some(segments) => spans_from_segments_with_matches(&segments, plain, &[]),
-        None => vec![Span::styled(row.text.clone(), plain)],
-    };
-    chrome.paint_content(&mut content_spans);
-
-    let wrapped = hard_wrap_styled_spans(
-        &row.text,
-        &content_spans,
-        content_width,
-        chrome.washed(plain),
-    );
-    let indent_width = display_width(CHILD_CONTENT_INDENT);
-    for (index, chunk) in wrapped.into_iter().enumerate() {
-        let mut spans = if index == 0 {
-            vec![
-                Span::styled(CHILD_CONTENT_INDENT.to_string(), Theme::tool_tree()),
-                Span::styled(number.clone(), chrome.washed(Theme::tool_diff_gutter())),
-                Span::styled(sign.to_string(), chrome.sign),
-                Span::styled(sign_gap.to_string(), pad),
-            ]
-        } else {
-            // Continuations keep tree indent clear; wash covers number+sign columns.
-            let mut cont = vec![Span::styled(
-                CHILD_CONTENT_INDENT.to_string(),
-                Theme::tool_tree(),
-            )];
-            let rest = prefix_width.saturating_sub(indent_width);
-            if rest > 0 {
-                cont.push(Span::styled(" ".repeat(rest), pad));
-            }
-            cont
-        };
-        spans.extend(chunk);
-        lines.push(pad_spans_line_with(spans, width, chrome.washed(plain)));
+    match row.kind {
+        DiffRowKind::File => {
+            let _ = syntax.paint_row(row);
+            push_body_line(lines, &row.plain_text(), width, Theme::tool_path());
+        }
+        // Op locators and other annotations are not content lines; drop the
+        // sign column so they read as headers rather than gap markers.
+        DiffRowKind::Meta => {
+            let _ = syntax.paint_row(row);
+            push_body_line(lines, &row.text, width, Theme::text());
+        }
+        DiffRowKind::Context | DiffRowKind::Added | DiffRowKind::Removed | DiffRowKind::Skip => {
+            tool_diff::push_diff_content_row(
+                lines,
+                row,
+                tool_diff::DiffRowFrame {
+                    indent: CHILD_CONTENT_INDENT,
+                    gutter,
+                    width,
+                },
+                syntax,
+            );
+        }
     }
 }
 

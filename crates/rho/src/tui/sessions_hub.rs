@@ -210,7 +210,7 @@ fn cleanup_missing_workspaces_row(missing: &[DirectoryGroup], value: String) -> 
 fn manage_sessions_picker(title: impl Into<String>, items: Vec<PickerItem>) -> UiPicker {
     UiPicker::manage_sessions(title, items)
         .with_key_hints(PickerKeyHints {
-            tab_complete: false,
+            tab: super::TabKey::None,
             row_delete: true,
             ..Default::default()
         })

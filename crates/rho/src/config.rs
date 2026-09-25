@@ -198,6 +198,7 @@ pub(super) fn inferred_provider_auth(
 
 impl Default for Config {
     fn default() -> Self {
+        let compaction = CompactionConfig::default();
         Self {
             questionnaire: QuestionnaireConfig::default(),
             provider: "openai".into(),
@@ -214,9 +215,9 @@ impl Default for Config {
             zen_mode: false,
             output_streaming: StreamingMode::default(),
             theme: "terminal".into(),
-            auto_compact: false,
-            compact_threshold_percent: 85,
-            compact_target_percent: 50,
+            auto_compact: compaction.auto_compact,
+            compact_threshold_percent: compaction.threshold_percent,
+            compact_target_percent: compaction.target_percent,
             cache_miss_notices: false,
             internal_agents: BTreeMap::new(),
             favorite_models: Vec::new(),

@@ -17,6 +17,7 @@ fn tiny_stacked_layout_keeps_viewports_within_the_body() {
         OverlaySizing {
             has_details: true,
             nav_rows: 2,
+            shape: OverlayShape::Compact,
         },
     );
     let OverlayPanes::NavAndDetail {
@@ -47,6 +48,7 @@ fn overlay_height_follows_item_count() {
         OverlaySizing {
             has_details: true,
             nav_rows: 5,
+            shape: OverlayShape::Compact,
         },
     );
     // 12-row detail minimum + 5 chrome rows + 2 border rows.
@@ -57,6 +59,7 @@ fn overlay_height_follows_item_count() {
         OverlaySizing {
             has_details: false,
             nav_rows: 5,
+            shape: OverlayShape::Compact,
         },
     );
     // 5 nav rows + 5 chrome rows + 2 border rows.
@@ -67,6 +70,7 @@ fn overlay_height_follows_item_count() {
         OverlaySizing {
             has_details: true,
             nav_rows: 100,
+            shape: OverlayShape::Compact,
         },
     );
     // Clamped to the screen minus vertical margins.
@@ -83,6 +87,7 @@ fn pane_at_maps_positions_to_panes() {
     let sizing = OverlaySizing {
         has_details: true,
         nav_rows: 30,
+        shape: OverlayShape::Compact,
     };
     let side_by_side = picker_overlay_layout(area, sizing);
     let outer = side_by_side.outer;
@@ -145,6 +150,7 @@ fn nav_body_rect_right_edge_is_scrollbar_column() {
         OverlaySizing {
             has_details: true,
             nav_rows: 40,
+            shape: OverlayShape::Compact,
         },
     );
     let nav = layout.nav_body_rect();
@@ -165,4 +171,30 @@ fn nav_body_rect_right_edge_is_scrollbar_column() {
     let detail = layout.detail_body_rect().expect("detail pane");
     assert_eq!(detail.y, layout.body_top());
     assert!(detail.x > nav.x + nav.width);
+}
+
+// Covers: the viewer shape (`/diff`) must fill the height even with few rows
+// and give the nav its wider path column, while compact overlays keep theirs.
+// Owner: pure unit (overlay geometry)
+#[test]
+fn viewer_shape_fills_height_and_widens_nav() {
+    let area = Rect::new(0, 0, 160, 40);
+    let layout = |shape| {
+        let layout = picker_overlay_layout(
+            area,
+            OverlaySizing {
+                has_details: true,
+                nav_rows: 3,
+                shape,
+            },
+        );
+        let OverlayPanes::NavAndDetail { nav_width, .. } = layout.panes else {
+            panic!("expected nav+detail");
+        };
+        (layout.outer.height, nav_width)
+    };
+    // 40 rows minus 3-row margins; nav is 40% of 150 inner columns, capped.
+    assert_eq!(layout(OverlayShape::Viewer), (34, MAX_VIEWER_NAV_WIDTH));
+    // 12-row detail minimum + chrome; nav capped at the compact maximum.
+    assert_eq!(layout(OverlayShape::Compact), (19, MAX_NAV_WIDTH));
 }

@@ -81,6 +81,7 @@ pub(in crate::tui) fn list_picker_frame(
         show_badges: true,
         show_preview: true,
         fill: LineFill::Natural,
+        label_overflow: picker.label_overflow,
     };
     let rows = picker_item_rows(
         &picker.items,

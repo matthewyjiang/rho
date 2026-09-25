@@ -95,6 +95,9 @@ pub enum ProviderErrorKind {
     Unavailable,
     Interrupted,
     Other,
+    /// The request did not fit the model's context window. Retrying unchanged
+    /// cannot succeed; the runtime may compact history and retry once.
+    ContextOverflow,
 }
 
 /// Whether retrying an operation unchanged may succeed.

@@ -70,10 +70,10 @@ fn filter_accepts_shift_modified_characters() {
     assert_eq!(picker.filter, "Q");
 }
 
-// Covers: Tab must not complete the filter when tab_complete is disabled.
+// Covers: Tab must not complete the filter when Tab has no binding.
 // Owner: tui picker key dispatch
 #[test]
-fn tab_is_ignored_when_tab_complete_disabled() {
+fn tab_is_ignored_without_a_tab_binding() {
     let mut picker = UiPicker::new("Config", vec![item("mode")], PickerAction::Config);
     picker.filter = "mo".into();
 
@@ -89,7 +89,7 @@ fn tab_is_ignored_when_tab_complete_disabled() {
     assert_eq!(picker.filter, "mo");
 }
 
-// Covers: Tab completes the selected row only when tab_complete is enabled.
+// Covers: Tab completes the selected row only when Tab is bound to CompleteFilter.
 // Owner: tui picker key dispatch
 #[test]
 fn tab_completes_filter_when_tab_complete_enabled() {
@@ -101,7 +101,7 @@ fn tab_completes_filter_when_tab_complete_enabled() {
     .with_key_hints(PickerKeyHints {
         pin_toggle: None,
         scope_toggle: None,
-        tab_complete: true,
+        tab: super::TabKey::CompleteFilter,
         row_delete: false,
     });
     picker.filter = "gpt".into();
@@ -131,7 +131,7 @@ fn ctrl_o_toggles_model_scope_when_enabled() {
     .with_key_hints(PickerKeyHints {
         pin_toggle: Some("Ctrl+P".into()),
         scope_toggle: Some("Ctrl+O".into()),
-        tab_complete: true,
+        tab: super::TabKey::CompleteFilter,
         row_delete: false,
     });
     let mut key = key(KeyCode::Char('o'));

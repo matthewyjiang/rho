@@ -55,7 +55,7 @@ fn login_flow_picker(target: LoginFlowTarget, preferred: InteractiveLoginMode) -
         target,
     )
     .with_key_hints(PickerKeyHints {
-        tab_complete: true,
+        tab: super::TabKey::CompleteFilter,
         ..Default::default()
     });
     let preferred = match preferred {

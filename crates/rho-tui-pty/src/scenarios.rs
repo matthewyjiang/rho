@@ -11,6 +11,7 @@ mod boundary_notifications;
 mod calibrated_context;
 mod changelog;
 mod command_palette;
+mod compact;
 #[cfg(unix)]
 mod computer;
 #[cfg(unix)]
@@ -20,6 +21,7 @@ mod computer_setup;
 mod config;
 mod conversation_tree;
 mod copy_output;
+mod diff_viewer;
 mod dispatch;
 mod doctor;
 mod document_attachment;
@@ -92,6 +94,7 @@ use command_palette::{
     CREATE_AGENT_COMMAND_SCENARIO, CREATE_AGENT_MISSING_TOOLS_SCENARIO,
     SLASH_COMMAND_PALETTE_SCENARIO, TAB_COMPLETE_ENTER_BARE_COMMAND_SCENARIO,
 };
+use compact::{SUBMIT_DURING_COMPACT_STEPS, TYPE_DURING_COMPACT_STEPS};
 #[cfg(unix)]
 use computer::{COMPUTER_FAILURE_SCENARIO, COMPUTER_PLAN_SCENARIO, COMPUTER_USE_SCENARIO};
 use config::{
@@ -179,77 +182,6 @@ const DEFAULT_SIZE: PtySize = PtySize {
 pub(super) const STARTUP: WaitTimeout = WaitTimeout::secs(20, "startup");
 pub(super) const STREAM: WaitTimeout = WaitTimeout::secs(20, "stream response");
 pub(super) const SETTLE: WaitTimeout = WaitTimeout::secs(10, "ui settle");
-
-const TYPE_DURING_COMPACT_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("seed_history"),
-    Step::SubmitText("fixture compact until cancel"),
-    Step::WaitText {
-        text: "fixture response: fixture compact until cancel",
-        timeout: STREAM,
-    },
-    Step::Phase("compact"),
-    Step::SubmitText("/compact"),
-    Step::WaitText {
-        text: "compacting context",
-        timeout: STREAM,
-    },
-    Step::Phase("type_draft"),
-    Step::TypeText("draft during compact"),
-    Step::WaitText {
-        text: "draft during compact",
-        timeout: WaitTimeout::secs(2, "composer input during compact"),
-    },
-    Step::Phase("cancel_compact"),
-    Step::Key(Key::Esc),
-    Step::WaitText {
-        text: "context compaction cancelled",
-        timeout: WaitTimeout::secs(2, "esc cancels compact"),
-    },
-    Step::WaitText {
-        text: "draft during compact",
-        timeout: WaitTimeout::secs(2, "draft survives compact cancel"),
-    },
-    Step::CtrlCExit,
-];
-
-const SUBMIT_DURING_COMPACT_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::Phase("seed_history"),
-    Step::SubmitText("fixture compact until release"),
-    Step::WaitText {
-        text: "fixture response: fixture compact until release",
-        timeout: STREAM,
-    },
-    Step::Phase("compact"),
-    Step::SubmitText("/compact"),
-    Step::WaitText {
-        text: "compacting context",
-        timeout: STREAM,
-    },
-    Step::Phase("submit_follow_up"),
-    Step::SubmitText("after compact please"),
-    Step::WaitText {
-        text: "1 follow-up",
-        timeout: WaitTimeout::secs(2, "queued follow-up during compact"),
-    },
-    Step::Phase("release_compact"),
-    Step::Custom(release_compact_fixture),
-    Step::Phase("drain_after_failed_compact"),
-    Step::WaitText {
-        text: "fixture response: after compact please",
-        timeout: STREAM,
-    },
-    Step::CtrlCExit,
-];
 
 const CANCEL_AND_RESUBMIT_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -662,7 +594,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "runtime_info",
         "Open runtime details immediately, copy the report, and keep fields readable after a narrow resize",
         PtySize {
-            rows: 40,
+            // Tall enough to show Workspace below the default auto-compaction rows.
+            rows: 50,
             cols: 100,
         },
         RUNTIME_INFO_STEPS,
@@ -691,6 +624,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     ),
     WORKSPACE_REWIND_SCENARIO,
+    diff_viewer::DIFF_VIEWER_SCENARIO,
     copy_output::COPY_OUTPUT_SCENARIO,
     HOOKS_CONTRACT_SCENARIO,
     #[cfg(unix)]
@@ -978,7 +912,7 @@ pub fn smoke_scenario_ids() -> Vec<&'static str> {
 }
 
 mod fixture_release;
-use fixture_release::{release_compact_fixture, release_fixture};
+use fixture_release::release_fixture;
 
 pub use dispatch::run_named;
 

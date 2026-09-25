@@ -24,7 +24,7 @@ pub(in crate::tui) mod standalone;
 
 pub(in crate::tui) use action::{ConfigParentRow, DuringTurnSelect, PickerAction, PickerTurn};
 pub(in crate::tui) use detail::{
-    DetailBlock, DetailField, DetailSheet, DetailTone, ExcerptAnchor, PickerDetail,
+    DetailBlock, DetailField, DetailSheet, DetailTone, DiffDetail, ExcerptAnchor, PickerDetail,
 };
 pub(in crate::tui) use input::{
     apply_picker_key, overlay_scroll_targets, PickerKeyEffect, PickerMouseEvent,
@@ -32,9 +32,13 @@ pub(in crate::tui) use input::{
 use overlay::{detail_content_line_count, overlay_detail_lines};
 pub(in crate::tui) use overlay::{picker_overlay_frame, OverlayChrome};
 use overlay_layout::DetailViewport;
-pub(in crate::tui) use overlay_layout::{clamp_overlay_scroll, OverlayScrollbarState};
+pub(in crate::tui) use overlay_layout::{
+    clamp_overlay_scroll, OverlayScrollbarState, OverlayShape,
+};
 pub(in crate::tui) use overlay_state::{OverlayFocus, OverlayScrollbarDrag};
-pub(in crate::tui) use rows::{label_column_width, picker_item_rows, RowLayout, RowWidthMode};
+pub(in crate::tui) use rows::{
+    label_column_width, picker_item_rows, LabelOverflow, RowLayout, RowWidthMode,
+};
 
 #[derive(Debug)]
 pub(super) struct PickerMatches<'a>(Ref<'a, Vec<usize>>);
@@ -64,10 +68,21 @@ pub(super) struct PickerKeyHints {
     pub(super) pin_toggle: Option<String>,
     /// Bound key that switches the model list between all and pinned.
     pub(super) scope_toggle: Option<String>,
-    /// Tab fills the filter from the selected row.
-    pub(super) tab_complete: bool,
+    /// What Tab does. Shift+Tab mirrors [`TabKey::CycleItems`].
+    pub(super) tab: TabKey,
     /// `d` / Delete removes the selected row (sessions, workflows).
     pub(super) row_delete: bool,
+}
+
+/// Picker behaviour bound to Tab.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::tui) enum TabKey {
+    #[default]
+    None,
+    /// Fill the filter from the selected row.
+    CompleteFilter,
+    /// Tab / Shift+Tab step to the next / previous item from either pane.
+    CycleItems,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -131,6 +146,8 @@ pub(super) struct UiPicker {
     /// When set, Space confirms the row like Enter (toggle-style pickers).
     space_confirms: bool,
     pub(super) overlay_chrome: Option<OverlayChrome>,
+    pub(super) overlay_shape: OverlayShape,
+    pub(super) label_overflow: LabelOverflow,
     parent: Option<Box<UiPicker>>,
     matches: RefCell<PickerMatchCache>,
     detail_wrap_cache: RefCell<DetailWrapCache>,
@@ -257,6 +274,8 @@ impl UiPicker {
             force_fuzzy_filter: false,
             space_confirms: false,
             overlay_chrome: None,
+            overlay_shape: OverlayShape::Compact,
+            label_overflow: LabelOverflow::KeepStart,
             parent: None,
             matches: RefCell::default(),
             detail_wrap_cache: RefCell::default(),
@@ -285,6 +304,7 @@ impl UiPicker {
         edit_agent => EditAgent,
         workflow => Workflow,
         attach_subagent => AttachSubagent,
+        view_diff => ViewDiff,
         dismiss => Dismiss,
     }
 
@@ -299,6 +319,7 @@ impl UiPicker {
         is_manage_sessions => ManageSessions,
         is_resume_session => ResumeSession,
         is_workflow => Workflow,
+        is_view_diff => ViewDiff,
     }
 
     pub(in crate::tui) fn is_model_list(&self) -> bool {
@@ -344,6 +365,16 @@ impl UiPicker {
 
     pub(super) fn with_overlay_chrome(mut self, chrome: OverlayChrome) -> Self {
         self.overlay_chrome = Some(chrome);
+        self
+    }
+
+    pub(super) fn with_overlay_shape(mut self, shape: OverlayShape) -> Self {
+        self.overlay_shape = shape;
+        self
+    }
+
+    pub(super) fn with_label_overflow(mut self, overflow: LabelOverflow) -> Self {
+        self.label_overflow = overflow;
         self
     }
 
@@ -540,8 +571,10 @@ impl UiPicker {
         if let Some(key) = &self.key_hints.scope_toggle {
             parts.push(format!("{key} all/pinned"));
         }
-        if self.key_hints.tab_complete {
-            parts.push("Tab complete".into());
+        match self.key_hints.tab {
+            TabKey::None => {}
+            TabKey::CompleteFilter => parts.push("Tab complete".into()),
+            TabKey::CycleItems => parts.push("Tab next".into()),
         }
         if self.key_hints.row_delete {
             parts.push("d delete".into());
@@ -723,6 +756,11 @@ impl UiPicker {
             };
         }
         PickerMatches(Ref::map(self.matches.borrow(), |cache| &cache.indices))
+    }
+
+    /// Index into `items` of the selected row, when it passes the filter.
+    pub(super) fn selected_index(&self) -> Option<usize> {
+        self.selected_item().map(|_| self.selected)
     }
 
     pub(super) fn selected_item(&self) -> Option<&PickerItem> {
