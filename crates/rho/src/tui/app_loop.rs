@@ -324,7 +324,20 @@ impl App {
                 }
                 Event::Mouse(mouse) => {
                     self.flush_pending_paste_burst();
+                    // A double click confirms an inline choice like Enter, but
+                    // only this idle loop can resolve one: the running-turn
+                    // loop has no inline choice key or confirm handling. Drop
+                    // a request it left behind so this event cannot fire it.
+                    self.input_ui.take_inline_choice_confirm();
                     self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
+                    if self.input_ui.take_inline_choice_confirm() {
+                        if let ComposerMode::InlineChoice(modal) = self.input_ui.composer() {
+                            let value = modal.choice.selected_value().to_owned();
+                            // Boxed like idle modal keys, so resolver futures
+                            // stay out of this event's poll frame.
+                            Box::pin(self.resolve_inline_choice(value, terminal, agent)).await?;
+                        }
+                    }
                 }
                 Event::FocusGained => self.on_focus_gained(),
                 Event::FocusLost => {

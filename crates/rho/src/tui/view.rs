@@ -142,7 +142,7 @@ impl App {
             &ctx.live_history,
         );
         self.draw_panels(frame, surface);
-        self.draw_composer(frame, surface, ctx.composer.lines, ctx.command_lines);
+        self.draw_composer(frame, surface, ctx.composer.lines, ctx.palette.lines);
         self.draw_cursor(frame, surface);
         if let Some(selection) = self.screen_selection {
             highlight_selection(frame.buffer_mut(), area, 0, selection);
@@ -542,7 +542,7 @@ impl App {
             history_count,
             &ctx.live_history.lines,
         );
-        let command_lines = ctx.command_lines;
+        let command_lines = ctx.palette.lines;
         let composer = ctx.composer;
         lines.resize(layout.history.height as usize, Line::default());
         if let Some(activity_rail) = layout.activity_rail {

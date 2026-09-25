@@ -29,6 +29,7 @@ mod file_palette;
 mod first_run;
 mod goal;
 mod hooks;
+mod inline_choice_click;
 mod limits;
 mod login;
 mod markdown_stream;
@@ -37,6 +38,7 @@ mod mermaid;
 mod model_cycle_reasoning;
 mod model_prompts;
 mod no_save;
+mod palette_click;
 mod paste;
 mod pickers;
 mod process_rail;
@@ -544,6 +546,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
     questionnaire::QUESTIONNAIRE_SCENARIO,
     questionnaire::QUESTIONNAIRE_CLICK_SCENARIO,
     questionnaire::APPROVAL_CLICK_SCENARIO,
+    inline_choice_click::INLINE_CHOICE_CLICK_SCENARIO,
+    palette_click::SLASH_PALETTE_CLICK_SCENARIO,
+    palette_click::FILE_PALETTE_CLICK_SCENARIO,
     Scenario::new(
         "supervised_approval",
         "Inspect and cancel a bounded supervised process approval",

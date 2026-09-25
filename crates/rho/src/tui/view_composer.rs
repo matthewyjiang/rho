@@ -20,7 +20,7 @@ use super::{
     inline_shell, input_frame,
     login::secret_input_lines,
     login_presentation::login_composer_view,
-    palette::ActivePalette,
+    palette::{ActivePalette, PaletteFrame, PaletteRow},
     picker_lines, questionnaire_frame, styled_line,
     text_input::text_input_lines,
     truncate_one_line, App, ComposerMode, InputFrame, LineFill, Theme, MAX_COMMAND_SUGGESTIONS,
@@ -223,20 +223,28 @@ impl App {
         }
     }
 
-    /// Suggestion rows for whichever palette the composer shows.
+    /// Suggestion rows for whichever palette the composer shows, with a hit
+    /// span per pickable row.
     ///
     /// One [`App::active_palette`] resolution decides the palette and yields
     /// its matches, so nothing here asks "visible?" and then matches again.
-    pub(super) fn command_suggestion_lines(&mut self, width: usize) -> Vec<Line<'static>> {
+    /// Hits carry absolute match indices, so a pointer picks the same row the
+    /// scrolled window painted.
+    pub(super) fn command_suggestion_lines(&mut self, width: usize) -> PaletteFrame {
+        let mut frame = PaletteFrame::default();
         match self.active_palette() {
             Some(ActivePalette::Command(matches)) => {
                 let selected_index = self
                     .input_ui
                     .command_selection()
                     .min(matches.len().saturating_sub(1));
-                let start = selected_index
-                    .saturating_add(1)
-                    .saturating_sub(MAX_COMMAND_SUGGESTIONS);
+                let (start, _, _) = file_picker::file_palette_scroll_counts(
+                    matches.len(),
+                    selected_index,
+                    MAX_COMMAND_SUGGESTIONS,
+                    self.input_ui.palette_window_start(),
+                );
+                self.input_ui.set_palette_window_start(start);
 
                 let usage_width = matches
                     .iter()
@@ -251,29 +259,30 @@ impl App {
                             .max(1),
                     );
 
-                matches
+                for (index, command) in matches
                     .into_iter()
                     .enumerate()
                     .skip(start)
                     .take(MAX_COMMAND_SUGGESTIONS)
-                    .map(|(index, command)| {
-                        let selected = index == selected_index;
-                        let marker = if selected { ">" } else { " " };
-                        let description_width = width.saturating_sub(usage_width + 3).max(1);
-                        let usage = truncate_one_line(&command.usage, usage_width);
-                        let description =
-                            truncate_one_line(&command.description, description_width);
-                        let usage_padding =
-                            " ".repeat(usage_width.saturating_sub(display_width(&usage)));
-                        let text = format!("{marker} {usage}{usage_padding} {description}");
-                        let style = if selected {
-                            Theme::brand()
-                        } else {
-                            Theme::dim()
-                        };
-                        styled_line(text, width.max(1), style, LineFill::Natural)
-                    })
-                    .collect()
+                {
+                    let selected = index == selected_index;
+                    let marker = if selected { ">" } else { " " };
+                    let description_width = width.saturating_sub(usage_width + 3).max(1);
+                    let usage = truncate_one_line(&command.usage, usage_width);
+                    let description = truncate_one_line(&command.description, description_width);
+                    let usage_padding =
+                        " ".repeat(usage_width.saturating_sub(display_width(&usage)));
+                    let text = format!("{marker} {usage}{usage_padding} {description}");
+                    let style = if selected {
+                        Theme::brand()
+                    } else {
+                        Theme::dim()
+                    };
+                    frame.push_row(
+                        styled_line(text, width.max(1), style, LineFill::Natural),
+                        PaletteRow::Command(index),
+                    );
+                }
             }
             Some(ActivePalette::File(matches)) => {
                 let selected_index = self
@@ -284,46 +293,48 @@ impl App {
                     matches.len(),
                     selected_index,
                     MAX_COMMAND_SUGGESTIONS,
+                    self.input_ui.palette_window_start(),
                 );
+                self.input_ui.set_palette_window_start(start);
 
-                let mut lines = matches
-                    .rows(start, MAX_COMMAND_SUGGESTIONS)
-                    .map(|(index, entry)| {
-                        let selected = index == selected_index;
-                        let marker = if selected { ">" } else { " " };
-                        let text = format!("{marker} {}", file_palette_row(&entry, matches.source));
-                        let style = if selected {
-                            Theme::brand()
-                        } else {
-                            Theme::dim()
-                        };
+                for (index, entry) in matches.rows(start, MAX_COMMAND_SUGGESTIONS) {
+                    let selected = index == selected_index;
+                    let marker = if selected { ">" } else { " " };
+                    let text = format!("{marker} {}", file_palette_row(&entry, matches.source));
+                    let style = if selected {
+                        Theme::brand()
+                    } else {
+                        Theme::dim()
+                    };
+                    frame.push_row(
                         styled_line(
                             truncate_one_line(&text, width.max(1)),
                             width.max(1),
                             style,
                             LineFill::Natural,
-                        )
-                    })
-                    .collect::<Vec<_>>();
+                        ),
+                        PaletteRow::File(index),
+                    );
+                }
 
+                // The footer reports scroll position; it is not a row to pick.
                 if let Some(footer) = file_picker::file_palette_scroll_footer(
                     above,
                     below,
                     matches.len(),
                     matches.incomplete,
                 ) {
-                    lines.push(styled_line(
+                    frame.push_line(styled_line(
                         truncate_one_line(&footer, width.max(1)),
                         width.max(1),
                         Theme::dim(),
                         LineFill::Natural,
                     ));
                 }
-
-                lines
             }
-            None => Vec::new(),
+            None => {}
         }
+        frame
     }
 }
 

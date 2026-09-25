@@ -144,6 +144,9 @@ pub(in crate::tui) struct InputUi {
     command_prefix: Option<String>,
     command_palette_dismissed: bool,
     file_selection: usize,
+    /// First painted row of whichever palette is open. Kept across frames so
+    /// the window only scrolls when the highlight leaves it.
+    palette_window_start: usize,
     file_query: Option<String>,
     file_palette_dismissed: bool,
     composer: ComposerMode,
@@ -152,6 +155,10 @@ pub(in crate::tui) struct InputUi {
     /// clicks on composer choices wait for this so they never land on rows
     /// the user has not seen yet.
     composer_painted: bool,
+    /// One-shot request from a double click on an inline choice option to
+    /// confirm it like Enter. The pointer handler cannot run the async
+    /// resolver, so the idle loop takes this right after the mouse event.
+    inline_choice_confirm_requested: bool,
 }
 
 impl InputUi {
@@ -357,6 +364,7 @@ impl InputUi {
         self.composer_view_start = 0;
         self.hovered_composer_copy = false;
         self.composer_painted = false;
+        self.inline_choice_confirm_requested = false;
     }
 
     pub(in crate::tui) fn take_composer(&mut self) -> ComposerMode {
@@ -364,7 +372,18 @@ impl InputUi {
         self.composer_view_start = 0;
         self.hovered_composer_copy = false;
         self.composer_painted = false;
+        self.inline_choice_confirm_requested = false;
         std::mem::replace(&mut self.composer, ComposerMode::Input)
+    }
+
+    /// Ask the idle loop to confirm the focused inline choice option.
+    pub(in crate::tui) fn request_inline_choice_confirm(&mut self) {
+        self.inline_choice_confirm_requested = true;
+    }
+
+    /// Consume a pending inline choice confirm request.
+    pub(in crate::tui) fn take_inline_choice_confirm(&mut self) -> bool {
+        std::mem::take(&mut self.inline_choice_confirm_requested)
     }
 
     pub(in crate::tui) fn composer_painted(&self) -> bool {
@@ -679,6 +698,14 @@ impl InputUi {
 
     pub(in crate::tui) fn set_file_selection(&mut self, selection: usize) {
         self.file_selection = selection;
+    }
+
+    pub(in crate::tui) fn palette_window_start(&self) -> usize {
+        self.palette_window_start
+    }
+
+    pub(in crate::tui) fn set_palette_window_start(&mut self, start: usize) {
+        self.palette_window_start = start;
     }
 
     pub(in crate::tui) fn file_query(&self) -> Option<&str> {

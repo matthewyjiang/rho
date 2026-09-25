@@ -3,10 +3,11 @@
 //! Composer wrap, suggestion lines, history settings, and the screen layout are
 //! computed together so every consumer of a frame sees the same chrome.
 
-use ratatui::{layout::Rect, text::Line};
+use ratatui::layout::Rect;
 
 use super::{
     history_cache::HistoryRenderSettings,
+    palette::PaletteFrame,
     screen_layout::{interactive_chrome, ChromeRails, ScreenLayout},
     view::LiveHistory,
     view_composer::ComposerFrame,
@@ -17,7 +18,8 @@ use super::{
 pub(super) struct FrameContext {
     pub(super) width: usize,
     pub(super) composer: ComposerFrame,
-    pub(super) command_lines: Vec<Line<'static>>,
+    /// Palette rows painted into `layout.commands`, with their pointer hits.
+    pub(super) palette: PaletteFrame,
     pub(super) settings: HistoryRenderSettings,
     pub(super) live_history: LiveHistory,
     pub(super) history_len: usize,
@@ -33,12 +35,12 @@ impl App {
         let width = area.width as usize;
         let height = area.height as usize;
         let composer = self.composer_frame(width, height);
-        let command_lines = self.command_suggestion_lines(width);
+        let palette = self.command_suggestion_lines(width);
         let chrome = interactive_chrome(ChromeRails {
             height,
             desired_statusline_height: self.statusline.height(),
             composer_line_count: composer.lines.len(),
-            command_line_count: command_lines.len(),
+            command_line_count: palette.lines.len(),
             desired_pending: self.pending_input_height(),
             desired_subagents: self.subagent_panel.desired_height(),
             desired_processes: self.process_panel.desired_height(),
@@ -59,7 +61,7 @@ impl App {
         FrameContext {
             width,
             composer,
-            command_lines,
+            palette,
             settings,
             live_history,
             history_len,

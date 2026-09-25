@@ -1,7 +1,8 @@
 //! Pointer input for composer modes that paint clickable choices.
 //!
-//! Questionnaire and approval renderers report which composer lines hold which
-//! choice through [`ComposerFrame::choice_hits`](super::view_composer::ComposerFrame).
+//! Questionnaire, approval, and inline choice renderers report which composer
+//! lines hold which choice through
+//! [`ComposerFrame::choice_hits`](super::view_composer::ComposerFrame).
 //! A press is mapped onto those lines where the composer was painted: one
 //! click selects, a double click confirms the way Enter does. Presses that miss
 //! every choice fall through to the screen handler for selection and copy.
@@ -46,11 +47,13 @@ impl<T> ComposerHit<T> {
     }
 }
 
-/// A choice painted by a questionnaire or approval composer.
+/// A choice painted by a questionnaire, approval, or inline choice composer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ComposerChoice {
     Questionnaire(QuestionnaireTarget),
     Approval(ApprovalChoice),
+    /// Index of an available option in the open inline choice.
+    InlineChoice(usize),
 }
 
 /// Whether a press on a choice selects it or confirms it.
@@ -80,13 +83,13 @@ pub(super) fn composer_target_at<T: Copy>(
 }
 
 impl App {
-    /// Handles a left press on a questionnaire or approval choice painted in
-    /// `ctx`. `false` when the event is not such a press, so the screen handler
-    /// still scrolls, selects, and copies around the form.
+    /// Handles a left press on a questionnaire, approval, or inline choice
+    /// option painted in `ctx`. `false` when the event is not such a press, so
+    /// the screen handler still scrolls, selects, and copies around the form.
     ///
     /// Clicks are ignored until the form has been painted, so a press that
-    /// races a newly opened approval cannot move its focus off Deny. A single
-    /// click on an approval only moves the highlight; resolving it takes a
+    /// races a newly opened approval or destructive confirmation cannot move
+    /// its focus. A single click only moves the highlight; resolving takes a
     /// double click on the same choice, like pressing Enter.
     pub(super) fn handle_choice_composer_mouse(
         &mut self,
@@ -121,6 +124,7 @@ impl App {
             }
             ComposerChoice::Questionnaire(QuestionnaireTarget::Question(_)) => None,
             ComposerChoice::Approval(choice) => Some(choice as usize),
+            ComposerChoice::InlineChoice(index) => Some(index),
         };
         let click = match sequence_index {
             Some(index)
@@ -143,6 +147,7 @@ impl App {
         match target {
             ComposerChoice::Questionnaire(target) => self.click_questionnaire(target, click),
             ComposerChoice::Approval(choice) => self.click_approval_choice(choice, click),
+            ComposerChoice::InlineChoice(index) => self.click_inline_choice(index, click),
         }
         true
     }

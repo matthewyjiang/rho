@@ -133,6 +133,7 @@ mod mouse_capture;
 mod notification_card_render;
 mod overlay_panel;
 mod palette;
+mod palette_pointer;
 mod panel_text;
 mod paste_burst;
 mod pending_input;

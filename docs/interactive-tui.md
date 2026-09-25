@@ -59,7 +59,7 @@ add tests for the config parser
 find where the TUI handles paste events
 ```
 
-Use a multiline prompt when you need to paste or write a longer request. Type `@` to open a workspace file picker, fuzzy-search paths, then press `tab` or `enter` to insert an `@path` reference. The picker follows `.gitignore`, `.ignore`, and global Git ignore rules while still showing hidden workspace files that are not ignored.
+Use a multiline prompt when you need to paste or write a longer request. Type `@` to open a workspace file picker, fuzzy-search paths, then press `tab` or `enter` to insert an `@path` reference. You can also double-click a path to insert it. The picker follows `.gitignore`, `.ignore`, and global Git ignore rules while still showing hidden workspace files that are not ignored.
 
 ### Interrupt, steer, reset, or quit
 
@@ -115,7 +115,7 @@ Both the config menu and shortcut save `[display].output_streaming` in configura
 
 ## Commands
 
-Type `/` at the start of the message box to open the command palette. Keep typing to filter commands, use `up` and `down` to select, press `tab` to complete the selected command, and press `enter` to run it. Most built-in slash commands run locally. Commands that start agent work say so below.
+Type `/` at the start of the message box to open the command palette. Keep typing to filter commands, use `up` and `down` to select, press `tab` to complete the selected command, and press `enter` to run it. With the mouse, click a row to select it, scroll over the palette to move the selection, and double-click a row to complete it like `tab`. A double click never runs a command. Most built-in slash commands run locally. Commands that start agent work say so below.
 
 Suggestions reflect the current model's capabilities. `/fast` and its argument suggestions appear only for models that support fast mode, and switching models updates the suggestions immediately. You can still type a hidden command explicitly: unsupported actions explain why they cannot run. `/fast off` can disable the saved preference even on a model that does not support fast mode.
 
@@ -204,6 +204,8 @@ While a goal is active, the status line shows `◎ /goal active` with the evalua
 A form with several questions shows one question at a time. Up and Down move among that question's choices. Tab moves to the next question, and Shift+Tab moves to the previous question. Enter confirms the current question and moves forward, or submits on the last question. Esc cancels the form. The footer under the choices lists the keys that apply.
 
 You can also use the mouse. Click a question's tab to show it, and click a choice to select it; on a multi-select question, each click toggles the choice. Double-clicking a single-select choice confirms it like Enter.
+
+Confirmation prompts, such as deleting a session or granting desktop access, work the same way: click an option to focus it, and double-click it to confirm.
 
 ## Questionnaire fallbacks
 

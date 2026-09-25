@@ -89,7 +89,9 @@ impl App {
                 self.handle_side_overlay_mouse(kind, screen, column, row, now);
                 return Ok(());
             }
-            ComposerMode::Questionnaire(_) | ComposerMode::Approval(_) => true,
+            ComposerMode::Questionnaire(_)
+            | ComposerMode::Approval(_)
+            | ComposerMode::InlineChoice(_) => true,
             // Pickers route inside the screen handler: an inline list shares
             // the wheel with the transcript around it.
             ComposerMode::Input
@@ -97,8 +99,7 @@ impl App {
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
-            | ComposerMode::InteractivePending(_)
-            | ComposerMode::InlineChoice(_) => false,
+            | ComposerMode::InteractivePending(_) => false,
         };
         // One layout snapshot serves both the choice hit test and the screen
         // handler it may fall through to.
@@ -127,6 +128,7 @@ impl App {
         let settings = ctx.settings;
         let live_history = ctx.live_history;
         let layout = ctx.layout;
+        let palette_hits = ctx.palette.hits;
         match kind {
             MouseEventKind::ScrollUp => {
                 self.input_ui.cancel_pointer_click_sequence();
@@ -137,6 +139,10 @@ impl App {
                     size.width,
                     size.height,
                 ) {
+                    return Ok(());
+                }
+                if self.handle_palette_mouse(kind, &palette_hits, layout.commands, column, row, now)
+                {
                     return Ok(());
                 }
                 self.screen_selection = None;
@@ -161,6 +167,10 @@ impl App {
                 ) {
                     return Ok(());
                 }
+                if self.handle_palette_mouse(kind, &palette_hits, layout.commands, column, row, now)
+                {
+                    return Ok(());
+                }
                 self.screen_selection = None;
                 self.clear_hovered_copy_buttons();
                 self.clear_rail_pointer_state();
@@ -182,6 +192,10 @@ impl App {
                 ) {
                     self.input_ui.clear_selection();
                     self.input_ui.cancel_pointer_click_sequence();
+                    return Ok(());
+                }
+                if self.handle_palette_mouse(kind, &palette_hits, layout.commands, column, row, now)
+                {
                     return Ok(());
                 }
                 self.screen_selection = None;

@@ -512,20 +512,32 @@ fn fuzzy_matching_indexes(keys: &[&str], query: &str) -> Vec<usize> {
     matches.into_iter().map(|(index, _)| index).collect()
 }
 
+/// First visible row of a palette window, plus hidden-row counts above and
+/// below it.
+///
+/// The window stays where it was (`previous_start`) while the selection is
+/// inside it and scrolls only as far as needed to reveal the selection. A
+/// click therefore never shifts rows under the pointer, and the second press
+/// of a double click lands on the same row.
 pub(super) fn file_palette_scroll_counts(
     match_count: usize,
     selected_index: usize,
     visible_rows: usize,
+    previous_start: usize,
 ) -> (usize, usize, usize) {
     if match_count == 0 || visible_rows == 0 {
         return (0, 0, 0);
     }
 
     let selected_index = selected_index.min(match_count - 1);
-    let start = selected_index
-        .saturating_add(1)
-        .saturating_sub(visible_rows)
-        .min(match_count.saturating_sub(1));
+    let start = if selected_index < previous_start {
+        selected_index
+    } else if selected_index >= previous_start.saturating_add(visible_rows) {
+        selected_index + 1 - visible_rows
+    } else {
+        previous_start
+    }
+    .min(match_count.saturating_sub(visible_rows));
     let visible = visible_rows.min(match_count.saturating_sub(start));
     let above = start;
     let below = match_count.saturating_sub(start + visible);

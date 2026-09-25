@@ -7,7 +7,10 @@
 
 use std::time::{Duration, Instant};
 
+use ratatui::text::Line;
+
 use super::{
+    composer_pointer::ComposerHit,
     file_picker::{FilePaletteMatches, PathTokenSource, WorkspacePathCache},
     types::CommandChoice,
     App, ComposerMode,
@@ -117,6 +120,36 @@ impl PaletteCaches {
 pub(super) enum ActivePalette {
     Command(Vec<CommandChoice>),
     File(FilePaletteMatches),
+}
+
+/// A painted palette row, by absolute index into the active palette's
+/// matches rather than its offset in the scrolled window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PaletteRow {
+    Command(usize),
+    File(usize),
+}
+
+/// Palette lines painted above the composer, and which of them are rows a
+/// pointer can pick. Hit line indices count from the first palette line.
+#[derive(Debug, Default)]
+pub(super) struct PaletteFrame {
+    pub(super) lines: Vec<Line<'static>>,
+    pub(super) hits: Vec<ComposerHit<PaletteRow>>,
+}
+
+impl PaletteFrame {
+    /// Append a pickable row.
+    pub(super) fn push_row(&mut self, line: Line<'static>, row: PaletteRow) {
+        let index = self.lines.len();
+        self.hits.push(ComposerHit::rows(index..index + 1, row));
+        self.lines.push(line);
+    }
+
+    /// Append a line that is not a row, such as a scroll footer.
+    pub(super) fn push_line(&mut self, line: Line<'static>) {
+        self.lines.push(line);
+    }
 }
 
 impl App {

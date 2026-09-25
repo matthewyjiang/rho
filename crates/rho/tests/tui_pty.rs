@@ -1030,6 +1030,29 @@ fn approval_double_click_allows_and_resumes_turn() {
     assert_pass("approval_click");
 }
 
+// Covers: a click focuses an inline choice option without resolving it, and a
+// double click confirms it like Enter.
+// Owner: interactive TUI
+#[test]
+fn inline_choice_click_focuses_and_double_click_confirms() {
+    assert_pass("inline_choice_click");
+}
+
+// Covers: clicking and wheeling the `/` palette move its highlight, and a
+// double click completes the row like Tab without running it.
+// Owner: interactive TUI
+#[test]
+fn slash_palette_click_highlights_and_double_click_completes() {
+    assert_pass("slash_palette_click");
+}
+
+// Covers: a double click on an `@` palette row inserts that path.
+// Owner: interactive TUI
+#[test]
+fn file_palette_double_click_inserts_path() {
+    assert_pass("file_palette_click");
+}
+
 #[test]
 fn text_selection_highlight_follows_drag_before_release() {
     assert_pass("text_selection_drag");

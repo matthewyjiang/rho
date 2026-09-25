@@ -221,12 +221,33 @@ fn palette_mixes_server_resources_ahead_of_workspace_files() {
     }
 }
 
+// Covers: the palette window jumps while the selection is still visible
+// (rows move under a clicking pointer), or fails to reveal the selection.
+// Owner: palette scroll geometry
 #[test]
-fn scroll_counts_track_hidden_rows_above_and_below() {
-    assert_eq!(file_palette_scroll_counts(12, 0, 5), (0, 0, 7));
-    assert_eq!(file_palette_scroll_counts(12, 4, 5), (0, 0, 7));
-    assert_eq!(file_palette_scroll_counts(12, 5, 5), (1, 1, 6));
-    assert_eq!(file_palette_scroll_counts(12, 11, 5), (7, 7, 0));
+fn scroll_window_stays_put_until_the_selection_leaves_it() {
+    // (matches, selected, visible, previous start, expected (start, above, below))
+    let cases = [
+        (12, 0, 5, 0, (0, 0, 7)),
+        (12, 4, 5, 0, (0, 0, 7)),
+        (12, 5, 5, 0, (1, 1, 6)),
+        (12, 11, 5, 0, (7, 7, 0)),
+        // Selection moves up inside a scrolled window: the window holds.
+        (12, 4, 5, 3, (3, 3, 4)),
+        (12, 7, 5, 3, (3, 3, 4)),
+        // Selection above the window: scroll just enough to show it.
+        (12, 1, 5, 3, (1, 1, 6)),
+        // A stale start past the end (the list shrank) is pulled back.
+        (6, 2, 5, 9, (1, 1, 0)),
+        (3, 0, 5, 2, (0, 0, 0)),
+    ];
+    for (matches, selected, visible, previous, expected) in cases {
+        assert_eq!(
+            file_palette_scroll_counts(matches, selected, visible, previous),
+            expected,
+            "matches={matches} selected={selected} previous={previous}"
+        );
+    }
 }
 
 #[test]
