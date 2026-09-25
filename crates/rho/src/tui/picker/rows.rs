@@ -54,10 +54,11 @@ pub(in crate::tui) struct RowLayout {
     pub(in crate::tui) fill: LineFill,
 }
 
-/// Item and section-header rows plus the row index of the selected item.
+/// Item and section-header rows, and which item each row paints.
 pub(in crate::tui) struct PickerRows {
     pub(in crate::tui) rows: Vec<Line<'static>>,
-    pub(in crate::tui) selected_row: usize,
+    /// Item index painted on each row of `rows`; `None` for section headers.
+    pub(in crate::tui) row_items: Vec<Option<usize>>,
 }
 
 /// Shared label column width for aligned list rows.
@@ -129,9 +130,18 @@ pub(in crate::tui) fn selected_row_index(
     matching: &[usize],
     selected: usize,
 ) -> usize {
+    item_row_index(items, matching, selected).unwrap_or(0)
+}
+
+/// Row-space index of item `item` among the matching rows, counting section
+/// headers, or `None` when it does not match.
+pub(in crate::tui) fn item_row_index(
+    items: &[PickerItem],
+    matching: &[usize],
+    item: usize,
+) -> Option<usize> {
     rows(items, matching.iter().copied())
-        .position(|row| matches!(row, PickerRow::Item { index, .. } if index == selected))
-        .unwrap_or(0)
+        .position(|row| matches!(row, PickerRow::Item { index, .. } if index == item))
 }
 
 /// Item index shown at `row_index` in row space, or `None` for section
@@ -158,22 +168,23 @@ pub(in crate::tui) fn picker_item_rows(
     hovered_row: Option<usize>,
 ) -> PickerRows {
     let mut lines = Vec::with_capacity(matching.len());
-    let mut selected_row = 0;
+    let mut row_items = Vec::with_capacity(matching.len());
     for row in rows(items, matching.iter().copied()) {
         match row {
-            PickerRow::Header(section) => lines.push(section_header_line(section, layout)),
+            PickerRow::Header(section) => {
+                lines.push(section_header_line(section, layout));
+                row_items.push(None);
+            }
             PickerRow::Item { index, item } => {
-                if index == selected {
-                    selected_row = lines.len();
-                }
                 let hovered = hovered_row == Some(lines.len());
                 lines.push(item_line(item, index == selected, hovered, layout));
+                row_items.push(Some(index));
             }
         }
     }
     PickerRows {
         rows: lines,
-        selected_row,
+        row_items,
     }
 }
 

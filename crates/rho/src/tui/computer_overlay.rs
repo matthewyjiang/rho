@@ -7,6 +7,7 @@ use super::{
         classify_panel_key, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
         OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
     },
+    panel_pointer::PanelPointer,
     panel_text::{heading_with_status, indented_wrapped_lines},
     theme::Theme,
     App, ComposerMode, PanelOverlay,
@@ -16,6 +17,8 @@ use crate::tools::computer_use::{desktop_warning, ComputerUseControl, ComputerUs
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct ComputerOverlay {
     scroll: PanelScroll,
+    /// Selection, scrollbar drag, and hover for this panel.
+    pub(super) pointer: PanelPointer,
 }
 
 impl App {
@@ -180,7 +183,7 @@ impl App {
             } else {
                 "Enter/Esc close"
             },
-            &lines,
+            lines,
             overlay.scroll.offset(),
             area,
         ))

@@ -20,6 +20,7 @@ use super::{
         classify_panel_key, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
         OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
     },
+    panel_pointer::PanelPointer,
     panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
     render::display_width,
     theme::Theme,
@@ -53,6 +54,8 @@ impl PendingDoctorProbe {
 pub(super) struct DoctorOverlay {
     report: DoctorReport,
     scroll: PanelScroll,
+    /// Selection, scrollbar drag, and hover for this panel.
+    pub(super) pointer: PanelPointer,
     /// Spinner phase anchor.
     checking_started: Instant,
 }
@@ -115,6 +118,7 @@ impl App {
             .set_composer(ComposerMode::Panel(PanelOverlay::Doctor(DoctorOverlay {
                 report,
                 scroll: PanelScroll::default(),
+                pointer: PanelPointer::default(),
                 checking_started: Instant::now(),
             })));
         self.set_status("doctor");
@@ -177,6 +181,8 @@ impl App {
                 overlay
                     .report
                     .replace_checks(probe_checks(&outcome, &active_provider));
+                // Rows may have moved under a selection anchored by line.
+                overlay.pointer.clear_selection();
             }
         }
         self.pending_doctor_probes = still_pending;
@@ -199,7 +205,7 @@ impl App {
         Some(render_overlay_panel(
             TITLE,
             FOOTER,
-            &body,
+            body,
             overlay.scroll.offset(),
             area,
         ))

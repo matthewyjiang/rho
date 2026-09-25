@@ -97,7 +97,7 @@ fn choice_hits_tile_each_choice_block_in_order() {
         if type_other {
             assert!(composer.insert_text("typed other text that also wraps around"));
         }
-        let frame = questionnaire_frame(&composer, width);
+        let frame = questionnaire_frame(&composer, width, /*hovered*/ None);
         let choices: Vec<_> = frame
             .hits
             .iter()
@@ -176,7 +176,7 @@ fn tab_chip_hits_cover_their_painted_labels() {
     composer.focus_question(3);
 
     // Narrow enough that the tab bar scrolls and paints a left overflow mark.
-    let frame = questionnaire_frame(&composer, 40);
+    let frame = questionnaire_frame(&composer, 40, /*hovered*/ None);
     let mut tabs = Vec::new();
     for hit in &frame.hits {
         let QuestionnaireTarget::Question(index) = hit.target else {
@@ -257,4 +257,99 @@ async fn approval_clicks_wait_for_the_prompt_to_be_painted() {
     )
     .unwrap();
     assert_eq!(active(&app), ApprovalChoice::AllowOnce);
+}
+
+fn sectioned_item(section: &str, label: String) -> crate::tui::PickerItem {
+    crate::tui::PickerItem {
+        section: Some(section.into()),
+        value: label.clone(),
+        label,
+        detail: None,
+        preview: None,
+        badge: None,
+        selection_verb: None,
+        allow_filter_completion: true,
+    }
+}
+
+// Covers: once an inline list picker scrolls (or filters), a click must pick
+// the item painted under it by its index in the full item list, and section
+// headers must not be clickable; a hit keyed by window offset or match
+// position would select a neighbor.
+// Owner: inline picker hit mapping (pure frame output; a PTY scenario would
+// need a long sectioned picker and cell arithmetic to reach the same state).
+#[test]
+fn inline_picker_hits_name_absolute_items_and_skip_headers() {
+    let items: Vec<_> = (0..12)
+        .map(|index| {
+            let section = if index < 6 { "ALPHA" } else { "BETA" };
+            sectioned_item(section, format!("{}-{index:02}", section.to_lowercase()))
+        })
+        .collect();
+    // (name, filter, selected item, item that must be scrolled out of view)
+    let cases = [
+        ("scrolled past the first section", "", 10, Some(0)),
+        ("filtered to the second section", "beta", 11, None),
+    ];
+    for (name, filter, selected, hidden) in cases {
+        let mut picker = crate::tui::UiPicker::config("sections", items.clone());
+        picker.filter = filter.into();
+        picker.selected = selected;
+        let mut app = test_app();
+        app.input_ui.set_composer(ComposerMode::Picker(picker));
+
+        // About ten rows fit: selecting the second-to-last item scrolls the
+        // first ones out while the BETA header stays painted.
+        let frame = app.composer_frame(80, /*viewport_height*/ 20);
+        let text = |line: usize| -> String {
+            frame.lines[line]
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        };
+        let hits: Vec<_> = frame
+            .choice_hits
+            .iter()
+            .map(|hit| match hit.target {
+                ComposerChoice::PickerRow(target) => (target.item, hit.lines.clone()),
+                ComposerChoice::Questionnaire(_)
+                | ComposerChoice::Approval(_)
+                | ComposerChoice::InlineChoice(_) => {
+                    panic!("{name}: foreign target {:?}", hit.target)
+                }
+            })
+            .collect();
+
+        assert!(
+            hits.iter().any(|(item, _)| *item == selected),
+            "{name}: selection painted"
+        );
+        if let Some(hidden) = hidden {
+            assert!(
+                hits.iter().all(|(item, _)| *item != hidden),
+                "{name}: window scrolled"
+            );
+        }
+        // Each hit covers exactly the row painting its item's label.
+        for (item, lines) in &hits {
+            assert_eq!(lines.len(), 1, "{name}");
+            let row = text(lines.start);
+            assert!(
+                row.contains(&items[*item].label),
+                "{name}: item {item} hit lands on {row:?}"
+            );
+        }
+        // Painted section headers take no hit.
+        let header_rows: Vec<usize> = (0..frame.lines.len())
+            .filter(|line| matches!(text(*line).trim(), "ALPHA" | "BETA"))
+            .collect();
+        assert!(!header_rows.is_empty(), "{name}: fixture paints a header");
+        for line in header_rows {
+            assert!(
+                hits.iter().all(|(_, lines)| !lines.contains(&line)),
+                "{name}: header row {line} is clickable"
+            );
+        }
+    }
 }

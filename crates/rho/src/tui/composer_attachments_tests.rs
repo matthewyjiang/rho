@@ -1,9 +1,12 @@
 use image::{DynamicImage, ImageFormat};
+use ratatui::layout::Rect;
 use ratatui_image::picker::{Picker, ProtocolType};
 use rho_providers::model::ImageContent;
 use std::io::Cursor;
 
-use super::{layout_composer_attachments, ComposerAttachmentSlot, COMPOSER_IMAGE_GAP};
+use super::{
+    attachment_target_at, layout_composer_attachments, ComposerAttachmentSlot, COMPOSER_IMAGE_GAP,
+};
 use crate::tui::{
     feed_image::{FeedImage, ImageRowBudget, COMPOSER_IMAGE_HEIGHT},
     ChatMedia, ChatTextDocument, MediaAttachId, PendingAttachmentSource,
@@ -137,4 +140,55 @@ fn composer_image_run_wraps_when_gaps_exceed_width() {
         );
     }
     assert_eq!(layout.total_rows, layout.lines.len());
+}
+
+// Covers: a click maps to the attachment painted under the pointer, and a
+// preview cut by the composer scroll window is not a target (it is not
+// painted), so a click can never remove an attachment the user cannot see.
+// Owner: pure layout policy (attachment pointer targets).
+#[test]
+fn attachment_targets_follow_the_painted_window() {
+    let slots = vec![
+        image_slot(png_asset(40, 40)),
+        image_slot(png_asset(40, 40)),
+        ComposerAttachmentSlot::pending(
+            MediaAttachId::new(),
+            PendingAttachmentSource::File,
+            "doc.pdf".into(),
+        ),
+    ];
+    let layout = layout_composer_attachments(&slots, 40, ImageRowBudget::composer());
+    let strip = &layout.images;
+    let strip_rows = strip[0].height + 1;
+    let doc_row = strip_rows;
+    let area = |height: usize| Rect::new(5, 10, 40, height as u16);
+    let second_image_column = 5 + strip[1].column;
+    // (composer height, first visible line, column, row, expected slot)
+    let cases = [
+        // Image cell and its label row both belong to the preview.
+        (strip_rows + 1, 0, 5, 10, Some(0)),
+        (
+            strip_rows + 1,
+            0,
+            second_image_column,
+            10 + strip[0].height as u16,
+            Some(1),
+        ),
+        // The gap between previews is not a target.
+        (strip_rows + 1, 0, second_image_column - 1, 10, None),
+        (strip_rows + 1, 0, 5, 10 + doc_row as u16, Some(2)),
+        // Scrolled one line: previews are no longer fully painted.
+        (strip_rows, 1, 5, 10, None),
+        (strip_rows, 1, 5, 10 + (doc_row - 1) as u16, Some(2)),
+        // Outside the composer rect.
+        (strip_rows + 1, 0, 4, 10, None),
+    ];
+    for (height, start, column, row, expected) in cases {
+        assert_eq!(
+            attachment_target_at(&layout, area(height), start, column, row)
+                .map(|target| target.attachment),
+            expected,
+            "height {height} start {start} at ({column}, {row})"
+        );
+    }
 }

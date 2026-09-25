@@ -1053,6 +1053,55 @@ fn file_palette_double_click_inserts_path() {
     assert_pass("file_palette_click");
 }
 
+// Covers: hovering a questionnaire choice lifts it and leaving reverts it.
+// Owner: interactive TUI
+#[test]
+fn questionnaire_choice_hover_lifts_and_reverts() {
+    assert_pass("questionnaire_hover");
+}
+
+// Covers: a click selects an inline picker row without submitting; a double click submits it.
+// Owner: interactive TUI
+#[test]
+fn inline_picker_click_selects_and_double_click_submits() {
+    assert_pass("inline_picker_click");
+}
+
+// Covers: a click selects an overlay picker row; a double click submits it.
+// Owner: interactive TUI
+#[test]
+fn overlay_picker_double_click_submits() {
+    assert_pass("overlay_picker_double_click");
+}
+
+// Covers: panel scrollbar hover and drag scroll the body, and drag-select copies panel text.
+// Owner: interactive TUI
+#[test]
+fn panel_scrollbar_drag_and_selection_copy() {
+    assert_pass("panel_pointer");
+}
+
+// Covers: drag-select copies side chat text, and the side chat scrollbar drags.
+// Owner: interactive TUI
+#[test]
+fn side_chat_selection_copy_and_scrollbar_drag() {
+    assert_pass("side_chat_pointer");
+}
+
+// Covers: hovering the statusline model field marks it, and clicking opens the model picker.
+// Owner: interactive TUI
+#[test]
+fn statusline_model_hover_and_click_opens_picker() {
+    assert_pass("statusline_model_click");
+}
+
+// Covers: hovering a composer attachment offers removal, and clicking removes it.
+// Owner: interactive TUI
+#[test]
+fn composer_attachment_click_removes_it() {
+    assert_pass("attachment_click_remove");
+}
+
 #[test]
 fn text_selection_highlight_follows_drag_before_release() {
     assert_pass("text_selection_drag");

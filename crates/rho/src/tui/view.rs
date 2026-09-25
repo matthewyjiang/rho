@@ -23,8 +23,8 @@ use super::{
 };
 use super::{
     history_cache::{HistoryLineSlice, HistoryRenderSettings},
-    App, CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, LineFill, PanelOverlay,
-    ReasoningChrome, SessionHeaderCache, StreamKind, Theme,
+    App, CodeBlockCopyTarget, ComposerMode, Entry, GoalStatus, LineFill, ReasoningChrome,
+    SessionHeaderCache, StreamKind, Theme,
 };
 #[cfg(test)]
 use super::{ActiveFrame, DEFAULT_TUI_HEIGHT};
@@ -391,6 +391,7 @@ impl App {
             );
         }
         let statusline_height = layout.statusline.height as usize;
+        self.sync_statusline_hover(layout.statusline, width);
         for (index, line) in self
             .statusline_lines(width)
             .iter()
@@ -448,33 +449,22 @@ impl App {
                 );
                 Some(overlay.cursor)
             }),
+            // Single-pane overlays share pointer feedback. The copy notice is
+            // painted with the composer, under the overlay, so repaint it on top.
             ComposerMode::Panel(panel) => self.panel_overlay_frame(area, now).map(|overlay| {
-                frame.render_widget(Clear, overlay.outer);
-                let body = overlay.body();
-                let scroll = overlay.scroll();
-                frame.render_widget(
-                    Paragraph::new(overlay.lines).style(Theme::surface()),
-                    overlay.outer,
-                );
-                // Info is the one panel with drag-to-copy selection.
-                if let PanelOverlay::Info(_) = panel {
-                    if let Some(selection) = self.info_text_selection() {
-                        highlight_selection(frame.buffer_mut(), body, scroll, selection);
-                    }
-                    // The notice is painted with the composer, under this panel.
-                    if let Some(notice) = self.history.copy_notice() {
-                        render_copy_notice(frame, area, notice, now);
-                    }
+                let cursor = panel.pointer().paint_overlay(frame, overlay);
+                if let Some(notice) = self.history.copy_notice() {
+                    render_copy_notice(frame, area, notice, now);
                 }
-                overlay.cursor
+                cursor
             }),
             ComposerMode::Side => self.side_overlay_frame(area).map(|overlay| {
-                frame.render_widget(Clear, overlay.outer);
-                frame.render_widget(
-                    Paragraph::new(overlay.lines).style(Theme::surface()),
-                    overlay.outer,
-                );
-                overlay.cursor
+                let pointer = self.side_overlay_pointer().unwrap_or_default();
+                let cursor = pointer.paint_overlay(frame, overlay);
+                if let Some(notice) = self.history.copy_notice() {
+                    render_copy_notice(frame, area, notice, now);
+                }
+                cursor
             }),
             _ => None,
         };

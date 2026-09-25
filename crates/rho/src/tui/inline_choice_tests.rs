@@ -92,7 +92,9 @@ fn option_hits_tile_each_available_option_group() {
     };
     // (width, whether some option group wraps past label + detail rows)
     for (width, wraps) in [(80, false), (24, true)] {
-        let frame = inline_choice_frame(&choice, width, /*return_to_parent*/ false);
+        let frame = inline_choice_frame(
+            &choice, width, /*return_to_parent*/ false, /*hovered*/ None,
+        );
         let rows: Vec<String> = frame
             .lines
             .iter()
@@ -108,7 +110,9 @@ fn option_hits_tile_each_available_option_group() {
             .iter()
             .map(|hit| match hit.target {
                 ComposerChoice::InlineChoice(index) => (index, hit.lines.clone()),
-                ComposerChoice::Questionnaire(_) | ComposerChoice::Approval(_) => {
+                ComposerChoice::Questionnaire(_)
+                | ComposerChoice::Approval(_)
+                | ComposerChoice::PickerRow(_) => {
                     panic!("width {width}: foreign target {:?}", hit.target)
                 }
             })

@@ -1,4 +1,5 @@
-//! Selected-node details pane: durable output body + document scroll.
+//! Selected-node details pane: durable output body, document scroll, and
+//! drag-to-copy text selection.
 
 use std::{path::PathBuf, time::Instant};
 
@@ -11,7 +12,9 @@ use ratatui::{
 use crate::workflow::TaskInstanceId;
 
 use super::super::{
+    copy_interaction::{selection_position, selection_position_clamped},
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
+    text_selection::TextSelection,
     theme::Theme,
     HISTORY_MOUSE_SCROLL_LINES, HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
@@ -33,6 +36,12 @@ pub(super) struct DetailPane {
     viewport: usize,
     cached_width: Option<usize>,
     cached_lines: Vec<Line<'static>>,
+    /// Body selection in content-line space, so it survives scrolling.
+    selection: Option<TextSelection>,
+    /// A primary-button drag is extending `selection`.
+    selecting: bool,
+    /// Text a finished drag selected; the app loop copies it.
+    pending_copy: Option<String>,
 }
 
 impl DetailPane {
@@ -62,6 +71,16 @@ impl DetailPane {
         self.scroll.drag().is_some()
     }
 
+    /// Body selection to highlight, in content-line space.
+    pub(super) fn selection(&self) -> Option<TextSelection> {
+        self.selection
+    }
+
+    /// Text a finished drag selected, for the caller to copy once.
+    pub(super) fn take_pending_copy(&mut self) -> Option<String> {
+        self.pending_copy.take()
+    }
+
     /// Load durable output for the selected node when the cache is stale.
     pub(super) fn refresh(&mut self, node: Option<&WorkflowNodeSnapshot>, reset_scroll: bool) {
         let Some(node) = node else {
@@ -79,6 +98,7 @@ impl DetailPane {
         self.loaded_key = Some(key);
         self.body = output::load_finished_output(run_directory, node);
         self.invalidate_line_cache();
+        self.clear_selection();
         if reset_scroll {
             self.scroll = HistoryScrollChrome::default();
             // Stay top-anchored even before geometry is known.
@@ -91,6 +111,8 @@ impl DetailPane {
         let width = width.max(1);
         if self.cached_width != Some(width) {
             self.cached_width = Some(width);
+            // Rewrapped lines no longer match the selected columns.
+            self.clear_selection();
             self.cached_lines = match self.body.as_ref() {
                 Some(body) => {
                     let mut lines = vec![
@@ -180,6 +202,11 @@ impl DetailPane {
             MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
         );
         if !over_details && !dragging {
+            // A press elsewhere on the screen drops the body selection.
+            if matches!(kind, MouseEventKind::Down(MouseButton::Left)) && self.selection.is_some() {
+                self.clear_selection();
+                return true;
+            }
             return false;
         }
 
@@ -188,6 +215,7 @@ impl DetailPane {
             self.scroll.drag().is_some(),
             self.scroll.hovered(),
             self.scroll.should_render(now),
+            self.selection,
         );
         self.scroll.handle_scrollbar_mouse(
             kind,
@@ -206,13 +234,69 @@ impl DetailPane {
         let top = self.visible_start();
         self.scroll
             .pin_top_line(self.content_len, self.viewport, top);
+        self.handle_selection_mouse(kind, column, row);
         let after = (
             self.visible_start(),
             self.scroll.drag().is_some(),
             self.scroll.hovered(),
             self.scroll.should_render(now),
+            self.selection,
         );
         before != after
+    }
+
+    /// Drag-to-select over the body text. A press that started a scrollbar
+    /// drag never selects; a release with a non-empty selection keeps the
+    /// highlight and queues its text for copy.
+    fn handle_selection_mouse(&mut self, kind: MouseEventKind, column: u16, row: u16) {
+        let text_area = self.text_area();
+        let top = self.visible_start();
+        match kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.selection = selection_position(text_area, top, column, row)
+                    .filter(|_| self.scroll.drag().is_none() && !self.cached_lines.is_empty())
+                    .map(TextSelection::new);
+                self.selecting = self.selection.is_some();
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.selecting => {
+                self.extend_selection(text_area, top, column, row);
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.selecting => {
+                self.extend_selection(text_area, top, column, row);
+                self.selecting = false;
+                match self
+                    .selection
+                    .and_then(|selection| selection.selected_text(&self.cached_lines, 0))
+                {
+                    Some(text) => self.pending_copy = Some(text),
+                    None => self.selection = None,
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn extend_selection(&mut self, text_area: Rect, top: usize, column: u16, row: u16) {
+        if let (Some(selection), Some(position)) = (
+            self.selection.as_mut(),
+            selection_position_clamped(text_area, top, column, row),
+        ) {
+            selection.update(position);
+        }
+    }
+
+    /// Body text columns: the pane minus the scrollbar column the body lines
+    /// are wrapped around.
+    pub(super) fn text_area(&self) -> Rect {
+        Rect {
+            width: self.area.width.saturating_sub(1),
+            ..self.area
+        }
+    }
+
+    fn clear_selection(&mut self) {
+        self.selection = None;
+        self.selecting = false;
     }
 
     pub(super) fn scrollbar(&self) -> Option<HistoryScrollbar> {
@@ -223,6 +307,7 @@ impl DetailPane {
         self.body = None;
         self.loaded_key = None;
         self.invalidate_line_cache();
+        self.clear_selection();
         if reset_scroll {
             self.scroll = HistoryScrollChrome::default();
         }

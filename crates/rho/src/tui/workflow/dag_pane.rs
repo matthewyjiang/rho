@@ -9,6 +9,9 @@ use super::dag::{to_u16, DagRender};
 
 /// Rows moved per wheel step, matching the history view's wheel feel.
 const WHEEL_PAN_ROWS: u16 = 3;
+/// Columns moved per horizontal wheel step. Cells are about twice as tall as
+/// wide, so twice the row step covers a similar distance on screen.
+const WHEEL_PAN_COLUMNS: u16 = WHEEL_PAN_ROWS * 2;
 
 /// What one mouse event did to the graph pane.
 #[derive(Debug, PartialEq, Eq)]
@@ -73,7 +76,9 @@ impl DagPane {
     }
 
     /// Drag pans the canvas, a press-and-release without movement selects the
-    /// node under the pointer, and the wheel pans vertically.
+    /// node under the pointer, the wheel pans vertically, and horizontal
+    /// scroll (tilt wheel, trackpad, Shift+wheel in most terminals) pans
+    /// columns.
     pub(super) fn handle_mouse(&mut self, kind: MouseEventKind, column: u16, row: u16) -> DagMouse {
         let inside = self.inner.contains((column, row).into());
         match (kind, self.drag) {
@@ -106,16 +111,29 @@ impl DagPane {
                     None => DagMouse::Redraw,
                 }
             }
-            (MouseEventKind::ScrollUp, _) if inside => self.wheel_pan(-i32::from(WHEEL_PAN_ROWS)),
-            (MouseEventKind::ScrollDown, _) if inside => self.wheel_pan(i32::from(WHEEL_PAN_ROWS)),
+            (MouseEventKind::ScrollUp, _) if inside => {
+                self.wheel_pan((-i32::from(WHEEL_PAN_ROWS), 0))
+            }
+            (MouseEventKind::ScrollDown, _) if inside => {
+                self.wheel_pan((i32::from(WHEEL_PAN_ROWS), 0))
+            }
+            (MouseEventKind::ScrollLeft, _) if inside => {
+                self.wheel_pan((0, -i32::from(WHEEL_PAN_COLUMNS)))
+            }
+            (MouseEventKind::ScrollRight, _) if inside => {
+                self.wheel_pan((0, i32::from(WHEEL_PAN_COLUMNS)))
+            }
             _ => DagMouse::Ignored,
         }
     }
 
-    fn wheel_pan(&mut self, delta_rows: i32) -> DagMouse {
+    /// Pan by `(rows, columns)` from the current view, clamped to the canvas.
+    fn wheel_pan(&mut self, (delta_rows, delta_columns): (i32, i32)) -> DagMouse {
         let current = self.manual_offset.unwrap_or(self.drawn_offset);
-        let row = clamp_u16(i32::from(current.0) + delta_rows);
-        let panned = self.clamp_to_canvas((row, current.1));
+        let panned = self.clamp_to_canvas((
+            clamp_u16(i32::from(current.0) + delta_rows),
+            clamp_u16(i32::from(current.1) + delta_columns),
+        ));
         self.manual_offset = Some(panned);
         DagMouse::Redraw
     }

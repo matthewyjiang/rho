@@ -10,6 +10,7 @@ use super::super::{
         clamp_panel_scroll, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
         OverlayPanelFrame,
     },
+    panel_pointer::PanelPointer,
     render::{display_width, render_entry_with_options, TrailingBlank},
     theme::Theme,
     Entry,
@@ -46,6 +47,9 @@ pub(super) struct SideOverlay {
     pub(super) busy: bool,
     pub(super) snapshot: String,
     streaming_assistant: Option<String>,
+    /// Transcript selection, scrollbar drag, and hover. Body lines only grow
+    /// at the end, so a selection anchored by line survives streaming.
+    pub(super) pointer: PanelPointer,
 }
 
 impl SideOverlay {
@@ -57,6 +61,7 @@ impl SideOverlay {
             busy: false,
             snapshot,
             streaming_assistant: None,
+            pointer: PanelPointer::default(),
         }
     }
 
@@ -153,6 +158,16 @@ impl SideOverlay {
         body
     }
 
+    /// Pins `top_line` as the first visible body row (scrollbar drag). The
+    /// last position follows the end again, like the history bottom.
+    pub(super) fn scroll_to(&mut self, top_line: usize, metrics: &SideScrollMetrics) {
+        if top_line >= metrics.max_scroll {
+            self.follow_end();
+        } else {
+            self.scroll = top_line;
+        }
+    }
+
     pub(super) fn scroll_by(&mut self, delta: isize, metrics: &SideScrollMetrics) {
         let current = resolve_side_scroll(self.scroll, metrics);
         self.scroll = if delta < 0 {
@@ -238,7 +253,7 @@ pub(super) fn side_overlay_frame(overlay: &SideOverlay, area: Rect) -> Option<Ov
     } else {
         FOOTER_IDLE
     };
-    let mut frame = render_overlay_panel(TITLE, footer, &body.lines, scroll, area);
+    let mut frame = render_overlay_panel(TITLE, footer, body.lines, scroll, area);
     frame.copy_hits = body.copy_hits;
     let cursor_x = INPUT_PREFIX
         .chars()

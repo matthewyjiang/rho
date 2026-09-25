@@ -31,6 +31,11 @@ use path::{compact_cwd, fit_cwd_row, format_cwd_left};
 #[cfg(test)]
 use path::{fit_cwd, shorten_path_display};
 
+#[path = "statusline_fields.rs"]
+mod field_row;
+pub(super) use field_row::StatusClick;
+use field_row::{click_action, status_fields_line, StatusFieldHit};
+
 /// Optional cwd-row suffix. Tone is resolved at paint so a theme switch
 /// recolors without waiting for another probe.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,6 +91,8 @@ pub(super) struct StatusLineState {
     /// names the gap instead of a model the session cannot reach.
     signed_in: bool,
     not_saved: bool,
+    /// Clickable field under the pointer; painted with a hover lift.
+    hovered: Option<FieldKey>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -94,9 +101,14 @@ struct StatusLineCache {
     goal: Option<GoalStatus>,
     theme_generation: u64,
     lines: Vec<Line<'static>>,
+    /// Clickable field spans painted on [`FIELDS_ROW`] by the same render.
+    hits: Vec<StatusFieldHit>,
     #[cfg(test)]
     render_count: usize,
 }
+
+/// Index of the ranked-field row in [`StatusLine::lines`]; the cwd row sits above it.
+pub(super) const FIELDS_ROW: usize = 1;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(super) struct StatusLine {
@@ -132,6 +144,7 @@ impl Default for StatusLineState {
             average_generation_rate: None,
             signed_in: true,
             not_saved: false,
+            hovered: None,
         }
     }
 }
@@ -157,6 +170,7 @@ impl StatusLineState {
             average_generation_rate: None,
             signed_in: true,
             not_saved: false,
+            hovered: None,
         }
     }
 }
@@ -277,17 +291,43 @@ impl StatusLine {
             || self.cache.goal != goal
             || self.cache.theme_generation != theme_generation
         {
-            let lines = statusline_lines(&self.state, width, goal.as_ref());
+            let (lines, hits) = statusline_lines(&self.state, width, goal.as_ref());
             self.cache.width = width;
             self.cache.goal = goal;
             self.cache.theme_generation = theme_generation;
             self.cache.lines = lines;
+            self.cache.hits = hits;
             #[cfg(test)]
             {
                 self.cache.render_count += 1;
             }
         }
         &self.cache.lines
+    }
+
+    /// Clickable field painted at row-relative `column` of [`FIELDS_ROW`] in
+    /// the last [`Self::lines`] render. Callers render first so the spans
+    /// match the current width.
+    pub(super) fn hit_at(&self, column: usize) -> Option<&StatusFieldHit> {
+        self.cache
+            .hits
+            .iter()
+            .find(|hit| hit.columns.contains(&column))
+    }
+
+    /// Hover the clickable field painted at row-relative `column` of
+    /// [`FIELDS_ROW`], or clear hover with `None`. Returns whether the hovered
+    /// field changed; a change repaints the row.
+    pub(super) fn set_hovered_column(&mut self, column: Option<usize>) -> bool {
+        let hovered = column
+            .and_then(|column| self.hit_at(column))
+            .map(|hit| hit.key);
+        if self.state.hovered == hovered {
+            return false;
+        }
+        self.state.hovered = hovered;
+        self.invalidate();
+        true
     }
 
     #[cfg(test)]
@@ -301,6 +341,7 @@ impl StatusLine {
 
     fn invalidate(&mut self) {
         self.cache.lines.clear();
+        self.cache.hits.clear();
     }
 }
 
@@ -381,6 +422,8 @@ struct StatusField {
     order: u8,
     text: String,
     style: Style,
+    /// What a click on this field does; `None` is not clickable.
+    action: Option<StatusClick>,
 }
 
 fn field(
@@ -398,6 +441,7 @@ fn field(
         order,
         text: text.into(),
         style,
+        action: click_action(key),
     }
 }
 
@@ -460,7 +504,7 @@ fn statusline_lines(
     state: &StatusLineState,
     width: usize,
     goal: Option<&GoalStatus>,
-) -> Vec<Line<'static>> {
+) -> (Vec<Line<'static>>, Vec<StatusFieldHit>) {
     let goal = goal.map(|goal| {
         let state = if goal.blocked { "blocked" } else { "active" };
         [
@@ -486,10 +530,13 @@ fn statusline_lines(
         .map(|candidates| fit_right_status(&top_left, candidates, width))
         .unwrap_or_default();
     let (bottom_left, bottom_right) = pack_bottom_status(state, width);
-    vec![
+    let (fields_row, hits) = render_status_row(bottom_left, bottom_right, width, state.hovered);
+    let lines = vec![
         render_cwd_row(&cwd_path, cwd_branch, cwd_extra, top_right, width),
-        render_status_row(bottom_left, bottom_right, width),
-    ]
+        fields_row,
+    ];
+    debug_assert_eq!(lines.len(), FIELDS_ROW + 1);
+    (lines, hits)
 }
 
 /// Bottom row layout with an explicit field hierarchy.
@@ -796,8 +843,9 @@ fn render_status_row(
     left: Vec<StatusField>,
     right: Vec<StatusField>,
     width: usize,
-) -> Line<'static> {
-    status_fields_line(&left, &right, width)
+    hovered: Option<FieldKey>,
+) -> (Line<'static>, Vec<StatusFieldHit>) {
+    status_fields_line(&left, &right, width, hovered)
 }
 
 fn render_cwd_row(
@@ -867,31 +915,6 @@ fn status_row_spans(mut left: Vec<Span<'static>>, right: String, width: usize) -
     left.push(Span::styled(gap, Theme::dim()));
     left.push(Span::styled(right, Theme::dim()));
     Line::from(left)
-}
-
-fn status_fields_line(left: &[StatusField], right: &[StatusField], width: usize) -> Line<'static> {
-    if right.is_empty() {
-        return Line::from(fields_to_spans(left));
-    }
-
-    let left_width = side_width(left);
-    let right_width = side_width(right);
-    let gap = " ".repeat(width.saturating_sub(left_width + right_width));
-    let mut spans = fields_to_spans(left);
-    spans.push(Span::styled(gap, Theme::dim()));
-    spans.extend(fields_to_spans(right));
-    Line::from(spans)
-}
-
-fn fields_to_spans(fields: &[StatusField]) -> Vec<Span<'static>> {
-    let mut spans = Vec::with_capacity(fields.len().saturating_mul(2).saturating_sub(1).max(1));
-    for (index, field) in fields.iter().enumerate() {
-        if index > 0 {
-            spans.push(Span::styled(FIELD_SEP.to_string(), Theme::dim()));
-        }
-        spans.push(Span::styled(field.text.clone(), field.style));
-    }
-    spans
 }
 
 #[cfg(test)]

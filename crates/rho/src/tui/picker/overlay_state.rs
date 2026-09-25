@@ -122,6 +122,28 @@ impl UiPicker {
         true
     }
 
+    /// Select item `item` (a click on an inline list row), pinning the nav
+    /// window at `window_start`, the row-space start it was painted with, so
+    /// the rows stay put under the pointer. `false` when `item` no longer
+    /// matches the filter.
+    pub(in crate::tui) fn select_item_in_window(
+        &mut self,
+        item: usize,
+        window_start: usize,
+    ) -> bool {
+        let matches = self.matching_indices().contains(&item);
+        if !matches {
+            return false;
+        }
+        self.nav_scroll = window_start;
+        self.nav_follows_selection = true;
+        if item != self.selected {
+            self.selected = item;
+            self.on_selection_changed();
+        }
+        true
+    }
+
     /// Content hints the overlay uses to size its outer box.
     pub(in crate::tui) fn overlay_sizing(&self) -> super::overlay_layout::OverlaySizing {
         super::overlay_layout::OverlaySizing {

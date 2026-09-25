@@ -27,9 +27,13 @@ pub(in crate::tui) struct QuestionnaireFrame {
     pub(in crate::tui) hits: Vec<ComposerHit<QuestionnaireTarget>>,
 }
 
+/// Renders the questionnaire. `hovered` is the chip or choice under the
+/// pointer; unless it is already the active chip or the focused choice, its
+/// label lifts to strong text.
 pub(in crate::tui) fn questionnaire_frame(
     questionnaire: &QuestionnaireComposer,
     width: usize,
+    hovered: Option<QuestionnaireTarget>,
 ) -> QuestionnaireFrame {
     let width = width.max(1);
     let questions = questionnaire.request.questions();
@@ -38,18 +42,29 @@ pub(in crate::tui) fn questionnaire_frame(
 
     push_header_lines(&mut lines, questionnaire, width);
     if questions.len() > 1 {
-        push_tab_lines(&mut lines, &mut hits, questionnaire, width);
+        let hovered_tab = match hovered {
+            Some(QuestionnaireTarget::Question(index)) => Some(index),
+            Some(QuestionnaireTarget::Choice { .. }) | None => None,
+        };
+        push_tab_lines(&mut lines, &mut hits, questionnaire, width, hovered_tab);
         lines.push(Line::raw(""));
     }
 
     let active = questionnaire.active_index;
+    let hovered_choice = match hovered {
+        Some(QuestionnaireTarget::Choice { index, .. }) => Some(index),
+        Some(QuestionnaireTarget::Question(_)) | None => None,
+    };
     let cursor = push_active_question(
         &mut lines,
         &mut hits,
-        &questions[active],
-        &questionnaire.fields[active],
-        active,
-        questions.len(),
+        ActiveQuestion {
+            question: &questions[active],
+            field: &questionnaire.fields[active],
+            index: active,
+            total: questions.len(),
+            hovered_choice,
+        },
         width,
     );
 
@@ -108,12 +123,14 @@ const TAB_OVERFLOW_RIGHT: &str = " …";
 /// A single-row tab bar with one chip per question. When the chips do not all
 /// fit, the bar scrolls: a contiguous window around the active chip is shown
 /// and hidden chips are indicated with dim ellipses. The active chip is
-/// highlighted; answered chips carry a check mark.
+/// highlighted, a hovered inactive chip lifts; answered chips carry a check
+/// mark.
 fn push_tab_lines(
     lines: &mut Vec<Line<'static>>,
     hits: &mut Vec<ComposerHit<QuestionnaireTarget>>,
     questionnaire: &QuestionnaireComposer,
     width: usize,
+    hovered: Option<usize>,
 ) {
     let chips = questionnaire
         .request
@@ -152,6 +169,8 @@ fn push_tab_lines(
         }
         let style = if index == questionnaire.active_index {
             Theme::input_prompt()
+        } else if hovered == Some(index) {
+            Theme::text_strong()
         } else {
             Theme::dim()
         };
@@ -200,15 +219,28 @@ fn tab_window(chip_widths: &[usize], active: usize, width: usize) -> (usize, usi
     (active, active + 1)
 }
 
+/// The question being answered, and which of its choices the pointer is on.
+struct ActiveQuestion<'a> {
+    question: &'a HostQuestion,
+    field: &'a QuestionnaireFieldState,
+    index: usize,
+    total: usize,
+    hovered_choice: Option<usize>,
+}
+
 fn push_active_question(
     lines: &mut Vec<Line<'static>>,
     hits: &mut Vec<ComposerHit<QuestionnaireTarget>>,
-    question: &HostQuestion,
-    field: &QuestionnaireFieldState,
-    index: usize,
-    total: usize,
+    active: ActiveQuestion<'_>,
     width: usize,
 ) -> Position {
+    let ActiveQuestion {
+        question,
+        field,
+        index,
+        total,
+        hovered_choice,
+    } = active;
     push_hanging_text(
         lines,
         "▸ ",
@@ -234,7 +266,13 @@ fn push_active_question(
         let is_other = question.permits_other() && choice_index == question.choices().len();
         let marker = questionnaire_selection_marker(question, field, choice_index);
         let arrow = if highlighted { "→" } else { " " };
-        let style = questionnaire_choice_style(question, field, choice_index, highlighted);
+        let style = questionnaire_choice_style(
+            question,
+            field,
+            choice_index,
+            highlighted,
+            /*hovered*/ hovered_choice == Some(choice_index),
+        );
         let row_start = lines.len();
         if is_other && questionnaire_other_selected(field) {
             let prefix = format!("  {arrow} {marker} other: ");
@@ -340,16 +378,19 @@ fn footer_parts(questionnaire: &QuestionnaireComposer) -> Vec<&'static str> {
     parts
 }
 
+/// Choice label ink: the focused row is accented; selected and hovered rows
+/// are strong.
 fn questionnaire_choice_style(
     question: &HostQuestion,
     field: &QuestionnaireFieldState,
     choice_index: usize,
     highlighted: bool,
+    hovered: bool,
 ) -> Style {
     if highlighted {
         return Theme::accent();
     }
-    if questionnaire_choice_selected(question, field, choice_index) {
+    if hovered || questionnaire_choice_selected(question, field, choice_index) {
         return Theme::text_strong();
     }
     Theme::text()

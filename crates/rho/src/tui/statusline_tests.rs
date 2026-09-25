@@ -53,8 +53,91 @@ fn statusline_rows_use_display_width_for_alignment() {
         "模型",
         Theme::dim(),
     )];
-    let line = render_status_row(left, right, 10);
+    let (line, _) = render_status_row(left, right, 10, /*hovered*/ None);
     assert_eq!(display_width(&line_text(&line)), 10);
+}
+
+/// Painted `(key, columns)` of every clickable field on the fields row,
+/// found by walking the emitted spans rather than the recorded hits.
+fn painted_field_columns(
+    line: &Line<'_>,
+    fields: &[StatusField],
+    width: usize,
+) -> Vec<(FieldKey, std::ops::Range<usize>)> {
+    let mut column = 0;
+    let mut painted = Vec::new();
+    let mut remaining = fields.iter().filter(|field| field.action.is_some());
+    let mut next = remaining.next();
+    for span in &line.spans {
+        let span_width = display_width(span.content.as_ref());
+        if let Some(field) = next.filter(|field| field.text == span.content.as_ref()) {
+            let columns = column.min(width)..(column + span_width).min(width);
+            if !columns.is_empty() {
+                painted.push((field.key, columns));
+            }
+            next = remaining.next();
+        }
+        column += span_width;
+    }
+    painted
+}
+
+// Covers: click spans must land on the columns each clickable field is
+// painted at, across rank drops and truncation.
+// Owner: pure layout policy (statusline paint).
+#[test]
+fn field_hits_match_painted_columns_across_widths() {
+    let statusline = fully_populated_statusline();
+    for width in [100, 66, 51, 45, 36, 27, 20, 12, 6] {
+        let (left, right) = pack_bottom_status(&statusline.state, width);
+        let fields = left.iter().chain(&right).cloned().collect::<Vec<_>>();
+        let (line, hits) = render_status_row(left, right, width, /*hovered*/ None);
+        let recorded = hits
+            .into_iter()
+            .map(|hit| (hit.key, hit.columns))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            recorded,
+            painted_field_columns(&line, &fields, width),
+            "width {width}"
+        );
+    }
+}
+
+// Covers: hover emphasizes only the hovered clickable field, repaints the
+// cached row, and an inert field (zen) never takes hover.
+// Owner: pure layout policy (statusline paint).
+#[test]
+fn hover_lifts_only_the_hovered_clickable_field() {
+    let _guard = crate::tui::theme::theme_test_lock();
+    let mut statusline = fully_populated_statusline();
+    let before = statusline.lines(100, None)[FIELDS_ROW].clone();
+    let model = statusline
+        .cache
+        .hits
+        .iter()
+        .find(|hit| hit.key == FieldKey::Model)
+        .cloned()
+        .expect("model field is clickable at width 100");
+    assert!(statusline.set_hovered_column(Some(model.columns.start)));
+    let after = statusline.lines(100, None)[FIELDS_ROW].clone();
+    let changed = before
+        .spans
+        .iter()
+        .zip(&after.spans)
+        .filter(|(before, after)| before.style != after.style)
+        .map(|(_, after)| after.content.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(changed.len(), 1, "{changed:?}");
+    assert_eq!(display_width(&changed[0]), model.columns.len());
+    assert_eq!(line_text(&before), line_text(&after));
+
+    let text = line_text(&after);
+    let zen_byte = text.find(" zen ").expect("zen is painted") + 1;
+    let zen_column = display_width(&text[..zen_byte]);
+    assert!(statusline.set_hovered_column(Some(zen_column)));
+    assert_eq!(statusline.state.hovered, None);
+    assert!(!statusline.set_hovered_column(None));
 }
 
 #[test]

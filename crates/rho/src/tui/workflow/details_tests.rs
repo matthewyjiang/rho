@@ -69,3 +69,52 @@ fn finished_output_loads_and_scrolls_from_top() {
     assert_eq!(pane.visible_start(), 3);
     assert_eq!(pane.visible_body_lines().len(), 5);
 }
+
+// Covers: a drag over the body selects in content-line space (so the copy
+// matches the scrolled view), a release queues the selected text once, and a
+// press outside the pane drops the highlight.
+// Owner: workflow details pane.
+#[test]
+fn drag_over_body_selects_and_queues_copy() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    let dir = tempdir().unwrap();
+    let relative = "artifacts/review/answer.txt";
+    // Blank-line paragraphs so markdown keeps one row per paragraph.
+    let body = (0..20)
+        .map(|n| format!("row {n:02}\n\n"))
+        .collect::<String>();
+    write_file_beneath(dir.path(), Path::new(relative), body.as_bytes()).unwrap();
+    let node = finished_node(relative, body.as_bytes());
+    let mut pane = DetailPane::default();
+    pane.set_run_directory(Some(dir.path().to_path_buf()));
+    pane.refresh(Some(&node), /*reset_scroll*/ true);
+    let area = ratatui::layout::Rect::new(10, 5, 21, 4);
+    let lines = pane.prepare_body_lines(20);
+    pane.sync_geometry(area, lines, 4);
+    pane.scroll_by(5);
+    let top = pane.visible_start();
+
+    assert!(pane.handle_mouse(MouseEventKind::Down(MouseButton::Left), 10, 5));
+    assert!(pane.handle_mouse(MouseEventKind::Drag(MouseButton::Left), 15, 6));
+    assert_eq!(pane.take_pending_copy(), None, "drag alone must not copy");
+    pane.handle_mouse(MouseEventKind::Up(MouseButton::Left), 15, 6);
+    let visible = pane
+        .visible_body_lines()
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    // Columns 0..=5 of the second visible row: the press was at x=10, the
+    // release at x=15.
+    let second = visible[1].chars().take(6).collect::<String>();
+    assert_eq!(
+        pane.take_pending_copy(),
+        Some(format!("{}\n{}", visible[0].trim_end(), second.trim_end())),
+        "top line {top}"
+    );
+    assert_eq!(pane.take_pending_copy(), None);
+    assert!(pane.selection().is_some());
+
+    assert!(pane.handle_mouse(MouseEventKind::Down(MouseButton::Left), 0, 0));
+    assert_eq!(pane.selection(), None);
+}

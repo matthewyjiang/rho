@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::tui::{
     composer_attachments::ComposerAttachmentSlot,
+    composer_pointer::PointerHover,
     feed_image::FeedImage,
     inline_shell::InlineShellMode,
     paste_burst::{expand_paste_segments, PasteBurst},
@@ -151,6 +152,9 @@ pub(in crate::tui) struct InputUi {
     file_palette_dismissed: bool,
     composer: ComposerMode,
     hovered_composer_copy: bool,
+    /// Composer choice and palette row under the pointer, resolved each
+    /// frame from the last pointer cell. Cleared with the composer mode.
+    pointer_hover: PointerHover,
     /// Whether the current composer mode has reached the screen. Pointer
     /// clicks on composer choices wait for this so they never land on rows
     /// the user has not seen yet.
@@ -375,6 +379,7 @@ impl InputUi {
         self.last_pointer_click = None;
         self.composer_view_start = 0;
         self.hovered_composer_copy = false;
+        self.pointer_hover = PointerHover::default();
         self.composer_painted = false;
         self.pointer_action = None;
     }
@@ -383,6 +388,7 @@ impl InputUi {
         self.last_pointer_click = None;
         self.composer_view_start = 0;
         self.hovered_composer_copy = false;
+        self.pointer_hover = PointerHover::default();
         self.composer_painted = false;
         self.pointer_action = None;
         std::mem::replace(&mut self.composer, ComposerMode::Input)
@@ -414,6 +420,18 @@ impl InputUi {
 
     pub(in crate::tui) fn set_hovered_composer_copy(&mut self, hovered: bool) {
         self.hovered_composer_copy = hovered;
+    }
+
+    /// Composer choice and palette row the pointer rests on, for the hover lift.
+    pub(in crate::tui) fn pointer_hover(&self) -> PointerHover {
+        self.pointer_hover
+    }
+
+    /// Record the hovered targets; `true` when they changed.
+    pub(in crate::tui) fn set_pointer_hover(&mut self, hover: PointerHover) -> bool {
+        let changed = self.pointer_hover != hover;
+        self.pointer_hover = hover;
+        changed
     }
 
     pub(in crate::tui) fn paste_burst(&self) -> &PasteBurst {
@@ -515,6 +533,16 @@ impl InputUi {
 
     pub(in crate::tui) fn pop_attachment(&mut self) -> Option<ComposerAttachment> {
         let slot = self.attachments.pop()?;
+        self.bump_attachments();
+        Some(slot.attachment)
+    }
+
+    /// Remove the attachment at `index` (pointer removal of one preview).
+    pub(in crate::tui) fn remove_attachment(&mut self, index: usize) -> Option<ComposerAttachment> {
+        if index >= self.attachments.len() {
+            return None;
+        }
+        let slot = self.attachments.remove(index);
         self.bump_attachments();
         Some(slot.attachment)
     }

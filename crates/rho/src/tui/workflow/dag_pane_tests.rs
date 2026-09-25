@@ -141,3 +141,62 @@ fn click_maps_through_a_centered_draw_rect() {
         DagMouse::Ignored
     );
 }
+
+// Covers: horizontal scroll pans the canvas column axis, clamped to the
+// canvas on both ends, and never moves the row axis.
+// Owner: workflow DAG pane mouse mapping (pure geometry).
+#[test]
+fn horizontal_scroll_pans_columns_within_the_canvas() {
+    let nodes = vec![
+        node("inspect", "Inspect workspace", &[], NodeState::Pending),
+        node("test", "Run checks", &[], NodeState::Pending),
+        node("apply", "Apply", &["inspect", "test"], NodeState::Pending),
+    ];
+    let rendered = render_dag(&nodes, 0, &vec![None; nodes.len()]);
+    let mut pane = DagPane::default();
+    // Narrower than the canvas so the column axis can scroll.
+    let inner = Rect::new(2, 1, 8, 40);
+    pane.offset_for_draw(&rendered, 0, inner);
+    let max_column = (rendered.canvas_width - usize::from(inner.width)) as u16;
+    assert!(max_column > 0, "fixture canvas must overflow the pane");
+    let (row_axis, followed_column) = pane.offset_for_draw(&rendered, 0, inner);
+
+    let scroll = |pane: &mut DagPane, kind| {
+        assert_eq!(pane.handle_mouse(kind, inner.x, inner.y), DagMouse::Redraw);
+        pane.offset_for_draw(&rendered, 0, inner)
+    };
+    // Left steps from the followed view down to column 0 and stays there.
+    let mut expected = followed_column;
+    while expected > 0 {
+        expected = expected.saturating_sub(super::WHEEL_PAN_COLUMNS);
+        assert_eq!(
+            scroll(&mut pane, MouseEventKind::ScrollLeft),
+            (row_axis, expected)
+        );
+    }
+    assert_eq!(scroll(&mut pane, MouseEventKind::ScrollLeft), (row_axis, 0));
+    // Right steps until the far edge, then stays clamped there.
+    while expected < max_column {
+        expected = (expected + super::WHEEL_PAN_COLUMNS).min(max_column);
+        assert_eq!(
+            scroll(&mut pane, MouseEventKind::ScrollRight),
+            (row_axis, expected)
+        );
+    }
+    assert_eq!(
+        scroll(&mut pane, MouseEventKind::ScrollRight),
+        (row_axis, max_column)
+    );
+    assert_eq!(
+        scroll(&mut pane, MouseEventKind::ScrollLeft),
+        (
+            row_axis,
+            max_column.saturating_sub(super::WHEEL_PAN_COLUMNS)
+        )
+    );
+    // Outside the pane the event is not the graph's.
+    assert_eq!(
+        pane.handle_mouse(MouseEventKind::ScrollRight, 0, 0),
+        DagMouse::Ignored
+    );
+}

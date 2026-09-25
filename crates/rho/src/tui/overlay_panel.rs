@@ -14,7 +14,7 @@ use super::{
     display_width,
     picker::{clamp_overlay_scroll, OverlayScrollbarState},
     render::{fit_line, truncate_one_line},
-    scrollbar::track_span,
+    scrollbar::{track_span, HistoryScrollbar},
     styled_line, LineFill, Theme,
 };
 
@@ -42,6 +42,10 @@ pub(super) struct OverlayPanelFrame {
     pub(super) copy_hits: Vec<CopyHit>,
     body: Rect,
     scroll: usize,
+    /// Every body row, unscrolled, so a selection can copy the rows it spans.
+    body_lines: Vec<Line<'static>>,
+    /// Hitbox of the painted scrollbar column; `None` when the body fits.
+    scrollbar: Option<HistoryScrollbar>,
 }
 
 impl OverlayPanelFrame {
@@ -53,10 +57,21 @@ impl OverlayPanelFrame {
         self.scroll
     }
 
-    pub(super) fn copy_text_at(&self, column: u16, row: u16) -> Option<&str> {
+    /// Body rows in body-line coordinates (line 0 is the first row, not the
+    /// first visible one).
+    pub(super) fn body_lines(&self) -> &[Line<'static>] {
+        &self.body_lines
+    }
+
+    pub(super) fn scrollbar(&self) -> Option<HistoryScrollbar> {
+        self.scrollbar
+    }
+
+    /// The copy target under the pointer, as painted.
+    pub(super) fn copy_hit_at(&self, column: u16, row: u16) -> Option<&CopyHit> {
         self.copy_hits
             .iter()
-            .find_map(|hit| hit.text_at(self.body, self.scroll, column, row))
+            .find(|hit| hit.text_at(self.body, self.scroll, column, row).is_some())
     }
 }
 
@@ -72,10 +87,12 @@ pub(super) fn overlay_panel_inner_width(area: Rect) -> usize {
         .max(1)
 }
 
+/// Draws the panel chrome around `body` scrolled to `scroll`. The frame keeps
+/// `body` so pointer selection can copy rows outside the viewport.
 pub(super) fn render_overlay_panel(
     title: &str,
     footer: &str,
-    body: &[Line<'static>],
+    body: Vec<Line<'static>>,
     scroll: usize,
     area: Rect,
 ) -> OverlayPanelFrame {
@@ -85,6 +102,13 @@ pub(super) fn render_overlay_panel(
     let scroll = clamp_overlay_scroll(scroll, body.len(), body_rows);
     let scrollbar = OverlayScrollbarState::detail(body.len(), body_rows, scroll);
     let content_width = inner_width.saturating_sub(usize::from(scrollbar.is_some()));
+    // The track is the last inner column, beside the clipped content.
+    let track = Rect::new(
+        layout.outer.x.saturating_add(1),
+        layout.outer.y.saturating_add(1),
+        as_u16(inner_width),
+        as_u16(body_rows),
+    );
 
     let mut lines = Vec::with_capacity(layout.outer.height as usize);
     lines.push(border_line(
@@ -131,13 +155,10 @@ pub(super) fn render_overlay_panel(
         outer: layout.outer,
         lines,
         copy_hits: Vec::new(),
-        body: Rect::new(
-            layout.outer.x.saturating_add(1),
-            layout.outer.y.saturating_add(1),
-            content_width as u16,
-            body_rows as u16,
-        ),
+        body: Rect::new(track.x, track.y, content_width as u16, track.height),
         scroll,
+        body_lines: body,
+        scrollbar: scrollbar.map(|scrollbar| scrollbar.hitbox(track)),
     }
 }
 

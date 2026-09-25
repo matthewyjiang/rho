@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{layout::Rect, DefaultTerminal};
 
@@ -8,7 +10,10 @@ use super::{
     },
     OverlayFocus, OverlayScrollbarDrag, UiPicker,
 };
-use crate::tui::{scrollbar::HistoryScrollbar, App, ComposerMode, InteractiveRuntime};
+use crate::tui::{
+    app_state::PointerAction, mouse::COMPOSER_DOUBLE_CLICK, scrollbar::HistoryScrollbar, App,
+    ComposerMode, InteractiveRuntime,
+};
 
 /// Lines one wheel event scrolls in either overlay pane. Tied to the history
 /// wheel speed so the two cannot drift.
@@ -19,8 +24,9 @@ const PICKER_WHEEL_LINES: isize = crate::tui::HISTORY_MOUSE_SCROLL_LINES as isiz
 pub(in crate::tui) enum PickerMouseEvent {
     /// Wheel step, negative up and positive down.
     Wheel(isize),
-    /// Left button press.
-    Click,
+    /// Left button press, at this time, so two presses on one row can pair
+    /// into a double click.
+    Click(Instant),
     /// Left button drag.
     Drag,
     /// Left button release.
@@ -255,12 +261,15 @@ impl App {
     /// An open overlay swallows every pointer event it is offered, even
     /// outside its box, so the history behind a popup never scrolls or
     /// selects by accident. An inline list picker has no box: only the wheel
-    /// reaches it, stepping the selection because it has no viewport of its
-    /// own; clicks and movement fall through to the history.
+    /// reaches it here, stepping the selection because it has no viewport of
+    /// its own. Its row clicks arrive as composer choices
+    /// ([`App::handle_choice_composer_mouse`]); other clicks and movement fall
+    /// through to the history.
     ///
     /// Over an overlay the wheel moves viewports, never the selection. The
     /// pane under the pointer takes the scroll, falling back to the focused
-    /// pane when the pointer sits outside the box.
+    /// pane when the pointer sits outside the box. A click selects a nav row,
+    /// and a second click on the same row submits it like Enter.
     pub(in crate::tui) fn route_picker_mouse(
         &mut self,
         event: PickerMouseEvent,
@@ -269,6 +278,8 @@ impl App {
         width: u16,
         height: u16,
     ) -> bool {
+        // Item a click selected on an overlay nav row, for double click pairing.
+        let mut clicked_item = None;
         let selection_may_change = {
             let ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
                 return false;
@@ -279,7 +290,7 @@ impl App {
                         picker.select_by_offset(delta);
                         true
                     }
-                    PickerMouseEvent::Click
+                    PickerMouseEvent::Click(_)
                     | PickerMouseEvent::Drag
                     | PickerMouseEvent::Release
                     | PickerMouseEvent::Move => return false,
@@ -287,8 +298,10 @@ impl App {
             } else {
                 let layout =
                     picker_overlay_layout(Rect::new(0, 0, width, height), picker.overlay_sizing());
-                let may_change =
-                    matches!(event, PickerMouseEvent::Click | PickerMouseEvent::Wheel(_));
+                let may_change = matches!(
+                    event,
+                    PickerMouseEvent::Click(_) | PickerMouseEvent::Wheel(_)
+                );
                 match event {
                     PickerMouseEvent::Wheel(delta) => {
                         picker.set_overlay_scrollbar_drag(None);
@@ -316,7 +329,7 @@ impl App {
                             }
                         }
                     }
-                    PickerMouseEvent::Click => {
+                    PickerMouseEvent::Click(_) => {
                         if let Some(scrollbar) = nav_scrollbar(picker, layout)
                             .filter(|scrollbar| scrollbar.contains(column, row))
                         {
@@ -345,6 +358,7 @@ impl App {
                                         picker.nav_window_start(viewport_rows) + hit.pane_row;
                                     if picker.select_nav_row(row_index, viewport_rows) {
                                         picker.focus_overlay_pane(OverlayFocus::Nav);
+                                        clicked_item = Some(picker.selected);
                                     }
                                 }
                                 Some(hit)
@@ -393,6 +407,26 @@ impl App {
         };
         if selection_may_change {
             self.preview_selected_theme_if_active();
+        }
+        if let PickerMouseEvent::Click(now) = event {
+            match clicked_item {
+                // The item keeps a double click from pairing two rows that
+                // share a cell after the nav window moved.
+                Some(item)
+                    if self.input_ui.register_pointer_click(
+                        now,
+                        column,
+                        row,
+                        item,
+                        COMPOSER_DOUBLE_CLICK,
+                    ) =>
+                {
+                    self.input_ui
+                        .request_pointer_action(PointerAction::SubmitPicker);
+                }
+                Some(_) => {}
+                None => self.input_ui.cancel_pointer_click_sequence(),
+            }
         }
         true
     }

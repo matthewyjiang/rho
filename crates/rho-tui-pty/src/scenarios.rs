@@ -29,6 +29,7 @@ mod file_palette;
 mod first_run;
 mod goal;
 mod hooks;
+mod hover_clicks;
 mod inline_choice_click;
 mod limits;
 mod login;
@@ -39,6 +40,7 @@ mod model_cycle_reasoning;
 mod model_prompts;
 mod no_save;
 mod palette_click;
+mod panel_pointer;
 mod paste;
 mod pickers;
 mod process_rail;
@@ -56,6 +58,7 @@ mod sessions_tool;
 mod shell_completion;
 mod side_chat;
 mod startup;
+mod status_clicks;
 mod statusline;
 mod steering;
 mod streaming_controls;
@@ -549,6 +552,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
     inline_choice_click::INLINE_CHOICE_CLICK_SCENARIO,
     palette_click::SLASH_PALETTE_CLICK_SCENARIO,
     palette_click::FILE_PALETTE_CLICK_SCENARIO,
+    hover_clicks::QUESTIONNAIRE_HOVER_SCENARIO,
+    hover_clicks::INLINE_PICKER_CLICK_SCENARIO,
+    hover_clicks::OVERLAY_PICKER_DOUBLE_CLICK_SCENARIO,
+    panel_pointer::PANEL_POINTER_SCENARIO,
+    panel_pointer::SIDE_POINTER_SCENARIO,
+    status_clicks::STATUSLINE_MODEL_CLICK_SCENARIO,
+    status_clicks::ATTACHMENT_CLICK_REMOVE_SCENARIO,
     Scenario::new(
         "supervised_approval",
         "Inspect and cancel a bounded supervised process approval",

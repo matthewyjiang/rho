@@ -81,6 +81,7 @@ pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod changelog_command;
 mod chat_media;
 mod choice_actions;
+mod chrome_pointer;
 mod claude_login;
 mod composer_layout;
 mod copy_actions;
@@ -134,6 +135,7 @@ mod notification_card_render;
 mod overlay_panel;
 mod palette;
 mod palette_pointer;
+mod panel_pointer;
 mod panel_text;
 mod paste_burst;
 mod pending_input;
@@ -262,7 +264,7 @@ use questionnaire::{
     QuestionnaireResponseChannel,
 };
 use render::{
-    char_prefix_display_width, display_width, input_frame, picker_lines, session_header_lines,
+    char_prefix_display_width, display_width, input_frame, list_picker_frame, session_header_lines,
     styled_line, tool_entry_lines, truncate_one_line, InputFrame, LineFill,
 };
 use scrollbar::HistoryScrollbar;

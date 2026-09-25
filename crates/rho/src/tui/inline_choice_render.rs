@@ -18,11 +18,13 @@ use crate::tui::{
 };
 
 /// Choice rows plus one click target per available option, spanning its
-/// label and detail rows but not the blank rows between groups.
+/// label and detail rows but not the blank rows between groups. `hovered` is
+/// the option index under the pointer; an unfocused one lifts its label.
 pub(in crate::tui) fn inline_choice_frame(
     choice: &InlineChoice,
     width: usize,
     return_to_parent: bool,
+    hovered: Option<usize>,
 ) -> ComposerFrame {
     let width = width.max(1);
     let mut lines = indented_wrapped_lines(
@@ -45,7 +47,12 @@ pub(in crate::tui) fn inline_choice_frame(
     let mut previous_wrapped = false;
     let mut choice_hits = Vec::new();
     for (index, option) in choice.options.iter().enumerate() {
-        let group = option_lines(option, index == choice.active, width);
+        let group = option_lines(
+            option,
+            index == choice.active,
+            /*hovered*/ hovered == Some(index),
+            width,
+        );
         let wrapped = group.len() > 1 + usize::from(!option.detail.is_empty());
         // Single-line labels/details stay compact; separate multiline groups.
         if index > 0 && (previous_wrapped || wrapped) {
@@ -107,8 +114,14 @@ pub(in crate::tui) fn inline_choice_frame(
     }
 }
 
-fn option_lines(option: &InlineChoiceOption, focused: bool, width: usize) -> Vec<Line<'static>> {
+fn option_lines(
+    option: &InlineChoiceOption,
+    focused: bool,
+    hovered: bool,
+    width: usize,
+) -> Vec<Line<'static>> {
     let focused = focused && option.available;
+    let hovered = hovered && option.available;
     let marker = if focused {
         SELECTION_MARKER_ACTIVE
     } else if option.available {
@@ -116,8 +129,8 @@ fn option_lines(option: &InlineChoiceOption, focused: bool, width: usize) -> Vec
     } else {
         "·"
     };
-    let style = if focused {
-        Theme::text().add_modifier(Modifier::BOLD)
+    let style = if focused || hovered {
+        Theme::text_strong()
     } else if option.available {
         Theme::text()
     } else {

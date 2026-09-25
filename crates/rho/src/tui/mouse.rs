@@ -16,7 +16,7 @@ use super::{
     tool_card_hover::{ToolCardHit, ToolCardTarget},
     tool_output_ui::expandable_tool_entry,
     view::LiveHistory,
-    App, ComposerMode, PanelOverlay,
+    App, ComposerMode,
 };
 
 /// Max gap between presses that still counts as a double-click in the composer.
@@ -77,12 +77,8 @@ impl App {
         let now = Instant::now();
         let composer_owns_choices = match self.input_ui.composer() {
             // Overlays own pointer input; nothing behind them reacts.
-            ComposerMode::Panel(PanelOverlay::Info(_)) => {
-                self.handle_info_overlay_mouse(kind, screen, column, row, now);
-                return Ok(());
-            }
             ComposerMode::Panel(_) => {
-                self.handle_panel_overlay_mouse(kind, screen);
+                self.handle_panel_overlay_mouse(kind, screen, column, row, now);
                 return Ok(());
             }
             ComposerMode::Side => {
@@ -92,10 +88,11 @@ impl App {
             ComposerMode::Questionnaire(_)
             | ComposerMode::Approval(_)
             | ComposerMode::InlineChoice(_) => true,
-            // Pickers route inside the screen handler: an inline list shares
+            // Inline list rows are composer choices. Overlay pickers and the
+            // wheel route inside the screen handler: an inline list shares
             // the wheel with the transcript around it.
+            ComposerMode::Picker(picker) => !picker.is_overlay(),
             ComposerMode::Input
-            | ComposerMode::Picker(_)
             | ComposerMode::SecretInput(_)
             | ComposerMode::ConfigNumberInput(_)
             | ComposerMode::TextInput(_)
@@ -183,19 +180,22 @@ impl App {
                 );
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                // The picker tracks its own click sequence for double clicks.
                 if self.route_picker_mouse(
-                    PickerMouseEvent::Click,
+                    PickerMouseEvent::Click(now),
                     column,
                     row,
                     size.width,
                     size.height,
                 ) {
                     self.input_ui.clear_selection();
-                    self.input_ui.cancel_pointer_click_sequence();
                     return Ok(());
                 }
                 if self.handle_palette_mouse(kind, &palette_hits, layout.commands, column, row, now)
                 {
+                    return Ok(());
+                }
+                if self.handle_chrome_click(&layout, screen, column, row) {
                     return Ok(());
                 }
                 self.screen_selection = None;

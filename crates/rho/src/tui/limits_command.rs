@@ -13,6 +13,7 @@ use super::{
         classify_panel_key, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
         OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
     },
+    panel_pointer::PanelPointer,
     panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
     render::display_width,
     theme::Theme,
@@ -118,6 +119,8 @@ pub(super) struct LimitsOverlay {
     sections: Vec<LimitsSection>,
     empty_note: Option<String>,
     scroll: PanelScroll,
+    /// Selection, scrollbar drag, and hover for this panel.
+    pub(super) pointer: PanelPointer,
     checking_started: Instant,
 }
 
@@ -255,6 +258,12 @@ impl App {
             }
         }
         self.pending_usage_limits = still_pending;
+        if changed {
+            // Rows may have moved under a selection anchored by line.
+            if let Some(overlay) = self.limits_overlay_mut() {
+                overlay.pointer.clear_selection();
+            }
+        }
         Ok(changed)
     }
 
@@ -274,7 +283,7 @@ impl App {
         Some(render_overlay_panel(
             TITLE,
             FOOTER,
-            &body,
+            body,
             overlay.scroll.offset(),
             area,
         ))
@@ -551,6 +560,7 @@ fn build_limits_overlay(
         sections,
         empty_note,
         scroll: PanelScroll::default(),
+        pointer: PanelPointer::default(),
         checking_started: Instant::now(),
     }
 }

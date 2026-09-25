@@ -6,7 +6,11 @@ use std::{
 use crossterm::event::Event;
 use ratatui::DefaultTerminal;
 
-use super::super::{mouse_capture, terminal_events::TerminalEvents, theme::Theme};
+use crate::clipboard::SystemClipboard;
+
+use super::super::{
+    mouse_capture, terminal_events::TerminalEvents, text_selection::CopyNotice, theme::Theme,
+};
 use super::{
     event_adapter::WorkflowEventAdapter,
     input::{handle_key, InputResult},
@@ -14,7 +18,7 @@ use super::{
     view,
 };
 
-/// Keep the auto-hide details scrollbar alive without waiting for input.
+/// Redraw cadence for timed chrome (details scrollbar, copy notice) without input.
 const SCROLLBAR_TICK: Duration = Duration::from_millis(100);
 
 /// Why the workflow screen closed.
@@ -62,12 +66,16 @@ async fn run_loop(
     adapter: &mut dyn WorkflowEventAdapter,
 ) -> anyhow::Result<WorkflowTuiExit> {
     let mut terminal_events = TerminalEvents::new();
+    let mut clipboard = SystemClipboard::new();
     let mut scrollbar_tick = tokio::time::interval(SCROLLBAR_TICK);
     scrollbar_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     terminal.draw(|frame| view::draw(frame, app))?;
 
     loop {
-        let scrollbar_visible = app.details().should_render_scrollbar(Instant::now());
+        let now = Instant::now();
+        // Transient chrome (scrollbar, copy notice) hides on a timer, not input.
+        let transient_visible =
+            app.details().should_render_scrollbar(now) || app.copy_notice().is_some();
         tokio::select! {
             terminal_event = terminal_events.next() => {
                 match terminal_event? {
@@ -85,7 +93,17 @@ async fn run_loop(
                         }
                     },
                     Event::Mouse(mouse) => {
-                        if view::handle_mouse(app, mouse.kind, mouse.column, mouse.row) {
+                        let mut redraw =
+                            view::handle_mouse(app, mouse.kind, mouse.column, mouse.row);
+                        if let Some(text) = app.details_mut().take_pending_copy() {
+                            app.set_copy_notice(CopyNotice::from_copy_result(
+                                clipboard.copy_text(&text),
+                                text.chars().count(),
+                                Instant::now(),
+                            ));
+                            redraw = true;
+                        }
+                        if redraw {
                             terminal.draw(|frame| view::draw(frame, app))?;
                         }
                     }
@@ -109,8 +127,10 @@ async fn run_loop(
                 app.apply(update);
                 terminal.draw(|frame| view::draw(frame, app))?;
             }
-            _ = scrollbar_tick.tick(), if scrollbar_visible => {
-                // Drop the chrome after HISTORY_SCROLLBAR_REVEAL_DURATION without input.
+            _ = scrollbar_tick.tick(), if transient_visible => {
+                // Drop the scrollbar after HISTORY_SCROLLBAR_REVEAL_DURATION and
+                // the copy notice after its own duration, without input.
+                app.expire_copy_notice(Instant::now());
                 terminal.draw(|frame| view::draw(frame, app))?;
             }
         }
