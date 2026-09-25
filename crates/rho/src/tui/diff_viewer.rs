@@ -54,10 +54,9 @@ impl App {
                 return Ok(());
             }
         };
-        if status.files.is_empty() {
-            self.set_status("worktree clean");
-            return Ok(());
-        }
+        // A clean worktree still opens the popup, so `/diff` always answers
+        // in the same place instead of only flashing a status line.
+        let clean = status.files.is_empty();
         self.input_ui
             .set_composer(ComposerMode::Picker(diff_picker(&status)));
         self.diff_viewer = Some(DiffViewer {
@@ -72,7 +71,11 @@ impl App {
                 .collect(),
             pending: None,
         });
-        self.set_status("worktree diff");
+        self.set_status(if clean {
+            "worktree clean"
+        } else {
+            "worktree diff"
+        });
         self.request_selected_diff();
         Ok(())
     }
@@ -194,10 +197,19 @@ impl App {
 
 fn diff_picker(status: &WorktreeStatus) -> UiPicker {
     let branch = status.branch.as_deref().unwrap_or("detached HEAD");
-    let count = status.files.len();
-    let noun = if count == 1 { "file" } else { "files" };
+    let summary = match status.files.len() {
+        0 => "clean".to_string(),
+        1 => "1 file".to_string(),
+        count => format!("{count} files"),
+    };
+    // Nothing to cycle in a clean tree, so Tab is not advertised there.
+    let tab = if status.files.is_empty() {
+        TabKey::None
+    } else {
+        TabKey::CycleItems
+    };
     let items = status.files.iter().map(file_item).collect();
-    UiPicker::view_diff(format!("Diff · {branch} · {count} {noun}"), items)
+    UiPicker::view_diff(format!("Diff · {branch} · {summary}"), items)
         .with_layout(PickerLayout::Overlay)
         .with_overlay_shape(OverlayShape::Viewer)
         .with_overlay_chrome(OverlayChrome {
@@ -207,10 +219,11 @@ fn diff_picker(status: &WorktreeStatus) -> UiPicker {
         })
         .with_label_overflow(LabelOverflow::KeepEnd)
         .with_key_hints(PickerKeyHints {
-            tab: TabKey::CycleItems,
+            tab,
             ..PickerKeyHints::default()
         })
         .with_fuzzy_filter()
+        .with_empty_message("worktree clean")
 }
 
 fn file_item(file: &ChangedFile) -> PickerItem {

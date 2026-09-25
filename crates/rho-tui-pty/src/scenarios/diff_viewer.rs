@@ -6,6 +6,7 @@ use anyhow::{ensure, Context, Result};
 
 use crate::{
     env::IsolatedHome,
+    harness::PtyHarness,
     keys::Key,
     pty::PtySize,
     scenario::{Scenario, Step},
@@ -30,7 +31,7 @@ pub(super) const DIFF_VIEWER_SCENARIO: Scenario = Scenario::new(
 fn setup_git_worktree(home: &IsolatedHome) -> Result<()> {
     let repo = &home.workspace;
     fs::write(repo.join("app.py"), "print('one')\n")?;
-    git(repo, &["init", "-q"])?;
+    git(repo, &["init", "-q", "-b", "main"])?;
     git(repo, &["add", "app.py"])?;
     git(repo, &["commit", "-q", "-m", "init"])?;
     fs::write(repo.join("app.py"), "print('index-copy')\n")?;
@@ -92,5 +93,23 @@ const DIFF_VIEWER_STEPS: &[Step] = &[
         text: "Untracked",
         timeout: SETTLE,
     },
+    Step::Custom(commit_everything),
+    Step::Phase("clean_worktree_opens_empty_popup"),
+    Step::SubmitText("/diff"),
+    // The popup title, not the status line, which also says "clean".
+    Step::WaitText {
+        text: "Diff · main · clean",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
     Step::ExitCommand,
 ];
+
+fn commit_everything(harness: &mut PtyHarness) -> Result<()> {
+    let repo = harness
+        .working_directory()
+        .context("pty harness has no working directory")?
+        .to_path_buf();
+    git(&repo, &["add", "-A"])?;
+    git(&repo, &["commit", "-q", "-m", "all"])
+}
