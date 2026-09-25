@@ -15,7 +15,8 @@ pub(super) fn apply_builtin_overrides(
     model: &str,
     metadata: ModelMetadata,
 ) -> ModelMetadata {
-    static OVERRIDES: OnceLock<toml::Value> = OnceLock::new();
+    // Parse as a document (`Table`): in toml 1.x, `Value::from_str` parses a single value.
+    static OVERRIDES: OnceLock<toml::Table> = OnceLock::new();
     let overrides = OVERRIDES.get_or_init(|| {
         BUILTIN_MODEL_OVERRIDES_TOML
             .parse()
@@ -85,9 +86,21 @@ pub(super) fn local_override_table(
 ) -> Option<toml::map::Map<String, toml::Value>> {
     let path = local_overrides_path()?;
     let contents = fs::read_to_string(path).ok()?;
-    let value = contents.parse::<toml::Value>().ok()?;
+    model_override_from_document(&contents, provider, model)
+}
+
+/// Returns the `[models."provider/model"]` table from a `models.toml` document.
+///
+/// Unparseable documents yield `None` so a broken user file cannot block model loading.
+pub(super) fn model_override_from_document(
+    contents: &str,
+    provider: &str,
+    model: &str,
+) -> Option<toml::Table> {
+    // Parse as a document (`Table`): in toml 1.x, `Value::from_str` parses a single value.
+    let document = contents.parse::<toml::Table>().ok()?;
     let key = format!("{provider}/{model}");
-    value
+    document
         .get("models")
         .and_then(|models| models.get(&key))
         .and_then(toml::Value::as_table)

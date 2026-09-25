@@ -1005,6 +1005,35 @@ fn local_reasoning_override_replaces_provider_levels_exactly() {
     assert!(metadata.reasoning_capabilities_known);
 }
 
+// Covers: a multi-table models.toml must resolve per-model overrides, not silently parse to None
+// Owner: local models.toml override parsing
+#[test]
+fn local_models_document_resolves_the_requested_model_table() {
+    let document = r#"
+[models."openai/gpt-5"]
+usable_context_window = 200000
+
+[models."anthropic/claude-sonnet-4-5"]
+catalog = "anthropic"
+supported_reasoning_levels = ["low", "high"]
+"#;
+
+    let table = overrides::model_override_from_document(document, "anthropic", "claude-sonnet-4-5");
+
+    let expected = toml::from_str::<toml::Table>(
+        r#"
+catalog = "anthropic"
+supported_reasoning_levels = ["low", "high"]
+"#,
+    )
+    .unwrap();
+    assert_eq!(table, Some(expected));
+    assert_eq!(
+        overrides::model_override_from_document(document, "openai", "missing"),
+        None
+    );
+}
+
 // Covers: Token Plan qwen3.8-max must expose only models.dev effort levels
 // Owner: models.dev catalog policy
 #[test]
