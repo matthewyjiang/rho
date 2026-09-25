@@ -62,10 +62,12 @@ The summary goes into history as a compaction summary, labeled by what caused it
 
 A later compaction updates the earlier summary instead of summarizing it again. The earlier summary goes to the model as a previous summary to revise with the newer turns, so detail is not lost at each round.
 
-Two things stay verbatim outside the summary:
+Two user messages stay verbatim outside the summary, each only if its estimate is at most 2,048 tokens:
 
-- The first user turn, if its estimate is at most 2,048 tokens. Across 701 local sessions the first turn is at most 856 tokens at p99, and only 2 sessions exceed 2,048. A larger first turn is summarized. If the first turn is the only history left to remove, it is summarized too.
-- The active `/goal`, restated after the summary. A cleared goal is dropped at the next compaction. `/goal` already limits conditions to 4,000 characters.
+- The first user turn, kept ahead of the summary. A larger first turn is only summarized.
+- The latest user message, restated after the summary when it would otherwise fall outside the recent tail. This keeps the instruction for the current turn, such as a `/goal` prompt, when compaction runs in the middle of a long turn.
+
+If those messages are the only history left to remove, they are summarized too.
 
 ## Which compactor runs
 

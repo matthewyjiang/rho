@@ -5,7 +5,7 @@
 //! original content stays in the session transcript and is addressed by a
 //! [`recall_id`] derived from it, which is stable across resume and branches.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, ops::Range};
 
 use rho_providers::model::{
     context::{estimate_context_tokens, estimate_message_tokens},
@@ -53,10 +53,7 @@ pub(crate) fn elide_tool_results(
     target_tokens: u64,
 ) -> Option<Elision> {
     let partition = partition_messages_for_compaction(messages, tools, target_tokens)?;
-    // Anchors and an earlier summary may precede the compacted span, so locate
-    // it from the end.
-    let end = messages.len() - partition.recent_messages.len();
-    let start = end - partition.compacted_messages.len();
+    let Range { start, end } = partition.compacted_range();
     let owners = Owners::new(&messages[start..end], start);
 
     let mut output = messages.to_vec();

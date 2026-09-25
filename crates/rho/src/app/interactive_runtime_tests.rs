@@ -69,7 +69,6 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
         hooks: None,
         diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
         recall: None,
-        active_goal: Default::default(),
     })
     .unwrap();
     assert_eq!(runtime.diagnostics().compaction_trigger_tokens(), Some(10));

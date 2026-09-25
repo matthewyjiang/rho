@@ -1,15 +1,10 @@
-//! Text-summary compaction: the summarizer request and the replacement history.
-//!
-//! Replacement history keeps, in order: leading system messages, the first user
-//! turn verbatim (when it fits the anchor budget), the active `/goal` verbatim,
-//! one typed compaction summary, then the recent tail. A later compaction finds
-//! the earlier summary and asks the model to update it rather than summarize a
-//! summary as if it were a user turn.
-
-use std::sync::{Arc, Mutex};
+//! Text-summary compaction: the summarizer request and the replacement history
+//! built from its response. [`CompactionPartition`] decides what stays
+//! verbatim; this module only renders it for the model and assembles the
+//! result.
 
 use rho_providers::model::{ContentBlock, Message};
-use rho_sdk::{model::SemanticMessage, CompactionTrigger};
+use rho_sdk::{model::SemanticMessage, CompactionTrigger, Error};
 use rho_tools::tool::ToolResult;
 
 use super::CompactionPartition;
@@ -49,58 +44,15 @@ const ORIGINAL_REQUEST_INSTRUCTION: &str = "\
 The user's original request stays verbatim in context after compaction. It is \
 included for reference; summarize only what the turns below add.";
 
-const GOAL_ANCHOR_HEADER: &str = "Active goal set with /goal, restated verbatim after compaction for model context only. It is not a new user message.";
-
-/// Active `/goal` condition, shared between the interactive host and its
-/// compactors so text-summary compaction can keep it verbatim. Clones share
-/// state. Hosts without goals keep the default (none).
-#[derive(Clone, Debug, Default)]
-pub(crate) struct ActiveGoal(Arc<Mutex<Option<String>>>);
-
-impl ActiveGoal {
-    pub(crate) fn set(&self, condition: Option<&str>) {
-        *self
-            .0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = condition.map(str::to_owned);
-    }
-
-    fn get(&self) -> Option<String> {
-        self.0
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone()
-    }
-}
-
-/// True for a goal anchor written by an earlier compaction. Recognition is
-/// attribution only; it drops the stale anchor, and never grants authority.
-pub(super) fn is_goal_anchor(message: &Message) -> bool {
-    matches!(
-        message,
-        Message::User(blocks) if matches!(
-            blocks.as_slice(),
-            [ContentBlock::Text(header), ContentBlock::Text(_)] if header == GOAL_ANCHOR_HEADER
-        )
-    )
-}
-
-fn goal_anchor(condition: String) -> Message {
-    Message::User(vec![
-        ContentBlock::Text(GOAL_ANCHOR_HEADER.into()),
-        ContentBlock::Text(condition),
-    ])
-}
-
-pub(crate) fn build_summary_request_messages(partition: &CompactionPartition) -> Vec<Message> {
+pub(crate) fn build_summary_request_messages(partition: &CompactionPartition<'_>) -> Vec<Message> {
     let mut sections = Vec::new();
-    if !partition.anchor_messages.is_empty() {
+    if !partition.first_turn().is_empty() {
         sections.push(format!(
             "{ORIGINAL_REQUEST_INSTRUCTION}\n\n<original-request>\n{}\n</original-request>",
-            render_messages_for_summary(&partition.anchor_messages)
+            render_messages_for_summary(partition.first_turn())
         ));
     }
-    if let Some(previous) = &partition.previous_summary {
+    if let Some(previous) = partition.previous_summary() {
         sections.push(format!(
             "{PREVIOUS_SUMMARY_INSTRUCTION}\n\n<previous-summary>\n{}\n</previous-summary>",
             previous.trim()
@@ -108,7 +60,7 @@ pub(crate) fn build_summary_request_messages(partition: &CompactionPartition) ->
     }
     sections.push(format!(
         "<conversation>\n{}\n</conversation>",
-        render_messages_for_summary(&partition.compacted_messages)
+        render_messages_for_summary(partition.summarized())
     ));
     vec![
         Message::System(SUMMARY_SYSTEM_PROMPT.into()),
@@ -116,8 +68,31 @@ pub(crate) fn build_summary_request_messages(partition: &CompactionPartition) ->
     ]
 }
 
+/// Replacement history from the summarizer's response, labeled by `trigger`.
+/// Fails when the response has no summary text outside `<analysis>` blocks.
+pub(crate) fn summary_replacement(
+    partition: &CompactionPartition<'_>,
+    trigger: CompactionTrigger,
+    response: &[ContentBlock],
+) -> Result<Vec<Message>, Error> {
+    let text = response
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::Text(text) => Some(text.as_str()),
+            ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
+        })
+        .collect::<String>();
+    let summary = strip_analysis(&text);
+    if summary.is_empty() {
+        return Err(Error::InvalidHostResponse {
+            message: "compaction model returned no summary text".into(),
+        });
+    }
+    Ok(partition.replacement(Message::compaction_summary(trigger, summary)))
+}
+
 /// Removes `<analysis>` scratchpads. An unclosed block runs to the end.
-pub(crate) fn strip_analysis(text: &str) -> String {
+fn strip_analysis(text: &str) -> String {
     const OPEN: &str = "<analysis>";
     const CLOSE: &str = "</analysis>";
     let mut kept = String::new();
@@ -136,23 +111,9 @@ pub(crate) fn strip_analysis(text: &str) -> String {
     kept.trim().to_owned()
 }
 
-pub(crate) fn replacement_history_from_summary(
-    partition: CompactionPartition,
-    trigger: CompactionTrigger,
-    goal: &ActiveGoal,
-    summary: &str,
-) -> Vec<Message> {
-    let mut replacement = partition.leading_messages;
-    replacement.extend(partition.anchor_messages);
-    replacement.extend(goal.get().map(goal_anchor));
-    replacement.push(Message::compaction_summary(trigger, summary.trim()));
-    replacement.extend(partition.recent_messages);
-    replacement
-}
-
-fn render_messages_for_summary(messages: &[Message]) -> String {
+fn render_messages_for_summary<'a>(messages: impl IntoIterator<Item = &'a Message>) -> String {
     messages
-        .iter()
+        .into_iter()
         .map(render_message_for_summary)
         .collect::<Vec<_>>()
         .join("\n\n")

@@ -2,14 +2,24 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
-fn partition(previous_summary: Option<&str>) -> CompactionPartition {
-    CompactionPartition {
-        leading_messages: vec![Message::System("system".into())],
-        anchor_messages: vec![Message::user_text("build the thing")],
-        previous_summary: previous_summary.map(str::to_owned),
-        compacted_messages: vec![Message::assistant_text("did step one")],
-        recent_messages: vec![Message::user_text("recent")],
-    }
+fn history(previous_summary: Option<&str>) -> Vec<Message> {
+    let mut history = vec![
+        Message::System("system".into()),
+        Message::user_text("build the thing"),
+    ];
+    history.extend(
+        previous_summary
+            .map(|text| Message::compaction_summary(CompactionTrigger::Automatic, text)),
+    );
+    history.extend([
+        Message::assistant_text("did step one ".repeat(400)),
+        Message::user_text("recent"),
+    ]);
+    history
+}
+
+fn partition(history: &[Message]) -> CompactionPartition<'_> {
+    super::super::partition_messages_for_compaction(history, &[], 1_000).unwrap()
 }
 
 // Covers: the scratchpad never reaches model context, including when the model
@@ -43,7 +53,8 @@ fn strip_analysis_removes_scratchpads() {
 #[test]
 fn summary_request_updates_previous_summary_instead_of_resummarizing() {
     for previous in [None, Some("## Open tasks\nship it")] {
-        let request = build_summary_request_messages(&partition(previous));
+        let history = history(previous);
+        let request = build_summary_request_messages(&partition(&history));
 
         let [Message::System(_), Message::User(blocks)] = request.as_slice() else {
             panic!("unexpected request shape: {request:?}");
@@ -61,40 +72,48 @@ fn summary_request_updates_previous_summary_instead_of_resummarizing() {
         if let Some(expected) = expected {
             assert!(body.contains(&expected), "{body}");
         }
-        assert!(!body.contains("user:\n## Open tasks"), "{body}");
+        assert!(
+            body.contains("<original-request>\nuser:\nbuild the thing"),
+            "{body}"
+        );
+        assert!(!body.contains("summary:\n## Open tasks"), "{body}");
     }
 }
 
-// Covers: replacement history keeps the first turn and the active goal verbatim
-// ahead of a typed summary labeled by trigger, and drops the goal once cleared.
+// Covers: the response becomes one summary labeled by trigger, with the
+// scratchpad removed and the first turn kept ahead of it; a response with no
+// text outside the scratchpad is an error, not an empty summary.
 // Owner: text-summary compaction
 #[test]
-fn replacement_keeps_anchors_and_labels_summary_by_trigger() {
-    let goal = ActiveGoal::default();
-    for (trigger, condition) in [
-        (CompactionTrigger::Manual, Some("tests pass")),
-        (CompactionTrigger::Automatic, None),
-    ] {
-        goal.set(condition);
+fn summary_replacement_labels_summary_and_rejects_empty_text() {
+    let history = history(None);
+    let partition = partition(&history);
+    let response = |text: &str| vec![ContentBlock::Text(text.into())];
 
-        let replacement =
-            replacement_history_from_summary(partition(None), trigger, &goal, "  summary  ");
-
-        let expected = [
+    for trigger in [CompactionTrigger::Manual, CompactionTrigger::Automatic] {
+        let replacement = summary_replacement(
+            &partition,
+            trigger,
+            &response("<analysis>scratch</analysis>\n  summary  "),
+        )
+        .unwrap();
+        assert_eq!(
+            replacement,
             vec![
                 Message::System("system".into()),
                 Message::user_text("build the thing"),
-            ],
-            condition
-                .map(|text| goal_anchor(text.into()))
-                .into_iter()
-                .collect(),
-            vec![
                 Message::compaction_summary(trigger, "summary"),
                 Message::user_text("recent"),
             ],
-        ]
-        .concat();
-        assert_eq!(replacement, expected, "{trigger:?}");
+            "{trigger:?}"
+        );
     }
+    assert!(matches!(
+        summary_replacement(
+            &partition,
+            CompactionTrigger::Manual,
+            &response("<analysis>only</analysis>")
+        ),
+        Err(Error::InvalidHostResponse { .. })
+    ));
 }

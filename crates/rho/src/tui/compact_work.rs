@@ -77,7 +77,6 @@ impl App {
             self.notify_status("already compacting context");
             return Ok(());
         }
-        self.sync_active_goal(agent);
         agent.begin_compact_task()?;
         self.begin_started_compact(follow_up);
         Ok(())
@@ -93,17 +92,11 @@ impl App {
         if agent.is_compacting() {
             return Err((anyhow::anyhow!("already compacting context"), submission));
         }
-        self.sync_active_goal(agent);
         if let Err(error) = agent.begin_compact_task() {
             return Err((error, submission));
         }
         self.begin_started_compact(CompactFollowUp::Send(submission));
         Ok(())
-    }
-
-    /// Shares the active `/goal` with the compactor, which keeps it verbatim.
-    pub(super) fn sync_active_goal(&self, agent: &InteractiveRuntime) {
-        agent.set_active_goal(self.goal.as_ref().map(|goal| goal.condition.as_str()));
     }
 
     fn begin_started_compact(&mut self, follow_up: CompactFollowUp) {

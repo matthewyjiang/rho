@@ -429,7 +429,6 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
         hooks: None,
         diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
         recall: None,
-        active_goal: Default::default(),
     })
     .unwrap();
     assert_eq!(runtime.diagnostics().compaction_trigger_tokens(), Some(50));

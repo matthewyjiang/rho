@@ -3,6 +3,10 @@
 use super::{ContentBlock, Message};
 use crate::CompactionTrigger;
 
+// Frozen wire strings: saved sessions are recognized by exact match, so any
+// change here stops old summaries from loading as summaries. The golden test in
+// `compaction_summary_tests.rs` pins them.
+
 /// Single-block form written before this encoding existed, for every trigger.
 const LEGACY_PREFIX: &str =
     "Automatic compaction summary of earlier conversation for model context only:\n\n";

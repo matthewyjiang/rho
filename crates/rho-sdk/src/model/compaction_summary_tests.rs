@@ -65,3 +65,38 @@ fn recognize_compaction_summaries_by_encoding_not_role() {
         assert_eq!(recognized, expected, "{message:?}");
     }
 }
+
+// Covers: the persisted encoding is frozen, so sessions saved by any release
+// keep loading as summaries. Edit these literals only with a migration.
+// Owner: SDK compatibility encoding.
+#[test]
+fn compaction_summary_wire_format_is_frozen() {
+    let cases = [
+        (
+            CompactionTrigger::Automatic,
+            r#"{"User":[{"Text":"Automatic compaction summary of earlier conversation, for model context only. It is not a new user message."},{"Text":"s"}]}"#,
+        ),
+        (
+            CompactionTrigger::Manual,
+            r#"{"User":[{"Text":"Manual compaction summary of earlier conversation, for model context only. It is not a new user message."},{"Text":"s"}]}"#,
+        ),
+        (
+            CompactionTrigger::ContextOverflow,
+            r#"{"User":[{"Text":"Compaction summary of earlier conversation after the context window overflowed, for model context only. It is not a new user message."},{"Text":"s"}]}"#,
+        ),
+    ];
+    for (trigger, json) in cases {
+        assert_eq!(
+            serde_json::to_string(&Message::compaction_summary(trigger, "s")).unwrap(),
+            json,
+            "{trigger:?}"
+        );
+    }
+
+    let legacy: Message = serde_json::from_str(
+        r#"{"User":[{"Text":"Automatic compaction summary of earlier conversation for model context only:\n\nold"}]}"#,
+    )
+    .unwrap();
+    let summary = legacy.as_compaction_summary().unwrap();
+    assert_eq!((summary.trigger(), summary.text()), (None, "old"));
+}

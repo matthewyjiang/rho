@@ -149,7 +149,6 @@ pub(super) async fn initialize(
             hooks: hooks.as_ref(),
             diagnostics: diagnostics.clone(),
             recall: tools.recall_store(),
-            active_goal: tools.active_goal(),
         })?;
         let session_options = match resolve_session_options(
             &provider,

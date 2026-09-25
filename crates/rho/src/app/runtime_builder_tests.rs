@@ -65,7 +65,6 @@ fn compactor(
         usage_recording: ProviderRequestUsageRecording::new(usage),
         diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
         recall: None,
-        active_goal: Default::default(),
     })
     .0
 }
@@ -383,7 +382,6 @@ fn tiered_compactor(
         usage_recording: ProviderRequestUsageRecording::new(usage),
         diagnostics: diagnostics.clone(),
         recall,
-        active_goal: Default::default(),
     })
     .0;
     (compactor, diagnostics)

@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use rho_providers::model::{
     context::{estimate_context_tokens, estimate_message_tokens},
     ContentBlock, Message,
@@ -10,17 +12,14 @@ mod elide;
 #[path = "compaction_summary.rs"]
 mod summary;
 pub(crate) use elide::{elide_tool_results, recall_id, Elision};
-pub(crate) use summary::{
-    build_summary_request_messages, replacement_history_from_summary, strip_analysis, ActiveGoal,
-};
+pub(crate) use summary::{build_summary_request_messages, summary_replacement};
 
 const SUMMARY_RESERVE_MIN_TOKENS: u64 = 512;
 const SUMMARY_RESERVE_MAX_TOKENS: u64 = 8_192;
-/// Largest first user turn kept verbatim through compaction; larger turns are
-/// summarized instead. Measured over 701 local sessions: the first user turn
-/// (contiguous user messages before the first reply) estimates at most 856
-/// tokens at p99 and 1,537 at p99.5, and only 2 sessions exceed 2,048.
-const FIRST_TURN_ANCHOR_MAX_TOKENS: u64 = 2_048;
+/// Largest first user turn, and largest latest user message, kept verbatim
+/// through text-summary compaction; larger ones are only summarized. Typical
+/// first turns are far below this.
+const VERBATIM_USER_MAX_TOKENS: u64 = 2_048;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompactionConfig {
@@ -86,20 +85,57 @@ pub(crate) fn outcome_reduced_context(outcome: &rho_sdk::CompactionOutcome) -> b
     outcome.current_messages() < outcome.previous_messages() || outcome.removed_tokens() > 0
 }
 
-/// History split for compaction, in order. Goal anchors written by an earlier
-/// compaction sit between `anchor_messages` and the previous summary; they
-/// belong to no field because the replacement re-adds the current goal.
+/// History split for text-summary compaction, as positions in the partitioned
+/// history.
+///
+/// Replacement history keeps, in order: the leading system messages, the first
+/// user turn when it fits [`VERBATIM_USER_MAX_TOKENS`], one new summary, the
+/// latest user message when it would otherwise be only summarized, and the
+/// recent tail. The summary an earlier compaction wrote is not summarized
+/// again: the summarizer gets its text as the summary to update.
 #[derive(Clone, Debug)]
-pub struct CompactionPartition {
-    pub leading_messages: Vec<Message>,
-    /// The first user turn, kept verbatim when it fits
-    /// [`FIRST_TURN_ANCHOR_MAX_TOKENS`].
-    pub anchor_messages: Vec<Message>,
-    /// Text of the summary an earlier compaction wrote, so the summarizer
-    /// updates it instead of summarizing it again as a user turn.
-    pub previous_summary: Option<String>,
-    pub compacted_messages: Vec<Message>,
-    pub recent_messages: Vec<Message>,
+pub(crate) struct CompactionPartition<'a> {
+    messages: &'a [Message],
+    first_turn: Range<usize>,
+    previous_summary: Option<usize>,
+    latest_user: Option<usize>,
+    recent_start: usize,
+}
+
+impl<'a> CompactionPartition<'a> {
+    /// The first user turn, kept verbatim ahead of the summary.
+    pub(crate) fn first_turn(&self) -> &'a [Message] {
+        &self.messages[self.first_turn.clone()]
+    }
+
+    /// Text of the summary an earlier compaction wrote.
+    pub(crate) fn previous_summary(&self) -> Option<&'a str> {
+        let summary = self.messages[self.previous_summary?].as_compaction_summary()?;
+        Some(summary.text())
+    }
+
+    /// Messages the new summary covers, oldest first. The kept latest user
+    /// message is included so the summary reads in order.
+    pub(crate) fn summarized(&self) -> impl Iterator<Item = &'a Message> + '_ {
+        self.compacted_range()
+            .filter(|&index| Some(index) != self.previous_summary)
+            .map(|index| &self.messages[index])
+    }
+
+    /// Positions between the first turn and the recent tail. Only tool
+    /// results here may be elided.
+    pub(crate) fn compacted_range(&self) -> Range<usize> {
+        self.first_turn.end..self.recent_start
+    }
+
+    /// Replacement history around a newly written `summary`.
+    pub(crate) fn replacement(&self, summary: Message) -> Vec<Message> {
+        let mut replacement = self.messages[..self.first_turn.end].to_vec();
+        replacement.push(summary);
+        replacement.extend(self.latest_user.map(|index| self.messages[index].clone()));
+        replacement.extend_from_slice(&self.messages[self.recent_start..]);
+        replacement
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,104 +145,118 @@ struct MessageGroup {
     tokens: u64,
 }
 
-pub fn partition_messages_for_compaction(
-    messages: &[Message],
+/// Splits `messages` so the recent tail fits `target_tokens` alongside what
+/// stays verbatim. Returns `None` when nothing would be summarized.
+pub(crate) fn partition_messages_for_compaction<'a>(
+    messages: &'a [Message],
     tools: &[ToolSpec],
     target_tokens: u64,
-) -> Option<CompactionPartition> {
-    let first_compactable = messages
-        .iter()
-        .position(|message| !matches!(message, Message::System(_)))
-        .unwrap_or(messages.len());
-    let anchor_end = first_turn_anchor_end(messages, first_compactable);
-    partition_after_anchor(
+) -> Option<CompactionPartition<'a>> {
+    partition(
         messages,
         tools,
         target_tokens,
-        first_compactable,
-        anchor_end,
+        /*keep_user_turns*/ true,
     )
-    // With nothing else to remove, summarize the first turn rather than
-    // make compaction a no-op.
+    // With nothing else to remove, summarize the kept user messages
+    // rather than make compaction a no-op.
     .or_else(|| {
-        (anchor_end > first_compactable).then_some(())?;
-        partition_after_anchor(
+        partition(
             messages,
             tools,
             target_tokens,
-            first_compactable,
-            first_compactable,
+            /*keep_user_turns*/ false,
         )
     })
 }
 
-fn partition_after_anchor(
-    messages: &[Message],
+fn partition<'a>(
+    messages: &'a [Message],
     tools: &[ToolSpec],
     target_tokens: u64,
-    first_compactable: usize,
-    anchor_end: usize,
-) -> Option<CompactionPartition> {
-    let mut compacted_start = anchor_end;
-    while messages
-        .get(compacted_start)
-        .is_some_and(summary::is_goal_anchor)
-    {
-        compacted_start += 1;
-    }
+    keep_user_turns: bool,
+) -> Option<CompactionPartition<'a>> {
+    let leading_end = messages
+        .iter()
+        .position(|message| !matches!(message, Message::System(_)))
+        .unwrap_or(messages.len());
+    let natural_first_turn_end = first_turn_end(messages, leading_end);
+    // An earlier compaction put its summary right after the first turn. A
+    // summary anywhere else is summarized like any other message.
     let previous_summary = messages
-        .get(compacted_start)
-        .and_then(Message::as_compaction_summary)
-        .map(|summary| summary.text().to_owned());
-    if previous_summary.is_some() {
-        compacted_start += 1;
-    }
+        .get(natural_first_turn_end)
+        .is_some_and(|message| message.as_compaction_summary().is_some())
+        .then_some(natural_first_turn_end);
+    let first_turn_end = if keep_user_turns {
+        natural_first_turn_end
+    } else {
+        leading_end
+    };
+    // Only messages after the earlier summary can stay in the recent tail.
+    let history_start = previous_summary.map_or(first_turn_end, |index| index + 1);
+    let groups = message_groups(messages, history_start);
 
-    let groups = message_groups(messages, compacted_start);
-    let recent_token_budget =
-        recent_tail_token_budget(&messages[..anchor_end], tools, target_tokens);
-    let recent_start = recent_tail_start(&groups, recent_token_budget)?;
-    if recent_start <= compacted_start {
-        return None;
+    let fixed_tokens = estimate_context_tokens(&messages[..first_turn_end], tools);
+    let mut recent_start = recent_tail_start(
+        &groups,
+        recent_tail_token_budget(fixed_tokens, target_tokens),
+    )?;
+    // The latest user message overall, when the tail does not already hold it.
+    let latest_user = messages[history_start..]
+        .iter()
+        .rposition(is_user_input)
+        .map(|offset| history_start + offset)
+        .filter(|&index| {
+            keep_user_turns
+                && index < recent_start
+                && estimate_message_tokens(&messages[index]) <= VERBATIM_USER_MAX_TOKENS
+        });
+    if let Some(index) = latest_user {
+        // Less budget only moves the tail later, so `index` stays before it.
+        let fixed_tokens = fixed_tokens.saturating_add(estimate_message_tokens(&messages[index]));
+        recent_start = recent_tail_start(
+            &groups,
+            recent_tail_token_budget(fixed_tokens, target_tokens),
+        )?;
     }
-
-    Some(CompactionPartition {
-        leading_messages: messages[..first_compactable].to_vec(),
-        anchor_messages: messages[first_compactable..anchor_end].to_vec(),
-        previous_summary,
-        compacted_messages: messages[compacted_start..recent_start].to_vec(),
-        recent_messages: messages[recent_start..].to_vec(),
-    })
+    // Rewriting the earlier summary around a restated latest user message
+    // alone would remove nothing.
+    (first_turn_end..recent_start)
+        .any(|index| Some(index) != previous_summary && Some(index) != latest_user)
+        .then_some(CompactionPartition {
+            messages,
+            first_turn: leading_end..first_turn_end,
+            previous_summary,
+            latest_user,
+            recent_start,
+        })
 }
 
-/// End of the verbatim first-turn anchor starting at `start`: the contiguous
-/// human user messages there, or `start` when they exceed the anchor budget.
-fn first_turn_anchor_end(messages: &[Message], start: usize) -> usize {
+/// Input a person sent, as opposed to tool images or compaction summaries.
+fn is_user_input(message: &Message) -> bool {
+    matches!(message.semantic(), SemanticMessage::User(_))
+        && message.as_compaction_summary().is_none()
+}
+
+/// End of the contiguous user messages at `start`, or `start` when together
+/// they exceed [`VERBATIM_USER_MAX_TOKENS`].
+fn first_turn_end(messages: &[Message], start: usize) -> usize {
     let end = messages[start..]
         .iter()
-        .position(|message| {
-            !matches!(message.semantic(), SemanticMessage::User(_))
-                || message.as_compaction_summary().is_some()
-                || summary::is_goal_anchor(message)
-        })
+        .position(|message| !is_user_input(message))
         .map_or(messages.len(), |offset| start + offset);
     let tokens: u64 = messages[start..end]
         .iter()
         .map(estimate_message_tokens)
         .sum();
-    if tokens <= FIRST_TURN_ANCHOR_MAX_TOKENS {
+    if tokens <= VERBATIM_USER_MAX_TOKENS {
         end
     } else {
         start
     }
 }
 
-fn recent_tail_token_budget(
-    leading_messages: &[Message],
-    tools: &[ToolSpec],
-    target_tokens: u64,
-) -> u64 {
-    let fixed_tokens = estimate_context_tokens(leading_messages, tools);
+fn recent_tail_token_budget(fixed_tokens: u64, target_tokens: u64) -> u64 {
     target_tokens
         .saturating_sub(fixed_tokens)
         .saturating_sub(summary_reserve_tokens(target_tokens))
@@ -389,117 +439,105 @@ mod tests {
         }
     }
 
-    // Covers: the first user turn stays verbatim only within its budget and only
-    // when something else is compacted; an earlier summary and its stale goal
-    // anchor leave the compacted span so the summarizer can update the summary.
+    // Covers: the first user turn and the latest user message stay verbatim
+    // only within their budget and only when something else is summarized; an
+    // earlier summary is handed over for updating instead of being summarized.
     // Owner: compaction partition
     #[test]
-    fn partition_anchors_first_turn_and_splits_out_previous_summary() {
+    fn partition_keeps_user_turns_and_updates_previous_summary() {
         struct Case {
             name: &'static str,
             messages: Vec<Message>,
-            anchor: Vec<Message>,
             previous_summary: Option<&'static str>,
-            compacted: Vec<Message>,
-            recent: Vec<Message>,
+            summarized: Vec<Message>,
+            replacement: Vec<Message>,
         }
         let system = Message::System("system".into());
         let task = Message::user_text("x".repeat(1_000));
         let huge_task = Message::user_text("x".repeat(20_000));
         let old = Message::assistant_text("y".repeat(2_000));
-        let recent = || {
-            vec![
-                Message::user_text("recent user"),
-                Message::assistant_text("recent assistant"),
-            ]
-        };
-        let stale_goal = |condition: &str| {
-            let goal = ActiveGoal::default();
-            goal.set(Some(condition));
-            summary::replacement_history_from_summary(
-                CompactionPartition {
-                    leading_messages: Vec::new(),
-                    anchor_messages: Vec::new(),
-                    previous_summary: None,
-                    compacted_messages: Vec::new(),
-                    recent_messages: Vec::new(),
-                },
-                rho_sdk::CompactionTrigger::Manual,
-                &goal,
-                "earlier",
-            )
-        };
-        let [goal_anchor, earlier_summary] = <[Message; 2]>::try_from(stale_goal("done")).unwrap();
+        let follow_up = Message::user_text("now do the second part");
+        let summary = Message::compaction_summary(rho_sdk::CompactionTrigger::Manual, "new");
+        let earlier = Message::compaction_summary(rho_sdk::CompactionTrigger::Automatic, "earlier");
+        let recent = [
+            Message::user_text("recent user"),
+            Message::assistant_text("recent assistant"),
+        ];
+        let history = |messages: &[&[Message]]| messages.concat();
         let cases = [
             Case {
-                name: "first turn anchored",
-                messages: [vec![system.clone(), task.clone(), old.clone()], recent()].concat(),
-                anchor: vec![task.clone()],
+                name: "first turn kept",
+                messages: history(&[&[system.clone(), task.clone(), old.clone()], &recent]),
                 previous_summary: None,
-                compacted: vec![old.clone()],
-                recent: recent(),
+                summarized: vec![old.clone()],
+                replacement: history(&[&[system.clone(), task.clone(), summary.clone()], &recent]),
             },
             Case {
-                name: "oversized first turn is summarized",
-                messages: [
-                    vec![system.clone(), huge_task.clone(), old.clone()],
-                    recent(),
-                ]
-                .concat(),
-                anchor: Vec::new(),
+                name: "oversized first turn is only summarized",
+                messages: history(&[&[system.clone(), huge_task.clone(), old.clone()], &recent]),
                 previous_summary: None,
-                compacted: vec![huge_task.clone(), old.clone()],
-                recent: recent(),
+                summarized: vec![huge_task.clone(), old.clone()],
+                replacement: history(&[&[system.clone(), summary.clone()], &recent]),
+            },
+            Case {
+                name: "latest user message outside the tail is restated",
+                messages: vec![
+                    system.clone(),
+                    task.clone(),
+                    old.clone(),
+                    follow_up.clone(),
+                    old.clone(),
+                    recent[1].clone(),
+                ],
+                previous_summary: None,
+                summarized: vec![old.clone(), follow_up.clone(), old.clone()],
+                replacement: vec![
+                    system.clone(),
+                    task.clone(),
+                    summary.clone(),
+                    follow_up.clone(),
+                    recent[1].clone(),
+                ],
             },
             Case {
                 name: "single turn falls back to summarizing it",
                 messages: vec![system.clone(), task.clone(), old.clone()],
-                anchor: Vec::new(),
                 previous_summary: None,
-                compacted: vec![task.clone()],
-                recent: vec![old.clone()],
+                summarized: vec![task.clone()],
+                replacement: vec![system.clone(), summary.clone(), old.clone()],
             },
             Case {
-                name: "earlier summary and stale goal leave the compacted span",
-                messages: [
-                    vec![
-                        system.clone(),
-                        task.clone(),
-                        goal_anchor,
-                        earlier_summary,
-                        old.clone(),
-                    ],
-                    recent(),
-                ]
-                .concat(),
-                anchor: vec![task.clone()],
+                name: "earlier summary is updated, not summarized",
+                messages: history(&[
+                    &[system.clone(), task.clone(), earlier.clone(), old.clone()],
+                    &recent,
+                ]),
                 previous_summary: Some("earlier"),
-                compacted: vec![old.clone()],
-                recent: recent(),
+                summarized: vec![old.clone()],
+                replacement: history(&[&[system.clone(), task.clone(), summary.clone()], &recent]),
             },
         ];
 
         for case in cases {
             let partition = partition_messages_for_compaction(&case.messages, &[], 1_000).unwrap();
             assert_eq!(
-                partition.leading_messages,
-                vec![system.clone()],
-                "{}",
-                case.name
-            );
-            assert_eq!(partition.anchor_messages, case.anchor, "{}", case.name);
-            assert_eq!(
-                partition.previous_summary.as_deref(),
+                partition.previous_summary(),
                 case.previous_summary,
                 "{}",
                 case.name
             );
             assert_eq!(
-                partition.compacted_messages, case.compacted,
+                partition.summarized().cloned().collect::<Vec<_>>(),
+                case.summarized,
                 "{}",
                 case.name
             );
-            assert_eq!(partition.recent_messages, case.recent, "{}", case.name);
+            assert_eq!(
+                partition.replacement(summary.clone()),
+                case.replacement,
+                "{}",
+                case.name
+            );
         }
     }
 
@@ -533,7 +571,7 @@ mod tests {
         for (case, assistant) in cases {
             let messages = vec![
                 Message::System("system".into()),
-                // Over the first-turn anchor budget, so it is compacted.
+                // Over the verbatim first-turn budget, so it is summarized.
                 Message::user_text("x".repeat(20_000)),
                 assistant.clone(),
                 Message::ToolResult(ToolResult {
@@ -546,16 +584,15 @@ mod tests {
 
             let partition = partition_messages_for_compaction(&messages, &[], 700).unwrap();
 
-            assert!(
-                matches!(partition.compacted_messages.as_slice(), [Message::User(_)]),
+            assert_eq!(
+                partition.summarized().cloned().collect::<Vec<_>>(),
+                vec![messages[1].clone()],
                 "{case}"
             );
-            assert!(
-                matches!(
-                    partition.recent_messages.as_slice(),
-                    [a, Message::ToolResult(_), Message::User(_)] if *a == assistant
-                ),
-                "{case}"
+            assert_eq!(
+                partition.compacted_range(),
+                1..2,
+                "{case}: the call group stays in the tail"
             );
         }
     }
@@ -570,14 +607,11 @@ mod tests {
 
         let partition = partition_messages_for_compaction(&messages, &[], 1).unwrap();
 
-        assert!(matches!(
-            partition.compacted_messages.as_slice(),
-            [Message::User(_)]
-        ));
-        assert!(matches!(
-            partition.recent_messages.as_slice(),
-            [Message::Assistant(_)]
-        ));
+        assert_eq!(
+            partition.summarized().cloned().collect::<Vec<_>>(),
+            vec![messages[1].clone()]
+        );
+        assert_eq!(partition.compacted_range(), 1..2);
     }
 
     #[test]

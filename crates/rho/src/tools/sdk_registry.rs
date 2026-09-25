@@ -188,8 +188,6 @@ pub struct AppToolSet {
     /// Present only when the `sessions` tool is installed, since recall is
     /// the only way to read an elided result back.
     recall: Option<crate::session::recall::RecallStore>,
-    /// Active `/goal` the compactor keeps verbatim; only the interactive TUI sets it.
-    active_goal: crate::compaction::ActiveGoal,
 }
 
 impl AppToolSet {
@@ -212,7 +210,6 @@ impl AppToolSet {
             file_view: rho_tools::FileViewPolicy::default(),
             session_search: super::sessions::SessionBinding::default(),
             recall: None,
-            active_goal: Default::default(),
         }
     }
 
@@ -365,11 +362,6 @@ impl AppToolSet {
     /// this agent cannot call `sessions` and so could never recall.
     pub(crate) fn recall_store(&self) -> Option<crate::session::recall::RecallStore> {
         self.recall.clone()
-    }
-
-    /// Shared handle to the active `/goal` that text-summary compaction keeps.
-    pub(crate) fn active_goal(&self) -> crate::compaction::ActiveGoal {
-        self.active_goal.clone()
     }
 
     /// Attach the root interactive session's host-controlled desktop grant.
