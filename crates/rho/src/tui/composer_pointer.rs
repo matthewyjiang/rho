@@ -20,7 +20,6 @@ use super::{
     app_state::PointerAction,
     approval::ApprovalChoice,
     frame_context::FrameContext,
-    mouse::COMPOSER_DOUBLE_CLICK,
     palette::{PaletteFrame, PaletteRow},
     questionnaire::QuestionnaireTarget,
     screen_layout::ScreenLayout,
@@ -166,13 +165,9 @@ impl App {
         };
         let click = match sequence_index {
             Some(index)
-                if self.input_ui.register_pointer_click(
-                    now,
-                    column,
-                    row,
-                    index,
-                    COMPOSER_DOUBLE_CLICK,
-                ) =>
+                if self
+                    .input_ui
+                    .register_pointer_click(now, column, row, index) =>
             {
                 ChoiceClick::Double
             }

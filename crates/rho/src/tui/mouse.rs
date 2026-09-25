@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::{
@@ -18,9 +18,6 @@ use super::{
     view::LiveHistory,
     App, ComposerMode,
 };
-
-/// Max gap between presses that still counts as a double-click in the composer.
-pub(super) const COMPOSER_DOUBLE_CLICK: Duration = Duration::from_millis(500);
 
 impl App {
     /// Drops both the history-anchored and screen-space text selections.
@@ -75,6 +72,15 @@ impl App {
         let size = terminal.size()?;
         let screen = Rect::new(0, 0, size.width, size.height);
         let now = Instant::now();
+        // Every surface resolves hover from this cell at paint time, so record
+        // it for every event, including ones an overlay consumes; otherwise
+        // hover behind a closed overlay stays pinned to a stale cell.
+        let moved_cell = self.last_mouse_position != Some((column, row));
+        self.last_mouse_position = Some((column, row));
+        // A move within the same cell changes nothing any surface paints.
+        if kind == MouseEventKind::Moved && !moved_cell {
+            return Ok(());
+        }
         let composer_owns_choices = match self.input_ui.composer() {
             // Overlays own pointer input; nothing behind them reacts.
             ComposerMode::Panel(_) => {
@@ -272,13 +278,9 @@ impl App {
                         self.composer_text_char_index_at(&layout, column, row, /*clamp*/ false)
                     {
                         let index = self.composer_caret_index(index);
-                        let double_click = self.input_ui.register_pointer_click(
-                            now,
-                            column,
-                            row,
-                            index,
-                            COMPOSER_DOUBLE_CLICK,
-                        );
+                        let double_click = self
+                            .input_ui
+                            .register_pointer_click(now, column, row, index);
                         if double_click {
                             let range = self
                                 .input_ui
@@ -494,10 +496,8 @@ impl App {
                     }
                 }
             }
-            MouseEventKind::Moved if self.last_mouse_position == Some((column, row)) => {}
             MouseEventKind::Moved => {
                 self.input_ui.cancel_pointer_click_sequence();
-                self.last_mouse_position = Some((column, row));
                 if self.route_picker_mouse(
                     PickerMouseEvent::Move,
                     column,

@@ -11,8 +11,7 @@ use super::{
     OverlayFocus, OverlayScrollbarDrag, UiPicker,
 };
 use crate::tui::{
-    app_state::PointerAction, mouse::COMPOSER_DOUBLE_CLICK, scrollbar::HistoryScrollbar, App,
-    ComposerMode, InteractiveRuntime,
+    app_state::PointerAction, scrollbar::HistoryScrollbar, App, ComposerMode, InteractiveRuntime,
 };
 
 /// Lines one wheel event scrolls in either overlay pane. Tied to the history
@@ -412,15 +411,7 @@ impl App {
             match clicked_item {
                 // The item keeps a double click from pairing two rows that
                 // share a cell after the nav window moved.
-                Some(item)
-                    if self.input_ui.register_pointer_click(
-                        now,
-                        column,
-                        row,
-                        item,
-                        COMPOSER_DOUBLE_CLICK,
-                    ) =>
-                {
+                Some(item) if self.input_ui.register_pointer_click(now, column, row, item) => {
                     self.input_ui
                         .request_pointer_action(PointerAction::SubmitPicker);
                 }

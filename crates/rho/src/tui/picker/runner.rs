@@ -21,7 +21,7 @@ use super::{
 use crate::{
     keybindings::Keybindings,
     tui::{
-        mouse::COMPOSER_DOUBLE_CLICK, terminal_events::TerminalEvents, Theme,
+        click_sequence::DOUBLE_CLICK_GAP, terminal_events::TerminalEvents, Theme,
         HISTORY_MOUSE_SCROLL_LINES,
     },
 };
@@ -205,7 +205,7 @@ fn apply_mouse(
             };
             let double_click = last_click.is_some_and(|click| {
                 click.row == row_index
-                    && now.saturating_duration_since(click.at) <= COMPOSER_DOUBLE_CLICK
+                    && now.saturating_duration_since(click.at) <= DOUBLE_CLICK_GAP
             });
             picker.select_nav_row(row_index, nav_rows);
             picker.focus_overlay_pane(OverlayFocus::Nav);

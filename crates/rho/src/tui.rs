@@ -27,6 +27,7 @@ mod attach_picker;
 pub(crate) mod attachment;
 mod background_polls;
 mod cache_stats;
+mod click_sequence;
 mod clipboard;
 mod command_actions;
 mod command_block;

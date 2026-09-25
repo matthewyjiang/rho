@@ -110,7 +110,9 @@ running node also shows its current activity when available.
 
 The right pane shows details for the selected node. Finished agent answers
 render as Markdown, while command streams render as text. Use `PgUp`/`PgDn`,
-`Home`/`End`, the mouse wheel, or the scrollbar to scroll long output.
+`Home`/`End`, the mouse wheel, or the scrollbar to scroll long output. Drag
+across the details to copy text. In the graph pane, drag or use the wheel to
+pan; horizontal scrolling pans sideways.
 
 ### Cleanup
 

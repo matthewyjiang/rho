@@ -15,7 +15,6 @@ use ratatui::layout::{Position, Rect};
 
 use super::{
     composer_pointer::{composer_target_at, ChoiceClick, ComposerHit},
-    mouse::COMPOSER_DOUBLE_CLICK,
     palette::{ActivePalette, PaletteRow},
     App,
 };
@@ -85,15 +84,14 @@ impl App {
         };
         // The index keeps a double click from pairing two rows that share a
         // cell after the scrolled window shifts under the first click.
-        let click =
-            if self
-                .input_ui
-                .register_pointer_click(now, column, row, index, COMPOSER_DOUBLE_CLICK)
-            {
-                ChoiceClick::Double
-            } else {
-                ChoiceClick::Single
-            };
+        let click = if self
+            .input_ui
+            .register_pointer_click(now, column, row, index)
+        {
+            ChoiceClick::Double
+        } else {
+            ChoiceClick::Single
+        };
 
         match (palette, click) {
             (Some(ActivePalette::Command(_)), ChoiceClick::Single) => {

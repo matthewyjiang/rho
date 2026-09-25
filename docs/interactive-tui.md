@@ -97,6 +97,8 @@ Most editing keys work the way they do in a normal terminal input. Run `/help` f
 | code block `COPY` | Copy the full code block contents |
 | `ctrl-c` | Clear input, then quit if pressed again |
 
+See [Mouse](#mouse) for clicking pickers, prompts, panels, and the status line.
+
 `ctrl-g` opens the current composer text in a non-empty `$VISUAL`, falling back to `$EDITOR` only when `VISUAL` is unset or empty, both while idle and while a response is running. Rho temporarily restores the normal terminal before starting the editor and resumes the TUI after the process exits. The editor receives expanded pasted text rather than any collapsed display marker. Rho removes one conventional final line ending from the edited file when it restores the composer. Set `VISUAL` or `EDITOR` to an executable path or a platform-native command line with arguments. Rho does not pick a default editor; if neither variable is set or non-empty, it warns with `EDITOR is not set`.
 
 ## Text streaming
@@ -188,6 +190,17 @@ Cycling pins maps an unsupported reasoning level to a supported one. An ordinary
 Compaction does not make provider-native blocks sendable, and it does not prove a provider cache is warm. If handoff compaction fails or produces no reduction, Rho keeps the source model active.
 
 Internal agent overrides: [Internal agent models](/configuration#internal-agent-models).
+
+## Mouse
+
+Everything clickable reacts when you hover over it, and a double click does what `enter` would. A single click only selects or focuses.
+
+- **Pickers:** click a row to select it and double-click to choose it. The wheel scrolls the list.
+- **Questionnaires, approvals, and confirmation prompts:** click a choice to focus it and double-click to confirm it. Clicks are ignored until the prompt has been drawn, so a stray click cannot move an approval off **Deny** before you see it.
+- **`/` and `@` palettes:** click a row to select it, and scroll over the palette to move the selection. Double-click completes the row like `tab`; it never runs a command.
+- **Panels and side chat** (`/limits`, `/doctor`, `/hooks`, `/info`, `/side`, and similar): drag across text to copy it, drag the scrollbar to scroll, and click a copy target to copy it.
+- **Status line:** click the model, provider, or reasoning to open `/model`; context, cost, or rate to open `/info`; permission mode to open its picker; desktop access to open `/computer`; and a sign-in warning to open `/login`.
+- **Attachments:** click a queued attachment to remove it.
 
 ## Status line
 
