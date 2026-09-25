@@ -39,6 +39,15 @@ pub(crate) enum Request {
         #[serde(default)]
         refresh: bool,
     },
+    /// Original content of a tool result elided by compaction in the current
+    /// session. Does not use the search index.
+    Recall {
+        recall_id: String,
+        #[serde(default)]
+        start: usize,
+        #[serde(default = "default_chars")]
+        chars: usize,
+    },
 }
 
 impl Request {
@@ -61,7 +70,7 @@ impl Request {
                 i64::try_from(*limit)?;
                 i64::try_from(*offset)?;
             }
-            Self::Read { chars, start, .. } => {
+            Self::Read { chars, start, .. } | Self::Recall { chars, start, .. } => {
                 anyhow::ensure!(
                     *chars > 0 && *chars <= budget,
                     "sessions read character budget: limit {budget}, asked {chars}"
@@ -96,8 +105,28 @@ pub(crate) fn execute(
         "sessions requires a bound current session"
     );
     request.validate(max_output_bytes)?;
-    let reconcile = match &request {
-        Request::Search { refresh, .. } | Request::Read { refresh, .. } => *refresh,
+    let reconcile = match request {
+        Request::Search { refresh, .. } | Request::Read { refresh, .. } => refresh,
+        Request::Recall {
+            recall_id,
+            start,
+            chars,
+        } => {
+            let output = super::recall::recall(
+                root,
+                cwd,
+                current,
+                &recall_id,
+                (start, chars),
+                cancellation,
+            )?;
+            anyhow::ensure!(
+                output.len() <= max_output_bytes,
+                "sessions output byte budget: limit {max_output_bytes}, asked {}; request a smaller recall window",
+                output.len()
+            );
+            return Ok(output);
+        }
     };
     let workspace = Workspace::resolve(cwd);
     let mut connection = search_index::open(root)?;
@@ -146,6 +175,7 @@ pub(crate) fn execute(
             context,
         )?
         .finish(max_output_bytes)?,
+        Request::Recall { .. } => unreachable!("recall returns before opening the index"),
     };
     transaction.commit()?;
     anyhow::ensure!(!cancellation.is_cancelled(), "sessions lookup cancelled");

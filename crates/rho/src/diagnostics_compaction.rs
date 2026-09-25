@@ -67,10 +67,32 @@ impl From<CompactionDecision> for ProviderCompactionCheck {
     }
 }
 
+/// Which compaction tier produced the last compactor result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CompactionTier {
+    /// Tool-result elision alone reached the target; no model request was made.
+    Elision,
+    /// Provider server-side compaction.
+    Native,
+    /// Portable text-summary compaction.
+    TextSummary,
+    /// Nothing was compactable; history was returned unchanged.
+    Unchanged,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct CompactionTierReport {
+    pub tier: CompactionTier,
+    /// Tool results replaced with recall stubs before this tier ran.
+    pub elided_tool_results: usize,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct CompactionDiagnostics {
     pub completed: rho_sdk::CompactionState,
     pub current: CompactionContext,
     pub last_idle_check: Option<IdleCompactionCheck>,
     pub last_provider_check: Option<ProviderCompactionCheck>,
+    pub last_tier: Option<CompactionTierReport>,
 }

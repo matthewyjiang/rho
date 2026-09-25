@@ -9,7 +9,7 @@ use rho_sdk::{
     ProviderRequestUsageRecording, Retryability,
 };
 
-use super::{build_compaction, ModelCompactor};
+use super::{build_compaction, CompactionSetup, ModelCompactor};
 use crate::compaction::CompactionConfig;
 
 #[derive(Clone, Default)]
@@ -52,18 +52,19 @@ fn compactor(
     usage: RecordingUsage,
     context_window: Option<u64>,
 ) -> ModelCompactor {
-    build_compaction(
-        Arc::new(provider) as Arc<dyn ModelProvider>,
-        &[],
-        rho_sdk::ReasoningLevel::Off,
-        CompactionConfig {
+    build_compaction(CompactionSetup {
+        provider: Arc::new(provider) as Arc<dyn ModelProvider>,
+        tools: &[],
+        reasoning: rho_sdk::ReasoningLevel::Off,
+        compaction: CompactionConfig {
             auto_compact: false,
             threshold_percent: 85,
             target_percent: 20,
         },
         context_window,
-        ProviderRequestUsageRecording::new(usage),
-    )
+        usage_recording: ProviderRequestUsageRecording::new(usage),
+        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+    })
     .0
 }
 
@@ -332,4 +333,76 @@ async fn native_compaction_cancellation_is_explicit() {
         events[0].outcome(),
         rho_sdk::ProviderRequestOutcome::Cancelled
     ));
+}
+
+// Covers: elision that reaches the target commits without any model request
+// and records the tier; when it cannot, the summarizer sees elided history.
+// Owner: ModelCompactor tier escalation.
+#[tokio::test]
+async fn elision_tier_skips_the_model_when_it_reaches_target() {
+    let call = |id: &str| {
+        Message::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall {
+            id: id.into(),
+            name: "read_file".into(),
+            arguments: serde_json::json!({"path": "big.rs"}),
+        })])
+    };
+    let output = |id: &str| {
+        Message::ToolResult(rho_sdk::model::ToolResult {
+            id: id.into(),
+            ok: true,
+            content: "x".repeat(40_000),
+        })
+    };
+    let history = vec![
+        Message::System("system".into()),
+        Message::user_text("read it"),
+        call("old"),
+        output("old"),
+        Message::user_text("recent"),
+        Message::assistant_text("ok"),
+    ];
+    let usage = RecordingUsage::default();
+    let diagnostics = crate::diagnostics::test_diagnostics("test", "test");
+    let compactor = build_compaction(CompactionSetup {
+        provider: Arc::new(ScriptedProvider::new(
+            ModelIdentity::new("opencode-go", "openai-responses", "muse-test"),
+            Vec::<ScriptedTurn>::new(),
+        )) as Arc<dyn ModelProvider>,
+        tools: &[],
+        reasoning: rho_sdk::ReasoningLevel::Off,
+        compaction: CompactionConfig::default(),
+        context_window: Some(1_000_000),
+        usage_recording: ProviderRequestUsageRecording::new(usage.clone()),
+        diagnostics: diagnostics.clone(),
+    })
+    .0;
+    diagnostics.record_compaction_context(
+        crate::diagnostics::CompactionContext::new(
+            rho_sdk::ContextEstimate::from_estimated_tokens(0),
+            None,
+            &CompactionConfig::default(),
+        ),
+        None,
+        Default::default(),
+    );
+
+    let compacted = compactor
+        .compact(CompactionRequest::new(history.clone(), Default::default()))
+        .await
+        .unwrap();
+
+    assert_eq!(usage.events(), Vec::new());
+    assert_eq!(compacted.messages().len(), history.len());
+    assert!(matches!(
+        &compacted.messages()[3],
+        Message::ToolResult(result) if result.id == "old" && result.content.starts_with("[elided tool result: read_file path=big.rs")
+    ));
+    assert_eq!(
+        diagnostics.compaction().unwrap().last_tier,
+        Some(crate::diagnostics::CompactionTierReport {
+            tier: crate::diagnostics::CompactionTier::Elision,
+            elided_tool_results: 1,
+        })
+    );
 }

@@ -246,6 +246,7 @@ where
                 usage_recording,
                 hook_host_labels,
                 hooks: hooks.as_ref(),
+                diagnostics: diagnostics.clone(),
             },
             max_steps,
         )?;

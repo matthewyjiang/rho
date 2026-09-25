@@ -80,6 +80,11 @@ capability, including the default agent. Unlike workspace file search, it asks
 for read access to the session storage directory. Checked permission modes may
 ask for approval or deny that outside-workspace read.
 
+Search and read exclude the current session. `action = "recall"` is the one
+current-session action: it returns the original text of a tool result that
+compaction elided, by the `recall_id` in its stub. See
+[Tool-result elision](/configuration/compaction#tool-result-elision).
+
 In the TUI, search cards show the query, matching-session count, and scope.
 Read cards show the original speaker and character range. Press `Ctrl+O` or
 click the card to expand grouped excerpts or the retrieved passage, including

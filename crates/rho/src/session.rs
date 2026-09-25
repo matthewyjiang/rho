@@ -21,6 +21,7 @@ mod layout;
 #[cfg(test)]
 mod performance_benchmarks;
 mod persistence;
+mod recall;
 pub(crate) mod search;
 mod search_evidence;
 mod search_index;

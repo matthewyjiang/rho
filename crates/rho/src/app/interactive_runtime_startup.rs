@@ -147,6 +147,7 @@ pub(super) async fn initialize(
             usage_recording: usage_recording.clone(),
             hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
             hooks: hooks.as_ref(),
+            diagnostics: diagnostics.clone(),
         })?;
         let session_options = match resolve_session_options(
             &provider,

@@ -14,7 +14,7 @@ use rho_sdk::{
     Error, Session,
 };
 
-use super::runtime_builder::build_compaction;
+use super::runtime_builder::{build_compaction, CompactionSetup};
 use crate::{
     compaction::CompactionConfig,
     model_identity::PromptModel,
@@ -88,6 +88,7 @@ pub(crate) struct ConversationSwitch<'a> {
     pub(crate) context_window: Option<u64>,
     pub(crate) previous_context_window: Option<u64>,
     pub(crate) usage_recording: rho_sdk::ProviderRequestUsageRecording,
+    pub(crate) diagnostics: crate::diagnostics::RuntimeDiagnostics,
 }
 
 pub(crate) fn apply_conversation_switch(
@@ -195,14 +196,15 @@ fn record_switch_notice(
 }
 
 fn refresh_session_compaction(switch: &ConversationSwitch<'_>) -> Result<(), Error> {
-    let (compactor, policy) = build_compaction(
-        Arc::clone(&switch.new_provider),
-        switch.tools.tools(),
-        switch.new_reasoning,
-        switch.compaction.clone(),
-        switch.context_window,
-        switch.usage_recording.clone(),
-    );
+    let (compactor, policy) = build_compaction(CompactionSetup {
+        provider: Arc::clone(&switch.new_provider),
+        tools: switch.tools.tools(),
+        reasoning: switch.new_reasoning,
+        compaction: switch.compaction.clone(),
+        context_window: switch.context_window,
+        usage_recording: switch.usage_recording.clone(),
+        diagnostics: switch.diagnostics.clone(),
+    });
     switch
         .session
         .set_compaction(Some(Arc::new(compactor)), policy)
@@ -232,14 +234,15 @@ fn restore_after_failed_step(
         };
     }
     if matches!(compaction, RestoreCompaction::Required) {
-        let (compactor, policy) = build_compaction(
-            previous_provider,
-            switch.tools.tools(),
-            previous_reasoning,
-            switch.compaction.clone(),
-            switch.previous_context_window,
-            switch.usage_recording.clone(),
-        );
+        let (compactor, policy) = build_compaction(CompactionSetup {
+            provider: previous_provider,
+            tools: switch.tools.tools(),
+            reasoning: previous_reasoning,
+            compaction: switch.compaction.clone(),
+            context_window: switch.previous_context_window,
+            usage_recording: switch.usage_recording.clone(),
+            diagnostics: switch.diagnostics.clone(),
+        });
         if let Err(refresh_error) = session.set_compaction(Some(Arc::new(compactor)), policy) {
             return Error::InvalidConfiguration {
                 message: format!(
