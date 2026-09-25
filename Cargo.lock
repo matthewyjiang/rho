@@ -4635,7 +4635,7 @@ dependencies = [
 name = "rho-agent-tools"
 version = "1.5.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "calamine",
  "flate2",
  "globset",
@@ -4668,7 +4668,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "clap",
  "crossterm",
@@ -4732,7 +4732,7 @@ version = "2.11.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.22.1",
+ "base64 0.23.1",
  "futures-util",
  "gethostname",
  "http",

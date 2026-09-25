@@ -28,7 +28,7 @@ keyring = "4.1.2"
 libc = "0.2"
 rand = "0.8"
 sha2 = "0.10"
-base64 = "0.22"
+base64 = "0.23"
 url = "2"
 webbrowser = "1"
 ssh-key = { version = "0.6", features = ["ed25519", "std", "alloc"] }
