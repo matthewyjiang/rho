@@ -8,11 +8,11 @@ use super::{BoundedText, ExtractedText};
 pub(super) use byte_scan::MAX_PDF_OBJECT_NESTING_DEPTH;
 pub(super) use byte_scan::{bounded_flate_size, validate_object_nesting};
 
-use byte_scan::{consume_budget, MAX_PDF_EXPANDED_STREAM_BYTES};
+use byte_scan::{consume_budget, is_unbounded_filter, MAX_PDF_EXPANDED_STREAM_BYTES};
 
 pub(super) fn extract(bytes: &[u8], max_characters: usize) -> Result<ExtractedText, String> {
-    // pdf-inspector only accepts bytes and always loads with its own lopdf 0.42
-    // path. Preflight uses that same lopdf version so reject decisions match the
+    // pdf-inspector only accepts bytes and always loads with its own lopdf path.
+    // Preflight uses that same lopdf version so reject decisions match the
     // extractor stack. A second parse is forced by the crate API; keep it short.
     validate_object_nesting(bytes)?;
     preflight_document(bytes)?;
@@ -30,6 +30,9 @@ fn preflight_document(bytes: &[u8]) -> Result<(), String> {
         bytes,
         lopdf::LoadOptions {
             strict: true,
+            // Bounds object/xref stream decode during load. pdf-inspector's own load
+            // cannot take this option, so the byte-scan filter reject is still required.
+            max_decompressed_size: Some(MAX_PDF_EXPANDED_STREAM_BYTES),
             ..Default::default()
         },
     )
@@ -66,14 +69,7 @@ fn validate_stream_expansion(document: &lopdf::Document) -> Result<(), String> {
                 let expanded = bounded_flate_size(&stream.content, remaining)?;
                 consume_budget(&mut remaining, expanded)?;
             }
-            filters
-                if filters.iter().any(|filter| {
-                    matches!(
-                        *filter,
-                        b"LZWDecode" | b"LZW" | b"ASCII85Decode" | b"A85" | b"FlateDecode" | b"Fl"
-                    )
-                }) =>
-            {
+            filters if filters.iter().any(|filter| is_unbounded_filter(filter)) => {
                 let chain = filters
                     .iter()
                     .map(|filter| String::from_utf8_lossy(filter))
