@@ -119,8 +119,8 @@ const PNG_4X4: &[u8] = &[
 /// Composer label of the pasted fixture: first attachment, 75-byte PNG.
 const IMAGE_LABEL: &str = "[image 1: image/png 75 B]";
 
-/// Affordance painted over a hovered attachment label.
-const REMOVE_HINT: &str = "✕ remove";
+/// Remove button painted at the end of every attachment label row.
+const REMOVE_BUTTON: &str = "✕";
 
 fn setup_image(home: &IsolatedHome) -> Result<()> {
     std::fs::write(home.workspace.join(IMAGE_FILE), PNG_4X4)?;
@@ -135,34 +135,56 @@ fn paste_image_path(harness: &mut PtyHarness) -> Result<()> {
     harness.paste(&path.to_string_lossy())
 }
 
-/// 1-based SGR cell inside the lowest on-screen occurrence of `needle`.
-fn label_cell(harness: &PtyHarness, needle: &str) -> Result<(u16, u16)> {
+/// 1-based SGR cells of the attachment label and of the remove button on
+/// the same (lowest) row.
+fn label_and_button_cells(harness: &PtyHarness) -> Result<((u16, u16), (u16, u16))> {
     for (row, line) in harness.screen().rows_text().iter().enumerate().rev() {
-        if let Some(offset) = line.find(needle) {
-            let column = UnicodeWidthStr::width(&line[..offset]);
-            return Ok((column as u16 + 3, row as u16 + 1));
-        }
+        let Some(label) = line.find(IMAGE_LABEL) else {
+            continue;
+        };
+        let Some(button) = line[label..]
+            .find(REMOVE_BUTTON)
+            .map(|offset| label + offset)
+        else {
+            break;
+        };
+        let cell = |offset: usize| {
+            (
+                UnicodeWidthStr::width(&line[..offset]) as u16 + 1,
+                row as u16 + 1,
+            )
+        };
+        return Ok((cell(label + 2), cell(button)));
     }
-    anyhow::bail!("{needle:?} not found:\n{}", harness.screen().debug_dump());
+    anyhow::bail!(
+        "attachment label with its remove button not found:\n{}",
+        harness.screen().debug_dump()
+    );
 }
 
-// Covers: hovering a composer attachment shows the remove affordance and a
-// click removes that attachment from the composer.
-// Owner: interactive UX (PTY).
-fn hover_then_click_removes_attachment(harness: &mut PtyHarness) -> Result<()> {
-    let (column, row) = label_cell(harness, IMAGE_LABEL)?;
-    harness.mouse_move(column, row)?;
-    harness.wait_for_text(REMOVE_HINT, CLICK)?;
+fn click(harness: &mut PtyHarness, (column, row): (u16, u16)) -> Result<()> {
     harness.mouse(MouseButton::Left, column, row, true)?;
-    harness.mouse(MouseButton::Left, column, row, false)?;
-    harness.wait_for_text_gone(REMOVE_HINT, CLICK)?;
-    if harness.screen().contains_text("[image 1:") {
+    harness.mouse(MouseButton::Left, column, row, false)
+}
+
+// Covers: a click on an attachment's label keeps it (a stray click on a
+// preview must never delete it); a click on its always-painted remove button
+// removes it.
+// Owner: interactive UX (PTY).
+fn only_the_remove_button_removes_attachment(harness: &mut PtyHarness) -> Result<()> {
+    let (label, button) = label_and_button_cells(harness)?;
+    click(harness, label)?;
+    // A remove would repaint without the label; the button stays as a marker
+    // that the frame after the click has settled.
+    harness.wait_for_text(IMAGE_LABEL, CLICK)?;
+    if !harness.screen().contains_text(IMAGE_LABEL) {
         anyhow::bail!(
-            "clicked attachment is still in the composer:\n{}",
+            "a click on the label removed the attachment:\n{}",
             harness.screen().debug_dump()
         );
     }
-    Ok(())
+    click(harness, button)?;
+    harness.wait_for_text_gone(IMAGE_LABEL, CLICK)
 }
 
 const ATTACHMENT_CLICK_REMOVE_STEPS: &[Step] = &[
@@ -177,14 +199,14 @@ const ATTACHMENT_CLICK_REMOVE_STEPS: &[Step] = &[
         text: IMAGE_LABEL,
         timeout: SETTLE,
     },
-    Step::Phase("hover_and_click_remove"),
-    Step::Custom(hover_then_click_removes_attachment),
+    Step::Phase("click_remove_button"),
+    Step::Custom(only_the_remove_button_removes_attachment),
     Step::ExitCommand,
 ];
 
 pub(super) const ATTACHMENT_CLICK_REMOVE_SCENARIO: Scenario = Scenario::new(
     "attachment_click_remove",
-    "Show a remove affordance on a hovered composer attachment and remove it by click",
+    "Keep a composer attachment on a label click and remove it with its remove button",
     DEFAULT_SIZE,
     ATTACHMENT_CLICK_REMOVE_STEPS,
     /* smoke */ false,

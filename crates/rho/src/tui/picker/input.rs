@@ -253,6 +253,116 @@ fn apply_detail_scrollbar_top(picker: &mut UiPicker, layout: OverlayLayout, top_
     picker.detail_scroll = clamp_overlay_scroll(top_line, line_count, viewport.rows);
 }
 
+/// Applies one pointer event to an overlay picker laid out as `layout`, and
+/// returns the item a click selected on a nav row.
+///
+/// This is the whole overlay pointer policy, shared by the in-app picker and
+/// the standalone runner: the wheel scrolls the pane under the pointer (or
+/// the focused pane outside the box), a press on a scrollbar starts a drag,
+/// a press on a nav row selects it, and movement re-aims row hover. Callers
+/// pair the returned item into a double click to submit.
+pub(super) fn apply_overlay_pointer(
+    picker: &mut UiPicker,
+    layout: OverlayLayout,
+    event: PickerMouseEvent,
+    column: u16,
+    row: u16,
+) -> Option<usize> {
+    let mut clicked = None;
+    match event {
+        PickerMouseEvent::Wheel(delta) => {
+            picker.set_overlay_scrollbar_drag(None);
+            let fallback = if picker.detail_pane_focused() {
+                OverlayPane::Detail
+            } else {
+                OverlayPane::Nav
+            };
+            let pane = layout
+                .pane_hit(column, row)
+                .map_or(fallback, |hit| hit.pane);
+            match pane {
+                OverlayPane::Nav => {
+                    let rows = layout.scroll_targets().nav_rows;
+                    picker.scroll_nav_by(delta.saturating_mul(PICKER_WHEEL_LINES), rows);
+                }
+                OverlayPane::Detail => {
+                    if let Some(viewport) = layout.detail_viewport() {
+                        picker.scroll_detail_by(delta.saturating_mul(PICKER_WHEEL_LINES), viewport);
+                    }
+                }
+            }
+        }
+        PickerMouseEvent::Click(_) => {
+            if let Some(scrollbar) =
+                nav_scrollbar(picker, layout).filter(|scrollbar| scrollbar.contains(column, row))
+            {
+                let drag = scrollbar.begin_drag(row);
+                let top = scrollbar.top_line_for_pointer(row, drag);
+                apply_nav_scrollbar_top(picker, layout, top);
+                picker.set_overlay_scrollbar_drag(Some(OverlayScrollbarDrag::Nav(drag)));
+                picker.focus_overlay_pane(OverlayFocus::Nav);
+            } else if let Some(scrollbar) =
+                detail_scrollbar(picker, layout).filter(|scrollbar| scrollbar.contains(column, row))
+            {
+                let drag = scrollbar.begin_drag(row);
+                let top = scrollbar.top_line_for_pointer(row, drag);
+                apply_detail_scrollbar_top(picker, layout, top);
+                picker.set_overlay_scrollbar_drag(Some(OverlayScrollbarDrag::Detail(drag)));
+                picker.focus_overlay_pane(OverlayFocus::Detail);
+            } else {
+                picker.set_overlay_scrollbar_drag(None);
+                match layout.pane_hit(column, row) {
+                    Some(hit) if hit.pane == OverlayPane::Nav => {
+                        let viewport_rows = layout.scroll_targets().nav_rows;
+                        let row_index = picker.nav_window_start(viewport_rows) + hit.pane_row;
+                        if picker.select_nav_row(row_index, viewport_rows) {
+                            picker.focus_overlay_pane(OverlayFocus::Nav);
+                            clicked = Some(picker.selected);
+                        }
+                    }
+                    Some(hit)
+                        if hit.pane == OverlayPane::Detail && picker.has_scrollable_detail() =>
+                    {
+                        picker.focus_overlay_pane(OverlayFocus::Detail);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        PickerMouseEvent::Drag => match picker.overlay_scrollbar_drag() {
+            Some(OverlayScrollbarDrag::Nav(drag)) => {
+                if let Some(scrollbar) = nav_scrollbar(picker, layout) {
+                    apply_nav_scrollbar_top(
+                        picker,
+                        layout,
+                        scrollbar.top_line_for_pointer(row, drag),
+                    );
+                }
+            }
+            Some(OverlayScrollbarDrag::Detail(drag)) => {
+                if let Some(scrollbar) = detail_scrollbar(picker, layout) {
+                    apply_detail_scrollbar_top(
+                        picker,
+                        layout,
+                        scrollbar.top_line_for_pointer(row, drag),
+                    );
+                }
+            }
+            None => {}
+        },
+        PickerMouseEvent::Release => {
+            picker.set_overlay_scrollbar_drag(None);
+        }
+        PickerMouseEvent::Move => {
+            if picker.overlay_scrollbar_drag().is_none() {
+                let hovered = overlay_nav_row_at(picker, layout, column, row);
+                picker.set_hovered_nav_row(hovered);
+            }
+        }
+    }
+    clicked
+}
+
 impl App {
     /// Pointer event routed to an open picker. Returns true when the picker
     /// consumed it.
@@ -297,111 +407,11 @@ impl App {
             } else {
                 let layout =
                     picker_overlay_layout(Rect::new(0, 0, width, height), picker.overlay_sizing());
-                let may_change = matches!(
+                clicked_item = apply_overlay_pointer(picker, layout, event, column, row);
+                matches!(
                     event,
                     PickerMouseEvent::Click(_) | PickerMouseEvent::Wheel(_)
-                );
-                match event {
-                    PickerMouseEvent::Wheel(delta) => {
-                        picker.set_overlay_scrollbar_drag(None);
-                        let fallback = if picker.detail_pane_focused() {
-                            OverlayPane::Detail
-                        } else {
-                            OverlayPane::Nav
-                        };
-                        let pane = layout
-                            .pane_hit(column, row)
-                            .map_or(fallback, |hit| hit.pane);
-                        match pane {
-                            OverlayPane::Nav => {
-                                let rows = layout.scroll_targets().nav_rows;
-                                picker
-                                    .scroll_nav_by(delta.saturating_mul(PICKER_WHEEL_LINES), rows);
-                            }
-                            OverlayPane::Detail => {
-                                if let Some(viewport) = layout.detail_viewport() {
-                                    picker.scroll_detail_by(
-                                        delta.saturating_mul(PICKER_WHEEL_LINES),
-                                        viewport,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    PickerMouseEvent::Click(_) => {
-                        if let Some(scrollbar) = nav_scrollbar(picker, layout)
-                            .filter(|scrollbar| scrollbar.contains(column, row))
-                        {
-                            let drag = scrollbar.begin_drag(row);
-                            let top = scrollbar.top_line_for_pointer(row, drag);
-                            apply_nav_scrollbar_top(picker, layout, top);
-                            picker
-                                .set_overlay_scrollbar_drag(Some(OverlayScrollbarDrag::Nav(drag)));
-                            picker.focus_overlay_pane(OverlayFocus::Nav);
-                        } else if let Some(scrollbar) = detail_scrollbar(picker, layout)
-                            .filter(|scrollbar| scrollbar.contains(column, row))
-                        {
-                            let drag = scrollbar.begin_drag(row);
-                            let top = scrollbar.top_line_for_pointer(row, drag);
-                            apply_detail_scrollbar_top(picker, layout, top);
-                            picker.set_overlay_scrollbar_drag(Some(OverlayScrollbarDrag::Detail(
-                                drag,
-                            )));
-                            picker.focus_overlay_pane(OverlayFocus::Detail);
-                        } else {
-                            picker.set_overlay_scrollbar_drag(None);
-                            match layout.pane_hit(column, row) {
-                                Some(hit) if hit.pane == OverlayPane::Nav => {
-                                    let viewport_rows = layout.scroll_targets().nav_rows;
-                                    let row_index =
-                                        picker.nav_window_start(viewport_rows) + hit.pane_row;
-                                    if picker.select_nav_row(row_index, viewport_rows) {
-                                        picker.focus_overlay_pane(OverlayFocus::Nav);
-                                        clicked_item = Some(picker.selected);
-                                    }
-                                }
-                                Some(hit)
-                                    if hit.pane == OverlayPane::Detail
-                                        && picker.has_scrollable_detail() =>
-                                {
-                                    picker.focus_overlay_pane(OverlayFocus::Detail);
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    PickerMouseEvent::Drag => match picker.overlay_scrollbar_drag() {
-                        Some(OverlayScrollbarDrag::Nav(drag)) => {
-                            if let Some(scrollbar) = nav_scrollbar(picker, layout) {
-                                apply_nav_scrollbar_top(
-                                    picker,
-                                    layout,
-                                    scrollbar.top_line_for_pointer(row, drag),
-                                );
-                            }
-                        }
-                        Some(OverlayScrollbarDrag::Detail(drag)) => {
-                            if let Some(scrollbar) = detail_scrollbar(picker, layout) {
-                                apply_detail_scrollbar_top(
-                                    picker,
-                                    layout,
-                                    scrollbar.top_line_for_pointer(row, drag),
-                                );
-                            }
-                        }
-                        None => {}
-                    },
-                    PickerMouseEvent::Release => {
-                        picker.set_overlay_scrollbar_drag(None);
-                    }
-                    PickerMouseEvent::Move => {
-                        if picker.overlay_scrollbar_drag().is_none() {
-                            let hovered = overlay_nav_row_at(picker, layout, column, row);
-                            picker.set_hovered_nav_row(hovered);
-                        }
-                    }
-                }
-                may_change
+                )
             }
         };
         if selection_may_change {

@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crossterm::event::{MouseButton, MouseEventKind};
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use pretty_assertions::assert_eq;
 use ratatui::layout::Rect;
 
@@ -9,8 +9,9 @@ use super::{
         overlay_layout::{picker_overlay_layout, OverlayPane},
         PickerAction, PickerItem, PickerLayout, UiPicker,
     },
-    apply_mouse, MouseEffect, PointerInput,
+    apply_mouse, MouseEffect,
 };
+use crate::tui::click_sequence::ClickSequence;
 
 const AREA: Rect = Rect::new(0, 0, 80, 24);
 
@@ -45,12 +46,12 @@ fn nav_cell(picker: &UiPicker, pane_row: usize) -> (u16, u16) {
         .expect("nav row is painted")
 }
 
-fn event(kind: MouseEventKind, (column, row): (u16, u16), now: Instant) -> PointerInput {
-    PointerInput {
+fn event(kind: MouseEventKind, (column, row): (u16, u16)) -> MouseEvent {
+    MouseEvent {
         kind,
         column,
         row,
-        now,
+        modifiers: KeyModifiers::NONE,
     }
 }
 
@@ -63,15 +64,15 @@ fn event(kind: MouseEventKind, (column, row): (u16, u16), now: Instant) -> Point
 #[test]
 fn pointer_selects_submits_hovers_and_scrolls_nav_rows() {
     let mut picker = overlay_picker(60);
-    let mut last_click = None;
+    let mut clicks = ClickSequence::default();
     let start = Instant::now();
     let down = MouseEventKind::Down(MouseButton::Left);
     let row_two = nav_cell(&picker, 2);
     let row_three = nav_cell(&picker, 3);
 
-    let hover = event(MouseEventKind::Moved, row_three, start);
+    let hover = event(MouseEventKind::Moved, row_three);
     assert_eq!(
-        apply_mouse(&mut picker, AREA, hover, &mut last_click),
+        apply_mouse(&mut picker, AREA, hover, start, &mut clicks),
         MouseEffect::None
     );
     assert_eq!(picker.hovered_nav_row(), Some(3));
@@ -90,7 +91,7 @@ fn pointer_selects_submits_hovers_and_scrolls_nav_rows() {
     for (cell, offset, effect, selected) in presses {
         let now = start + Duration::from_millis(offset);
         assert_eq!(
-            apply_mouse(&mut picker, AREA, event(down, cell, now), &mut last_click),
+            apply_mouse(&mut picker, AREA, event(down, cell), now, &mut clicks),
             effect,
             "press at {offset}ms"
         );
@@ -104,8 +105,9 @@ fn pointer_selects_submits_hovers_and_scrolls_nav_rows() {
     apply_mouse(
         &mut picker,
         AREA,
-        event(MouseEventKind::ScrollDown, row_two, start),
-        &mut last_click,
+        event(MouseEventKind::ScrollDown, row_two),
+        start,
+        &mut clicks,
     );
     assert_eq!(
         picker.nav_window_start(nav_rows),
@@ -113,12 +115,7 @@ fn pointer_selects_submits_hovers_and_scrolls_nav_rows() {
     );
     assert_eq!(picker.selected, 3, "the wheel never moves the selection");
     // A click after scrolling selects the row now painted under the pointer.
-    apply_mouse(
-        &mut picker,
-        AREA,
-        event(down, row_two, start),
-        &mut last_click,
-    );
+    apply_mouse(&mut picker, AREA, event(down, row_two), start, &mut clicks);
     assert_eq!(
         picker.selected,
         top + crate::tui::HISTORY_MOUSE_SCROLL_LINES + 2
