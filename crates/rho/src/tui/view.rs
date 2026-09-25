@@ -379,6 +379,9 @@ impl App {
             Paragraph::new(composer_visible).style(Style::default()),
             layout.composer,
         );
+        if layout.composer.height > 0 {
+            self.input_ui.mark_composer_painted();
+        }
         self.render_composer_images(frame, layout.composer, width, layout.composer_start);
         if layout.bottom_divider.height > 0 {
             frame.render_widget(

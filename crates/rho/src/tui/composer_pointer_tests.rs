@@ -1,0 +1,260 @@
+use crossterm::event::{MouseButton, MouseEventKind};
+use pretty_assertions::assert_eq;
+use ratatui::{backend::TestBackend, layout::Rect, Terminal};
+use rho_sdk::{DefaultSelection, HostChoice, HostInputRequest, HostQuestion, SelectionMode};
+
+use super::{composer_target_at, ComposerChoice, ComposerHit};
+use crate::tui::{
+    approval::ApprovalChoice,
+    questionnaire::{questionnaire_frame, QuestionnaireComposer, QuestionnaireTarget},
+    tests::test_app,
+    ComposerMode, QuestionnaireResponseChannel,
+};
+
+// Covers: a press lands on the choice painted under it even when the composer
+// is scrolled (visible start > 0) or offset on screen; PTY cannot cheaply
+// produce a composer taller than its rect.
+// Owner: composer pointer hit mapping
+#[test]
+fn pointer_maps_through_origin_and_visible_start() {
+    let hits = [
+        ComposerHit::rows(2..4, 'a'),
+        ComposerHit {
+            lines: 4..5,
+            columns: 3..6,
+            target: 'b',
+        },
+    ];
+    let origin = Rect::new(2, 10, 20, 3);
+    let cases = [
+        // (visible start, column, row, expected)
+        (0, 2, 12, Some('a')),
+        (0, 2, 13, None),
+        (1, 2, 11, Some('a')),
+        (1, 2, 12, Some('a')),
+        (2, 5, 12, Some('b')),
+        (2, 8, 12, None),
+        (0, 1, 12, None),
+        (0, 2, 9, None),
+    ];
+    for (start, column, row, expected) in cases {
+        assert_eq!(
+            composer_target_at(&hits, origin, start, column, row),
+            expected,
+            "start={start} column={column} row={row}"
+        );
+    }
+}
+
+fn composer(questions: Vec<HostQuestion>) -> QuestionnaireComposer {
+    let (reply_tx, _reply_rx) = tokio::sync::oneshot::channel();
+    QuestionnaireComposer::new(
+        HostInputRequest::questionnaire("", questions).unwrap(),
+        QuestionnaireResponseChannel::new(reply_tx),
+    )
+}
+
+// Covers: a choice's hit span drifts from its painted rows when choices take
+// varying heights (wrapped labels, descriptions, the "(recommended)" overflow
+// row, the expanded free-text row), so clicks land on a neighbor.
+// Owner: questionnaire render
+#[test]
+fn choice_hits_tile_each_choice_block_in_order() {
+    let long = "a label long enough to wrap onto a second row at this width";
+    let question = |selection| {
+        HostQuestion::new(
+            "q",
+            "Pick one?",
+            vec![
+                HostChoice::new("short", "short"),
+                HostChoice::new("desc", "described").description("with a description row"),
+                HostChoice::new("long", long),
+            ],
+            selection,
+        )
+        .unwrap()
+        .default_value(serde_json::json!("long"))
+        .default_selection(DefaultSelection::Focused)
+        .allow_other()
+    };
+    let width = 30;
+    // (name, mode, type into "other", which choices confirm on double click)
+    for (name, selection, type_other, expected_confirms) in [
+        (
+            "single",
+            SelectionMode::One,
+            false,
+            [true, true, true, false],
+        ),
+        (
+            "multi with other text",
+            SelectionMode::Many,
+            true,
+            [false; 4],
+        ),
+    ] {
+        let mut composer = composer(vec![question(selection)]);
+        if type_other {
+            assert!(composer.insert_text("typed other text that also wraps around"));
+        }
+        let frame = questionnaire_frame(&composer, width);
+        let choices: Vec<_> = frame
+            .hits
+            .iter()
+            .filter_map(|hit| match hit.target {
+                QuestionnaireTarget::Choice { index, confirms } => {
+                    Some((index, confirms, hit.lines.clone()))
+                }
+                QuestionnaireTarget::Question(_) => None,
+            })
+            .collect();
+        let row_text = |row: usize| -> String {
+            frame.lines[row]
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect()
+        };
+
+        assert_eq!(
+            choices.iter().map(|(index, ..)| *index).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3],
+            "{name}"
+        );
+        // Blocks are contiguous: each choice ends where the next begins, so
+        // no painted row belongs to two choices or to none.
+        for pair in choices.windows(2) {
+            assert_eq!(pair[0].2.end, pair[1].2.start, "{name}");
+        }
+        // Each block starts on the row that paints its selection marker.
+        for (index, _, lines) in &choices {
+            let first = row_text(lines.start);
+            assert!(
+                first.contains('○')
+                    || first.contains('●')
+                    || first.contains('□')
+                    || first.contains('■'),
+                "{name}: choice {index} starts on a non-marker row: {first:?}"
+            );
+            for row in lines.clone().skip(1) {
+                let text = row_text(row);
+                assert!(
+                    !(text.contains('○')
+                        || text.contains('●')
+                        || text.contains('□')
+                        || text.contains('■')),
+                    "{name}: choice {index} swallowed another marker row: {text:?}"
+                );
+            }
+        }
+        assert!(
+            choices.iter().any(|(_, _, lines)| lines.len() > 1),
+            "{name}: fixture should produce multi-row choices"
+        );
+        let confirms: Vec<_> = choices.iter().map(|(_, confirms, _)| *confirms).collect();
+        assert_eq!(confirms, expected_confirms, "{name}");
+    }
+}
+
+// Covers: tab chip hit columns drift from the painted chips (separators,
+// overflow ellipses, check marks), sending clicks to the wrong question.
+// Owner: questionnaire render
+#[test]
+fn tab_chip_hits_cover_their_painted_labels() {
+    let questions = (1..=4)
+        .map(|index| {
+            HostQuestion::new(
+                format!("q{index}"),
+                format!("question number {index}?"),
+                vec![HostChoice::new("a", "a"), HostChoice::new("b", "b")],
+                SelectionMode::One,
+            )
+            .unwrap()
+        })
+        .collect();
+    let mut composer = composer(questions);
+    composer.focus_question(3);
+
+    // Narrow enough that the tab bar scrolls and paints a left overflow mark.
+    let frame = questionnaire_frame(&composer, 40);
+    let mut tabs = Vec::new();
+    for hit in &frame.hits {
+        let QuestionnaireTarget::Question(index) = hit.target else {
+            continue;
+        };
+        let line: String = frame.lines[hit.lines.start]
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        let painted: String = line
+            .chars()
+            .skip(hit.columns.start)
+            .take(hit.columns.len())
+            .collect();
+        tabs.push((index, painted.split_whitespace().next().map(str::to_owned)));
+    }
+    assert!(
+        tabs.len() < 4,
+        "tab bar should scroll at this width: {tabs:?}"
+    );
+    assert!(tabs.iter().any(|(index, _)| *index == 3));
+    for (index, label) in tabs {
+        assert_eq!(label, Some((index + 1).to_string()));
+    }
+}
+
+// Covers: a click that races a newly opened approval (before its first paint)
+// must not move focus off Deny; the same click after the paint does.
+// Owner: composer pointer gating (a PTY cannot order a click before a repaint)
+#[tokio::test]
+async fn approval_clicks_wait_for_the_prompt_to_be_painted() {
+    let mut app = test_app();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    let request = rho_sdk::ApprovalRequest::new(
+        rho_sdk::CapabilityRequest::read_path(
+            "/workspace/file",
+            rho_sdk::PathScope::PrimaryWorkspace,
+            rho_sdk::CapabilitySource::built_in_tool("read_file"),
+        ),
+        "approval required",
+    );
+    app.open_approval(rho_sdk::PendingApproval::new(request).0)
+        .await;
+    let active = |app: &crate::tui::App| match app.input_ui.composer() {
+        ComposerMode::Approval(approval) => approval.active(),
+        other => panic!("approval closed: {other:?}"),
+    };
+    let allow_once = |app: &mut crate::tui::App| {
+        let ctx = app.frame_context(Rect::new(0, 0, 80, 24));
+        let hit = ctx
+            .composer
+            .choice_hits
+            .iter()
+            .find(|hit| hit.target == ComposerChoice::Approval(ApprovalChoice::AllowOnce))
+            .expect("allow once is painted");
+        let row = ctx.layout.composer.y + (hit.lines.start - ctx.layout.composer_start) as u16;
+        (ctx.layout.composer.x, row)
+    };
+
+    let (column, row) = allow_once(&mut app);
+    app.handle_mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        &mut terminal,
+    )
+    .unwrap();
+    assert_eq!(active(&app), ApprovalChoice::Deny);
+
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    let (column, row) = allow_once(&mut app);
+    app.handle_mouse_event(
+        MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        &mut terminal,
+    )
+    .unwrap();
+    assert_eq!(active(&app), ApprovalChoice::AllowOnce);
+}

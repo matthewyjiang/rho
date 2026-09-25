@@ -4,11 +4,14 @@ mod command;
 mod overlay;
 mod snapshot;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::time::Instant;
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::{layout::Rect, DefaultTerminal};
 
 use super::{
     commands, line_editor::LineEditor, App, CommandId, CommandInvocation, ComposerMode, Entry,
+    HISTORY_MOUSE_SCROLL_LINES,
 };
 use crate::app::side_chat::{spawn_side_chat, SideChatEvent, SideChatHandle, SideChatLaunch};
 use crate::config::Config;
@@ -333,17 +336,36 @@ impl App {
         self.scroll_side_overlay_area(Rect::new(0, 0, size.width, size.height), delta);
     }
 
-    pub(super) fn scroll_side_overlay_wheel(
+    /// Pointer input while the side overlay is open. The overlay owns every
+    /// event so clicks, drags, and releases never reach transcript controls
+    /// hidden behind it.
+    pub(super) fn handle_side_overlay_mouse(
         &mut self,
-        width: u16,
-        height: u16,
-        delta: isize,
-    ) -> bool {
-        if !self.side_overlay_open() {
-            return false;
+        kind: MouseEventKind,
+        screen: Rect,
+        column: u16,
+        row: u16,
+        now: Instant,
+    ) {
+        self.clear_selections();
+        self.clear_hovered_copy_buttons();
+        self.clear_rail_pointer_state();
+        self.history.set_scrollbar_drag(None);
+        let lines = HISTORY_MOUSE_SCROLL_LINES as isize;
+        match kind {
+            MouseEventKind::ScrollUp => self.scroll_side_overlay_area(screen, -lines),
+            MouseEventKind::ScrollDown => self.scroll_side_overlay_area(screen, lines),
+            MouseEventKind::Down(MouseButton::Left) => {
+                let text = self
+                    .side_overlay_frame(screen)
+                    .and_then(|overlay| overlay.copy_text_at(column, row).map(str::to_owned));
+                if let Some(text) = text {
+                    self.copy_text(&text, now);
+                }
+            }
+            MouseEventKind::Down(MouseButton::Right) => self.paste_clipboard_text(),
+            _ => {}
         }
-        self.scroll_side_overlay_area(Rect::new(0, 0, width, height), delta);
-        true
     }
 
     fn scroll_side_overlay_area(&mut self, area: Rect, delta: isize) {

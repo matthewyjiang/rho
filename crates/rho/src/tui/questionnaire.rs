@@ -6,7 +6,7 @@ use tokio::sync::oneshot;
 mod render;
 mod timeout;
 
-pub(in crate::tui) use render::{questionnaire_cursor_position, questionnaire_lines};
+pub(in crate::tui) use render::questionnaire_frame;
 
 use super::paste_burst::{next_word_boundary, previous_word_boundary};
 
@@ -74,6 +74,20 @@ pub(super) struct QuestionnaireComposer {
     fields: Vec<QuestionnaireFieldState>,
     active_index: usize,
     timeout: Option<timeout::QuestionnaireTimer>,
+}
+
+/// Pointer target painted by the questionnaire composer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::tui) enum QuestionnaireTarget {
+    /// Tab chip for the question at this index.
+    Question(usize),
+    /// Choice row on the active question, including the trailing "other" row.
+    Choice {
+        index: usize,
+        /// Whether a double click confirms the question like Enter. Multi-select
+        /// rows toggle on every click, and the free-text row needs typing.
+        confirms: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -291,6 +305,27 @@ impl QuestionnaireComposer {
         if self.active_text_entry_active() {
             let char_len = self.active_char_len();
             self.active_field_mut().other_cursor = char_len;
+        }
+    }
+
+    /// Show the question behind a clicked tab chip.
+    pub(super) fn focus_question(&mut self, index: usize) {
+        self.active_index = index.min(self.fields.len().saturating_sub(1));
+    }
+
+    /// Point at a clicked choice the way arrows do, then mark it: single-select
+    /// questions select it, multi-select questions toggle it. Clicking the
+    /// free-text row while it is already on only focuses its input.
+    pub(super) fn click_choice(&mut self, index: usize) {
+        let question = self.active_question().clone();
+        let field = self.active_field_mut();
+        field.choice_cursor = index.min(choice_count(&question).saturating_sub(1));
+        match &field.selection {
+            FieldSelection::Multi { other: true, .. } if field.text_entry_active(&question) => {}
+            FieldSelection::Multi { .. } => field.toggle_highlighted(&question),
+            FieldSelection::None | FieldSelection::Single(_) | FieldSelection::Other => {
+                field.select_highlighted_for_single(&question);
+            }
         }
     }
 

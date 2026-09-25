@@ -203,6 +203,8 @@ While a goal is active, the status line shows `◎ /goal active` with the evalua
 
 A form with several questions shows one question at a time. Up and Down move among that question's choices. Tab moves to the next question, and Shift+Tab moves to the previous question. Enter confirms the current question and moves forward, or submits on the last question. Esc cancels the form. The footer under the choices lists the keys that apply.
 
+You can also use the mouse. Click a question's tab to show it, and click a choice to select it; on a multi-select question, each click toggles the choice. Double-clicking a single-select choice confirms it like Enter.
+
 ## Questionnaire fallbacks
 
 A questionnaire normally blocks until you submit or cancel it. You can opt in

@@ -148,6 +148,10 @@ pub(in crate::tui) struct InputUi {
     file_palette_dismissed: bool,
     composer: ComposerMode,
     hovered_composer_copy: bool,
+    /// Whether the current composer mode has reached the screen. Pointer
+    /// clicks on composer choices wait for this so they never land on rows
+    /// the user has not seen yet.
+    composer_painted: bool,
 }
 
 impl InputUi {
@@ -352,13 +356,23 @@ impl InputUi {
         self.last_pointer_click = None;
         self.composer_view_start = 0;
         self.hovered_composer_copy = false;
+        self.composer_painted = false;
     }
 
     pub(in crate::tui) fn take_composer(&mut self) -> ComposerMode {
         self.last_pointer_click = None;
         self.composer_view_start = 0;
         self.hovered_composer_copy = false;
+        self.composer_painted = false;
         std::mem::replace(&mut self.composer, ComposerMode::Input)
+    }
+
+    pub(in crate::tui) fn composer_painted(&self) -> bool {
+        self.composer_painted
+    }
+
+    pub(in crate::tui) fn mark_composer_painted(&mut self) {
+        self.composer_painted = true;
     }
 
     pub(in crate::tui) fn hovered_composer_copy(&self) -> bool {

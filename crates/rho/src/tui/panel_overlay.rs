@@ -70,25 +70,10 @@ impl App {
         }
     }
 
-    /// Routes a pointer event to the open panel. `true` means a panel is open
-    /// and consumed it: Info handles selection and copy; the rest scroll on
-    /// the wheel and swallow clicks so controls hidden behind stay inert.
-    pub(super) fn handle_panel_overlay_mouse(
-        &mut self,
-        kind: MouseEventKind,
-        screen: Rect,
-        column: u16,
-        row: u16,
-        now: Instant,
-    ) -> bool {
-        match self.panel_overlay() {
-            None => return false,
-            Some(PanelOverlay::Info(_)) => {
-                self.handle_info_overlay_mouse(kind, screen, column, row, now);
-                return true;
-            }
-            Some(_) => {}
-        }
+    /// Pointer input for the scroll-only panels (every panel but Info, which
+    /// owns selection and copy). The wheel scrolls; other events are swallowed
+    /// so controls hidden behind the panel stay inert.
+    pub(super) fn handle_panel_overlay_mouse(&mut self, kind: MouseEventKind, screen: Rect) {
         self.clear_selections();
         self.clear_hovered_copy_buttons();
         self.clear_rail_pointer_state();
@@ -97,10 +82,9 @@ impl App {
         let delta = match kind {
             MouseEventKind::ScrollUp => -lines,
             MouseEventKind::ScrollDown => lines,
-            _ => return true,
+            _ => return,
         };
         self.scroll_panel_overlay(screen, PanelScrollTarget::Delta(delta));
-        true
     }
 
     fn scroll_panel_overlay(&mut self, area: Rect, target: PanelScrollTarget) {

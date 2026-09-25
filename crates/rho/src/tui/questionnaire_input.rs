@@ -1,7 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::{
-    questionnaire::{QuestionnaireComposer, QuestionnaireEnterAction},
+    composer_pointer::ChoiceClick,
+    questionnaire::{QuestionnaireComposer, QuestionnaireEnterAction, QuestionnaireTarget},
     questionnaire_notice_text, App, ComposerMode, Entry, HerdrUserWait, QuestionAnswerRequest,
 };
 
@@ -71,7 +72,7 @@ impl App {
                 };
                 match action {
                     QuestionnaireEnterAction::Advance => {}
-                    QuestionnaireEnterAction::Submit => self.submit_questionnaire_answer()?,
+                    QuestionnaireEnterAction::Submit => self.submit_questionnaire_answer(),
                 }
                 self.ctrl_c_streak = 0;
             }
@@ -179,6 +180,31 @@ impl App {
         Ok(true)
     }
 
+    /// Applies a click on a tab chip or choice row. A double click confirms
+    /// like Enter: it advances, or submits on the last question.
+    pub(super) fn click_questionnaire(&mut self, target: QuestionnaireTarget, click: ChoiceClick) {
+        let Some(questionnaire) = self.questionnaire_mut() else {
+            return;
+        };
+        let action = match target {
+            QuestionnaireTarget::Question(index) => {
+                questionnaire.focus_question(index);
+                None
+            }
+            QuestionnaireTarget::Choice { index, .. } => {
+                questionnaire.click_choice(index);
+                match click {
+                    ChoiceClick::Single => None,
+                    ChoiceClick::Double => Some(questionnaire.confirm_active_question()),
+                }
+            }
+        };
+        match action {
+            None | Some(QuestionnaireEnterAction::Advance) => {}
+            Some(QuestionnaireEnterAction::Submit) => self.submit_questionnaire_answer(),
+        }
+    }
+
     fn questionnaire_mut(&mut self) -> Option<&mut QuestionnaireComposer> {
         match self.input_ui.composer_mut() {
             ComposerMode::Questionnaire(questionnaire) => Some(questionnaire),
@@ -186,29 +212,20 @@ impl App {
         }
     }
 
-    fn submit_questionnaire_answer(&mut self) -> anyhow::Result<()> {
-        if let Some(display) = self.prepare_questionnaire_answer()? {
-            self.insert_entry(&Entry::User(display));
-        }
-        Ok(())
-    }
-
-    fn prepare_questionnaire_answer(&mut self) -> anyhow::Result<Option<String>> {
+    fn submit_questionnaire_answer(&mut self) {
         let ComposerMode::Questionnaire(mut questionnaire) = self.input_ui.take_composer() else {
-            return Ok(None);
+            return;
         };
         match questionnaire.submit() {
             Ok(submitted) => {
-                let display = submitted.display;
                 self.clear_submitted_input();
                 self.set_status("answers submitted");
-                Ok(Some(display))
+                self.insert_entry(&Entry::User(submitted.display));
             }
             Err(error) => {
                 self.input_ui
                     .set_composer(ComposerMode::Questionnaire(questionnaire));
                 self.set_status(error);
-                Ok(None)
             }
         }
     }

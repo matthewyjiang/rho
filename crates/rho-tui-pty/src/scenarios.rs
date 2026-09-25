@@ -40,6 +40,7 @@ mod no_save;
 mod paste;
 mod pickers;
 mod process_rail;
+mod questionnaire;
 mod questionnaire_timeout;
 #[cfg(unix)]
 mod quiet_subagent;
@@ -413,30 +414,6 @@ const TERMINAL_RESTORATION_STEPS: &[Step] = &[
     Step::Custom(assert_terminal_restored),
 ];
 
-const QUESTIONNAIRE_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::SubmitText("fixture questionnaire"),
-    Step::WaitText {
-        text: "Choose one color",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "A warm primary color",
-        timeout: STREAM,
-    },
-    Step::Key(Key::Down),
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "questionnaire response observed exactly 1 time",
-        timeout: STREAM,
-    },
-    Step::ExitCommand,
-];
-
 const PROGRESS_TOOL_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -564,13 +541,9 @@ const ALL_SCENARIOS: &[Scenario] = &[
     questionnaire_timeout::TIMEOUT,
     questionnaire_timeout::PAUSE,
     DOCUMENT_ATTACHMENT_SCENARIO,
-    Scenario::new(
-        "questionnaire",
-        "Exercise questionnaire keyboard selection and submission",
-        DEFAULT_SIZE,
-        QUESTIONNAIRE_STEPS,
-        false,
-    ),
+    questionnaire::QUESTIONNAIRE_SCENARIO,
+    questionnaire::QUESTIONNAIRE_CLICK_SCENARIO,
+    questionnaire::APPROVAL_CLICK_SCENARIO,
     Scenario::new(
         "supervised_approval",
         "Inspect and cancel a bounded supervised process approval",

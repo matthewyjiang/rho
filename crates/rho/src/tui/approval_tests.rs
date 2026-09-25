@@ -6,7 +6,7 @@ use rho_sdk::{
 
 use super::{
     render::{
-        approval_detail_page_lines, approval_details, approval_lines_for_position, approval_title,
+        approval_detail_page_lines, approval_details, approval_frame_for_position, approval_title,
         format_direct_invocation,
     },
     ApprovalChoice,
@@ -104,14 +104,15 @@ fn every_rendered_line_respects_narrow_width() {
         source(),
     );
     let width = 14;
-    let lines = approval_lines_for_position(
+    let lines = approval_frame_for_position(
         &request,
         "a long reason that must wrap",
         ApprovalChoice::AllowForSession,
         0,
         width,
         14,
-    );
+    )
+    .lines;
 
     assert!(lines.iter().all(|line| line.width() <= width));
     assert!(lines.len() <= 9);
@@ -125,30 +126,23 @@ fn every_rendered_line_respects_narrow_width() {
 fn detail_window_starts_at_head_and_grows_with_viewport() {
     let request = long_process_request();
     let width = 40;
-    let short = line_text(&approval_lines_for_position(
-        &request,
-        "",
-        ApprovalChoice::Deny,
-        0,
-        width,
-        14,
-    ));
-    let tall = line_text(&approval_lines_for_position(
-        &request,
-        "",
-        ApprovalChoice::Deny,
-        0,
-        width,
-        60,
-    ));
-    let with_reason = line_text(&approval_lines_for_position(
-        &request,
-        "custom audit reason",
-        ApprovalChoice::Deny,
-        0,
-        width,
-        60,
-    ));
+    let short = line_text(
+        &approval_frame_for_position(&request, "", ApprovalChoice::Deny, 0, width, 14).lines,
+    );
+    let tall = line_text(
+        &approval_frame_for_position(&request, "", ApprovalChoice::Deny, 0, width, 60).lines,
+    );
+    let with_reason = line_text(
+        &approval_frame_for_position(
+            &request,
+            "custom audit reason",
+            ApprovalChoice::Deny,
+            0,
+            width,
+            60,
+        )
+        .lines,
+    );
 
     assert!(
         short
@@ -339,14 +333,17 @@ fn detail_paging_reaches_command_suffix_and_meta() {
     let mut saw_cwd = false;
     let mut saw_earlier = false;
     for offset in 0..32 {
-        let lines = line_text(&approval_lines_for_position(
-            &request,
-            "",
-            ApprovalChoice::Deny,
-            offset,
-            width,
-            viewport_height,
-        ));
+        let lines = line_text(
+            &approval_frame_for_position(
+                &request,
+                "",
+                ApprovalChoice::Deny,
+                offset,
+                width,
+                viewport_height,
+            )
+            .lines,
+        );
         saw_suffix |= lines
             .iter()
             .any(|line| line.contains("DANGEROUS_SUFFIX_INSPECTABLE"));
@@ -370,14 +367,17 @@ fn detail_paging_reaches_command_suffix_and_meta() {
         "once scrolled past the head, the prompt should offer paging back"
     );
 
-    let end = line_text(&approval_lines_for_position(
-        &request,
-        "",
-        ApprovalChoice::Deny,
-        10_000,
-        width,
-        viewport_height,
-    ));
+    let end = line_text(
+        &approval_frame_for_position(
+            &request,
+            "",
+            ApprovalChoice::Deny,
+            10_000,
+            width,
+            viewport_height,
+        )
+        .lines,
+    );
     assert!(
         end.iter().any(|line| line.contains("cwd /work")),
         "oversized offsets should clamp onto the trailing meta window: {end:?}"

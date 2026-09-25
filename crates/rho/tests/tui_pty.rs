@@ -1014,6 +1014,22 @@ fn process_rail_click_opens_peek_and_q_returns() {
     assert_pass("process_rail_peek");
 }
 
+// Covers: a click selects a questionnaire choice without submitting, and a
+// double click confirms it like Enter.
+// Owner: interactive TUI
+#[test]
+fn questionnaire_choice_click_and_double_click_submit() {
+    assert_pass("questionnaire_click");
+}
+
+// Covers: a single click never resolves an approval; a double click allows it
+// and the turn resumes.
+// Owner: interactive TUI
+#[test]
+fn approval_double_click_allows_and_resumes_turn() {
+    assert_pass("approval_click");
+}
+
 #[test]
 fn text_selection_highlight_follows_drag_before_release() {
     assert_pass("text_selection_drag");

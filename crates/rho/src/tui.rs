@@ -37,6 +37,7 @@ mod compaction_display;
 mod composer;
 mod composer_attachments;
 mod composer_chrome;
+mod composer_pointer;
 mod computer_command;
 mod computer_overlay;
 mod config_actions;
@@ -224,7 +225,7 @@ use types::*;
 
 use activity::{ActivityPhase, ActivityStatus, BackgroundCounts, LoadingSpinner};
 use app_state::{HistoryUi, InputUi, PendingWorkUi, TurnUi};
-use approval::{approval_lines, ApprovalKeyOutcome};
+use approval::{approval_frame, ApprovalKeyOutcome};
 use chat_media::{
     ChatMedia, ChatTextDocument, ComposerAttachment, MediaAttachId, PendingAttachmentSource,
 };
@@ -255,8 +256,8 @@ use picker::{
 use process_panel::ProcessPanel;
 use prompt_turn::FailedTurn;
 use questionnaire::{
-    questionnaire_cursor_position, questionnaire_lines, questionnaire_notice_text,
-    QuestionAnswerRequest, QuestionnaireReply, QuestionnaireResponseChannel,
+    questionnaire_frame, questionnaire_notice_text, QuestionAnswerRequest, QuestionnaireReply,
+    QuestionnaireResponseChannel,
 };
 use render::{
     char_prefix_display_width, display_width, input_frame, picker_lines, session_header_lines,

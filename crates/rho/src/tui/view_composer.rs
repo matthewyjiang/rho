@@ -7,9 +7,10 @@ use ratatui::{
 
 use super::{
     advisor_status::AdvisorStatus,
-    approval_lines, char_prefix_display_width,
+    approval_frame, char_prefix_display_width,
     composer_chrome::ComposerDividerSlot,
     composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
+    composer_pointer::{ComposerChoice, ComposerHit},
     config_number_input_lines,
     copy_interaction::CopyHit,
     display_width,
@@ -20,18 +21,20 @@ use super::{
     login::secret_input_lines,
     login_presentation::login_composer_view,
     palette::ActivePalette,
-    picker_lines, questionnaire_cursor_position, questionnaire_lines, styled_line,
+    picker_lines, questionnaire_frame, styled_line,
     text_input::text_input_lines,
     truncate_one_line, App, ComposerMode, InputFrame, LineFill, Theme, MAX_COMMAND_SUGGESTIONS,
     MIN_COMMAND_DESCRIPTION_WIDTH,
 };
 
-/// Composer rows plus the caret or focused row that the viewport must keep visible.
+/// Composer rows plus the caret or focused row that the viewport must keep
+/// visible, and any pointer targets painted with them.
 #[derive(Debug)]
 pub(super) struct ComposerFrame {
     pub(super) lines: Vec<Line<'static>>,
     pub(super) cursor: Position,
     pub(super) copy_hit: Option<CopyHit>,
+    pub(super) choice_hits: Vec<ComposerHit<ComposerChoice>>,
 }
 
 fn overlay_editor_caret(value: &str, cursor: usize, width: usize) -> Position {
@@ -47,6 +50,7 @@ impl ComposerFrame {
             lines,
             cursor,
             copy_hit: None,
+            choice_hits: Vec::new(),
         }
     }
 }
@@ -182,9 +186,8 @@ impl App {
                 let view =
                     login_composer_view(pending, width, /*hovered*/ composer_copy_hovered);
                 ComposerFrame {
-                    lines: view.lines,
-                    cursor: Position { x: 0, y: 0 },
                     copy_hit: view.copy_hit,
+                    ..ComposerFrame::new(view.lines, Position { x: 0, y: 0 })
                 }
             }
             ComposerMode::InlineChoice(modal) => inline_choice_frame(
@@ -192,14 +195,28 @@ impl App {
                 width,
                 /*return_to_parent*/ modal.parent_picker.is_some(),
             ),
-            ComposerMode::Questionnaire(questionnaire) => ComposerFrame::new(
-                questionnaire_lines(questionnaire, width),
-                questionnaire_cursor_position(questionnaire, width),
-            ),
-            ComposerMode::Approval(approval) => ComposerFrame::new(
-                approval_lines(approval, width, viewport_height),
-                Position { x: 0, y: 0 },
-            ),
+            ComposerMode::Questionnaire(questionnaire) => {
+                let frame = questionnaire_frame(questionnaire, width);
+                ComposerFrame {
+                    choice_hits: frame
+                        .hits
+                        .into_iter()
+                        .map(|hit| hit.map_target(ComposerChoice::Questionnaire))
+                        .collect(),
+                    ..ComposerFrame::new(frame.lines, frame.cursor)
+                }
+            }
+            ComposerMode::Approval(approval) => {
+                let frame = approval_frame(approval, width, viewport_height);
+                ComposerFrame {
+                    choice_hits: frame
+                        .hits
+                        .into_iter()
+                        .map(|hit| hit.map_target(ComposerChoice::Approval))
+                        .collect(),
+                    ..ComposerFrame::new(frame.lines, Position { x: 0, y: 0 })
+                }
+            }
             ComposerMode::Panel(_) | ComposerMode::Side => {
                 ComposerFrame::new(Vec::new(), Position { x: 0, y: 0 })
             }

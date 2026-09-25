@@ -9,6 +9,7 @@ use rho_sdk::{
 
 use super::{ApprovalChoice, ApprovalComposer};
 use crate::tui::{
+    composer_pointer::ComposerHit,
     render::{push_wrapped_text, truncate_one_line, LineFill},
     theme::Theme,
 };
@@ -26,12 +27,18 @@ struct ApprovalDetails {
     meta: Vec<String>,
 }
 
-pub(in crate::tui) fn approval_lines(
+/// Approval composer rows plus the clickable choice rows.
+pub(in crate::tui) struct ApprovalFrame {
+    pub(in crate::tui) lines: Vec<Line<'static>>,
+    pub(in crate::tui) hits: Vec<ComposerHit<ApprovalChoice>>,
+}
+
+pub(in crate::tui) fn approval_frame(
     approval: &ApprovalComposer,
     width: usize,
     viewport_height: usize,
-) -> Vec<Line<'static>> {
-    approval_lines_for_position(
+) -> ApprovalFrame {
+    approval_frame_for_position(
         approval.request().capability(),
         approval.request().reason(),
         approval.active(),
@@ -41,14 +48,14 @@ pub(in crate::tui) fn approval_lines(
     )
 }
 
-pub(super) fn approval_lines_for_position(
+pub(super) fn approval_frame_for_position(
     request: &CapabilityRequest,
     reason: &str,
     active: ApprovalChoice,
     detail_offset: usize,
     width: usize,
     viewport_height: usize,
-) -> Vec<Line<'static>> {
+) -> ApprovalFrame {
     let width = width.max(1);
     let page_lines = approval_detail_page_lines(viewport_height);
     let mut lines = vec![Line::styled(
@@ -62,8 +69,10 @@ pub(super) fn approval_lines_for_position(
     let detail_end = (detail_offset + page_lines).min(details.len());
     lines.extend(details[detail_offset..detail_end].iter().cloned());
 
+    let mut hits = Vec::with_capacity(ApprovalChoice::ALL.len());
     for choice in ApprovalChoice::ALL {
         let selected = choice == active;
+        hits.push(ComposerHit::rows(lines.len()..lines.len() + 1, choice));
         lines.push(Line::styled(
             truncate_one_line(
                 &format!(
@@ -125,7 +134,7 @@ pub(super) fn approval_lines_for_position(
         ),
         Theme::dim(),
     ));
-    lines
+    ApprovalFrame { lines, hits }
 }
 
 pub(super) fn approval_detail_line_count(

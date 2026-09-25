@@ -9,17 +9,18 @@ use ratatui::{
 
 use super::{
     copy_interaction::{selection_position, selection_position_clamped, CopyHit},
+    frame_context::FrameContext,
     paste_burst::word_range_at,
     picker::PickerMouseEvent,
     text_selection::{screen_lines, CopyNotice, TextSelection},
     tool_card_hover::{ToolCardHit, ToolCardTarget},
     tool_output_ui::expandable_tool_entry,
     view::LiveHistory,
-    App, ComposerMode,
+    App, ComposerMode, PanelOverlay,
 };
 
 /// Max gap between presses that still counts as a double-click in the composer.
-const COMPOSER_DOUBLE_CLICK: Duration = Duration::from_millis(500);
+pub(super) const COMPOSER_DOUBLE_CLICK: Duration = Duration::from_millis(500);
 
 impl App {
     /// Drops both the history-anchored and screen-space text selections.
@@ -57,6 +58,13 @@ impl App {
         (history_content, history_start)
     }
 
+    /// Routes one pointer event to the surface that owns it.
+    ///
+    /// The composer mode decides the owner, matched exhaustively so a new mode
+    /// has to choose its pointer behavior instead of silently inheriting the
+    /// transcript's. Surfaces that do not consume an event fall through to the
+    /// screen handler: transcript scroll, selection, copy, rails, and composer
+    /// editing.
     pub(super) fn handle_mouse_event<B: Backend>(
         &mut self,
         kind: MouseEventKind,
@@ -67,45 +75,54 @@ impl App {
         let size = terminal.size()?;
         let screen = Rect::new(0, 0, size.width, size.height);
         let now = Instant::now();
-        // An open panel owns pointer input; nothing behind it reacts.
-        if self.handle_panel_overlay_mouse(kind, screen, column, row, now) {
-            return Ok(());
-        }
-        // The side overlay owns pointer input while open. Do not let clicks,
-        // drags or releases reach transcript controls hidden behind it.
-        if matches!(self.input_ui.composer(), ComposerMode::Side) {
-            self.clear_selections();
-            self.clear_hovered_copy_buttons();
-            self.clear_rail_pointer_state();
-            self.history.set_scrollbar_drag(None);
-            match kind {
-                MouseEventKind::ScrollUp => {
-                    self.scroll_side_overlay_wheel(
-                        size.width,
-                        size.height,
-                        -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
-                    );
-                }
-                MouseEventKind::ScrollDown => {
-                    self.scroll_side_overlay_wheel(
-                        size.width,
-                        size.height,
-                        super::HISTORY_MOUSE_SCROLL_LINES as isize,
-                    );
-                }
-                MouseEventKind::Down(MouseButton::Left) => {
-                    if let Some(overlay) = self.side_overlay_frame(screen) {
-                        if let Some(text) = overlay.copy_text_at(column, row) {
-                            self.copy_text(text, now);
-                        }
-                    }
-                }
-                MouseEventKind::Down(MouseButton::Right) => self.paste_clipboard_text(),
-                _ => {}
+        let composer_owns_choices = match self.input_ui.composer() {
+            // Overlays own pointer input; nothing behind them reacts.
+            ComposerMode::Panel(PanelOverlay::Info(_)) => {
+                self.handle_info_overlay_mouse(kind, screen, column, row, now);
+                return Ok(());
             }
+            ComposerMode::Panel(_) => {
+                self.handle_panel_overlay_mouse(kind, screen);
+                return Ok(());
+            }
+            ComposerMode::Side => {
+                self.handle_side_overlay_mouse(kind, screen, column, row, now);
+                return Ok(());
+            }
+            ComposerMode::Questionnaire(_) | ComposerMode::Approval(_) => true,
+            // Pickers route inside the screen handler: an inline list shares
+            // the wheel with the transcript around it.
+            ComposerMode::Input
+            | ComposerMode::Picker(_)
+            | ComposerMode::SecretInput(_)
+            | ComposerMode::ConfigNumberInput(_)
+            | ComposerMode::TextInput(_)
+            | ComposerMode::InteractivePending(_)
+            | ComposerMode::InlineChoice(_) => false,
+        };
+        // One layout snapshot serves both the choice hit test and the screen
+        // handler it may fall through to.
+        let ctx = self.frame_context(screen);
+        if composer_owns_choices && self.handle_choice_composer_mouse(kind, &ctx, column, row, now)
+        {
             return Ok(());
         }
-        let ctx = self.frame_context(screen);
+        self.handle_screen_mouse(kind, column, row, screen, now, ctx, terminal)
+    }
+
+    /// Pointer handling for the transcript screen and the composer beneath it.
+    #[allow(clippy::too_many_arguments)]
+    fn handle_screen_mouse<B: Backend>(
+        &mut self,
+        kind: MouseEventKind,
+        column: u16,
+        row: u16,
+        screen: Rect,
+        now: Instant,
+        ctx: FrameContext,
+        terminal: &mut Terminal<B>,
+    ) -> Result<(), B::Error> {
+        let size = screen.as_size();
         let width = ctx.width;
         let settings = ctx.settings;
         let live_history = ctx.live_history;
