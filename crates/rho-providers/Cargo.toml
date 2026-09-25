@@ -9,7 +9,7 @@ repository = "https://github.com/matthewyjiang/rho"
 readme = "README.md"
 
 [dependencies]
-rho-sdk = { version = "5.5.0", path = "../rho-sdk" }
+rho-sdk = { version = "5.6.0", path = "../rho-sdk" }
 tokio = { version = "1", features = ["full"] }
 reqwest = { workspace = true }
 http = "1"
