@@ -16,6 +16,7 @@ use super::{
         classify_panel_key, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
         OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
     },
+    panel_pointer::PanelPointer,
     panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
     render::{display_width, wrap_line_at_whitespace},
     theme::Theme,
@@ -38,6 +39,8 @@ const FIELD_LABELS: &[&str] = &["tools", "argv", "directory", "timeout", "enviro
 pub(super) struct HooksOverlay {
     report: HookReport,
     scroll: PanelScroll,
+    /// Selection, scrollbar drag, and hover for this panel.
+    pub(super) pointer: PanelPointer,
 }
 
 impl App {
@@ -46,6 +49,7 @@ impl App {
             .set_composer(ComposerMode::Panel(PanelOverlay::Hooks(HooksOverlay {
                 report,
                 scroll: PanelScroll::default(),
+                pointer: PanelPointer::default(),
             })));
         self.set_status_quiet("hooks");
     }
@@ -58,7 +62,7 @@ impl App {
         Some(render_overlay_panel(
             TITLE,
             FOOTER,
-            &lines,
+            lines,
             overlay.scroll.offset(),
             area,
         ))

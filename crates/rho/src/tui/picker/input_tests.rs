@@ -251,7 +251,7 @@ fn detail_scrollbar_click_and_drag_scroll_the_right_pane() {
     app.input_ui.set_composer(ComposerMode::Picker(picker));
 
     assert!(app.route_picker_mouse(
-        PickerMouseEvent::Click,
+        PickerMouseEvent::Click(std::time::Instant::now()),
         scrollbar_column,
         bottom_row,
         width,

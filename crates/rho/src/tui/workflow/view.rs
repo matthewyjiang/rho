@@ -12,6 +12,7 @@ use crate::workflow::{
     CommandExit, NodeState, NodeTerminalState, RunLifecycle, WorkflowOutcome, WorkspaceAccess,
 };
 
+use super::super::text_selection::render_copy_notice;
 #[cfg(any(test, debug_assertions))]
 use super::control::ConfirmKind;
 use super::{
@@ -43,6 +44,9 @@ pub(super) fn draw(frame: &mut Frame<'_>, state: &mut WorkflowUiState) {
     draw_dag(frame, body[0], state);
     draw_details(frame, body[1], state);
     draw_footer(frame, vertical[2], state);
+    if let Some(notice) = state.copy_notice() {
+        render_copy_notice(frame, area, notice, Instant::now());
+    }
 }
 
 pub(super) fn handle_mouse(
@@ -122,6 +126,11 @@ fn draw_details(frame: &mut Frame<'_>, area: Rect, state: &mut WorkflowUiState) 
     frame.render_widget(
         Paragraph::new(state.details().visible_body_lines()),
         body_area,
+    );
+    state.details().selection().highlight(
+        frame.buffer_mut(),
+        state.details().text_area(),
+        state.details().visible_start(),
     );
 
     let now = Instant::now();

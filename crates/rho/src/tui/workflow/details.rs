@@ -1,4 +1,5 @@
-//! Selected-node details pane: durable output body + document scroll.
+//! Selected-node details pane: durable output body, document scroll, and
+//! drag-to-copy text selection.
 
 use std::{path::PathBuf, time::Instant};
 
@@ -11,6 +12,7 @@ use ratatui::{
 use crate::workflow::TaskInstanceId;
 
 use super::super::{
+    drag_selection::{DragSelection, SelectionBody},
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
     theme::Theme,
     HISTORY_MOUSE_SCROLL_LINES, HISTORY_SCROLLBAR_REVEAL_DURATION,
@@ -33,6 +35,10 @@ pub(super) struct DetailPane {
     viewport: usize,
     cached_width: Option<usize>,
     cached_lines: Vec<Line<'static>>,
+    /// Body selection in content-line space, so it survives scrolling.
+    selection: DragSelection,
+    /// Text a finished drag selected; the app loop copies it.
+    pending_copy: Option<String>,
 }
 
 impl DetailPane {
@@ -62,6 +68,16 @@ impl DetailPane {
         self.scroll.drag().is_some()
     }
 
+    /// Body selection to highlight, in content-line space.
+    pub(super) fn selection(&self) -> DragSelection {
+        self.selection
+    }
+
+    /// Text a finished drag selected, for the caller to copy once.
+    pub(super) fn take_pending_copy(&mut self) -> Option<String> {
+        self.pending_copy.take()
+    }
+
     /// Load durable output for the selected node when the cache is stale.
     pub(super) fn refresh(&mut self, node: Option<&WorkflowNodeSnapshot>, reset_scroll: bool) {
         let Some(node) = node else {
@@ -79,6 +95,7 @@ impl DetailPane {
         self.loaded_key = Some(key);
         self.body = output::load_finished_output(run_directory, node);
         self.invalidate_line_cache();
+        self.clear_selection();
         if reset_scroll {
             self.scroll = HistoryScrollChrome::default();
             // Stay top-anchored even before geometry is known.
@@ -91,6 +108,8 @@ impl DetailPane {
         let width = width.max(1);
         if self.cached_width != Some(width) {
             self.cached_width = Some(width);
+            // Rewrapped lines no longer match the selected columns.
+            self.clear_selection();
             self.cached_lines = match self.body.as_ref() {
                 Some(body) => {
                     let mut lines = vec![
@@ -180,6 +199,12 @@ impl DetailPane {
             MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left)
         );
         if !over_details && !dragging {
+            // A press elsewhere on the screen drops the body selection.
+            if matches!(kind, MouseEventKind::Down(MouseButton::Left)) && self.selection.is_active()
+            {
+                self.clear_selection();
+                return true;
+            }
             return false;
         }
 
@@ -188,6 +213,7 @@ impl DetailPane {
             self.scroll.drag().is_some(),
             self.scroll.hovered(),
             self.scroll.should_render(now),
+            self.selection,
         );
         self.scroll.handle_scrollbar_mouse(
             kind,
@@ -206,13 +232,52 @@ impl DetailPane {
         let top = self.visible_start();
         self.scroll
             .pin_top_line(self.content_len, self.viewport, top);
+        self.handle_selection_mouse(kind, column, row);
         let after = (
             self.visible_start(),
             self.scroll.drag().is_some(),
             self.scroll.hovered(),
             self.scroll.should_render(now),
+            self.selection,
         );
         before != after
+    }
+
+    /// Drag-to-select over the body text. A press that started a scrollbar
+    /// drag never selects; a release that selected text keeps the highlight
+    /// and queues the text for copy.
+    fn handle_selection_mouse(&mut self, kind: MouseEventKind, column: u16, row: u16) {
+        let body = SelectionBody {
+            area: self.text_area(),
+            top_line: self.visible_start(),
+            lines: &self.cached_lines,
+        };
+        match kind {
+            MouseEventKind::Down(MouseButton::Left) if self.scroll.drag().is_some() => {
+                self.selection.clear();
+            }
+            MouseEventKind::Down(MouseButton::Left) => self.selection.press(body, column, row),
+            MouseEventKind::Drag(MouseButton::Left) => self.selection.drag(body, column, row),
+            MouseEventKind::Up(MouseButton::Left) => {
+                if let Some(text) = self.selection.release(body, column, row) {
+                    self.pending_copy = Some(text);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Body text columns: the pane minus the scrollbar column the body lines
+    /// are wrapped around.
+    pub(super) fn text_area(&self) -> Rect {
+        Rect {
+            width: self.area.width.saturating_sub(1),
+            ..self.area
+        }
+    }
+
+    fn clear_selection(&mut self) {
+        self.selection.clear();
     }
 
     pub(super) fn scrollbar(&self) -> Option<HistoryScrollbar> {
@@ -223,6 +288,7 @@ impl DetailPane {
         self.body = None;
         self.loaded_key = None;
         self.invalidate_line_cache();
+        self.clear_selection();
         if reset_scroll {
             self.scroll = HistoryScrollChrome::default();
         }

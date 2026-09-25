@@ -7,31 +7,34 @@ use ratatui::{
 
 use super::{
     advisor_status::AdvisorStatus,
-    approval_lines, char_prefix_display_width,
+    approval_frame, char_prefix_display_width,
     composer_chrome::ComposerDividerSlot,
     composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
+    composer_pointer::{ComposerChoice, ComposerHit},
     config_number_input_lines,
     copy_interaction::CopyHit,
     display_width,
     divider::{labeled_divider_line, DividerCaption},
     file_picker,
     inline_choice::inline_choice_frame,
-    inline_shell, input_frame,
+    inline_shell, input_frame, list_picker_frame,
     login::secret_input_lines,
     login_presentation::login_composer_view,
-    palette::ActivePalette,
-    picker_lines, questionnaire_cursor_position, questionnaire_lines, styled_line,
+    palette::{ActivePalette, PaletteFrame, PaletteRow},
+    questionnaire_frame, styled_line,
     text_input::text_input_lines,
     truncate_one_line, App, ComposerMode, InputFrame, LineFill, Theme, MAX_COMMAND_SUGGESTIONS,
     MIN_COMMAND_DESCRIPTION_WIDTH,
 };
 
-/// Composer rows plus the caret or focused row that the viewport must keep visible.
+/// Composer rows plus the caret or focused row that the viewport must keep
+/// visible, and any pointer targets painted with them.
 #[derive(Debug)]
 pub(super) struct ComposerFrame {
     pub(super) lines: Vec<Line<'static>>,
     pub(super) cursor: Position,
     pub(super) copy_hit: Option<CopyHit>,
+    pub(super) choice_hits: Vec<ComposerHit<ComposerChoice>>,
 }
 
 fn overlay_editor_caret(value: &str, cursor: usize, width: usize) -> Position {
@@ -47,6 +50,7 @@ impl ComposerFrame {
             lines,
             cursor,
             copy_hit: None,
+            choice_hits: Vec::new(),
         }
     }
 }
@@ -151,20 +155,24 @@ impl App {
             }
             // Overlay pickers paint over the composer, so they own no rows here.
             ComposerMode::Picker(picker) => {
-                let lines = if picker.is_overlay() {
-                    Vec::new()
-                } else {
-                    picker_lines(picker, width, viewport_height)
+                let cursor = Position {
+                    x: display_width(&picker.filter)
+                        .saturating_add(2)
+                        .min(width.saturating_sub(1)) as u16,
+                    y: 0,
                 };
-                ComposerFrame::new(
-                    lines,
-                    Position {
-                        x: display_width(&picker.filter)
-                            .saturating_add(2)
-                            .min(width.saturating_sub(1)) as u16,
-                        y: 0,
-                    },
-                )
+                if picker.is_overlay() {
+                    return ComposerFrame::new(Vec::new(), cursor);
+                }
+                let frame = list_picker_frame(picker, width, viewport_height);
+                ComposerFrame {
+                    choice_hits: frame
+                        .hits
+                        .into_iter()
+                        .map(|hit| hit.map_target(ComposerChoice::PickerRow))
+                        .collect(),
+                    ..ComposerFrame::new(frame.lines, cursor)
+                }
             }
             ComposerMode::SecretInput(secret) => ComposerFrame::new(
                 secret_input_lines(secret, width),
@@ -182,9 +190,8 @@ impl App {
                 let view =
                     login_composer_view(pending, width, /*hovered*/ composer_copy_hovered);
                 ComposerFrame {
-                    lines: view.lines,
-                    cursor: Position { x: 0, y: 0 },
                     copy_hit: view.copy_hit,
+                    ..ComposerFrame::new(view.lines, Position { x: 0, y: 0 })
                 }
             }
             ComposerMode::InlineChoice(modal) => inline_choice_frame(
@@ -192,34 +199,56 @@ impl App {
                 width,
                 /*return_to_parent*/ modal.parent_picker.is_some(),
             ),
-            ComposerMode::Questionnaire(questionnaire) => ComposerFrame::new(
-                questionnaire_lines(questionnaire, width),
-                questionnaire_cursor_position(questionnaire, width),
-            ),
-            ComposerMode::Approval(approval) => ComposerFrame::new(
-                approval_lines(approval, width, viewport_height),
-                Position { x: 0, y: 0 },
-            ),
+            ComposerMode::Questionnaire(questionnaire) => {
+                let frame = questionnaire_frame(questionnaire, width);
+                ComposerFrame {
+                    choice_hits: frame
+                        .hits
+                        .into_iter()
+                        .map(|hit| hit.map_target(ComposerChoice::Questionnaire))
+                        .collect(),
+                    ..ComposerFrame::new(frame.lines, frame.cursor)
+                }
+            }
+            ComposerMode::Approval(approval) => {
+                let frame = approval_frame(approval, width, viewport_height);
+                ComposerFrame {
+                    choice_hits: frame
+                        .hits
+                        .into_iter()
+                        .map(|hit| hit.map_target(ComposerChoice::Approval))
+                        .collect(),
+                    ..ComposerFrame::new(frame.lines, Position { x: 0, y: 0 })
+                }
+            }
             ComposerMode::Panel(_) | ComposerMode::Side => {
                 ComposerFrame::new(Vec::new(), Position { x: 0, y: 0 })
             }
         }
     }
 
-    /// Suggestion rows for whichever palette the composer shows.
+    /// Suggestion rows for whichever palette the composer shows, with a hit
+    /// span per pickable row.
     ///
     /// One [`App::active_palette`] resolution decides the palette and yields
     /// its matches, so nothing here asks "visible?" and then matches again.
-    pub(super) fn command_suggestion_lines(&mut self, width: usize) -> Vec<Line<'static>> {
+    /// Hits carry absolute match indices, so a pointer picks the same row the
+    /// scrolled window painted; the highlighted row's hit is marked active.
+    pub(super) fn command_suggestion_lines(&mut self, width: usize) -> PaletteFrame {
+        let mut frame = PaletteFrame::default();
         match self.active_palette() {
             Some(ActivePalette::Command(matches)) => {
                 let selected_index = self
                     .input_ui
                     .command_selection()
                     .min(matches.len().saturating_sub(1));
-                let start = selected_index
-                    .saturating_add(1)
-                    .saturating_sub(MAX_COMMAND_SUGGESTIONS);
+                let (start, _, _) = file_picker::file_palette_scroll_counts(
+                    matches.len(),
+                    selected_index,
+                    MAX_COMMAND_SUGGESTIONS,
+                    self.input_ui.palette_window_start(),
+                );
+                self.input_ui.set_palette_window_start(start);
 
                 let usage_width = matches
                     .iter()
@@ -234,29 +263,31 @@ impl App {
                             .max(1),
                     );
 
-                matches
+                for (index, command) in matches
                     .into_iter()
                     .enumerate()
                     .skip(start)
                     .take(MAX_COMMAND_SUGGESTIONS)
-                    .map(|(index, command)| {
-                        let selected = index == selected_index;
-                        let marker = if selected { ">" } else { " " };
-                        let description_width = width.saturating_sub(usage_width + 3).max(1);
-                        let usage = truncate_one_line(&command.usage, usage_width);
-                        let description =
-                            truncate_one_line(&command.description, description_width);
-                        let usage_padding =
-                            " ".repeat(usage_width.saturating_sub(display_width(&usage)));
-                        let text = format!("{marker} {usage}{usage_padding} {description}");
-                        let style = if selected {
-                            Theme::brand()
-                        } else {
-                            Theme::dim()
-                        };
-                        styled_line(text, width.max(1), style, LineFill::Natural)
-                    })
-                    .collect()
+                {
+                    let selected = index == selected_index;
+                    let marker = if selected { ">" } else { " " };
+                    let description_width = width.saturating_sub(usage_width + 3).max(1);
+                    let usage = truncate_one_line(&command.usage, usage_width);
+                    let description = truncate_one_line(&command.description, description_width);
+                    let usage_padding =
+                        " ".repeat(usage_width.saturating_sub(display_width(&usage)));
+                    let text = format!("{marker} {usage}{usage_padding} {description}");
+                    frame.push_row(
+                        styled_line(
+                            text,
+                            width.max(1),
+                            palette_row_style(selected),
+                            LineFill::Natural,
+                        ),
+                        PaletteRow::Command(index),
+                        selected,
+                    );
+                }
             }
             Some(ActivePalette::File(matches)) => {
                 let selected_index = self
@@ -267,46 +298,53 @@ impl App {
                     matches.len(),
                     selected_index,
                     MAX_COMMAND_SUGGESTIONS,
+                    self.input_ui.palette_window_start(),
                 );
+                self.input_ui.set_palette_window_start(start);
 
-                let mut lines = matches
-                    .rows(start, MAX_COMMAND_SUGGESTIONS)
-                    .map(|(index, entry)| {
-                        let selected = index == selected_index;
-                        let marker = if selected { ">" } else { " " };
-                        let text = format!("{marker} {}", file_palette_row(&entry, matches.source));
-                        let style = if selected {
-                            Theme::brand()
-                        } else {
-                            Theme::dim()
-                        };
+                for (index, entry) in matches.rows(start, MAX_COMMAND_SUGGESTIONS) {
+                    let selected = index == selected_index;
+                    let marker = if selected { ">" } else { " " };
+                    let text = format!("{marker} {}", file_palette_row(&entry, matches.source));
+                    frame.push_row(
                         styled_line(
                             truncate_one_line(&text, width.max(1)),
                             width.max(1),
-                            style,
+                            palette_row_style(selected),
                             LineFill::Natural,
-                        )
-                    })
-                    .collect::<Vec<_>>();
+                        ),
+                        PaletteRow::File(index),
+                        selected,
+                    );
+                }
 
+                // The footer reports scroll position; it is not a row to pick.
                 if let Some(footer) = file_picker::file_palette_scroll_footer(
                     above,
                     below,
                     matches.len(),
                     matches.incomplete,
                 ) {
-                    lines.push(styled_line(
+                    frame.push_line(styled_line(
                         truncate_one_line(&footer, width.max(1)),
                         width.max(1),
                         Theme::dim(),
                         LineFill::Natural,
                     ));
                 }
-
-                lines
             }
-            None => Vec::new(),
+            None => {}
         }
+        frame
+    }
+}
+
+/// Palette row ink: the highlighted row stands out and the rest recede.
+fn palette_row_style(selected: bool) -> ratatui::style::Style {
+    if selected {
+        Theme::brand()
+    } else {
+        Theme::dim()
     }
 }
 

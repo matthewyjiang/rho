@@ -148,6 +148,20 @@ impl InlineChoice {
         &self.options[self.active].value
     }
 
+    /// Focuses option `index` when it exists and is available; `false`
+    /// leaves the focus where it was.
+    pub(super) fn focus_option(&mut self, index: usize) -> bool {
+        if !self
+            .options
+            .get(index)
+            .is_some_and(|option| option.available)
+        {
+            return false;
+        }
+        self.active = index;
+        true
+    }
+
     pub(super) fn selected_requires_full_visibility(&self) -> bool {
         self.options[self.active].requires_full_visibility
     }

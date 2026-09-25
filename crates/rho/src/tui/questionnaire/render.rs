@@ -8,8 +8,10 @@ use rho_sdk::{HostQuestion, SelectionMode};
 use super::{
     choice_count, is_confirm, normalize_questionnaire_answer, questionnaire_answer_display,
     request_title, FieldSelection, QuestionnaireComposer, QuestionnaireFieldState,
+    QuestionnaireTarget,
 };
 use crate::tui::{
+    composer_pointer::ComposerHit,
     render::{
         display_width, editable_input_visual_lines, input_visual_lines, styled_line,
         truncate_one_line, visual_caret_position, wrap_line_at_whitespace, LineFill,
@@ -17,41 +19,39 @@ use crate::tui::{
     theme::Theme,
 };
 
-pub(in crate::tui) fn questionnaire_lines(
-    questionnaire: &QuestionnaireComposer,
-    width: usize,
-) -> Vec<Line<'static>> {
-    questionnaire_frame(questionnaire, width).0
+/// Questionnaire composer rows, the caret, and the clickable tab chips and
+/// choice rows, derived from one walk so pointer targets match the paint.
+pub(in crate::tui) struct QuestionnaireFrame {
+    pub(in crate::tui) lines: Vec<Line<'static>>,
+    pub(in crate::tui) cursor: Position,
+    pub(in crate::tui) hits: Vec<ComposerHit<QuestionnaireTarget>>,
 }
 
-pub(in crate::tui) fn questionnaire_cursor_position(
+pub(in crate::tui) fn questionnaire_frame(
     questionnaire: &QuestionnaireComposer,
     width: usize,
-) -> Position {
-    questionnaire_frame(questionnaire, width).1
-}
-
-pub(super) fn questionnaire_frame(
-    questionnaire: &QuestionnaireComposer,
-    width: usize,
-) -> (Vec<Line<'static>>, Position) {
+) -> QuestionnaireFrame {
     let width = width.max(1);
     let questions = questionnaire.request.questions();
     let mut lines = Vec::new();
+    let mut hits = Vec::new();
 
     push_header_lines(&mut lines, questionnaire, width);
     if questions.len() > 1 {
-        push_tab_lines(&mut lines, questionnaire, width);
+        push_tab_lines(&mut lines, &mut hits, questionnaire, width);
         lines.push(Line::raw(""));
     }
 
     let active = questionnaire.active_index;
     let cursor = push_active_question(
         &mut lines,
-        &questions[active],
-        &questionnaire.fields[active],
-        active,
-        questions.len(),
+        &mut hits,
+        ActiveQuestion {
+            question: &questions[active],
+            field: &questionnaire.fields[active],
+            index: active,
+            total: questions.len(),
+        },
         width,
     );
 
@@ -64,7 +64,11 @@ pub(super) fn questionnaire_frame(
             LineFill::Natural,
         ));
     }
-    (lines, cursor)
+    QuestionnaireFrame {
+        lines,
+        cursor,
+        hits,
+    }
 }
 
 fn push_header_lines(
@@ -109,6 +113,7 @@ const TAB_OVERFLOW_RIGHT: &str = " …";
 /// highlighted; answered chips carry a check mark.
 fn push_tab_lines(
     lines: &mut Vec<Line<'static>>,
+    hits: &mut Vec<ComposerHit<QuestionnaireTarget>>,
     questionnaire: &QuestionnaireComposer,
     width: usize,
 ) {
@@ -135,19 +140,31 @@ fn push_tab_lines(
         .collect::<Vec<_>>();
     let (start, end) = tab_window(&chip_widths, questionnaire.active_index, width);
 
+    let row = lines.len();
+    let mut column = 0;
     let mut spans: Vec<Span<'static>> = Vec::new();
     if start > 0 {
         spans.push(Span::styled(TAB_OVERFLOW_LEFT, Theme::dim()));
+        column += display_width(TAB_OVERFLOW_LEFT);
     }
     for (index, chip) in chips.into_iter().enumerate().take(end).skip(start) {
         if index > start {
             spans.push(Span::styled(TAB_SEPARATOR, Theme::dim()));
+            column += display_width(TAB_SEPARATOR);
         }
-        let style = if index == questionnaire.active_index {
+        let active = index == questionnaire.active_index;
+        let style = if active {
             Theme::input_prompt()
         } else {
             Theme::dim()
         };
+        hits.push(ComposerHit {
+            lines: row..row + 1,
+            columns: column..column + chip_widths[index],
+            target: QuestionnaireTarget::Question(index),
+            active,
+        });
+        column += chip_widths[index];
         spans.push(Span::styled(chip, style));
     }
     if end < chip_widths.len() {
@@ -187,14 +204,26 @@ fn tab_window(chip_widths: &[usize], active: usize, width: usize) -> (usize, usi
     (active, active + 1)
 }
 
-fn push_active_question(
-    lines: &mut Vec<Line<'static>>,
-    question: &HostQuestion,
-    field: &QuestionnaireFieldState,
+/// The question being answered.
+struct ActiveQuestion<'a> {
+    question: &'a HostQuestion,
+    field: &'a QuestionnaireFieldState,
     index: usize,
     total: usize,
+}
+
+fn push_active_question(
+    lines: &mut Vec<Line<'static>>,
+    hits: &mut Vec<ComposerHit<QuestionnaireTarget>>,
+    active: ActiveQuestion<'_>,
     width: usize,
 ) -> Position {
+    let ActiveQuestion {
+        question,
+        field,
+        index,
+        total,
+    } = active;
     push_hanging_text(
         lines,
         "▸ ",
@@ -273,6 +302,16 @@ fn push_active_question(
                 };
             }
         }
+        hits.push(
+            ComposerHit::rows(
+                row_start..lines.len(),
+                QuestionnaireTarget::Choice {
+                    index: choice_index,
+                    confirms: question.selection() != SelectionMode::Many && !is_other,
+                },
+            )
+            .with_active(highlighted),
+        );
     }
     cursor
 }
@@ -319,6 +358,7 @@ fn footer_parts(questionnaire: &QuestionnaireComposer) -> Vec<&'static str> {
     parts
 }
 
+/// Choice label ink: the focused row is accented; selected rows are strong.
 fn questionnaire_choice_style(
     question: &HostQuestion,
     field: &QuestionnaireFieldState,

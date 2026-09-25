@@ -431,7 +431,8 @@ fn picker_lists_more_items_on_a_taller_viewport() {
     let picker = UiPicker::models("models", items);
 
     let item_rows = |height: usize| {
-        picker_lines(&picker, 80, height)
+        list_picker_frame(&picker, 80, height)
+            .lines
             .iter()
             // Item rows carry a selection marker before the label.
             .filter(|line| line_text(line).contains("model-"))
@@ -470,7 +471,7 @@ fn picker_reserves_wrapped_footer_rows() {
         ..Default::default()
     });
 
-    let lines = picker_lines(&picker, 80, 18);
+    let lines = list_picker_frame(&picker, 80, 18).lines;
     let item_rows = lines
         .iter()
         .filter(|line| line_text(line).contains("model-"))

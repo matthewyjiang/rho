@@ -1014,6 +1014,94 @@ fn process_rail_click_opens_peek_and_q_returns() {
     assert_pass("process_rail_peek");
 }
 
+// Covers: a click selects a questionnaire choice without submitting, and a
+// double click confirms it like Enter.
+// Owner: interactive TUI
+#[test]
+fn questionnaire_choice_click_and_double_click_submit() {
+    assert_pass("questionnaire_click");
+}
+
+// Covers: a single click never resolves an approval; a double click allows it
+// and the turn resumes.
+// Owner: interactive TUI
+#[test]
+fn approval_double_click_allows_and_resumes_turn() {
+    assert_pass("approval_click");
+}
+
+// Covers: a click focuses an inline choice option without resolving it, and a
+// double click confirms it like Enter.
+// Owner: interactive TUI
+#[test]
+fn inline_choice_click_focuses_and_double_click_confirms() {
+    assert_pass("inline_choice_click");
+}
+
+// Covers: clicking and wheeling the `/` palette move its highlight, and a
+// double click completes the row like Tab without running it.
+// Owner: interactive TUI
+#[test]
+fn slash_palette_click_highlights_and_double_click_completes() {
+    assert_pass("slash_palette_click");
+}
+
+// Covers: a double click on an `@` palette row inserts that path.
+// Owner: interactive TUI
+#[test]
+fn file_palette_double_click_inserts_path() {
+    assert_pass("file_palette_click");
+}
+
+// Covers: hovering a questionnaire choice lifts it and leaving reverts it.
+// Owner: interactive TUI
+#[test]
+fn questionnaire_choice_hover_lifts_and_reverts() {
+    assert_pass("questionnaire_hover");
+}
+
+// Covers: a click selects an inline picker row without submitting; a double click submits it.
+// Owner: interactive TUI
+#[test]
+fn inline_picker_click_selects_and_double_click_submits() {
+    assert_pass("inline_picker_click");
+}
+
+// Covers: a click selects an overlay picker row; a double click submits it.
+// Owner: interactive TUI
+#[test]
+fn overlay_picker_double_click_submits() {
+    assert_pass("overlay_picker_double_click");
+}
+
+// Covers: panel scrollbar hover and drag scroll the body, and drag-select copies panel text.
+// Owner: interactive TUI
+#[test]
+fn panel_scrollbar_drag_and_selection_copy() {
+    assert_pass("panel_pointer");
+}
+
+// Covers: drag-select copies side chat text, and the side chat scrollbar drags.
+// Owner: interactive TUI
+#[test]
+fn side_chat_selection_copy_and_scrollbar_drag() {
+    assert_pass("side_chat_pointer");
+}
+
+// Covers: hovering the statusline model field marks it, and clicking opens the model picker.
+// Owner: interactive TUI
+#[test]
+fn statusline_model_hover_and_click_opens_picker() {
+    assert_pass("statusline_model_click");
+}
+
+// Covers: hovering a composer attachment offers removal, and clicking removes it.
+// Owner: interactive TUI
+#[test]
+fn composer_attachment_click_removes_it() {
+    assert_pass("attachment_click_remove");
+}
+
 #[test]
 fn text_selection_highlight_follows_drag_before_release() {
     assert_pass("text_selection_drag");

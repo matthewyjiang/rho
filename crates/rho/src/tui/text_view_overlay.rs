@@ -15,6 +15,7 @@ use super::{
         classify_panel_key, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
         OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
     },
+    panel_pointer::PanelPointer,
     render::wrap_text_lines,
     theme::Theme,
     App, ComposerMode, PanelOverlay, UiPicker,
@@ -27,6 +28,8 @@ pub(super) struct TextViewOverlay {
     title: String,
     text: String,
     scroll: PanelScroll,
+    /// Selection, scrollbar drag, and hover for this panel.
+    pub(super) pointer: PanelPointer,
     /// Picker restored when the panel closes.
     parent: Box<UiPicker>,
 }
@@ -51,6 +54,7 @@ impl App {
                     title,
                     text,
                     scroll: PanelScroll::default(),
+                    pointer: PanelPointer::default(),
                     parent: Box::new(parent),
                 },
             ))));
@@ -64,7 +68,7 @@ impl App {
         Some(render_overlay_panel(
             &overlay.title,
             FOOTER,
-            &lines,
+            lines,
             overlay.scroll.offset(),
             area,
         ))

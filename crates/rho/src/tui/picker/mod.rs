@@ -37,8 +37,7 @@ pub(in crate::tui) use overlay_layout::{
 };
 pub(in crate::tui) use overlay_state::{OverlayFocus, OverlayScrollbarDrag};
 pub(in crate::tui) use rows::{
-    label_column_width, picker_item_rows, scroll_window_start, LabelOverflow, RowLayout,
-    RowWidthMode,
+    label_column_width, picker_item_rows, LabelOverflow, RowLayout, RowWidthMode,
 };
 
 #[derive(Debug)]

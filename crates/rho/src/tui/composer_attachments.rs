@@ -2,7 +2,12 @@
 //!
 //! Ready images may carry a Kitty/halfblock preview. Consecutive previews share
 //! width-bounded horizontal strips (wrapping when gaps would overflow); documents
-//! and pending items stay full-width label rows.
+//! and pending items stay full-width label rows. Every label row ends in a
+//! `✕` remove button, always painted so it works without motion reporting; a
+//! press on the button removes that attachment, hover lifts it, and presses
+//! anywhere else on a preview do nothing.
+
+use std::ops::Range;
 
 use ratatui::{
     layout::Rect,
@@ -13,8 +18,8 @@ use ratatui::{
 use super::{
     display_width,
     feed_image::{FeedImage, ImageRowBudget},
-    styled_line, truncate_one_line, App, ChatMedia, ComposerAttachment, ComposerMode, LineFill,
-    MediaAttachId, PendingAttachmentSource, Theme,
+    truncate_one_line, App, ChatMedia, ComposerAttachment, ComposerMode, MediaAttachId,
+    PendingAttachmentSource, Theme,
 };
 
 /// Gap in columns between side-by-side composer image previews.
@@ -58,12 +63,84 @@ pub(super) struct ComposerImagePlacement {
     pub(super) height: usize,
 }
 
-/// Reserved composer attachment chrome: text lines and image placements.
+/// The remove button painted at the end of one attachment's label row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct AttachmentTarget {
+    /// Slot index in the composer attachment list.
+    pub(super) attachment: usize,
+    /// Block row (starts at 0) of the label row holding the button.
+    pub(super) row: usize,
+    /// Block columns the button paints.
+    pub(super) columns: Range<u16>,
+}
+
+/// Reserved composer attachment chrome: text lines, image placements, and
+/// pointer targets.
 #[derive(Clone, Debug, Default)]
 pub(super) struct ComposerAttachmentLayout {
     pub(super) total_rows: usize,
     pub(super) lines: Vec<Line<'static>>,
     pub(super) images: Vec<ComposerImagePlacement>,
+    pub(super) targets: Vec<AttachmentTarget>,
+}
+
+/// Remove button under screen cell (`column`, `row`) of a composer painted at
+/// `composer_area` from composer line `composer_start`.
+///
+/// A button is a target only while its label row is on screen, so a press
+/// always lands on a `✕` the user can see.
+pub(super) fn attachment_target_at(
+    layout: &ComposerAttachmentLayout,
+    composer_area: Rect,
+    composer_start: usize,
+    column: u16,
+    row: u16,
+) -> Option<&AttachmentTarget> {
+    if !composer_area.contains(ratatui::layout::Position { x: column, y: row }) {
+        return None;
+    }
+    let block_row = composer_start.saturating_add(usize::from(row - composer_area.y));
+    let block_column = column - composer_area.x;
+    layout
+        .targets
+        .iter()
+        .find(|target| target.row == block_row && target.columns.contains(&block_column))
+}
+
+/// Remove button painted at the end of every attachment label row.
+const REMOVE_BUTTON: &str = " ✕ ";
+/// Fallback when a label cell is too narrow for [`REMOVE_BUTTON`].
+const REMOVE_BUTTON_NARROW: &str = "✕";
+
+/// One attachment label fitted into `width` columns, followed by its remove
+/// button. The button always fits; the label truncates first. Returns the
+/// spans and the button's columns relative to the label start.
+fn label_with_remove_button(label: &str, width: usize) -> (Vec<Span<'static>>, Range<usize>) {
+    let button = if width >= display_width(REMOVE_BUTTON) {
+        REMOVE_BUTTON
+    } else {
+        REMOVE_BUTTON_NARROW
+    };
+    let button_width = display_width(button);
+    // One space keeps the label from touching the button.
+    let label_budget = width.saturating_sub(button_width + 1);
+    let mut spans = Vec::with_capacity(3);
+    let mut column = 0;
+    if label_budget > 0 {
+        let label = truncate_one_line(label, label_budget);
+        column = display_width(&label) + 1;
+        spans.push(Span::styled(label, Theme::dim()));
+        spans.push(Span::raw(" "));
+    }
+    spans.push(Span::styled(
+        button,
+        Theme::markdown_code_copy_button(/*hovered*/ false),
+    ));
+    (spans, column..column + button_width)
+}
+
+fn u16_columns(columns: Range<usize>) -> Range<u16> {
+    u16::try_from(columns.start).unwrap_or(u16::MAX)..u16::try_from(columns.end).unwrap_or(u16::MAX)
 }
 
 /// Layout composer attachments into label/image chrome for one width.
@@ -104,12 +181,14 @@ pub(super) fn layout_composer_attachments(
             continue;
         }
 
-        layout.lines.push(styled_line(
-            slots[index].attachment.composer_label(index + 1),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ));
+        let label = slots[index].attachment.composer_label(index + 1);
+        let (spans, button) = label_with_remove_button(&label, width);
+        layout.targets.push(AttachmentTarget {
+            attachment: index,
+            row: layout.total_rows,
+            columns: u16_columns(button),
+        });
+        layout.lines.push(Line::from(spans));
         layout.total_rows = layout.total_rows.saturating_add(1);
         index += 1;
     }
@@ -195,19 +274,25 @@ fn append_image_strip(
         let label = slots[attachment_index]
             .attachment
             .composer_label(attachment_index + 1);
-        let truncated = truncate_one_line(&label, cell_width);
-        let pad = cell_width.saturating_sub(display_width(&truncated));
-        spans.push(Span::styled(truncated, Theme::dim()));
+        let (label_spans, button) = label_with_remove_button(&label, cell_width);
+        let pad = cell_width.saturating_sub(button.end);
+        spans.extend(label_spans);
         if pad > 0 {
             spans.push(Span::raw(" ".repeat(pad)));
         }
-        layout.images.push(ComposerImagePlacement {
+        let placement = ComposerImagePlacement {
             image: image.clone(),
             row: image_row,
             column: u16::try_from(column).unwrap_or(u16::MAX),
             width: u16::try_from(cell_width).unwrap_or(u16::MAX).max(1),
             height: strip_height,
+        };
+        layout.targets.push(AttachmentTarget {
+            attachment: attachment_index,
+            row: image_row.saturating_add(strip_height),
+            columns: u16_columns(column + button.start..column + button.end),
         });
+        layout.images.push(placement);
         column = column
             .saturating_add(cell_width)
             .saturating_add(COMPOSER_IMAGE_GAP);
@@ -280,6 +365,30 @@ impl App {
         });
     }
 
+    /// Remove the attachment at `index`, cancelling its task when it is still
+    /// pending. Backspace and the `✕` button both remove through here, so
+    /// they report the same status.
+    pub(super) fn remove_composer_attachment(&mut self, index: usize) {
+        match self.input_ui.remove_attachment(index) {
+            Some(ComposerAttachment::Pending { id, .. }) => {
+                self.cancel_pending_attachment(id);
+                let pending_count = self.input_ui.pending_attachment_count();
+                self.set_status(if pending_count == 0 {
+                    "document extraction cancelled".to_string()
+                } else {
+                    format!("extracting files: {pending_count}")
+                });
+            }
+            Some(ComposerAttachment::Ready(_)) => {
+                self.set_status(format!(
+                    "attachments: {}",
+                    self.input_ui.attachment_slots().len()
+                ));
+            }
+            None => {}
+        }
+    }
+
     pub(super) fn composer_attachment_lines(&self, width: usize) -> Vec<Line<'static>> {
         self.composer_attachment_layout(width).lines
     }
@@ -329,6 +438,40 @@ impl App {
                 ),
             );
         }
+        self.lift_hovered_remove_button(frame, composer_area, &layout, composer_start);
+    }
+
+    /// Lift the remove button under the pointer. The button row is plain
+    /// text for every attachment kind, so the lift never fights a
+    /// graphics-protocol image cell.
+    fn lift_hovered_remove_button(
+        &self,
+        frame: &mut Frame<'_>,
+        composer_area: Rect,
+        layout: &ComposerAttachmentLayout,
+        composer_start: usize,
+    ) {
+        let Some(target) = self
+            .last_mouse_position
+            .filter(|_| self.chrome_pointer_live(frame.area()))
+            .and_then(|(column, row)| {
+                attachment_target_at(layout, composer_area, composer_start, column, row)
+            })
+        else {
+            return;
+        };
+        // In range: the target row is on screen, inside `composer_area`.
+        let y = composer_area.y + (target.row - composer_start) as u16;
+        let x = composer_area.x.saturating_add(target.columns.start);
+        let width = target
+            .columns
+            .end
+            .min(composer_area.width)
+            .saturating_sub(target.columns.start);
+        frame.buffer_mut().set_style(
+            Rect::new(x, y, width, 1),
+            Theme::markdown_code_copy_button(/*hovered*/ true),
+        );
     }
 }
 

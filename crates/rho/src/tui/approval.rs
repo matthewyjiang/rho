@@ -1,11 +1,11 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use rho_sdk::{ApprovalDecision, PendingApproval};
 
-use super::{App, ComposerMode, HerdrUserWait};
+use super::{composer_pointer::ChoiceClick, App, ComposerMode, HerdrUserWait};
 
 mod render;
 
-pub(in crate::tui) use render::approval_lines;
+pub(in crate::tui) use render::approval_frame;
 use render::{approval_detail_line_count, approval_detail_page_lines};
 
 const DENIED_BY_USER_REASON: &str = "denied by user";
@@ -15,7 +15,6 @@ const CANCELLED_BY_USER_REASON: &str = "cancelled by user";
 pub(super) enum ApprovalKeyOutcome {
     Ignored,
     Handled,
-    Resolved,
 }
 
 /// Fail-closed choice set for the supervised approval prompt.
@@ -118,6 +117,10 @@ impl ApprovalComposer {
         self.active = self.active.next();
     }
 
+    fn set_active(&mut self, choice: ApprovalChoice) {
+        self.active = choice;
+    }
+
     fn respond(&mut self, decision: ApprovalDecision) {
         let _ = self.pending.respond(decision);
     }
@@ -173,19 +176,30 @@ impl App {
             }
             KeyCode::Enter => {
                 self.finish_approval(None);
-                ApprovalKeyOutcome::Resolved
+                ApprovalKeyOutcome::Handled
             }
             KeyCode::Esc => {
                 self.finish_approval(Some(ApprovalDecision::Deny {
                     reason: CANCELLED_BY_USER_REASON.into(),
                 }));
-                ApprovalKeyOutcome::Resolved
+                ApprovalKeyOutcome::Handled
             }
             _ => ApprovalKeyOutcome::Handled,
         };
         self.input_ui.clear_paste_burst();
         self.ctrl_c_streak = 0;
         Ok(outcome)
+    }
+
+    /// A click highlights a choice; a double click confirms it like Enter.
+    pub(super) fn click_approval_choice(&mut self, choice: ApprovalChoice, click: ChoiceClick) {
+        let ComposerMode::Approval(approval) = self.input_ui.composer_mut() else {
+            return;
+        };
+        approval.set_active(choice);
+        if click == ChoiceClick::Double {
+            self.finish_approval(None);
+        }
     }
 
     pub(super) fn cancel_approval(&mut self) {
@@ -201,6 +215,7 @@ impl App {
         let restore_side = if let ComposerMode::Approval(mut approval) = composer {
             let decision = decision.unwrap_or_else(|| approval.active.decision());
             approval.respond(decision);
+            self.turn.mark_approval_resolved();
             self.set_status("running");
             approval.restore_side
         } else {

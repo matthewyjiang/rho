@@ -66,63 +66,62 @@ impl App {
         &mut self,
         key: KeyEvent,
         terminal: &mut DefaultTerminal,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<()> {
         if self.handle_paste_burst_key(key) {
-            return Ok(false);
+            return Ok(());
         }
 
         if self.handle_pending_input_key(key) {
-            return Ok(false);
+            return Ok(());
         }
 
         let size = terminal.size()?;
         match self.handle_approval_key(key, size.width as usize, size.height as usize)? {
             ApprovalKeyOutcome::Ignored => {}
-            ApprovalKeyOutcome::Handled => return Ok(false),
-            ApprovalKeyOutcome::Resolved => return Ok(true),
+            ApprovalKeyOutcome::Handled => return Ok(()),
         }
 
         if self.handle_history_key(key, terminal)? {
-            return Ok(false);
+            return Ok(());
         }
 
         if self.handle_questionnaire_key(key)? {
-            return Ok(false);
+            return Ok(());
         }
         if self.handle_running_config_number_key(key, terminal)? {
-            return Ok(false);
+            return Ok(());
         }
         if self.handle_running_text_input_key(key).await? {
-            return Ok(false);
+            return Ok(());
         }
         if self.handle_running_picker_key(key, terminal).await? {
-            return Ok(false);
+            return Ok(());
         }
         if self.handle_panel_overlay_key(key, terminal) {
-            return Ok(false);
+            return Ok(());
         }
         if self.handle_side_chat_key(key, terminal) {
-            return Ok(false);
+            return Ok(());
         }
         match self.handle_command_palette_key(key) {
             CommandPaletteKeyOutcome::Ignored => {}
-            CommandPaletteKeyOutcome::Handled => return Ok(false),
+            CommandPaletteKeyOutcome::Handled => return Ok(()),
             CommandPaletteKeyOutcome::Submit => {
                 self.submit_during_turn(terminal).await?;
-                return Ok(false);
+                return Ok(());
             }
         }
         if self.handle_file_palette_key(key)? {
-            return Ok(false);
+            return Ok(());
         }
         // Same order as the idle composer: pin cycle wins when a user binds
         // `cycle_pinned_model` onto a key that `handle_configurable_*` also
         // owns (for example Ctrl-P rebound to `toggle_tool_output`).
         if self.handle_running_favorite_cycle_key(key)? {
-            return Ok(false);
+            return Ok(());
         }
         if self.handle_configurable_running_key(key, terminal)? {
-            return Ok(false);
+            return Ok(());
         }
 
         match (key.modifiers, key.code) {
@@ -209,7 +208,7 @@ impl App {
         }
         self.clamp_command_selection();
         self.clamp_file_selection();
-        Ok(false)
+        Ok(())
     }
 
     pub(super) async fn submit_during_turn(
@@ -477,8 +476,10 @@ impl App {
         tool_call_active: &AtomicBool,
     ) -> Result<StreamControl, RunningTerminalError> {
         self.observe_questionnaire_input(&first_event);
+        // Only a resolution caused by this event counts; drop any left by a
+        // turn-end cancel or an interrupting Esc that returned early.
+        self.turn.take_approval_resolved();
         let mut control = StreamControl::Continue;
-        let mut approval_resolved = false;
         'event: {
             match self.take_exclusive_event(first_event) {
                 Ok(resize) => {
@@ -538,17 +539,15 @@ impl App {
                             control = StreamControl::Resize;
                             break 'event;
                         }
-                        let resolved =
-                            self.handle_key_during_turn(key, terminal)
-                                .await
-                                .map_err(|err| {
-                                    RunningTerminalError::Recoverable(
-                                        rho_providers::model::ModelError::InvalidResponse(
-                                            err.to_string(),
-                                        ),
-                                    )
-                                })?;
-                        approval_resolved |= resolved;
+                        self.handle_key_during_turn(key, terminal)
+                            .await
+                            .map_err(|err| {
+                                RunningTerminalError::Recoverable(
+                                    rho_providers::model::ModelError::InvalidResponse(
+                                        err.to_string(),
+                                    ),
+                                )
+                            })?;
                         if self.pending.input_action().is_some() {
                             break 'event;
                         }
@@ -568,7 +567,19 @@ impl App {
                     }
                     Event::Mouse(mouse) => {
                         self.flush_pending_paste_burst();
+                        self.input_ui.take_pointer_action();
                         self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
+                        if let Some(action) = self.input_ui.take_pointer_action() {
+                            Box::pin(self.run_running_pointer_action(action, terminal))
+                                .await
+                                .map_err(|err| {
+                                    RunningTerminalError::Recoverable(
+                                        rho_providers::model::ModelError::InvalidResponse(
+                                            err.to_string(),
+                                        ),
+                                    )
+                                })?;
+                        }
                     }
                     Event::FocusGained => self.on_focus_gained(),
                     Event::FocusLost => {
@@ -581,7 +592,7 @@ impl App {
             }
         }
         self.flush_due_paste_burst();
-        if approval_resolved {
+        if self.turn.take_approval_resolved() {
             Ok(StreamControl::ApprovalResolved)
         } else {
             Ok(control)

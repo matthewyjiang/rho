@@ -4,11 +4,16 @@ mod command;
 mod overlay;
 mod snapshot;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::time::Instant;
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
 use ratatui::{layout::Rect, DefaultTerminal};
 
 use super::{
-    commands, line_editor::LineEditor, App, CommandId, CommandInvocation, ComposerMode, Entry,
+    commands,
+    line_editor::LineEditor,
+    panel_pointer::{PanelPointer, PanelPointerEffect, PanelPointerEvent},
+    App, CommandId, CommandInvocation, ComposerMode, Entry,
 };
 use crate::app::side_chat::{spawn_side_chat, SideChatEvent, SideChatHandle, SideChatLaunch};
 use crate::config::Config;
@@ -119,6 +124,10 @@ impl App {
         if self.side_overlay_open() {
             self.input_ui.set_composer(ComposerMode::Input);
         }
+        // The aside outlives the overlay; its hover and selection do not.
+        if let Some(side) = self.side_chat.as_mut() {
+            side.overlay.pointer = PanelPointer::default();
+        }
     }
 
     pub(super) fn discard_side_chat(&mut self) {
@@ -181,7 +190,12 @@ impl App {
         area: Rect,
     ) -> Option<super::overlay_panel::OverlayPanelFrame> {
         let side = self.side_chat.as_ref()?;
-        side_overlay_frame(&side.overlay, area)
+        side_overlay_frame(&side.overlay, area).map(|(frame, _)| frame)
+    }
+
+    /// Pointer state of the side overlay, for painting hover and selection.
+    pub(super) fn side_overlay_pointer(&self) -> Option<PanelPointer> {
+        self.side_chat.as_ref().map(|side| side.overlay.pointer)
     }
 
     pub(super) fn handle_side_chat_key(
@@ -330,30 +344,56 @@ impl App {
         let Ok(size) = terminal.size() else {
             return;
         };
-        self.scroll_side_overlay_area(Rect::new(0, 0, size.width, size.height), delta);
-    }
-
-    pub(super) fn scroll_side_overlay_wheel(
-        &mut self,
-        width: u16,
-        height: u16,
-        delta: isize,
-    ) -> bool {
-        if !self.side_overlay_open() {
-            return false;
-        }
-        self.scroll_side_overlay_area(Rect::new(0, 0, width, height), delta);
-        true
-    }
-
-    fn scroll_side_overlay_area(&mut self, area: Rect, delta: isize) {
+        let area = Rect::new(0, 0, size.width, size.height);
         let Some(side) = self.side_chat.as_mut() else {
             return;
         };
-        let Some(metrics) = side_scroll_metrics(&side.overlay, area) else {
+        if let Some(metrics) = side_scroll_metrics(&side.overlay, area) {
+            side.overlay.scroll_by(delta, &metrics);
+        }
+    }
+
+    /// Pointer input while the side overlay is open. The overlay owns every
+    /// event so clicks, drags, and releases never reach transcript controls
+    /// hidden behind it. Left-button and wheel input follow the shared panel
+    /// pointer (scrollbar drag, drag-to-copy, copy targets); right-click pastes.
+    /// Motion needs no work here: paint resolves hover from the app's last
+    /// pointer cell.
+    pub(super) fn handle_side_overlay_mouse(
+        &mut self,
+        kind: MouseEventKind,
+        screen: Rect,
+        column: u16,
+        row: u16,
+        now: Instant,
+    ) {
+        self.clear_selections();
+        self.clear_hovered_copy_buttons();
+        self.clear_rail_pointer_state();
+        self.history.set_scrollbar_drag(None);
+        if kind == MouseEventKind::Down(MouseButton::Right) {
+            self.paste_clipboard_text();
+            return;
+        }
+        // Building the frame renders the whole transcript; skip it for motion.
+        let Some(event) = PanelPointerEvent::from_kind(kind) else {
             return;
         };
-        side.overlay.scroll_by(delta, &metrics);
+        let Some(side) = self.side_chat.as_mut() else {
+            return;
+        };
+        // Hit-test against the frame the user sees, then mutate the overlay.
+        // The pointer never changes the body, so the frame's metrics stay
+        // valid for the scroll it asks for.
+        let Some((frame, metrics)) = side_overlay_frame(&side.overlay, screen) else {
+            return;
+        };
+        match side.overlay.pointer.handle(event, column, row, &frame) {
+            PanelPointerEffect::None => {}
+            PanelPointerEffect::ScrollTo(line) => side.overlay.scroll_to(line, &metrics),
+            PanelPointerEffect::ScrollBy(delta) => side.overlay.scroll_by(delta, &metrics),
+            PanelPointerEffect::Copy(text) => self.copy_text(&text, now),
+        }
     }
 
     pub(super) fn insert_side_paste(&mut self, text: &str) -> bool {

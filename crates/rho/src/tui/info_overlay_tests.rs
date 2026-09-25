@@ -192,21 +192,21 @@ fn drag_copies_the_selected_span() {
     let row = body.y;
     let start = body.x;
 
-    app.handle_info_overlay_mouse(
+    app.handle_panel_overlay_mouse(
         MouseEventKind::Down(MouseButton::Left),
         screen,
         start,
         row,
         Instant::now(),
     );
-    app.handle_info_overlay_mouse(
+    app.handle_panel_overlay_mouse(
         MouseEventKind::Drag(MouseButton::Left),
         screen,
         start.saturating_add(3),
         row,
         Instant::now(),
     );
-    app.handle_info_overlay_mouse(
+    app.handle_panel_overlay_mouse(
         MouseEventKind::Up(MouseButton::Left),
         screen,
         start.saturating_add(3),

@@ -2,21 +2,21 @@
 //!
 //! The command paints the in-memory snapshot immediately. Claude, Cursor, and
 //! the session tree fill in afterwards. Closing the overlay does not leave a
-//! transcript block. `c` copies the whole report; a drag copies the selection.
+//! transcript block. `c` copies the whole report; a drag copies the selection
+//! (shared panel pointer, see `panel_pointer`).
 
 use std::time::Instant;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::layout::Rect;
 
 use super::{
-    copy_interaction::{selection_position, selection_position_clamped},
     info_command::{info_copy_text, load_external_runtimes, runtime_info_lines, RuntimeInfo},
     overlay_panel::{
         classify_panel_key, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
         OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
     },
-    text_selection::TextSelection,
+    panel_pointer::PanelPointer,
     App, ComposerMode, PanelOverlay,
 };
 
@@ -27,7 +27,8 @@ const FOOTER: &str = "c copy  Enter/Esc close";
 pub(super) struct InfoOverlay {
     info: RuntimeInfo,
     scroll: PanelScroll,
-    selection: Option<TextSelection>,
+    /// Selection, scrollbar drag, and hover for this panel.
+    pub(super) pointer: PanelPointer,
 }
 
 impl App {
@@ -37,7 +38,7 @@ impl App {
                 InfoOverlay {
                     info,
                     scroll: PanelScroll::default(),
-                    selection: None,
+                    pointer: PanelPointer::default(),
                 },
             ))));
         self.set_status_quiet("info");
@@ -70,17 +71,10 @@ impl App {
         Some(render_overlay_panel(
             TITLE,
             FOOTER,
-            &lines,
+            lines,
             overlay.scroll.offset(),
             area,
         ))
-    }
-
-    pub(super) fn info_text_selection(&self) -> Option<TextSelection> {
-        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer() else {
-            return None;
-        };
-        overlay.selection
     }
 
     pub(super) fn scroll_info_overlay(&mut self, area: Rect, target: PanelScrollTarget) -> bool {
@@ -135,56 +129,6 @@ impl App {
             }
             PanelKey::Passthrough => false,
             PanelKey::Swallow => true,
-        }
-    }
-
-    pub(super) fn handle_info_overlay_mouse(
-        &mut self,
-        kind: MouseEventKind,
-        screen: Rect,
-        column: u16,
-        row: u16,
-        now: Instant,
-    ) {
-        self.clear_selections();
-        self.clear_hovered_copy_buttons();
-        self.clear_rail_pointer_state();
-        self.history.set_scrollbar_drag(None);
-        let Some(frame) = self.info_overlay_frame(screen) else {
-            return;
-        };
-        let body = frame.body();
-        let scroll = frame.scroll();
-        match kind {
-            MouseEventKind::ScrollUp => {
-                self.scroll_info_overlay(
-                    screen,
-                    PanelScrollTarget::Delta(-(super::HISTORY_MOUSE_SCROLL_LINES as isize)),
-                );
-            }
-            MouseEventKind::ScrollDown => {
-                self.scroll_info_overlay(
-                    screen,
-                    PanelScrollTarget::Delta(super::HISTORY_MOUSE_SCROLL_LINES as isize),
-                );
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                let selection =
-                    selection_position(body, scroll, column, row).map(TextSelection::new);
-                self.set_info_selection(selection);
-            }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                let Some(position) = selection_position_clamped(body, scroll, column, row) else {
-                    return;
-                };
-                if let Some(selection) = self.info_selection_mut() {
-                    selection.update(position);
-                }
-            }
-            MouseEventKind::Up(MouseButton::Left) => {
-                self.copy_info_selection(body, scroll, column, row, screen, now);
-            }
-            _ => {}
         }
     }
 
@@ -301,38 +245,12 @@ impl App {
         self.copy_text(&text, now);
     }
 
-    fn copy_info_selection(
-        &mut self,
-        body: Rect,
-        scroll: usize,
-        column: u16,
-        row: u16,
-        screen: Rect,
-        now: Instant,
-    ) {
-        let Some(mut selection) = self.take_info_selection() else {
-            return;
-        };
-        if let Some(position) = selection_position_clamped(body, scroll, column, row) {
-            selection.update(position);
-        }
-        if !selection.has_moved() {
-            return;
-        }
-        let lines = self.info_body_lines(screen);
-        let Some(text) = selection.selected_text(&lines, 0) else {
-            return;
-        };
-        self.copy_text(&text, now);
-        self.set_info_selection(Some(selection));
-    }
-
     fn apply_info_runtimes(&mut self, lines: Vec<String>) {
         let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() else {
             return;
         };
         overlay.info.set_external_runtimes(lines);
-        overlay.selection = None;
+        overlay.pointer.clear_selection();
     }
 
     fn apply_info_tree(
@@ -344,7 +262,7 @@ impl App {
             return;
         };
         overlay.info.set_tree(tree, error);
-        overlay.selection = None;
+        overlay.pointer.clear_selection();
     }
 
     fn mark_info_tree_loading(&mut self) {
@@ -361,35 +279,11 @@ impl App {
         overlay.info.tree_loading()
     }
 
-    fn set_info_selection(&mut self, selection: Option<TextSelection>) {
-        if let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() {
-            overlay.selection = selection;
-        }
-    }
-
-    fn info_selection_mut(&mut self) -> Option<&mut TextSelection> {
-        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() else {
-            return None;
-        };
-        overlay.selection.as_mut()
-    }
-
-    fn take_info_selection(&mut self) -> Option<TextSelection> {
-        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() else {
-            return None;
-        };
-        overlay.selection.take()
-    }
-
     fn info_body_len(&self, area: Rect) -> usize {
-        self.info_body_lines(area).len()
-    }
-
-    fn info_body_lines(&self, area: Rect) -> Vec<ratatui::text::Line<'static>> {
         let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer() else {
-            return Vec::new();
+            return 0;
         };
-        runtime_info_lines(&overlay.info, info_body_width(area))
+        runtime_info_lines(&overlay.info, info_body_width(area)).len()
     }
 }
 

@@ -1,8 +1,8 @@
-//! Hover lift paint for click-toggleable tool cards.
+//! Hover lift paint: tool cards, composer choices, palette and picker rows.
 //!
-//! The whole card stays clickable; hovering lifts the card's text (blended
-//! ink, or bold when the theme has no RGB ink) instead of washing the
-//! background, so text selection and diff row washes stay legible.
+//! The whole target stays clickable; hovering lifts its text (blended ink, or
+//! bold when the theme has no RGB ink) instead of washing the background, so
+//! text selection, diff row washes, and per-span colors stay legible.
 
 use std::ops::Range;
 
@@ -44,6 +44,19 @@ pub(super) fn lift_lines(
     first_visible_line: usize,
     lines: Range<usize>,
 ) {
+    lift_cells(buffer, area, first_visible_line, lines, 0..usize::MAX);
+}
+
+/// [`lift_lines`] restricted to `columns` (relative to `area.x`). Each cell
+/// keeps its own hue, so badges, warnings, and dim details on a hovered row
+/// stay distinguishable while the whole target reads as lifted.
+pub(super) fn lift_cells(
+    buffer: &mut Buffer,
+    area: Rect,
+    first_visible_line: usize,
+    lines: Range<usize>,
+    columns: Range<usize>,
+) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -61,8 +74,13 @@ pub(super) fn lift_lines(
         else {
             continue;
         };
-        for x in area.left()..area.right() {
-            let cell = &mut buffer[(x, y)];
+        let left = usize::from(area.x).saturating_add(columns.start);
+        let right = usize::from(area.x)
+            .saturating_add(columns.end)
+            .min(usize::from(area.right()));
+        for x in left..right {
+            // Bounded by `area.right()`, so it fits u16.
+            let cell = &mut buffer[(x as u16, y)];
             let fg = cell.fg;
             let lifted = match memo.iter().find(|(seen, _)| *seen == fg) {
                 Some((_, lifted)) => *lifted,

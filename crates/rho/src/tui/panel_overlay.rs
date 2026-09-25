@@ -3,7 +3,8 @@
 //! Each overlay module owns its content, keys, and scroll state. This module
 //! is the one place that fans a composer-level event out to whichever panel
 //! is open, so input, resize, and draw paths name panels once instead of
-//! listing every variant.
+//! listing every variant. Pointer input is shared: every panel embeds a
+//! [`PanelPointer`] and this module applies its effects.
 
 use std::time::Instant;
 
@@ -12,8 +13,34 @@ use ratatui::{layout::Rect, DefaultTerminal};
 
 use super::{
     overlay_panel::{OverlayPanelFrame, PanelScrollTarget},
-    App, ComposerMode, PanelOverlay, HISTORY_MOUSE_SCROLL_LINES,
+    panel_pointer::{PanelPointer, PanelPointerEffect, PanelPointerEvent},
+    App, ComposerMode, PanelOverlay,
 };
+
+impl PanelOverlay {
+    /// Pointer state of the open panel, for painting hover and selection.
+    pub(super) fn pointer(&self) -> PanelPointer {
+        match self {
+            Self::Limits(overlay) => overlay.pointer,
+            Self::Doctor(overlay) => overlay.pointer,
+            Self::Computer(overlay) => overlay.pointer,
+            Self::Hooks(overlay) => overlay.pointer,
+            Self::TextView(overlay) => overlay.pointer,
+            Self::Info(overlay) => overlay.pointer,
+        }
+    }
+
+    fn pointer_mut(&mut self) -> &mut PanelPointer {
+        match self {
+            Self::Limits(overlay) => &mut overlay.pointer,
+            Self::Doctor(overlay) => &mut overlay.pointer,
+            Self::Computer(overlay) => &mut overlay.pointer,
+            Self::Hooks(overlay) => &mut overlay.pointer,
+            Self::TextView(overlay) => &mut overlay.pointer,
+            Self::Info(overlay) => &mut overlay.pointer,
+        }
+    }
+}
 
 impl App {
     fn panel_overlay(&self) -> Option<&PanelOverlay> {
@@ -70,9 +97,11 @@ impl App {
         }
     }
 
-    /// Routes a pointer event to the open panel. `true` means a panel is open
-    /// and consumed it: Info handles selection and copy; the rest scroll on
-    /// the wheel and swallow clicks so controls hidden behind stay inert.
+    /// Pointer input while a panel is open: wheel and scrollbar drag scroll
+    /// the body, a drag selects and copies text, and copy targets copy on
+    /// press. The panel owns every event so controls hidden behind it stay
+    /// inert. Motion needs no work here: paint resolves hover from the app's
+    /// last pointer cell.
     pub(super) fn handle_panel_overlay_mouse(
         &mut self,
         kind: MouseEventKind,
@@ -80,27 +109,33 @@ impl App {
         column: u16,
         row: u16,
         now: Instant,
-    ) -> bool {
-        match self.panel_overlay() {
-            None => return false,
-            Some(PanelOverlay::Info(_)) => {
-                self.handle_info_overlay_mouse(kind, screen, column, row, now);
-                return true;
-            }
-            Some(_) => {}
-        }
+    ) {
         self.clear_selections();
         self.clear_hovered_copy_buttons();
         self.clear_rail_pointer_state();
         self.history.set_scrollbar_drag(None);
-        let lines = HISTORY_MOUSE_SCROLL_LINES as isize;
-        let delta = match kind {
-            MouseEventKind::ScrollUp => -lines,
-            MouseEventKind::ScrollDown => lines,
-            _ => return true,
+        // Building the frame renders the whole body; skip it for motion.
+        let Some(event) = PanelPointerEvent::from_kind(kind) else {
+            return;
         };
-        self.scroll_panel_overlay(screen, PanelScrollTarget::Delta(delta));
-        true
+        // Hit-test against the frame the user sees, then mutate the panel.
+        let Some(frame) = self.panel_overlay_frame(screen, now) else {
+            return;
+        };
+        let ComposerMode::Panel(panel) = self.input_ui.composer_mut() else {
+            return;
+        };
+        let effect = panel.pointer_mut().handle(event, column, row, &frame);
+        match effect {
+            PanelPointerEffect::None => {}
+            PanelPointerEffect::ScrollTo(line) => {
+                self.scroll_panel_overlay(screen, PanelScrollTarget::Absolute(line));
+            }
+            PanelPointerEffect::ScrollBy(delta) => {
+                self.scroll_panel_overlay(screen, PanelScrollTarget::Delta(delta));
+            }
+            PanelPointerEffect::Copy(text) => self.copy_text(&text, now),
+        }
     }
 
     fn scroll_panel_overlay(&mut self, area: Rect, target: PanelScrollTarget) {

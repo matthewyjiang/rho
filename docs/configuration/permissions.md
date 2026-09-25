@@ -46,7 +46,7 @@ An interactive change applies before the next turn. The session ID and history s
 
 ## Approval prompt
 
-When a checked mode needs a person, the composer opens an approval prompt. It leads with the path or command and focuses **Deny**. Choose **Allow once**, **Allow for session**, or **Deny**, then press Enter.
+When a checked mode needs a person, the composer opens an approval prompt. It leads with the path or command and focuses **Deny**. Choose **Allow once**, **Allow for session**, or **Deny**, then press Enter. You can also click a choice to focus it, or double-click it to confirm.
 
 **Allow for session** remembers only that exact capability request for the current session. Page Up and Page Down scroll long details without hiding the choices. **Deny** rejects that operation and lets the run continue. Escape denies it and cancels the run.
 

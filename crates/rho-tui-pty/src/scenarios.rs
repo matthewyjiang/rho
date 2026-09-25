@@ -31,6 +31,8 @@ mod file_palette;
 mod first_run;
 mod goal;
 mod hooks;
+mod hover_clicks;
+mod inline_choice_click;
 mod limits;
 mod login;
 mod markdown_stream;
@@ -39,9 +41,12 @@ mod mermaid;
 mod model_cycle_reasoning;
 mod model_prompts;
 mod no_save;
+mod palette_click;
+mod panel_pointer;
 mod paste;
 mod pickers;
 mod process_rail;
+mod questionnaire;
 mod questionnaire_timeout;
 #[cfg(unix)]
 mod quiet_subagent;
@@ -55,6 +60,7 @@ mod sessions_tool;
 mod shell_completion;
 mod side_chat;
 mod startup;
+mod status_clicks;
 mod statusline;
 mod steering;
 mod streaming_controls;
@@ -345,30 +351,6 @@ const TERMINAL_RESTORATION_STEPS: &[Step] = &[
     Step::Custom(assert_terminal_restored),
 ];
 
-const QUESTIONNAIRE_STEPS: &[Step] = &[
-    Step::Phase("startup"),
-    Step::WaitText {
-        text: "gpt-5.5",
-        timeout: STARTUP,
-    },
-    Step::SubmitText("fixture questionnaire"),
-    Step::WaitText {
-        text: "Choose one color",
-        timeout: STREAM,
-    },
-    Step::WaitText {
-        text: "A warm primary color",
-        timeout: STREAM,
-    },
-    Step::Key(Key::Down),
-    Step::Key(Key::Enter),
-    Step::WaitText {
-        text: "questionnaire response observed exactly 1 time",
-        timeout: STREAM,
-    },
-    Step::ExitCommand,
-];
-
 const PROGRESS_TOOL_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -496,13 +478,19 @@ const ALL_SCENARIOS: &[Scenario] = &[
     questionnaire_timeout::TIMEOUT,
     questionnaire_timeout::PAUSE,
     DOCUMENT_ATTACHMENT_SCENARIO,
-    Scenario::new(
-        "questionnaire",
-        "Exercise questionnaire keyboard selection and submission",
-        DEFAULT_SIZE,
-        QUESTIONNAIRE_STEPS,
-        false,
-    ),
+    questionnaire::QUESTIONNAIRE_SCENARIO,
+    questionnaire::QUESTIONNAIRE_CLICK_SCENARIO,
+    questionnaire::APPROVAL_CLICK_SCENARIO,
+    inline_choice_click::INLINE_CHOICE_CLICK_SCENARIO,
+    palette_click::SLASH_PALETTE_CLICK_SCENARIO,
+    palette_click::FILE_PALETTE_CLICK_SCENARIO,
+    hover_clicks::QUESTIONNAIRE_HOVER_SCENARIO,
+    hover_clicks::INLINE_PICKER_CLICK_SCENARIO,
+    hover_clicks::OVERLAY_PICKER_DOUBLE_CLICK_SCENARIO,
+    panel_pointer::PANEL_POINTER_SCENARIO,
+    panel_pointer::SIDE_POINTER_SCENARIO,
+    status_clicks::STATUSLINE_MODEL_CLICK_SCENARIO,
+    status_clicks::ATTACHMENT_CLICK_REMOVE_SCENARIO,
     Scenario::new(
         "supervised_approval",
         "Inspect and cancel a bounded supervised process approval",

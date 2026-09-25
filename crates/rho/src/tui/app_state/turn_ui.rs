@@ -69,9 +69,20 @@ pub(in crate::tui) struct TurnUi {
     provider_retry: Option<ProviderRetryHint>,
     loading_spinner: LoadingSpinner,
     tool_calls: ToolCallBatch,
+    /// Set when any input path confirms or denies a pending approval; the
+    /// running event loop takes it once to report the turn as working again.
+    approval_resolved: bool,
 }
 
 impl TurnUi {
+    pub(in crate::tui) fn mark_approval_resolved(&mut self) {
+        self.approval_resolved = true;
+    }
+
+    pub(in crate::tui) fn take_approval_resolved(&mut self) -> bool {
+        std::mem::take(&mut self.approval_resolved)
+    }
+
     pub(in crate::tui) fn current_turn_start(&self) -> Option<usize> {
         self.current_turn_start
     }

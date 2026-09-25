@@ -9,6 +9,7 @@ use ratatui::{
 use super::{InlineChoice, InlineChoiceOption};
 use crate::tui::{
     composer_chrome::{wrap_footer_parts, SELECTION_MARKER_ACTIVE, SELECTION_MARKER_INACTIVE},
+    composer_pointer::{ComposerChoice, ComposerHit},
     display_width,
     panel_text::indented_wrapped_lines,
     render::{truncate_to_display_width, wrap_line_at_whitespace},
@@ -16,6 +17,8 @@ use crate::tui::{
     Theme,
 };
 
+/// Choice rows plus one click target per available option, spanning its
+/// label and detail rows but not the blank rows between groups.
 pub(in crate::tui) fn inline_choice_frame(
     choice: &InlineChoice,
     width: usize,
@@ -40,6 +43,7 @@ pub(in crate::tui) fn inline_choice_frame(
 
     let mut focused_row = 0;
     let mut previous_wrapped = false;
+    let mut choice_hits = Vec::new();
     for (index, option) in choice.options.iter().enumerate() {
         let group = option_lines(option, index == choice.active, width);
         let wrapped = group.len() > 1 + usize::from(!option.detail.is_empty());
@@ -49,6 +53,16 @@ pub(in crate::tui) fn inline_choice_frame(
         }
         if index == choice.active {
             focused_row = lines.len();
+        }
+        // Unavailable options paint but take no clicks.
+        if option.available {
+            choice_hits.push(
+                ComposerHit::rows(
+                    lines.len()..lines.len() + group.len(),
+                    ComposerChoice::InlineChoice(index),
+                )
+                .with_active(index == choice.active),
+            );
         }
         lines.extend(group);
         previous_wrapped = wrapped;
@@ -84,13 +98,16 @@ pub(in crate::tui) fn inline_choice_frame(
         ));
     }
     // The composer viewport follows this row even though choices hide the caret.
-    ComposerFrame::new(
-        lines,
-        Position {
-            x: 0,
-            y: u16::try_from(focused_row).unwrap_or(u16::MAX),
-        },
-    )
+    ComposerFrame {
+        choice_hits,
+        ..ComposerFrame::new(
+            lines,
+            Position {
+                x: 0,
+                y: u16::try_from(focused_row).unwrap_or(u16::MAX),
+            },
+        )
+    }
 }
 
 fn option_lines(option: &InlineChoiceOption, focused: bool, width: usize) -> Vec<Line<'static>> {
@@ -103,7 +120,7 @@ fn option_lines(option: &InlineChoiceOption, focused: bool, width: usize) -> Vec
         "·"
     };
     let style = if focused {
-        Theme::text().add_modifier(Modifier::BOLD)
+        Theme::text_strong()
     } else if option.available {
         Theme::text()
     } else {

@@ -34,7 +34,7 @@ fn overlay_panel_clips_body_to_inner_width_when_scrollbar_is_shown() {
     let body = (0..20)
         .map(|i| ratatui::text::Line::raw(format!("row-{i:02} {}", "x".repeat(80))))
         .collect::<Vec<_>>();
-    let frame = render_overlay_panel("Title", "Enter/Esc close", &body, 0, area);
+    let frame = render_overlay_panel("Title", "Enter/Esc close", body, 0, area);
     let widths: Vec<usize> = frame
         .lines
         .iter()

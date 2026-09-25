@@ -55,7 +55,8 @@ fn aligned_rows_insert_section_headers_on_transitions() {
         texts,
         vec!["  FIRST", "  alpha", "  beta", "  SECOND", "→ gamma"]
     );
-    assert_eq!(rows.selected_row, 4);
+    assert_eq!(rows.row_items, vec![None, Some(0), Some(1), None, Some(2)]);
+    assert_eq!(selected_row_index(&items, &matching, 2), 4);
 }
 
 // Covers: header rows shift the selected row index; wrong accounting scrolls
@@ -66,7 +67,7 @@ fn selected_row_index_ignores_headers_before_it() {
     let items = vec![item("one", None), item("two", Some("GROUP"))];
     let rows = picker_item_rows(&items, &[0, 1], 1, aligned_layout(30, 12), None);
     // one, GROUP header, two → selected "two" sits at row 2.
-    assert_eq!(rows.selected_row, 2);
+    assert_eq!(selected_row_index(&items, &[0, 1], 1), 2);
     assert_eq!(rows.rows.len(), 3);
 }
 

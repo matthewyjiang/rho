@@ -1,8 +1,9 @@
 //! Composer text, paste handling, command/file palettes, and input history.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::tui::{
+    click_sequence::ClickSequence,
     composer_attachments::ComposerAttachmentSlot,
     feed_image::FeedImage,
     inline_shell::InlineShellMode,
@@ -97,14 +98,6 @@ enum ComposerSelectionState {
     Selected(ComposerSelection),
 }
 
-#[derive(Clone, Copy, Debug)]
-struct ComposerClick {
-    at: Instant,
-    column: u16,
-    row: u16,
-    index: usize,
-}
-
 impl ComposerSelectionState {
     fn value(self) -> Option<ComposerSelection> {
         match self {
@@ -120,7 +113,6 @@ pub(in crate::tui) struct InputUi {
     text: String,
     cursor: usize,
     selection: ComposerSelectionState,
-    last_pointer_click: Option<ComposerClick>,
     composer_view_start: usize,
     shell_mode: Option<InlineShellMode>,
     /// Char offset of the word Tab opened path completion on, in shell mode.
@@ -144,10 +136,43 @@ pub(in crate::tui) struct InputUi {
     command_prefix: Option<String>,
     command_palette_dismissed: bool,
     file_selection: usize,
+    /// First painted row of whichever palette is open. Kept across frames so
+    /// the window only scrolls when the highlight leaves it.
+    palette_window_start: usize,
     file_query: Option<String>,
     file_palette_dismissed: bool,
     composer: ComposerMode,
-    hovered_composer_copy: bool,
+    /// Pointer state scoped to the current composer mode; reset as one value
+    /// whenever the mode changes.
+    pointer: ComposerPointerState,
+}
+
+/// Pointer state that belongs to one composer mode. Replacing the mode resets
+/// all of it at once, which is what keeps a pending [`PointerAction`] from
+/// ever applying to a mode the pointer did not act on.
+#[derive(Default)]
+struct ComposerPointerState {
+    clicks: ClickSequence,
+    hovered_copy: bool,
+    /// Whether this mode has reached the screen. Clicks on composer choices
+    /// wait for this so they never land on rows the user has not seen yet.
+    painted: bool,
+    /// One-shot async follow-up a pointer event asked for. The pointer
+    /// handler is sync and backend-generic, so the event loop takes this right
+    /// after the mouse event and runs it with the terminal and runtime.
+    action: Option<PointerAction>,
+}
+
+/// Async work a pointer event hands to the event loop.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::tui) enum PointerAction {
+    /// Confirm the focused inline choice option, like Enter.
+    ConfirmInlineChoice,
+    /// Submit the highlighted picker row, like Enter.
+    SubmitPicker,
+    /// Run a slash command as if typed and submitted, e.g. from a clicked
+    /// statusline field. Carries the full command text (`/permissions`).
+    RunCommand(String),
 }
 
 impl InputUi {
@@ -159,7 +184,7 @@ impl InputUi {
         self.shell_completion_anchor = None;
         self.cursor = 0;
         self.selection = ComposerSelectionState::None;
-        self.last_pointer_click = None;
+        self.pointer.clicks.cancel();
         self.composer_view_start = 0;
         self.attachments.clear();
         self.attachment_epoch = self.attachment_epoch.wrapping_add(1);
@@ -185,7 +210,7 @@ impl InputUi {
         self.text = text;
         self.cursor = cursor;
         self.selection = ComposerSelectionState::None;
-        self.last_pointer_click = None;
+        self.pointer.clicks.cancel();
         self.composer_view_start = 0;
     }
 
@@ -196,7 +221,7 @@ impl InputUi {
         self.submission_mode = draft.submission_mode;
         self.cursor = self.text.chars().count();
         self.selection = ComposerSelectionState::None;
-        self.last_pointer_click = None;
+        self.pointer.clicks.cancel();
         self.composer_view_start = 0;
     }
 
@@ -212,14 +237,14 @@ impl InputUi {
     pub(in crate::tui) fn set_text(&mut self, text: String) {
         self.text = text;
         self.selection = ComposerSelectionState::None;
-        self.last_pointer_click = None;
+        self.pointer.clicks.cancel();
         self.composer_view_start = 0;
     }
 
     pub(in crate::tui) fn clear_text(&mut self) {
         self.text.clear();
         self.selection = ComposerSelectionState::None;
-        self.last_pointer_click = None;
+        self.pointer.clicks.cancel();
         self.composer_view_start = 0;
     }
 
@@ -304,32 +329,20 @@ impl InputUi {
         self.selection = ComposerSelectionState::None;
     }
 
-    /// Record a pointer press and consume a qualifying second press.
+    /// Record a pointer press on `index` and report whether it completes a
+    /// double click (see [`ClickSequence`]).
     pub(in crate::tui) fn register_pointer_click(
         &mut self,
         now: Instant,
         column: u16,
         row: u16,
         index: usize,
-        maximum_gap: Duration,
     ) -> bool {
-        let double_click = self.last_pointer_click.is_some_and(|click| {
-            now.saturating_duration_since(click.at) <= maximum_gap
-                && click.column == column
-                && click.row == row
-                && click.index == index
-        });
-        self.last_pointer_click = (!double_click).then_some(ComposerClick {
-            at: now,
-            column,
-            row,
-            index,
-        });
-        double_click
+        self.pointer.clicks.register(now, column, row, index)
     }
 
     pub(in crate::tui) fn cancel_pointer_click_sequence(&mut self) {
-        self.last_pointer_click = None;
+        self.pointer.clicks.cancel();
     }
 
     /// Take a non-empty selection range and clear selection state.
@@ -349,24 +362,42 @@ impl InputUi {
 
     pub(in crate::tui) fn set_composer(&mut self, composer: ComposerMode) {
         self.composer = composer;
-        self.last_pointer_click = None;
         self.composer_view_start = 0;
-        self.hovered_composer_copy = false;
+        self.pointer = ComposerPointerState::default();
     }
 
     pub(in crate::tui) fn take_composer(&mut self) -> ComposerMode {
-        self.last_pointer_click = None;
         self.composer_view_start = 0;
-        self.hovered_composer_copy = false;
+        self.pointer = ComposerPointerState::default();
         std::mem::replace(&mut self.composer, ComposerMode::Input)
     }
 
+    /// Ask the event loop to run `action` after this pointer event. Changing
+    /// composer modes drops a pending action, so it never applies to a mode
+    /// the pointer did not act on.
+    pub(in crate::tui) fn request_pointer_action(&mut self, action: PointerAction) {
+        self.pointer.action = Some(action);
+    }
+
+    /// Consume the pending pointer action, if any.
+    pub(in crate::tui) fn take_pointer_action(&mut self) -> Option<PointerAction> {
+        self.pointer.action.take()
+    }
+
+    pub(in crate::tui) fn composer_painted(&self) -> bool {
+        self.pointer.painted
+    }
+
+    pub(in crate::tui) fn mark_composer_painted(&mut self) {
+        self.pointer.painted = true;
+    }
+
     pub(in crate::tui) fn hovered_composer_copy(&self) -> bool {
-        self.hovered_composer_copy
+        self.pointer.hovered_copy
     }
 
     pub(in crate::tui) fn set_hovered_composer_copy(&mut self, hovered: bool) {
-        self.hovered_composer_copy = hovered;
+        self.pointer.hovered_copy = hovered;
     }
 
     pub(in crate::tui) fn paste_burst(&self) -> &PasteBurst {
@@ -466,8 +497,13 @@ impl InputUi {
         self.bump_attachments();
     }
 
-    pub(in crate::tui) fn pop_attachment(&mut self) -> Option<ComposerAttachment> {
-        let slot = self.attachments.pop()?;
+    /// Remove the attachment at `index`. Callers go through
+    /// `App::remove_composer_attachment`, which also cancels pending work.
+    pub(in crate::tui) fn remove_attachment(&mut self, index: usize) -> Option<ComposerAttachment> {
+        if index >= self.attachments.len() {
+            return None;
+        }
+        let slot = self.attachments.remove(index);
         self.bump_attachments();
         Some(slot.attachment)
     }
@@ -665,6 +701,14 @@ impl InputUi {
 
     pub(in crate::tui) fn set_file_selection(&mut self, selection: usize) {
         self.file_selection = selection;
+    }
+
+    pub(in crate::tui) fn palette_window_start(&self) -> usize {
+        self.palette_window_start
+    }
+
+    pub(in crate::tui) fn set_palette_window_start(&mut self, start: usize) {
+        self.palette_window_start = start;
     }
 
     pub(in crate::tui) fn file_query(&self) -> Option<&str> {

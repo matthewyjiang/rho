@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::{
@@ -9,6 +9,7 @@ use ratatui::{
 
 use super::{
     copy_interaction::{selection_position, selection_position_clamped, CopyHit},
+    frame_context::FrameContext,
     paste_burst::word_range_at,
     picker::PickerMouseEvent,
     text_selection::{screen_lines, CopyNotice, TextSelection},
@@ -17,9 +18,6 @@ use super::{
     view::LiveHistory,
     App, ComposerMode,
 };
-
-/// Max gap between presses that still counts as a double-click in the composer.
-const COMPOSER_DOUBLE_CLICK: Duration = Duration::from_millis(500);
 
 impl App {
     /// Drops both the history-anchored and screen-space text selections.
@@ -57,6 +55,13 @@ impl App {
         (history_content, history_start)
     }
 
+    /// Routes one pointer event to the surface that owns it.
+    ///
+    /// The composer mode decides the owner, matched exhaustively so a new mode
+    /// has to choose its pointer behavior instead of silently inheriting the
+    /// transcript's. Surfaces that do not consume an event fall through to the
+    /// screen handler: transcript scroll, selection, copy, rails, and composer
+    /// editing.
     pub(super) fn handle_mouse_event<B: Backend>(
         &mut self,
         kind: MouseEventKind,
@@ -67,49 +72,66 @@ impl App {
         let size = terminal.size()?;
         let screen = Rect::new(0, 0, size.width, size.height);
         let now = Instant::now();
-        // An open panel owns pointer input; nothing behind it reacts.
-        if self.handle_panel_overlay_mouse(kind, screen, column, row, now) {
+        // Every surface resolves hover from this cell at paint time, so record
+        // it for every event, including ones an overlay consumes; otherwise
+        // hover behind a closed overlay stays pinned to a stale cell.
+        let moved_cell = self.last_mouse_position != Some((column, row));
+        self.last_mouse_position = Some((column, row));
+        // A move within the same cell changes nothing any surface paints.
+        if kind == MouseEventKind::Moved && !moved_cell {
             return Ok(());
         }
-        // The side overlay owns pointer input while open. Do not let clicks,
-        // drags or releases reach transcript controls hidden behind it.
-        if matches!(self.input_ui.composer(), ComposerMode::Side) {
-            self.clear_selections();
-            self.clear_hovered_copy_buttons();
-            self.clear_rail_pointer_state();
-            self.history.set_scrollbar_drag(None);
-            match kind {
-                MouseEventKind::ScrollUp => {
-                    self.scroll_side_overlay_wheel(
-                        size.width,
-                        size.height,
-                        -(super::HISTORY_MOUSE_SCROLL_LINES as isize),
-                    );
-                }
-                MouseEventKind::ScrollDown => {
-                    self.scroll_side_overlay_wheel(
-                        size.width,
-                        size.height,
-                        super::HISTORY_MOUSE_SCROLL_LINES as isize,
-                    );
-                }
-                MouseEventKind::Down(MouseButton::Left) => {
-                    if let Some(overlay) = self.side_overlay_frame(screen) {
-                        if let Some(text) = overlay.copy_text_at(column, row) {
-                            self.copy_text(text, now);
-                        }
-                    }
-                }
-                MouseEventKind::Down(MouseButton::Right) => self.paste_clipboard_text(),
-                _ => {}
+        let composer_owns_choices = match self.input_ui.composer() {
+            // Overlays own pointer input; nothing behind them reacts.
+            ComposerMode::Panel(_) => {
+                self.handle_panel_overlay_mouse(kind, screen, column, row, now);
+                return Ok(());
             }
+            ComposerMode::Side => {
+                self.handle_side_overlay_mouse(kind, screen, column, row, now);
+                return Ok(());
+            }
+            ComposerMode::Questionnaire(_)
+            | ComposerMode::Approval(_)
+            | ComposerMode::InlineChoice(_) => true,
+            // Inline list rows are composer choices. Overlay pickers and the
+            // wheel route inside the screen handler: an inline list shares
+            // the wheel with the transcript around it.
+            ComposerMode::Picker(picker) => !picker.is_overlay(),
+            ComposerMode::Input
+            | ComposerMode::SecretInput(_)
+            | ComposerMode::ConfigNumberInput(_)
+            | ComposerMode::TextInput(_)
+            | ComposerMode::InteractivePending(_) => false,
+        };
+        // One layout snapshot serves both the choice hit test and the screen
+        // handler it may fall through to.
+        let ctx = self.frame_context(screen);
+        if composer_owns_choices && self.handle_choice_composer_mouse(kind, &ctx, column, row, now)
+        {
             return Ok(());
         }
-        let ctx = self.frame_context(screen);
+        self.handle_screen_mouse(kind, column, row, screen, now, ctx, terminal)
+    }
+
+    /// Pointer handling for the transcript screen and the composer beneath it.
+    #[allow(clippy::too_many_arguments)]
+    fn handle_screen_mouse<B: Backend>(
+        &mut self,
+        kind: MouseEventKind,
+        column: u16,
+        row: u16,
+        screen: Rect,
+        now: Instant,
+        ctx: FrameContext,
+        terminal: &mut Terminal<B>,
+    ) -> Result<(), B::Error> {
+        let size = screen.as_size();
         let width = ctx.width;
         let settings = ctx.settings;
         let live_history = ctx.live_history;
         let layout = ctx.layout;
+        let palette_hits = ctx.palette.hits;
         match kind {
             MouseEventKind::ScrollUp => {
                 self.input_ui.cancel_pointer_click_sequence();
@@ -120,6 +142,10 @@ impl App {
                     size.width,
                     size.height,
                 ) {
+                    return Ok(());
+                }
+                if self.handle_palette_mouse(kind, &palette_hits, layout.commands, column, row, now)
+                {
                     return Ok(());
                 }
                 self.screen_selection = None;
@@ -144,6 +170,10 @@ impl App {
                 ) {
                     return Ok(());
                 }
+                if self.handle_palette_mouse(kind, &palette_hits, layout.commands, column, row, now)
+                {
+                    return Ok(());
+                }
                 self.screen_selection = None;
                 self.clear_hovered_copy_buttons();
                 self.clear_rail_pointer_state();
@@ -156,15 +186,22 @@ impl App {
                 );
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                // The picker tracks its own click sequence for double clicks.
                 if self.route_picker_mouse(
-                    PickerMouseEvent::Click,
+                    PickerMouseEvent::Click(now),
                     column,
                     row,
                     size.width,
                     size.height,
                 ) {
                     self.input_ui.clear_selection();
-                    self.input_ui.cancel_pointer_click_sequence();
+                    return Ok(());
+                }
+                if self.handle_palette_mouse(kind, &palette_hits, layout.commands, column, row, now)
+                {
+                    return Ok(());
+                }
+                if self.handle_chrome_click(&layout, screen, column, row, now) {
                     return Ok(());
                 }
                 self.screen_selection = None;
@@ -241,13 +278,9 @@ impl App {
                         self.composer_text_char_index_at(&layout, column, row, /*clamp*/ false)
                     {
                         let index = self.composer_caret_index(index);
-                        let double_click = self.input_ui.register_pointer_click(
-                            now,
-                            column,
-                            row,
-                            index,
-                            COMPOSER_DOUBLE_CLICK,
-                        );
+                        let double_click = self
+                            .input_ui
+                            .register_pointer_click(now, column, row, index);
                         if double_click {
                             let range = self
                                 .input_ui
@@ -463,10 +496,8 @@ impl App {
                     }
                 }
             }
-            MouseEventKind::Moved if self.last_mouse_position == Some((column, row)) => {}
             MouseEventKind::Moved => {
                 self.input_ui.cancel_pointer_click_sequence();
-                self.last_mouse_position = Some((column, row));
                 if self.route_picker_mouse(
                     PickerMouseEvent::Move,
                     column,

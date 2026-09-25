@@ -27,6 +27,7 @@ mod attach_picker;
 pub(crate) mod attachment;
 mod background_polls;
 mod cache_stats;
+mod click_sequence;
 mod clipboard;
 mod command_actions;
 mod command_block;
@@ -37,6 +38,7 @@ mod compaction_display;
 mod composer;
 mod composer_attachments;
 mod composer_chrome;
+mod composer_pointer;
 mod computer_command;
 mod computer_overlay;
 mod config_actions;
@@ -50,6 +52,7 @@ mod diff_pane;
 mod diff_viewer;
 mod divider;
 mod doctor_overlay;
+mod drag_selection;
 pub(crate) mod event_adapter;
 mod external_editor;
 mod external_login;
@@ -82,6 +85,7 @@ pub(crate) use goal::GOAL_JUDGE_PROMPT;
 mod changelog_command;
 mod chat_media;
 mod choice_actions;
+mod chrome_pointer;
 mod claude_login;
 mod composer_layout;
 mod copy_actions;
@@ -134,6 +138,8 @@ mod mouse_capture;
 mod notification_card_render;
 mod overlay_panel;
 mod palette;
+mod palette_pointer;
+mod panel_pointer;
 mod panel_text;
 mod paste_burst;
 mod pending_input;
@@ -142,6 +148,7 @@ mod performance_benchmarks;
 mod permission_mode;
 mod picker;
 mod picker_actions;
+mod pointer_actions;
 mod process_panel;
 mod process_peek;
 mod prompt_history;
@@ -226,7 +233,7 @@ use types::*;
 
 use activity::{ActivityPhase, ActivityStatus, BackgroundCounts, LoadingSpinner};
 use app_state::{HistoryUi, InputUi, PendingWorkUi, TurnUi};
-use approval::{approval_lines, ApprovalKeyOutcome};
+use approval::{approval_frame, ApprovalKeyOutcome};
 use chat_media::{
     ChatMedia, ChatTextDocument, ComposerAttachment, MediaAttachId, PendingAttachmentSource,
 };
@@ -257,11 +264,11 @@ use picker::{
 use process_panel::ProcessPanel;
 use prompt_turn::FailedTurn;
 use questionnaire::{
-    questionnaire_cursor_position, questionnaire_lines, questionnaire_notice_text,
-    QuestionAnswerRequest, QuestionnaireReply, QuestionnaireResponseChannel,
+    questionnaire_frame, questionnaire_notice_text, QuestionAnswerRequest, QuestionnaireReply,
+    QuestionnaireResponseChannel,
 };
 use render::{
-    char_prefix_display_width, display_width, input_frame, picker_lines, session_header_lines,
+    char_prefix_display_width, display_width, input_frame, list_picker_frame, session_header_lines,
     styled_line, tool_entry_lines, truncate_one_line, InputFrame, LineFill,
 };
 use scrollbar::HistoryScrollbar;

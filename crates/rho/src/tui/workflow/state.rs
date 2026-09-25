@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
-use crate::workflow::TaskInstanceId;
+use crate::{tui::text_selection::CopyNotice, workflow::TaskInstanceId};
 
 use super::{
     control::{control_policy, ControlPolicy},
@@ -20,6 +20,8 @@ pub(super) struct WorkflowUiState {
     notice: Option<String>,
     details: DetailPane,
     dag_pane: DagPane,
+    /// Result of the last details copy, shown briefly over the screen.
+    copy_notice: Option<CopyNotice>,
 }
 
 impl WorkflowUiState {
@@ -36,6 +38,7 @@ impl WorkflowUiState {
             notice: None,
             details: DetailPane::default(),
             dag_pane: DagPane::default(),
+            copy_notice: None,
         };
         state.details.set_run_directory(run_directory);
         state.refresh_details(/*reset_scroll*/ true);
@@ -106,6 +109,25 @@ impl WorkflowUiState {
 
     pub(super) fn notice(&self) -> Option<&str> {
         self.notice.as_deref()
+    }
+
+    pub(super) fn copy_notice(&self) -> Option<&CopyNotice> {
+        self.copy_notice.as_ref()
+    }
+
+    pub(super) fn set_copy_notice(&mut self, notice: CopyNotice) {
+        self.copy_notice = Some(notice);
+    }
+
+    /// Drop the notice once it has expired, ending the redraw ticks it keeps.
+    pub(super) fn expire_copy_notice(&mut self, now: std::time::Instant) {
+        if self
+            .copy_notice
+            .as_ref()
+            .is_some_and(|notice| !notice.is_visible(now))
+        {
+            self.copy_notice = None;
+        }
     }
 
     pub(super) fn details(&self) -> &DetailPane {
