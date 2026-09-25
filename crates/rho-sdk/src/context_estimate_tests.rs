@@ -87,6 +87,9 @@ async fn context_unchanged_compaction_preserves_provider_baseline() {
             crate::CompactionTrigger::Automatic => {
                 session.complete("second").await.unwrap();
             }
+            crate::CompactionTrigger::ContextOverflow => {
+                unreachable!("cases cover manual and automatic triggers only")
+            }
         }
         let estimate = session.context_estimate();
         assert_eq!(

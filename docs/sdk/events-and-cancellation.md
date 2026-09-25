@@ -56,7 +56,8 @@ sequenceDiagram
 9. Every per-call event and host-input request carries its `ToolCallId`. Within one available call, `ToolStarted` precedes all `ToolUpdated` events and one `ToolFinished` ends the call.
 10. Sync calls in one model response still enter provider and persisted history in model order. Async results enter history in completion order and may be non-adjacent to the original call.
 11. Automatic compaction emits `CompactionStarted` before calling the compactor and `CompactionCompleted` only after committing replacement history. Once committed, cancellation does not suppress that completion event, including under channel backpressure. Hosts must keep consuming events or await `Run::outcome` so the bounded channel can drain. Dropping the run or its receiver still ends delivery. Compaction is skipped while async jobs are pending.
-12. A run that reaches a normal cooperative terminal path emits one of `Completed`, `Cancelled`, or `Failed`.
+12. When a provider rejects a request with `ProviderErrorKind::ContextOverflow` and the runtime has an automatic compaction policy, the runtime emits `ProviderStreamReset` with reason `ContextOverflow`, then compaction events with trigger `CompactionTrigger::ContextOverflow`. If compaction reduced the estimated context, it retries the request once. This happens at most once per model step. Recovery is skipped while async jobs are pending or after the provider accepted mid-turn steering. A second overflow, an unchanged compaction, or a runtime without an automatic policy fails the run with the original provider error. If the compactor fails, the run also fails with the original provider error.
+13. A run that reaches a normal cooperative terminal path emits one of `Completed`, `Cancelled`, or `Failed`.
 
 ### Terminal authority
 

@@ -18,6 +18,9 @@ pub enum ProviderStreamResetReason {
         /// Provider-supplied wait before the next attempt may succeed.
         retry_after: Option<Duration>,
     },
+    /// The request exceeded the model context window. The runtime compacts
+    /// history and retries the request once.
+    ContextOverflow,
 }
 
 /// Reason a successful run stopped producing model turns.

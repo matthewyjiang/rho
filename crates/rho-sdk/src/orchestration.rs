@@ -51,7 +51,7 @@ use async_jobs::{
     await_all_jobs, await_first_job, forward_job_notice, harvest_ready_jobs, split_tool_calls,
     AsyncJobSet, AwaitJobs,
 };
-use compaction::maybe_compact;
+use compaction::{maybe_compact, recover_context_overflow, OverflowRecovery};
 use model_call_timer::ModelCallTimer;
 use provider_cancellation::{
     drain_cancelled_provider_events, drain_cooperative_provider_on_cancellation,
@@ -186,6 +186,11 @@ async fn execute_turn_loop(
             step_index: step,
         };
         let mut compaction_estimate;
+        // Completion input stays protected through overflow recovery too. It
+        // remains a history suffix across automatic compaction, so re-address
+        // it by length; later boundary input and steering append after it.
+        let protected_len = preserve_from.map(|start| history.len() - start);
+        let mut overflow_preserve_from = None;
         if !control.async_jobs.has_pending() {
             match maybe_compact(
                 &core,
@@ -203,6 +208,7 @@ async fn execute_turn_loop(
                     return control.terminate(core, history, error).await;
                 }
             }
+            overflow_preserve_from = protected_len.map(|len| history.len() - len);
         } else {
             if runtime.compaction_policy.is_some() {
                 tracing::warn!(
@@ -263,7 +269,7 @@ async fn execute_turn_loop(
         // Emit before the provider call so quiet hosts still show context fill
         // while thinking and tool-call JSON stream (usage often arrives only at
         // the end of the OpenAI-compatible stream).
-        let context_estimate =
+        let mut context_estimate =
             compaction_estimate.unwrap_or_else(|| core.advance_context(&history, &tool_specs));
         let estimated_context_tokens = context_estimate.estimated_tokens();
         match emit(
@@ -282,30 +288,67 @@ async fn execute_turn_loop(
             }
         }
 
-        let (response, mut capture) = match request_valid_response(
-            request_scope,
-            &history,
-            &tool_specs,
-            &accumulated_usage,
-            runtime.reasoning_level,
-            core.prompt_cache_key().as_deref(),
-            &mut control,
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(error) => {
-                let kind = if cancellation.is_cancelled() {
-                    TerminalKind::Cancelled
-                } else {
-                    TerminalKind::Failed(Error::from(error.error))
-                };
-                control
-                    .async_jobs
-                    .interrupt(control.pending_outputs, &mut history, hooks, &events)
-                    .await;
-                return commit_terminal(core, history, error.capture, kind, &events).await;
+        let mut overflow_recovered = false;
+        let (response, mut capture) = loop {
+            let error = match request_valid_response(
+                request_scope,
+                &history,
+                &tool_specs,
+                &accumulated_usage,
+                runtime.reasoning_level,
+                core.prompt_cache_key().as_deref(),
+                &mut control,
+            )
+            .await
+            {
+                Ok(result) => break result,
+                Err(error) => error,
+            };
+            // One compaction per step. Pending async jobs and provider-accepted
+            // steering tie the request to state compaction must not rewrite.
+            let recover = !overflow_recovered
+                && !control.async_jobs.has_pending()
+                && !control.steering.has_delivered();
+            if recover {
+                overflow_recovered = true;
+                match recover_context_overflow(
+                    &core,
+                    request_scope,
+                    &tool_specs,
+                    &mut history,
+                    overflow_preserve_from,
+                    &error.error,
+                    &cancellation,
+                    &events,
+                )
+                .await
+                {
+                    Ok(OverflowRecovery::Retry) => {
+                        context_estimate = core.advance_context(&history, &tool_specs);
+                        continue;
+                    }
+                    Ok(OverflowRecovery::GiveUp) => {}
+                    Err(recovery_error) => {
+                        tracing::warn!(
+                            error = %recovery_error,
+                            "context overflow compaction failed"
+                        );
+                        if matches!(recovery_error, Error::Cancelled | Error::Interrupted { .. }) {
+                            return control.terminate(core, history, recovery_error).await;
+                        }
+                    }
+                }
             }
+            let kind = if cancellation.is_cancelled() {
+                TerminalKind::Cancelled
+            } else {
+                TerminalKind::Failed(Error::from(error.error))
+            };
+            control
+                .async_jobs
+                .interrupt(control.pending_outputs, &mut history, hooks, &events)
+                .await;
+            return commit_terminal(core, history, error.capture, kind, &events).await;
         };
         accumulated_usage = accumulated_usage.saturating_add(capture.usage());
         // Delivered steering can change the physical request outside this

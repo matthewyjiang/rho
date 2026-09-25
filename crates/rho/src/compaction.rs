@@ -40,8 +40,10 @@ impl CompactionConfig {
 
     /// Translate the model-token target into the local units used to partition
     /// history. A provider-calibrated trigger must not retain an uncalibrated tail.
-    /// Manual requests additionally cap retention at half the current context,
-    /// so `/compact` can remove history below the automatic threshold.
+    /// Manual and context-overflow requests additionally cap retention at half
+    /// the current context, so `/compact` can remove history below the
+    /// automatic threshold and overflow recovery shrinks even when the
+    /// configured window overstates the provider's real limit.
     pub(crate) fn target_tokens_for_context(
         &self,
         context_window: Option<u64>,
@@ -52,7 +54,9 @@ impl CompactionConfig {
             .map(|window| self.target_tokens(window))
             .unwrap_or(u64::MAX / 2);
         let target = match trigger {
-            rho_sdk::CompactionTrigger::Manual => configured.min(context.tokens() / 2),
+            rho_sdk::CompactionTrigger::Manual | rho_sdk::CompactionTrigger::ContextOverflow => {
+                configured.min(context.tokens() / 2)
+            }
             // `CompactionTrigger` is `#[non_exhaustive]`; unknown future
             // triggers keep the configured automatic budget.
             rho_sdk::CompactionTrigger::Automatic | _ => configured,
@@ -375,6 +379,7 @@ mod tests {
         let cases = [
             (rho_sdk::CompactionTrigger::Automatic, 500_000),
             (rho_sdk::CompactionTrigger::Manual, current / 2),
+            (rho_sdk::CompactionTrigger::ContextOverflow, current / 2),
         ];
 
         for (trigger, expected) in cases {
