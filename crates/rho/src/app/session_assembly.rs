@@ -248,6 +248,7 @@ where
                 hooks: hooks.as_ref(),
                 diagnostics: diagnostics.clone(),
                 recall: tool_set.recall_store(),
+                active_goal: tool_set.active_goal(),
             },
             max_steps,
         )?;

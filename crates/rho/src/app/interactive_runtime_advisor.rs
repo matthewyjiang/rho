@@ -196,6 +196,7 @@ impl InteractiveRuntime {
             hooks: self.hooks.as_ref(),
             diagnostics: self.diagnostics.clone(),
             recall: self.tools.recall_store(),
+            active_goal: self.tools.active_goal(),
         })?;
         let replacement_session = replacement_runtime
             .rebind_session(SessionOptions::from_snapshot(snapshot))

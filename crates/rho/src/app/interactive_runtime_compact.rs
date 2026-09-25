@@ -44,6 +44,12 @@ impl InteractiveRuntime {
         Ok(())
     }
 
+    /// Records the TUI's active `/goal` so text-summary compaction keeps it
+    /// verbatim. Call before any turn or compact that could compact history.
+    pub(crate) fn set_active_goal(&self, condition: Option<&str>) {
+        self.tools.active_goal().set(condition);
+    }
+
     pub(crate) fn is_compacting(&self) -> bool {
         self.pending_compact.is_some()
     }

@@ -65,6 +65,7 @@ fn compactor(
         usage_recording: ProviderRequestUsageRecording::new(usage),
         diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
         recall: None,
+        active_goal: Default::default(),
     })
     .0
 }
@@ -307,7 +308,8 @@ async fn manual_trigger_summarizes_below_automatic_target() {
         .await
         .unwrap();
     assert!(summarized(manual.messages()));
-    assert!(manual.messages().len() < history.len());
+    let tokens = |messages: &[Message]| rho_sdk::model::context::estimate_messages_tokens(messages);
+    assert!(tokens(manual.messages()) < tokens(&history));
 }
 
 #[tokio::test]
@@ -381,6 +383,7 @@ fn tiered_compactor(
         usage_recording: ProviderRequestUsageRecording::new(usage),
         diagnostics: diagnostics.clone(),
         recall,
+        active_goal: Default::default(),
     })
     .0;
     (compactor, diagnostics)

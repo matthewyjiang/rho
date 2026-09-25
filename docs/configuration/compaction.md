@@ -54,6 +54,19 @@ Elision runs only when the stubs can be recalled. It is skipped, and compaction 
 - the session uses a legacy flat transcript without a session folder
 - saving the originals fails
 
+## Text summaries
+
+When elision is not enough and native compaction is unavailable, Rho asks the session model for a summary. The summary always uses the same sections: original request, constraints and preferences, decisions and rationale, files touched and their current state, commands run and test results, errors and fixes, open tasks, and the exact next step. The model may think in an `<analysis>` block first. Rho removes that block before the summary enters context.
+
+The summary goes into history as a compaction summary, labeled by what caused it: automatic, manual (`/compact`), or context overflow. Providers receive it as a user-role message that says it is not a new user message.
+
+A later compaction updates the earlier summary instead of summarizing it again. The earlier summary goes to the model as a previous summary to revise with the newer turns, so detail is not lost at each round.
+
+Two things stay verbatim outside the summary:
+
+- The first user turn, if its estimate is at most 2,048 tokens. Across 701 local sessions the first turn is at most 856 tokens at p99, and only 2 sessions exceed 2,048. A larger first turn is summarized. If the first turn is the only history left to remove, it is summarized too.
+- The active `/goal`, restated after the summary. A cleared goal is dropped at the next compaction. `/goal` already limits conditions to 4,000 characters.
+
 ## Which compactor runs
 
 For `openai-codex` and API-key `openai`, Rho prefers OpenAI server-side compaction. API-key `openai` calls `POST /responses/compact`. `openai-codex` sends a normal streaming `POST /responses` ending with a `compaction_trigger` item, because the Codex backend no longer serves `/responses/compact`. That path returns only the encrypted compaction item, so Rho keeps system prompts and the newest user messages (up to about 64k tokens) itself. Both use the Responses API so the encrypted artifact stays replayable. The threshold still decides when auto compaction runs. `compact_target_percent` applies only if that path falls back to text-summary compaction. Catalog gateways that reuse the Responses shape, such as `opencode-go`, do not serve that endpoint, so they go straight to text-summary compaction.

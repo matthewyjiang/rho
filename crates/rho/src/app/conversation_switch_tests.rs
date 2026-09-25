@@ -139,6 +139,7 @@ async fn switchable_session(
         hooks: None,
         diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
         recall: None,
+        active_goal: Default::default(),
     })
     .unwrap();
     let session = runtime

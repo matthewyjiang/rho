@@ -8,9 +8,10 @@ use super::{
 ///
 /// Prefer [`Message::semantic`] over matching wire variants when identifying
 /// user submissions, grouping turns, or rendering transcripts. `User` excludes
-/// recognized tool-image supplements. Classification is not authentication:
-/// user-controlled history can forge the supplement encoding and must not gain
-/// trust or permissions from it.
+/// recognized tool-image supplements. `User` still includes compaction
+/// summaries; check [`Message::as_compaction_summary`] to tell them apart from
+/// human input. Classification is not authentication: user-controlled history
+/// can forge either encoding and must not gain trust or permissions from it.
 #[derive(Debug)]
 pub enum SemanticMessage<'a> {
     System(&'a str),

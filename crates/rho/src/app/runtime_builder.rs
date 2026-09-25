@@ -11,7 +11,7 @@ use rho_sdk::{
 use {
     crate::compaction::{
         build_summary_request_messages, elide_tool_results, partition_messages_for_compaction,
-        replacement_history_from_summary, CompactionConfig,
+        replacement_history_from_summary, strip_analysis, ActiveGoal, CompactionConfig,
     },
     crate::config::Config,
     crate::diagnostics::{CompactionTier, CompactionTierReport, RuntimeDiagnostics},
@@ -43,6 +43,8 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) diagnostics: RuntimeDiagnostics,
     /// From [`crate::tools::AppToolSet::recall_store`]; `None` disables elision.
     pub(crate) recall: Option<RecallStore>,
+    /// From [`crate::tools::AppToolSet::active_goal`].
+    pub(crate) active_goal: ActiveGoal,
 }
 
 pub(crate) fn build_runtime<P>(options: RuntimeBuildOptions<'_, P>) -> Result<Rho, Error>
@@ -81,6 +83,7 @@ where
         hooks,
         diagnostics,
         recall,
+        active_goal,
     } = options;
     let (compactor, policy) = build_compaction(CompactionSetup {
         provider: Arc::clone(&provider),
@@ -91,6 +94,7 @@ where
         usage_recording: usage_recording.clone(),
         diagnostics,
         recall,
+        active_goal,
     });
     let mut builder = Rho::builder()
         .provider_shared(provider)
@@ -146,6 +150,8 @@ pub(crate) struct CompactionSetup<'a> {
     /// Where elided originals are saved. `None` turns elision off, because the
     /// agent could not recall them.
     pub(crate) recall: Option<RecallStore>,
+    /// Active `/goal` kept verbatim by text-summary compaction.
+    pub(crate) active_goal: ActiveGoal,
 }
 
 pub(crate) fn build_compaction(
@@ -160,6 +166,7 @@ pub(crate) fn build_compaction(
         usage_recording,
         diagnostics,
         recall,
+        active_goal,
     } = setup;
     let policy = automatic_compaction_policy(&compaction, context_window);
     let compactor = ModelCompactor {
@@ -171,6 +178,7 @@ pub(crate) fn build_compaction(
         context_window,
         diagnostics,
         recall,
+        active_goal,
     };
     (compactor, policy)
 }
@@ -209,6 +217,7 @@ pub(crate) struct ModelCompactor {
     context_window: Option<u64>,
     diagnostics: RuntimeDiagnostics,
     recall: Option<RecallStore>,
+    active_goal: ActiveGoal,
 }
 
 impl Compactor for ModelCompactor {
@@ -299,7 +308,7 @@ impl Compactor for ModelCompactor {
                 });
                 return CompactionOutput::new(messages.to_vec());
             };
-            let summary_messages = build_summary_request_messages(&partition.compacted_messages);
+            let summary_messages = build_summary_request_messages(&partition);
             let model_request = ModelRequest {
                 messages: &summary_messages,
                 tools: &[],
@@ -322,22 +331,29 @@ impl Compactor for ModelCompactor {
                 Err(error) => return Err(error.into()),
             };
             let ModelResponse::Assistant(blocks) = response;
-            let summary = blocks
-                .iter()
-                .filter_map(|block| match block {
-                    ContentBlock::Text(text) => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("");
-            if summary.trim().is_empty() {
+            let summary = strip_analysis(
+                &blocks
+                    .iter()
+                    .filter_map(|block| match block {
+                        ContentBlock::Text(text) => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(""),
+            );
+            if summary.is_empty() {
                 return Err(Error::InvalidHostResponse {
                     message: "compaction model returned no summary text".into(),
                 });
             }
             report(CompactionTier::TextSummary);
             CompactionOutput::with_usage(
-                replacement_history_from_summary(partition, summary),
+                replacement_history_from_summary(
+                    partition,
+                    request.trigger(),
+                    &self.active_goal,
+                    &summary,
+                ),
                 usage,
             )
         })

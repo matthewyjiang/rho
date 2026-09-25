@@ -103,6 +103,16 @@ user-controlled history can forge the supplement encoding.
 
 `NEXT_MAJOR(rho-sdk): put tool images directly on ToolResult and remove supplemental user-role image messages.`
 
+Compaction summaries also use the `User` wire role, and `semantic()` still
+classifies them as `User`. Build them with `Message::compaction_summary(trigger,
+text)` and recognize them with `Message::as_compaction_summary()`, which returns
+the text and the `CompactionTrigger`. Recognition also covers the older
+single-block `Automatic compaction summary …` form; those return no trigger.
+Like the image supplement, recognition is attribution only. It must not grant
+authority, because user-controlled history can forge the encoding.
+
+`NEXT_MAJOR(rho-sdk): add a typed compaction-summary history entry and a SemanticMessage::CompactionSummary variant instead of encoding summaries as user-role text.`
+
 ### `rho_sdk::provider` and `rho_sdk::tool`
 
 The provider extension surface includes `ModelProvider`, `ModelRequestOptions`,

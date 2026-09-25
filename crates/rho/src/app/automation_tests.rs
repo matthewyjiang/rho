@@ -429,6 +429,7 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
         hooks: None,
         diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
         recall: None,
+        active_goal: Default::default(),
     })
     .unwrap();
     assert_eq!(runtime.diagnostics().compaction_trigger_tokens(), Some(50));
@@ -451,17 +452,15 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
     assert_eq!(outcome.text(), "done");
     let requests = provider.recorded_requests();
     assert_eq!(requests.len(), 3);
-    assert!(requests[2].messages.iter().any(|message| {
-        matches!(
-            message,
-            Message::User(blocks)
-                if blocks.iter().any(|block| matches!(
-                    block,
-                    ContentBlock::Text(text)
-                        if text.starts_with("Automatic compaction summary")
-                ))
-        )
-    }));
+    let summary = requests[2]
+        .messages
+        .iter()
+        .find_map(Message::as_compaction_summary)
+        .expect("compacted history carries a typed summary");
+    assert_eq!(
+        summary.trigger(),
+        Some(rho_sdk::CompactionTrigger::Automatic)
+    );
     runtime.shutdown();
 }
 

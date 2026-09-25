@@ -53,8 +53,10 @@ pub(crate) fn elide_tool_results(
     target_tokens: u64,
 ) -> Option<Elision> {
     let partition = partition_messages_for_compaction(messages, tools, target_tokens)?;
-    let start = partition.leading_messages.len();
-    let end = start + partition.compacted_messages.len();
+    // Anchors and an earlier summary may precede the compacted span, so locate
+    // it from the end.
+    let end = messages.len() - partition.recent_messages.len();
+    let start = end - partition.compacted_messages.len();
     let owners = Owners::new(&messages[start..end], start);
 
     let mut output = messages.to_vec();
