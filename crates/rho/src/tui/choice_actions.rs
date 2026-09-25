@@ -1,7 +1,7 @@
 use ratatui::DefaultTerminal;
 
-use super::composer_pointer::ChoiceClick;
 use super::sessions_hub_tasks::SessionsDelete;
+use super::{app_state::PointerAction, composer_pointer::ChoiceClick};
 use super::{App, ComposerMode, InlineChoiceKeyOutcome, InlineChoicePending, InteractiveRuntime};
 
 impl App {
@@ -97,7 +97,9 @@ impl App {
         }
         match click {
             ChoiceClick::Single => {}
-            ChoiceClick::Double => self.input_ui.request_inline_choice_confirm(),
+            ChoiceClick::Double => self
+                .input_ui
+                .request_pointer_action(PointerAction::ConfirmInlineChoice),
         }
     }
 

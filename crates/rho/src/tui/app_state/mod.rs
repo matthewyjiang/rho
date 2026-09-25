@@ -7,7 +7,7 @@ mod pending_work;
 mod turn_ui;
 
 pub(in crate::tui) use history_ui::HistoryUi;
-pub(in crate::tui) use input_ui::InputUi;
+pub(in crate::tui) use input_ui::{InputUi, PointerAction};
 pub(in crate::tui) use pending_work::PendingWorkUi;
 #[cfg(test)]
 pub(in crate::tui) use turn_ui::SessionUiPhase;

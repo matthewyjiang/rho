@@ -567,7 +567,19 @@ impl App {
                     }
                     Event::Mouse(mouse) => {
                         self.flush_pending_paste_burst();
+                        self.input_ui.take_pointer_action();
                         self.handle_mouse_event(mouse.kind, mouse.column, mouse.row, terminal)?;
+                        if let Some(action) = self.input_ui.take_pointer_action() {
+                            Box::pin(self.run_running_pointer_action(action, terminal))
+                                .await
+                                .map_err(|err| {
+                                    RunningTerminalError::Recoverable(
+                                        rho_providers::model::ModelError::InvalidResponse(
+                                            err.to_string(),
+                                        ),
+                                    )
+                                })?;
+                        }
                     }
                     Event::FocusGained => self.on_focus_gained(),
                     Event::FocusLost => {

@@ -155,10 +155,22 @@ pub(in crate::tui) struct InputUi {
     /// clicks on composer choices wait for this so they never land on rows
     /// the user has not seen yet.
     composer_painted: bool,
-    /// One-shot request from a double click on an inline choice option to
-    /// confirm it like Enter. The pointer handler cannot run the async
-    /// resolver, so the idle loop takes this right after the mouse event.
-    inline_choice_confirm_requested: bool,
+    /// One-shot async follow-up a pointer event asked for. The pointer
+    /// handler is sync and backend-generic, so the event loop takes this right
+    /// after the mouse event and runs it with the terminal and runtime.
+    pointer_action: Option<PointerAction>,
+}
+
+/// Async work a pointer event hands to the event loop.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(in crate::tui) enum PointerAction {
+    /// Confirm the focused inline choice option, like Enter.
+    ConfirmInlineChoice,
+    /// Submit the highlighted picker row, like Enter.
+    SubmitPicker,
+    /// Run a slash command as if typed and submitted, e.g. from a clicked
+    /// statusline field. Carries the full command text (`/permissions`).
+    RunCommand(String),
 }
 
 impl InputUi {
@@ -364,7 +376,7 @@ impl InputUi {
         self.composer_view_start = 0;
         self.hovered_composer_copy = false;
         self.composer_painted = false;
-        self.inline_choice_confirm_requested = false;
+        self.pointer_action = None;
     }
 
     pub(in crate::tui) fn take_composer(&mut self) -> ComposerMode {
@@ -372,18 +384,20 @@ impl InputUi {
         self.composer_view_start = 0;
         self.hovered_composer_copy = false;
         self.composer_painted = false;
-        self.inline_choice_confirm_requested = false;
+        self.pointer_action = None;
         std::mem::replace(&mut self.composer, ComposerMode::Input)
     }
 
-    /// Ask the idle loop to confirm the focused inline choice option.
-    pub(in crate::tui) fn request_inline_choice_confirm(&mut self) {
-        self.inline_choice_confirm_requested = true;
+    /// Ask the event loop to run `action` after this pointer event. Changing
+    /// composer modes drops a pending action, so it never applies to a mode
+    /// the pointer did not act on.
+    pub(in crate::tui) fn request_pointer_action(&mut self, action: PointerAction) {
+        self.pointer_action = Some(action);
     }
 
-    /// Consume a pending inline choice confirm request.
-    pub(in crate::tui) fn take_inline_choice_confirm(&mut self) -> bool {
-        std::mem::take(&mut self.inline_choice_confirm_requested)
+    /// Consume the pending pointer action, if any.
+    pub(in crate::tui) fn take_pointer_action(&mut self) -> Option<PointerAction> {
+        self.pointer_action.take()
     }
 
     pub(in crate::tui) fn composer_painted(&self) -> bool {
