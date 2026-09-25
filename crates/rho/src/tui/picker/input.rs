@@ -291,6 +291,9 @@ pub(super) fn apply_overlay_pointer(
                     }
                 }
             }
+            // The rows moved under a still pointer; re-aim hover at the row
+            // now painted there.
+            picker.set_hovered_nav_row(overlay_nav_row_at(picker, layout, column, row));
         }
         PickerMouseEvent::Click(_) => {
             if let Some(scrollbar) =

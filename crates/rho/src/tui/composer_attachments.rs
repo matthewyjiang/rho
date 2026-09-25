@@ -451,9 +451,13 @@ impl App {
         layout: &ComposerAttachmentLayout,
         composer_start: usize,
     ) {
-        let Some(target) = self.last_mouse_position.and_then(|(column, row)| {
-            attachment_target_at(layout, composer_area, composer_start, column, row)
-        }) else {
+        let Some(target) = self
+            .last_mouse_position
+            .filter(|_| self.chrome_pointer_live(frame.area()))
+            .and_then(|(column, row)| {
+                attachment_target_at(layout, composer_area, composer_start, column, row)
+            })
+        else {
             return;
         };
         // In range: the target row is on screen, inside `composer_area`.

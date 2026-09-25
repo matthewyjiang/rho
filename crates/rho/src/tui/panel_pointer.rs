@@ -38,20 +38,37 @@ pub(super) enum PanelPointerEffect {
     Copy(String),
 }
 
-impl PanelPointer {
-    /// Whether [`PanelPointer::handle`] can act on `kind`. Owners skip
-    /// building a frame for anything else, notably pointer motion.
-    pub(super) fn handles(kind: MouseEventKind) -> bool {
-        matches!(
-            kind,
-            MouseEventKind::ScrollUp
-                | MouseEventKind::ScrollDown
-                | MouseEventKind::Down(MouseButton::Left)
-                | MouseEventKind::Drag(MouseButton::Left)
-                | MouseEventKind::Up(MouseButton::Left)
-        )
-    }
+/// The pointer events a panel acts on. Everything else, notably motion, is
+/// resolved at paint time, so owners skip building a frame for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PanelPointerEvent {
+    Wheel(isize),
+    Press,
+    Drag,
+    Release,
+}
 
+impl PanelPointerEvent {
+    /// The panel event for `kind`, or `None` when a panel ignores it.
+    pub(super) fn from_kind(kind: MouseEventKind) -> Option<Self> {
+        let wheel = HISTORY_MOUSE_SCROLL_LINES as isize;
+        match kind {
+            MouseEventKind::ScrollUp => Some(Self::Wheel(-wheel)),
+            MouseEventKind::ScrollDown => Some(Self::Wheel(wheel)),
+            MouseEventKind::Down(MouseButton::Left) => Some(Self::Press),
+            MouseEventKind::Drag(MouseButton::Left) => Some(Self::Drag),
+            MouseEventKind::Up(MouseButton::Left) => Some(Self::Release),
+            MouseEventKind::Down(MouseButton::Right | MouseButton::Middle)
+            | MouseEventKind::Drag(MouseButton::Right | MouseButton::Middle)
+            | MouseEventKind::Up(MouseButton::Right | MouseButton::Middle)
+            | MouseEventKind::Moved
+            | MouseEventKind::ScrollLeft
+            | MouseEventKind::ScrollRight => None,
+        }
+    }
+}
+
+impl PanelPointer {
     /// Drops the selection, e.g. after the body text changed underneath it.
     pub(super) fn clear_selection(&mut self) {
         self.selection.clear();
@@ -64,25 +81,19 @@ impl PanelPointer {
     /// anchors a selection that is copied on release if the pointer moved.
     pub(super) fn handle(
         &mut self,
-        kind: MouseEventKind,
+        event: PanelPointerEvent,
         column: u16,
         row: u16,
         frame: &OverlayPanelFrame,
     ) -> PanelPointerEffect {
-        let wheel = HISTORY_MOUSE_SCROLL_LINES as isize;
-        match kind {
-            MouseEventKind::ScrollUp => {
+        match event {
+            PanelPointerEvent::Wheel(delta) => {
                 self.scrollbar_drag = None;
-                PanelPointerEffect::ScrollBy(-wheel)
+                PanelPointerEffect::ScrollBy(delta)
             }
-            MouseEventKind::ScrollDown => {
-                self.scrollbar_drag = None;
-                PanelPointerEffect::ScrollBy(wheel)
-            }
-            MouseEventKind::Down(MouseButton::Left) => self.press(column, row, frame),
-            MouseEventKind::Drag(MouseButton::Left) => self.drag(column, row, frame),
-            MouseEventKind::Up(MouseButton::Left) => self.release(column, row, frame),
-            _ => PanelPointerEffect::None,
+            PanelPointerEvent::Press => self.press(column, row, frame),
+            PanelPointerEvent::Drag => self.drag(column, row, frame),
+            PanelPointerEvent::Release => self.release(column, row, frame),
         }
     }
 

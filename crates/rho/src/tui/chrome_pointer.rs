@@ -8,6 +8,8 @@
 //! at draw time, so scroll, resize, and removal re-anchor it without extra
 //! state, and hover and clicks share one gate ([`App::chrome_pointer_live`]).
 
+use std::time::Instant;
+
 use ratatui::layout::{Position, Rect};
 
 use super::{
@@ -33,7 +35,7 @@ impl App {
     /// screen is showing at a usable size with the idle-or-running `Input`
     /// composer, so neither a hover nor a click ever acts behind a modal the
     /// user is in the middle of. Hover and clicks share this one gate.
-    fn chrome_pointer_live(&self, screen: Rect) -> bool {
+    pub(super) fn chrome_pointer_live(&self, screen: Rect) -> bool {
         matches!(self.input_ui.composer(), ComposerMode::Input)
             && self.setup_step().is_none()
             && terminal_meets_minimum(screen)
@@ -47,6 +49,7 @@ impl App {
         screen: Rect,
         column: u16,
         row: u16,
+        now: Instant,
     ) -> bool {
         if !self.chrome_pointer_live(screen) {
             return false;
@@ -58,7 +61,8 @@ impl App {
             let Some(action) = self.statusline.hit_at(offset).map(|hit| hit.action) else {
                 return false;
             };
-            self.clear_pointer_state_for_chrome_click();
+            self.clear_pointer_selections();
+            self.input_ui.cancel_pointer_click_sequence();
             match action {
                 StatusClick::Command(command) => self
                     .input_ui
@@ -78,8 +82,17 @@ impl App {
         .map(|target| target.attachment) else {
             return false;
         };
-        self.clear_pointer_state_for_chrome_click();
-        self.remove_composer_attachment(index);
+        // Removal reflows the row, so the next attachment's button can land
+        // on this same cell. Pair presses by cell alone (indices renumber)
+        // and swallow the second press of a double click, so one double click
+        // never removes two attachments.
+        self.clear_pointer_selections();
+        if !self
+            .input_ui
+            .register_pointer_click(now, column, row, /*index*/ 0)
+        {
+            self.remove_composer_attachment(index);
+        }
         true
     }
 
@@ -108,10 +121,10 @@ impl App {
         self.open_child_picker(child);
     }
 
-    fn clear_pointer_state_for_chrome_click(&mut self) {
+    /// Drop text selections and drags a chrome press supersedes.
+    fn clear_pointer_selections(&mut self) {
         self.screen_selection = None;
         self.input_ui.clear_selection();
-        self.input_ui.cancel_pointer_click_sequence();
         self.history.clear_text_selection();
         self.history.set_scrollbar_drag(None);
         self.clear_rail_pointer_state();

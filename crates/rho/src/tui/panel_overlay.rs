@@ -13,7 +13,7 @@ use ratatui::{layout::Rect, DefaultTerminal};
 
 use super::{
     overlay_panel::{OverlayPanelFrame, PanelScrollTarget},
-    panel_pointer::{PanelPointer, PanelPointerEffect},
+    panel_pointer::{PanelPointer, PanelPointerEffect, PanelPointerEvent},
     App, ComposerMode, PanelOverlay,
 };
 
@@ -115,9 +115,9 @@ impl App {
         self.clear_rail_pointer_state();
         self.history.set_scrollbar_drag(None);
         // Building the frame renders the whole body; skip it for motion.
-        if !PanelPointer::handles(kind) {
+        let Some(event) = PanelPointerEvent::from_kind(kind) else {
             return;
-        }
+        };
         // Hit-test against the frame the user sees, then mutate the panel.
         let Some(frame) = self.panel_overlay_frame(screen, now) else {
             return;
@@ -125,7 +125,7 @@ impl App {
         let ComposerMode::Panel(panel) = self.input_ui.composer_mut() else {
             return;
         };
-        let effect = panel.pointer_mut().handle(kind, column, row, &frame);
+        let effect = panel.pointer_mut().handle(event, column, row, &frame);
         match effect {
             PanelPointerEffect::None => {}
             PanelPointerEffect::ScrollTo(line) => {

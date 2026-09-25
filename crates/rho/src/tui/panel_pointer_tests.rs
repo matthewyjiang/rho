@@ -1,16 +1,15 @@
-use crossterm::event::{MouseButton, MouseEventKind};
 use pretty_assertions::assert_eq;
 use ratatui::{layout::Rect, text::Line};
 
-use super::{PanelPointer, PanelPointerEffect};
+use super::{PanelPointer, PanelPointerEffect, PanelPointerEvent};
 use crate::tui::{
     copy_interaction::CopyHit,
     overlay_panel::{render_overlay_panel, OverlayPanelFrame},
 };
 
-const DOWN: MouseEventKind = MouseEventKind::Down(MouseButton::Left);
-const DRAG: MouseEventKind = MouseEventKind::Drag(MouseButton::Left);
-const UP: MouseEventKind = MouseEventKind::Up(MouseButton::Left);
+const DOWN: PanelPointerEvent = PanelPointerEvent::Press;
+const DRAG: PanelPointerEvent = PanelPointerEvent::Drag;
+const UP: PanelPointerEvent = PanelPointerEvent::Release;
 
 /// 40 rows of `row-NN tail` in a 40x14 area: 8 body rows, so the body
 /// overflows, the scrollbar shows, and the last top line is 32.
@@ -66,7 +65,7 @@ fn scrollbar_drag_maps_pointer_rows_to_top_lines() {
 }
 
 /// One pointer event in a test sequence: its kind and body column.
-type PointerStep = (MouseEventKind, u16);
+type PointerStep = (PanelPointerEvent, u16);
 
 // Covers: a body press routes to the copy target under it before the shared
 // drag selection, and the selection resolves through the frame's scroll (the

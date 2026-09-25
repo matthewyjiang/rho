@@ -248,3 +248,84 @@ fn removing_a_middle_attachment_keeps_its_neighbours() {
         )
     );
 }
+
+// Covers: removal reflows the label row so the next attachment's `✕` can
+// land under the same cell; a double click there removes only one
+// attachment, while a later separate click removes the next.
+// Owner: attachment pointer removal (the one destructive chrome click).
+#[test]
+fn double_click_on_remove_button_removes_one_attachment() {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    use ratatui::{backend::TestBackend, Terminal};
+
+    let document = |name: &str| {
+        ChatMedia::TextDocument(ChatTextDocument {
+            name: name.into(),
+            mime: "text/plain".into(),
+            body: "hi".into(),
+            truncated: false,
+            warnings: Vec::new(),
+        })
+    };
+    let mut app = crate::tui::tests::test_app();
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    // Same-width names so every button sits in the same columns.
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        app.input_ui.push_ready_attachment(document(name), None);
+    }
+    // Screen cells of every painted remove button, in attachment order.
+    let buttons = |app: &mut crate::tui::App| {
+        let ctx = app.frame_context(Rect::new(0, 0, 80, 24));
+        app.composer_attachment_layout(80)
+            .targets
+            .iter()
+            .map(|target| {
+                (
+                    ctx.layout.composer.x + target.columns.start,
+                    ctx.layout.composer.y + (target.row - ctx.layout.composer_start) as u16,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let press = |app: &mut crate::tui::App, terminal: &mut Terminal<TestBackend>, cell| {
+        let (column, row) = cell;
+        app.handle_mouse_event(
+            MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            terminal,
+        )
+        .unwrap();
+        app.handle_mouse_event(MouseEventKind::Up(MouseButton::Left), column, row, terminal)
+            .unwrap();
+    };
+
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    // The composer is bottom-anchored and shrinks a row per removal, so the
+    // label above the removed one slides down into the pointer's cell.
+    let cell = *buttons(&mut app).last().unwrap();
+    press(&mut app, &mut terminal, cell);
+    terminal.draw(|frame| app.draw(frame)).unwrap();
+    assert_eq!(
+        buttons(&mut app).last(),
+        Some(&cell),
+        "reflow puts b.txt's button under the pointer"
+    );
+    press(&mut app, &mut terminal, cell);
+    assert_eq!(
+        app.input_ui.attachments(),
+        vec![
+            ComposerAttachment::Ready(document("a.txt")),
+            ComposerAttachment::Ready(document("b.txt")),
+        ],
+        "the second press of a double click is swallowed"
+    );
+
+    app.input_ui.cancel_pointer_click_sequence();
+    press(&mut app, &mut terminal, cell);
+    assert_eq!(
+        app.input_ui.attachments(),
+        vec![ComposerAttachment::Ready(document("a.txt"))],
+        "a separate click still removes"
+    );
+}

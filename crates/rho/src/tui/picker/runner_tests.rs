@@ -59,7 +59,8 @@ fn event(kind: MouseEventKind, (column, row): (u16, u16)) -> MouseEvent {
 // wheel onto the rows the overlay painted: one click selects, a second click
 // on the same row within the gap submits like Enter, a slow second click or
 // a click on another row only selects, and the wheel scrolls the nav window
-// without moving the selection.
+// without moving the selection while hover re-aims at the row now under the
+// pointer.
 // Owner: standalone picker pointer mapping (pure geometry).
 #[test]
 fn pointer_selects_submits_hovers_and_scrolls_nav_rows() {
@@ -114,6 +115,11 @@ fn pointer_selects_submits_hovers_and_scrolls_nav_rows() {
         top + crate::tui::HISTORY_MOUSE_SCROLL_LINES
     );
     assert_eq!(picker.selected, 3, "the wheel never moves the selection");
+    assert_eq!(
+        picker.hovered_nav_row(),
+        Some(top + crate::tui::HISTORY_MOUSE_SCROLL_LINES + 2),
+        "hover follows the row the wheel scrolled under the pointer"
+    );
     // A click after scrolling selects the row now painted under the pointer.
     apply_mouse(&mut picker, AREA, event(down, row_two), start, &mut clicks);
     assert_eq!(

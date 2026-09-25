@@ -201,7 +201,7 @@ impl App {
                 {
                     return Ok(());
                 }
-                if self.handle_chrome_click(&layout, screen, column, row) {
+                if self.handle_chrome_click(&layout, screen, column, row, now) {
                     return Ok(());
                 }
                 self.screen_selection = None;

@@ -12,7 +12,7 @@ use ratatui::{layout::Rect, DefaultTerminal};
 use super::{
     commands,
     line_editor::LineEditor,
-    panel_pointer::{PanelPointer, PanelPointerEffect},
+    panel_pointer::{PanelPointer, PanelPointerEffect, PanelPointerEvent},
     App, CommandId, CommandInvocation, ComposerMode, Entry,
 };
 use crate::app::side_chat::{spawn_side_chat, SideChatEvent, SideChatHandle, SideChatLaunch};
@@ -376,9 +376,9 @@ impl App {
             return;
         }
         // Building the frame renders the whole transcript; skip it for motion.
-        if !PanelPointer::handles(kind) {
+        let Some(event) = PanelPointerEvent::from_kind(kind) else {
             return;
-        }
+        };
         let Some(side) = self.side_chat.as_mut() else {
             return;
         };
@@ -388,7 +388,7 @@ impl App {
         let Some((frame, metrics)) = side_overlay_frame(&side.overlay, screen) else {
             return;
         };
-        match side.overlay.pointer.handle(kind, column, row, &frame) {
+        match side.overlay.pointer.handle(event, column, row, &frame) {
             PanelPointerEffect::None => {}
             PanelPointerEffect::ScrollTo(line) => side.overlay.scroll_to(line, &metrics),
             PanelPointerEffect::ScrollBy(delta) => side.overlay.scroll_by(delta, &metrics),

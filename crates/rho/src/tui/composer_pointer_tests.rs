@@ -361,7 +361,10 @@ fn inline_picker_hits_name_absolute_items_and_skip_headers() {
 // Owner: composer hover paint (pure buffer pass)
 #[test]
 fn hover_lifts_only_the_hovered_inactive_rows() {
-    use ratatui::{buffer::Buffer, style::Modifier};
+    use ratatui::{
+        buffer::Buffer,
+        style::{Color, Style},
+    };
 
     let origin = Rect::new(0, 0, 6, 3);
     let hits = [
@@ -369,12 +372,19 @@ fn hover_lifts_only_the_hovered_inactive_rows() {
         ComposerHit::rows(1..3, 'b'),
         ComposerHit::rows(3..4, 'c'),
     ];
-    // Screen rows the lift touched: `text_strong` is always bold.
-    let lifted_rows = |start: usize, pointer: Option<(u16, u16)>| {
+    // Paint dim RGB ink everywhere, then report the screen rows the lift
+    // changed. The lift blends RGB ink (or bolds named ink), so any change
+    // to a cell means it was lifted.
+    let painted = {
         let mut buffer = Buffer::empty(origin);
+        buffer.set_style(origin, Style::default().fg(Color::Rgb(90, 90, 90)));
+        buffer
+    };
+    let lifted_rows = |start: usize, pointer: Option<(u16, u16)>| {
+        let mut buffer = painted.clone();
         lift_hovered_hit(&mut buffer, &hits, origin, start, pointer);
         (0..origin.height)
-            .filter(|&y| buffer[(0, y)].modifier.contains(Modifier::BOLD))
+            .filter(|&y| buffer[(0, y)] != painted[(0, y)])
             .collect::<Vec<_>>()
     };
     // (name, visible start, pointer cell, screen rows expected lifted)

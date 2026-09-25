@@ -193,14 +193,14 @@ Internal agent overrides: [Internal agent models](/configuration#internal-agent-
 
 ## Mouse
 
-Everything clickable reacts when you hover over it, and a double click does what `enter` would. A single click only selects or focuses.
+Everything clickable reacts when you hover over it. In pickers, prompts, and palettes, a single click selects or focuses and a double click does what `enter` would. Buttons such as copy targets, status line fields, and an attachment's `✕` act on a single click.
 
 - **Pickers:** click a row to select it and double-click to choose it. The wheel scrolls the list.
 - **Questionnaires, approvals, and confirmation prompts:** click a choice to focus it and double-click to confirm it. Clicks are ignored until the prompt has been drawn, so a stray click cannot move an approval off **Deny** before you see it.
 - **`/` and `@` palettes:** click a row to select it, and scroll over the palette to move the selection. Double-click completes the row like `tab`; it never runs a command.
 - **Panels and side chat** (`/limits`, `/doctor`, `/hooks`, `/info`, `/side`, and similar): drag across text to copy it, drag the scrollbar to scroll, and click a copy target to copy it.
 - **Status line:** click the model, provider, or reasoning to open `/model`; context, cost, or rate to open `/info`; permission mode to open its picker; desktop access to open `/computer`; and a sign-in warning to open `/login`.
-- **Attachments:** click a queued attachment to remove it.
+- **Attachments:** click the `✕` after a queued attachment's label to remove it. Clicking the preview or label does nothing, and a double click removes only one attachment.
 
 ## Status line
 

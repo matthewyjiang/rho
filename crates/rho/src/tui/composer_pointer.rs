@@ -17,12 +17,11 @@ use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::{
     buffer::Buffer,
     layout::{Position, Rect},
-    style::Color,
 };
 
 use super::{
     app_state::PointerAction, approval::ApprovalChoice, frame_context::FrameContext,
-    questionnaire::QuestionnaireTarget, App, ComposerMode, Theme,
+    questionnaire::QuestionnaireTarget, tool_card_hover, App, ComposerMode,
 };
 
 /// A clickable span of composer lines.
@@ -125,10 +124,11 @@ pub(super) fn composer_target_at<T: Copy>(
     composer_hit_at(hits, origin, start, column, row).map(|hit| hit.target)
 }
 
-/// Hover lift for composer choices and palette rows: restyles the painted
-/// cells of the hit under `pointer` with strong text, clipped to `origin`.
-/// The active hit keeps its own highlight. Runs after the lines are painted,
-/// with the same `origin` and `start` the paint used.
+/// Hover lift for composer choices and palette rows: lifts the painted cells
+/// of the hit under `pointer` with the shared hover ink
+/// ([`tool_card_hover::lift_cells`]), which keeps each cell's own hue. The
+/// active hit keeps its own highlight. Runs after the lines are painted, with
+/// the same `origin` and `start` the paint used.
 pub(super) fn lift_hovered_hit<T>(
     buffer: &mut Buffer,
     hits: &[ComposerHit<T>],
@@ -136,25 +136,17 @@ pub(super) fn lift_hovered_hit<T>(
     start: usize,
     pointer: Option<(u16, u16)>,
 ) {
-    let Some(hit) = pointer
+    if let Some(hit) = pointer
         .and_then(|(column, row)| composer_hit_at(hits, origin, start, column, row))
         .filter(|hit| !hit.active)
-    else {
-        return;
-    };
-    // Themes without a text color leave `fg` unset, which would keep a dim
-    // row's ink; reset it so the lift reads the same in every theme.
-    let lift = Theme::text_strong();
-    let lift = lift.fg(lift.fg.unwrap_or(Color::Reset));
-    let visible = start..start.saturating_add(usize::from(origin.height));
-    let columns = hit.columns.start.min(usize::from(origin.width))
-        ..hit.columns.end.min(usize::from(origin.width));
-    for line in hit.lines.start.max(visible.start)..hit.lines.end.min(visible.end) {
-        // Both offsets fit in u16: they are bounded by the origin rect.
-        let y = origin.y + (line - start) as u16;
-        for column in columns.clone() {
-            buffer[(origin.x + column as u16, y)].set_style(lift);
-        }
+    {
+        tool_card_hover::lift_cells(
+            buffer,
+            origin,
+            start,
+            hit.lines.clone(),
+            hit.columns.clone(),
+        );
     }
 }
 
