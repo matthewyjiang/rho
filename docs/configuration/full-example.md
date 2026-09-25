@@ -28,7 +28,7 @@ cache_miss_notices = false
 max_output_bytes = 64000
 
 [compaction]
-auto_compact = false
+auto_compact = true # set false to opt out
 compact_threshold_percent = 85
 compact_target_percent = 50
 

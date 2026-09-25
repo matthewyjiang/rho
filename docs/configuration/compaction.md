@@ -2,7 +2,14 @@
 
 Parent: [Configuration](/configuration).
 
-`auto_compact` summarizes older conversation history when the estimated context approaches the model's effective window. It is off by default. Change it under `/config` → **Context & limits**, or in `[compaction]`.
+`auto_compact` summarizes older conversation history when the estimated context approaches the model's effective window. It is on by default. Change it under `/config` → **Context & limits**, or in `[compaction]`. To opt out, set:
+
+```toml
+[compaction]
+auto_compact = false
+```
+
+Models without a known context window get no automatic compaction or overflow recovery, whatever this setting says. Use `/compact` for them.
 
 `compact_threshold_percent` is the trigger. `compact_target_percent` is the post-compaction target as a percent of the effective window. The target must stay below the threshold. A value at or above the threshold is clamped to one below it on load or save. Rho keeps the recent verbatim tail by token budget and safe tool-call boundaries, not by message count.
 
