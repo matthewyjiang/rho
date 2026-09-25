@@ -20,11 +20,13 @@ pub const ASYNC_TOOL_CALL_CONTEXT_KIND: &str = "rho.sdk.async_tool_call.v1";
 
 use crate::CancellationToken;
 
+mod compaction_summary;
 pub mod context;
 pub mod handoff;
 mod semantic;
 mod tool_image_supplement;
 
+pub use compaction_summary::CompactionSummary;
 pub use semantic::SemanticMessage;
 pub use tool_image_supplement::ToolImageSupplement;
 

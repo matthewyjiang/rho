@@ -15,6 +15,11 @@ pub(crate) fn render_classifier_transcript(
     let mut pending_calls = HashMap::new();
 
     for message in history {
+        // A compaction summary is model-written, so it cannot supply evidence
+        // of user authorization either.
+        if message.as_compaction_summary().is_some() {
+            continue;
+        }
         match message.semantic() {
             // Tool images cannot supply evidence of user authorization.
             SemanticMessage::System(_) | SemanticMessage::ToolImageSupplement(_) => {}

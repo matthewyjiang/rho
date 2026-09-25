@@ -1,7 +1,7 @@
 use std::{num::NonZeroU64, sync::Arc};
 
 use rho_sdk::{
-    model::{ContentBlock, ModelRequest, ModelResponse},
+    model::{ModelRequest, ModelResponse},
     provider::{ModelProvider, ModelRequestOptions},
     CompactionFuture, CompactionOutput, CompactionPolicy, CompactionRequest, Compactor, Error,
     ProviderRequestOutcome, ProviderRequestUsageContext, ProviderRequestUsageEvent,
@@ -11,7 +11,7 @@ use rho_sdk::{
 use {
     crate::compaction::{
         build_summary_request_messages, elide_tool_results, partition_messages_for_compaction,
-        replacement_history_from_summary, CompactionConfig,
+        summary_replacement, CompactionConfig,
     },
     crate::config::Config,
     crate::diagnostics::{CompactionTier, CompactionTierReport, RuntimeDiagnostics},
@@ -299,7 +299,7 @@ impl Compactor for ModelCompactor {
                 });
                 return CompactionOutput::new(messages.to_vec());
             };
-            let summary_messages = build_summary_request_messages(&partition.compacted_messages);
+            let summary_messages = build_summary_request_messages(&partition);
             let model_request = ModelRequest {
                 messages: &summary_messages,
                 tools: &[],
@@ -322,24 +322,9 @@ impl Compactor for ModelCompactor {
                 Err(error) => return Err(error.into()),
             };
             let ModelResponse::Assistant(blocks) = response;
-            let summary = blocks
-                .iter()
-                .filter_map(|block| match block {
-                    ContentBlock::Text(text) => Some(text.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("");
-            if summary.trim().is_empty() {
-                return Err(Error::InvalidHostResponse {
-                    message: "compaction model returned no summary text".into(),
-                });
-            }
+            let replacement = summary_replacement(&partition, request.trigger(), &blocks)?;
             report(CompactionTier::TextSummary);
-            CompactionOutput::with_usage(
-                replacement_history_from_summary(partition, summary),
-                usage,
-            )
+            CompactionOutput::with_usage(replacement, usage)
         })
     }
 

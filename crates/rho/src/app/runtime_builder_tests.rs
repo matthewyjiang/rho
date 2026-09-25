@@ -307,7 +307,8 @@ async fn manual_trigger_summarizes_below_automatic_target() {
         .await
         .unwrap();
     assert!(summarized(manual.messages()));
-    assert!(manual.messages().len() < history.len());
+    let tokens = |messages: &[Message]| rho_sdk::model::context::estimate_messages_tokens(messages);
+    assert!(tokens(manual.messages()) < tokens(&history));
 }
 
 #[tokio::test]
