@@ -131,7 +131,8 @@ pub(super) enum PaletteRow {
 }
 
 /// Palette lines painted above the composer, and which of them are rows a
-/// pointer can pick. Hit line indices count from the first palette line.
+/// pointer can pick. Hit line indices count from the first palette line; the
+/// highlighted row's hit is marked active.
 #[derive(Debug, Default)]
 pub(super) struct PaletteFrame {
     pub(super) lines: Vec<Line<'static>>,
@@ -139,10 +140,11 @@ pub(super) struct PaletteFrame {
 }
 
 impl PaletteFrame {
-    /// Append a pickable row.
-    pub(super) fn push_row(&mut self, line: Line<'static>, row: PaletteRow) {
+    /// Append a pickable row; `selected` marks the highlighted one.
+    pub(super) fn push_row(&mut self, line: Line<'static>, row: PaletteRow, selected: bool) {
         let index = self.lines.len();
-        self.hits.push(ComposerHit::rows(index..index + 1, row));
+        let hit = ComposerHit::rows(index..index + 1, row);
+        self.hits.push(hit.with_active(selected));
         self.lines.push(line);
     }
 

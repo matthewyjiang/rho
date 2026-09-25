@@ -53,7 +53,7 @@ fn statusline_rows_use_display_width_for_alignment() {
         "模型",
         Theme::dim(),
     )];
-    let (line, _) = render_status_row(left, right, 10, /*hovered*/ None);
+    let (line, _) = status_fields_line(&left, &right, 10, /*hovered*/ None);
     assert_eq!(display_width(&line_text(&line)), 10);
 }
 
@@ -91,7 +91,7 @@ fn field_hits_match_painted_columns_across_widths() {
     for width in [100, 66, 51, 45, 36, 27, 20, 12, 6] {
         let (left, right) = pack_bottom_status(&statusline.state, width);
         let fields = left.iter().chain(&right).cloned().collect::<Vec<_>>();
-        let (line, hits) = render_status_row(left, right, width, /*hovered*/ None);
+        let (line, hits) = status_fields_line(&left, &right, width, /*hovered*/ None);
         let recorded = hits
             .into_iter()
             .map(|hit| (hit.key, hit.columns))
@@ -119,7 +119,7 @@ fn hover_lifts_only_the_hovered_clickable_field() {
         .find(|hit| hit.key == FieldKey::Model)
         .cloned()
         .expect("model field is clickable at width 100");
-    assert!(statusline.set_hovered_column(Some(model.columns.start)));
+    statusline.set_hovered_column(Some(model.columns.start));
     let after = statusline.lines(100, None)[FIELDS_ROW].clone();
     let changed = before
         .spans
@@ -135,9 +135,8 @@ fn hover_lifts_only_the_hovered_clickable_field() {
     let text = line_text(&after);
     let zen_byte = text.find(" zen ").expect("zen is painted") + 1;
     let zen_column = display_width(&text[..zen_byte]);
-    assert!(statusline.set_hovered_column(Some(zen_column)));
+    statusline.set_hovered_column(Some(zen_column));
     assert_eq!(statusline.state.hovered, None);
-    assert!(!statusline.set_hovered_column(None));
 }
 
 #[test]

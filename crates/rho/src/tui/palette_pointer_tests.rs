@@ -5,11 +5,15 @@ use crate::tui::{
     composer_pointer::ComposerHit, palette::PaletteRow, tests::test_app, MAX_COMMAND_SUGGESTIONS,
 };
 
-/// One full-width hit per painted row, in paint order.
-fn row_hits(rows: impl IntoIterator<Item = PaletteRow>) -> Vec<ComposerHit<PaletteRow>> {
+/// One full-width hit per painted row, in paint order, with `selected` marked
+/// active.
+fn row_hits(
+    rows: impl IntoIterator<Item = PaletteRow>,
+    selected: PaletteRow,
+) -> Vec<ComposerHit<PaletteRow>> {
     rows.into_iter()
         .enumerate()
-        .map(|(line, row)| ComposerHit::rows(line..line + 1, row))
+        .map(|(line, row)| ComposerHit::rows(line..line + 1, row).with_active(row == selected))
         .collect()
 }
 
@@ -29,14 +33,14 @@ fn scrolled_palette_hits_name_absolute_matches() {
             "command window scrolled past the first rows",
             "/",
             /*selection*/ 7,
-            row_hits((3..=7).map(PaletteRow::Command)),
+            row_hits((3..=7).map(PaletteRow::Command), PaletteRow::Command(7)),
             MAX_COMMAND_SUGGESTIONS,
         ),
         (
             "file window scrolled, footer painted without a hit",
             "@",
             /*selection*/ 6,
-            row_hits((2..=6).map(PaletteRow::File)),
+            row_hits((2..=6).map(PaletteRow::File), PaletteRow::File(6)),
             MAX_COMMAND_SUGGESTIONS + 1,
         ),
     ];

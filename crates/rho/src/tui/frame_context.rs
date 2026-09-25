@@ -30,12 +30,13 @@ impl App {
     /// Compute the frame geometry used by draw, mouse, and scroll.
     ///
     /// Recomputed per event or frame. Do not cache across events: composer text,
-    /// live history, and theme can all change between them.
+    /// live history, and theme can all change between them. Pointer hover is
+    /// not part of the snapshot; paint applies it on top.
     pub(super) fn frame_context(&mut self, area: Rect) -> FrameContext {
         let width = area.width as usize;
         let height = area.height as usize;
-        let mut composer = self.composer_frame(width, height);
-        let mut palette = self.command_suggestion_lines(width);
+        let composer = self.composer_frame(width, height);
+        let palette = self.command_suggestion_lines(width);
         let chrome = interactive_chrome(ChromeRails {
             height,
             desired_statusline_height: self.statusline.height(),
@@ -58,12 +59,6 @@ impl App {
             .saturating_add(live_history.lines.len());
         let layout =
             self.build_screen_layout(area, history_len, &composer.lines, composer.cursor, chrome);
-        // Hover only restyles rows, so the layout above still holds for the
-        // re-rendered ones. Rows re-render only when the hover target changes.
-        if self.refresh_pointer_hover(&composer, &palette, &layout) {
-            composer = self.composer_frame(width, height);
-            palette = self.command_suggestion_lines(width);
-        }
         FrameContext {
             width,
             composer,

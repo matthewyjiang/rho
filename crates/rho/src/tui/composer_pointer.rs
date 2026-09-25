@@ -7,24 +7,22 @@
 //! click selects, a double click confirms the way Enter does. Presses that miss
 //! every choice fall through to the screen handler for selection and copy.
 //!
-//! Hover is resolved per frame from the last pointer cell against the same
-//! hits (see [`App::refresh_pointer_hover`]), so it follows relayouts, typing,
-//! and scrolling without waiting for the pointer to move.
+//! Hover is one paint-time pass ([`lift_hovered_hit`]) over the same hits and
+//! the last pointer cell, so it follows relayouts, typing, and scrolling
+//! without waiting for the pointer to move, and renderers never see it.
 
 use std::{ops::Range, time::Instant};
 
 use crossterm::event::{MouseButton, MouseEventKind};
-use ratatui::layout::{Position, Rect};
+use ratatui::{
+    buffer::Buffer,
+    layout::{Position, Rect},
+    style::Color,
+};
 
 use super::{
-    app_state::PointerAction,
-    approval::ApprovalChoice,
-    frame_context::FrameContext,
-    palette::{PaletteFrame, PaletteRow},
-    questionnaire::QuestionnaireTarget,
-    screen_layout::ScreenLayout,
-    view_composer::ComposerFrame,
-    App, ComposerMode,
+    app_state::PointerAction, approval::ApprovalChoice, frame_context::FrameContext,
+    questionnaire::QuestionnaireTarget, App, ComposerMode, Theme,
 };
 
 /// A clickable span of composer lines.
@@ -36,16 +34,26 @@ pub(super) struct ComposerHit<T> {
     pub(super) lines: Range<usize>,
     pub(super) columns: Range<usize>,
     pub(super) target: T,
+    /// Whether the renderer painted this target as the focused or selected
+    /// one. Hover leaves it alone so its own highlight stays readable.
+    pub(super) active: bool,
 }
 
 impl<T> ComposerHit<T> {
-    /// A target covering every column of `lines`.
+    /// An inactive target covering every column of `lines`.
     pub(super) fn rows(lines: Range<usize>, target: T) -> Self {
         Self {
             lines,
             columns: 0..usize::MAX,
             target,
+            active: false,
         }
+    }
+
+    /// Mark whether this is the focused or selected target.
+    pub(super) fn with_active(mut self, active: bool) -> Self {
+        self.active = active;
+        self
     }
 
     pub(super) fn map_target<U>(self, map: impl FnOnce(T) -> U) -> ComposerHit<U> {
@@ -53,6 +61,7 @@ impl<T> ComposerHit<T> {
             lines: self.lines,
             columns: self.columns,
             target: map(self.target),
+            active: self.active,
         }
     }
 }
@@ -79,19 +88,29 @@ pub(super) struct PickerRowTarget {
     pub(super) window_start: usize,
 }
 
-/// What the pointer rests on in the composer and the palette above it, for
-/// the hover lift. Both are `None` off every clickable row.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(super) struct PointerHover {
-    pub(super) choice: Option<ComposerChoice>,
-    pub(super) palette: Option<PaletteRow>,
-}
-
 /// Whether a press on a choice selects it or confirms it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ChoiceClick {
     Single,
     Double,
+}
+
+/// Resolves the hit painted under a pointer. `origin` is the rect the lines
+/// were painted into and `start` the first line painted there.
+fn composer_hit_at<T>(
+    hits: &[ComposerHit<T>],
+    origin: Rect,
+    start: usize,
+    column: u16,
+    row: u16,
+) -> Option<&ComposerHit<T>> {
+    if !origin.contains(Position { x: column, y: row }) {
+        return None;
+    }
+    let line = start.saturating_add(usize::from(row - origin.y));
+    let column = usize::from(column - origin.x);
+    hits.iter()
+        .find(|hit| hit.lines.contains(&line) && hit.columns.contains(&column))
 }
 
 /// Resolves the target painted under a pointer. `origin` is the composer rect
@@ -103,14 +122,40 @@ pub(super) fn composer_target_at<T: Copy>(
     column: u16,
     row: u16,
 ) -> Option<T> {
-    if !origin.contains(Position { x: column, y: row }) {
-        return None;
+    composer_hit_at(hits, origin, start, column, row).map(|hit| hit.target)
+}
+
+/// Hover lift for composer choices and palette rows: restyles the painted
+/// cells of the hit under `pointer` with strong text, clipped to `origin`.
+/// The active hit keeps its own highlight. Runs after the lines are painted,
+/// with the same `origin` and `start` the paint used.
+pub(super) fn lift_hovered_hit<T>(
+    buffer: &mut Buffer,
+    hits: &[ComposerHit<T>],
+    origin: Rect,
+    start: usize,
+    pointer: Option<(u16, u16)>,
+) {
+    let Some(hit) = pointer
+        .and_then(|(column, row)| composer_hit_at(hits, origin, start, column, row))
+        .filter(|hit| !hit.active)
+    else {
+        return;
+    };
+    // Themes without a text color leave `fg` unset, which would keep a dim
+    // row's ink; reset it so the lift reads the same in every theme.
+    let lift = Theme::text_strong();
+    let lift = lift.fg(lift.fg.unwrap_or(Color::Reset));
+    let visible = start..start.saturating_add(usize::from(origin.height));
+    let columns = hit.columns.start.min(usize::from(origin.width))
+        ..hit.columns.end.min(usize::from(origin.width));
+    for line in hit.lines.start.max(visible.start)..hit.lines.end.min(visible.end) {
+        // Both offsets fit in u16: they are bounded by the origin rect.
+        let y = origin.y + (line - start) as u16;
+        for column in columns.clone() {
+            buffer[(origin.x + column as u16, y)].set_style(lift);
+        }
     }
-    let line = start.saturating_add(usize::from(row - origin.y));
-    let column = usize::from(column - origin.x);
-    hits.iter()
-        .find(|hit| hit.lines.contains(&line) && hit.columns.contains(&column))
-        .map(|hit| hit.target)
 }
 
 impl App {
@@ -202,45 +247,6 @@ impl App {
                 .input_ui
                 .request_pointer_action(PointerAction::SubmitPicker),
         }
-    }
-
-    /// Resolves the composer choice and palette row under the last pointer
-    /// cell against this frame's hits and layout, and records them for the
-    /// hover lift. `true` only when the hovered targets changed, so the caller
-    /// re-renders the rows with the new hover; hover restyles rows without
-    /// changing their count, so the layout stays valid.
-    ///
-    /// The setup screen paints its composer elsewhere, so session geometry
-    /// never hovers there.
-    pub(super) fn refresh_pointer_hover(
-        &mut self,
-        composer: &ComposerFrame,
-        palette: &PaletteFrame,
-        layout: &ScreenLayout,
-    ) -> bool {
-        let hover = match self
-            .last_mouse_position
-            .filter(|_| self.setup_step().is_none())
-        {
-            Some((column, row)) => PointerHover {
-                choice: composer_target_at(
-                    &composer.choice_hits,
-                    layout.composer,
-                    layout.composer_start,
-                    column,
-                    row,
-                ),
-                palette: composer_target_at(
-                    &palette.hits,
-                    layout.commands,
-                    /*start*/ 0,
-                    column,
-                    row,
-                ),
-            },
-            None => PointerHover::default(),
-        };
-        self.input_ui.set_pointer_hover(hover)
     }
 }
 

@@ -68,12 +68,12 @@ fn scrollbar_drag_maps_pointer_rows_to_top_lines() {
 /// One pointer event in a test sequence: its kind and body column.
 type PointerStep = (MouseEventKind, u16);
 
-// Covers: body presses resolve against the scrolled viewport. A drag copies
-// the body line under the pointer (not the screen row), a copy target copies
-// its payload instead of starting a selection, and a click copies nothing.
+// Covers: a body press routes to the copy target under it before the shared
+// drag selection, and the selection resolves through the frame's scroll (the
+// copy is the body line under the pointer, not the screen row).
 // Owner: pure unit
 #[test]
-fn body_press_routes_to_selection_or_copy_target_through_scroll() {
+fn body_press_routes_to_copy_target_or_scrolled_selection() {
     let mut scrolled = frame(/*scroll*/ 10);
     let body = scrolled.body();
     // Body line 11 is the second visible row once scrolled by 10.
@@ -84,7 +84,7 @@ fn body_press_routes_to_selection_or_copy_target_through_scroll() {
     });
     let row = body.y + 1;
     // (name, pointer events as (kind, body column), expected effect of the last)
-    let cases: [(&str, &[PointerStep], PanelPointerEffect); 3] = [
+    let cases: [(&str, &[PointerStep], PanelPointerEffect); 2] = [
         (
             "drag copies the scrolled line",
             &[(DOWN, 0), (DRAG, 3), (UP, 5)],
@@ -94,11 +94,6 @@ fn body_press_routes_to_selection_or_copy_target_through_scroll() {
             "copy target copies on press",
             &[(DOWN, 9)],
             PanelPointerEffect::Copy("payload".into()),
-        ),
-        (
-            "click without movement copies nothing",
-            &[(DOWN, 2), (UP, 2)],
-            PanelPointerEffect::None,
         ),
     ];
     for (name, events, expected) in cases {

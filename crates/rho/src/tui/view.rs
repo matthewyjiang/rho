@@ -14,12 +14,15 @@ use super::tool_card_hover::ToolCardTarget;
 use super::tool_output_ui::tool_output_toggleable;
 use super::{
     composer_chrome::ComposerDividerSlot,
+    composer_pointer::lift_hovered_hit,
     highlight_selection,
+    palette::PaletteFrame,
     picker::picker_overlay_frame,
     render::{pad_display_line, padded_content_width, truncate_one_line},
     render_copy_notice,
     screen_layout::{terminal_meets_minimum, StackedBand, MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH},
     session_header_lines, styled_line, tool_card_hover,
+    view_composer::ComposerFrame,
 };
 use super::{
     history_cache::{HistoryLineSlice, HistoryRenderSettings},
@@ -142,7 +145,7 @@ impl App {
             &ctx.live_history,
         );
         self.draw_panels(frame, surface);
-        self.draw_composer(frame, surface, ctx.composer.lines, ctx.palette.lines);
+        self.draw_composer(frame, surface, ctx.composer, ctx.palette);
         self.draw_cursor(frame, surface);
         if let Some(selection) = self.screen_selection {
             highlight_selection(frame.buffer_mut(), area, 0, selection);
@@ -350,8 +353,8 @@ impl App {
         &mut self,
         frame: &mut Frame<'_>,
         surface: DrawSurface<'_>,
-        composer_lines: Vec<Line<'static>>,
-        command_lines: Vec<Line<'static>>,
+        composer: ComposerFrame,
+        palette: PaletteFrame,
     ) {
         let DrawSurface {
             area,
@@ -360,14 +363,16 @@ impl App {
             layout,
             ..
         } = surface;
-        let composer_visible = composer_lines
+        let composer_visible = composer
+            .lines
             .into_iter()
             .skip(layout.composer_start)
             .take(layout.composer.height as usize)
             .collect::<Vec<_>>();
         frame.render_widget(
             Paragraph::new(
-                command_lines
+                palette
+                    .lines
                     .into_iter()
                     .take(layout.commands.height as usize)
                     .collect::<Vec<_>>(),
@@ -382,6 +387,22 @@ impl App {
         if layout.composer.height > 0 {
             self.input_ui.mark_composer_painted();
         }
+        // Hover is one pass over the painted rows, from the same hits clicks
+        // resolve against, so renderers never know where the pointer is.
+        lift_hovered_hit(
+            frame.buffer_mut(),
+            &palette.hits,
+            layout.commands,
+            /*start*/ 0,
+            self.last_mouse_position,
+        );
+        lift_hovered_hit(
+            frame.buffer_mut(),
+            &composer.choice_hits,
+            layout.composer,
+            layout.composer_start,
+            self.last_mouse_position,
+        );
         self.render_composer_images(frame, layout.composer, width, layout.composer_start);
         if layout.bottom_divider.height > 0 {
             frame.render_widget(
@@ -391,7 +412,7 @@ impl App {
             );
         }
         let statusline_height = layout.statusline.height as usize;
-        self.sync_statusline_hover(layout.statusline, width);
+        self.sync_statusline_hover(area, layout.statusline, width);
         for (index, line) in self
             .statusline_lines(width)
             .iter()
@@ -452,7 +473,8 @@ impl App {
             // Single-pane overlays share pointer feedback. The copy notice is
             // painted with the composer, under the overlay, so repaint it on top.
             ComposerMode::Panel(panel) => self.panel_overlay_frame(area, now).map(|overlay| {
-                let cursor = panel.pointer().paint_overlay(frame, overlay);
+                let at = self.last_mouse_position.map(Position::from);
+                let cursor = panel.pointer().paint_overlay(frame, overlay, at);
                 if let Some(notice) = self.history.copy_notice() {
                     render_copy_notice(frame, area, notice, now);
                 }
@@ -460,7 +482,8 @@ impl App {
             }),
             ComposerMode::Side => self.side_overlay_frame(area).map(|overlay| {
                 let pointer = self.side_overlay_pointer().unwrap_or_default();
-                let cursor = pointer.paint_overlay(frame, overlay);
+                let at = self.last_mouse_position.map(Position::from);
+                let cursor = pointer.paint_overlay(frame, overlay, at);
                 if let Some(notice) = self.history.copy_notice() {
                     render_copy_notice(frame, area, notice, now);
                 }

@@ -5,7 +5,6 @@ use std::time::Instant;
 use crate::tui::{
     click_sequence::ClickSequence,
     composer_attachments::ComposerAttachmentSlot,
-    composer_pointer::PointerHover,
     feed_image::FeedImage,
     inline_shell::InlineShellMode,
     paste_burst::{expand_paste_segments, PasteBurst},
@@ -155,9 +154,6 @@ pub(in crate::tui) struct InputUi {
 struct ComposerPointerState {
     clicks: ClickSequence,
     hovered_copy: bool,
-    /// Composer choice and palette row under the pointer, resolved each
-    /// frame from the last pointer cell.
-    hover: PointerHover,
     /// Whether this mode has reached the screen. Clicks on composer choices
     /// wait for this so they never land on rows the user has not seen yet.
     painted: bool,
@@ -404,18 +400,6 @@ impl InputUi {
         self.pointer.hovered_copy = hovered;
     }
 
-    /// Composer choice and palette row the pointer rests on, for the hover lift.
-    pub(in crate::tui) fn pointer_hover(&self) -> PointerHover {
-        self.pointer.hover
-    }
-
-    /// Record the hovered targets; `true` when they changed.
-    pub(in crate::tui) fn set_pointer_hover(&mut self, hover: PointerHover) -> bool {
-        let changed = self.pointer.hover != hover;
-        self.pointer.hover = hover;
-        changed
-    }
-
     pub(in crate::tui) fn paste_burst(&self) -> &PasteBurst {
         &self.paste_burst
     }
@@ -513,13 +497,8 @@ impl InputUi {
         self.bump_attachments();
     }
 
-    pub(in crate::tui) fn pop_attachment(&mut self) -> Option<ComposerAttachment> {
-        let slot = self.attachments.pop()?;
-        self.bump_attachments();
-        Some(slot.attachment)
-    }
-
-    /// Remove the attachment at `index` (pointer removal of one preview).
+    /// Remove the attachment at `index`. Callers go through
+    /// `App::remove_composer_attachment`, which also cancels pending work.
     pub(in crate::tui) fn remove_attachment(&mut self, index: usize) -> Option<ComposerAttachment> {
         if index >= self.attachments.len() {
             return None;

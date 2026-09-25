@@ -98,9 +98,10 @@ impl App {
     }
 
     /// Pointer input while a panel is open: wheel and scrollbar drag scroll
-    /// the body, a drag selects and copies text, copy targets copy on press,
-    /// and motion updates hover. The panel owns every event so controls hidden
-    /// behind it stay inert.
+    /// the body, a drag selects and copies text, and copy targets copy on
+    /// press. The panel owns every event so controls hidden behind it stay
+    /// inert. Motion needs no work here: paint resolves hover from the app's
+    /// last pointer cell.
     pub(super) fn handle_panel_overlay_mouse(
         &mut self,
         kind: MouseEventKind,
@@ -113,6 +114,10 @@ impl App {
         self.clear_hovered_copy_buttons();
         self.clear_rail_pointer_state();
         self.history.set_scrollbar_drag(None);
+        // Building the frame renders the whole body; skip it for motion.
+        if !PanelPointer::handles(kind) {
+            return;
+        }
         // Hit-test against the frame the user sees, then mutate the panel.
         let Some(frame) = self.panel_overlay_frame(screen, now) else {
             return;

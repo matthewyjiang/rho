@@ -34,9 +34,7 @@ pub(in crate::tui) use overlay::{picker_overlay_frame, OverlayChrome};
 use overlay_layout::DetailViewport;
 pub(in crate::tui) use overlay_layout::{clamp_overlay_scroll, OverlayScrollbarState};
 pub(in crate::tui) use overlay_state::{OverlayFocus, OverlayScrollbarDrag};
-pub(in crate::tui) use rows::{
-    item_row_index, label_column_width, picker_item_rows, RowLayout, RowWidthMode,
-};
+pub(in crate::tui) use rows::{label_column_width, picker_item_rows, RowLayout, RowWidthMode};
 
 #[derive(Debug)]
 pub(super) struct PickerMatches<'a>(Ref<'a, Vec<usize>>);

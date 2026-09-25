@@ -33,33 +33,19 @@ pub(in crate::tui) struct ApprovalFrame {
     pub(in crate::tui) hits: Vec<ComposerHit<ApprovalChoice>>,
 }
 
-/// Renders the approval prompt. `hovered` is the choice under the pointer;
-/// unless it is the active choice, it lifts to strong text.
 pub(in crate::tui) fn approval_frame(
     approval: &ApprovalComposer,
     width: usize,
     viewport_height: usize,
-    hovered: Option<ApprovalChoice>,
 ) -> ApprovalFrame {
-    let mut frame = approval_frame_for_position(
+    approval_frame_for_position(
         approval.request().capability(),
         approval.request().reason(),
         approval.active(),
         approval.detail_offset(),
         width,
         viewport_height,
-    );
-    // Each choice paints one row in one style, so lifting the whole row is
-    // exact. The active row keeps its own highlight.
-    if let Some(hit) = hovered
-        .filter(|choice| *choice != approval.active())
-        .and_then(|choice| frame.hits.iter().find(|hit| hit.target == choice))
-    {
-        for line in &mut frame.lines[hit.lines.clone()] {
-            line.style = Theme::text_strong();
-        }
-    }
-    frame
+    )
 }
 
 pub(super) fn approval_frame_for_position(
@@ -86,7 +72,8 @@ pub(super) fn approval_frame_for_position(
     let mut hits = Vec::with_capacity(ApprovalChoice::ALL.len());
     for choice in ApprovalChoice::ALL {
         let selected = choice == active;
-        hits.push(ComposerHit::rows(lines.len()..lines.len() + 1, choice));
+        let hit = ComposerHit::rows(lines.len()..lines.len() + 1, choice);
+        hits.push(hit.with_active(selected));
         lines.push(Line::styled(
             truncate_one_line(
                 &format!(

@@ -3,9 +3,10 @@
 //!
 //! A statusline field press runs that field's slash command through the event
 //! loop's [`PointerAction`], exactly like typing it, or opens its picker
-//! directly when no command opens it. A press on a composer attachment
-//! removes it. Hover for both derives from the last pointer cell at
-//! draw time, so scroll, resize, and removal re-anchor it without extra state.
+//! directly when no command opens it. A press on an attachment's `✕` button
+//! removes that attachment. Hover for both derives from the last pointer cell
+//! at draw time, so scroll, resize, and removal re-anchor it without extra
+//! state, and hover and clicks share one gate ([`App::chrome_pointer_live`]).
 
 use ratatui::layout::{Position, Rect};
 
@@ -15,7 +16,7 @@ use super::{
     config_picker::{permission_mode_picker, PERMISSION_MODE_VALUE},
     screen_layout::{terminal_meets_minimum, ScreenLayout},
     statusline::{StatusClick, FIELDS_ROW},
-    App, ComposerAttachment, ComposerMode,
+    App, ComposerMode,
 };
 
 /// Row-relative column on the statusline fields row under (`column`, `row`).
@@ -28,11 +29,18 @@ fn fields_row_column(statusline: Rect, column: u16, row: u16) -> Option<usize> {
 }
 
 impl App {
-    /// Handle a primary press on a statusline field or a composer attachment.
-    /// Returns true when the press was consumed.
-    ///
-    /// Both need the idle-or-running `Input` composer: a click never acts
-    /// behind a modal the user is in the middle of.
+    /// Whether bottom-chrome targets react to the pointer: the session
+    /// screen is showing at a usable size with the idle-or-running `Input`
+    /// composer, so neither a hover nor a click ever acts behind a modal the
+    /// user is in the middle of. Hover and clicks share this one gate.
+    fn chrome_pointer_live(&self, screen: Rect) -> bool {
+        matches!(self.input_ui.composer(), ComposerMode::Input)
+            && self.setup_step().is_none()
+            && terminal_meets_minimum(screen)
+    }
+
+    /// Handle a primary press on a statusline field or an attachment's remove
+    /// button. Returns true when the press was consumed.
     pub(super) fn handle_chrome_click(
         &mut self,
         layout: &ScreenLayout,
@@ -40,10 +48,7 @@ impl App {
         column: u16,
         row: u16,
     ) -> bool {
-        if !matches!(self.input_ui.composer(), ComposerMode::Input)
-            || self.setup_step().is_some()
-            || !terminal_meets_minimum(screen)
-        {
+        if !self.chrome_pointer_live(screen) {
             return false;
         }
         let width = usize::from(screen.width);
@@ -74,22 +79,16 @@ impl App {
             return false;
         };
         self.clear_pointer_state_for_chrome_click();
-        match self.input_ui.remove_attachment(index) {
-            Some(ComposerAttachment::Pending { id, .. }) => {
-                self.cancel_pending_attachment(id);
-            }
-            Some(ComposerAttachment::Ready(_)) | None => {}
-        }
-        self.set_status(format!("removed attachment {}", index + 1));
+        self.remove_composer_attachment(index);
         true
     }
 
     /// Point statusline hover at the clickable field under the last pointer
-    /// cell. Draw calls this before painting the statusline.
-    pub(super) fn sync_statusline_hover(&mut self, statusline: Rect, width: usize) {
+    /// cell. Draw calls this before painting the statusline into `screen`.
+    pub(super) fn sync_statusline_hover(&mut self, screen: Rect, statusline: Rect, width: usize) {
         let column = self
             .last_mouse_position
-            .filter(|_| matches!(self.input_ui.composer(), ComposerMode::Input))
+            .filter(|_| self.chrome_pointer_live(screen))
             .and_then(|(column, row)| fields_row_column(statusline, column, row));
         // Hit spans come from the render at this width.
         self.statusline_lines(width);

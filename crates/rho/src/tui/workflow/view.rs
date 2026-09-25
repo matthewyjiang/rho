@@ -12,7 +12,7 @@ use crate::workflow::{
     CommandExit, NodeState, NodeTerminalState, RunLifecycle, WorkflowOutcome, WorkspaceAccess,
 };
 
-use super::super::text_selection::{highlight_selection, render_copy_notice};
+use super::super::text_selection::render_copy_notice;
 #[cfg(any(test, debug_assertions))]
 use super::control::ConfirmKind;
 use super::{
@@ -127,14 +127,11 @@ fn draw_details(frame: &mut Frame<'_>, area: Rect, state: &mut WorkflowUiState) 
         Paragraph::new(state.details().visible_body_lines()),
         body_area,
     );
-    if let Some(selection) = state.details().selection() {
-        highlight_selection(
-            frame.buffer_mut(),
-            state.details().text_area(),
-            state.details().visible_start(),
-            selection,
-        );
-    }
+    state.details().selection().highlight(
+        frame.buffer_mut(),
+        state.details().text_area(),
+        state.details().visible_start(),
+    );
 
     let now = Instant::now();
     if let Some(scrollbar) = state

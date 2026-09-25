@@ -2,9 +2,9 @@
 //!
 //! Every panel and the side chat own one [`PanelPointer`]. It turns pointer
 //! events into scroll or copy effects against the frame the overlay painted:
-//! wheel scrolling, scrollbar drag, drag-to-select with copy on release,
-//! copy-target clicks, and hover feedback. Which overlay is open and how it
-//! applies a scroll stay with the caller.
+//! wheel scrolling, scrollbar drag, drag-to-select with copy on release
+//! ([`DragSelection`]), copy-target clicks, and hover feedback. Which overlay
+//! is open and how it applies a scroll stay with the caller.
 
 use crossterm::event::{MouseButton, MouseEventKind};
 use ratatui::{
@@ -14,22 +14,18 @@ use ratatui::{
 };
 
 use super::{
-    copy_interaction::{selection_position, selection_position_clamped},
-    overlay_panel::OverlayPanelFrame,
-    scrollbar::HistoryScrollbarDrag,
-    text_selection::{highlight_selection, TextSelection},
-    Theme, HISTORY_MOUSE_SCROLL_LINES,
+    drag_selection::DragSelection, overlay_panel::OverlayPanelFrame,
+    scrollbar::HistoryScrollbarDrag, Theme, HISTORY_MOUSE_SCROLL_LINES,
 };
 
-/// Pointer state for one open overlay. Selection lines are body lines, not
-/// screen rows, so a highlight stays on its text while the body scrolls.
+/// Pointer state for one open overlay. Hover is not stored: paint resolves it
+/// from the app's last pointer cell against the frame being painted, so a
+/// move needs no handler work and a scroll or reflow under a still pointer
+/// cannot leave stale hover.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct PanelPointer {
-    selection: Option<TextSelection>,
+    selection: DragSelection,
     scrollbar_drag: Option<HistoryScrollbarDrag>,
-    /// Last pointer cell. Hover is resolved against the frame being painted,
-    /// so a scroll or reflow under a still pointer cannot leave stale hover.
-    at: Option<Position>,
 }
 
 /// What the owning overlay must do after one pointer event.
@@ -43,9 +39,22 @@ pub(super) enum PanelPointerEffect {
 }
 
 impl PanelPointer {
+    /// Whether [`PanelPointer::handle`] can act on `kind`. Owners skip
+    /// building a frame for anything else, notably pointer motion.
+    pub(super) fn handles(kind: MouseEventKind) -> bool {
+        matches!(
+            kind,
+            MouseEventKind::ScrollUp
+                | MouseEventKind::ScrollDown
+                | MouseEventKind::Down(MouseButton::Left)
+                | MouseEventKind::Drag(MouseButton::Left)
+                | MouseEventKind::Up(MouseButton::Left)
+        )
+    }
+
     /// Drops the selection, e.g. after the body text changed underneath it.
     pub(super) fn clear_selection(&mut self) {
-        self.selection = None;
+        self.selection.clear();
     }
 
     /// Resolves one pointer event against `frame`, the overlay as painted.
@@ -60,7 +69,6 @@ impl PanelPointer {
         row: u16,
         frame: &OverlayPanelFrame,
     ) -> PanelPointerEffect {
-        self.at = Some(Position { x: column, y: row });
         let wheel = HISTORY_MOUSE_SCROLL_LINES as isize;
         match kind {
             MouseEventKind::ScrollUp => {
@@ -80,7 +88,7 @@ impl PanelPointer {
 
     fn press(&mut self, column: u16, row: u16, frame: &OverlayPanelFrame) -> PanelPointerEffect {
         self.scrollbar_drag = None;
-        self.selection = None;
+        self.selection.clear();
         if let Some(hit) = frame.copy_hit_at(column, row) {
             return PanelPointerEffect::Copy(hit.text.clone());
         }
@@ -92,8 +100,7 @@ impl PanelPointer {
             self.scrollbar_drag = Some(drag);
             return PanelPointerEffect::ScrollTo(scrollbar.top_line_for_pointer(row, drag));
         }
-        self.selection =
-            selection_position(frame.body(), frame.scroll(), column, row).map(TextSelection::new);
+        self.selection.press(frame.selection_body(), column, row);
         PanelPointerEffect::None
     }
 
@@ -105,12 +112,7 @@ impl PanelPointer {
                     PanelPointerEffect::ScrollTo(scrollbar.top_line_for_pointer(row, drag))
                 });
         }
-        if let (Some(selection), Some(position)) = (
-            self.selection.as_mut(),
-            selection_position_clamped(frame.body(), frame.scroll(), column, row),
-        ) {
-            selection.update(position);
-        }
+        self.selection.drag(frame.selection_body(), column, row);
         PanelPointerEffect::None
     }
 
@@ -118,29 +120,18 @@ impl PanelPointer {
         if self.scrollbar_drag.take().is_some() {
             return PanelPointerEffect::None;
         }
-        let Some(mut selection) = self.selection.take() else {
-            return PanelPointerEffect::None;
-        };
-        if let Some(position) =
-            selection_position_clamped(frame.body(), frame.scroll(), column, row)
-        {
-            selection.update(position);
-        }
-        // A click without movement selects nothing and drops the anchor.
-        let Some(text) = selection.selected_text(frame.body_lines(), /*first_line*/ 0) else {
-            return PanelPointerEffect::None;
-        };
-        // Keep the copied span highlighted until the next press.
-        self.selection = Some(selection);
-        PanelPointerEffect::Copy(text)
+        self.selection
+            .release(frame.selection_body(), column, row)
+            .map_or(PanelPointerEffect::None, PanelPointerEffect::Copy)
     }
 
     /// Paints `overlay` with this pointer's feedback on top and returns the
-    /// overlay caret.
+    /// overlay caret. `at` is the app's last pointer cell, for hover.
     pub(super) fn paint_overlay(
         self,
         frame: &mut Frame<'_>,
         mut overlay: OverlayPanelFrame,
+        at: Option<Position>,
     ) -> Option<Position> {
         // Clear punches host defaults; repaint the surface so light schemes
         // do not leave holes under the panel ink.
@@ -149,19 +140,22 @@ impl PanelPointer {
             Paragraph::new(std::mem::take(&mut overlay.lines)).style(Theme::surface()),
             overlay.outer,
         );
-        self.paint_feedback(frame, &overlay);
+        self.paint_feedback(frame, &overlay, at);
         overlay.cursor
     }
 
     /// The selection highlight, the hovered copy target, and the scrollbar
     /// thumb while hovered or dragged.
-    fn paint_feedback(self, frame: &mut Frame<'_>, overlay: &OverlayPanelFrame) {
+    fn paint_feedback(
+        self,
+        frame: &mut Frame<'_>,
+        overlay: &OverlayPanelFrame,
+        at: Option<Position>,
+    ) {
         let body = overlay.body();
-        let scroll = overlay.scroll();
-        if let Some(selection) = self.selection {
-            highlight_selection(frame.buffer_mut(), body, scroll, selection);
-        }
-        let Some(at) = self.at else {
+        self.selection
+            .highlight(frame.buffer_mut(), body, overlay.scroll());
+        let Some(at) = at else {
             return;
         };
         if let Some(hit) = overlay.copy_hit_at(at.x, at.y) {

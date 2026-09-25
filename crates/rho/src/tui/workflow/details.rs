@@ -12,9 +12,8 @@ use ratatui::{
 use crate::workflow::TaskInstanceId;
 
 use super::super::{
-    copy_interaction::{selection_position, selection_position_clamped},
+    drag_selection::{DragSelection, SelectionBody},
     scrollbar::{HistoryScrollChrome, HistoryScrollbar, ScrollbarMouseInput},
-    text_selection::TextSelection,
     theme::Theme,
     HISTORY_MOUSE_SCROLL_LINES, HISTORY_SCROLLBAR_REVEAL_DURATION,
 };
@@ -37,9 +36,7 @@ pub(super) struct DetailPane {
     cached_width: Option<usize>,
     cached_lines: Vec<Line<'static>>,
     /// Body selection in content-line space, so it survives scrolling.
-    selection: Option<TextSelection>,
-    /// A primary-button drag is extending `selection`.
-    selecting: bool,
+    selection: DragSelection,
     /// Text a finished drag selected; the app loop copies it.
     pending_copy: Option<String>,
 }
@@ -72,7 +69,7 @@ impl DetailPane {
     }
 
     /// Body selection to highlight, in content-line space.
-    pub(super) fn selection(&self) -> Option<TextSelection> {
+    pub(super) fn selection(&self) -> DragSelection {
         self.selection
     }
 
@@ -203,7 +200,8 @@ impl DetailPane {
         );
         if !over_details && !dragging {
             // A press elsewhere on the screen drops the body selection.
-            if matches!(kind, MouseEventKind::Down(MouseButton::Left)) && self.selection.is_some() {
+            if matches!(kind, MouseEventKind::Down(MouseButton::Left)) && self.selection.is_active()
+            {
                 self.clear_selection();
                 return true;
             }
@@ -246,42 +244,26 @@ impl DetailPane {
     }
 
     /// Drag-to-select over the body text. A press that started a scrollbar
-    /// drag never selects; a release with a non-empty selection keeps the
-    /// highlight and queues its text for copy.
+    /// drag never selects; a release that selected text keeps the highlight
+    /// and queues the text for copy.
     fn handle_selection_mouse(&mut self, kind: MouseEventKind, column: u16, row: u16) {
-        let text_area = self.text_area();
-        let top = self.visible_start();
+        let body = SelectionBody {
+            area: self.text_area(),
+            top_line: self.visible_start(),
+            lines: &self.cached_lines,
+        };
         match kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                self.selection = selection_position(text_area, top, column, row)
-                    .filter(|_| self.scroll.drag().is_none() && !self.cached_lines.is_empty())
-                    .map(TextSelection::new);
-                self.selecting = self.selection.is_some();
+            MouseEventKind::Down(MouseButton::Left) if self.scroll.drag().is_some() => {
+                self.selection.clear();
             }
-            MouseEventKind::Drag(MouseButton::Left) if self.selecting => {
-                self.extend_selection(text_area, top, column, row);
-            }
-            MouseEventKind::Up(MouseButton::Left) if self.selecting => {
-                self.extend_selection(text_area, top, column, row);
-                self.selecting = false;
-                match self
-                    .selection
-                    .and_then(|selection| selection.selected_text(&self.cached_lines, 0))
-                {
-                    Some(text) => self.pending_copy = Some(text),
-                    None => self.selection = None,
+            MouseEventKind::Down(MouseButton::Left) => self.selection.press(body, column, row),
+            MouseEventKind::Drag(MouseButton::Left) => self.selection.drag(body, column, row),
+            MouseEventKind::Up(MouseButton::Left) => {
+                if let Some(text) = self.selection.release(body, column, row) {
+                    self.pending_copy = Some(text);
                 }
             }
             _ => {}
-        }
-    }
-
-    fn extend_selection(&mut self, text_area: Rect, top: usize, column: u16, row: u16) {
-        if let (Some(selection), Some(position)) = (
-            self.selection.as_mut(),
-            selection_position_clamped(text_area, top, column, row),
-        ) {
-            selection.update(position);
         }
     }
 
@@ -295,8 +277,7 @@ impl DetailPane {
     }
 
     fn clear_selection(&mut self) {
-        self.selection = None;
-        self.selecting = false;
+        self.selection.clear();
     }
 
     pub(super) fn scrollbar(&self) -> Option<HistoryScrollbar> {

@@ -12,6 +12,7 @@ use ratatui::{
 use super::{
     copy_interaction::CopyHit,
     display_width,
+    drag_selection::SelectionBody,
     picker::{clamp_overlay_scroll, OverlayScrollbarState},
     render::{fit_line, truncate_one_line},
     scrollbar::{track_span, HistoryScrollbar},
@@ -57,10 +58,15 @@ impl OverlayPanelFrame {
         self.scroll
     }
 
-    /// Body rows in body-line coordinates (line 0 is the first row, not the
-    /// first visible one).
-    pub(super) fn body_lines(&self) -> &[Line<'static>] {
-        &self.body_lines
+    /// The painted body, for drag-to-select. Its lines are every body row in
+    /// body-line coordinates (line 0 is the first row, not the first visible
+    /// one).
+    pub(super) fn selection_body(&self) -> SelectionBody<'_> {
+        SelectionBody {
+            area: self.body,
+            top_line: self.scroll,
+            lines: &self.body_lines,
+        }
     }
 
     pub(super) fn scrollbar(&self) -> Option<HistoryScrollbar> {

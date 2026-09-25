@@ -5,11 +5,12 @@ use rho_providers::model::ImageContent;
 use std::io::Cursor;
 
 use super::{
-    attachment_target_at, layout_composer_attachments, ComposerAttachmentSlot, COMPOSER_IMAGE_GAP,
+    attachment_target_at, layout_composer_attachments, AttachmentTarget, ComposerAttachmentSlot,
+    COMPOSER_IMAGE_GAP,
 };
 use crate::tui::{
     feed_image::{FeedImage, ImageRowBudget, COMPOSER_IMAGE_HEIGHT},
-    ChatMedia, ChatTextDocument, MediaAttachId, PendingAttachmentSource,
+    ChatMedia, ChatTextDocument, ComposerAttachment, MediaAttachId, PendingAttachmentSource,
 };
 
 fn kitty_picker() -> Picker {
@@ -142,12 +143,13 @@ fn composer_image_run_wraps_when_gaps_exceed_width() {
     assert_eq!(layout.total_rows, layout.lines.len());
 }
 
-// Covers: a click maps to the attachment painted under the pointer, and a
-// preview cut by the composer scroll window is not a target (it is not
-// painted), so a click can never remove an attachment the user cannot see.
+// Covers: only the painted `✕` button removes an attachment. A press on the
+// image, on the label text, between previews, on a row scrolled out of the
+// composer window, or outside the composer is not a target, so a stray click
+// on a preview can never delete it.
 // Owner: pure layout policy (attachment pointer targets).
 #[test]
-fn attachment_targets_follow_the_painted_window() {
+fn only_the_remove_button_is_an_attachment_target() {
     let slots = vec![
         image_slot(png_asset(40, 40)),
         image_slot(png_asset(40, 40)),
@@ -158,37 +160,91 @@ fn attachment_targets_follow_the_painted_window() {
         ),
     ];
     let layout = layout_composer_attachments(&slots, 40, ImageRowBudget::composer());
-    let strip = &layout.images;
-    let strip_rows = strip[0].height + 1;
-    let doc_row = strip_rows;
-    let area = |height: usize| Rect::new(5, 10, 40, height as u16);
-    let second_image_column = 5 + strip[1].column;
-    // (composer height, first visible line, column, row, expected slot)
+    let button = |attachment: usize| {
+        layout
+            .targets
+            .iter()
+            .find(|target| target.attachment == attachment)
+            .expect("every attachment paints a remove button")
+            .clone()
+    };
+    let (first, second, doc) = (button(0), button(1), button(2));
+    let area = Rect::new(5, 10, 40, layout.total_rows as u16);
+    let at = |target: &AttachmentTarget, start: usize| {
+        (5 + target.columns.start, 10 + (target.row - start) as u16)
+    };
+    // (name, first visible line, pointer cell, expected attachment)
     let cases = [
-        // Image cell and its label row both belong to the preview.
-        (strip_rows + 1, 0, 5, 10, Some(0)),
+        ("first image button", 0, at(&first, 0), Some(0)),
+        ("second image button", 0, at(&second, 0), Some(1)),
+        ("document button", 0, at(&doc, 0), Some(2)),
+        ("image cell above its label", 0, (5, 10), None),
         (
-            strip_rows + 1,
+            "label text left of the button",
             0,
-            second_image_column,
-            10 + strip[0].height as u16,
-            Some(1),
+            (5 + first.columns.start - 2, 10 + first.row as u16),
+            None,
         ),
-        // The gap between previews is not a target.
-        (strip_rows + 1, 0, second_image_column - 1, 10, None),
-        (strip_rows + 1, 0, 5, 10 + doc_row as u16, Some(2)),
-        // Scrolled one line: previews are no longer fully painted.
-        (strip_rows, 1, 5, 10, None),
-        (strip_rows, 1, 5, 10 + (doc_row - 1) as u16, Some(2)),
-        // Outside the composer rect.
-        (strip_rows + 1, 0, 4, 10, None),
+        (
+            "button row scrolled out of the window",
+            first.row + 1,
+            (5 + first.columns.start, 10),
+            None,
+        ),
+        ("outside the composer", 0, (4, 10 + first.row as u16), None),
     ];
-    for (height, start, column, row, expected) in cases {
+    for (name, start, (column, row), expected) in cases {
         assert_eq!(
-            attachment_target_at(&layout, area(height), start, column, row)
-                .map(|target| target.attachment),
+            attachment_target_at(&layout, area, start, column, row).map(|target| target.attachment),
             expected,
-            "height {height} start {start} at ({column}, {row})"
+            "{name}"
         );
     }
+}
+
+// Covers: removing a middle attachment by index (the `✕` path) drops exactly
+// that slot, reports the pending count when it was still extracting, and
+// leaves the other pending extraction in place.
+// Owner: attachment removal policy (shared by Backspace and the pointer).
+#[test]
+fn removing_a_middle_attachment_keeps_its_neighbours() {
+    let document = |name: &str| {
+        ChatMedia::TextDocument(ChatTextDocument {
+            name: name.into(),
+            mime: "text/plain".into(),
+            body: "hi".into(),
+            truncated: false,
+            warnings: Vec::new(),
+        })
+    };
+    let (first_pending, second_pending) = (MediaAttachId::new(), MediaAttachId::new());
+    let mut app = crate::tui::tests::test_app();
+    app.input_ui.push_ready_attachment(document("a.txt"), None);
+    app.input_ui.push_pending_attachment(
+        first_pending,
+        PendingAttachmentSource::File,
+        "b.pdf".into(),
+    );
+    app.input_ui.push_pending_attachment(
+        second_pending,
+        PendingAttachmentSource::File,
+        "c.pdf".into(),
+    );
+
+    app.remove_composer_attachment(1);
+
+    assert_eq!(
+        (app.input_ui.attachments(), app.status().to_string()),
+        (
+            vec![
+                ComposerAttachment::Ready(document("a.txt")),
+                ComposerAttachment::Pending {
+                    id: second_pending,
+                    source: PendingAttachmentSource::File,
+                    name: "c.pdf".into(),
+                },
+            ],
+            "extracting files: 1".to_string(),
+        )
+    );
 }

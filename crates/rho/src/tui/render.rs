@@ -6,8 +6,6 @@ pub(super) use entry_render::{
     apply_markdown_images, entry_lines, render_entry_with_options, TrailingBlank,
 };
 pub(super) use list_picker::list_picker_frame;
-#[cfg(test)]
-pub(super) use list_picker::picker_lines;
 pub(super) use styled_text::{clip_line, fit_line, wrap_text_lines};
 
 use super::{

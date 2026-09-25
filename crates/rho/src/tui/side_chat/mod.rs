@@ -190,7 +190,7 @@ impl App {
         area: Rect,
     ) -> Option<super::overlay_panel::OverlayPanelFrame> {
         let side = self.side_chat.as_ref()?;
-        side_overlay_frame(&side.overlay, area)
+        side_overlay_frame(&side.overlay, area).map(|(frame, _)| frame)
     }
 
     /// Pointer state of the side overlay, for painting hover and selection.
@@ -357,6 +357,8 @@ impl App {
     /// event so clicks, drags, and releases never reach transcript controls
     /// hidden behind it. Left-button and wheel input follow the shared panel
     /// pointer (scrollbar drag, drag-to-copy, copy targets); right-click pastes.
+    /// Motion needs no work here: paint resolves hover from the app's last
+    /// pointer cell.
     pub(super) fn handle_side_overlay_mouse(
         &mut self,
         kind: MouseEventKind,
@@ -373,27 +375,23 @@ impl App {
             self.paste_clipboard_text();
             return;
         }
-        // Hit-test against the frame the user sees, then mutate the overlay.
-        let Some(frame) = self.side_overlay_frame(screen) else {
+        // Building the frame renders the whole transcript; skip it for motion.
+        if !PanelPointer::handles(kind) {
             return;
-        };
+        }
         let Some(side) = self.side_chat.as_mut() else {
             return;
         };
-        let effect = side.overlay.pointer.handle(kind, column, row, &frame);
-        let metrics = side_scroll_metrics(&side.overlay, screen);
-        match effect {
+        // Hit-test against the frame the user sees, then mutate the overlay.
+        // The pointer never changes the body, so the frame's metrics stay
+        // valid for the scroll it asks for.
+        let Some((frame, metrics)) = side_overlay_frame(&side.overlay, screen) else {
+            return;
+        };
+        match side.overlay.pointer.handle(kind, column, row, &frame) {
             PanelPointerEffect::None => {}
-            PanelPointerEffect::ScrollTo(line) => {
-                if let Some(metrics) = metrics {
-                    side.overlay.scroll_to(line, &metrics);
-                }
-            }
-            PanelPointerEffect::ScrollBy(delta) => {
-                if let Some(metrics) = metrics {
-                    side.overlay.scroll_by(delta, &metrics);
-                }
-            }
+            PanelPointerEffect::ScrollTo(line) => side.overlay.scroll_to(line, &metrics),
+            PanelPointerEffect::ScrollBy(delta) => side.overlay.scroll_by(delta, &metrics),
             PanelPointerEffect::Copy(text) => self.copy_text(&text, now),
         }
     }

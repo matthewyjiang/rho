@@ -70,12 +70,13 @@ fn finished_output_loads_and_scrolls_from_top() {
     assert_eq!(pane.visible_body_lines().len(), 5);
 }
 
-// Covers: a drag over the body selects in content-line space (so the copy
-// matches the scrolled view), a release queues the selected text once, and a
-// press outside the pane drops the highlight.
+// Covers: the pane feeds the shared drag selection its scrolled content
+// lines and text columns (so the copy matches the scrolled view), queues the
+// copied text once for the app loop, and drops the highlight on a press
+// outside the pane.
 // Owner: workflow details pane.
 #[test]
-fn drag_over_body_selects_and_queues_copy() {
+fn drag_over_body_queues_scrolled_copy_once() {
     use crossterm::event::{MouseButton, MouseEventKind};
 
     let dir = tempdir().unwrap();
@@ -97,7 +98,6 @@ fn drag_over_body_selects_and_queues_copy() {
 
     assert!(pane.handle_mouse(MouseEventKind::Down(MouseButton::Left), 10, 5));
     assert!(pane.handle_mouse(MouseEventKind::Drag(MouseButton::Left), 15, 6));
-    assert_eq!(pane.take_pending_copy(), None, "drag alone must not copy");
     pane.handle_mouse(MouseEventKind::Up(MouseButton::Left), 15, 6);
     let visible = pane
         .visible_body_lines()
@@ -113,8 +113,8 @@ fn drag_over_body_selects_and_queues_copy() {
         "top line {top}"
     );
     assert_eq!(pane.take_pending_copy(), None);
-    assert!(pane.selection().is_some());
+    assert!(pane.selection().is_active());
 
     assert!(pane.handle_mouse(MouseEventKind::Down(MouseButton::Left), 0, 0));
-    assert_eq!(pane.selection(), None);
+    assert!(!pane.selection().is_active());
 }

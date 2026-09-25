@@ -92,9 +92,7 @@ fn option_hits_tile_each_available_option_group() {
     };
     // (width, whether some option group wraps past label + detail rows)
     for (width, wraps) in [(80, false), (24, true)] {
-        let frame = inline_choice_frame(
-            &choice, width, /*return_to_parent*/ false, /*hovered*/ None,
-        );
+        let frame = inline_choice_frame(&choice, width, /*return_to_parent*/ false);
         let rows: Vec<String> = frame
             .lines
             .iter()

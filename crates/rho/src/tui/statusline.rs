@@ -316,18 +316,15 @@ impl StatusLine {
     }
 
     /// Hover the clickable field painted at row-relative `column` of
-    /// [`FIELDS_ROW`], or clear hover with `None`. Returns whether the hovered
-    /// field changed; a change repaints the row.
-    pub(super) fn set_hovered_column(&mut self, column: Option<usize>) -> bool {
+    /// [`FIELDS_ROW`], or clear hover with `None`. A change repaints the row.
+    pub(super) fn set_hovered_column(&mut self, column: Option<usize>) {
         let hovered = column
             .and_then(|column| self.hit_at(column))
             .map(|hit| hit.key);
-        if self.state.hovered == hovered {
-            return false;
+        if self.state.hovered != hovered {
+            self.state.hovered = hovered;
+            self.invalidate();
         }
-        self.state.hovered = hovered;
-        self.invalidate();
-        true
     }
 
     #[cfg(test)]
@@ -530,7 +527,7 @@ fn statusline_lines(
         .map(|candidates| fit_right_status(&top_left, candidates, width))
         .unwrap_or_default();
     let (bottom_left, bottom_right) = pack_bottom_status(state, width);
-    let (fields_row, hits) = render_status_row(bottom_left, bottom_right, width, state.hovered);
+    let (fields_row, hits) = status_fields_line(&bottom_left, &bottom_right, width, state.hovered);
     let lines = vec![
         render_cwd_row(&cwd_path, cwd_branch, cwd_extra, top_right, width),
         fields_row,
@@ -837,15 +834,6 @@ fn fit_right_status(left: &str, candidates: &[String], width: usize) -> String {
         .unwrap_or_else(|| {
             truncate_one_line(candidates.last().expect("status has a value"), available)
         })
-}
-
-fn render_status_row(
-    left: Vec<StatusField>,
-    right: Vec<StatusField>,
-    width: usize,
-    hovered: Option<FieldKey>,
-) -> (Line<'static>, Vec<StatusFieldHit>) {
-    status_fields_line(&left, &right, width, hovered)
 }
 
 fn render_cwd_row(

@@ -105,7 +105,6 @@ impl App {
     pub(super) fn composer_frame(&mut self, width: usize, viewport_height: usize) -> ComposerFrame {
         self.refresh_composer_attachment_layout_cache(width);
         let composer_copy_hovered = self.input_ui.hovered_composer_copy();
-        let hovered = self.input_ui.pointer_hover().choice;
         match self.input_ui.composer() {
             ComposerMode::Input => {
                 let focused_paste = self
@@ -165,16 +164,7 @@ impl App {
                 if picker.is_overlay() {
                     return ComposerFrame::new(Vec::new(), cursor);
                 }
-                let hovered_item = match hovered {
-                    Some(ComposerChoice::PickerRow(target)) => Some(target.item),
-                    Some(
-                        ComposerChoice::Questionnaire(_)
-                        | ComposerChoice::Approval(_)
-                        | ComposerChoice::InlineChoice(_),
-                    )
-                    | None => None,
-                };
-                let frame = list_picker_frame(picker, width, viewport_height, hovered_item);
+                let frame = list_picker_frame(picker, width, viewport_height);
                 ComposerFrame {
                     choice_hits: frame
                         .hits
@@ -208,27 +198,9 @@ impl App {
                 &modal.choice,
                 width,
                 /*return_to_parent*/ modal.parent_picker.is_some(),
-                match hovered {
-                    Some(ComposerChoice::InlineChoice(index)) => Some(index),
-                    Some(
-                        ComposerChoice::Questionnaire(_)
-                        | ComposerChoice::Approval(_)
-                        | ComposerChoice::PickerRow(_),
-                    )
-                    | None => None,
-                },
             ),
             ComposerMode::Questionnaire(questionnaire) => {
-                let hovered = match hovered {
-                    Some(ComposerChoice::Questionnaire(target)) => Some(target),
-                    Some(
-                        ComposerChoice::Approval(_)
-                        | ComposerChoice::InlineChoice(_)
-                        | ComposerChoice::PickerRow(_),
-                    )
-                    | None => None,
-                };
-                let frame = questionnaire_frame(questionnaire, width, hovered);
+                let frame = questionnaire_frame(questionnaire, width);
                 ComposerFrame {
                     choice_hits: frame
                         .hits
@@ -239,16 +211,7 @@ impl App {
                 }
             }
             ComposerMode::Approval(approval) => {
-                let hovered = match hovered {
-                    Some(ComposerChoice::Approval(choice)) => Some(choice),
-                    Some(
-                        ComposerChoice::Questionnaire(_)
-                        | ComposerChoice::InlineChoice(_)
-                        | ComposerChoice::PickerRow(_),
-                    )
-                    | None => None,
-                };
-                let frame = approval_frame(approval, width, viewport_height, hovered);
+                let frame = approval_frame(approval, width, viewport_height);
                 ComposerFrame {
                     choice_hits: frame
                         .hits
@@ -270,10 +233,9 @@ impl App {
     /// One [`App::active_palette`] resolution decides the palette and yields
     /// its matches, so nothing here asks "visible?" and then matches again.
     /// Hits carry absolute match indices, so a pointer picks the same row the
-    /// scrolled window painted.
+    /// scrolled window painted; the highlighted row's hit is marked active.
     pub(super) fn command_suggestion_lines(&mut self, width: usize) -> PaletteFrame {
         let mut frame = PaletteFrame::default();
-        let hovered = self.input_ui.pointer_hover().palette;
         match self.active_palette() {
             Some(ActivePalette::Command(matches)) => {
                 let selected_index = self
@@ -315,15 +277,15 @@ impl App {
                     let usage_padding =
                         " ".repeat(usage_width.saturating_sub(display_width(&usage)));
                     let text = format!("{marker} {usage}{usage_padding} {description}");
-                    let row = PaletteRow::Command(index);
                     frame.push_row(
                         styled_line(
                             text,
                             width.max(1),
-                            palette_row_style(selected, hovered == Some(row)),
+                            palette_row_style(selected),
                             LineFill::Natural,
                         ),
-                        row,
+                        PaletteRow::Command(index),
+                        selected,
                     );
                 }
             }
@@ -344,15 +306,15 @@ impl App {
                     let selected = index == selected_index;
                     let marker = if selected { ">" } else { " " };
                     let text = format!("{marker} {}", file_palette_row(&entry, matches.source));
-                    let row = PaletteRow::File(index);
                     frame.push_row(
                         styled_line(
                             truncate_one_line(&text, width.max(1)),
                             width.max(1),
-                            palette_row_style(selected, hovered == Some(row)),
+                            palette_row_style(selected),
                             LineFill::Natural,
                         ),
-                        row,
+                        PaletteRow::File(index),
+                        selected,
                     );
                 }
 
@@ -377,13 +339,10 @@ impl App {
     }
 }
 
-/// Palette row ink: the highlighted row stands out, a hovered row lifts
-/// toward it, and the rest recede.
-fn palette_row_style(selected: bool, hovered: bool) -> ratatui::style::Style {
+/// Palette row ink: the highlighted row stands out and the rest recede.
+fn palette_row_style(selected: bool) -> ratatui::style::Style {
     if selected {
         Theme::brand()
-    } else if hovered {
-        Theme::text_strong()
     } else {
         Theme::dim()
     }

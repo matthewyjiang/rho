@@ -3,7 +3,7 @@ use pretty_assertions::assert_eq;
 use ratatui::{backend::TestBackend, layout::Rect, Terminal};
 use rho_sdk::{DefaultSelection, HostChoice, HostInputRequest, HostQuestion, SelectionMode};
 
-use super::{composer_target_at, ComposerChoice, ComposerHit};
+use super::{composer_target_at, lift_hovered_hit, ComposerChoice, ComposerHit};
 use crate::tui::{
     approval::ApprovalChoice,
     questionnaire::{questionnaire_frame, QuestionnaireComposer, QuestionnaireTarget},
@@ -23,6 +23,7 @@ fn pointer_maps_through_origin_and_visible_start() {
             lines: 4..5,
             columns: 3..6,
             target: 'b',
+            active: false,
         },
     ];
     let origin = Rect::new(2, 10, 20, 3);
@@ -97,7 +98,7 @@ fn choice_hits_tile_each_choice_block_in_order() {
         if type_other {
             assert!(composer.insert_text("typed other text that also wraps around"));
         }
-        let frame = questionnaire_frame(&composer, width, /*hovered*/ None);
+        let frame = questionnaire_frame(&composer, width);
         let choices: Vec<_> = frame
             .hits
             .iter()
@@ -176,7 +177,7 @@ fn tab_chip_hits_cover_their_painted_labels() {
     composer.focus_question(3);
 
     // Narrow enough that the tab bar scrolls and paints a left overflow mark.
-    let frame = questionnaire_frame(&composer, 40, /*hovered*/ None);
+    let frame = questionnaire_frame(&composer, 40);
     let mut tabs = Vec::new();
     for hit in &frame.hits {
         let QuestionnaireTarget::Question(index) = hit.target else {
@@ -351,5 +352,44 @@ fn inline_picker_hits_name_absolute_items_and_skip_headers() {
                 "{name}: header row {line} is clickable"
             );
         }
+    }
+}
+
+// Covers: the hover pass lifts only the hovered target's painted rows, never
+// the active (selected) one, clips to the rows the composer window shows, and
+// leaves every cell alone when the pointer is off all targets.
+// Owner: composer hover paint (pure buffer pass)
+#[test]
+fn hover_lifts_only_the_hovered_inactive_rows() {
+    use ratatui::{buffer::Buffer, style::Modifier};
+
+    let origin = Rect::new(0, 0, 6, 3);
+    let hits = [
+        ComposerHit::rows(0..1, 'a').with_active(true),
+        ComposerHit::rows(1..3, 'b'),
+        ComposerHit::rows(3..4, 'c'),
+    ];
+    // Screen rows the lift touched: `text_strong` is always bold.
+    let lifted_rows = |start: usize, pointer: Option<(u16, u16)>| {
+        let mut buffer = Buffer::empty(origin);
+        lift_hovered_hit(&mut buffer, &hits, origin, start, pointer);
+        (0..origin.height)
+            .filter(|&y| buffer[(0, y)].modifier.contains(Modifier::BOLD))
+            .collect::<Vec<_>>()
+    };
+    // (name, visible start, pointer cell, screen rows expected lifted)
+    let cases = [
+        ("inactive two-row target", 0, Some((2, 2)), vec![1, 2]),
+        ("active target stays as painted", 0, Some((2, 0)), vec![]),
+        (
+            "scrolled: target clipped to the window",
+            1,
+            Some((2, 0)),
+            vec![0, 1],
+        ),
+        ("pointer off every target", 0, None, vec![]),
+    ];
+    for (name, start, pointer, expected) in cases {
+        assert_eq!(lifted_rows(start, pointer), expected, "{name}");
     }
 }

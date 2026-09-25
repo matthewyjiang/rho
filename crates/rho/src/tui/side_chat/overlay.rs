@@ -239,7 +239,12 @@ fn resolve_side_scroll(scroll: usize, metrics: &SideScrollMetrics) -> usize {
     }
 }
 
-pub(super) fn side_overlay_frame(overlay: &SideOverlay, area: Rect) -> Option<OverlayPanelFrame> {
+/// The side overlay as painted at `area`, with the scroll metrics of that
+/// same render so pointer scrolling needs no second body render.
+pub(super) fn side_overlay_frame(
+    overlay: &SideOverlay,
+    area: Rect,
+) -> Option<(OverlayPanelFrame, SideScrollMetrics)> {
     let PreparedSidePanel {
         body,
         inner_width,
@@ -276,7 +281,7 @@ pub(super) fn side_overlay_frame(overlay: &SideOverlay, area: Rect) -> Option<Ov
             .saturating_add(1)
             .saturating_add(input_screen_row as u16),
     });
-    Some(frame)
+    Some((frame, metrics))
 }
 
 fn truncate_input(input: &str, width: usize) -> String {

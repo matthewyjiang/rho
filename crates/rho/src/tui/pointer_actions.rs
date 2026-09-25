@@ -34,7 +34,14 @@ impl App {
             }
             PointerAction::RunCommand(text) => {
                 if let Some(invocation) = self.pointer_command(&text) {
-                    let submission = self.pointer_command_submission(invocation, text);
+                    // The click carries its own command text and no media or
+                    // pasted segments, so the composer draft stays untouched.
+                    let submission = CommandSubmission::new(
+                        invocation,
+                        TurnPrompt::command(text.clone(), text),
+                        Vec::new(),
+                        Vec::new(),
+                    );
                     self.execute_command(submission, terminal, agent).await?;
                 }
             }
@@ -65,21 +72,6 @@ impl App {
             }
         }
         Ok(())
-    }
-
-    /// A command submission that leaves the composer draft untouched: the
-    /// click carries its own command text and no media or pasted segments.
-    fn pointer_command_submission(
-        &self,
-        invocation: commands::CommandInvocation,
-        text: String,
-    ) -> CommandSubmission {
-        CommandSubmission::new(
-            invocation,
-            TurnPrompt::command(text.clone(), text),
-            Vec::new(),
-            Vec::new(),
-        )
     }
 
     /// Parses a pointer-issued command. Only an idle `Input` composer runs

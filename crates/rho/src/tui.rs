@@ -50,6 +50,7 @@ mod context_handoff;
 mod copy_interaction;
 mod divider;
 mod doctor_overlay;
+mod drag_selection;
 pub(crate) mod event_adapter;
 mod external_editor;
 mod external_login;

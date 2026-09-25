@@ -7,9 +7,7 @@ use super::{styled_line, truncate_one_line, LineFill};
 use crate::tui::{
     composer_chrome::wrap_footer_parts,
     composer_pointer::{ComposerHit, PickerRowTarget},
-    picker::{
-        item_row_index, label_column_width, picker_item_rows, PickerDetail, RowLayout, RowWidthMode,
-    },
+    picker::{label_column_width, picker_item_rows, PickerDetail, RowLayout, RowWidthMode},
     theme::Theme,
     UiPicker,
 };
@@ -37,27 +35,17 @@ fn picker_visible_item_cap(picker: &UiPicker, viewport_height: usize, footer_row
         .max(1)
 }
 
-/// Inline list picker rows without hover, for render tests.
-#[cfg(test)]
-pub(in crate::tui) fn picker_lines(
-    picker: &UiPicker,
-    width: usize,
-    viewport_height: usize,
-) -> Vec<Line<'static>> {
-    list_picker_frame(picker, width, viewport_height, /*hovered_item*/ None).lines
-}
-
 /// Inline list picker rows plus one pointer hit per painted item row.
 ///
-/// Hit line indices count from the first picker line. Section headers, the
-/// filter, and the footer take no hits.
+/// Hit line indices count from the first picker line, and the selected row's
+/// hit is marked active. Section headers, the filter, and the footer take no
+/// hits.
 pub(in crate::tui) struct ListPickerFrame {
     pub(in crate::tui) lines: Vec<Line<'static>>,
     pub(in crate::tui) hits: Vec<ComposerHit<PickerRowTarget>>,
 }
 
-/// Renders the inline list picker. `hovered_item` (an index into the full
-/// item list) gets the hover lift when it is painted.
+/// Renders the inline list picker. Hover is painted on top from the hits.
 ///
 /// The item window comes from [`UiPicker::nav_window_start`], so it only
 /// scrolls when the selection leaves it, and a click can hold it in place.
@@ -65,7 +53,6 @@ pub(in crate::tui) fn list_picker_frame(
     picker: &UiPicker,
     width: usize,
     viewport_height: usize,
-    hovered_item: Option<usize>,
 ) -> ListPickerFrame {
     let footer_text = list_picker_footer_text(picker, width);
     let footer_lines = list_picker_footer_lines(&footer_text, width);
@@ -95,14 +82,12 @@ pub(in crate::tui) fn list_picker_frame(
         show_preview: true,
         fill: LineFill::Natural,
     };
-    let hovered_row =
-        hovered_item.and_then(|item| item_row_index(&picker.items, &matching_indices, item));
     let rows = picker_item_rows(
         &picker.items,
         &matching_indices,
         picker.selected,
         row_layout,
-        hovered_row,
+        /*hovered_row*/ None,
     );
     let start = picker.nav_window_start(item_cap);
     for (line, item) in rows
@@ -113,13 +98,16 @@ pub(in crate::tui) fn list_picker_frame(
         .take(item_cap)
     {
         if let Some(item) = item {
-            hits.push(ComposerHit::rows(
-                lines.len()..lines.len() + 1,
-                PickerRowTarget {
-                    item,
-                    window_start: start,
-                },
-            ));
+            hits.push(
+                ComposerHit::rows(
+                    lines.len()..lines.len() + 1,
+                    PickerRowTarget {
+                        item,
+                        window_start: start,
+                    },
+                )
+                .with_active(item == picker.selected),
+            );
         }
         lines.push(line);
     }
