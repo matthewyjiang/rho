@@ -64,7 +64,7 @@ impl WorkspaceSearch for GlobSearch {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "description": "Glob pattern. Without `/` it matches file names at any depth; with `/` it matches paths relative to `path`. `*` does not cross `/`; use `**` for any depth."},
+                    "pattern": {"type": "string", "description": "Glob pattern. Without `/` it matches file names at any depth; with `/` it matches paths relative to `path`. `*` does not cross `/`; use `**` for any depth. A leading `!` excludes matches instead."},
                     "path": {"type": "string", "description": "Directory to search. Defaults to the working directory."},
                     "include_hidden": {"type": "boolean", "description": "Include hidden files. Defaults to false."},
                     "max_results": {"type": "integer", "minimum": 1, "description": "Maximum paths to return. Defaults to 200, capped at 1000."}

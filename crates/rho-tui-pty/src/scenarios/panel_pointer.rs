@@ -135,15 +135,25 @@ struct Track {
     bottom: u16,
 }
 
+/// Waits for the overlay chrome to finish painting, then locates its
+/// scrollbar. Body text can land a frame before the footer rule, so reading
+/// the chrome once right after a text wait races the redraw.
+fn overlay_track(harness: &mut PtyHarness) -> Result<Track> {
+    wait_until(harness, "overlay chrome not found", |harness| {
+        find_overlay_track(harness).is_some()
+    })?;
+    find_overlay_track(harness).context("overlay chrome vanished after it painted")
+}
+
 /// Locates the overlay scrollbar from the panel chrome: the footer rule
 /// (`├──┤`) sits under the body with the panel's `┌` corner above it, the
 /// track is the column left of `┤`, and the body starts under the `┌`. The
 /// copy notice can cover the top-right corner, so the right edge is read from
 /// the footer rule.
-fn overlay_track(harness: &PtyHarness) -> Result<Track> {
+fn find_overlay_track(harness: &PtyHarness) -> Option<Track> {
     let screen = harness.screen();
     let symbol = |row: u16, col: u16| screen.cell(row, col).map(|cell| cell.contents);
-    let track = (0..screen.rows()).rev().find_map(|rule_row| {
+    (0..screen.rows()).rev().find_map(|rule_row| {
         let left = (0..screen.cols()).find(|&col| symbol(rule_row, col).as_deref() == Some("├"))?;
         let right =
             (left..screen.cols()).find(|&col| symbol(rule_row, col).as_deref() == Some("┤"))?;
@@ -155,8 +165,7 @@ fn overlay_track(harness: &PtyHarness) -> Result<Track> {
             top: top_border + 1,
             bottom: rule_row - 1,
         })
-    });
-    track.with_context(|| format!("overlay chrome not found:\n{}", screen.debug_dump()))
+    })
 }
 
 /// Polls until `done` holds, failing with `what` and a screen dump.
