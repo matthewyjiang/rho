@@ -69,9 +69,6 @@ For a deterministic multi-step graph, see the
 
 Read the documentation at <https://matthewyjiang.github.io/rho/>.
 
-## Development
+## Contributing
 
-```bash
-cargo build
-cargo test
-```
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the guidelines.

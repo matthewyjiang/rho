@@ -1,3 +1,5 @@
+- [ ] I have followed all rules in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Summary
 
 <!-- What changed and why. -->
