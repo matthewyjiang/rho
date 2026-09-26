@@ -215,14 +215,13 @@ impl BackgroundTasks {
         !self.ready.is_empty() || self.running.iter().any(|task| task.abort.is_finished())
     }
 
-    /// Take the oldest finished output that `select` accepts (`Ok`);
-    /// rejected outputs (`Err`) stay queued. Callers apply one output before
-    /// taking the next, so an apply that aborts other tasks also drops their
-    /// already-finished outputs.
-    pub(super) fn take_next_finished<U>(
+    /// Take the oldest finished output that `accepts`; the rest stay queued.
+    /// Callers apply one output before taking the next, so an apply that
+    /// aborts other tasks also drops their already-finished outputs.
+    pub(super) fn take_next_finished(
         &mut self,
-        mut select: impl FnMut(TaskOutput) -> Result<U, TaskOutput>,
-    ) -> Option<U> {
+        accepts: impl Fn(&TaskOutput) -> bool,
+    ) -> Option<TaskOutput> {
         let mut index = 0;
         while index < self.running.len() {
             if let Some(output) = (&mut self.running[index].output).now_or_never() {
@@ -232,20 +231,8 @@ impl BackgroundTasks {
                 index += 1;
             }
         }
-        let mut rejected = Vec::new();
-        let mut taken = None;
-        while let Some((id, output)) = (!self.ready.is_empty()).then(|| self.ready.remove(0)) {
-            match select(output) {
-                Ok(output) => {
-                    taken = Some(output);
-                    break;
-                }
-                Err(output) => rejected.push((id, output)),
-            }
-        }
-        rejected.append(&mut self.ready);
-        self.ready = rejected;
-        taken
+        let index = self.ready.iter().position(|(_, output)| accepts(output))?;
+        Some(self.ready.remove(index).1)
     }
 
     /// Drop matching tasks and their unapplied outputs without waiting.
@@ -299,10 +286,13 @@ impl App {
     /// `update_activity_panels`.
     pub(super) fn apply_finished_ui_tasks(&mut self) -> bool {
         let mut changed = false;
-        while let Some(output) = self.tasks.take_next_finished(|output| match output {
-            TaskOutput::Ui(output) => Ok(output),
-            output @ TaskOutput::Session(_) => Err(output),
-        }) {
+        while let Some(output) = self
+            .tasks
+            .take_next_finished(|output| matches!(output, TaskOutput::Ui(_)))
+        {
+            let TaskOutput::Ui(output) = output else {
+                unreachable!("only Ui outputs are accepted");
+            };
             changed |= self.apply_ui_output(output);
         }
         changed
@@ -334,10 +324,8 @@ impl App {
     ) -> Option<TaskOutput> {
         let session_busy = agent.is_session_busy();
         self.tasks.take_next_finished(|output| match output {
-            TaskOutput::Session(output) if session_busy && output.waits_for_idle_session() => {
-                Err(output.into())
-            }
-            output => Ok(output),
+            TaskOutput::Session(output) => !(session_busy && output.waits_for_idle_session()),
+            TaskOutput::Ui(_) => true,
         })
     }
 

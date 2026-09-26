@@ -33,12 +33,19 @@ async fn cancel_all_honors_each_task_cancel_policy() {
         update_notice,
     );
 
+    // Wait until the blocking task runs: abort still cancels one that has
+    // not started, and this test is about one that ignores abort.
     let (release_blocking, blocked) = mpsc::channel::<()>();
+    let (blocking_started, started) = tokio::sync::oneshot::channel::<()>();
     tasks.spawn_blocking(
         TaskId::SyntaxWarmup,
-        move || blocked.recv().unwrap(),
+        move || {
+            blocking_started.send(()).unwrap();
+            blocked.recv().unwrap();
+        },
         |_| SessionOutput::SyntaxWarmup.into(),
     );
+    started.await.unwrap();
 
     let (release_cache, cache_gate) = tokio::sync::oneshot::channel::<()>();
     let (cache_done, cache_written) = tokio::sync::oneshot::channel::<()>();
@@ -76,13 +83,13 @@ async fn abort_drops_held_outputs() {
         update_notice,
     );
     wait_finished(&tasks).await;
-    assert!(tasks.take_next_finished(Err::<TaskOutput, _>).is_none());
+    assert!(tasks.take_next_finished(|_| false).is_none());
     assert!(tasks.contains(|id| *id == TaskId::UpdateNotice));
 
     tasks.abort(|id| *id == TaskId::UpdateNotice);
 
     assert!(!tasks.has_pending());
-    assert!(tasks.take_next_finished(Ok::<_, TaskOutput>).is_none());
+    assert!(tasks.take_next_finished(|_| true).is_none());
 }
 
 // Covers: outputs are handed out one at a time, so an apply that aborts
@@ -98,8 +105,8 @@ async fn abort_between_takes_drops_outputs_that_finished_together() {
         tokio::task::yield_now().await;
     }
 
-    assert!(tasks.take_next_finished(Ok::<_, TaskOutput>).is_some());
+    assert!(tasks.take_next_finished(|_| true).is_some());
     tasks.abort(|id| matches!(id, TaskId::UpdateNotice | TaskId::Changelog));
 
-    assert!(tasks.take_next_finished(Ok::<_, TaskOutput>).is_none());
+    assert!(tasks.take_next_finished(|_| true).is_none());
 }
