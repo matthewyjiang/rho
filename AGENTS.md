@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Fork pull requests follow [CONTRIBUTING.md](CONTRIBUTING.md). Do not run a command to decide whether this checkout is a fork.
+Fork pull requests follow [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Commits and pull requests
 
