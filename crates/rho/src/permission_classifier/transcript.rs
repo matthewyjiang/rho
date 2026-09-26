@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
+use crate::history_message::HistoryMessage;
 use rho_providers::model::{ContentBlock, Message, ToolCall, ToolResult};
-use rho_sdk::model::SemanticMessage;
 use rho_sdk::{
     ApprovalRequest, CapabilityOperation, CapabilityRequest, CapabilitySource, NetworkTarget,
     PathScope,
@@ -15,15 +15,13 @@ pub(crate) fn render_classifier_transcript(
     let mut pending_calls = HashMap::new();
 
     for message in history {
-        // A compaction summary is model-written, so it cannot supply evidence
-        // of user authorization either.
-        if message.as_compaction_summary().is_some() {
-            continue;
-        }
-        match message.semantic() {
-            // Tool images cannot supply evidence of user authorization.
-            SemanticMessage::System(_) | SemanticMessage::ToolImageSupplement(_) => {}
-            SemanticMessage::User(blocks) => {
+        match HistoryMessage::of(message) {
+            // Tool images and model-written compaction summaries cannot
+            // supply evidence of user authorization.
+            HistoryMessage::System(_)
+            | HistoryMessage::ToolImageSupplement(_)
+            | HistoryMessage::CompactionSummary(_) => {}
+            HistoryMessage::User(blocks) => {
                 for block in blocks {
                     match block {
                         ContentBlock::Text(text) => {
@@ -36,16 +34,16 @@ pub(crate) fn render_classifier_transcript(
                     }
                 }
             }
-            SemanticMessage::Assistant(blocks) => {
+            HistoryMessage::Assistant(blocks) => {
                 append_tool_calls(&mut lines, &mut pending_calls, blocks)?;
             }
-            SemanticMessage::EnrichedAssistant(assistant) => {
+            HistoryMessage::EnrichedAssistant(assistant) => {
                 append_tool_calls(&mut lines, &mut pending_calls, &assistant.content)?;
             }
-            SemanticMessage::AbortedAssistant(aborted) => {
+            HistoryMessage::AbortedAssistant(aborted) => {
                 append_tool_calls(&mut lines, &mut pending_calls, &aborted.content)?;
             }
-            SemanticMessage::ToolResult(result) => {
+            HistoryMessage::ToolResult(result) => {
                 if let Some(call) = pending_calls.remove(result.id.as_str()) {
                     append_questionnaire_answers(&mut lines, call, result)?;
                 }

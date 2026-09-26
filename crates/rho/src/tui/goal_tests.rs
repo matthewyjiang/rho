@@ -139,6 +139,26 @@ fn transcript_preserves_portable_fallback_without_opaque_context() {
     assert!(!transcript.contains("secret-ciphertext"));
 }
 
+// Covers: the goal judge sees a compaction summary as a labeled recap, not as
+// a user message it could read as the user's own claim.
+// Owner: goal evaluation transcript
+#[test]
+fn transcript_labels_compaction_summaries() {
+    let transcript = evaluation_transcript(&[
+        Message::compaction_summary(rho_sdk::CompactionTrigger::Manual, "tests pass"),
+        Message::user_text("keep going"),
+    ]);
+
+    assert_eq!(
+        transcript,
+        [
+            r#"{"CompactionSummary":"tests pass"}"#,
+            r#"{"User":[{"Text":"keep going"}]}"#,
+        ]
+        .join("\n")
+    );
+}
+
 #[test]
 fn transcript_tail_is_unicode_safe() {
     assert_eq!(

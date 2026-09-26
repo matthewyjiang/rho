@@ -22,6 +22,7 @@ mod executable;
 mod export;
 mod external_editor;
 mod herdr;
+mod history_message;
 mod hooks;
 mod installation;
 mod keybindings;

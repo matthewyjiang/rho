@@ -273,3 +273,30 @@ fn clips_on_character_boundaries() {
          The session has no messages yet.\n"
     );
 }
+
+// Covers: a compaction summary reaches the advisor as a labeled model-written
+// recap, never under the `## user` header.
+// Owner: advisor transcript renderer
+#[test]
+fn labels_compaction_summaries_as_model_written() {
+    let messages = vec![
+        Message::compaction_summary(rho_sdk::CompactionTrigger::Automatic, "## Open tasks\nship"),
+        Message::user_text("continue"),
+    ];
+
+    let rendered = render_transcript(None, &messages, generous());
+
+    assert_eq!(
+        rendered,
+        "# Session transcript\n\
+         \n\
+         ## compaction summary (model-written)\n\
+         \n\
+         ## Open tasks\n\
+         ship\n\
+         \n\
+         ## user\n\
+         \n\
+         continue\n"
+    );
+}
