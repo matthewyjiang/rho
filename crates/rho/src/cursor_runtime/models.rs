@@ -90,9 +90,8 @@ impl Default for CursorModelFlags {
     }
 }
 
-/// Spawned `refresh()` task, so callers do not repeat the JoinHandle type.
-pub(crate) type RefreshHandle =
-    tokio::task::JoinHandle<Result<Vec<CursorModel>, CursorModelsError>>;
+/// Outcome of a `refresh()` or `refresh_if_stale()` task.
+pub(crate) type RefreshResult = Result<Vec<CursorModel>, CursorModelsError>;
 
 /// Failures when listing or caching Cursor models.
 #[derive(Debug, Error)]

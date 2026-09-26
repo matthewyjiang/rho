@@ -460,25 +460,22 @@ impl App {
     /// stale, or belongs to another account. The account check needs a probe,
     /// so the whole decision runs inside the task.
     fn spawn_cursor_model_refresh_if_needed(&mut self) {
-        if self.pending_cursor_models.is_some() {
+        use crate::tui::background_tasks::{SessionOutput, TaskId};
+        if self.tasks.contains(|id| *id == TaskId::CursorModels) {
             return;
         }
-        self.pending_cursor_models = Some(tokio::spawn(
+        self.tasks.spawn(
+            TaskId::CursorModels,
             crate::cursor_runtime::models::refresh_if_stale(),
-        ));
+            |result| SessionOutput::CursorModels(result).into(),
+        );
     }
 
-    pub(in crate::tui) async fn poll_cursor_model_refresh(&mut self) {
-        let Some(handle) = self.pending_cursor_models.as_mut() else {
-            return;
-        };
-        if !handle.is_finished() {
-            return;
-        }
-        let Some(handle) = self.pending_cursor_models.take() else {
-            return;
-        };
-        let Ok(Ok(models)) = handle.await else {
+    pub(in crate::tui) fn apply_cursor_model_refresh(
+        &mut self,
+        result: Result<crate::cursor_runtime::models::RefreshResult, tokio::task::JoinError>,
+    ) {
+        let Ok(Ok(models)) = result else {
             return;
         };
         if models.is_empty() {

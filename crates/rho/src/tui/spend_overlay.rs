@@ -14,6 +14,7 @@ use ratatui::text::{Line, Span};
 
 use super::{
     activity::LoadingSpinner,
+    background_tasks::{TaskId, TaskOutput, UiOutput},
     overlay_panel::{PanelBody, PanelKeyOutcome, PanelScroll, PanelState},
     panel_text::indented_wrapped_lines,
     spend_view::{range_tabs_line, spend_body_lines},
@@ -25,43 +26,20 @@ use crate::usage::report::{catalog_route_pricing, load_spend_reports, SpendRange
 const TITLE: &str = "Spend";
 const FOOTER: &str = "Tab range  c copy  Enter/Esc close";
 
-type LoadResult = Result<Arc<SpendReports>, String>;
+pub(super) type LoadResult = Result<Arc<SpendReports>, String>;
 
-/// App-owned `/spend` data: the last finished reports and the one ledger read
-/// in flight. Outlives the overlay so reopening is instant, and a read keeps
-/// running when the overlay closes so rapid reopening never stacks reads.
+/// App-owned `/spend` data: the last finished reports. Outlives the overlay
+/// so reopening is instant. The one ledger read in flight is a
+/// `TaskId::SpendLoad` background task; it keeps running when the overlay
+/// closes so rapid reopening never stacks reads.
 #[derive(Debug, Default)]
 pub(super) struct SpendCache {
     reports: Option<Arc<SpendReports>>,
-    pending: Option<tokio::task::JoinHandle<LoadResult>>,
 }
 
-impl SpendCache {
-    pub(super) fn is_loading(&self) -> bool {
-        self.pending.is_some()
-    }
-
-    pub(super) fn load_finished(&self) -> bool {
-        self.pending
-            .as_ref()
-            .is_some_and(tokio::task::JoinHandle::is_finished)
-    }
-
-    /// Start a ledger read unless one is already running.
-    fn refresh(&mut self) {
-        // Unit tests inject `pending` instead of reading the real ledger.
-        if self.pending.is_none() && !cfg!(test) {
-            self.pending = Some(tokio::task::spawn_blocking(read_default_ledger));
-        }
-    }
-
-    /// Drop the in-flight read at shutdown. A running `spawn_blocking` read
-    /// cannot be cancelled; dropping the handle lets it finish unobserved.
-    pub(super) fn abort(&mut self) {
-        if let Some(handle) = self.pending.take() {
-            handle.abort();
-        }
-    }
+/// Background-task wrapper for a ledger read; a join error reads as a failure.
+fn spend_load_output(result: Result<LoadResult, tokio::task::JoinError>) -> TaskOutput {
+    UiOutput::SpendLoad(result.unwrap_or_else(|error| Err(error.to_string()))).into()
 }
 
 /// How the newest ledger read went, next to whatever reports are showing.
@@ -207,9 +185,22 @@ fn read_default_ledger() -> LoadResult {
 }
 
 impl App {
+    fn spend_loading(&self) -> bool {
+        self.tasks.contains(|id| *id == TaskId::SpendLoad)
+    }
+
+    /// Start a ledger read unless one is already running.
+    fn refresh_spend(&mut self) {
+        // Unit tests inject a load task instead of reading the real ledger.
+        if !self.spend_loading() && !cfg!(test) {
+            self.tasks
+                .spawn_blocking(TaskId::SpendLoad, read_default_ledger, spend_load_output);
+        }
+    }
+
     pub(super) fn execute_spend_command(&mut self) -> anyhow::Result<()> {
-        self.spend.refresh();
-        let load = if self.spend.is_loading() {
+        self.refresh_spend();
+        let load = if self.spend_loading() {
             LoadStatus::Running {
                 started: Instant::now(),
             }
@@ -238,17 +229,7 @@ impl App {
 
     /// Store a finished read in the cache and, if the overlay is open, show
     /// it. Returns whether anything changed on screen.
-    pub(super) async fn poll_spend_load(&mut self) -> bool {
-        if !self.spend.load_finished() {
-            return false;
-        }
-        let Some(handle) = self.spend.pending.take() else {
-            return false;
-        };
-        let loaded = match handle.await {
-            Ok(result) => result,
-            Err(error) => Err(error.to_string()),
-        };
+    pub(super) fn apply_spend_load(&mut self, loaded: LoadResult) -> bool {
         if let Ok(reports) = &loaded {
             self.spend.reports = Some(Arc::clone(reports));
         }

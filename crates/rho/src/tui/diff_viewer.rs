@@ -14,9 +14,9 @@
 use std::{path::PathBuf, sync::Arc};
 
 use rho_tools::tool_card::DiffRow;
-use tokio::task::JoinHandle;
 
 use super::{
+    background_tasks::{TaskId, UiOutput},
     diff_pane::{patch_rows, row_stats},
     local_diff::{self, ChangedFile, DiffSection, FileChange, WorktreeStatus},
     picker::{
@@ -33,8 +33,6 @@ pub(super) struct DiffViewer {
     repo_root: PathBuf,
     /// One slot per picker item, same order.
     slots: Vec<FileSlot>,
-    /// In-flight patch load and the file index it is for.
-    pending: Option<(usize, JoinHandle<anyhow::Result<Vec<DiffRow>>>)>,
 }
 
 #[derive(Debug)]
@@ -57,6 +55,8 @@ impl App {
         // A clean worktree still opens the popup, so `/diff` always answers
         // in the same place instead of only flashing a status line.
         let clean = status.files.is_empty();
+        // A load for a previous viewer's file index must not land here.
+        self.tasks.abort(|id| matches!(id, TaskId::DiffPatch(_)));
         self.input_ui
             .set_composer(ComposerMode::Picker(diff_picker(&status)));
         self.diff_viewer = Some(DiffViewer {
@@ -69,7 +69,6 @@ impl App {
                     loaded: false,
                 })
                 .collect(),
-            pending: None,
         });
         self.set_status(if clean {
             "worktree clean"
@@ -92,56 +91,43 @@ impl App {
         let Some(slot) = viewer.slots.get(index) else {
             return;
         };
-        if viewer.pending.is_some() || slot.loaded {
+        if slot.loaded || self.tasks.contains(|id| matches!(id, TaskId::DiffPatch(_))) {
             return;
         }
         let repo_root = viewer.repo_root.clone();
         let file = slot.file.clone();
-        let handle = tokio::task::spawn_blocking(move || {
-            local_diff::file_patch(&repo_root, &file).map(|patch| patch_rows(&patch))
-        });
-        viewer.pending = Some((index, handle));
+        self.tasks.spawn_blocking(
+            TaskId::DiffPatch(index),
+            move || local_diff::file_patch(&repo_root, &file).map(|patch| patch_rows(&patch)),
+            move |result| {
+                let result = result
+                    .unwrap_or_else(|error| Err(anyhow::anyhow!("patch load failed: {error}")));
+                UiOutput::DiffPatch(index, result).into()
+            },
+        );
     }
 
-    pub(super) fn diff_load_pending(&self) -> bool {
-        self.diff_viewer
-            .as_ref()
-            .is_some_and(|viewer| viewer.pending.is_some())
+    /// Drop viewer state once its picker is gone; a load still running then
+    /// finishes unobserved on its thread.
+    pub(super) fn drop_closed_diff_viewer(&mut self) {
+        if self.diff_viewer.is_some()
+            && !matches!(self.input_ui.composer(), ComposerMode::Picker(picker) if picker.is_view_diff())
+        {
+            self.diff_viewer = None;
+            self.tasks.abort(|id| matches!(id, TaskId::DiffPatch(_)));
+        }
     }
 
-    pub(super) fn diff_load_finished(&self) -> bool {
-        self.diff_viewer.as_ref().is_some_and(|viewer| {
-            viewer
-                .pending
-                .as_ref()
-                .is_some_and(|(_, handle)| handle.is_finished())
-        })
-    }
-
-    /// Apply a finished patch load. Drops viewer state once its picker is
-    /// gone; a load still running then finishes unobserved on its thread.
-    pub(super) async fn poll_diff_viewer(&mut self) -> bool {
+    /// Apply a finished patch load, then load whatever is selected by now.
+    pub(super) fn apply_diff_patch(
+        &mut self,
+        index: usize,
+        result: anyhow::Result<Vec<DiffRow>>,
+    ) -> bool {
+        self.drop_closed_diff_viewer();
         if self.diff_viewer.is_none() {
             return false;
         }
-        if !matches!(self.input_ui.composer(), ComposerMode::Picker(picker) if picker.is_view_diff())
-        {
-            self.diff_viewer = None;
-            return false;
-        }
-        if !self.diff_load_finished() {
-            return false;
-        }
-        let Some((index, handle)) = self
-            .diff_viewer
-            .as_mut()
-            .and_then(|viewer| viewer.pending.take())
-        else {
-            return false;
-        };
-        let result = handle
-            .await
-            .unwrap_or_else(|error| Err(anyhow::anyhow!("patch load failed: {error}")));
         self.apply_loaded_patch(index, result);
         self.request_selected_diff();
         true

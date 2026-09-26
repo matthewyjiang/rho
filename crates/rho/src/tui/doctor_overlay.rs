@@ -15,6 +15,7 @@ use ratatui::{
 
 use super::{
     activity::LoadingSpinner,
+    background_tasks::{TaskId, UiOutput},
     overlay_panel::{PanelBody, PanelState},
     panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
     render::display_width,
@@ -33,17 +34,6 @@ const HINT_INDENT: usize = 4;
 /// summary so a long label never pushes the status off screen.
 const ROW_CHROME_WIDTH: usize = 12;
 const FALLBACK_SPINNER: &str = "⠙";
-
-pub(super) struct PendingDoctorProbe {
-    id: DoctorProbeId,
-    handle: tokio::task::JoinHandle<DoctorProbeOutcome>,
-}
-
-impl PendingDoctorProbe {
-    pub(super) fn is_finished(&self) -> bool {
-        self.handle.is_finished()
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct DoctorOverlay {
@@ -134,9 +124,7 @@ impl App {
             probes: &probes,
         });
         for id in probes {
-            let handle = tokio::spawn(run_probe(id.clone(), self.credential_store.clone()));
-            self.pending_doctor_probes
-                .push(PendingDoctorProbe { id, handle });
+            self.spawn_doctor_probe(id.clone(), run_probe(id, self.credential_store.clone()));
         }
         self.input_ui
             .set_composer(ComposerMode::Panel(PanelOverlay::Doctor(DoctorOverlay {
@@ -155,51 +143,47 @@ impl App {
         )
     }
 
+    /// Spawn one probe. A join error reads as a failed probe.
+    pub(super) fn spawn_doctor_probe(
+        &mut self,
+        id: DoctorProbeId,
+        probe: impl std::future::Future<Output = DoctorProbeOutcome> + Send + 'static,
+    ) {
+        self.tasks
+            .spawn(TaskId::DoctorProbe(id.clone()), probe, move |result| {
+                UiOutput::DoctorProbe(result.unwrap_or(DoctorProbeOutcome::Failed(id))).into()
+            });
+    }
+
     fn abort_doctor_probes(&mut self) {
-        for probe in self.pending_doctor_probes.drain(..) {
-            probe.handle.abort();
-        }
+        self.tasks.abort(|id| matches!(id, TaskId::DoctorProbe(_)));
     }
 
     pub(super) async fn cancel_doctor_command(&mut self) {
-        let pending = std::mem::take(&mut self.pending_doctor_probes);
-        for probe in pending {
-            probe.handle.abort();
-            let _ = probe.handle.await;
+        self.tasks
+            .cancel(|id| matches!(id, TaskId::DoctorProbe(_)))
+            .await;
+    }
+
+    /// Approvals and other set_composer replacements do not go through panel
+    /// close; drop leftover children once the overlay is gone.
+    pub(super) async fn cancel_orphaned_doctor_probes(&mut self) {
+        if !self.doctor_overlay_open() {
+            self.cancel_doctor_command().await;
         }
     }
 
-    pub(super) async fn poll_doctor_command(&mut self) -> anyhow::Result<bool> {
-        if !self.doctor_overlay_open() {
-            // Approvals and other set_composer replacements do not go through
-            // panel close; drop leftover children here.
-            self.cancel_doctor_command().await;
-            return Ok(false);
-        }
-        let mut changed = false;
-        let mut still_pending = Vec::new();
-        let pending = std::mem::take(&mut self.pending_doctor_probes);
+    pub(super) fn apply_doctor_probe(&mut self, outcome: &DoctorProbeOutcome) -> bool {
         let active_provider = self.info.runtime.provider.clone();
-        for probe in pending {
-            if !probe.is_finished() {
-                still_pending.push(probe);
-                continue;
-            }
-            changed = true;
-            let outcome = match probe.handle.await {
-                Ok(outcome) => outcome,
-                Err(_) => DoctorProbeOutcome::Failed(probe.id),
-            };
-            if let Some(overlay) = self.doctor_overlay_mut() {
-                overlay
-                    .report
-                    .replace_checks(probe_checks(&outcome, &active_provider));
-                // Rows may have moved under a selection anchored by line.
-                overlay.panel.pointer.clear_selection();
-            }
-        }
-        self.pending_doctor_probes = still_pending;
-        Ok(changed)
+        let Some(overlay) = self.doctor_overlay_mut() else {
+            return false;
+        };
+        overlay
+            .report
+            .replace_checks(probe_checks(outcome, &active_provider));
+        // Rows may have moved under a selection anchored by line.
+        overlay.panel.pointer.clear_selection();
+        true
     }
 
     fn doctor_overlay_mut(&mut self) -> Option<&mut DoctorOverlay> {

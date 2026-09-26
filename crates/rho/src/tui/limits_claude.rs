@@ -1,8 +1,8 @@
 //! Claude Code section of `/limits`: live PTY probe and overlay updates.
 //!
 //! Disk [`RateLimitState`] is the only Claude model. A successful probe writes
-//! that cache; the overlay renders it. In-flight work is a pending fetch on
-//! the shared `/limits` list.
+//! that cache; the overlay renders it. In-flight work is a
+//! `TaskId::UsageLimits(ClaudeCode)` background task.
 
 use crate::claude_runtime::rate_limit::RateLimitState;
 use crate::claude_runtime::usage_probe;
@@ -10,7 +10,7 @@ use crate::usage_limits::{UsageFailure, UsageLimitWindow};
 
 use super::{
     now_unix, App, LimitsFetchResult, LimitsOverlay, LimitsSection, LimitsSectionId,
-    LimitsSectionStatus, PendingUsageFetch, CLAUDE_CODE_PROVIDER_LABEL,
+    LimitsSectionStatus, TaskId, CLAUDE_CODE_PROVIDER_LABEL,
 };
 
 pub(super) struct ClaudeLimitsView<'a> {
@@ -116,9 +116,8 @@ fn claude_section(status: LimitsSectionStatus, windows: Vec<UsageLimitWindow>) -
 impl App {
     pub(super) fn spawn_claude_usage_fetch(&mut self, disk: Option<&RateLimitState>) {
         if self
-            .pending_usage_limits
-            .iter()
-            .any(|fetch| fetch.id == LimitsSectionId::ClaudeCode)
+            .tasks
+            .contains(|id| *id == TaskId::UsageLimits(LimitsSectionId::ClaudeCode))
         {
             return;
         }
@@ -133,31 +132,22 @@ impl App {
         }) {
             return;
         }
-        self.pending_usage_limits.push(PendingUsageFetch {
-            id: LimitsSectionId::ClaudeCode,
-            handle: tokio::spawn(async {
-                match usage_probe::fetch_usage().await {
-                    #[cfg(unix)]
-                    Ok(usage_probe::UsageProbeOutcome::Ready(state)) => {
-                        LimitsFetchResult::ClaudeReady {
-                            windows: claude_windows_from_state(
-                                &state,
-                                now_unix(),
-                                AgeNote::StaleOnly,
-                            ),
-                        }
-                    }
-                    Ok(usage_probe::UsageProbeOutcome::Unavailable) => {
-                        LimitsFetchResult::Unavailable
-                    }
-                    Err(error) => {
-                        tracing::warn!(error = %error, "claude usage probe failed");
-                        LimitsFetchResult::Failed {
-                            reason: error.failure(),
-                        }
+        self.spawn_limits_fetch(LimitsSectionId::ClaudeCode, async {
+            match usage_probe::fetch_usage().await {
+                #[cfg(unix)]
+                Ok(usage_probe::UsageProbeOutcome::Ready(state)) => {
+                    LimitsFetchResult::ClaudeReady {
+                        windows: claude_windows_from_state(&state, now_unix(), AgeNote::StaleOnly),
                     }
                 }
-            }),
+                Ok(usage_probe::UsageProbeOutcome::Unavailable) => LimitsFetchResult::Unavailable,
+                Err(error) => {
+                    tracing::warn!(error = %error, "claude usage probe failed");
+                    LimitsFetchResult::Failed {
+                        reason: error.failure(),
+                    }
+                }
+            }
         });
         let cached_at = disk.and_then(|state| state.section_age_unix());
         if let Some(overlay) = self.limits_overlay_mut() {

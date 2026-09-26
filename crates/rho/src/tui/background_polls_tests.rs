@@ -12,7 +12,30 @@ use rho_sdk::{
 };
 use tokio::sync::oneshot;
 
-use crate::{app::interactive_runtime::test_runtime, tui::tests::test_app};
+use crate::{
+    app::interactive_runtime::{test_runtime, InteractiveRuntime},
+    tui::{
+        background_tasks::{SessionOutput, TaskId, TaskOutput},
+        tests::test_app,
+        App,
+    },
+};
+
+/// The idle dispatch point for metadata, without a terminal: take what the
+/// session accepts now and apply it.
+async fn apply_finished_model_metadata(app: &mut App, agent: &mut InteractiveRuntime) {
+    for output in app.take_finished_tasks(agent) {
+        let TaskOutput::Session(SessionOutput::ModelMetadata {
+            reasoning_at_start,
+            metadata,
+        }) = output
+        else {
+            panic!("only a metadata task was registered");
+        };
+        app.apply_model_metadata(agent, reasoning_at_start, metadata)
+            .await;
+    }
+}
 
 // Covers: deferred, unchanged metadata discards a successful provider baseline,
 // or a no-op guard prevents a genuine reasoning change from being installed.
@@ -48,24 +71,34 @@ async fn deferred_metadata_preserves_context_unless_reasoning_changes() {
         };
         let (release, fetched) = oneshot::channel();
         let (finished, completion) = oneshot::channel();
-        app.pending_model_metadata = Some(tokio::spawn(async move {
-            let metadata = fetched.await.unwrap();
-            // No await after this signal: the current-thread executor finishes
-            // this task before the test can observe the queued result.
-            finished.send(()).unwrap();
-            Some(metadata)
-        }));
-        app.pending_model_metadata_reasoning = Some((
+        let reasoning_at_start = (
             ReasoningLevel::Low,
             ReasoningRequestSource::PersistedOrDefault,
-        ));
+        );
+        app.tasks.spawn(
+            TaskId::ModelMetadata,
+            async move {
+                let metadata = fetched.await.unwrap();
+                // No await after this signal: the current-thread executor
+                // finishes this task before the test can observe the result.
+                finished.send(()).unwrap();
+                Some(metadata)
+            },
+            move |metadata| {
+                SessionOutput::ModelMetadata {
+                    reasoning_at_start,
+                    metadata,
+                }
+                .into()
+            },
+        );
 
         agent.start(UserInput::text("work"), None).await.unwrap();
         release.send(metadata.clone()).unwrap();
         completion.await.unwrap();
-        assert!(app.pending_model_metadata.as_ref().unwrap().is_finished());
-        app.poll_model_metadata_fetch(&mut agent).await;
-        assert!(app.pending_model_metadata.is_some());
+        assert!(app.tasks.has_finished());
+        apply_finished_model_metadata(&mut app, &mut agent).await;
+        assert!(app.tasks.has_pending());
         assert_eq!(app.model_metadata, None);
 
         agent.finish_run().await.unwrap();
@@ -73,7 +106,7 @@ async fn deferred_metadata_preserves_context_unless_reasoning_changes() {
         assert!(calibrated.tokens.unwrap() >= 100_000);
         let history = agent.history();
 
-        app.poll_model_metadata_fetch(&mut agent).await;
+        apply_finished_model_metadata(&mut app, &mut agent).await;
 
         let expected_context = if effective == ReasoningLevel::Low {
             calibrated
@@ -92,7 +125,7 @@ async fn deferred_metadata_preserves_context_unless_reasoning_changes() {
                 calibrated.context_window,
             )
         };
-        assert!(app.pending_model_metadata.is_none());
+        assert!(!app.tasks.has_pending());
         assert_eq!(app.model_metadata, Some(metadata));
         assert_eq!(app.info.runtime.reasoning, effective);
         assert_eq!(agent.history(), history);

@@ -31,7 +31,11 @@ fn shown(app: &App, expected: &Arc<SpendReports>) -> (bool, LoadStatus) {
 
 fn start_load(app: &mut App) -> tokio::sync::oneshot::Sender<LoadResult> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
-    app.spend.pending = Some(tokio::spawn(async move { receiver.await.unwrap() }));
+    app.tasks.spawn(
+        TaskId::SpendLoad,
+        async move { receiver.await.unwrap() },
+        spend_load_output,
+    );
     sender
 }
 
@@ -41,10 +45,10 @@ async fn finish_load(
     result: LoadResult,
 ) {
     sender.send(result).unwrap();
-    while !app.spend.load_finished() {
+    while !app.tasks.has_finished() {
         tokio::task::yield_now().await;
     }
-    app.poll_spend_load().await;
+    app.apply_finished_ui_tasks();
 }
 
 // Covers: reopening /spend paints the last reports at once while a read runs,
@@ -65,7 +69,7 @@ async fn cache_serves_reopens_and_survives_failed_refresh() {
     // Closing and reopening mid-read reuses the same read.
     app.close_panel_overlay();
     app.execute_spend_command().unwrap();
-    assert!(app.spend.is_loading());
+    assert!(app.spend_loading());
 
     // The read lands after close; the cache still keeps it.
     app.close_panel_overlay();

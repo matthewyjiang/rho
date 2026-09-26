@@ -70,9 +70,7 @@ impl App {
             .auth_unavailable
             .as_ref()
             .map(|_| "no providers configured; run /login to sign in".to_string());
-        let pending_update_notice = info.services.pending_update_notice.take();
-        let pending_custom_models = info.services.pending_custom_models.take();
-        let pending_syntax_warmup = info.services.pending_syntax_warmup.take();
+        let tasks = super::background_tasks::BackgroundTasks::from_startup(&mut info.services);
         let (prompt_history_limit, output_streaming) = info
             .services
             .config_repository
@@ -116,32 +114,18 @@ impl App {
             credential_store,
             available_auths,
             using_unavailable_provider,
-            pending_interactive_login: None,
             exclusive: super::exclusive_screen::ExclusiveOccupant::Session,
-            pending_usage_limits: Vec::new(),
-            pending_doctor_probes: Vec::new(),
-            pending_info_runtimes: None,
-            pending_info_tree: None,
+            tasks,
             info_tree_deferred: false,
             spend: Default::default(),
             usage_limits_live: std::collections::BTreeMap::new(),
-            pending_changelog: None,
             diff_viewer: None,
             web_search_reload_pending: false,
             compaction_reload_pending: false,
-            pending_web_search_test: None,
             usage_limits_client: std::sync::OnceLock::new(),
             usage: UsageUi::default(),
             model_metadata: None,
-            pending_model_metadata: None,
-            pending_model_metadata_reasoning: None,
-            pending_update_notice,
-            pending_custom_models,
-            pending_cursor_models: None,
-            pending_syntax_warmup,
             prompt_history,
-            pending_herdr_graphics: None,
-            pending_github_pr: None,
             held_turns: std::collections::VecDeque::new(),
             compact_follow_up: super::compact_work::CompactFollowUp::None,
             start_follow_ups: None,

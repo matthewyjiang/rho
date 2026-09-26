@@ -1,11 +1,16 @@
-//! Background polling for model metadata and update notices.
+//! Startup hydration and model metadata fetches.
 
-use futures_util::FutureExt;
-use rho_providers::model::models_dev::{
-    custom_model_id_catalog_miss, fetch_model_metadata, CatalogLookupMiss,
+use rho_providers::model::{
+    models_dev::{custom_model_id_catalog_miss, fetch_model_metadata, CatalogLookupMiss},
+    ModelMetadata, ReasoningRequestSource,
 };
+use rho_sdk::ReasoningLevel;
+use tokio::task::JoinError;
 
-use super::{reasoning_metadata, App, ComposerMode, Entry, InteractiveRuntime, StatusSource};
+use super::{
+    background_tasks::{OnCancel, SessionOutput, TaskId},
+    reasoning_metadata, App, ComposerMode, Entry, InteractiveRuntime, StatusSource,
+};
 
 #[cfg(test)]
 #[path = "background_polls_tests.rs"]
@@ -38,53 +43,15 @@ impl App {
         Ok(true)
     }
 
-    pub(super) fn poll_custom_provider_models(&mut self) {
-        let Some(handle) = self.pending_custom_models.as_mut() else {
-            return;
-        };
-        if !handle.is_finished() {
-            return;
-        }
-        self.pending_custom_models = None;
-    }
-
-    /// Rebuild history once the dump is ready so a plain first paint gets roles.
-    pub(super) fn poll_syntax_warmup(&mut self) -> bool {
-        let Some(handle) = self.pending_syntax_warmup.as_mut() else {
-            return false;
-        };
-        if !handle.is_finished() {
-            return false;
-        }
-        self.pending_syntax_warmup = None;
-        self.history.invalidate_from(0);
-        true
-    }
-
-    pub(super) fn poll_herdr_graphics(&mut self) {
-        let Some(handle) = self.pending_herdr_graphics.as_mut() else {
-            return;
-        };
-        let Some(result) = handle.now_or_never() else {
-            return;
-        };
-        self.pending_herdr_graphics = None;
-        if let Ok(capability) = result {
-            self.image_picker = super::feed_image::picker_from_environment(capability);
-        }
-    }
-
-    pub(super) fn poll_update_notice(&mut self) {
-        let Some(handle) = self.pending_update_notice.as_mut() else {
-            return;
-        };
-        let Some(result) = handle.now_or_never() else {
-            return;
-        };
-        self.pending_update_notice = None;
-        if let Ok(Some(notice)) = result {
-            self.info.services.update_notice = Some(notice);
-        }
+    /// Adopt the Herdr graphics probe `tui::run` started before the app.
+    pub(super) fn track_herdr_graphics(
+        &mut self,
+        handle: tokio::task::JoinHandle<crate::herdr::HerdrGraphicsCapability>,
+    ) {
+        self.tasks
+            .track(TaskId::HerdrGraphics, handle, OnCancel::Await, |result| {
+                SessionOutput::HerdrGraphics(result).into()
+            });
     }
 
     /// Returns whether the runtime accepted the context window.
@@ -103,10 +70,7 @@ impl App {
     }
 
     pub(super) fn start_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
-        if let Some(handle) = self.pending_model_metadata.take() {
-            handle.abort();
-        }
-        self.pending_model_metadata_reasoning = None;
+        self.tasks.abort(|id| *id == TaskId::ModelMetadata);
         let provider = self.info.runtime.provider.clone();
         let model = rho_providers::providers::fast_mode::request_model(
             &provider,
@@ -130,46 +94,46 @@ impl App {
             let _ = self.apply_context_window(agent, None);
             self.model_metadata = None;
         }
-        self.pending_model_metadata_reasoning = Some((
+        let reasoning_at_start = (
             self.info.runtime.reasoning,
             self.info.runtime.reasoning_source,
-        ));
-        self.pending_model_metadata = Some(tokio::spawn(async move {
-            fetch_model_metadata(&provider, &model).await
-        }));
+        );
+        self.tasks.spawn(
+            TaskId::ModelMetadata,
+            async move { fetch_model_metadata(&provider, &model).await },
+            move |metadata| {
+                SessionOutput::ModelMetadata {
+                    reasoning_at_start,
+                    metadata,
+                }
+                .into()
+            },
+        );
     }
 
-    pub(super) async fn poll_model_metadata_fetch(&mut self, agent: &mut InteractiveRuntime) {
-        // Applying metadata can rebuild compaction and reasoning. Keep the
-        // completed fetch queued while either a provider turn or compact owns
-        // the session instead of dropping it after a SessionBusy error.
-        if agent.is_session_busy() {
-            return;
-        }
-        let Some(handle) = self.pending_model_metadata.as_mut() else {
+    /// Apply a finished metadata fetch. The dispatch point holds it while
+    /// the session is busy.
+    pub(super) async fn apply_model_metadata(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+        reasoning_at_start: (ReasoningLevel, ReasoningRequestSource),
+        metadata: Result<Option<ModelMetadata>, JoinError>,
+    ) {
+        let Ok(Some(metadata)) = metadata else {
+            self.warn_custom_model_id_catalog_miss();
             return;
         };
-        if !handle.is_finished() {
+        if !self.apply_context_window(agent, metadata.display_context_window()) {
+            // Keep prior metadata until a later fetch can apply cleanly.
             return;
         }
-        if let Some(handle) = self.pending_model_metadata.take() {
-            let reasoning_at_fetch_start = self.pending_model_metadata_reasoning.take();
-            if let Some(Ok(Some(metadata))) = handle.now_or_never() {
-                if !self.apply_context_window(agent, metadata.display_context_window()) {
-                    // Keep prior metadata until a later fetch can apply cleanly.
-                    return;
-                }
-                self.apply_fetched_reasoning(
-                    agent,
-                    &metadata.reasoning_capabilities(),
-                    reasoning_at_fetch_start,
-                )
-                .await;
-                self.model_metadata = Some(metadata);
-            } else {
-                self.warn_custom_model_id_catalog_miss();
-            }
-        }
+        self.apply_fetched_reasoning(
+            agent,
+            &metadata.reasoning_capabilities(),
+            Some(reasoning_at_start),
+        )
+        .await;
+        self.model_metadata = Some(metadata);
     }
 
     fn warn_custom_model_id_catalog_miss(&mut self) {
