@@ -1,7 +1,7 @@
 # AGENTS.md
 
-If you are not the maintainer of this repository, follow [CONTRIBUTING.md](CONTRIBUTING.md).
-You are the maintainer only when `gh api repositories/1275798525 --jq .permissions.admin` prints `true`.
+If you are opening a pull request from a fork, follow [CONTRIBUTING.md](CONTRIBUTING.md).
+You are on a fork when the GitHub repository in `git remote get-url origin` differs from the `repository` field in the crate manifests. Ignore `.git` and SSH versus HTTPS.
 
 ## Commits and pull requests
 
