@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.12.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.11.0...rho-providers-v2.12.0) (2026-09-26)
+
+
+### Features
+
+* **compaction:** recover from context-window overflows instead of failing the run ([#1282](https://github.com/matthewyjiang/rho/issues/1282)) ([7e614a7](https://github.com/matthewyjiang/rho/commit/7e614a7c04b29acafb057d273d14955fe8e6357d))
+
+
+### Bug Fixes
+
+* **providers:** keep fractional models.dev prices ([#1306](https://github.com/matthewyjiang/rho/issues/1306)) ([c0f3987](https://github.com/matthewyjiang/rho/commit/c0f3987f0484b05f4f764c6290fe40b475030768))
+
 ## [2.11.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.10.0...rho-providers-v2.11.0) (2026-09-24)
 
 
