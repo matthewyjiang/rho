@@ -28,7 +28,6 @@ Local workflow, the PTY harness, and MSRV details live in the
 
 - Prefer small modules and keep them private until something outside needs them.
 - Match known enums exhaustively.
-- Cap Cargo at 8 jobs (`cargo -j 8` or `CARGO_BUILD_JOBS=8`).
 
 ## License
 
