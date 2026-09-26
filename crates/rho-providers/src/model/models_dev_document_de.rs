@@ -364,13 +364,17 @@ impl<'de> Deserialize<'de> for LenientF64 {
     }
 }
 
+/// Map key serde_json uses for a number under `arbitrary_precision`. Private
+/// to serde_json, but stable: its `Number` serializer and deserializer share it.
+const ARBITRARY_PRECISION_NUMBER_KEY: &str = "$serde_json::private::Number";
+
 struct NumberOrDollar(f64);
 
 impl<'de> Deserialize<'de> for NumberOrDollar {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct NumberVisitor;
 
-        impl Visitor<'_> for NumberVisitor {
+        impl<'de> Visitor<'de> for NumberVisitor {
             type Value = NumberOrDollar;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -396,6 +400,23 @@ impl<'de> Deserialize<'de> for NumberOrDollar {
                     .parse()
                     .map(NumberOrDollar)
                     .map_err(E::custom)
+            }
+
+            /// serde_json's `arbitrary_precision` (enabled in the `rho` binary
+            /// through starlark) hands a buffered number back as a one-key map
+            /// holding its decimal text. Without this, fractional prices such
+            /// as `3.2` were dropped as invalid.
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                use serde::de::Error;
+
+                let Some(key) = map.next_key::<String>()? else {
+                    return Err(A::Error::custom("empty object is not a number"));
+                };
+                if key != ARBITRARY_PRECISION_NUMBER_KEY {
+                    return Err(A::Error::custom("object is not a number"));
+                }
+                let text = map.next_value::<String>()?;
+                text.parse().map(NumberOrDollar).map_err(A::Error::custom)
             }
         }
 

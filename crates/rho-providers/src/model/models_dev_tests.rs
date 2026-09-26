@@ -795,6 +795,9 @@ fn reasoning_models_without_options_are_not_capability_complete() {
     assert_eq!(metadata.supported_reasoning_levels, None);
 }
 
+// Covers: fractional prices survive the `arbitrary_precision` number shape the
+// `rho` binary parses with (fixtures go through JSON text, see `catalog`).
+// Owner: models.dev parser
 #[test]
 fn models_dev_parses_long_context_cost_tiers() {
     let api = json!({
@@ -809,7 +812,7 @@ fn models_dev_parses_long_context_cost_tiers() {
                     "limit": { "context": 500000, "output": 500000 },
                     "cost": {
                         "input": 2.0,
-                        "output": 6.0,
+                        "output": 6.25,
                         "cache_read": 0.5,
                         "tiers": [{
                             "input": 4.0,
@@ -842,7 +845,7 @@ fn models_dev_parses_long_context_cost_tiers() {
             max_output_tokens: Some(500_000),
             cost_default: Some(ModelCost {
                 input_micros_per_m: Some(2_000_000),
-                output_micros_per_m: Some(6_000_000),
+                output_micros_per_m: Some(6_250_000),
                 cache_read_micros_per_m: Some(500_000),
                 cache_write_micros_per_m: None,
             }),
