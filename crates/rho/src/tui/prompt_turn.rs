@@ -407,7 +407,7 @@ impl App {
             queued_interactions
                 .extend_subagent_questionnaires(self.subagent_inbox.take_questionnaires());
             needs_redraw |= self.update_activity_panels(agent)?;
-            needs_redraw |= self.poll_overlay_tasks().await?;
+            needs_redraw |= self.reconcile_overlays().await?;
             needs_redraw |= self.poll_sessions_task()?;
             if needs_redraw {
                 self.draw_running_frame(terminal, &mut frame_scheduler)?;

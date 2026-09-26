@@ -76,12 +76,30 @@ async fn abort_drops_held_outputs() {
         update_notice,
     );
     wait_finished(&tasks).await;
-    let taken: Vec<TaskOutput> = tasks.take_finished(Err);
-    assert!(taken.is_empty());
+    assert!(tasks.take_next_finished(Err::<TaskOutput, _>).is_none());
     assert!(tasks.contains(|id| *id == TaskId::UpdateNotice));
 
     tasks.abort(|id| *id == TaskId::UpdateNotice);
 
     assert!(!tasks.has_pending());
-    assert!(tasks.take_finished(Ok).is_empty());
+    assert!(tasks.take_next_finished(Ok::<_, TaskOutput>).is_none());
+}
+
+// Covers: outputs are handed out one at a time, so an apply that aborts
+// another feature's task (login cancelling `/limits`) also drops that task's
+// result when both finished in the same tick.
+// Owner: background task registry (unit seam)
+#[tokio::test]
+async fn abort_between_takes_drops_outputs_that_finished_together() {
+    let mut tasks = BackgroundTasks::default();
+    tasks.spawn(TaskId::UpdateNotice, async { None }, update_notice);
+    tasks.spawn(TaskId::Changelog, async { None }, update_notice);
+    while tasks.running.iter().any(|task| !task.abort.is_finished()) {
+        tokio::task::yield_now().await;
+    }
+
+    assert!(tasks.take_next_finished(Ok::<_, TaskOutput>).is_some());
+    tasks.abort(|id| matches!(id, TaskId::UpdateNotice | TaskId::Changelog));
+
+    assert!(tasks.take_next_finished(Ok::<_, TaskOutput>).is_none());
 }

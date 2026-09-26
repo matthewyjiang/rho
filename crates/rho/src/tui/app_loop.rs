@@ -10,8 +10,10 @@ use super::{
 };
 
 impl App {
-    /// Drain overlay work in both idle and running loops, then redraw once.
-    pub(super) async fn poll_overlay_tasks(&mut self) -> anyhow::Result<bool> {
+    /// Drop task work for overlays that closed without their close path (for
+    /// example an approval replaced the composer), and drain side chat.
+    /// Runs in both idle and running loops.
+    pub(super) async fn reconcile_overlays(&mut self) -> anyhow::Result<bool> {
         self.cancel_orphaned_doctor_probes().await;
         self.cancel_orphaned_info_refresh().await;
         self.drop_closed_diff_viewer();
@@ -195,7 +197,7 @@ impl App {
             }
             needs_redraw |= self.poll_prompt_history();
             needs_redraw |= self.poll_pending_session_title()?;
-            needs_redraw |= self.poll_overlay_tasks().await?;
+            needs_redraw |= self.reconcile_overlays().await?;
             // The composer decides what to ask about and changes on key events.
             needs_redraw |= self.poll_mcp_argument_completion().await;
             needs_redraw |= self.poll_markdown_images();

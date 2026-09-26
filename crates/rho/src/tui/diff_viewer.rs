@@ -56,7 +56,7 @@ impl App {
         // in the same place instead of only flashing a status line.
         let clean = status.files.is_empty();
         // A load for a previous viewer's file index must not land here.
-        self.tasks.abort(|id| matches!(id, TaskId::DiffPatch(_)));
+        self.tasks.abort(|id| *id == TaskId::DiffPatch);
         self.input_ui
             .set_composer(ComposerMode::Picker(diff_picker(&status)));
         self.diff_viewer = Some(DiffViewer {
@@ -91,13 +91,13 @@ impl App {
         let Some(slot) = viewer.slots.get(index) else {
             return;
         };
-        if slot.loaded || self.tasks.contains(|id| matches!(id, TaskId::DiffPatch(_))) {
+        if slot.loaded || self.tasks.contains(|id| *id == TaskId::DiffPatch) {
             return;
         }
         let repo_root = viewer.repo_root.clone();
         let file = slot.file.clone();
         self.tasks.spawn_blocking(
-            TaskId::DiffPatch(index),
+            TaskId::DiffPatch,
             move || local_diff::file_patch(&repo_root, &file).map(|patch| patch_rows(&patch)),
             move |result| {
                 let result = result
@@ -114,7 +114,7 @@ impl App {
             && !matches!(self.input_ui.composer(), ComposerMode::Picker(picker) if picker.is_view_diff())
         {
             self.diff_viewer = None;
-            self.tasks.abort(|id| matches!(id, TaskId::DiffPatch(_)));
+            self.tasks.abort(|id| *id == TaskId::DiffPatch);
         }
     }
 

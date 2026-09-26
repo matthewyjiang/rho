@@ -144,7 +144,7 @@ async fn replacing_doctor_overlay_aborts_probes() {
     });
 
     app.input_ui.set_composer(super::super::ComposerMode::Input);
-    app.poll_overlay_tasks().await.unwrap();
+    app.reconcile_overlays().await.unwrap();
 
     assert!(!app.tasks.has_pending());
     assert_eq!(std::sync::Arc::strong_count(&task_marker), 1);

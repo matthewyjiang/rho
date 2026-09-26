@@ -44,8 +44,8 @@ pub(super) enum TaskId {
     InfoRuntimes,
     InfoTree,
     SpendLoad,
-    /// Patch load for the `/diff` file at this index.
-    DiffPatch(usize),
+    /// Patch load for the selected `/diff` file.
+    DiffPatch,
     Changelog,
     WebSearchTest,
 }
@@ -215,12 +215,14 @@ impl BackgroundTasks {
         !self.ready.is_empty() || self.running.iter().any(|task| task.abort.is_finished())
     }
 
-    /// Take finished outputs that `select` accepts (`Ok`); rejected outputs
-    /// (`Err`) stay queued for a later call.
-    pub(super) fn take_finished<U>(
+    /// Take the oldest finished output that `select` accepts (`Ok`);
+    /// rejected outputs (`Err`) stay queued. Callers apply one output before
+    /// taking the next, so an apply that aborts other tasks also drops their
+    /// already-finished outputs.
+    pub(super) fn take_next_finished<U>(
         &mut self,
         mut select: impl FnMut(TaskOutput) -> Result<U, TaskOutput>,
-    ) -> Vec<U> {
+    ) -> Option<U> {
         let mut index = 0;
         while index < self.running.len() {
             if let Some(output) = (&mut self.running[index].output).now_or_never() {
@@ -230,13 +232,19 @@ impl BackgroundTasks {
                 index += 1;
             }
         }
-        let mut taken = Vec::new();
-        for (id, output) in std::mem::take(&mut self.ready) {
+        let mut rejected = Vec::new();
+        let mut taken = None;
+        while let Some((id, output)) = (!self.ready.is_empty()).then(|| self.ready.remove(0)) {
             match select(output) {
-                Ok(output) => taken.push(output),
-                Err(output) => self.ready.push((id, output)),
+                Ok(output) => {
+                    taken = Some(output);
+                    break;
+                }
+                Err(output) => rejected.push((id, output)),
             }
         }
+        rejected.append(&mut self.ready);
+        self.ready = rejected;
         taken
     }
 
@@ -290,12 +298,11 @@ impl App {
     /// Apply finished `Ui` outputs. Every loop calls this through
     /// `update_activity_panels`.
     pub(super) fn apply_finished_ui_tasks(&mut self) -> bool {
-        let outputs = self.tasks.take_finished(|output| match output {
+        let mut changed = false;
+        while let Some(output) = self.tasks.take_next_finished(|output| match output {
             TaskOutput::Ui(output) => Ok(output),
             output @ TaskOutput::Session(_) => Err(output),
-        });
-        let mut changed = false;
-        for output in outputs {
+        }) {
             changed |= self.apply_ui_output(output);
         }
         changed
@@ -308,9 +315,8 @@ impl App {
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<bool> {
-        let outputs = self.take_finished_tasks(agent);
         let mut changed = false;
-        for output in outputs {
+        while let Some(output) = self.take_next_finished_task(agent) {
             changed |= match output {
                 TaskOutput::Ui(output) => self.apply_ui_output(output),
                 TaskOutput::Session(output) => {
@@ -321,10 +327,13 @@ impl App {
         Ok(changed)
     }
 
-    /// Finished outputs the session can apply now; the rest stay queued.
-    pub(super) fn take_finished_tasks(&mut self, agent: &InteractiveRuntime) -> Vec<TaskOutput> {
+    /// Next finished output the session can apply now; the rest stay queued.
+    pub(super) fn take_next_finished_task(
+        &mut self,
+        agent: &InteractiveRuntime,
+    ) -> Option<TaskOutput> {
         let session_busy = agent.is_session_busy();
-        self.tasks.take_finished(|output| match output {
+        self.tasks.take_next_finished(|output| match output {
             TaskOutput::Session(output) if session_busy && output.waits_for_idle_session() => {
                 Err(output.into())
             }

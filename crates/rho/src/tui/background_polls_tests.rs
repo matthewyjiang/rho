@@ -24,7 +24,7 @@ use crate::{
 /// The idle dispatch point for metadata, without a terminal: take what the
 /// session accepts now and apply it.
 async fn apply_finished_model_metadata(app: &mut App, agent: &mut InteractiveRuntime) {
-    for output in app.take_finished_tasks(agent) {
+    while let Some(output) = app.take_next_finished_task(agent) {
         let TaskOutput::Session(SessionOutput::ModelMetadata {
             reasoning_at_start,
             metadata,
