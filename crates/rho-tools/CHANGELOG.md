@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.6.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.5.0...rho-agent-tools-v1.6.0) (2026-09-26)
+
+
+### Features
+
+* **compaction:** recover from context-window overflows instead of failing the run ([#1282](https://github.com/matthewyjiang/rho/issues/1282)) ([7e614a7](https://github.com/matthewyjiang/rho/commit/7e614a7c04b29acafb057d273d14955fe8e6357d))
+
+
+### Bug Fixes
+
+* **tools:** make grep and glob honor negated globs like '!*_tests.rs' ([#1287](https://github.com/matthewyjiang/rho/issues/1287)) ([d81d328](https://github.com/matthewyjiang/rho/commit/d81d32859a0d1a759dd30e7df2f303f90168c2fb))
+
 ## [1.5.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.4.0...rho-agent-tools-v1.5.0) (2026-09-24)
 
 

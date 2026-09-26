@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.16.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.15.0...rho-coding-agent-v2.16.0) (2026-09-26)
+
+
+### Features
+
+* **compaction:** elide old tool outputs first so compaction can skip the model call ([#1288](https://github.com/matthewyjiang/rho/issues/1288)) ([f730108](https://github.com/matthewyjiang/rho/commit/f730108bbc86f12152c8736da57c41d88b7edc02))
+* **compaction:** enable auto_compact by default ([#1285](https://github.com/matthewyjiang/rho/issues/1285)) ([515c370](https://github.com/matthewyjiang/rho/commit/515c3709b68cba14c12aa31c76e707d80ad2b93e)), closes [#1272](https://github.com/matthewyjiang/rho/issues/1272)
+* **compaction:** keep summaries from degrading across repeated compactions ([#1303](https://github.com/matthewyjiang/rho/issues/1303)) ([e56768a](https://github.com/matthewyjiang/rho/commit/e56768ae6fb62a40a76dc5c1e09b95e8f42fe5ff))
+* **compaction:** recover from context-window overflows instead of failing the run ([#1282](https://github.com/matthewyjiang/rho/issues/1282)) ([7e614a7](https://github.com/matthewyjiang/rho/commit/7e614a7c04b29acafb057d273d14955fe8e6357d))
+* **tui:** add /spend usage summary overlay ([#1307](https://github.com/matthewyjiang/rho/issues/1307)) ([12ee3c1](https://github.com/matthewyjiang/rho/commit/12ee3c188a210fe951e2fd8111b086f26eb4c3b9))
+* **tui:** browse /diff file by file in a popup instead of scrolling the transcript ([#1284](https://github.com/matthewyjiang/rho/issues/1284)) ([e3b0875](https://github.com/matthewyjiang/rho/commit/e3b08753d7fb265a043e4a113c00c34203ab1d6f))
+* **tui:** mouse control and hover feedback across the TUI ([#1271](https://github.com/matthewyjiang/rho/issues/1271)) ([9720170](https://github.com/matthewyjiang/rho/commit/9720170f5132a4a0a3ccbb01b86f661133c313c0))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.11.0 to 2.12.0
+
 ## [2.15.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.14.0...rho-coding-agent-v2.15.0) (2026-09-24)
 
 
