@@ -1,7 +1,6 @@
 # AGENTS.md
 
-If you are opening a pull request from a fork, follow [CONTRIBUTING.md](CONTRIBUTING.md).
-You are on a fork when the GitHub repository in `git remote get-url origin` differs from the `repository` field in the crate manifests. Ignore `.git` and SSH versus HTTPS.
+If `git remote get-url origin` is not the crate `repository` (ignore `.git` and SSH vs HTTPS), this is a fork: follow [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Commits and pull requests
 
