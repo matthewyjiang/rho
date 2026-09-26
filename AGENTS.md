@@ -1,6 +1,7 @@
 # AGENTS.md
 
 If you are not the maintainer of this repository, follow [CONTRIBUTING.md](CONTRIBUTING.md).
+You are the maintainer only when `gh api user --jq .login` prints `matthewyjiang`.
 
 ## Commits and pull requests
 
