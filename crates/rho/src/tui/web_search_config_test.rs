@@ -1,9 +1,10 @@
 //! Explicit test-query consent and background task lifecycle.
 use super::*;
+use crate::tui::background_tasks::{TaskId, UiOutput};
 
 impl App {
     pub(in crate::tui) fn prompt_web_search_test(&mut self) -> anyhow::Result<()> {
-        if self.pending_web_search_test.is_some() {
+        if self.web_search_test_running() {
             self.set_status("a web search test is already in progress");
             return Ok(());
         }
@@ -53,29 +54,28 @@ impl App {
         }
         let config = self.info.services.config_repository.load()?;
         self.refresh_web_search_picker(WEB_SEARCH_TEST_VALUE, None)?;
-        if self.pending_web_search_test.is_some() {
+        if self.web_search_test_running() {
             self.set_status("a web search test is already in progress");
             return Ok(());
         }
-        self.pending_web_search_test = Some(tokio::spawn(async move {
-            crate::tools::web::test_search_backend(&config).await
-        }));
+        self.tasks.spawn(
+            TaskId::WebSearchTest,
+            async move { crate::tools::web::test_search_backend(&config).await },
+            |result| UiOutput::WebSearchTest(result).into(),
+        );
         self.set_status("testing web search connection");
         Ok(())
     }
 
-    pub(in crate::tui) async fn poll_web_search_test(&mut self) -> anyhow::Result<bool> {
-        if !self
-            .pending_web_search_test
-            .as_ref()
-            .is_some_and(|handle| handle.is_finished())
-        {
-            return Ok(false);
-        }
-        let Some(handle) = self.pending_web_search_test.take() else {
-            return Ok(false);
-        };
-        match handle.await {
+    fn web_search_test_running(&self) -> bool {
+        self.tasks.contains(|id| *id == TaskId::WebSearchTest)
+    }
+
+    pub(in crate::tui) fn apply_web_search_test(
+        &mut self,
+        result: Result<Result<usize, rho_tools::tool::ToolError>, tokio::task::JoinError>,
+    ) -> bool {
+        match result {
             Ok(Ok(count)) => {
                 let notice = format!(
                     "web search test: {count} result{}",
@@ -95,13 +95,6 @@ impl App {
                 self.set_status("web search test failed");
             }
         }
-        Ok(true)
-    }
-
-    pub(in crate::tui) async fn cancel_web_search_test(&mut self) {
-        if let Some(handle) = self.pending_web_search_test.take() {
-            handle.abort();
-            let _ = handle.await;
-        }
+        true
     }
 }

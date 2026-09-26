@@ -1,4 +1,5 @@
 use super::{
+    background_tasks::{SessionOutput, TaskId},
     provider_actions::{ProviderActivation, ProviderActivationOutcome},
     InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, *,
 };
@@ -16,10 +17,10 @@ use {
 
 pub(super) use super::login_secret_input::{secret_input_lines, SecretInput};
 
-#[derive(Debug)]
-pub(super) struct PendingInteractiveLogin {
-    pub(super) target: LoginTarget,
-    pub(super) handle: tokio::task::JoinHandle<Result<CompletedAuthentication, String>>,
+/// A finished interactive login task and the target it signed in to.
+pub(super) struct FinishedInteractiveLogin {
+    target: LoginTarget,
+    result: Result<Result<CompletedAuthentication, String>, tokio::task::JoinError>,
 }
 
 /// What Enter in the API-key overlay resolved to.
@@ -518,7 +519,7 @@ impl App {
         terminal: &mut DefaultTerminal,
         _agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        if self.pending_interactive_login.is_some() {
+        if self.interactive_login_pending() {
             self.insert_entry(&Entry::Notice(
                 "Interactive login is already in progress. Press esc to cancel.".into(),
             ));
@@ -573,28 +574,34 @@ impl App {
         ));
         self.input_ui
             .set_composer(ComposerMode::InteractivePending(pending));
-        self.pending_interactive_login = Some(PendingInteractiveLogin {
-            target,
-            handle: tokio::spawn(async move { completion.await.map_err(|err| err.to_string()) }),
-        });
+        self.tasks.spawn(
+            TaskId::InteractiveLogin,
+            async move { completion.await.map_err(|err| err.to_string()) },
+            move |result| {
+                SessionOutput::InteractiveLogin(FinishedInteractiveLogin { target, result }).into()
+            },
+        );
         Ok(())
     }
 
-    pub(super) async fn poll_pending_interactive_login(
+    pub(super) fn interactive_login_pending(&self) -> bool {
+        self.tasks.contains(|id| *id == TaskId::InteractiveLogin)
+    }
+
+    /// Esc on the pending-login composer. Drops the task so its result never
+    /// applies.
+    pub(super) fn abort_interactive_login(&mut self) {
+        self.tasks.abort(|id| *id == TaskId::InteractiveLogin);
+    }
+
+    pub(super) async fn apply_interactive_login(
         &mut self,
+        finished: FinishedInteractiveLogin,
         terminal: &mut DefaultTerminal,
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
-        let Some(pending) = self.pending_interactive_login.as_ref() else {
-            return Ok(());
-        };
-        if !pending.handle.is_finished() {
-            return Ok(());
-        }
-
-        let pending = self.pending_interactive_login.take().unwrap();
-        let target = pending.target;
-        match pending.handle.await {
+        let FinishedInteractiveLogin { target, result } = finished;
+        match result {
             Ok(Ok(result)) => {
                 self.cancel_limits_command().await;
                 self.cancel_doctor_command().await;

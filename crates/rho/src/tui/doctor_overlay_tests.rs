@@ -34,7 +34,7 @@ async fn opening_doctor_does_not_queue_model_context() {
         app.input_ui.composer(),
         super::super::ComposerMode::Panel(super::super::PanelOverlay::Doctor(_))
     ));
-    assert!(app.pending_doctor_probes.is_empty());
+    assert!(!app.tasks.has_pending());
     assert!(
         app.history
             .entries()
@@ -52,24 +52,22 @@ async fn cancelling_doctor_probes_waits_for_task_to_stop() {
     let mut app = super::super::tests::test_app();
     let task_marker = std::sync::Arc::new(());
     let captured_marker = task_marker.clone();
-    app.pending_doctor_probes.push(PendingDoctorProbe {
-        id: DoctorProbeId::Rtk,
-        handle: tokio::spawn(async move {
-            let _marker = captured_marker;
-            std::future::pending::<DoctorProbeOutcome>().await
-        }),
+    app.spawn_doctor_probe(DoctorProbeId::Rtk, async move {
+        let _marker = captured_marker;
+        std::future::pending::<DoctorProbeOutcome>().await
     });
 
     app.cancel_doctor_command().await;
 
-    assert!(app.pending_doctor_probes.is_empty());
+    assert!(!app.tasks.has_pending());
     assert_eq!(std::sync::Arc::strong_count(&task_marker), 1);
 }
 
-async fn wait_until_finished(handle: &tokio::task::JoinHandle<DoctorProbeOutcome>) {
-    while !handle.is_finished() {
+async fn apply_finished_probes(app: &mut super::super::App) -> bool {
+    while !app.tasks.has_finished() {
         tokio::task::yield_now().await;
     }
+    app.apply_finished_ui_tasks()
 }
 
 fn checking_rtk_row() -> DoctorCheck {
@@ -105,13 +103,10 @@ async fn poll_applies_finished_probe_and_failed_join() {
         .report
         .replace_checks(vec![checking_rtk_row()]);
 
-    let handle = tokio::spawn(async { DoctorProbeOutcome::Rtk { available: true } });
-    wait_until_finished(&handle).await;
-    app.pending_doctor_probes.push(PendingDoctorProbe {
-        id: DoctorProbeId::Rtk,
-        handle,
+    app.spawn_doctor_probe(DoctorProbeId::Rtk, async {
+        DoctorProbeOutcome::Rtk { available: true }
     });
-    assert!(app.poll_doctor_command().await.unwrap());
+    assert!(apply_finished_probes(&mut app).await);
     assert!(!app.doctor_overlay_mut().unwrap().is_checking());
     let rtk = rtk_row(&mut app);
     assert_eq!(
@@ -123,14 +118,10 @@ async fn poll_applies_finished_probe_and_failed_join() {
         .unwrap()
         .report
         .replace_checks(vec![checking_rtk_row()]);
-    let handle = tokio::spawn(std::future::pending::<DoctorProbeOutcome>());
-    handle.abort();
-    wait_until_finished(&handle).await;
-    app.pending_doctor_probes.push(PendingDoctorProbe {
-        id: DoctorProbeId::Rtk,
-        handle,
+    app.spawn_doctor_probe(DoctorProbeId::Rtk, async {
+        panic!("probe task panicked");
     });
-    assert!(app.poll_doctor_command().await.unwrap());
+    assert!(apply_finished_probes(&mut app).await);
     let rtk = rtk_row(&mut app);
     assert_eq!(
         (rtk.status, rtk.summary.as_str()),
@@ -147,18 +138,15 @@ async fn replacing_doctor_overlay_aborts_probes() {
     app.start_doctor_command().unwrap();
     let task_marker = std::sync::Arc::new(());
     let captured_marker = task_marker.clone();
-    app.pending_doctor_probes.push(PendingDoctorProbe {
-        id: DoctorProbeId::Rtk,
-        handle: tokio::spawn(async move {
-            let _marker = captured_marker;
-            std::future::pending::<DoctorProbeOutcome>().await
-        }),
+    app.spawn_doctor_probe(DoctorProbeId::Rtk, async move {
+        let _marker = captured_marker;
+        std::future::pending::<DoctorProbeOutcome>().await
     });
 
     app.input_ui.set_composer(super::super::ComposerMode::Input);
-    app.poll_doctor_command().await.unwrap();
+    app.reconcile_overlays().await.unwrap();
 
-    assert!(app.pending_doctor_probes.is_empty());
+    assert!(!app.tasks.has_pending());
     assert_eq!(std::sync::Arc::strong_count(&task_marker), 1);
 }
 

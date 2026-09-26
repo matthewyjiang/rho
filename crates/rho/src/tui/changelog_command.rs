@@ -1,6 +1,10 @@
 use ratatui::{text::Line, DefaultTerminal};
 
-use super::{command_block::CommandBlock, App, Entry};
+use super::{
+    background_tasks::{TaskId, UiOutput},
+    command_block::CommandBlock,
+    App, Entry,
+};
 use crate::{
     changelog::{
         bundled_current_display, fetch_latest_display, parse_request, ChangelogDisplay,
@@ -46,40 +50,24 @@ impl App {
     /// Starts a background fetch for `/changelog latest`. Returns whether a new
     /// task was spawned so callers can redraw the "fetching" status at once.
     pub(super) fn start_latest_changelog_command(&mut self) -> bool {
-        if self.pending_changelog.is_some() {
+        if self.tasks.contains(|id| *id == TaskId::Changelog) {
             self.set_status("a latest changelog fetch is already in progress");
             return false;
         }
 
-        self.pending_changelog = Some(tokio::spawn(async move { fetch_latest_display().await }));
+        self.tasks
+            .spawn(TaskId::Changelog, fetch_latest_display(), |result| {
+                UiOutput::Changelog(result).into()
+            });
         self.set_status("fetching latest changelog");
         true
     }
 
-    pub(super) async fn cancel_changelog_command(&mut self) {
-        if let Some(handle) = self.pending_changelog.take() {
-            handle.abort();
-            let _ = handle.await;
-        }
-    }
-
-    pub(super) async fn poll_changelog_command(&mut self) -> anyhow::Result<bool> {
-        if !self
-            .pending_changelog
-            .as_ref()
-            .is_some_and(|handle| handle.is_finished())
-        {
-            return Ok(false);
-        }
-        self.finish_changelog_command().await?;
-        Ok(true)
-    }
-
-    async fn finish_changelog_command(&mut self) -> anyhow::Result<()> {
-        let Some(handle) = self.pending_changelog.take() else {
-            return Ok(());
-        };
-        match handle.await {
+    pub(super) fn apply_changelog_fetch(
+        &mut self,
+        result: Result<ChangelogFetchResult, tokio::task::JoinError>,
+    ) -> bool {
+        match result {
             Ok(Ok(display)) => self.show_changelog(display),
             Ok(Err(error)) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -94,7 +82,7 @@ impl App {
                 self.set_status("changelog fetch failed");
             }
         }
-        Ok(())
+        true
     }
 
     fn show_changelog(&mut self, display: ChangelogDisplay) {

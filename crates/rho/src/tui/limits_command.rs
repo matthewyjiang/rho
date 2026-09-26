@@ -8,6 +8,7 @@ use rho_providers::credentials::CredentialStore;
 
 use super::{
     activity::LoadingSpinner,
+    background_tasks::{TaskId, UiOutput},
     overlay_panel::{PanelBody, PanelState},
     panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
     render::display_width,
@@ -32,7 +33,7 @@ const FOOTER: &str = "Enter/Esc close";
 /// [`LimitsSectionId::ClaudeCode`].
 const CLAUDE_CODE_PROVIDER_LABEL: &str = "Claude Code";
 
-enum LimitsFetchResult {
+pub(super) enum LimitsFetchResult {
     ProviderReady {
         limits: crate::usage_limits::ProviderUsageLimits,
     },
@@ -46,21 +47,6 @@ enum LimitsFetchResult {
     },
 }
 
-pub(super) struct PendingUsageFetch {
-    id: LimitsSectionId,
-    handle: tokio::task::JoinHandle<LimitsFetchResult>,
-}
-
-impl PendingUsageFetch {
-    pub(super) fn is_finished(&self) -> bool {
-        self.handle.is_finished()
-    }
-
-    fn provider_kind(&self) -> Option<UsageProviderKind> {
-        self.id.provider_kind()
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(super) enum LiveUsage {
     Ready {
@@ -71,7 +57,7 @@ pub(super) enum LiveUsage {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum LimitsSectionId {
+pub(super) enum LimitsSectionId {
     Provider(UsageProviderKind),
     ClaudeCode,
 }
@@ -235,41 +221,35 @@ impl App {
     }
 
     pub(super) async fn cancel_limits_command(&mut self) {
-        let pending = std::mem::take(&mut self.pending_usage_limits);
-        for fetch in pending {
-            fetch.handle.abort();
-            let _ = fetch.handle.await;
-        }
+        self.tasks
+            .cancel(|id| matches!(id, TaskId::UsageLimits(_)))
+            .await;
     }
 
-    pub(super) async fn poll_limits_command(&mut self) -> anyhow::Result<bool> {
-        let mut changed = false;
-        let mut still_pending = Vec::new();
-        let pending = std::mem::take(&mut self.pending_usage_limits);
-        for fetch in pending {
-            if !fetch.is_finished() {
-                still_pending.push(fetch);
-                continue;
-            }
-            changed = true;
-            match fetch.handle.await {
-                Ok(result) => self.apply_limits_fetch(fetch.id, result),
-                Err(_) => self.apply_limits_fetch(
-                    fetch.id,
-                    LimitsFetchResult::Failed {
-                        reason: UsageFailure::Other,
-                    },
-                ),
-            }
-        }
-        self.pending_usage_limits = still_pending;
-        if changed {
-            // Rows may have moved under a selection anchored by line.
-            if let Some(overlay) = self.limits_overlay_mut() {
-                overlay.panel.pointer.clear_selection();
-            }
-        }
-        Ok(changed)
+    /// Section ids with a usage fetch in flight.
+    fn pending_limits_sections(&self) -> Vec<LimitsSectionId> {
+        self.tasks
+            .ids()
+            .filter_map(|id| match id {
+                TaskId::UsageLimits(section) => Some(*section),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Spawn a usage fetch for one section. A join error reads as a failure.
+    pub(super) fn spawn_limits_fetch(
+        &mut self,
+        section: LimitsSectionId,
+        fetch: impl std::future::Future<Output = LimitsFetchResult> + Send + 'static,
+    ) {
+        self.tasks
+            .spawn(TaskId::UsageLimits(section), fetch, move |result| {
+                let result = result.unwrap_or(LimitsFetchResult::Failed {
+                    reason: UsageFailure::Other,
+                });
+                UiOutput::UsageLimits(section, result).into()
+            });
     }
 
     fn limits_overlay_mut(&mut self) -> Option<&mut LimitsOverlay> {
@@ -283,21 +263,19 @@ impl App {
         &mut self,
         claude_disk: Option<&crate::claude_runtime::rate_limit::RateLimitState>,
     ) {
+        let pending = self.pending_limits_sections();
         let overlay = build_limits_overlay(
             self.credential_store.as_ref(),
             &self.usage_limits_live,
-            self.pending_usage_limits
+            pending
                 .iter()
-                .filter_map(PendingUsageFetch::provider_kind)
+                .filter_map(|section| section.provider_kind())
                 .collect::<Vec<_>>()
                 .as_slice(),
             usage_limits_cache::load(),
             limits_claude::ClaudeLimitsView {
                 disk: claude_disk,
-                pending: self
-                    .pending_usage_limits
-                    .iter()
-                    .any(|fetch| fetch.id == LimitsSectionId::ClaudeCode),
+                pending: pending.contains(&LimitsSectionId::ClaudeCode),
                 probe_available: limits_claude::claude_probe_available(),
             },
             crate::claude_runtime::rate_limit::now_unix(),
@@ -311,9 +289,9 @@ impl App {
         claude_disk: Option<&crate::claude_runtime::rate_limit::RateLimitState>,
     ) {
         let pending: Vec<UsageProviderKind> = self
-            .pending_usage_limits
-            .iter()
-            .filter_map(PendingUsageFetch::provider_kind)
+            .pending_limits_sections()
+            .into_iter()
+            .filter_map(LimitsSectionId::provider_kind)
             .collect();
         let kinds = connected_kinds(self.credential_store.as_ref());
         for kind in kinds {
@@ -325,17 +303,14 @@ impl App {
                 .usage_limits_client
                 .get_or_init(crate::reqwest_client)
                 .clone();
-            self.pending_usage_limits.push(PendingUsageFetch {
-                id: LimitsSectionId::Provider(kind),
-                handle: tokio::spawn(async move {
-                    match fetch_usage_provider(kind, store.as_ref(), client).await {
-                        Ok(Some(limits)) => LimitsFetchResult::ProviderReady { limits },
-                        Ok(None) => LimitsFetchResult::Unavailable,
-                        Err(error) => LimitsFetchResult::Failed {
-                            reason: error.failure(),
-                        },
-                    }
-                }),
+            self.spawn_limits_fetch(LimitsSectionId::Provider(kind), async move {
+                match fetch_usage_provider(kind, store.as_ref(), client).await {
+                    Ok(Some(limits)) => LimitsFetchResult::ProviderReady { limits },
+                    Ok(None) => LimitsFetchResult::Unavailable,
+                    Err(error) => LimitsFetchResult::Failed {
+                        reason: error.failure(),
+                    },
+                }
             });
             let live_fetched_at = match self.usage_limits_live.get(&kind) {
                 Some(LiveUsage::Ready {
@@ -358,7 +333,21 @@ impl App {
         self.spawn_claude_usage_fetch(claude_disk);
     }
 
-    fn apply_limits_fetch(&mut self, id: LimitsSectionId, result: LimitsFetchResult) {
+    /// Apply one finished usage fetch. Always changes the screen.
+    pub(super) fn apply_limits_fetch(
+        &mut self,
+        id: LimitsSectionId,
+        result: LimitsFetchResult,
+    ) -> bool {
+        self.apply_limits_result(id, result);
+        // Rows may have moved under a selection anchored by line.
+        if let Some(overlay) = self.limits_overlay_mut() {
+            overlay.panel.pointer.clear_selection();
+        }
+        true
+    }
+
+    fn apply_limits_result(&mut self, id: LimitsSectionId, result: LimitsFetchResult) {
         match result {
             LimitsFetchResult::ProviderReady { limits } => {
                 if let Some(kind) = id.provider_kind() {

@@ -26,6 +26,7 @@ mod approval;
 mod attach_picker;
 pub(crate) mod attachment;
 mod background_polls;
+mod background_tasks;
 mod cache_stats;
 mod click_sequence;
 mod clipboard;
@@ -255,7 +256,6 @@ use inline_choice::{
 };
 #[cfg(test)]
 use inline_shell::InlineShellMode;
-use login::PendingInteractiveLogin;
 #[cfg(test)]
 use login::SecretInput;
 use paste_burst::PasteBurstEnter;
@@ -288,7 +288,7 @@ use {
     crate::app::config_repository::ConfigRepository,
     crate::app::interactive_runtime::InteractiveRuntime,
     crate::commands::{self, CommandId, CommandInvocation},
-    crate::herdr::{HerdrGraphicsCapability, HerdrReporter, HerdrState},
+    crate::herdr::{HerdrReporter, HerdrState},
     crate::keybindings::Keybindings,
     crate::permission::PermissionMode,
     crate::session::Session,
@@ -495,7 +495,7 @@ pub(crate) async fn run(
                     agent.mcp_catalog().clone(),
                     agent.plugins_report().clone(),
                 );
-                app.pending_herdr_graphics = Some(pending_herdr_graphics);
+                app.track_herdr_graphics(pending_herdr_graphics);
                 app.terminal_session = Some(TerminalSession::acquire());
                 if let Some(manager) = agent.subagents() {
                     app.subagent_inbox.bind(manager);
@@ -558,44 +558,29 @@ struct App {
     credential_store: Arc<dyn CredentialStore>,
     available_auths: Vec<String>,
     using_unavailable_provider: bool,
-    pending_interactive_login: Option<PendingInteractiveLogin>,
     /// Who owns the full terminal. Setup and attach replace session chrome.
     exclusive: exclusive_screen::ExclusiveOccupant,
-    pending_usage_limits: Vec<limits_command::PendingUsageFetch>,
-    pending_doctor_probes: Vec<doctor_overlay::PendingDoctorProbe>,
-    pending_info_runtimes: Option<tokio::task::JoinHandle<Vec<String>>>,
-    pending_info_tree:
-        Option<tokio::task::JoinHandle<anyhow::Result<crate::session::tree::SessionTreeFacts>>>,
+    /// Background task handles; see `background_tasks`.
+    tasks: background_tasks::BackgroundTasks,
     /// `/info` opened while a turn was still writing the tree. Start the read
     /// once the session is idle again, if the overlay is still open.
     info_tree_deferred: bool,
-    /// `/spend` reports and the ledger read in flight; outlives the overlay.
+    /// Last `/spend` reports; outlives the overlay.
     spend: spend_overlay::SpendCache,
     usage_limits_live: std::collections::BTreeMap<
         crate::usage_limits::UsageProviderKind,
         limits_command::LiveUsage,
     >,
-    pending_changelog: Option<tokio::task::JoinHandle<changelog_command::ChangelogFetchResult>>,
     /// Open `/diff` popup state; dropped once its picker closes.
     diff_viewer: Option<diff_viewer::DiffViewer>,
     web_search_reload_pending: bool,
     compaction_reload_pending: bool,
-    pending_web_search_test:
-        Option<tokio::task::JoinHandle<Result<usize, rho_tools::tool::ToolError>>>,
     /// Built on first `/limits` use; constructing a client loads TLS roots,
     /// which startup should not pay for a feature that may never run.
     usage_limits_client: std::sync::OnceLock<reqwest::Client>,
     usage: UsageUi,
     model_metadata: Option<ModelMetadata>,
-    pending_model_metadata: Option<tokio::task::JoinHandle<Option<ModelMetadata>>>,
-    pending_model_metadata_reasoning: Option<(ReasoningLevel, ReasoningRequestSource)>,
-    pending_update_notice: Option<tokio::task::JoinHandle<Option<String>>>,
-    pending_custom_models: Option<tokio::task::JoinHandle<()>>,
-    pending_cursor_models: Option<crate::cursor_runtime::models::RefreshHandle>,
-    pending_syntax_warmup: Option<tokio::task::JoinHandle<()>>,
     prompt_history: prompt_history::PromptHistory,
-    pending_herdr_graphics: Option<tokio::task::JoinHandle<HerdrGraphicsCapability>>,
-    pending_github_pr: Option<tokio::task::JoinHandle<github_pr::GithubPrLookup>>,
     /// Turns held until MCP connect settles.
     held_turns: VecDeque<idle_input::HeldTurn>,
     compact_follow_up: compact_work::CompactFollowUp,

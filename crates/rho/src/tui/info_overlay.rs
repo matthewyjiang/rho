@@ -10,6 +10,7 @@ use std::time::Instant;
 use ratatui::text::Line;
 
 use super::{
+    background_tasks::{TaskId, UiOutput},
     info_command::{info_copy_text, load_external_runtimes, runtime_info_lines, RuntimeInfo},
     overlay_panel::{PanelBody, PanelState},
     App, ComposerMode, PanelOverlay,
@@ -73,16 +74,25 @@ impl App {
         if cfg!(test) {
             return;
         }
-        self.pending_info_runtimes = Some(tokio::spawn(load_external_runtimes()));
+        self.tasks
+            .spawn(TaskId::InfoRuntimes, load_external_runtimes(), |result| {
+                UiOutput::InfoRuntimes(result).into()
+            });
         if self.info_tree_loading() {
             let Some(session_id) = self.info.session.session_id.clone() else {
                 return;
             };
-            let cwd = self.info.runtime.cwd.clone();
-            self.pending_info_tree = Some(tokio::task::spawn_blocking(move || {
-                crate::session::Session::tree_facts_by_id(&cwd, &session_id)
-            }));
+            self.spawn_info_tree_read(session_id);
         }
+    }
+
+    fn spawn_info_tree_read(&mut self, session_id: String) {
+        let cwd = self.info.runtime.cwd.clone();
+        self.tasks.spawn_blocking(
+            TaskId::InfoTree,
+            move || crate::session::Session::tree_facts_by_id(&cwd, &session_id),
+            |result| UiOutput::InfoTree(result).into(),
+        );
     }
 
     /// Drop the refresh tasks. Called once the overlay has left the composer.
@@ -91,62 +101,48 @@ impl App {
         self.abort_info_refresh();
     }
 
-    pub(super) async fn poll_info_refresh(&mut self) -> anyhow::Result<bool> {
+    /// Approvals and other composer replacements do not go through close;
+    /// drop leftover reads once the overlay is gone.
+    pub(super) async fn cancel_orphaned_info_refresh(&mut self) {
         if !matches!(
             self.input_ui.composer(),
             ComposerMode::Panel(PanelOverlay::Info(_))
         ) {
-            // Approvals and other composer replacements do not go through close.
             self.cancel_info_refresh().await;
-            return Ok(false);
         }
-        let mut changed = false;
-        if self
-            .pending_info_runtimes
-            .as_ref()
-            .is_some_and(|handle| handle.is_finished())
-        {
-            if let Some(handle) = self.pending_info_runtimes.take() {
-                if let Ok(lines) = handle.await {
-                    self.apply_info_runtimes(lines);
-                    changed = true;
-                }
-            }
-        }
-        if self
-            .pending_info_tree
-            .as_ref()
-            .is_some_and(|handle| handle.is_finished())
-        {
-            if let Some(handle) = self.pending_info_tree.take() {
-                match handle.await {
-                    Ok(Ok(facts)) => {
-                        self.apply_info_tree(Some(facts), None);
-                        changed = true;
-                    }
-                    Ok(Err(error)) => {
-                        self.apply_info_tree(None, Some(error.to_string()));
-                        changed = true;
-                    }
-                    Err(_) => {}
-                }
-            }
-        }
-        Ok(changed)
     }
 
+    pub(super) fn apply_info_runtimes_result(
+        &mut self,
+        result: Result<Vec<String>, tokio::task::JoinError>,
+    ) -> bool {
+        let Ok(lines) = result else {
+            return false;
+        };
+        self.apply_info_runtimes(lines)
+    }
+
+    pub(super) fn apply_info_tree_result(
+        &mut self,
+        result: Result<
+            anyhow::Result<crate::session::tree::SessionTreeFacts>,
+            tokio::task::JoinError,
+        >,
+    ) -> bool {
+        match result {
+            Ok(Ok(facts)) => self.apply_info_tree(Some(facts), None),
+            Ok(Err(error)) => self.apply_info_tree(None, Some(error.to_string())),
+            Err(_) => false,
+        }
+    }
+
+    /// Stop the probes. The tree read is `spawn_blocking` and detaches: it
+    /// finishes in the background without blocking cancel or shutdown.
     pub(super) async fn cancel_info_refresh(&mut self) {
         self.info_tree_deferred = false;
-        if let Some(handle) = self.pending_info_runtimes.take() {
-            handle.abort();
-            let _ = handle.await;
-        }
-        // spawn_blocking does not observe abort. Awaiting it stalls the event
-        // loop until the tree read finishes. Drop the handle so the read can
-        // finish in the background without blocking cancel or shutdown.
-        if let Some(handle) = self.pending_info_tree.take() {
-            handle.abort();
-        }
+        self.tasks
+            .cancel(|id| matches!(id, TaskId::InfoRuntimes | TaskId::InfoTree))
+            .await;
     }
 
     /// Start the session-tree read skipped while a turn was writing the tree.
@@ -169,40 +165,35 @@ impl App {
             let _ = session_id;
             return true;
         }
-        let cwd = self.info.runtime.cwd.clone();
-        self.pending_info_tree = Some(tokio::task::spawn_blocking(move || {
-            crate::session::Session::tree_facts_by_id(&cwd, &session_id)
-        }));
+        self.spawn_info_tree_read(session_id);
         true
     }
 
     fn abort_info_refresh(&mut self) {
-        if let Some(handle) = self.pending_info_runtimes.take() {
-            handle.abort();
-        }
-        if let Some(handle) = self.pending_info_tree.take() {
-            handle.abort();
-        }
+        self.tasks
+            .abort(|id| matches!(id, TaskId::InfoRuntimes | TaskId::InfoTree));
     }
 
-    fn apply_info_runtimes(&mut self, lines: Vec<String>) {
+    fn apply_info_runtimes(&mut self, lines: Vec<String>) -> bool {
         let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() else {
-            return;
+            return false;
         };
         overlay.info.set_external_runtimes(lines);
         overlay.panel.pointer.clear_selection();
+        true
     }
 
     fn apply_info_tree(
         &mut self,
         tree: Option<crate::session::tree::SessionTreeFacts>,
         error: Option<String>,
-    ) {
+    ) -> bool {
         let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() else {
-            return;
+            return false;
         };
         overlay.info.set_tree(tree, error);
         overlay.panel.pointer.clear_selection();
+        true
     }
 
     fn mark_info_tree_loading(&mut self) {

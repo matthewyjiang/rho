@@ -9,10 +9,10 @@
 
 use std::{path::Path, process::Stdio, time::Duration};
 
-use futures_util::FutureExt;
 use serde::Deserialize;
 
 use super::{
+    background_tasks::{TaskId, UiOutput},
     smoke_injection,
     statusline::{CwdExtra, CwdExtraTone},
     workspace, App,
@@ -251,19 +251,21 @@ fn tool_name(token: &str) -> &str {
 impl App {
     pub(super) fn start_github_pr_fetch(&mut self) {
         if smoke_injection::matrix_enabled()
-            || self.pending_github_pr.is_some()
+            || self.tasks.contains(|id| *id == TaskId::GithubPr)
             || self.statusline.branch().is_none()
         {
             return;
         }
         let cwd = self.info.runtime.cwd.clone();
-        self.pending_github_pr = Some(tokio::spawn(async move { lookup(&cwd).await }));
+        self.tasks.spawn(
+            TaskId::GithubPr,
+            async move { lookup(&cwd).await },
+            |result| UiOutput::GithubPr(result).into(),
+        );
     }
 
     fn restart_github_pr_fetch(&mut self) {
-        if let Some(handle) = self.pending_github_pr.take() {
-            handle.abort();
-        }
+        self.tasks.abort(|id| *id == TaskId::GithubPr);
         self.start_github_pr_fetch();
     }
 
@@ -289,14 +291,10 @@ impl App {
         }
     }
 
-    pub(super) fn poll_github_pr(&mut self) -> bool {
-        let Some(handle) = self.pending_github_pr.as_mut() else {
-            return false;
-        };
-        let Some(result) = handle.now_or_never() else {
-            return false;
-        };
-        self.pending_github_pr = None;
+    pub(super) fn apply_github_pr(
+        &mut self,
+        result: Result<GithubPrLookup, tokio::task::JoinError>,
+    ) -> bool {
         if let Ok(lookup) = result {
             match paint_for_current_branch(self.statusline.branch(), lookup) {
                 GithubPrPaint::Keep => {}

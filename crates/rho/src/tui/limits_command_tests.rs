@@ -67,17 +67,17 @@ async fn cancelling_limits_query_waits_for_background_task_to_stop() {
     let mut app = super::super::tests::test_app();
     let task_marker = std::sync::Arc::new(());
     let captured_marker = task_marker.clone();
-    app.pending_usage_limits.push(PendingUsageFetch {
-        id: LimitsSectionId::Provider(UsageProviderKind::Codex),
-        handle: tokio::spawn(async move {
+    app.spawn_limits_fetch(
+        LimitsSectionId::Provider(UsageProviderKind::Codex),
+        async move {
             let _marker = captured_marker;
             std::future::pending::<LimitsFetchResult>().await
-        }),
-    });
+        },
+    );
 
     app.cancel_limits_command().await;
 
-    assert!(app.pending_usage_limits.is_empty());
+    assert!(!app.tasks.has_pending());
     assert_eq!(std::sync::Arc::strong_count(&task_marker), 1);
 }
 

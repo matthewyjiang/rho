@@ -10,17 +10,14 @@ use super::{
 };
 
 impl App {
-    /// Drain overlay work in both idle and running loops, then redraw once.
-    pub(super) async fn poll_overlay_tasks(&mut self) -> anyhow::Result<bool> {
-        let mut changed = self.poll_limits_command().await?;
-        changed |= self.poll_doctor_command().await?;
-        changed |= self.poll_info_refresh().await?;
-        changed |= self.poll_spend_load().await;
-        changed |= self.poll_side_chat();
-        changed |= self.poll_changelog_command().await?;
-        changed |= self.poll_diff_viewer().await;
-        changed |= self.poll_web_search_test().await?;
-        Ok(changed)
+    /// Drop task work for overlays that closed without their close path (for
+    /// example an approval replaced the composer), and drain side chat.
+    /// Runs in both idle and running loops.
+    pub(super) async fn reconcile_overlays(&mut self) -> anyhow::Result<bool> {
+        self.cancel_orphaned_doctor_probes().await;
+        self.cancel_orphaned_info_refresh().await;
+        self.drop_closed_diff_viewer();
+        Ok(self.poll_side_chat())
     }
 
     fn insert_recovered_history(&mut self) -> std::io::Result<bool> {
@@ -67,64 +64,7 @@ impl App {
         let mut needs_redraw = true;
         let mut first_frame = true;
         while !self.should_quit {
-            let background_ready = self
-                .pending_model_metadata
-                .as_ref()
-                .is_some_and(|handle| handle.is_finished())
-                || self
-                    .pending_update_notice
-                    .as_ref()
-                    .is_some_and(|handle| handle.is_finished())
-                || self
-                    .pending_interactive_login
-                    .as_ref()
-                    .is_some_and(|pending| pending.handle.is_finished())
-                || self
-                    .pending_usage_limits
-                    .iter()
-                    .any(super::limits_command::PendingUsageFetch::is_finished)
-                || self
-                    .pending_doctor_probes
-                    .iter()
-                    .any(super::doctor_overlay::PendingDoctorProbe::is_finished)
-                || self
-                    .pending_info_runtimes
-                    .as_ref()
-                    .is_some_and(|handle| handle.is_finished())
-                || self
-                    .pending_info_tree
-                    .as_ref()
-                    .is_some_and(|handle| handle.is_finished())
-                || self.spend.load_finished()
-                || self
-                    .pending_changelog
-                    .as_ref()
-                    .is_some_and(|handle| handle.is_finished())
-                || self.diff_load_finished()
-                || self
-                    .pending_web_search_test
-                    .as_ref()
-                    .is_some_and(|handle| handle.is_finished())
-                || self
-                    .pending_custom_models
-                    .as_ref()
-                    .is_some_and(|handle| handle.is_finished())
-                || self
-                    .pending_cursor_models
-                    .as_ref()
-                    .is_some_and(|handle| handle.is_finished())
-                || self
-                    .pending_syntax_warmup
-                    .as_ref()
-                    .is_some_and(|handle| handle.is_finished())
-                || self
-                    .pending_herdr_graphics
-                    .as_ref()
-                    .is_some_and(|handle| handle.is_finished())
-                || self
-                    .pending_github_pr
-                    .as_ref()
-                    .is_some_and(|handle| handle.is_finished())
+            let background_ready = self.tasks.has_finished()
                 || self.prompt_history.load_finished()
                 || agent.startup_hydrate_ready();
             needs_redraw |= self.poll_background(terminal, agent, first_frame).await?;
@@ -166,25 +106,10 @@ impl App {
                 || self.pending_subagent_questionnaire.is_some()
                 || self.subagent_inbox.has_queued_questionnaires()
                 || self.subagent_inbox.has_parent_action_requests();
-            let idle_timeout = if self.pending_model_metadata.is_some()
-                || self.pending_update_notice.is_some()
-                || self.pending_custom_models.is_some()
-                || self.pending_cursor_models.is_some()
-                || self.pending_syntax_warmup.is_some()
-                || self.pending_herdr_graphics.is_some()
-                || self.pending_github_pr.is_some()
+            let idle_timeout = if self.tasks.has_pending()
                 || self.computer_lifecycle_pending()
                 || self.prompt_history.load_pending()
                 || self.pending_session_title.is_some()
-                || self.pending_interactive_login.is_some()
-                || !self.pending_usage_limits.is_empty()
-                || !self.pending_doctor_probes.is_empty()
-                || self.pending_info_runtimes.is_some()
-                || self.pending_info_tree.is_some()
-                || self.spend.is_loading()
-                || self.pending_changelog.is_some()
-                || self.diff_load_pending()
-                || self.pending_web_search_test.is_some()
                 || self.mcp_argument_completions.is_pending()
                 || self.exclusive.wants_fast_ticks()
                 || !self.pending_inline_shells.is_empty()
@@ -241,15 +166,7 @@ impl App {
         }
         self.prompt_history.flush();
         self.abort_compact(agent).await;
-        self.cancel_limits_command().await;
-        self.cancel_doctor_command().await;
-        self.cancel_info_refresh().await;
-        self.spend.abort();
-        self.cancel_changelog_command().await;
-        self.cancel_web_search_test().await;
-        if let Some(handle) = self.pending_cursor_models.take() {
-            handle.abort();
-        }
+        self.tasks.cancel_all().await;
         agent.cancel_startup_hydrates();
         self.mcp_argument_completions.cancel();
         if let Some(mut pending) = self.pending_session_title.take() {
@@ -268,8 +185,7 @@ impl App {
         // Background work and input dispatch are separate phases. Do not keep
         // background future temporaries on the stack while handling input.
         Box::pin(async move {
-            let mut needs_redraw = false;
-            self.poll_model_metadata_fetch(agent).await;
+            let mut needs_redraw = self.apply_finished_tasks(terminal, agent).await?;
             needs_redraw |= self.apply_pending_compaction_config(agent)?;
             needs_redraw |= self.poll_startup_hydrates(agent).await?;
             needs_redraw |= self.poll_computer_connection(agent).await;
@@ -279,15 +195,9 @@ impl App {
             if !first_frame {
                 needs_redraw |= self.start_startup_prompt(terminal, agent).await?;
             }
-            self.poll_update_notice();
-            self.poll_custom_provider_models();
-            self.poll_cursor_model_refresh().await;
-            needs_redraw |= self.poll_syntax_warmup();
-            self.poll_herdr_graphics();
             needs_redraw |= self.poll_prompt_history();
             needs_redraw |= self.poll_pending_session_title()?;
-            self.poll_pending_interactive_login(terminal, agent).await?;
-            needs_redraw |= self.poll_overlay_tasks().await?;
+            needs_redraw |= self.reconcile_overlays().await?;
             // The composer decides what to ask about and changes on key events.
             needs_redraw |= self.poll_mcp_argument_completion().await;
             needs_redraw |= self.poll_markdown_images();
@@ -527,7 +437,7 @@ impl App {
         // Fold terminal subagent/advisor costs on every panel refresh path (idle
         // poll, in-turn wait, goal wait). Claiming is idempotent per run/call.
         changed |= self.claim_non_main_costs(agent);
-        changed |= self.poll_github_pr();
+        changed |= self.apply_finished_ui_tasks();
         self.restore_mcp_hold_activity_if_needed(agent.mcp_connect_pending());
         if self.activity_status().is_some() {
             self.turn.start_loading_if_needed();

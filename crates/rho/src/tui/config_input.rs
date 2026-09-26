@@ -33,9 +33,7 @@ impl App {
                 self.copy_text(&url, std::time::Instant::now());
             }
             (_, KeyCode::Esc) => {
-                if let Some(pending) = self.pending_interactive_login.take() {
-                    pending.handle.abort();
-                }
+                self.abort_interactive_login();
                 // Cancelling a pending login is not backing out of setup.
                 // Setup picker Esc still calls `dismiss_setup_screen()`.
                 self.restore_after_cancelled_login();

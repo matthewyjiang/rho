@@ -9,7 +9,18 @@ use pretty_assertions::assert_eq;
 use ratatui::layout::Rect;
 
 use super::*;
+use crate::tui::background_tasks::{TaskId, UiOutput};
 use crate::tui::clipboard::{Clipboard, CopyOutcome};
+
+/// Stand-in for `load_external_runtimes`, which unit tests never launch.
+fn spawn_runtime_probe(
+    app: &mut App,
+    probe: impl std::future::Future<Output = Vec<String>> + Send + 'static,
+) {
+    app.tasks.spawn(TaskId::InfoRuntimes, probe, |result| {
+        UiOutput::InfoRuntimes(result).into()
+    });
+}
 
 struct FakeClipboard {
     text: Arc<Mutex<String>>,
@@ -37,8 +48,7 @@ fn opening_info_paints_local_fields_before_probes() {
         app.input_ui.composer(),
         ComposerMode::Panel(PanelOverlay::Info(_))
     ));
-    assert!(app.pending_info_runtimes.is_none());
-    assert!(app.pending_info_tree.is_none());
+    assert!(!app.tasks.has_pending());
     let ComposerMode::Panel(PanelOverlay::Info(overlay)) = app.input_ui.composer() else {
         unreachable!("overlay just opened");
     };
@@ -58,22 +68,18 @@ fn opening_info_paints_local_fields_before_probes() {
 async fn finished_runtime_probe_fills_the_open_overlay() {
     let mut app = super::super::tests::test_app();
     app.execute_info_command().unwrap();
-    app.pending_info_runtimes = Some(tokio::spawn(async {
+    spawn_runtime_probe(&mut app, async {
         vec![
             "claude code: signed in as test".into(),
             "cursor: signed in".into(),
         ]
-    }));
-    while app
-        .pending_info_runtimes
-        .as_ref()
-        .is_some_and(|handle| !handle.is_finished())
-    {
+    });
+    while !app.tasks.has_finished() {
         tokio::task::yield_now().await;
     }
 
-    assert!(app.poll_info_refresh().await.unwrap());
-    assert!(app.pending_info_runtimes.is_none());
+    assert!(app.apply_finished_ui_tasks());
+    assert!(!app.tasks.has_pending());
     let ComposerMode::Panel(PanelOverlay::Info(overlay)) = app.input_ui.composer() else {
         panic!("probe closed the overlay");
     };
@@ -97,7 +103,7 @@ fn info_opened_during_a_turn_defers_the_tree_read_until_idle() {
     app.execute_info_command().unwrap();
 
     assert!(app.info_tree_deferred);
-    assert!(app.pending_info_tree.is_none());
+    assert!(!app.tasks.has_pending());
     let ComposerMode::Panel(PanelOverlay::Info(overlay)) = app.input_ui.composer() else {
         panic!("overlay did not open");
     };
@@ -120,14 +126,14 @@ async fn cancelling_info_probes_waits_for_the_task_to_stop() {
     let mut app = super::super::tests::test_app();
     let task_marker = Arc::new(());
     let captured_marker = task_marker.clone();
-    app.pending_info_runtimes = Some(tokio::spawn(async move {
+    spawn_runtime_probe(&mut app, async move {
         let _marker = captured_marker;
         std::future::pending::<Vec<String>>().await
-    }));
+    });
 
     app.cancel_info_refresh().await;
 
-    assert!(app.pending_info_runtimes.is_none());
+    assert!(!app.tasks.has_pending());
     assert_eq!(Arc::strong_count(&task_marker), 1);
 }
 
@@ -137,10 +143,10 @@ async fn cancelling_info_probes_waits_for_the_task_to_stop() {
 async fn closing_info_clears_probe_handles() {
     let mut app = super::super::tests::test_app();
     app.execute_info_command().unwrap();
-    app.pending_info_runtimes = Some(tokio::spawn(std::future::pending()));
+    spawn_runtime_probe(&mut app, std::future::pending());
     app.close_panel_overlay();
 
-    assert!(app.pending_info_runtimes.is_none());
+    assert!(!app.tasks.has_pending());
     assert!(!matches!(
         app.input_ui.composer(),
         ComposerMode::Panel(PanelOverlay::Info(_))
