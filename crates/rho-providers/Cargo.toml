@@ -46,6 +46,8 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+# The `rho` binary enables this through starlark; test the same number shape.
+serde_json = { version = "1", features = ["arbitrary_precision"] }
 pretty_assertions = "1"
 tempfile = "3"
 

@@ -617,7 +617,11 @@ async fn fetch_models_dev_api() -> Option<document::ModelsDevCatalog> {
 /// v11: rows gained a sidecar `image_input` key from models.dev
 /// `modalities.input`. Older rows would read `Unknown` forever without a
 /// refetch.
-pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 11;
+///
+/// v12: the `rho` binary parses numbers with serde_json `arbitrary_precision`,
+/// which the price parser rejected, so older rows dropped fractional prices
+/// (`glm-5` output `3.2`, every `gpt-5.6-luna` rate). Refetch to restore them.
+pub(super) const MODEL_METADATA_CACHE_VERSION: i64 = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CacheFreshness {

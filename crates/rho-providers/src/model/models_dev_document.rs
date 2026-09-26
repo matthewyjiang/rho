@@ -142,9 +142,11 @@ impl ModelsDevCatalog {
         Some((provider_doc, model_doc))
     }
 
+    /// Parses from JSON text like the network path does. `from_value` would
+    /// skip the arbitrary-precision number shape the `rho` binary sees.
     #[cfg(test)]
     pub(super) fn from_json_value(value: &serde_json::Value) -> Self {
-        serde_json::from_value(value.clone()).expect("models.dev test fixture must deserialize")
+        serde_json::from_str(&value.to_string()).expect("models.dev test fixture must deserialize")
     }
 }
 

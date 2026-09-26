@@ -53,6 +53,13 @@ web_search.mode = "off"
 credential_store = "file"
 "#;
 
+/// Pins the demo model's context window so the statusline `K (…%)` fill does
+/// not wait on a live models.dev fetch. Without it the capture times out
+/// offline or when the catalog download is slow.
+const DEMO_MODELS: &str = r#"[models."openai/gpt-5.6-sol"]
+advertised_context_window = 1000000
+"#;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "rho-pty-demo",
@@ -180,6 +187,9 @@ fn capture_demo(binary: &Path) -> Result<DemoCapture> {
     // Demo-only model label for the statusline; leave shared PTY defaults alone.
     fs::write(&home.config_path, DEMO_CONFIG)
         .with_context(|| format!("failed to write demo config {}", home.config_path.display()))?;
+    let models_path = home.home.join(".rho/models.toml");
+    fs::write(&models_path, DEMO_MODELS)
+        .with_context(|| format!("failed to write demo models {}", models_path.display()))?;
 
     let mut plan = RhoLaunchPlan::matrix(binary, &home, DEMO_SIZE);
     plan.cwd = workspace;
