@@ -130,6 +130,7 @@ impl App {
             CommandId::Mcp => self.execute_mcp_command(),
             CommandId::Title => self.execute_title_command(&invocation),
             CommandId::Limits => self.execute_limits_command(terminal),
+            CommandId::Spend => self.execute_spend_command(),
             CommandId::Fast => self.execute_fast_command(invocation, agent),
             CommandId::RefreshModels => self.execute_refresh_models_command(terminal, agent).await,
             CommandId::Workflow => self.execute_workflow_command(terminal).await,

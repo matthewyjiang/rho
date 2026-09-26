@@ -93,6 +93,30 @@ pub(super) fn overlay_panel_inner_width(area: Rect) -> usize {
         .max(1)
 }
 
+/// Body width for wrapped text with the panel's scrollbar column reserved,
+/// so right-aligned text is not clipped when the body scrolls.
+pub(super) fn overlay_panel_body_width(area: Rect) -> usize {
+    overlay_panel_inner_width(area).saturating_sub(1)
+}
+
+/// The full terminal as a panel layout area, when its size is readable.
+pub(super) fn terminal_area(terminal: &ratatui::DefaultTerminal) -> Option<Rect> {
+    let size = terminal.size().ok()?;
+    Some(Rect::new(0, 0, size.width, size.height))
+}
+
+/// `c` / `C`: copy the panel's report as plain text.
+pub(super) fn is_copy_key(key: crossterm::event::KeyEvent) -> bool {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    matches!(
+        (key.modifiers, key.code),
+        (
+            KeyModifiers::NONE | KeyModifiers::SHIFT,
+            KeyCode::Char('c' | 'C')
+        )
+    )
+}
+
 /// Draws the panel chrome around `body` scrolled to `scroll`. The frame keeps
 /// `body` so pointer selection can copy rows outside the viewport.
 pub(super) fn render_overlay_panel(

@@ -6,6 +6,8 @@ Rho's usage ledger is a durable, provider-neutral SQLite interface for accountin
 
 The database is `~/.rho/usage.sqlite3` by default. Setting `RHO_HOME` changes Rho's data root, including the ledger, to `$RHO_HOME/usage.sqlite3`. Rho creates the data directory and database with mode `0700` and `0600`, respectively, on Unix.
 
+In the interactive TUI, `/spend` reads this database (read-only) and summarizes spend and usage by provider, model, purpose, and time range. See [interactive TUI commands](/interactive-tui).
+
 The database uses WAL mode and a five-second busy timeout. Multiple Rho processes can write concurrently, and reporting tools can use SQLite's read-only mode while Rho is active. Readers should tolerate normal SQLite `-wal` and `-shm` sidecar files.
 
 ## Compatibility and schema
