@@ -1,5 +1,7 @@
 # AGENTS.md
 
+If you are not the maintainer of this repository, follow [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Commits and pull requests
 
 Use Conventional Commits for commit messages and PR titles:
