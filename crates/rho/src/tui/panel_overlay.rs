@@ -1,10 +1,11 @@
 //! Dispatch for single-pane panel overlays ([`PanelOverlay`]).
 //!
-//! Each overlay module owns its content, keys, and scroll state. This module
-//! is the one place that fans a composer-level event out to whichever panel
-//! is open, so input, resize, and draw paths name panels once instead of
-//! listing every variant. Pointer input is shared: every panel embeds a
-//! [`PanelPointer`] and this module applies its effects.
+//! Each overlay implements [`PanelBody`]: it owns its content and feature
+//! keys. This module owns everything shared, through one generic path: frame
+//! building, scroll clamping, pointer input, the copy key, and the
+//! close/scroll key table. Adding a panel means one [`PanelOverlay`] variant
+//! and one arm in [`PanelOverlay::body`] / [`PanelOverlay::body_mut`] /
+//! [`PanelOverlay::into_body`].
 
 use std::time::Instant;
 
@@ -12,35 +13,55 @@ use crossterm::event::{KeyEvent, MouseEventKind};
 use ratatui::{layout::Rect, DefaultTerminal};
 
 use super::{
-    overlay_panel::{OverlayPanelFrame, PanelScrollTarget},
+    overlay_panel::{
+        classify_panel_key, is_copy_key, panel_frame, scroll_panel, terminal_area,
+        OverlayPanelFrame, PanelBody, PanelKey, PanelKeyOutcome, PanelScrollTarget,
+    },
     panel_pointer::{PanelPointer, PanelPointerEffect, PanelPointerEvent},
     App, ComposerMode, PanelOverlay,
 };
 
 impl PanelOverlay {
-    /// Pointer state of the open panel, for painting hover and selection.
-    pub(super) fn pointer(&self) -> PanelPointer {
+    fn body(&self) -> &dyn PanelBody {
         match self {
-            Self::Limits(overlay) => overlay.pointer,
-            Self::Doctor(overlay) => overlay.pointer,
-            Self::Computer(overlay) => overlay.pointer,
-            Self::Hooks(overlay) => overlay.pointer,
-            Self::TextView(overlay) => overlay.pointer,
-            Self::Info(overlay) => overlay.pointer,
-            Self::Spend(overlay) => overlay.pointer,
+            Self::Limits(overlay) => overlay,
+            Self::Doctor(overlay) => overlay,
+            Self::Computer(overlay) => overlay,
+            Self::Hooks(overlay) => overlay,
+            Self::TextView(overlay) => overlay.as_ref(),
+            Self::Info(overlay) => overlay.as_ref(),
+            Self::Spend(overlay) => overlay.as_ref(),
         }
     }
 
-    fn pointer_mut(&mut self) -> &mut PanelPointer {
+    fn body_mut(&mut self) -> &mut dyn PanelBody {
         match self {
-            Self::Limits(overlay) => &mut overlay.pointer,
-            Self::Doctor(overlay) => &mut overlay.pointer,
-            Self::Computer(overlay) => &mut overlay.pointer,
-            Self::Hooks(overlay) => &mut overlay.pointer,
-            Self::TextView(overlay) => &mut overlay.pointer,
-            Self::Info(overlay) => &mut overlay.pointer,
-            Self::Spend(overlay) => &mut overlay.pointer,
+            Self::Limits(overlay) => overlay,
+            Self::Doctor(overlay) => overlay,
+            Self::Computer(overlay) => overlay,
+            Self::Hooks(overlay) => overlay,
+            Self::TextView(overlay) => overlay.as_mut(),
+            Self::Info(overlay) => overlay.as_mut(),
+            Self::Spend(overlay) => overlay.as_mut(),
         }
+    }
+
+    /// Owned body, so [`PanelBody::close`] can move state out of the panel.
+    fn into_body(self) -> Box<dyn PanelBody> {
+        match self {
+            Self::Limits(overlay) => Box::new(overlay),
+            Self::Doctor(overlay) => Box::new(overlay),
+            Self::Computer(overlay) => Box::new(overlay),
+            Self::Hooks(overlay) => Box::new(overlay),
+            Self::TextView(overlay) => overlay,
+            Self::Info(overlay) => overlay,
+            Self::Spend(overlay) => overlay,
+        }
+    }
+
+    /// Pointer state of the open panel, for painting hover and selection.
+    pub(super) fn pointer(&self) -> PanelPointer {
+        self.body().state().pointer
     }
 }
 
@@ -52,37 +73,77 @@ impl App {
         }
     }
 
-    /// Routes a key to the open panel. `false` when no panel is open or the
-    /// panel passes the key through (Ctrl+C).
+    fn panel_overlay_mut(&mut self) -> Option<&mut PanelOverlay> {
+        match self.input_ui.composer_mut() {
+            ComposerMode::Panel(panel) => Some(panel),
+            _ => None,
+        }
+    }
+
+    /// Routes a key to the open panel: its feature keys first, then copy,
+    /// then the shared close/scroll table. `false` when no panel is open or
+    /// the panel passes the key through (Ctrl+C).
     pub(super) fn handle_panel_overlay_key(
         &mut self,
         key: KeyEvent,
         terminal: &DefaultTerminal,
     ) -> bool {
-        match self.panel_overlay() {
-            None => false,
-            Some(PanelOverlay::Limits(_)) => self.handle_limits_overlay_key(key, terminal),
-            Some(PanelOverlay::Doctor(_)) => self.handle_doctor_overlay_key(key, terminal),
-            Some(PanelOverlay::Computer(_)) => self.handle_computer_overlay_key(key, terminal),
-            Some(PanelOverlay::Hooks(_)) => self.handle_hooks_overlay_key(key, terminal),
-            Some(PanelOverlay::TextView(_)) => self.handle_text_view_overlay_key(key, terminal),
-            Some(PanelOverlay::Info(_)) => self.handle_info_overlay_key(key, terminal),
-            Some(PanelOverlay::Spend(_)) => self.handle_spend_overlay_key(key, terminal),
+        let Some(panel) = self.panel_overlay_mut() else {
+            return false;
+        };
+        match panel.body_mut().handle_key(key) {
+            PanelKeyOutcome::Handled => return true,
+            PanelKeyOutcome::Run(action) => {
+                action(self);
+                return true;
+            }
+            PanelKeyOutcome::Unhandled => {}
+        }
+        if is_copy_key(key) {
+            self.copy_panel_overlay(Instant::now());
+            return true;
+        }
+        match classify_panel_key(key) {
+            PanelKey::Close => {
+                self.close_panel_overlay();
+                true
+            }
+            PanelKey::Scroll(target) => {
+                if let Some(area) = terminal_area(terminal) {
+                    self.scroll_panel_overlay(area, target);
+                }
+                true
+            }
+            PanelKey::Passthrough => false,
+            PanelKey::Swallow => true,
+        }
+    }
+
+    /// Copies the open panel's report, when it has one, as plain text.
+    pub(super) fn copy_panel_overlay(&mut self, now: Instant) {
+        if let Some(text) = self
+            .panel_overlay()
+            .and_then(|panel| panel.body().copy_text())
+        {
+            self.copy_text(&text, now);
+        }
+    }
+
+    /// Closes the open panel and runs its close policy. No-op without one.
+    pub(super) fn close_panel_overlay(&mut self) {
+        match self.input_ui.take_composer() {
+            ComposerMode::Panel(panel) => panel.into_body().close(self),
+            other => self.input_ui.set_composer(other),
         }
     }
 
     /// Re-clamps the open panel's scroll after a resize.
     pub(super) fn clamp_panel_overlay_scroll(&mut self, terminal: &DefaultTerminal) {
-        match self.panel_overlay() {
-            None => {}
-            Some(PanelOverlay::Limits(_)) => self.clamp_limits_overlay_scroll(terminal),
-            Some(PanelOverlay::Doctor(_)) => self.clamp_doctor_overlay_scroll(terminal),
-            Some(PanelOverlay::Computer(_)) => self.clamp_computer_overlay_scroll(terminal),
-            Some(PanelOverlay::Hooks(_)) => self.clamp_hooks_overlay_scroll(terminal),
-            Some(PanelOverlay::TextView(_)) => self.clamp_text_view_overlay_scroll(terminal),
-            Some(PanelOverlay::Info(_)) => self.clamp_info_overlay_scroll(terminal),
-            Some(PanelOverlay::Spend(_)) => self.clamp_spend_overlay_scroll(terminal),
-        }
+        let (Some(panel), Some(area)) = (self.panel_overlay(), terminal_area(terminal)) else {
+            return;
+        };
+        let offset = panel.body().state().scroll.offset();
+        self.scroll_panel_overlay(area, PanelScrollTarget::Absolute(offset));
     }
 
     /// The open panel's frame at `area`, or `None` when no panel is open.
@@ -91,15 +152,7 @@ impl App {
         area: Rect,
         now: Instant,
     ) -> Option<OverlayPanelFrame> {
-        match self.panel_overlay()? {
-            PanelOverlay::Limits(_) => self.limits_overlay_frame(area, now),
-            PanelOverlay::Doctor(_) => self.doctor_overlay_frame(area, now),
-            PanelOverlay::Computer(_) => self.computer_overlay_frame(area),
-            PanelOverlay::Hooks(_) => self.hooks_overlay_frame(area),
-            PanelOverlay::TextView(_) => self.text_view_overlay_frame(area),
-            PanelOverlay::Info(_) => self.info_overlay_frame(area),
-            PanelOverlay::Spend(_) => self.spend_overlay_frame(area, now),
-        }
+        Some(panel_frame(self.panel_overlay()?.body(), area, now))
     }
 
     /// Pointer input while a panel is open: wheel and scrollbar drag scroll
@@ -127,10 +180,14 @@ impl App {
         let Some(frame) = self.panel_overlay_frame(screen, now) else {
             return;
         };
-        let ComposerMode::Panel(panel) = self.input_ui.composer_mut() else {
+        let Some(panel) = self.panel_overlay_mut() else {
             return;
         };
-        let effect = panel.pointer_mut().handle(event, column, row, &frame);
+        let effect = panel
+            .body_mut()
+            .state_mut()
+            .pointer
+            .handle(event, column, row, &frame);
         match effect {
             PanelPointerEffect::None => {}
             PanelPointerEffect::ScrollTo(line) => {
@@ -144,29 +201,8 @@ impl App {
     }
 
     fn scroll_panel_overlay(&mut self, area: Rect, target: PanelScrollTarget) {
-        match self.panel_overlay() {
-            None => {}
-            Some(PanelOverlay::Limits(_)) => {
-                self.scroll_limits_overlay(area, target);
-            }
-            Some(PanelOverlay::Doctor(_)) => {
-                self.scroll_doctor_overlay(area, target);
-            }
-            Some(PanelOverlay::Computer(_)) => {
-                self.scroll_computer_overlay(area, target);
-            }
-            Some(PanelOverlay::Hooks(_)) => {
-                self.scroll_hooks_overlay(area, target);
-            }
-            Some(PanelOverlay::TextView(_)) => {
-                self.scroll_text_view_overlay(area, target);
-            }
-            Some(PanelOverlay::Info(_)) => {
-                self.scroll_info_overlay(area, target);
-            }
-            Some(PanelOverlay::Spend(_)) => {
-                self.scroll_spend_overlay(area, target);
-            }
+        if let Some(panel) = self.panel_overlay_mut() {
+            scroll_panel(panel.body_mut(), area, target);
         }
     }
 }

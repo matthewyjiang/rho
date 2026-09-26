@@ -1,37 +1,60 @@
 //! Live computer dashboard with immediate revocation, never implicit grants.
 
-use ratatui::{layout::Rect, text::Line};
+use std::time::Instant;
+
+use crossterm::event::{KeyCode, KeyEvent};
+use ratatui::text::Line;
 
 use super::{
-    overlay_panel::{
-        classify_panel_key, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
-        OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
-    },
-    panel_pointer::PanelPointer,
+    overlay_panel::{PanelBody, PanelKeyOutcome, PanelState},
     panel_text::{heading_with_status, indented_wrapped_lines},
     theme::Theme,
     App, ComposerMode, PanelOverlay,
 };
 use crate::tools::computer_use::{desktop_warning, ComputerUseControl, ComputerUseStatus};
 
-#[derive(Clone, Debug, Default, PartialEq)]
+const TITLE: &str = "Computer use";
+const FOOTER_REVOCABLE: &str = "r cancel setup / revoke access · Enter/Esc close";
+const FOOTER: &str = "Enter/Esc close";
+
 pub(super) struct ComputerOverlay {
-    scroll: PanelScroll,
-    /// Selection, scrollbar drag, and hover for this panel.
-    pub(super) pointer: PanelPointer,
+    /// The app's control handle, re-synced by the connection poll so status
+    /// stays live while the panel is open.
+    control: Option<ComputerUseControl>,
+    panel: PanelState,
 }
 
-impl App {
-    pub(super) fn show_computer_status(&mut self) {
-        self.input_ui
-            .set_composer(ComposerMode::Panel(PanelOverlay::Computer(
-                ComputerOverlay::default(),
-            )));
+impl std::fmt::Debug for ComputerOverlay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ComputerOverlay")
+            .field("status", &self.status())
+            .field("panel", &self.panel)
+            .finish()
+    }
+}
+
+impl ComputerOverlay {
+    fn status(&self) -> ComputerUseStatus {
+        self.control
+            .as_ref()
+            .map(ComputerUseControl::status)
+            .unwrap_or(ComputerUseStatus::Off)
     }
 
-    fn computer_status_lines(&self, width: usize) -> Vec<Line<'static>> {
+    /// `r` has something to cancel or revoke.
+    fn revocable(&self) -> bool {
+        self.control.as_ref().is_some_and(|control| {
+            control.installation_pending()
+                || matches!(
+                    control.status(),
+                    ComputerUseStatus::Connecting | ComputerUseStatus::Connected
+                )
+        })
+    }
+
+    fn status_lines(&self, width: usize) -> Vec<Line<'static>> {
         let state = self
-            .computer_use
+            .control
             .as_ref()
             .map(ComputerUseControl::status)
             .unwrap_or(ComputerUseStatus::Off);
@@ -83,7 +106,7 @@ impl App {
             Theme::dim(),
         ));
         if let Some(reason) = self
-            .computer_use
+            .control
             .as_ref()
             .and_then(ComputerUseControl::revocation_reason)
         {
@@ -100,7 +123,7 @@ impl App {
             lines.extend(indented_wrapped_lines(warning, 0, width, Theme::warning()));
         }
         if let Some(error) = self
-            .computer_use
+            .control
             .as_ref()
             .and_then(ComputerUseControl::terminal_error)
         {
@@ -110,7 +133,7 @@ impl App {
         }
         lines.push(Line::default());
         let driver = self
-            .computer_use
+            .control
             .as_ref()
             .and_then(ComputerUseControl::driver_path);
         lines.push(heading_with_status(
@@ -162,100 +185,63 @@ impl App {
         }
         lines
     }
+}
 
-    pub(super) fn computer_overlay_frame(&self, area: Rect) -> Option<OverlayPanelFrame> {
-        let ComposerMode::Panel(PanelOverlay::Computer(overlay)) = self.input_ui.composer() else {
-            return None;
-        };
-        // Reserve the shared panel's scrollbar column before wrapping text.
-        let lines = self.computer_status_lines(overlay_panel_inner_width(area).saturating_sub(1));
-        Some(render_overlay_panel(
-            "Computer use",
-            if self.computer_installation_pending()
-                || self.computer_use.as_ref().is_some_and(|control| {
-                    matches!(
-                        control.status(),
-                        ComputerUseStatus::Connecting | ComputerUseStatus::Connected
-                    )
-                })
-            {
-                "r cancel setup / revoke access · Enter/Esc close"
-            } else {
-                "Enter/Esc close"
-            },
-            lines,
-            overlay.scroll.offset(),
-            area,
-        ))
+impl PanelBody for ComputerOverlay {
+    fn state(&self) -> &PanelState {
+        &self.panel
     }
 
-    pub(super) fn scroll_computer_overlay(
-        &mut self,
-        area: Rect,
-        target: PanelScrollTarget,
-    ) -> bool {
-        if !matches!(
-            self.input_ui.composer(),
-            ComposerMode::Panel(PanelOverlay::Computer(_))
-        ) {
-            return false;
+    fn state_mut(&mut self) -> &mut PanelState {
+        &mut self.panel
+    }
+
+    fn title(&self) -> &str {
+        TITLE
+    }
+
+    fn footer(&self) -> &str {
+        if self.revocable() {
+            FOOTER_REVOCABLE
+        } else {
+            FOOTER
         }
-        let body_len = self
-            .computer_status_lines(overlay_panel_inner_width(area).saturating_sub(1))
-            .len();
-        let body_rows = overlay_panel_layout(area, body_len).body_rows;
+    }
+
+    fn body_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
+        self.status_lines(width)
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) -> PanelKeyOutcome {
+        if key.code != KeyCode::Char('r') || !key.modifiers.is_empty() {
+            return PanelKeyOutcome::Unhandled;
+        }
+        if !self.revocable() {
+            return PanelKeyOutcome::Handled;
+        }
+        PanelKeyOutcome::Run(|app| {
+            app.revoke_computer_preference();
+            app.show_computer_off();
+        })
+    }
+}
+
+impl App {
+    pub(super) fn show_computer_status(&mut self) {
+        self.input_ui
+            .set_composer(ComposerMode::Panel(PanelOverlay::Computer(
+                ComputerOverlay {
+                    control: self.computer_use.clone(),
+                    panel: PanelState::default(),
+                },
+            )));
+    }
+
+    /// Point an open dashboard at the app's current control handle.
+    pub(super) fn sync_computer_overlay(&mut self) {
+        let control = self.computer_use.clone();
         if let ComposerMode::Panel(PanelOverlay::Computer(overlay)) = self.input_ui.composer_mut() {
-            overlay.scroll.apply(target, body_len, body_rows);
-        }
-        true
-    }
-
-    pub(super) fn clamp_computer_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
-        if let (ComposerMode::Panel(PanelOverlay::Computer(overlay)), Ok(size)) =
-            (self.input_ui.composer(), terminal.size())
-        {
-            let target = PanelScrollTarget::Absolute(overlay.scroll.offset());
-            self.scroll_computer_overlay(Rect::new(0, 0, size.width, size.height), target);
-        }
-    }
-
-    pub(super) fn handle_computer_overlay_key(
-        &mut self,
-        key: crossterm::event::KeyEvent,
-        terminal: &ratatui::DefaultTerminal,
-    ) -> bool {
-        if !matches!(
-            self.input_ui.composer(),
-            ComposerMode::Panel(PanelOverlay::Computer(_))
-        ) {
-            return false;
-        }
-        if key.code == crossterm::event::KeyCode::Char('r') && key.modifiers.is_empty() {
-            if self.computer_use.as_ref().is_some_and(|control| {
-                control.installation_pending()
-                    || matches!(
-                        control.status(),
-                        ComputerUseStatus::Connecting | ComputerUseStatus::Connected
-                    )
-            }) {
-                self.revoke_computer_preference();
-                self.show_computer_off();
-            }
-            return true;
-        }
-        match classify_panel_key(key) {
-            PanelKey::Close => {
-                self.input_ui.set_composer(ComposerMode::Input);
-                true
-            }
-            PanelKey::Scroll(target) => {
-                if let Ok(size) = terminal.size() {
-                    self.scroll_computer_overlay(Rect::new(0, 0, size.width, size.height), target);
-                }
-                true
-            }
-            PanelKey::Passthrough => false,
-            PanelKey::Swallow => true,
+            overlay.control = control;
         }
     }
 }

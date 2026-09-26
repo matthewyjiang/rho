@@ -1,8 +1,9 @@
 //! Single-pane overlay chrome: title, scrollable body, footer.
 //!
-//! Feature policy (what the body means, which keys close it) stays at call
-//! sites. This module draws a bordered popup with one scrolling region and no
-//! search field or detail split.
+//! Draws a bordered popup with one scrolling region and no search field or
+//! detail split, and defines [`PanelBody`], the contract each panel overlay
+//! implements. Feature policy (what the body means, extra keys, close
+//! cleanup) stays with each panel; `panel_overlay.rs` drives the shared path.
 
 use ratatui::{
     layout::{Position, Rect},
@@ -13,6 +14,7 @@ use super::{
     copy_interaction::CopyHit,
     display_width,
     drag_selection::SelectionBody,
+    panel_pointer::PanelPointer,
     picker::{clamp_overlay_scroll, OverlayScrollbarState},
     render::{fit_line, truncate_one_line},
     scrollbar::{track_span, HistoryScrollbar},
@@ -203,6 +205,77 @@ pub(super) enum PanelScrollTarget {
     Delta(isize),
     Page(isize),
     Absolute(usize),
+}
+
+/// Per-panel state every single-pane overlay embeds: body scroll plus
+/// selection, scrollbar drag, and hover.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct PanelState {
+    pub(super) scroll: PanelScroll,
+    pub(super) pointer: PanelPointer,
+}
+
+/// Content and feature keys of one single-pane overlay.
+///
+/// Implementors own what the body shows and what their own keys do. The
+/// panel dispatcher (`panel_overlay.rs`) owns everything shared: chrome,
+/// scrolling, pointer input, the copy key, and the close/scroll key table.
+/// `body_lines` must be a pure function of the panel's state, `width`, and
+/// `now`, since scroll math re-renders it to measure the body.
+pub(super) trait PanelBody {
+    fn state(&self) -> &PanelState;
+    fn state_mut(&mut self) -> &mut PanelState;
+    fn title(&self) -> &str;
+    fn footer(&self) -> &str;
+    /// Every body row at `width`, which already reserves the scrollbar column.
+    fn body_lines(&self, width: usize, now: std::time::Instant) -> Vec<Line<'static>>;
+    /// Plain text for the copy key; `None` when there is nothing to copy.
+    fn copy_text(&self) -> Option<String> {
+        None
+    }
+    /// Feature keys, checked before the shared keys.
+    fn handle_key(&mut self, _key: crossterm::event::KeyEvent) -> PanelKeyOutcome {
+        PanelKeyOutcome::Unhandled
+    }
+    /// Runs after the panel left the composer, which is plain input by
+    /// then. Override to drop background work or restore a parent view.
+    fn close(self: Box<Self>, _app: &mut super::App) {}
+}
+
+/// What a panel did with a key in [`PanelBody::handle_key`].
+pub(super) enum PanelKeyOutcome {
+    /// Consumed by the panel.
+    Handled,
+    /// Consumed; run this app-level action next (the panel cannot reach
+    /// app state through `&mut self`).
+    Run(fn(&mut super::App)),
+    /// Fall through to the shared copy, scroll, and close keys.
+    Unhandled,
+}
+
+/// The panel's frame at `area`, body wrapped with the scrollbar column reserved.
+pub(super) fn panel_frame(
+    panel: &dyn PanelBody,
+    area: Rect,
+    now: std::time::Instant,
+) -> OverlayPanelFrame {
+    let lines = panel.body_lines(overlay_panel_body_width(area), now);
+    render_overlay_panel(
+        panel.title(),
+        panel.footer(),
+        lines,
+        panel.state().scroll.offset(),
+        area,
+    )
+}
+
+/// Moves the panel's scroll toward `target`, clamped to its body at `area`.
+pub(super) fn scroll_panel(panel: &mut dyn PanelBody, area: Rect, target: PanelScrollTarget) {
+    let body_len = panel
+        .body_lines(overlay_panel_body_width(area), std::time::Instant::now())
+        .len();
+    let body_rows = overlay_panel_layout(area, body_len).body_rows;
+    panel.state_mut().scroll.apply(target, body_len, body_rows);
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

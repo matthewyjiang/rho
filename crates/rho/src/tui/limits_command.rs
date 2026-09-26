@@ -1,7 +1,6 @@
 use std::{collections::BTreeMap, time::Instant};
 
 use ratatui::{
-    layout::Rect,
     style::Style,
     text::{Line, Span},
 };
@@ -9,11 +8,7 @@ use rho_providers::credentials::CredentialStore;
 
 use super::{
     activity::LoadingSpinner,
-    overlay_panel::{
-        classify_panel_key, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
-        OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
-    },
-    panel_pointer::PanelPointer,
+    overlay_panel::{PanelBody, PanelState},
     panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
     render::display_width,
     theme::Theme,
@@ -118,10 +113,33 @@ struct LimitsSection {
 pub(super) struct LimitsOverlay {
     sections: Vec<LimitsSection>,
     empty_note: Option<String>,
-    scroll: PanelScroll,
-    /// Selection, scrollbar drag, and hover for this panel.
-    pub(super) pointer: PanelPointer,
+    panel: PanelState,
     checking_started: Instant,
+}
+
+impl PanelBody for LimitsOverlay {
+    fn state(&self) -> &PanelState {
+        &self.panel
+    }
+
+    fn state_mut(&mut self) -> &mut PanelState {
+        &mut self.panel
+    }
+
+    fn title(&self) -> &str {
+        TITLE
+    }
+
+    fn footer(&self) -> &str {
+        FOOTER
+    }
+
+    fn body_lines(&self, width: usize, now: Instant) -> Vec<Line<'static>> {
+        let spinner = self
+            .is_checking()
+            .then(|| LoadingSpinner::frame_since(self.checking_started, now));
+        overlay_body_lines(self, width, spinner, now_unix())
+    }
 }
 
 impl LimitsOverlay {
@@ -216,19 +234,6 @@ impl App {
         self.set_status("usage limits");
     }
 
-    pub(super) fn limits_overlay_open(&self) -> bool {
-        matches!(
-            self.input_ui.composer(),
-            ComposerMode::Panel(PanelOverlay::Limits(_))
-        )
-    }
-
-    pub(super) fn close_limits_overlay(&mut self) {
-        if self.limits_overlay_open() {
-            self.input_ui.set_composer(ComposerMode::Input);
-        }
-    }
-
     pub(super) async fn cancel_limits_command(&mut self) {
         let pending = std::mem::take(&mut self.pending_usage_limits);
         for fetch in pending {
@@ -261,93 +266,10 @@ impl App {
         if changed {
             // Rows may have moved under a selection anchored by line.
             if let Some(overlay) = self.limits_overlay_mut() {
-                overlay.pointer.clear_selection();
+                overlay.panel.pointer.clear_selection();
             }
         }
         Ok(changed)
-    }
-
-    pub(super) fn limits_overlay_frame(
-        &self,
-        area: Rect,
-        now: Instant,
-    ) -> Option<OverlayPanelFrame> {
-        let ComposerMode::Panel(PanelOverlay::Limits(overlay)) = self.input_ui.composer() else {
-            return None;
-        };
-        let spinner = overlay
-            .is_checking()
-            .then(|| LoadingSpinner::frame_since(overlay.checking_started, now));
-        let inner_width = overlay_panel_inner_width(area);
-        let body = overlay_body_lines(overlay, inner_width, spinner, now_unix());
-        Some(render_overlay_panel(
-            TITLE,
-            FOOTER,
-            body,
-            overlay.scroll.offset(),
-            area,
-        ))
-    }
-
-    pub(super) fn handle_limits_overlay_key(
-        &mut self,
-        key: crossterm::event::KeyEvent,
-        terminal: &ratatui::DefaultTerminal,
-    ) -> bool {
-        if !self.limits_overlay_open() {
-            return false;
-        }
-        match classify_panel_key(key) {
-            PanelKey::Close => {
-                self.close_limits_overlay();
-                true
-            }
-            PanelKey::Scroll(target) => {
-                self.apply_limits_scroll(terminal, target);
-                true
-            }
-            PanelKey::Passthrough => false,
-            PanelKey::Swallow => true,
-        }
-    }
-
-    pub(super) fn scroll_limits_overlay(&mut self, area: Rect, target: PanelScrollTarget) -> bool {
-        if !self.limits_overlay_open() {
-            return false;
-        }
-        self.apply_limits_scroll_area(area, target);
-        true
-    }
-
-    fn apply_limits_scroll(
-        &mut self,
-        terminal: &ratatui::DefaultTerminal,
-        target: PanelScrollTarget,
-    ) {
-        let Ok(size) = terminal.size() else {
-            return;
-        };
-        self.apply_limits_scroll_area(Rect::new(0, 0, size.width, size.height), target);
-    }
-
-    fn apply_limits_scroll_area(&mut self, area: Rect, target: PanelScrollTarget) {
-        let Some((body_len, body_rows)) = self.limits_scroll_metrics(area) else {
-            return;
-        };
-        let Some(overlay) = self.limits_overlay_mut() else {
-            return;
-        };
-        overlay.scroll.apply(target, body_len, body_rows);
-    }
-
-    fn limits_scroll_metrics(&self, area: Rect) -> Option<(usize, usize)> {
-        let ComposerMode::Panel(PanelOverlay::Limits(overlay)) = self.input_ui.composer() else {
-            return None;
-        };
-        let inner_width = overlay_panel_inner_width(area);
-        let body_len = overlay_body_lines(overlay, inner_width, None, now_unix()).len();
-        let body_rows = overlay_panel_layout(area, body_len).body_rows;
-        Some((body_len, body_rows))
     }
 
     fn limits_overlay_mut(&mut self) -> Option<&mut LimitsOverlay> {
@@ -491,14 +413,6 @@ impl App {
         }
     }
 
-    pub(super) fn clamp_limits_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
-        let ComposerMode::Panel(PanelOverlay::Limits(overlay)) = self.input_ui.composer() else {
-            return;
-        };
-        let scroll = overlay.scroll.offset();
-        self.apply_limits_scroll(terminal, PanelScrollTarget::Absolute(scroll));
-    }
-
     fn mark_usage_failed(&mut self, kind: UsageProviderKind, reason: UsageFailure) {
         self.usage_limits_live
             .insert(kind, LiveUsage::Failed(reason));
@@ -559,8 +473,7 @@ fn build_limits_overlay(
     LimitsOverlay {
         sections,
         empty_note,
-        scroll: PanelScroll::default(),
-        pointer: PanelPointer::default(),
+        panel: PanelState::default(),
         checking_started: Instant::now(),
     }
 }

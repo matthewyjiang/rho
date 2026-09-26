@@ -138,7 +138,7 @@ async fn closing_info_clears_probe_handles() {
     let mut app = super::super::tests::test_app();
     app.execute_info_command().unwrap();
     app.pending_info_runtimes = Some(tokio::spawn(std::future::pending()));
-    app.close_info_overlay();
+    app.close_panel_overlay();
 
     assert!(app.pending_info_runtimes.is_none());
     assert!(!matches!(
@@ -159,7 +159,7 @@ fn copy_key_writes_the_report_without_closing() {
     });
     app.execute_info_command().unwrap();
 
-    app.copy_info_report(Instant::now());
+    app.copy_panel_overlay(Instant::now());
 
     assert!(matches!(
         app.input_ui.composer(),
@@ -187,7 +187,9 @@ fn drag_copies_the_selected_span() {
     });
     app.execute_info_command().unwrap();
     let screen = Rect::new(0, 0, 100, 40);
-    let frame = app.info_overlay_frame(screen).expect("info overlay");
+    let frame = app
+        .panel_overlay_frame(screen, Instant::now())
+        .expect("info overlay");
     let body = frame.body();
     let row = body.y;
     let start = body.x;
