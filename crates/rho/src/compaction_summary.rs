@@ -11,8 +11,9 @@ use super::CompactionPartition;
 use crate::history_message::HistoryMessage;
 
 /// Must keep the "Summarize the compacted conversation history" prefix: the
-/// TUI fixture provider recognizes summary requests by it.
-const SUMMARY_SYSTEM_PROMPT: &str = "\
+/// TUI fixture provider recognizes summary requests by it, as a system prompt
+/// or as the trailing instruction of a session-history request.
+pub(crate) const SUMMARY_SYSTEM_PROMPT: &str = "\
 Summarize the compacted conversation history for continuation. The original \
 transcript is stored separately; this summary replaces only older model context \
 for an agent that will keep working on the task.
@@ -45,6 +46,47 @@ const ORIGINAL_REQUEST_INSTRUCTION: &str = "\
 The user's original request stays verbatim in context after compaction. It is \
 included for reference; summarize only what the turns below add.";
 
+const SESSION_NO_TOOLS_INSTRUCTION: &str = "\
+Stop working on the task. Do not call tools. Summarize the whole conversation \
+above and reply with the summary only. The latest turns also stay verbatim \
+after the summary, so keep their detail brief.";
+
+const SESSION_ORIGINAL_REQUEST_INSTRUCTION: &str = "\
+The user's first message above stays verbatim in context after compaction. \
+Summarize only what the later turns add.";
+
+const SESSION_PREVIOUS_SUMMARY_INSTRUCTION: &str = "\
+An earlier compaction summary appears above. Update it with the turns after it \
+and return one complete summary in the same sections. Keep details that still \
+matter, revise ones the newer turns changed, and drop ones that no longer \
+matter.";
+
+/// Summary request that resends `history`, the session's request history,
+/// unchanged and appends the instruction as a final user message.
+///
+/// The provider cached that history for the session's last turn, so this
+/// request is billed mostly as cache reads. The caller must send it with the
+/// session model, reasoning level, tool specs, and prompt cache key; changing
+/// any of them misses the cache. `partition` must split `history`.
+pub(crate) fn build_session_summary_request(
+    history: &[Message],
+    partition: &CompactionPartition<'_>,
+) -> Vec<Message> {
+    let mut sections = vec![SUMMARY_SYSTEM_PROMPT, SESSION_NO_TOOLS_INSTRUCTION];
+    if !partition.first_turn().is_empty() {
+        sections.push(SESSION_ORIGINAL_REQUEST_INSTRUCTION);
+    }
+    if partition.previous_summary().is_some() {
+        sections.push(SESSION_PREVIOUS_SUMMARY_INSTRUCTION);
+    }
+    let mut messages = history.to_vec();
+    messages.push(Message::user_text(sections.join("\n\n")));
+    messages
+}
+
+/// Summary request that renders the history as one transcript under its own
+/// system prompt. Works on any model, but shares no cached prefix with the
+/// session.
 pub(crate) fn build_summary_request_messages(partition: &CompactionPartition<'_>) -> Vec<Message> {
     let mut sections = Vec::new();
     if !partition.first_turn().is_empty() {
@@ -70,12 +112,18 @@ pub(crate) fn build_summary_request_messages(partition: &CompactionPartition<'_>
 }
 
 /// Replacement history from the summarizer's response, labeled by `trigger`.
-/// Fails when the response has no summary text outside `<analysis>` blocks.
+/// Fails when the response calls a tool, which is never executed, or has no
+/// summary text outside `<analysis>` blocks.
 pub(crate) fn summary_replacement(
     partition: &CompactionPartition<'_>,
     trigger: CompactionTrigger,
     response: &[ContentBlock],
 ) -> Result<Vec<Message>, Error> {
+    if calls_tool(response) {
+        return Err(Error::InvalidHostResponse {
+            message: "compaction model called a tool instead of writing a summary".into(),
+        });
+    }
     let text = response
         .iter()
         .filter_map(|block| match block {
@@ -90,6 +138,13 @@ pub(crate) fn summary_replacement(
         });
     }
     Ok(partition.replacement(Message::compaction_summary(trigger, summary)))
+}
+
+/// Whether a summary response asked for a tool instead of answering.
+pub(crate) fn calls_tool(response: &[ContentBlock]) -> bool {
+    response
+        .iter()
+        .any(|block| matches!(block, ContentBlock::ToolCall(_)))
 }
 
 /// Removes `<analysis>` scratchpads. An unclosed block runs to the end.

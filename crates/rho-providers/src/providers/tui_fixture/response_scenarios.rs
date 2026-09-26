@@ -239,10 +239,21 @@ fn describe_agent_notification(request: &ModelRequest<'_>, prompt: &str) -> Stri
     }
 }
 
+/// Rendered-transcript summaries carry the instruction as the system prompt;
+/// session-history summaries append it as the last user message.
 fn is_compaction_request(request: &ModelRequest<'_>) -> bool {
+    const PREFIX: &str = "Summarize the compacted conversation history";
     matches!(
         request.messages.first(),
-        Some(Message::System(message))
-            if message.starts_with("Summarize the compacted conversation history")
-    )
+        Some(Message::System(message)) if message.starts_with(PREFIX)
+    ) || request
+        .messages
+        .last()
+        .is_some_and(|message| match message.semantic() {
+            SemanticMessage::User(content) => matches!(
+                content.first(),
+                Some(ContentBlock::Text(text)) if text.starts_with(PREFIX)
+            ),
+            _ => false,
+        })
 }

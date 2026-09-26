@@ -70,3 +70,89 @@ fn compaction_state_tracks_token_and_cost_accounting() {
         CompactionOutput::with_usage(vec![Message::System("summary".into())], usage).unwrap();
     assert_eq!(output.usage().cost_usd_micros, Some(100));
 }
+
+// Covers: a compactor cannot reproduce the session's cached request prefix
+// because manual or automatic requests lose the prompt cache key or the tool
+// specs the session's provider turns advertise.
+// Owner: SDK compaction contract
+#[tokio::test]
+async fn compaction_requests_carry_session_cache_key_and_tool_specs() {
+    use std::sync::{Arc, Mutex};
+
+    use serde_json::json;
+
+    use crate::{
+        model::{ContentBlock, ModelIdentity, ModelResponse, ToolSpec},
+        provider::{ScriptedProvider, ScriptedTurn},
+        tool::{ScriptedTool, ScriptedToolOutcome, ToolOutput},
+        CompactionFuture, Rho, SessionOptions,
+    };
+
+    #[derive(Clone, Default)]
+    struct Recording(Arc<Mutex<Vec<CompactionRequest>>>);
+    impl Compactor for Recording {
+        fn compact<'a>(&'a self, request: CompactionRequest) -> CompactionFuture<'a> {
+            self.0.lock().unwrap().push(request);
+            Box::pin(async { CompactionOutput::new(vec![Message::user_text("summary")]) })
+        }
+    }
+
+    let spec = ToolSpec {
+        name: "read".into(),
+        description: "read".into(),
+        input_schema: json!({"type": "object"}),
+    };
+    let compactor = Recording::default();
+    let runtime = Rho::builder()
+        .provider(ScriptedProvider::new(
+            ModelIdentity::new("scripted", "test", "compaction"),
+            [ScriptedTurn::completed(ModelResponse::Assistant(vec![
+                ContentBlock::Text("done".into()),
+            ]))],
+        ))
+        .tool(ScriptedTool::new(
+            spec.clone(),
+            ScriptedToolOutcome::Success(ToolOutput::text("ok")),
+        ))
+        .compactor(compactor.clone())
+        .compaction_policy(CompactionPolicy::after_messages(
+            NonZeroUsize::new(1).unwrap(),
+        ))
+        .build()
+        .unwrap();
+    let session = runtime
+        .session(
+            SessionOptions::new()
+                .history(vec![Message::user_text("old")])
+                .prompt_cache_key("rho:session"),
+        )
+        .await
+        .unwrap();
+
+    session.compact().await.unwrap();
+    session.complete("next").await.unwrap();
+
+    let requests = compactor.0.lock().unwrap();
+    let carried = requests
+        .iter()
+        .map(|request| {
+            (
+                request.trigger(),
+                request.prompt_cache_key().map(str::to_owned),
+                request.tool_specs().map(<[ToolSpec]>::to_vec),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        carried,
+        [
+            crate::CompactionTrigger::Manual,
+            crate::CompactionTrigger::Automatic
+        ]
+        .map(|trigger| (
+            trigger,
+            Some("rho:session".to_owned()),
+            Some(vec![spec.clone()])
+        ))
+    );
+}

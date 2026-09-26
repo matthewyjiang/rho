@@ -476,6 +476,10 @@ impl App {
                     self.sync_advisor_runtime(agent).await;
                 } else if id == PERMISSION_CLASSIFIER_AGENT_ID {
                     self.sync_permission_classifier_runtime_config(agent);
+                } else if selected && id == crate::agent::COMPACTION_AGENT_ID {
+                    // The compactor reads its summarizer from saved config
+                    // the next time the session is idle.
+                    self.compaction_reload_pending = true;
                 }
                 let status = self.status().to_string();
                 self.execute_agents_command()?;

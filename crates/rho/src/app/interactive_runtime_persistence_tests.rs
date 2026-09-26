@@ -35,6 +35,7 @@ async fn automatic_compaction_fixture(
         auto_compact: true,
         threshold_percent: 1,
         target_percent: 1,
+        summarizer: None,
     };
     interactive.set_context_window(Some(1_000)).unwrap();
     (interactive, root, storage, history)

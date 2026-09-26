@@ -60,6 +60,7 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
             auto_compact: true,
             threshold_percent: 1,
             target_percent: 1,
+            summarizer: None,
         },
         context_window: Some(1_000),
         usage_purpose: "agent",
@@ -122,6 +123,7 @@ async fn set_context_window_installs_automatic_compaction_when_idle() {
         auto_compact: true,
         threshold_percent: 1,
         target_percent: 1,
+        summarizer: None,
     };
     assert_eq!(
         interactive
@@ -151,6 +153,7 @@ async fn replace_provider_rebuilds_compactor_with_current_context_window() {
         auto_compact: true,
         threshold_percent: 80,
         target_percent: 50,
+        summarizer: None,
     };
     interactive.context_window = Some(2_000);
     let replacement: Arc<dyn ModelProvider> = Arc::new(ScriptedProvider::new(

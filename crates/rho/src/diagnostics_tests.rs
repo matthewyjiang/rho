@@ -65,6 +65,7 @@ fn runtime_updates_do_not_replace_restart_only_config() {
         auto_compact: true,
         threshold_percent: 70,
         target_percent: 40,
+        summarizer: None,
     });
 
     let response: serde_json::Value =
