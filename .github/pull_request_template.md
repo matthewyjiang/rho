@@ -1,47 +1,30 @@
-- [ ] I have followed all rules in [CONTRIBUTING.md](CONTRIBUTING.md).
-
 ## Summary
 
 <!-- What changed and why. -->
 
 ## Validation
 
-<!-- Commands run and results. Prefer the narrowest relevant tests, then broader gates when the change warrants them. -->
+<!-- Commands and results. Narrowest tests first. Delete the proof-plate line unless this diff touches Interactive TUI layout or chrome, tool cards, the statusline, version display, the docs demo fixture, or rho-pty-demo. -->
 
 ```text
 ```
 
-### Docs TUI proof plate
-
-<!-- Required when this PR changes Interactive TUI layout/chrome, tool cards, statusline, version display, the docs demo fixture, or rho-pty-demo. Delete this section if the diff does not touch those surfaces. -->
-
-- [ ] Ran `bash scripts/check_docs_ui_demo.sh --check` (or `--write` and committed dark SVGs + site light SVG)
-
+- [ ] `bash scripts/check_docs_ui_demo.sh --check` (or `--write`, then commit the dark SVGs and the site light SVG)
 
 ## Test gate
 
-<!-- Required when this PR adds or materially expands tests. Delete this section only if the diff adds no tests. Full rules: rho-test-selection skill. -->
+<!-- Delete this section if the diff adds no tests. Rules: `.agents/skills/rho-test-selection/SKILL.md`. -->
 
-- [ ] Followed `rho-test-selection` (failure mode, owner layer, gap).
-- [ ] Each new test names a distinct **failure mode** (user-visible or contract bug).
-- [ ] Each new test has one **owner layer** (pure unit / SDK contract / PTY / OS).
-- [ ] No existing test already covers that failure mode at a better layer.
-- [ ] Interactive TUI behavior uses a **PTY scenario** by default; new `crates/rho/src/tui` unit tests are pure logic or justified below.
-- [ ] Cases share one test function per rule (tables), not twin functions per literal.
-- [ ] Asserts use structured values; string `.contains` only for redaction, wire format, or security escaping.
-- [ ] No locks on help text, statusline chrome, labels, or other copy.
-- [ ] No wall-clock sleep used for synchronization; no known-flaky timing races.
-- [ ] Nearby weaker or duplicate tests were removed or merged when practical.
-
-### New tests
+- [ ] Each new test names one failure mode, has one owner layer, and is not already covered.
+- [ ] Interactive TUI behavior is a PTY scenario. A new `crates/rho/src/tui` unit test is pure logic, or the exception below says why PTY is the wrong layer.
+- [ ] One table-driven test per rule. Structured asserts. No copy locks, sleep synchronization, or known flakes.
+- [ ] Weaker or duplicate nearby tests were removed or merged when practical.
 
 | Failure mode | Owner layer | Why existing coverage is not enough |
 | --- | --- | --- |
 | | | |
 
-### PTY exception (if any)
-
-<!-- If you added interactive TUI unit tests instead of or beside PTY, say why PTY is the wrong layer. -->
+PTY exception, if any:
 
 ```text
 N/A
@@ -49,19 +32,16 @@ N/A
 
 ## Breaking changes
 
-<!-- Delete if none. Otherwise describe the break and migration. -->
+<!-- Delete if none. Describe the break and the migration. -->
 
 ## Next-major debt
 
-<!-- Required when this PR ships a worse API shape only to stay minor-compatible. Delete if none. Full rules: rho-next-major-debt skill. -->
+<!-- Delete if none. Rules: `.agents/skills/rho-next-major-debt/SKILL.md`. -->
 
-- [ ] Followed `rho-next-major-debt` (ideal shape considered; compromise intentional).
-- [ ] Each compromise has a greppable `NEXT_MAJOR(<surface>): <cleanup>` marker on the API.
-- [ ] Preferred end state is named in the marker; helpers cover every arm until major.
-- [ ] Host-facing docs updated when external callers must match the awkward shape.
-
-### Markers added
+- [ ] Each minor-only compromise has a `NEXT_MAJOR(<surface>): <cleanup>` marker. It names the preferred end state, helpers cover every arm, and host docs match the awkward shape.
 
 | Marker | Preferred end state |
 | --- | --- |
-| | |
+| | | |
+
+<!-- If an AI made this change, end with one line naming the model and harness. -->
