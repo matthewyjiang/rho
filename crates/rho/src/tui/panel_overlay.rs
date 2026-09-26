@@ -27,6 +27,7 @@ impl PanelOverlay {
             Self::Hooks(overlay) => overlay.pointer,
             Self::TextView(overlay) => overlay.pointer,
             Self::Info(overlay) => overlay.pointer,
+            Self::Spend(overlay) => overlay.pointer,
         }
     }
 
@@ -38,6 +39,7 @@ impl PanelOverlay {
             Self::Hooks(overlay) => &mut overlay.pointer,
             Self::TextView(overlay) => &mut overlay.pointer,
             Self::Info(overlay) => &mut overlay.pointer,
+            Self::Spend(overlay) => &mut overlay.pointer,
         }
     }
 }
@@ -65,6 +67,7 @@ impl App {
             Some(PanelOverlay::Hooks(_)) => self.handle_hooks_overlay_key(key, terminal),
             Some(PanelOverlay::TextView(_)) => self.handle_text_view_overlay_key(key, terminal),
             Some(PanelOverlay::Info(_)) => self.handle_info_overlay_key(key, terminal),
+            Some(PanelOverlay::Spend(_)) => self.handle_spend_overlay_key(key, terminal),
         }
     }
 
@@ -78,6 +81,7 @@ impl App {
             Some(PanelOverlay::Hooks(_)) => self.clamp_hooks_overlay_scroll(terminal),
             Some(PanelOverlay::TextView(_)) => self.clamp_text_view_overlay_scroll(terminal),
             Some(PanelOverlay::Info(_)) => self.clamp_info_overlay_scroll(terminal),
+            Some(PanelOverlay::Spend(_)) => self.clamp_spend_overlay_scroll(terminal),
         }
     }
 
@@ -94,6 +98,7 @@ impl App {
             PanelOverlay::Hooks(_) => self.hooks_overlay_frame(area),
             PanelOverlay::TextView(_) => self.text_view_overlay_frame(area),
             PanelOverlay::Info(_) => self.info_overlay_frame(area),
+            PanelOverlay::Spend(_) => self.spend_overlay_frame(area, now),
         }
     }
 
@@ -158,6 +163,9 @@ impl App {
             }
             Some(PanelOverlay::Info(_)) => {
                 self.scroll_info_overlay(area, target);
+            }
+            Some(PanelOverlay::Spend(_)) => {
+                self.scroll_spend_overlay(area, target);
             }
         }
     }

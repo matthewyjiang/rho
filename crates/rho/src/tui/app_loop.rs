@@ -15,6 +15,7 @@ impl App {
         let mut changed = self.poll_limits_command().await?;
         changed |= self.poll_doctor_command().await?;
         changed |= self.poll_info_refresh().await?;
+        changed |= self.poll_spend_load().await;
         changed |= self.poll_side_chat();
         changed |= self.poll_changelog_command().await?;
         changed |= self.poll_diff_viewer().await;
@@ -94,6 +95,7 @@ impl App {
                     .pending_info_tree
                     .as_ref()
                     .is_some_and(|handle| handle.is_finished())
+                || self.spend.load_finished()
                 || self
                     .pending_changelog
                     .as_ref()
@@ -179,6 +181,7 @@ impl App {
                 || !self.pending_doctor_probes.is_empty()
                 || self.pending_info_runtimes.is_some()
                 || self.pending_info_tree.is_some()
+                || self.spend.is_loading()
                 || self.pending_changelog.is_some()
                 || self.diff_load_pending()
                 || self.pending_web_search_test.is_some()
@@ -241,6 +244,7 @@ impl App {
         self.cancel_limits_command().await;
         self.cancel_doctor_command().await;
         self.cancel_info_refresh().await;
+        self.spend.abort();
         self.cancel_changelog_command().await;
         self.cancel_web_search_test().await;
         if let Some(handle) = self.pending_cursor_models.take() {
@@ -400,6 +404,10 @@ impl App {
             || matches!(
                 self.input_ui.composer(),
                 ComposerMode::Panel(PanelOverlay::Doctor(overlay)) if overlay.is_checking()
+            )
+            || matches!(
+                self.input_ui.composer(),
+                ComposerMode::Panel(PanelOverlay::Spend(overlay)) if overlay.shows_spinner()
             )
             || self.side_chat_busy()
             || self.history.scrollbar_hovered()

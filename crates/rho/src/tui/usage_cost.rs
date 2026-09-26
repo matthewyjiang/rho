@@ -1,6 +1,8 @@
 use rho_providers::model::{ContextUsage, ModelMetadata, ModelUsage};
 use rho_sdk::model::context::estimate_text_tokens;
 
+use crate::usage::pricing::catalog_cost_usd_micros;
+
 /// Attempt-aware provider usage snapshots for a single run.
 ///
 /// Provider usage is cumulative within the current attempt. Failed attempts keep
@@ -197,32 +199,12 @@ impl UsageCostTracker {
     }
 }
 
+/// Positive catalog estimate for display, or `None` when unpriced or free.
 pub(super) fn estimated_cost_usd_micros(
     usage: &ModelUsage,
     metadata: Option<&ModelMetadata>,
 ) -> Option<u64> {
-    let metadata = metadata?;
-    let cache_read = usage.cache_read_tokens.unwrap_or_default();
-    let inclusive = usage.inclusive_prompt_tokens().unwrap_or_default();
-    // Always derive billed input from inclusive prompt size. Preferring
-    // `input_tokens` when Some drops mute turns after a later cache split:
-    // accumulated `input_tokens` holds only the split remainder.
-    let input = inclusive
-        .saturating_sub(cache_read)
-        .saturating_sub(usage.cache_write_tokens.unwrap_or_default());
-    let cost = metadata.cost_for_input_tokens(inclusive)?;
-    let mut micros = 0u128;
-    micros += cost_component(input, cost.input_micros_per_m);
-    micros += cost_component(
-        usage.output_tokens.unwrap_or_default(),
-        cost.output_micros_per_m,
-    );
-    micros += cost_component(cache_read, cost.cache_read_micros_per_m);
-    micros += cost_component(
-        usage.cache_write_tokens.unwrap_or_default(),
-        cost.cache_write_micros_per_m,
-    );
-    (micros > 0).then_some(micros.min(u64::MAX as u128) as u64)
+    catalog_cost_usd_micros(usage, metadata?).filter(|micros| *micros > 0)
 }
 
 pub(super) fn format_usd(micros: u64) -> String {
@@ -241,8 +223,10 @@ pub(super) fn format_token_count(tokens: u64) -> String {
         tokens.to_string()
     } else if tokens < 1_000_000 {
         format!("{:.1}K", tokens as f64 / 1_000.0)
-    } else {
+    } else if tokens < 1_000_000_000 {
         format!("{:.1}M", tokens as f64 / 1_000_000.0)
+    } else {
+        format!("{:.1}B", tokens as f64 / 1_000_000_000.0)
     }
 }
 
@@ -317,10 +301,6 @@ pub(super) fn session_total_cost_usd_micros(
         (None, 0) => None,
         (main, extra) => Some(main.unwrap_or(0).saturating_add(extra)),
     }
-}
-
-pub(super) fn cost_component(tokens: u64, micros_per_million: Option<u64>) -> u128 {
-    tokens as u128 * micros_per_million.unwrap_or_default() as u128 / 1_000_000
 }
 
 #[cfg(test)]

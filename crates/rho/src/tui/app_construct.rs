@@ -123,6 +123,7 @@ impl App {
             pending_info_runtimes: None,
             pending_info_tree: None,
             info_tree_deferred: false,
+            spend: Default::default(),
             usage_limits_live: std::collections::BTreeMap::new(),
             pending_changelog: None,
             diff_viewer: None,

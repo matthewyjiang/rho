@@ -39,6 +39,7 @@ pub enum CommandId {
     Fast,
     Workflow,
     Side,
+    Spend,
     Exit,
 }
 
@@ -432,6 +433,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "skills",
         usage: "/skills",
         description: "show loaded skills and descriptions",
+        argument_choices: &[],
+    },
+    CommandSpec {
+        id: CommandId::Spend,
+        name: "spend",
+        usage: "/spend",
+        description: "show AI spend and usage history across this machine",
         argument_choices: &[],
     },
     CommandSpec {

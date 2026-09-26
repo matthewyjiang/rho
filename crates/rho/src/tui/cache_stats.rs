@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 use rho_providers::model::{ModelMetadata, ModelUsage};
 use rho_sdk::{ModelCallMetrics, ModelCallProfile};
 
-use super::usage_cost::{cost_component, format_token_count, format_usd};
+use super::usage_cost::{format_token_count, format_usd};
+use crate::usage::pricing::cost_component;
 
 /// Misses at or below this are cache-breakpoint granularity, not a real miss.
 ///

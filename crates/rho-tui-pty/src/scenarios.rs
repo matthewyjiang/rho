@@ -59,6 +59,7 @@ mod sessions_hub;
 mod sessions_tool;
 mod shell_completion;
 mod side_chat;
+mod spend;
 mod startup;
 mod status_clicks;
 mod statusline;
@@ -572,6 +573,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO,
     LIMITS_OVERLAY_SCENARIO,
     DOCTOR_OVERLAY_SCENARIO,
+    spend::SPEND_OVERLAY_SCENARIO,
     SIDE_OVERLAY_SCENARIO,
     SIDE_TOGGLE_SCENARIO,
     SIDE_BTW_SCENARIO,

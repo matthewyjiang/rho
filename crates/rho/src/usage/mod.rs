@@ -3,7 +3,9 @@
 mod event;
 mod migrations;
 mod model_request;
+pub(crate) mod pricing;
 mod recorder;
+pub(crate) mod report;
 mod sdk;
 mod sqlite;
 

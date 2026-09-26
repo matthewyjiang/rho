@@ -235,3 +235,22 @@ fn zeroed_provider_window_falls_back_to_metadata_display_window() {
         None
     );
 }
+
+// Covers: token counts step K -> M -> B at each thousandfold so ledger-scale
+// totals stay short instead of showing thousands of millions.
+// Owner: usage cost formatting
+#[test]
+fn format_token_count_steps_through_k_m_and_b() {
+    let cases = [
+        (999, "999"),
+        (1_000, "1.0K"),
+        (999_949, "999.9K"),
+        (1_000_000, "1.0M"),
+        (999_949_999, "999.9M"),
+        (1_000_000_000, "1.0B"),
+        (6_600_000_000, "6.6B"),
+    ];
+    for (tokens, expected) in cases {
+        assert_eq!(super::format_token_count(tokens), expected, "{tokens}");
+    }
+}

@@ -7,14 +7,15 @@
 
 use std::time::Instant;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::KeyEvent;
 use ratatui::layout::Rect;
 
 use super::{
     info_command::{info_copy_text, load_external_runtimes, runtime_info_lines, RuntimeInfo},
     overlay_panel::{
-        classify_panel_key, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
-        OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
+        classify_panel_key, is_copy_key, overlay_panel_body_width, overlay_panel_layout,
+        render_overlay_panel, terminal_area, OverlayPanelFrame, PanelKey, PanelScroll,
+        PanelScrollTarget,
     },
     panel_pointer::PanelPointer,
     App, ComposerMode, PanelOverlay,
@@ -67,7 +68,7 @@ impl App {
         let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer() else {
             return None;
         };
-        let lines = runtime_info_lines(&overlay.info, info_body_width(area));
+        let lines = runtime_info_lines(&overlay.info, overlay_panel_body_width(area));
         Some(render_overlay_panel(
             TITLE,
             FOOTER,
@@ -93,11 +94,11 @@ impl App {
     }
 
     pub(super) fn clamp_info_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
-        if let (ComposerMode::Panel(PanelOverlay::Info(overlay)), Ok(size)) =
-            (self.input_ui.composer(), terminal.size())
+        if let (ComposerMode::Panel(PanelOverlay::Info(overlay)), Some(area)) =
+            (self.input_ui.composer(), terminal_area(terminal))
         {
             let target = PanelScrollTarget::Absolute(overlay.scroll.offset());
-            self.scroll_info_overlay(Rect::new(0, 0, size.width, size.height), target);
+            self.scroll_info_overlay(area, target);
         }
     }
 
@@ -122,8 +123,8 @@ impl App {
                 true
             }
             PanelKey::Scroll(target) => {
-                if let Ok(size) = terminal.size() {
-                    self.scroll_info_overlay(Rect::new(0, 0, size.width, size.height), target);
+                if let Some(area) = terminal_area(terminal) {
+                    self.scroll_info_overlay(area, target);
                 }
                 true
             }
@@ -283,23 +284,8 @@ impl App {
         let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer() else {
             return 0;
         };
-        runtime_info_lines(&overlay.info, info_body_width(area)).len()
+        runtime_info_lines(&overlay.info, overlay_panel_body_width(area)).len()
     }
-}
-
-fn info_body_width(area: Rect) -> usize {
-    // Reserve the shared panel's scrollbar column before wrapping text.
-    overlay_panel_inner_width(area).saturating_sub(1)
-}
-
-fn is_copy_key(key: KeyEvent) -> bool {
-    matches!(
-        (key.modifiers, key.code),
-        (
-            KeyModifiers::NONE | KeyModifiers::SHIFT,
-            KeyCode::Char('c' | 'C')
-        )
-    )
 }
 
 #[cfg(test)]

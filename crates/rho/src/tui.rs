@@ -174,6 +174,8 @@ mod sessions_hub_tasks;
 mod setup_screen;
 mod shell_palette;
 mod side_chat;
+mod spend_overlay;
+mod spend_view;
 mod syntax;
 mod syntax_warmup;
 pub(crate) use syntax_warmup::spawn_syntax_warmup;
@@ -567,6 +569,8 @@ struct App {
     /// `/info` opened while a turn was still writing the tree. Start the read
     /// once the session is idle again, if the overlay is still open.
     info_tree_deferred: bool,
+    /// `/spend` reports and the ledger read in flight; outlives the overlay.
+    spend: spend_overlay::SpendCache,
     usage_limits_live: std::collections::BTreeMap<
         crate::usage_limits::UsageProviderKind,
         limits_command::LiveUsage,
