@@ -6,17 +6,12 @@
 //! share a column, and each argv element stays one token, so a wrapped path
 //! cannot be read as another argument.
 
-use ratatui::{
-    layout::Rect,
-    text::{Line, Span},
-};
+use std::time::Instant;
+
+use ratatui::text::{Line, Span};
 
 use super::{
-    overlay_panel::{
-        classify_panel_key, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
-        OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
-    },
-    panel_pointer::PanelPointer,
+    overlay_panel::{PanelBody, PanelState},
     panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
     render::{display_width, wrap_line_at_whitespace},
     theme::Theme,
@@ -38,9 +33,29 @@ const FIELD_LABELS: &[&str] = &["tools", "argv", "directory", "timeout", "enviro
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct HooksOverlay {
     report: HookReport,
-    scroll: PanelScroll,
-    /// Selection, scrollbar drag, and hover for this panel.
-    pub(super) pointer: PanelPointer,
+    panel: PanelState,
+}
+
+impl PanelBody for HooksOverlay {
+    fn state(&self) -> &PanelState {
+        &self.panel
+    }
+
+    fn state_mut(&mut self) -> &mut PanelState {
+        &mut self.panel
+    }
+
+    fn title(&self) -> &str {
+        TITLE
+    }
+
+    fn footer(&self) -> &str {
+        FOOTER
+    }
+
+    fn body_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
+        hooks_body_lines(&self.report, width)
+    }
 }
 
 impl App {
@@ -48,88 +63,10 @@ impl App {
         self.input_ui
             .set_composer(ComposerMode::Panel(PanelOverlay::Hooks(HooksOverlay {
                 report,
-                scroll: PanelScroll::default(),
-                pointer: PanelPointer::default(),
+                panel: PanelState::default(),
             })));
         self.set_status_quiet("hooks");
     }
-
-    pub(super) fn hooks_overlay_frame(&self, area: Rect) -> Option<OverlayPanelFrame> {
-        let ComposerMode::Panel(PanelOverlay::Hooks(overlay)) = self.input_ui.composer() else {
-            return None;
-        };
-        let lines = hooks_body_lines(&overlay.report, hooks_body_width(area));
-        Some(render_overlay_panel(
-            TITLE,
-            FOOTER,
-            lines,
-            overlay.scroll.offset(),
-            area,
-        ))
-    }
-
-    pub(super) fn scroll_hooks_overlay(&mut self, area: Rect, target: PanelScrollTarget) -> bool {
-        if !matches!(
-            self.input_ui.composer(),
-            ComposerMode::Panel(PanelOverlay::Hooks(_))
-        ) {
-            return false;
-        }
-        let body_len = self.hooks_body_len(area);
-        let body_rows = overlay_panel_layout(area, body_len).body_rows;
-        if let ComposerMode::Panel(PanelOverlay::Hooks(overlay)) = self.input_ui.composer_mut() {
-            overlay.scroll.apply(target, body_len, body_rows);
-        }
-        true
-    }
-
-    pub(super) fn clamp_hooks_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
-        if let (ComposerMode::Panel(PanelOverlay::Hooks(overlay)), Ok(size)) =
-            (self.input_ui.composer(), terminal.size())
-        {
-            let target = PanelScrollTarget::Absolute(overlay.scroll.offset());
-            self.scroll_hooks_overlay(Rect::new(0, 0, size.width, size.height), target);
-        }
-    }
-
-    pub(super) fn handle_hooks_overlay_key(
-        &mut self,
-        key: crossterm::event::KeyEvent,
-        terminal: &ratatui::DefaultTerminal,
-    ) -> bool {
-        if !matches!(
-            self.input_ui.composer(),
-            ComposerMode::Panel(PanelOverlay::Hooks(_))
-        ) {
-            return false;
-        }
-        match classify_panel_key(key) {
-            PanelKey::Close => {
-                self.input_ui.set_composer(ComposerMode::Input);
-                true
-            }
-            PanelKey::Scroll(target) => {
-                if let Ok(size) = terminal.size() {
-                    self.scroll_hooks_overlay(Rect::new(0, 0, size.width, size.height), target);
-                }
-                true
-            }
-            PanelKey::Passthrough => false,
-            PanelKey::Swallow => true,
-        }
-    }
-
-    fn hooks_body_len(&self, area: Rect) -> usize {
-        let ComposerMode::Panel(PanelOverlay::Hooks(overlay)) = self.input_ui.composer() else {
-            return 0;
-        };
-        hooks_body_lines(&overlay.report, hooks_body_width(area)).len()
-    }
-}
-
-fn hooks_body_width(area: Rect) -> usize {
-    // Reserve the shared panel's scrollbar column before wrapping text.
-    overlay_panel_inner_width(area).saturating_sub(1)
 }
 
 fn hooks_body_lines(report: &HookReport, width: usize) -> Vec<Line<'static>> {

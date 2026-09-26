@@ -2,6 +2,15 @@ use pretty_assertions::assert_eq;
 
 use super::*;
 
+impl App {
+    fn spend_overlay(&self) -> Option<&SpendOverlay> {
+        match self.input_ui.composer() {
+            ComposerMode::Panel(PanelOverlay::Spend(overlay)) => Some(overlay),
+            _ => None,
+        }
+    }
+}
+
 fn reports() -> Arc<SpendReports> {
     let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 10)
         .unwrap()
@@ -54,12 +63,12 @@ async fn cache_serves_reopens_and_survives_failed_refresh() {
     assert!(app.spend_overlay().unwrap().shows_spinner());
 
     // Closing and reopening mid-read reuses the same read.
-    app.close_spend_overlay();
+    app.close_panel_overlay();
     app.execute_spend_command().unwrap();
     assert!(app.spend.is_loading());
 
     // The read lands after close; the cache still keeps it.
-    app.close_spend_overlay();
+    app.close_panel_overlay();
     finish_load(&mut app, sender, Ok(Arc::clone(&first))).await;
     assert!(app
         .spend

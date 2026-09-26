@@ -9,18 +9,13 @@
 use std::time::Instant;
 
 use ratatui::{
-    layout::Rect,
     style::Style,
     text::{Line, Span},
 };
 
 use super::{
     activity::LoadingSpinner,
-    overlay_panel::{
-        classify_panel_key, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
-        OverlayPanelFrame, PanelKey, PanelScroll, PanelScrollTarget,
-    },
-    panel_pointer::PanelPointer,
+    overlay_panel::{PanelBody, PanelState},
     panel_text::{heading_with_status, indented_wrapped_lines, truncate_to},
     render::display_width,
     theme::Theme,
@@ -53,9 +48,7 @@ impl PendingDoctorProbe {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct DoctorOverlay {
     report: DoctorReport,
-    scroll: PanelScroll,
-    /// Selection, scrollbar drag, and hover for this panel.
-    pub(super) pointer: PanelPointer,
+    panel: PanelState,
     /// Spinner phase anchor.
     checking_started: Instant,
 }
@@ -63,6 +56,37 @@ pub(super) struct DoctorOverlay {
 impl DoctorOverlay {
     pub(super) fn is_checking(&self) -> bool {
         self.report.is_checking()
+    }
+}
+
+impl PanelBody for DoctorOverlay {
+    fn state(&self) -> &PanelState {
+        &self.panel
+    }
+
+    fn state_mut(&mut self) -> &mut PanelState {
+        &mut self.panel
+    }
+
+    fn title(&self) -> &str {
+        TITLE
+    }
+
+    fn footer(&self) -> &str {
+        FOOTER
+    }
+
+    fn body_lines(&self, width: usize, now: Instant) -> Vec<Line<'static>> {
+        let spinner = self
+            .is_checking()
+            .then(|| LoadingSpinner::frame_since(self.checking_started, now));
+        overlay_body_lines(self, width, spinner)
+    }
+
+    /// Key handling is synchronous, so probes are aborted without being
+    /// awaited. Probe children are `kill_on_drop`.
+    fn close(self: Box<Self>, app: &mut App) {
+        app.abort_doctor_probes();
     }
 }
 
@@ -117,8 +141,7 @@ impl App {
         self.input_ui
             .set_composer(ComposerMode::Panel(PanelOverlay::Doctor(DoctorOverlay {
                 report,
-                scroll: PanelScroll::default(),
-                pointer: PanelPointer::default(),
+                panel: PanelState::default(),
                 checking_started: Instant::now(),
             })));
         self.set_status("doctor");
@@ -130,16 +153,6 @@ impl App {
             self.input_ui.composer(),
             ComposerMode::Panel(PanelOverlay::Doctor(_))
         )
-    }
-
-    /// Close the overlay and drop its probes. Key handling is synchronous, so
-    /// tasks are aborted without being awaited. Probe children are
-    /// `kill_on_drop`.
-    pub(super) fn close_doctor_overlay(&mut self) {
-        if self.doctor_overlay_open() {
-            self.input_ui.set_composer(ComposerMode::Input);
-        }
-        self.abort_doctor_probes();
     }
 
     fn abort_doctor_probes(&mut self) {
@@ -159,7 +172,7 @@ impl App {
     pub(super) async fn poll_doctor_command(&mut self) -> anyhow::Result<bool> {
         if !self.doctor_overlay_open() {
             // Approvals and other set_composer replacements do not go through
-            // close_doctor_overlay; drop leftover children here.
+            // panel close; drop leftover children here.
             self.cancel_doctor_command().await;
             return Ok(false);
         }
@@ -182,102 +195,11 @@ impl App {
                     .report
                     .replace_checks(probe_checks(&outcome, &active_provider));
                 // Rows may have moved under a selection anchored by line.
-                overlay.pointer.clear_selection();
+                overlay.panel.pointer.clear_selection();
             }
         }
         self.pending_doctor_probes = still_pending;
         Ok(changed)
-    }
-
-    pub(super) fn doctor_overlay_frame(
-        &self,
-        area: Rect,
-        now: Instant,
-    ) -> Option<OverlayPanelFrame> {
-        let ComposerMode::Panel(PanelOverlay::Doctor(overlay)) = self.input_ui.composer() else {
-            return None;
-        };
-        let spinner = overlay
-            .is_checking()
-            .then(|| LoadingSpinner::frame_since(overlay.checking_started, now));
-        let inner_width = overlay_panel_inner_width(area);
-        let body = overlay_body_lines(overlay, inner_width, spinner);
-        Some(render_overlay_panel(
-            TITLE,
-            FOOTER,
-            body,
-            overlay.scroll.offset(),
-            area,
-        ))
-    }
-
-    pub(super) fn handle_doctor_overlay_key(
-        &mut self,
-        key: crossterm::event::KeyEvent,
-        terminal: &ratatui::DefaultTerminal,
-    ) -> bool {
-        if !self.doctor_overlay_open() {
-            return false;
-        }
-        match classify_panel_key(key) {
-            PanelKey::Close => {
-                self.close_doctor_overlay();
-                true
-            }
-            PanelKey::Scroll(target) => {
-                self.apply_doctor_scroll(terminal, target);
-                true
-            }
-            PanelKey::Passthrough => false,
-            PanelKey::Swallow => true,
-        }
-    }
-
-    pub(super) fn scroll_doctor_overlay(&mut self, area: Rect, target: PanelScrollTarget) -> bool {
-        if !self.doctor_overlay_open() {
-            return false;
-        }
-        self.apply_doctor_scroll_area(area, target);
-        true
-    }
-
-    pub(super) fn clamp_doctor_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
-        let ComposerMode::Panel(PanelOverlay::Doctor(overlay)) = self.input_ui.composer() else {
-            return;
-        };
-        let scroll = overlay.scroll.offset();
-        self.apply_doctor_scroll(terminal, PanelScrollTarget::Absolute(scroll));
-    }
-
-    fn apply_doctor_scroll(
-        &mut self,
-        terminal: &ratatui::DefaultTerminal,
-        target: PanelScrollTarget,
-    ) {
-        let Ok(size) = terminal.size() else {
-            return;
-        };
-        self.apply_doctor_scroll_area(Rect::new(0, 0, size.width, size.height), target);
-    }
-
-    fn apply_doctor_scroll_area(&mut self, area: Rect, target: PanelScrollTarget) {
-        let Some((body_len, body_rows)) = self.doctor_scroll_metrics(area) else {
-            return;
-        };
-        let Some(overlay) = self.doctor_overlay_mut() else {
-            return;
-        };
-        overlay.scroll.apply(target, body_len, body_rows);
-    }
-
-    fn doctor_scroll_metrics(&self, area: Rect) -> Option<(usize, usize)> {
-        let ComposerMode::Panel(PanelOverlay::Doctor(overlay)) = self.input_ui.composer() else {
-            return None;
-        };
-        let inner_width = overlay_panel_inner_width(area);
-        let body_len = overlay_body_lines(overlay, inner_width, None).len();
-        let body_rows = overlay_panel_layout(area, body_len).body_rows;
-        Some((body_len, body_rows))
     }
 
     fn doctor_overlay_mut(&mut self) -> Option<&mut DoctorOverlay> {

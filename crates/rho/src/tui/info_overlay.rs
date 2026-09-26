@@ -7,17 +7,11 @@
 
 use std::time::Instant;
 
-use crossterm::event::KeyEvent;
-use ratatui::layout::Rect;
+use ratatui::text::Line;
 
 use super::{
     info_command::{info_copy_text, load_external_runtimes, runtime_info_lines, RuntimeInfo},
-    overlay_panel::{
-        classify_panel_key, is_copy_key, overlay_panel_body_width, overlay_panel_layout,
-        render_overlay_panel, terminal_area, OverlayPanelFrame, PanelKey, PanelScroll,
-        PanelScrollTarget,
-    },
-    panel_pointer::PanelPointer,
+    overlay_panel::{PanelBody, PanelState},
     App, ComposerMode, PanelOverlay,
 };
 
@@ -27,9 +21,37 @@ const FOOTER: &str = "c copy  Enter/Esc close";
 #[derive(Clone, Debug)]
 pub(super) struct InfoOverlay {
     info: RuntimeInfo,
-    scroll: PanelScroll,
-    /// Selection, scrollbar drag, and hover for this panel.
-    pub(super) pointer: PanelPointer,
+    panel: PanelState,
+}
+
+impl PanelBody for InfoOverlay {
+    fn state(&self) -> &PanelState {
+        &self.panel
+    }
+
+    fn state_mut(&mut self) -> &mut PanelState {
+        &mut self.panel
+    }
+
+    fn title(&self) -> &str {
+        TITLE
+    }
+
+    fn footer(&self) -> &str {
+        FOOTER
+    }
+
+    fn body_lines(&self, width: usize, _now: Instant) -> Vec<Line<'static>> {
+        runtime_info_lines(&self.info, width)
+    }
+
+    fn copy_text(&self) -> Option<String> {
+        Some(info_copy_text(&self.info))
+    }
+
+    fn close(self: Box<Self>, app: &mut App) {
+        app.end_info_overlay();
+    }
 }
 
 impl App {
@@ -38,8 +60,7 @@ impl App {
             .set_composer(ComposerMode::Panel(PanelOverlay::Info(Box::new(
                 InfoOverlay {
                     info,
-                    scroll: PanelScroll::default(),
-                    pointer: PanelPointer::default(),
+                    panel: PanelState::default(),
                 },
             ))));
         self.set_status_quiet("info");
@@ -64,82 +85,8 @@ impl App {
         }
     }
 
-    pub(super) fn info_overlay_frame(&self, area: Rect) -> Option<OverlayPanelFrame> {
-        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer() else {
-            return None;
-        };
-        let lines = runtime_info_lines(&overlay.info, overlay_panel_body_width(area));
-        Some(render_overlay_panel(
-            TITLE,
-            FOOTER,
-            lines,
-            overlay.scroll.offset(),
-            area,
-        ))
-    }
-
-    pub(super) fn scroll_info_overlay(&mut self, area: Rect, target: PanelScrollTarget) -> bool {
-        if !matches!(
-            self.input_ui.composer(),
-            ComposerMode::Panel(PanelOverlay::Info(_))
-        ) {
-            return false;
-        }
-        let body_len = self.info_body_len(area);
-        let body_rows = overlay_panel_layout(area, body_len).body_rows;
-        if let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() {
-            overlay.scroll.apply(target, body_len, body_rows);
-        }
-        true
-    }
-
-    pub(super) fn clamp_info_overlay_scroll(&mut self, terminal: &ratatui::DefaultTerminal) {
-        if let (ComposerMode::Panel(PanelOverlay::Info(overlay)), Some(area)) =
-            (self.input_ui.composer(), terminal_area(terminal))
-        {
-            let target = PanelScrollTarget::Absolute(overlay.scroll.offset());
-            self.scroll_info_overlay(area, target);
-        }
-    }
-
-    pub(super) fn handle_info_overlay_key(
-        &mut self,
-        key: KeyEvent,
-        terminal: &ratatui::DefaultTerminal,
-    ) -> bool {
-        if !matches!(
-            self.input_ui.composer(),
-            ComposerMode::Panel(PanelOverlay::Info(_))
-        ) {
-            return false;
-        }
-        if is_copy_key(key) {
-            self.copy_info_report(Instant::now());
-            return true;
-        }
-        match classify_panel_key(key) {
-            PanelKey::Close => {
-                self.close_info_overlay();
-                true
-            }
-            PanelKey::Scroll(target) => {
-                if let Some(area) = terminal_area(terminal) {
-                    self.scroll_info_overlay(area, target);
-                }
-                true
-            }
-            PanelKey::Passthrough => false,
-            PanelKey::Swallow => true,
-        }
-    }
-
-    pub(super) fn close_info_overlay(&mut self) {
-        if matches!(
-            self.input_ui.composer(),
-            ComposerMode::Panel(PanelOverlay::Info(_))
-        ) {
-            self.input_ui.set_composer(ComposerMode::Input);
-        }
+    /// Drop the refresh tasks. Called once the overlay has left the composer.
+    fn end_info_overlay(&mut self) {
         self.info_tree_deferred = false;
         self.abort_info_refresh();
     }
@@ -238,20 +185,12 @@ impl App {
         }
     }
 
-    fn copy_info_report(&mut self, now: Instant) {
-        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer() else {
-            return;
-        };
-        let text = info_copy_text(&overlay.info);
-        self.copy_text(&text, now);
-    }
-
     fn apply_info_runtimes(&mut self, lines: Vec<String>) {
         let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer_mut() else {
             return;
         };
         overlay.info.set_external_runtimes(lines);
-        overlay.pointer.clear_selection();
+        overlay.panel.pointer.clear_selection();
     }
 
     fn apply_info_tree(
@@ -263,7 +202,7 @@ impl App {
             return;
         };
         overlay.info.set_tree(tree, error);
-        overlay.pointer.clear_selection();
+        overlay.panel.pointer.clear_selection();
     }
 
     fn mark_info_tree_loading(&mut self) {
@@ -278,13 +217,6 @@ impl App {
             return false;
         };
         overlay.info.tree_loading()
-    }
-
-    fn info_body_len(&self, area: Rect) -> usize {
-        let ComposerMode::Panel(PanelOverlay::Info(overlay)) = self.input_ui.composer() else {
-            return 0;
-        };
-        runtime_info_lines(&overlay.info, overlay_panel_body_width(area)).len()
     }
 }
 

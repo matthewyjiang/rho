@@ -148,8 +148,7 @@ fn empty_overlay() -> LimitsOverlay {
     LimitsOverlay {
         sections: Vec::new(),
         empty_note: None,
-        scroll: Default::default(),
-        pointer: Default::default(),
+        panel: Default::default(),
         checking_started: Instant::now(),
     }
 }
@@ -178,8 +177,7 @@ fn applying_one_provider_leaves_others_checking() {
             },
         ],
         empty_note: None,
-        scroll: Default::default(),
-        pointer: Default::default(),
+        panel: Default::default(),
         checking_started: Instant::now(),
     };
     overlay.apply_live(
@@ -422,8 +420,7 @@ fn overlay_body_uses_global_window_label_column() {
             },
         ],
         empty_note: None,
-        scroll: Default::default(),
-        pointer: Default::default(),
+        panel: Default::default(),
         checking_started: Instant::now(),
     };
     let lines = overlay_body_lines(&overlay, 80, None, 10);

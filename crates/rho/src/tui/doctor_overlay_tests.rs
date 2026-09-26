@@ -13,8 +13,7 @@ fn text(line: &Line<'_>) -> String {
 fn overlay(checks: Vec<DoctorCheck>) -> DoctorOverlay {
     DoctorOverlay {
         report: DoctorReport::from_checks(checks),
-        scroll: Default::default(),
-        pointer: Default::default(),
+        panel: Default::default(),
         checking_started: Instant::now(),
     }
 }

@@ -201,6 +201,7 @@ impl App {
             agent.computer_use().cloned(),
             agent.session_id().clone(),
         ));
+        self.sync_computer_overlay();
         if agent.is_session_busy() {
             return false;
         }
