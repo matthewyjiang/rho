@@ -4,10 +4,11 @@
 //! result.
 
 use rho_providers::model::{ContentBlock, Message};
-use rho_sdk::{model::SemanticMessage, CompactionTrigger, Error};
+use rho_sdk::{CompactionTrigger, Error};
 use rho_tools::tool::ToolResult;
 
 use super::CompactionPartition;
+use crate::history_message::HistoryMessage;
 
 /// Must keep the "Summarize the compacted conversation history" prefix: the
 /// TUI fixture provider recognizes summary requests by it.
@@ -120,12 +121,12 @@ fn render_messages_for_summary<'a>(messages: impl IntoIterator<Item = &'a Messag
 }
 
 fn render_message_for_summary(message: &Message) -> String {
-    if let Some(summary) = message.as_compaction_summary() {
-        return format!("earlier compaction summary:\n{}", summary.text());
-    }
-    match message.semantic() {
-        SemanticMessage::System(text) => format!("system:\n{text}"),
-        SemanticMessage::ToolImageSupplement(images) => {
+    match HistoryMessage::of(message) {
+        HistoryMessage::CompactionSummary(summary) => {
+            format!("earlier compaction summary:\n{}", summary.text())
+        }
+        HistoryMessage::System(text) => format!("system:\n{text}"),
+        HistoryMessage::ToolImageSupplement(images) => {
             format!(
                 "tool output images for {} ({}):\n{}",
                 images.tool_name(),
@@ -133,19 +134,19 @@ fn render_message_for_summary(message: &Message) -> String {
                 render_blocks(images.content())
             )
         }
-        SemanticMessage::User(blocks) => format!("user:\n{}", render_blocks(blocks)),
-        SemanticMessage::Assistant(blocks) => format!("assistant:\n{}", render_blocks(blocks)),
-        SemanticMessage::EnrichedAssistant(message) => {
+        HistoryMessage::User(blocks) => format!("user:\n{}", render_blocks(blocks)),
+        HistoryMessage::Assistant(blocks) => format!("assistant:\n{}", render_blocks(blocks)),
+        HistoryMessage::EnrichedAssistant(message) => {
             let mut rendered = render_blocks(&message.content);
             if let Some(summary) = &message.reasoning_summary {
                 rendered.push_str(&format!("\nreasoning summary:\n{summary}"));
             }
             format!("assistant:\n{rendered}")
         }
-        SemanticMessage::AbortedAssistant(message) => {
+        HistoryMessage::AbortedAssistant(message) => {
             format!("assistant [aborted]:\n{}", render_blocks(&message.content))
         }
-        SemanticMessage::ToolResult(result) => {
+        HistoryMessage::ToolResult(result) => {
             format!("tool result:\n{}", render_tool_result(result))
         }
     }

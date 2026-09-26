@@ -6,6 +6,8 @@ use serde::Deserialize;
 
 use rho_providers::model::Message;
 
+use crate::history_message::HistoryMessage;
+
 use crate::agent::{
     internal_definition, run_one_shot_agent, OneShotAgentRequest, GOAL_JUDGE_AGENT_ID,
 };
@@ -221,8 +223,14 @@ fn evaluation_transcript(messages: &[Message]) -> String {
     let transcript = messages
         .iter()
         .filter(|message| !matches!(message, Message::System(_)))
-        .map(safe_transcript_message)
-        .map(|message| serde_json::to_string(&message).unwrap_or_default())
+        .map(|message| match HistoryMessage::of(message) {
+            // A model-written summary is not user input; label it so the
+            // judge weighs it as a recap, not as a user claim.
+            HistoryMessage::CompactionSummary(summary) => {
+                serde_json::json!({ "CompactionSummary": summary.text() }).to_string()
+            }
+            _ => serde_json::to_string(&safe_transcript_message(message)).unwrap_or_default(),
+        })
         .collect::<Vec<_>>()
         .join("\n");
     tail_chars(&transcript, MAX_EVALUATION_TRANSCRIPT_CHARS)

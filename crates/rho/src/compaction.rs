@@ -5,6 +5,8 @@ use rho_providers::model::{
     ContentBlock, Message,
 };
 use rho_sdk::model::SemanticMessage;
+
+use crate::history_message::HistoryMessage;
 use rho_tools::tool::ToolSpec;
 
 #[path = "compaction_elide.rs"]
@@ -234,8 +236,7 @@ fn partition<'a>(
 
 /// Input a person sent, as opposed to tool images or compaction summaries.
 fn is_user_input(message: &Message) -> bool {
-    matches!(message.semantic(), SemanticMessage::User(_))
-        && message.as_compaction_summary().is_none()
+    matches!(HistoryMessage::of(message), HistoryMessage::User(_))
 }
 
 /// End of the contiguous user messages at `start`, or `start` when together

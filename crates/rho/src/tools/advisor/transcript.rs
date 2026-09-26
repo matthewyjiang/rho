@@ -6,7 +6,9 @@
 //! they are written, then the whole transcript is elided in the middle so the
 //! advisor keeps both the opening of the session and the most recent work.
 
-use rho_sdk::model::{ContentBlock, Message, SemanticMessage, ToolCall};
+use rho_sdk::model::{ContentBlock, Message, ToolCall};
+
+use crate::history_message::HistoryMessage;
 
 /// Size limits applied while rendering one transcript.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,13 +59,13 @@ pub(crate) fn render_transcript(
 }
 
 fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
-    match message.semantic() {
-        SemanticMessage::System(text) => {
+    match HistoryMessage::of(message) {
+        HistoryMessage::System(text) => {
             out.push_str("\n## system\n\n");
             push_clipped(out, text, budget.system_prompt_bytes);
             out.push('\n');
         }
-        SemanticMessage::ToolImageSupplement(images) => {
+        HistoryMessage::ToolImageSupplement(images) => {
             out.push_str("\n## tool output images\n\n");
             out.push_str(&format!(
                 "tool: {} ({})\n",
@@ -72,19 +74,24 @@ fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
             ));
             push_blocks(out, images.content(), budget);
         }
-        SemanticMessage::User(blocks) => {
+        HistoryMessage::CompactionSummary(summary) => {
+            out.push_str("\n## compaction summary (model-written)\n\n");
+            out.push_str(summary.text().trim_end());
+            out.push('\n');
+        }
+        HistoryMessage::User(blocks) => {
             out.push_str("\n## user\n\n");
             push_blocks(out, blocks, budget);
         }
-        SemanticMessage::Assistant(blocks) => {
+        HistoryMessage::Assistant(blocks) => {
             out.push_str("\n## assistant\n\n");
             push_blocks(out, blocks, budget);
         }
-        SemanticMessage::EnrichedAssistant(assistant) => {
+        HistoryMessage::EnrichedAssistant(assistant) => {
             out.push_str("\n## assistant\n\n");
             push_blocks(out, &assistant.content, budget);
         }
-        SemanticMessage::AbortedAssistant(aborted) => {
+        HistoryMessage::AbortedAssistant(aborted) => {
             out.push_str("\n## assistant (interrupted)\n\n");
             push_blocks(out, &aborted.content, budget);
             for call in &aborted.tool_calls {
@@ -96,7 +103,7 @@ fn push_message(out: &mut String, message: &Message, budget: TranscriptBudget) {
                 push_arguments_line(out, &call.arguments, budget.tool_call_bytes);
             }
         }
-        SemanticMessage::ToolResult(result) => {
+        HistoryMessage::ToolResult(result) => {
             let status = if result.ok { "ok" } else { "error" };
             out.push_str("\n## tool result ");
             out.push_str(&result.id);
