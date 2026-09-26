@@ -42,6 +42,6 @@ N/A
 
 | Marker | Preferred end state |
 | --- | --- |
-| | | |
+| | |
 
 <!-- If an AI made this change, end with one line naming the model and harness. -->
