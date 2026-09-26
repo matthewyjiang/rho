@@ -1,6 +1,6 @@
 # AGENTS.md
 
-If `git remote get-url origin` is not the crate `repository` (ignore `.git` and SSH vs HTTPS), this is a fork: follow [CONTRIBUTING.md](CONTRIBUTING.md).
+Fork pull requests follow [CONTRIBUTING.md](CONTRIBUTING.md). Do not run a command to decide whether this checkout is a fork.
 
 ## Commits and pull requests
 
