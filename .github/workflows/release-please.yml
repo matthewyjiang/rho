@@ -37,7 +37,7 @@ jobs:
     name: validate release candidate versions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.candidate-sha || github.sha }}
       - name: Check release version consistency
@@ -60,13 +60,13 @@ jobs:
     steps:
       - id: release
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.candidate-sha == '' }}
-        uses: googleapis/release-please-action@v4
+        uses: googleapis/release-please-action@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: .release-please-config.json
       - name: Check out recovery candidate
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate-sha != '' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.candidate-sha }}
       - name: Verify existing release tags for recovery
@@ -137,7 +137,7 @@ jobs:
       # cargo-workspace plugin cannot update its lockfile when rho-sdk changes.
       - name: Check out release pull request
         if: ${{ steps.release.outputs.prs_created == 'true' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
       # Release Please leaves renamed path dependency pins stale (for example
@@ -202,7 +202,7 @@ jobs:
     if: ${{ needs.release.outputs.releases_created == 'true' && needs.sdk-release-evidence.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.sdk-release-evidence.outputs.candidate-sha }}
       - name: Install Rust
@@ -278,7 +278,7 @@ jobs:
             cache-targets: true
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.release.outputs.tag_name }}
       - name: Install Rust
@@ -549,7 +549,7 @@ jobs:
           pacman -Sy --noconfirm base-devel git pacman-contrib
 
       - name: Checkout publish helper
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           persist-credentials: false
           sparse-checkout: |
@@ -557,13 +557,13 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Download package artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ needs.build-arch-package.outputs.artifact-name }}
           path: packages
 
       - name: Checkout mjiang-extras
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: matthewyjiang/mjiang-extras
           token: ${{ secrets.MJIANG_EXTRAS_PUSH_TOKEN }}
@@ -609,7 +609,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout main for Scoop manifest update
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: main
       - name: Download Windows checksum
