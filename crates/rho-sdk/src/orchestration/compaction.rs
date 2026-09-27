@@ -5,18 +5,20 @@ use tokio::sync::mpsc;
 use crate::{
     model::{Message, ToolSpec},
     session::{HistoryMetrics, SessionCore},
-    CancellationToken, CompactionDecision, CompactionTrigger, ContextEstimate, Error,
-    ProviderError, ProviderErrorKind, RunEvent,
+    CancellationToken, CompactionDecision, CompactionSkipReason, CompactionTrigger,
+    ContextEstimate, Error, ProviderError, ProviderErrorKind, RunEvent,
 };
 
-use super::{emit, provider_request::ProviderRequestScope};
+use super::{compaction_limit::CompactionLimit, emit, provider_request::ProviderRequestScope};
 
+/// Runs automatic compaction when the policy asks for it, rewriting only the
+/// history `limit` allows.
 pub(super) async fn maybe_compact(
     core: &Arc<SessionCore>,
     scope: ProviderRequestScope<'_>,
     tool_specs: &[ToolSpec],
     history: &mut Vec<Message>,
-    preserve_from: Option<usize>,
+    limit: CompactionLimit,
     cancellation: &CancellationToken,
     events: &mpsc::Sender<RunEvent>,
 ) -> Result<Option<ContextEstimate>, Error> {
@@ -25,15 +27,25 @@ pub(super) async fn maybe_compact(
         scope.runtime.compaction_policy.as_ref(),
         history.len(),
         estimate,
-    );
+    )
+    .with_extent(limit.extent());
+    let Some(compact_end) = limit.compact_end(history.len()) else {
+        let decision = decision.blocked_by_pending_tools();
+        core.record_compaction_decision(decision);
+        if decision.skip_reason() == Some(CompactionSkipReason::PendingAsyncTools) {
+            tracing::warn!(
+                "skipping compaction: nothing new to compact before pending async tool jobs"
+            );
+        }
+        return Ok(Some(estimate));
+    };
     core.record_compaction_decision(decision);
     if decision.skip_reason().is_some() {
         return Ok(Some(estimate));
     }
-    // Fresh completion input must reach one provider request verbatim. Evaluate
-    // the full history above, but give the compactor only the older prefix and
-    // that prefix's accounting so a protected suffix cannot distort tail sizing.
-    let compact_end = preserve_from.unwrap_or(history.len());
+    // Evaluate the full history above, but give the compactor only the older
+    // prefix and that prefix's accounting so a protected suffix cannot distort
+    // tail sizing.
     let prefix_estimate = if compact_end == history.len() {
         estimate
     } else {
@@ -66,8 +78,8 @@ pub(super) enum OverflowRecovery {
 ///
 /// Only [`ProviderErrorKind::ContextOverflow`] failures are recovered, and only
 /// when the host configured an automatic compaction policy: hosts with manual
-/// compaction alone keep their history and receive the original error. A
-/// protected suffix (`preserve_from`) is never summarized. Emits
+/// compaction alone keep their history and receive the original error, as do
+/// steps whose `limit` is blocked. History after `limit` is never summarized. Emits
 /// `ProviderStreamReset` first so hosts discard any partial attempt output.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn recover_context_overflow(
@@ -75,11 +87,14 @@ pub(super) async fn recover_context_overflow(
     scope: ProviderRequestScope<'_>,
     tool_specs: &[ToolSpec],
     history: &mut Vec<Message>,
-    preserve_from: Option<usize>,
+    limit: CompactionLimit,
     error: &ProviderError,
     cancellation: &CancellationToken,
     events: &mpsc::Sender<RunEvent>,
 ) -> Result<OverflowRecovery, Error> {
+    let Some(compact_end) = limit.compact_end(history.len()) else {
+        return Ok(OverflowRecovery::GiveUp);
+    };
     if error.kind() != ProviderErrorKind::ContextOverflow
         || scope.runtime.compaction_policy.is_none()
         || cancellation.is_cancelled()
@@ -95,7 +110,6 @@ pub(super) async fn recover_context_overflow(
         },
     )
     .await?;
-    let compact_end = preserve_from.unwrap_or(history.len());
     let estimate = core.estimate_context(&history[..compact_end], tool_specs);
     let outcome = run_compaction(
         core,

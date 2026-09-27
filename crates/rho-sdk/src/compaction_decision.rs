@@ -9,12 +9,24 @@ pub enum CompactionSkipReason {
     PendingAsyncTools,
 }
 
+/// How much history an automatic compaction checkpoint may rewrite.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[non_exhaustive]
+pub enum CompactionExtent {
+    /// All history, except fresh completion input kept for the next request.
+    History,
+    /// Only the prefix before the earliest running async tool call. That call
+    /// and everything after it stay verbatim so late results still pair.
+    BeforePendingAsyncTools,
+}
+
 /// The latest automatic policy evaluation. A due decision is not a success report.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct CompactionDecision {
     estimate: ContextEstimate,
     threshold: Option<CompactionThreshold>,
     skip_reason: Option<CompactionSkipReason>,
+    extent: CompactionExtent,
 }
 
 impl CompactionDecision {
@@ -34,13 +46,21 @@ impl CompactionDecision {
             estimate,
             threshold: policy.map(CompactionPolicy::threshold),
             skip_reason,
+            extent: CompactionExtent::History,
         }
     }
 
-    pub(crate) fn with_pending_tools(mut self) -> Self {
-        if self.threshold.is_some() {
+    /// Running async tool calls leave nothing new to compact before them, so a
+    /// due compaction is skipped.
+    pub(crate) fn blocked_by_pending_tools(mut self) -> Self {
+        if self.skip_reason.is_none() {
             self.skip_reason = Some(CompactionSkipReason::PendingAsyncTools);
         }
+        self
+    }
+
+    pub(crate) fn with_extent(mut self, extent: CompactionExtent) -> Self {
+        self.extent = extent;
         self
     }
 
@@ -55,5 +75,10 @@ impl CompactionDecision {
     /// `None` means the policy requested compaction, which may still fail or cancel.
     pub const fn skip_reason(self) -> Option<CompactionSkipReason> {
         self.skip_reason
+    }
+
+    /// History this checkpoint would rewrite when compaction is due.
+    pub const fn extent(self) -> CompactionExtent {
+        self.extent
     }
 }
