@@ -185,6 +185,8 @@ pub struct CompactionRequest {
     workspace_path: Option<PathBuf>,
     context_estimate: Option<crate::ContextEstimate>,
     service_tier: Option<crate::model::ServiceTier>,
+    prompt_cache_key: Option<String>,
+    tool_specs: Option<Vec<crate::model::ToolSpec>>,
 }
 
 impl CompactionRequest {
@@ -202,7 +204,40 @@ impl CompactionRequest {
             workspace_path: None,
             context_estimate: None,
             service_tier: None,
+            prompt_cache_key: None,
+            tool_specs: None,
         }
+    }
+
+    /// Carries the session's prompt cache key.
+    ///
+    /// A compactor that summarizes with the session model can send the
+    /// session's own message prefix under this key, so the provider serves
+    /// that prefix from the cache the preceding turns wrote.
+    pub fn with_prompt_cache_key(mut self, prompt_cache_key: impl Into<String>) -> Self {
+        self.prompt_cache_key = Some(prompt_cache_key.into());
+        self
+    }
+
+    /// The session's prompt cache key, or `None` when the session has none or
+    /// the caller did not supply it.
+    pub fn prompt_cache_key(&self) -> Option<&str> {
+        self.prompt_cache_key.as_deref()
+    }
+
+    /// Carries the tool specs, in order, that the session's provider turns advertise.
+    ///
+    /// Providers key cached prefixes on the tool schemas too, so a compactor
+    /// that reuses the session prefix must send these exact specs.
+    pub fn with_tool_specs(mut self, tool_specs: Vec<crate::model::ToolSpec>) -> Self {
+        self.tool_specs = Some(tool_specs);
+        self
+    }
+
+    /// The session's advertised tool specs, or `None` when the caller did not
+    /// supply them. `Some(&[])` means the session advertises no tools.
+    pub fn tool_specs(&self) -> Option<&[crate::model::ToolSpec]> {
+        self.tool_specs.as_deref()
     }
 
     /// Carries the session service tier into provider-native compaction.
@@ -233,6 +268,20 @@ impl CompactionRequest {
 
     pub fn context_estimate(&self) -> Option<crate::ContextEstimate> {
         self.context_estimate
+    }
+
+    /// Attaches the settings the session's own provider turns use, so a
+    /// compactor can reproduce their cached prefix.
+    pub(crate) fn with_session_turn(
+        mut self,
+        service_tier: Option<crate::model::ServiceTier>,
+        tool_specs: Vec<crate::model::ToolSpec>,
+        prompt_cache_key: Option<String>,
+    ) -> Self {
+        self.service_tier = service_tier;
+        self.tool_specs = Some(tool_specs);
+        self.prompt_cache_key = prompt_cache_key;
+        self
     }
 
     pub(crate) fn with_request_context(

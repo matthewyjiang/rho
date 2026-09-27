@@ -13,6 +13,7 @@ pub(crate) const SESSION_TITLE_AGENT_ID: &str = "session-title";
 pub(crate) const GOAL_JUDGE_AGENT_ID: &str = "goal-judge";
 pub(crate) const ADVISOR_AGENT_ID: &str = "advisor";
 pub(crate) const PERMISSION_CLASSIFIER_AGENT_ID: &str = "permission-classifier";
+pub(crate) const COMPACTION_AGENT_ID: &str = "compaction";
 
 pub(crate) const ADVISOR_PROMPT: &str = "You are a senior advisor reviewing another AI coding agent's live work session. You receive the full session transcript: the agent's system prompt, the user's requests, every tool call and result, and the agent's reasoning so far.\n\nThe advisor tool takes no arguments. This transcript is the payload.\n\nProvide strategic guidance for the agent's next steps:\n- Identify the core difficulty or the decision the agent is facing.\n- Recommend a concrete plan or course correction.\n- Flag risks, failure modes, or wrong assumptions the agent has not ruled out.\n\nBe direct and specific. Reference concrete files, commands, and evidence from the transcript. Do not restate the transcript. Do not write large code blocks; describe the approach. Include only guidance that changes what the agent does next.";
 
@@ -103,6 +104,25 @@ static INTERNAL_AGENTS: LazyLock<Vec<InternalAgent>> = LazyLock::new(|| {
             requires_own_model: true,
             accepts_claude_runtime: false,
         },
+        InternalAgent {
+            definition: AgentDefinition {
+                id: AgentId::new(COMPACTION_AGENT_ID).expect("valid internal agent ID"),
+                description: "Internal agent that writes text summaries when compacting context. Reserved; cannot be overridden or delegated."
+                    .to_string(),
+                prompt: PromptPolicy::Replace(crate::compaction::SUMMARY_SYSTEM_PROMPT.into()),
+                runtime: AgentRuntimeSpec::Rho {
+                    tools: ToolPolicy::Allow(BTreeSet::new()),
+                    // With no override, compaction summarizes on the session
+                    // model at the session's reasoning level so it can reuse
+                    // the session's prompt cache. An overridden model starts
+                    // at `OVERRIDE_DEFAULT_REASONING`.
+                    model: ModelPolicy::Inherit,
+                    reasoning: None,
+                },
+            },
+            requires_own_model: false,
+            accepts_claude_runtime: false,
+        },
     ]
 });
 
@@ -169,9 +189,14 @@ static CLAUDE_REASONING_CAPABILITIES: LazyLock<ReasoningCapabilities> = LazyLock
     ReasoningCapabilities::Levels(crate::claude_runtime::spawn::CLAUDE_EFFORT_LEVELS.clone())
 });
 
+/// Reasoning for an overridden model of an internal agent whose definition
+/// inherits the session's reasoning.
+const OVERRIDE_DEFAULT_REASONING: ReasoningLevel = ReasoningLevel::Low;
+
 /// Reasoning level an internal-agent one-shot will use for `selection`.
 ///
-/// Explicit config wins. Otherwise the reserved definition default applies.
+/// Explicit config wins. Otherwise the reserved definition default applies,
+/// or [`OVERRIDE_DEFAULT_REASONING`] when the definition inherits.
 /// Persisted/default values are normalized onto the selection's capabilities so
 /// a carried level never rejects at call time.
 pub(crate) fn effective_internal_agent_reasoning(
@@ -181,7 +206,7 @@ pub(crate) fn effective_internal_agent_reasoning(
     let requested = selection.reasoning.unwrap_or_else(|| {
         internal_definition(id)
             .reasoning()
-            .expect("internal agent definitions set a reasoning level")
+            .unwrap_or(OVERRIDE_DEFAULT_REASONING)
     });
     let capabilities = internal_agent_reasoning_capabilities(selection);
     match capabilities.resolve(requested, ReasoningRequestSource::PersistedOrDefault) {

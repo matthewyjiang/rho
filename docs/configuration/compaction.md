@@ -56,7 +56,7 @@ Elision runs only when the stubs can be recalled. It is skipped, and compaction 
 
 ## Text summaries
 
-When elision is not enough and native compaction is unavailable, Rho asks the session model for a summary. The summary always uses the same sections: original request, constraints and preferences, decisions and rationale, files touched and their current state, commands run and test results, errors and fixes, open tasks, and the exact next step. The model may think in an `<analysis>` block first. Rho removes that block before the summary enters context.
+When elision is not enough and native compaction is unavailable, Rho asks the session model for a summary, unless a [summarizer model](#summarizer-model) is set. The summary always uses the same sections: original request, constraints and preferences, decisions and rationale, files touched and their current state, commands run and test results, errors and fixes, open tasks, and the exact next step. The model may think in an `<analysis>` block first. Rho removes that block before the summary enters context.
 
 The summary goes into history as a compaction summary, labeled by what caused it: automatic, manual (`/compact`), or context overflow. Providers receive it as a user-role message that says it is not a new user message.
 
@@ -68,6 +68,36 @@ Two user messages stay verbatim outside the summary, each only if its estimate i
 - The latest user message, restated after the summary when it would otherwise fall outside the recent tail. This keeps the instruction for the current turn, such as a `/goal` prompt, when compaction runs in the middle of a long turn.
 
 If those messages are the only history left to remove, they are summarized too.
+
+### Prompt cache reuse
+
+The session-model summary request resends the conversation as the session model last saw it, with the same system prompt, messages, tool definitions, reasoning level, service tier, and prompt cache key, then adds one user message asking for the summary. The provider has already cached most of that prefix, so the request is billed mostly as cache reads. Its usage is recorded with purpose `compaction`, including cache reads, so it shows up in `/spend` and `/info`.
+
+That request resends old tool results in full, even when [elision](#tool-result-elision) stubbed them, because stubs would change the cached prefix. The instruction appended after that history names the span compaction will delete, so the model does not summarize the whole conversation or skip the turns that are about to disappear. Rho renders the history as one transcript instead, with elided stubs and no service tier, when:
+
+- the full request would not leave room for the summary in the model's window
+- the provider rejects it, for example as too large
+- compaction is recovering from a context overflow
+- the model calls a tool instead of answering, which Rho never executes
+- the reply has no summary text
+
+Whether the cache hits depends on the provider's caching rules, such as minimum prefix size, cache lifetime, and whether it caches at all.
+
+### Summarizer model
+
+Set a model for the `compaction` internal agent to write summaries on a cheaper model. Run `/agents`, select `compaction`, and pick a model, or edit config. Model aliases work here.
+
+```toml
+[internal_agents.compaction]
+provider = "openai"
+model = "gpt-5.6-luna"
+auth = "api-key"
+reasoning = "low" # optional; defaults to low
+```
+
+A different model cannot reuse the session's prompt cache, so it always gets the rendered transcript and does not inherit the session's service tier. A smaller model may also drop more detail from the summary. If the summarizer fails, for example because its credentials are missing, its window is too small, or it returns no summary, Rho logs a warning and tries the cached session-history request, then the transcript. A failed summarizer does not cost more than compaction with no summarizer, when the session-history request fits. **Use conversation model** removes the override, and compaction goes back to the session model at the session's reasoning level. In the interactive TUI, changes apply when the session is next idle. Other hosts pick them up on the next start.
+
+Native compaction ignores this setting.
 
 ## Which compactor runs
 

@@ -46,6 +46,34 @@ fn strip_analysis_removes_scratchpads() {
     }
 }
 
+// Covers: the session-history suffix points at the deleted span and the
+// verbatim tail, and does not copy the deleted message into the uncached
+// suffix. The cached prefix stays the session history.
+// Owner: text-summary compaction
+#[test]
+fn session_summary_request_names_the_deleted_span() {
+    let history = history(None);
+    let deleted = "did step one ".repeat(400);
+    let request = build_session_summary_request(&history, &partition(&history));
+
+    assert_eq!(&request[..history.len()], history.as_slice());
+    let Message::User(blocks) = &request[history.len()] else {
+        panic!("expected a trailing user instruction");
+    };
+    let [ContentBlock::Text(instruction)] = blocks.as_slice() else {
+        panic!("expected one text block, got {blocks:?}");
+    };
+    assert!(
+        instruction.contains("assistant: did step one"),
+        "{instruction}"
+    );
+    assert!(instruction.contains("user: recent"), "{instruction}");
+    assert!(
+        !instruction.contains(&deleted),
+        "the deleted message was copied into the suffix"
+    );
+}
+
 // Covers: a second compaction hands the earlier summary to the model as a
 // summary to update, never as a rendered user turn, and a first compaction
 // sends no previous-summary section.

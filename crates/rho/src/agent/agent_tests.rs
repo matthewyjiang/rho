@@ -230,6 +230,7 @@ fn model_required_internal_agents_require_their_own_model() {
             (GOAL_JUDGE_AGENT_ID, false),
             (ADVISOR_AGENT_ID, true),
             (PERMISSION_CLASSIFIER_AGENT_ID, true),
+            (COMPACTION_AGENT_ID, false),
         ]
     );
 }

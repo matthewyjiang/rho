@@ -751,10 +751,27 @@ impl Config {
 
 impl From<&Config> for CompactionConfig {
     fn from(config: &Config) -> Self {
+        let summarizer = config
+            .internal_agent_model(crate::agent::COMPACTION_AGENT_ID)
+            .and_then(|selection| {
+                // The compaction agent cannot delegate, so config load keeps
+                // every selection on Rho's stack.
+                let rho = selection.rho()?;
+                Some(crate::compaction::SummarizerModel {
+                    provider: rho.provider.clone(),
+                    model: rho.model.clone(),
+                    auth: rho.auth.clone(),
+                    reasoning: crate::agent::effective_internal_agent_reasoning(
+                        crate::agent::COMPACTION_AGENT_ID,
+                        selection,
+                    ),
+                })
+            });
         Self {
             auto_compact: config.auto_compact,
             threshold_percent: config.compact_threshold_percent,
             target_percent: config.compact_target_percent,
+            summarizer,
         }
     }
 }

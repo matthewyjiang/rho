@@ -42,6 +42,7 @@ pub(super) async fn maybe_compact(
     run_compaction(
         core,
         scope,
+        tool_specs,
         history,
         compact_end,
         prefix_estimate,
@@ -99,6 +100,7 @@ pub(super) async fn recover_context_overflow(
     let outcome = run_compaction(
         core,
         scope,
+        tool_specs,
         history,
         compact_end,
         estimate,
@@ -116,10 +118,15 @@ pub(super) async fn recover_context_overflow(
 
 /// Runs the configured compactor over `history[..compact_end]`, commits the
 /// replacement plus the protected suffix, and reports both compaction events.
+///
+/// `tool_specs` are the specs this run's provider turns advertise. The request
+/// carries them with the session prompt cache key, so a compactor can reuse the
+/// provider's cached prefix.
 #[allow(clippy::too_many_arguments)]
 async fn run_compaction(
     core: &Arc<SessionCore>,
     scope: ProviderRequestScope<'_>,
+    tool_specs: &[ToolSpec],
     history: &mut Vec<Message>,
     compact_end: usize,
     estimate: ContextEstimate,
@@ -156,11 +163,12 @@ async fn run_compaction(
                     .workspace
                     .as_ref()
                     .map(|workspace| workspace.root().to_path_buf()),
+            )
+            .with_session_turn(
+                scope.runtime.service_tier,
+                tool_specs.to_vec(),
+                core.prompt_cache_key(),
             );
-    let request = match scope.runtime.service_tier {
-        Some(tier) => request.with_service_tier(tier),
-        None => request,
-    };
     let output = match compactor.cancellation_mode() {
         crate::CompactorCancellationMode::Cooperative => compactor.compact(request).await?,
         crate::CompactorCancellationMode::External => {

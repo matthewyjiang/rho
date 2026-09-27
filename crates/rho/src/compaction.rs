@@ -14,7 +14,10 @@ mod elide;
 #[path = "compaction_summary.rs"]
 mod summary;
 pub(crate) use elide::{elide_tool_results, recall_id, Elision};
-pub(crate) use summary::{build_summary_request_messages, summary_replacement};
+pub(crate) use summary::{
+    build_session_summary_request, build_summary_request_messages, summary_replacement,
+    SUMMARY_SYSTEM_PROMPT,
+};
 
 const SUMMARY_RESERVE_MIN_TOKENS: u64 = 512;
 const SUMMARY_RESERVE_MAX_TOKENS: u64 = 8_192;
@@ -28,6 +31,18 @@ pub struct CompactionConfig {
     pub auto_compact: bool,
     pub threshold_percent: u8,
     pub target_percent: u8,
+    /// Model that writes text summaries, from `[internal_agents.compaction]`.
+    /// `None` uses the session model, which can reuse the session's prompt cache.
+    pub summarizer: Option<SummarizerModel>,
+}
+
+/// A separately configured text-summary model and the reasoning it runs at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SummarizerModel {
+    pub provider: String,
+    pub model: String,
+    pub auth: String,
+    pub reasoning: rho_sdk::ReasoningLevel,
 }
 
 /// Single source of truth for compaction defaults; `Config::default()` derives
@@ -38,6 +53,7 @@ impl Default for CompactionConfig {
             auto_compact: true,
             threshold_percent: 85,
             target_percent: 50,
+            summarizer: None,
         }
     }
 }
@@ -128,6 +144,17 @@ impl<'a> CompactionPartition<'a> {
     /// results here may be elided.
     pub(crate) fn compacted_range(&self) -> Range<usize> {
         self.first_turn.end..self.recent_start
+    }
+
+    /// Latest user message kept verbatim even when it sits inside the
+    /// summarized span.
+    pub(crate) fn kept_latest_user(&self) -> Option<&'a Message> {
+        self.latest_user.map(|index| &self.messages[index])
+    }
+
+    /// Messages kept verbatim after the summary.
+    pub(crate) fn recent_tail(&self) -> &'a [Message] {
+        &self.messages[self.recent_start..]
     }
 
     /// Replacement history around a newly written `summary`.
@@ -344,7 +371,10 @@ fn completed_tool_group_end(messages: &[Message], index: usize) -> Option<usize>
     }
 }
 
-fn summary_reserve_tokens(target_tokens: u64) -> u64 {
+/// Tokens kept free for the summary a compaction writes. Partitioning keeps
+/// this out of the retained tail, and the session-prefix summary request
+/// needs this much room left in the window.
+pub(crate) fn summary_reserve_tokens(target_tokens: u64) -> u64 {
     if target_tokens == 0 {
         return 0;
     }
@@ -384,6 +414,7 @@ mod tests {
             auto_compact: true,
             threshold_percent: 80,
             target_percent: 50,
+            summarizer: None,
         };
 
         assert_eq!(config.threshold_tokens(1_000), Some(800));
@@ -404,6 +435,7 @@ mod tests {
             auto_compact: true,
             threshold_percent: 85,
             target_percent: 99,
+            summarizer: None,
         };
 
         assert_eq!(config.target_tokens(1_000), 840);
@@ -418,6 +450,7 @@ mod tests {
             auto_compact: true,
             threshold_percent: 85,
             target_percent: 50,
+            summarizer: None,
         };
         let messages = vec![Message::user_text("x".repeat(4_000))];
         let current = estimate_context_tokens(&messages, &[]);

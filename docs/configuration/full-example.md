@@ -48,6 +48,12 @@ compact_target_percent = 50
 # auth = "anthropic-api-key"
 # reasoning = "high"
 
+[internal_agents.compaction]
+# provider = "openai"
+# model = "gpt-5.6-luna"
+# auth = "api-key"
+# reasoning = "low"
+
 [internal_agents.permission-classifier]
 # provider = "openai"
 # model = "gpt-5.6-luna"

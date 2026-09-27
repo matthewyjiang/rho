@@ -904,3 +904,55 @@ fn a_claude_cli_advisor_round_trips_through_save() {
         );
     }
 }
+
+// Covers: `[internal_agents.compaction]` fails to route text-summary
+// compaction to the configured model, loses an alias, or ignores reasoning;
+// an unset entry must keep the session model.
+// Owner: config to compaction wiring
+#[test]
+fn compaction_internal_agent_selects_the_summarizer_model() {
+    use crate::compaction::{CompactionConfig, SummarizerModel};
+    use rho_sdk::ReasoningLevel;
+
+    for (case, entry, expected) in [
+        ("unset", "", None),
+        (
+            "alias with default reasoning",
+            "[internal_agents.compaction]\nmodel = \"@cheap\"\n",
+            Some(SummarizerModel {
+                provider: "anthropic".into(),
+                model: "claude-haiku-4-5".into(),
+                auth: "anthropic-api-key".into(),
+                reasoning: ReasoningLevel::Low,
+            }),
+        ),
+        (
+            "explicit reasoning",
+            "[internal_agents.compaction]\nprovider = \"openai\"\nmodel = \"gpt-5.5-mini\"\nauth = \"api-key\"\nreasoning = \"medium\"\n",
+            Some(SummarizerModel {
+                provider: "openai".into(),
+                model: "gpt-5.5-mini".into(),
+                auth: "api-key".into(),
+                reasoning: ReasoningLevel::Medium,
+            }),
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            format!(
+                "[model]\nprovider = \"openai\"\nmodel = \"gpt-5.5\"\n\n[model.aliases]\ncheap = \"anthropic/claude-haiku-4-5\"\n\n{entry}"
+            ),
+        )
+        .unwrap();
+
+        let config = Config::load_with_store(
+            path,
+            &rho_providers::credentials::MemoryCredentialStore::default(),
+        )
+        .unwrap();
+
+        assert_eq!(CompactionConfig::from(&config).summarizer, expected, "{case}");
+    }
+}

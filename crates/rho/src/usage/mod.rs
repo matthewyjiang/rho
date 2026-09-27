@@ -10,7 +10,7 @@ mod sdk;
 mod sqlite;
 
 pub(crate) use model_request::{
-    send_recorded, send_recorded_from_attempt, send_recorded_observing,
+    send_recorded, send_recorded_observing, send_recorded_with, RecordedRequest,
 };
 pub(crate) use sdk::default_recording;
 

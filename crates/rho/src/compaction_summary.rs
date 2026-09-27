@@ -11,8 +11,9 @@ use super::CompactionPartition;
 use crate::history_message::HistoryMessage;
 
 /// Must keep the "Summarize the compacted conversation history" prefix: the
-/// TUI fixture provider recognizes summary requests by it.
-const SUMMARY_SYSTEM_PROMPT: &str = "\
+/// TUI fixture provider recognizes summary requests by it, as a system prompt
+/// or as the trailing instruction of a session-history request.
+pub(crate) const SUMMARY_SYSTEM_PROMPT: &str = "\
 Summarize the compacted conversation history for continuation. The original \
 transcript is stored separately; this summary replaces only older model context \
 for an agent that will keep working on the task.
@@ -45,6 +46,112 @@ const ORIGINAL_REQUEST_INSTRUCTION: &str = "\
 The user's original request stays verbatim in context after compaction. It is \
 included for reference; summarize only what the turns below add.";
 
+const SESSION_TASK_INSTRUCTION: &str = "\
+Stop working on the task. Do not call tools. Reply with the summary only.
+
+The summary replaces one span of the conversation above, named below. That \
+span will be deleted, so keep its paths, commands, identifiers, errors, and \
+decisions. Where this message names a span, summarize that span rather than \
+the whole conversation. Messages that stay verbatim after compaction should \
+stay brief.";
+
+const SESSION_FIRST_TURN_INSTRUCTION: &str = "\
+The user's first message stays verbatim. Do not summarize that message; \
+summarize the span named below.";
+
+const SESSION_PREVIOUS_SUMMARY_INSTRUCTION: &str = "\
+An earlier compaction summary appears above. Update it from the span named \
+below and return one complete summary in the same sections. Keep details that \
+still matter, revise ones the newer turns changed, and drop ones that no \
+longer matter.";
+
+/// Summary request that resends `history`, the session's request history,
+/// unchanged and appends the instruction as a final user message.
+///
+/// The provider cached that history for the session's last turn, so this
+/// request is billed mostly as cache reads. The caller must send it with the
+/// session model, reasoning level, tool specs, and prompt cache key; changing
+/// any of them misses the cache. `partition` must split `history`.
+pub(crate) fn build_session_summary_request(
+    history: &[Message],
+    partition: &CompactionPartition<'_>,
+) -> Vec<Message> {
+    let mut sections = vec![
+        SUMMARY_SYSTEM_PROMPT.to_string(),
+        SESSION_TASK_INSTRUCTION.to_string(),
+    ];
+    if !partition.first_turn().is_empty() {
+        sections.push(SESSION_FIRST_TURN_INSTRUCTION.to_string());
+    }
+    if partition.previous_summary().is_some() {
+        sections.push(SESSION_PREVIOUS_SUMMARY_INSTRUCTION.to_string());
+    }
+    sections.push(deleted_span_instruction(partition));
+    let mut messages = history.to_vec();
+    messages.push(Message::user_text(sections.join("\n\n")));
+    messages
+}
+
+/// Names the messages [`CompactionPartition`] will delete, and the verbatim
+/// tail those messages stop before. Quotes only a short marker so the suffix
+/// stays small; the history itself is already in the cached prefix.
+fn deleted_span_instruction(partition: &CompactionPartition<'_>) -> String {
+    let kept_latest = partition.kept_latest_user();
+    let start = partition
+        .summarized()
+        .find(|message| kept_latest.is_none_or(|kept| !std::ptr::eq(*message, kept)));
+    let mut lines = Vec::new();
+    if let Some(kept) = kept_latest {
+        lines.push(format!(
+            "This user message stays verbatim even though it sits among the \
+             turns being summarized. Mention it only briefly:\n{}",
+            message_marker(kept)
+        ));
+    }
+    match (start, partition.recent_tail().first()) {
+        (Some(start), Some(tail)) => lines.push(format!(
+            "Summarize from this message, inclusive, up to but not including \
+             the verbatim tail:\n\nDeleted span starts at:\n{}\n\nVerbatim tail \
+             starts at:\n{}",
+            message_marker(start),
+            message_marker(tail)
+        )),
+        (Some(start), None) => lines.push(format!(
+            "Summarize from this message through the end of the conversation:\n{}",
+            message_marker(start)
+        )),
+        (None, _) => lines.push("Summarize the conversation above.".to_string()),
+    }
+    lines.join("\n\n")
+}
+
+/// Role plus the first content line, truncated. Enough to point at one
+/// message in the history without copying it into the uncached suffix.
+fn message_marker(message: &Message) -> String {
+    let rendered = render_message_for_summary(message);
+    let content = rendered
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.ends_with(':'))
+        .unwrap_or("message");
+    const MAX_CHARS: usize = 120;
+    let content: String = content.chars().take(MAX_CHARS).collect();
+    let role = match HistoryMessage::of(message) {
+        HistoryMessage::CompactionSummary(_) => "earlier compaction summary",
+        HistoryMessage::System(_) => "system",
+        HistoryMessage::ToolImageSupplement(_) => "tool output images",
+        HistoryMessage::User(_) => "user",
+        HistoryMessage::Assistant(_)
+        | HistoryMessage::EnrichedAssistant(_)
+        | HistoryMessage::AbortedAssistant(_) => "assistant",
+        HistoryMessage::ToolResult(_) => "tool result",
+    };
+    format!("{role}: {content}")
+}
+
+/// Summary request that renders the history as one transcript under its own
+/// system prompt. Works on any model, but shares no cached prefix with the
+/// session.
 pub(crate) fn build_summary_request_messages(partition: &CompactionPartition<'_>) -> Vec<Message> {
     let mut sections = Vec::new();
     if !partition.first_turn().is_empty() {
@@ -70,12 +177,18 @@ pub(crate) fn build_summary_request_messages(partition: &CompactionPartition<'_>
 }
 
 /// Replacement history from the summarizer's response, labeled by `trigger`.
-/// Fails when the response has no summary text outside `<analysis>` blocks.
+/// Fails when the response calls a tool, which is never executed, or has no
+/// summary text outside `<analysis>` blocks.
 pub(crate) fn summary_replacement(
     partition: &CompactionPartition<'_>,
     trigger: CompactionTrigger,
     response: &[ContentBlock],
 ) -> Result<Vec<Message>, Error> {
+    if calls_tool(response) {
+        return Err(Error::InvalidHostResponse {
+            message: "compaction model called a tool instead of writing a summary".into(),
+        });
+    }
     let text = response
         .iter()
         .filter_map(|block| match block {
@@ -90,6 +203,13 @@ pub(crate) fn summary_replacement(
         });
     }
     Ok(partition.replacement(Message::compaction_summary(trigger, summary)))
+}
+
+/// Whether a summary response asked for a tool instead of answering.
+pub(crate) fn calls_tool(response: &[ContentBlock]) -> bool {
+    response
+        .iter()
+        .any(|block| matches!(block, ContentBlock::ToolCall(_)))
 }
 
 /// Removes `<analysis>` scratchpads. An unclosed block runs to the end.

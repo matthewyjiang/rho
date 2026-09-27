@@ -420,6 +420,7 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
             auto_compact: true,
             threshold_percent: 5,
             target_percent: 1,
+            summarizer: None,
         },
         context_window: Some(1_000),
         usage_purpose: "agent",

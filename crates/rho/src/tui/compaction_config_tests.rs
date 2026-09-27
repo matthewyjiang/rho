@@ -29,6 +29,7 @@ async fn compaction_edits_wait_for_idle_and_preserve_calibration() {
             auto_compact: true,
             threshold_percent: 95,
             target_percent: 50,
+            summarizer: None,
         })
         .unwrap();
     agent
