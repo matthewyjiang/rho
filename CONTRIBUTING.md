@@ -4,7 +4,9 @@ Thanks for contributing. Keep changes small and focused on one concern.
 
 ## Setup
 
-This repo expects Rust **1.92** (`mise.toml`). From the repo root:
+This repo expects Rust **1.92** (`mise.toml`). That file also enables [mr-boxington](https://mr-boxington.jdx.dev/) for mise 2026.9.2 or newer, so an activated `cargo` uses the shared build cache. Without mise, `cargo` is unchanged. The first wrapped build moves an existing `target/` into the mbx cache and leaves a symlink at `target/`.
+
+From the repo root:
 
 ```bash
 cargo build
