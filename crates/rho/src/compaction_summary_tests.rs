@@ -76,6 +76,87 @@ fn session_summary_request_names_the_deleted_span() {
     );
 }
 
+// Covers: tool-call and tool-result boundaries are marked by name, call id,
+// and status. Scraping the pretty-printed transcript would point at `{`
+// instead, so the cached summary suffix could no longer tell the deleted
+// span from the verbatim tail.
+// Owner: text-summary compaction
+#[test]
+fn session_summary_markers_name_tool_calls_instead_of_json() {
+    let payload = "x".repeat(8_000);
+    let history = vec![
+        Message::System("system".into()),
+        Message::user_text("build the thing"),
+        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+            id: "call-old".into(),
+            name: "read_file".into(),
+            arguments: json!({"path": payload}),
+        })]),
+        Message::ToolResult(ToolResult {
+            id: "call-old".into(),
+            ok: false,
+            content: format!("missing\n{payload}"),
+        }),
+        Message::assistant(AssistantMessage::from_content(vec![
+            ContentBlock::ToolCall(ToolCall {
+                id: "call-new".into(),
+                name: "bash".into(),
+                arguments: json!({"command": "true"}),
+            }),
+        ])),
+    ];
+    let request = build_session_summary_request(&history, &partition(&history));
+    let Message::User(blocks) = request.last().expect("trailing instruction") else {
+        panic!("expected a trailing user instruction");
+    };
+    let [ContentBlock::Text(instruction)] = blocks.as_slice() else {
+        panic!("expected one text block, got {blocks:?}");
+    };
+
+    assert!(
+        instruction.contains("assistant: tool call read_file (call-old)"),
+        "{instruction}"
+    );
+    assert!(
+        instruction.contains("assistant: tool call bash (call-new)"),
+        "{instruction}"
+    );
+    assert!(!instruction.contains(&payload), "{instruction}");
+    assert!(!instruction.contains('{'), "{instruction}");
+
+    let result_history = vec![
+        Message::System("system".into()),
+        Message::user_text("build the thing"),
+        Message::ToolResult(ToolResult {
+            id: "call-lost".into(),
+            ok: false,
+            content: format!("missing file\n{payload}"),
+        }),
+        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+            id: "call-new".into(),
+            name: "bash".into(),
+            arguments: json!({"command": "true"}),
+        })]),
+    ];
+    let result_request =
+        build_session_summary_request(&result_history, &partition(&result_history));
+    let Message::User(blocks) = result_request.last().expect("trailing instruction") else {
+        panic!("expected a trailing user instruction");
+    };
+    let [ContentBlock::Text(instruction)] = blocks.as_slice() else {
+        panic!("expected one text block, got {blocks:?}");
+    };
+    assert!(
+        instruction.contains("tool result: (call-lost) [error] missing file"),
+        "{instruction}"
+    );
+    assert!(
+        instruction.contains("assistant: tool call bash (call-new)"),
+        "{instruction}"
+    );
+    assert!(!instruction.contains(&payload), "{instruction}");
+}
+
 // Covers: a second compaction hands the earlier summary to the model as a
 // summary to update, never as a rendered user turn, and a first compaction
 // sends no previous-summary section.

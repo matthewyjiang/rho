@@ -126,28 +126,72 @@ fn deleted_span_instruction(partition: &CompactionPartition<'_>) -> String {
     lines.join("\n\n")
 }
 
-/// Role plus the first content line, truncated. Enough to point at one
-/// message in the history without copying it into the uncached suffix.
+/// Role plus a short marker, truncated. Enough to point at one message
+/// without copying it into the uncached suffix.
+///
+/// Tool calls and results are named here directly. Scraping the rendered
+/// transcript would skip those headers (they end in `:`) and land on `{`.
 fn message_marker(message: &Message) -> String {
-    let rendered = render_message_for_summary(message, &HashMap::new());
-    let content = rendered
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty() && !line.ends_with(':'))
-        .unwrap_or("message");
     const MAX_CHARS: usize = 120;
+    let (role, content) = marker_parts(message);
     let content: String = content.chars().take(MAX_CHARS).collect();
-    let role = match HistoryMessage::of(message) {
-        HistoryMessage::CompactionSummary(_) => "earlier compaction summary",
-        HistoryMessage::System(_) => "system",
-        HistoryMessage::ToolImageSupplement(_) => "tool output images",
-        HistoryMessage::User(_) => "user",
-        HistoryMessage::Assistant(_)
-        | HistoryMessage::EnrichedAssistant(_)
-        | HistoryMessage::AbortedAssistant(_) => "assistant",
-        HistoryMessage::ToolResult(_) => "tool result",
-    };
     format!("{role}: {content}")
+}
+
+fn marker_parts(message: &Message) -> (&'static str, String) {
+    match HistoryMessage::of(message) {
+        HistoryMessage::CompactionSummary(summary) => {
+            ("earlier compaction summary", first_line(summary.text()))
+        }
+        HistoryMessage::System(text) => ("system", first_line(text)),
+        HistoryMessage::ToolImageSupplement(images) => (
+            "tool output images",
+            format!("{} ({})", images.tool_name(), images.tool_call_id()),
+        ),
+        HistoryMessage::User(blocks) => ("user", block_marker(blocks)),
+        HistoryMessage::Assistant(blocks) => ("assistant", block_marker(blocks)),
+        HistoryMessage::EnrichedAssistant(message) => ("assistant", block_marker(&message.content)),
+        HistoryMessage::AbortedAssistant(message) => ("assistant", block_marker(&message.content)),
+        HistoryMessage::ToolResult(result) => ("tool result", tool_result_marker(result)),
+    }
+}
+
+fn first_line(text: &str) -> String {
+    first_nonempty_line(text).unwrap_or("message").to_owned()
+}
+
+fn first_nonempty_line(text: &str) -> Option<&str> {
+    text.lines().map(str::trim).find(|line| !line.is_empty())
+}
+
+fn block_marker(blocks: &[ContentBlock]) -> String {
+    if let Some(line) = blocks.iter().find_map(|block| match block {
+        ContentBlock::Text(text) => first_nonempty_line(text),
+        ContentBlock::Image(_) | ContentBlock::ToolCall(_) => None,
+    }) {
+        return line.to_owned();
+    }
+    if let Some(call) = blocks.iter().find_map(|block| match block {
+        ContentBlock::ToolCall(call) => Some(call),
+        ContentBlock::Text(_) | ContentBlock::Image(_) => None,
+    }) {
+        return format!("tool call {} ({})", call.name, call.id);
+    }
+    if let Some(image) = blocks.iter().find_map(|block| match block {
+        ContentBlock::Image(image) => Some(image),
+        ContentBlock::Text(_) | ContentBlock::ToolCall(_) => None,
+    }) {
+        return format!("[image: {}]", image.mime_type);
+    }
+    "message".to_owned()
+}
+
+fn tool_result_marker(result: &ToolResult) -> String {
+    let status = if result.ok { "ok" } else { "error" };
+    match first_nonempty_line(&result.content) {
+        Some(line) => format!("({}) [{status}] {line}", result.id),
+        None => format!("({}) [{status}]", result.id),
+    }
 }
 
 /// Summary request that renders the history as one transcript under its own
@@ -252,12 +296,13 @@ fn render_messages_for_summary<'a>(messages: impl IntoIterator<Item = &'a Messag
 
 fn message_content_blocks(message: &Message) -> &[ContentBlock] {
     match HistoryMessage::of(message) {
-        HistoryMessage::User(blocks) | HistoryMessage::Assistant(blocks) => blocks,
+        HistoryMessage::Assistant(blocks) => blocks,
         HistoryMessage::EnrichedAssistant(message) => message.content.as_slice(),
         HistoryMessage::AbortedAssistant(message) => message.content.as_slice(),
-        HistoryMessage::ToolImageSupplement(images) => images.content(),
         HistoryMessage::CompactionSummary(_)
         | HistoryMessage::System(_)
+        | HistoryMessage::User(_)
+        | HistoryMessage::ToolImageSupplement(_)
         | HistoryMessage::ToolResult(_) => &[],
     }
 }
