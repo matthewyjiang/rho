@@ -50,7 +50,7 @@ impl CompactionDecision {
         }
     }
 
-    /// Running async tool calls leave nothing compactable before them, so a
+    /// Running async tool calls leave nothing new to compact before them, so a
     /// due compaction is skipped.
     pub(crate) fn blocked_by_pending_tools(mut self) -> Self {
         if self.skip_reason.is_none() {
@@ -59,9 +59,8 @@ impl CompactionDecision {
         self
     }
 
-    /// Running async tool calls limit compaction to the prefix before them.
-    pub(crate) fn before_pending_tools(mut self) -> Self {
-        self.extent = CompactionExtent::BeforePendingAsyncTools;
+    pub(crate) fn with_extent(mut self, extent: CompactionExtent) -> Self {
+        self.extent = extent;
         self
     }
 

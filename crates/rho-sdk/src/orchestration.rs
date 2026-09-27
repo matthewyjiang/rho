@@ -53,7 +53,7 @@ use async_jobs::{
     AsyncJobSet, AwaitJobs,
 };
 use compaction::{maybe_compact, recover_context_overflow, OverflowRecovery};
-use compaction_limit::PendingAsyncCalls;
+use compaction_limit::CompactionLimit;
 use model_call_timer::ModelCallTimer;
 use provider_cancellation::{
     drain_cancelled_provider_events, drain_cooperative_provider_on_cancellation,
@@ -166,6 +166,9 @@ async fn execute_turn_loop(
     // (which deep-clone every tool's JSON schema) once instead of per step.
     let tool_specs = runtime.tools.specs();
     let mut preserve_from = None;
+    // End of the prefix a pending-call compaction already rewrote while the
+    // same async jobs kept running. Cleared once no job runs.
+    let mut pending_compacted_end = None;
     for step in 1..=runtime.max_steps.get() {
         drain_commands(&mut commands, &mut steering);
         let mut control = RunControl {
@@ -187,21 +190,26 @@ async fn execute_turn_loop(
             run_id: &run_id,
             step_index: step,
         };
-        // Completion input stays protected through overflow recovery too. It
-        // remains a history suffix across automatic compaction, so re-address
-        // it by length; later boundary input and steering append after it.
-        let protected_len = preserve_from.map(|start| history.len() - start);
-        // Running async calls stay verbatim with everything after them, so
-        // their late results still pair. Only the prefix before them compacts.
-        let pending_calls =
-            PendingAsyncCalls::locate(&history, &control.async_jobs.pending_call_ids());
+        // Completion input and running async calls stay verbatim through
+        // automatic compaction and overflow recovery. Everything after the
+        // limit is a suffix that only grows, so re-address it by length.
+        let running = control.async_jobs.pending_call_ids();
+        if running.is_empty() {
+            pending_compacted_end = None;
+        }
+        let limit = CompactionLimit::for_step(
+            &history,
+            &running,
+            preserve_from.take(),
+            pending_compacted_end,
+        );
+        let len_before_compaction = history.len();
         let mut compaction_estimate = match maybe_compact(
             &core,
             request_scope,
             &tool_specs,
             &mut history,
-            preserve_from.take(),
-            pending_calls,
+            limit,
             &cancellation,
             &events,
         )
@@ -212,12 +220,12 @@ async fn execute_turn_loop(
                 return control.terminate(core, history, error).await;
             }
         };
-        // Overflow recovery stays off while jobs run: a job can finish during
-        // the request, and its parked result must not lose its call.
-        let overflow_preserve_from = match pending_calls {
-            PendingAsyncCalls::None => protected_len.map(|len| history.len() - len),
-            PendingAsyncCalls::CompactBefore(_) | PendingAsyncCalls::Blocking => None,
-        };
+        let mut limit = limit.shifted(len_before_compaction, history.len());
+        if compaction_estimate.is_none() {
+            if let CompactionLimit::BeforePendingCalls(end) = limit {
+                pending_compacted_end = Some(end);
+            }
+        }
         if !control.async_jobs.has_pending() {
             match boundary_input::collect(
                 &runtime,
@@ -295,26 +303,29 @@ async fn execute_turn_loop(
                 Ok(result) => break result,
                 Err(error) => error,
             };
-            // One compaction per step. Pending async jobs and provider-accepted
-            // steering tie the request to state compaction must not rewrite.
-            let recover = !overflow_recovered
-                && !control.async_jobs.has_pending()
-                && !control.steering.has_delivered();
+            // One compaction per step, within the step's limit. Provider-accepted
+            // steering ties the request to state compaction must not rewrite.
+            let recover = !overflow_recovered && !control.steering.has_delivered();
             if recover {
                 overflow_recovered = true;
-                match recover_context_overflow(
+                let len_before_recovery = history.len();
+                let recovery = recover_context_overflow(
                     &core,
                     request_scope,
                     &tool_specs,
                     &mut history,
-                    overflow_preserve_from,
+                    limit,
                     &error.error,
                     &cancellation,
                     &events,
                 )
-                .await
-                {
+                .await;
+                limit = limit.shifted(len_before_recovery, history.len());
+                match recovery {
                     Ok(OverflowRecovery::Retry) => {
+                        if let CompactionLimit::BeforePendingCalls(end) = limit {
+                            pending_compacted_end = Some(end);
+                        }
                         context_estimate = core.advance_context(&history, &tool_specs);
                         continue;
                     }

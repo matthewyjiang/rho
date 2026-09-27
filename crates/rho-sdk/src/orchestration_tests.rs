@@ -83,8 +83,9 @@ async fn committed_compaction_event_survives_cancelled_backpressure() {
             },
             &[],
             &mut history,
-            /*preserve_from*/ None,
-            super::PendingAsyncCalls::None,
+            super::CompactionLimit::History {
+                preserve_from: None,
+            },
             &cancellation,
             &events,
         );

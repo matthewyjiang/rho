@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use super::PendingAsyncCalls;
+use super::CompactionLimit;
 use crate::model::{ContentBlock, ImageContent, Message, ToolCall, ToolResult};
 
 fn call(id: &str) -> Message {
@@ -34,32 +34,67 @@ fn image(id: &str) -> Message {
     .unwrap()
 }
 
-// Covers: compacting while async jobs run must keep every running call and any
-// result or image after the cut paired with its call, and must not compact a
-// prefix that holds no model reply.
+// Covers: compacting while async jobs run must keep every running call, any
+// result or image after the cut, and fresh completion input verbatim; must not
+// compact a prefix with no model reply; and must not recompact a prefix already
+// compacted while the same jobs run.
 // Owner: sdk orchestration compaction.
 #[test]
-fn locate_cuts_before_running_calls_without_splitting_pairs() {
+fn step_limit_cuts_before_running_calls_without_splitting_pairs() {
+    use CompactionLimit::{BeforePendingCalls, BlockedByPendingCalls, History};
+
+    let two_replies = vec![
+        Message::System("rules".into()),
+        Message::user_text("go"),
+        call("done"),
+        result("done"),
+        call("late"),
+        Message::assistant_text("working"),
+        call("later"),
+    ];
+    // (case, history, running, preserve_from, compacted_end, expected)
     let cases = [
         (
-            "no running jobs",
+            "no running jobs keeps completion input",
             vec![Message::user_text("go"), call("a")],
             vec![],
-            PendingAsyncCalls::None,
+            Some(1),
+            Some(1),
+            History {
+                preserve_from: Some(1),
+            },
         ),
         (
             "cut at the earliest running call",
-            vec![
-                Message::System("rules".into()),
-                Message::user_text("go"),
-                call("done"),
-                result("done"),
-                call("late"),
-                Message::assistant_text("working"),
-                call("later"),
-            ],
+            two_replies.clone(),
             vec!["later", "late"],
-            PendingAsyncCalls::CompactBefore(4),
+            None,
+            None,
+            BeforePendingCalls(4),
+        ),
+        (
+            "completion input before the call wins",
+            two_replies.clone(),
+            vec!["late"],
+            Some(3),
+            None,
+            BeforePendingCalls(3),
+        ),
+        (
+            "completion input after the call",
+            two_replies.clone(),
+            vec!["late"],
+            Some(6),
+            None,
+            BeforePendingCalls(4),
+        ),
+        (
+            "prefix already compacted for these jobs",
+            two_replies.clone(),
+            vec!["late"],
+            None,
+            Some(4),
+            BlockedByPendingCalls,
         ),
         (
             "late result moves the cut to its call",
@@ -73,7 +108,9 @@ fn locate_cuts_before_running_calls_without_splitting_pairs() {
                 image("finished"),
             ],
             vec!["running"],
-            PendingAsyncCalls::CompactBefore(3),
+            None,
+            None,
+            BeforePendingCalls(3),
         ),
         (
             "late image alone moves the cut to its call",
@@ -86,7 +123,9 @@ fn locate_cuts_before_running_calls_without_splitting_pairs() {
                 image("finished"),
             ],
             vec!["running"],
-            PendingAsyncCalls::CompactBefore(2),
+            None,
+            None,
+            BeforePendingCalls(2),
         ),
         (
             "running call in the first reply",
@@ -96,19 +135,23 @@ fn locate_cuts_before_running_calls_without_splitting_pairs() {
                 call("running"),
             ],
             vec!["running"],
-            PendingAsyncCalls::Blocking,
+            None,
+            None,
+            BlockedByPendingCalls,
         ),
         (
             "running call missing from history",
             vec![Message::user_text("go"), call("done"), result("done")],
             vec!["missing"],
-            PendingAsyncCalls::Blocking,
+            None,
+            None,
+            BlockedByPendingCalls,
         ),
     ];
-    for (name, history, running, expected) in cases {
+    for (name, history, running, preserve_from, compacted_end, expected) in cases {
         let running = running.into_iter().collect::<BTreeSet<_>>();
         assert_eq!(
-            PendingAsyncCalls::locate(&history, &running),
+            CompactionLimit::for_step(&history, &running, preserve_from, compacted_end),
             expected,
             "{name}"
         );

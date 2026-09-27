@@ -1132,18 +1132,140 @@ impl crate::Compactor for SummarizeOnceCompactor {
     }
 }
 
-// Covers: automatic compaction while an async job runs rewrites only the prefix
-// before the running call, and the late result still pairs with that call in
-// the next request.
+// Covers: automatic compaction while async jobs run rewrites only the prefix
+// before the earliest running call, never recompacts that prefix while the
+// same jobs run, and late results still pair with their calls.
 // Owner: sdk orchestration
 #[tokio::test]
-async fn pending_job_compacts_prefix_and_keeps_call_paired() {
+async fn pending_jobs_compact_prefix_once_and_keep_calls_paired() {
+    let gates = [(); 3].map(|()| Arc::new(Notify::new()));
+    let provider = ScriptedProvider::new(
+        identity(),
+        [
+            text_turn("ok"),
+            async_call_turn("call-a", "slow_a"),
+            async_call_turn("call-b", "slow_b"),
+            async_call_turn("call-c", "slow_c"),
+            text_turn("waiting"),
+            text_turn("done"),
+            text_turn("done"),
+            text_turn("done"),
+            text_turn("done"),
+        ],
+    );
+    let compactor = SummarizeOnceCompactor::default();
+    let mut builder = Rho::builder()
+        .provider(provider.clone())
+        .compactor(compactor.clone())
+        .compaction_policy(crate::CompactionPolicy::after_messages(
+            NonZeroUsize::new(4).unwrap(),
+        ))
+        .max_parallel_tools(NonZeroUsize::new(3).unwrap());
+    for (name, gate) in ["slow_a", "slow_b", "slow_c"].into_iter().zip(&gates) {
+        builder = builder.tool(GatedAsyncTool {
+            name,
+            gate: Arc::clone(gate),
+            exclusive: false,
+        });
+    }
+    let session = builder
+        .build()
+        .unwrap()
+        .session(SessionOptions::default())
+        .await
+        .unwrap();
+    session
+        .start(UserInput::text("warmup"))
+        .await
+        .unwrap()
+        .outcome()
+        .await
+        .unwrap();
+    let mut prefix = session.history();
+    prefix.push(Message::user_text("start"));
+
+    let mut run = session.start(UserInput::text("start")).await.unwrap();
+    let mut compactions_while_pending = 0;
+    let mut gated_decision = None;
+    loop {
+        match next_event(&mut run).await {
+            RunEvent::CompactionStarted { .. } if gated_decision.is_none() => {
+                compactions_while_pending += 1;
+            }
+            // After the fourth request the run can only wait on the gated
+            // jobs, so no later decision can race this read.
+            RunEvent::StepStarted { step: 4, .. } => {
+                let decision = session.last_compaction_decision().unwrap();
+                gated_decision = Some((decision.skip_reason(), decision.extent()));
+                gates.iter().for_each(|gate| gate.notify_one());
+            }
+            RunEvent::Completed { .. } => break,
+            RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
+            _ => {}
+        }
+    }
+    assert_eq!(compactions_while_pending, 1);
+    assert_eq!(compactor.0.lock().unwrap()[0], prefix);
+    assert_eq!(
+        gated_decision,
+        Some((
+            Some(crate::CompactionSkipReason::PendingAsyncTools),
+            crate::CompactionExtent::BeforePendingAsyncTools
+        ))
+    );
+
+    let requests = provider.recorded_requests();
+    let call_a = session
+        .history()
+        .into_iter()
+        .find(|message| {
+            message.completed_assistant_content()
+                == Some(&[ContentBlock::ToolCall(tool_call("call-a", "slow_a"))][..])
+        })
+        .unwrap();
+    assert_eq!(
+        requests[2].messages,
+        vec![Message::user_text("summary"), call_a]
+    );
+    // Every result in the final request follows its own call.
+    let last = &requests.last().unwrap().messages;
+    for id in ["call-a", "call-b", "call-c"] {
+        let call = last.iter().position(|message| {
+            message
+                .completed_assistant_content()
+                .is_some_and(|content| {
+                    content
+                        .iter()
+                        .any(|block| matches!(block, ContentBlock::ToolCall(call) if call.id == id))
+                })
+        });
+        let result = last
+            .iter()
+            .position(|message| matches!(message, Message::ToolResult(result) if result.id == id));
+        assert!(
+            matches!((call, result), (Some(call), Some(result)) if call < result),
+            "{id} unpaired in {last:?}"
+        );
+    }
+}
+
+// Covers: a context-overflow rejection while an async job runs compacts only
+// the prefix before the running call, so the retry and the late result stay
+// paired instead of failing the run or orphaning the result.
+// Owner: sdk orchestration
+#[tokio::test]
+async fn overflow_with_pending_job_compacts_prefix_and_retries() {
     let gate = Arc::new(Notify::new());
     let provider = ScriptedProvider::new(
         identity(),
         [
             text_turn("ok"),
             async_call_turn("call-a", "slow"),
+            ScriptedTurn::failed(crate::ProviderError::new(
+                crate::ProviderErrorKind::ContextOverflow,
+                "request exceeds the model context window",
+                crate::Retryability::Permanent,
+            )),
             text_turn("waiting"),
             text_turn("done"),
         ],
@@ -1157,9 +1279,8 @@ async fn pending_job_compacts_prefix_and_keeps_call_paired() {
             exclusive: false,
         })
         .compactor(compactor.clone())
-        .compaction_policy(crate::CompactionPolicy::after_messages(
-            NonZeroUsize::new(4).unwrap(),
-        ))
+        // Never due on its own, so only overflow recovery compacts.
+        .compaction_policy(crate::CompactionPolicy::after_messages(NonZeroUsize::MAX))
         .build()
         .unwrap()
         .session(SessionOptions::default())
@@ -1172,49 +1293,36 @@ async fn pending_job_compacts_prefix_and_keeps_call_paired() {
         .outcome()
         .await
         .unwrap();
-    let before = session.history();
+    let mut prefix = session.history();
+    prefix.push(Message::user_text("start"));
 
     let mut run = session.start(UserInput::text("start")).await.unwrap();
-    let mut extent = None;
     loop {
         match next_event(&mut run).await {
-            RunEvent::CompactionStarted { .. } if extent.is_none() => {
-                extent = Some(session.last_compaction_decision().unwrap().extent());
-            }
             RunEvent::CompactionCompleted { .. } => gate.notify_one(),
             RunEvent::Completed { .. } => break,
             RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
             _ => {}
         }
     }
-    let assistant_call = session.history()[1].clone();
+    assert_eq!(compactor.0.lock().unwrap().clone(), vec![prefix]);
+    let history = session.history();
+    let requests = provider.recorded_requests();
     assert_eq!(
-        assistant_call.completed_assistant_content(),
+        requests[3].messages,
+        vec![Message::user_text("summary"), history[1].clone()]
+    );
+    assert_eq!(
+        history[1].completed_assistant_content(),
         Some(&[ContentBlock::ToolCall(tool_call("call-a", "slow"))][..])
     );
+    assert_eq!(requests[4].messages[1..], history[1..4]);
     assert_eq!(
-        extent,
-        Some(crate::CompactionExtent::BeforePendingAsyncTools)
-    );
-    let mut prefix = before;
-    prefix.push(Message::user_text("start"));
-    assert_eq!(compactor.0.lock().unwrap()[0], prefix);
-
-    let requests = provider
-        .recorded_requests()
-        .into_iter()
-        .map(|request| request.messages)
-        .collect::<Vec<_>>();
-    let summarized = vec![Message::user_text("summary"), assistant_call];
-    assert_eq!(requests[2], summarized);
-    let mut paired = summarized;
-    paired.extend([
-        session.history()[2].clone(),
+        history[3],
         Message::ToolResult(ToolResult {
             id: "call-a".into(),
             ok: true,
             content: "slow done".into(),
-        }),
-    ]);
-    assert_eq!(requests[3], paired);
+        })
+    );
 }
