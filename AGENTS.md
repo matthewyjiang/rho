@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Fork pull requests follow [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Commits and pull requests
 
 Use Conventional Commits for commit messages and PR titles:
