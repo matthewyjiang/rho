@@ -1,4 +1,6 @@
 use pretty_assertions::assert_eq;
+use rho_providers::model::{AssistantMessage, ImageContent};
+use serde_json::json;
 
 use super::*;
 
@@ -144,4 +146,105 @@ fn summary_replacement_labels_summary_and_rejects_empty_text() {
         ),
         Err(Error::InvalidHostResponse { .. })
     ));
+}
+
+// Covers: fallback summary transcripts keep tool arguments readable and tool
+// result bodies raw, including enriched-assistant calls, so file text and
+// elided stubs are not JSON-escaped. Image bytes stay out of the transcript.
+// A later call that reuses an id does not relabel the earlier result.
+// Owner: text-summary compaction
+#[test]
+fn summary_transcript_renders_tool_calls_and_results_as_text() {
+    let image_bytes = "BASE64DATA";
+    let stub = "[elided tool result: read_file path=src/a.rs · ok · 12 bytes · recall_id=abc; fetch the text with the sessions tool, action=recall]";
+    let body = "fn main() {\n    let quoted = \"hi\";\n}\n";
+    let messages = vec![
+        Message::assistant(AssistantMessage::from_content(vec![
+            ContentBlock::Text("reading".into()),
+            ContentBlock::ToolCall(ToolCall {
+                id: "call-1".into(),
+                name: "read_file".into(),
+                arguments: json!({"path": "src/a.rs", "offset": 1}),
+            }),
+            ContentBlock::Image(ImageContent {
+                mime_type: "image/png".into(),
+                data: image_bytes.into(),
+            }),
+        ])),
+        Message::ToolResult(ToolResult {
+            id: "call-1".into(),
+            ok: true,
+            content: body.into(),
+        }),
+        Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
+            id: "call-elided".into(),
+            name: "read_file".into(),
+            arguments: json!({"path": "src/a.rs"}),
+        })]),
+        Message::ToolResult(ToolResult {
+            id: "call-elided".into(),
+            ok: true,
+            content: stub.into(),
+        }),
+        Message::ToolResult(ToolResult {
+            id: "call-missing".into(),
+            ok: false,
+            content: "boom\n".into(),
+        }),
+        Message::assistant(AssistantMessage::from_content(vec![
+            ContentBlock::ToolCall(ToolCall {
+                id: "call-1".into(),
+                name: "bash".into(),
+                arguments: json!({"command": "true"}),
+            }),
+        ])),
+        Message::ToolResult(ToolResult {
+            id: "call-1".into(),
+            ok: true,
+            content: "ran\n".into(),
+        }),
+    ];
+
+    let rendered = render_messages_for_summary(&messages);
+    assert_eq!(
+        rendered,
+        "\
+assistant:
+reading
+tool call read_file (call-1):
+{
+  \"path\": \"src/a.rs\",
+  \"offset\": 1
+}
+[image: image/png]
+
+tool result read_file (call-1) [ok]:
+fn main() {
+    let quoted = \"hi\";
+}
+
+
+assistant:
+tool call read_file (call-elided):
+{
+  \"path\": \"src/a.rs\"
+}
+
+tool result read_file (call-elided) [ok]:
+[elided tool result: read_file path=src/a.rs · ok · 12 bytes · recall_id=abc; fetch the text with the sessions tool, action=recall]
+
+tool result unknown (call-missing) [error]:
+boom
+
+
+assistant:
+tool call bash (call-1):
+{
+  \"command\": \"true\"
+}
+
+tool result bash (call-1) [ok]:
+ran
+"
+    );
 }

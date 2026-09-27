@@ -3,9 +3,10 @@
 //! verbatim; this module only renders it for the model and assembles the
 //! result.
 
-use rho_providers::model::{ContentBlock, Message};
+use std::collections::HashMap;
+
+use rho_providers::model::{ContentBlock, Message, ToolCall, ToolResult};
 use rho_sdk::{CompactionTrigger, Error};
-use rho_tools::tool::ToolResult;
 
 use super::CompactionPartition;
 use crate::history_message::HistoryMessage;
@@ -128,7 +129,7 @@ fn deleted_span_instruction(partition: &CompactionPartition<'_>) -> String {
 /// Role plus the first content line, truncated. Enough to point at one
 /// message in the history without copying it into the uncached suffix.
 fn message_marker(message: &Message) -> String {
-    let rendered = render_message_for_summary(message);
+    let rendered = render_message_for_summary(message, &HashMap::new());
     let content = rendered
         .lines()
         .map(str::trim)
@@ -233,14 +234,35 @@ fn strip_analysis(text: &str) -> String {
 }
 
 fn render_messages_for_summary<'a>(messages: impl IntoIterator<Item = &'a Message>) -> String {
-    messages
-        .into_iter()
-        .map(render_message_for_summary)
-        .collect::<Vec<_>>()
-        .join("\n\n")
+    let mut names = HashMap::new();
+    let mut rendered = Vec::new();
+    for message in messages {
+        // Names seen so far only. A reused call id must not relabel an earlier
+        // result, and a result whose call is outside this transcript stays
+        // `unknown` instead of dropping the id and status.
+        rendered.push(render_message_for_summary(message, &names));
+        for block in message_content_blocks(message) {
+            if let ContentBlock::ToolCall(call) = block {
+                names.insert(call.id.as_str(), call.name.as_str());
+            }
+        }
+    }
+    rendered.join("\n\n")
 }
 
-fn render_message_for_summary(message: &Message) -> String {
+fn message_content_blocks(message: &Message) -> &[ContentBlock] {
+    match HistoryMessage::of(message) {
+        HistoryMessage::User(blocks) | HistoryMessage::Assistant(blocks) => blocks,
+        HistoryMessage::EnrichedAssistant(message) => message.content.as_slice(),
+        HistoryMessage::AbortedAssistant(message) => message.content.as_slice(),
+        HistoryMessage::ToolImageSupplement(images) => images.content(),
+        HistoryMessage::CompactionSummary(_)
+        | HistoryMessage::System(_)
+        | HistoryMessage::ToolResult(_) => &[],
+    }
+}
+
+fn render_message_for_summary(message: &Message, names: &HashMap<&str, &str>) -> String {
     match HistoryMessage::of(message) {
         HistoryMessage::CompactionSummary(summary) => {
             format!("earlier compaction summary:\n{}", summary.text())
@@ -266,9 +288,7 @@ fn render_message_for_summary(message: &Message) -> String {
         HistoryMessage::AbortedAssistant(message) => {
             format!("assistant [aborted]:\n{}", render_blocks(&message.content))
         }
-        HistoryMessage::ToolResult(result) => {
-            format!("tool result:\n{}", render_tool_result(result))
-        }
+        HistoryMessage::ToolResult(result) => render_tool_result(result, names),
     }
 }
 
@@ -278,14 +298,25 @@ fn render_blocks(blocks: &[ContentBlock]) -> String {
         .map(|block| match block {
             ContentBlock::Text(text) => text.clone(),
             ContentBlock::Image(image) => format!("[image: {}]", image.mime_type),
-            ContentBlock::ToolCall(call) => serde_json::to_string(call).unwrap_or_default(),
+            ContentBlock::ToolCall(call) => render_tool_call(call),
         })
         .collect::<Vec<_>>()
         .join("\n")
 }
 
-fn render_tool_result(result: &ToolResult) -> String {
-    serde_json::to_string(result).unwrap_or_else(|_| result.content.clone())
+fn render_tool_call(call: &ToolCall) -> String {
+    let arguments = serde_json::to_string_pretty(&call.arguments)
+        .unwrap_or_else(|_| call.arguments.to_string());
+    format!("tool call {} ({}):\n{arguments}", call.name, call.id)
+}
+
+fn render_tool_result(result: &ToolResult, names: &HashMap<&str, &str>) -> String {
+    let name = names.get(result.id.as_str()).copied().unwrap_or("unknown");
+    let status = if result.ok { "ok" } else { "error" };
+    format!(
+        "tool result {name} ({}) [{status}]:\n{}",
+        result.id, result.content
+    )
 }
 
 #[cfg(test)]
