@@ -146,6 +146,17 @@ impl<'a> CompactionPartition<'a> {
         self.first_turn.end..self.recent_start
     }
 
+    /// Latest user message kept verbatim even when it sits inside the
+    /// summarized span.
+    pub(crate) fn kept_latest_user(&self) -> Option<&'a Message> {
+        self.latest_user.map(|index| &self.messages[index])
+    }
+
+    /// Messages kept verbatim after the summary.
+    pub(crate) fn recent_tail(&self) -> &'a [Message] {
+        &self.messages[self.recent_start..]
+    }
+
     /// Replacement history around a newly written `summary`.
     pub(crate) fn replacement(&self, summary: Message) -> Vec<Message> {
         let mut replacement = self.messages[..self.first_turn.end].to_vec();

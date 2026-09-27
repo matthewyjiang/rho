@@ -634,7 +634,7 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
         session_history: false,
         tools: Vec::new(),
         reasoning: rho_sdk::ReasoningLevel::High,
-        service_tier: Some(ServiceTier::Priority),
+        service_tier: None,
         prompt_cache_key: None,
     };
     let tool_call = || {
@@ -778,10 +778,10 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
     }
 }
 
-// Covers: a configured summarizer model receives the rendered transcript on
-// its own provider and reasoning with usage recorded under its identity, and
-// a failing summarizer falls back to the session model instead of failing
-// compaction.
+// Covers: a configured summarizer receives the rendered transcript on its own
+// provider and reasoning, with no session service tier. A failure falls back
+// to the cached session-history request. Overflow recovery skips that request
+// and uses the transcript, still without the session service tier.
 // Owner: ModelCompactor summarizer routing.
 #[tokio::test]
 async fn configured_summarizer_gets_the_transcript_and_falls_back_on_failure() {
@@ -791,8 +791,15 @@ async fn configured_summarizer_gets_the_transcript_and_falls_back_on_failure() {
         session_history: false,
         tools: Vec::new(),
         reasoning,
-        service_tier: Some(ServiceTier::Priority),
+        service_tier: None,
         prompt_cache_key: None,
+    };
+    let cached = || SentSummary {
+        session_history: true,
+        tools: vec![read_spec()],
+        reasoning: rho_sdk::ReasoningLevel::High,
+        service_tier: Some(ServiceTier::Priority),
+        prompt_cache_key: Some("rho:session".into()),
     };
     let rejected = || {
         ScriptedTurn::failed(ProviderError::new(
@@ -801,9 +808,10 @@ async fn configured_summarizer_gets_the_transcript_and_falls_back_on_failure() {
             Retryability::Permanent,
         ))
     };
-    for (case, summarizer_turns, session_turns, expected) in [
+    for (case, trigger, summarizer_turns, session_turns, expected) in [
         (
             "summarizer answers",
+            rho_sdk::CompactionTrigger::Manual,
             vec![summary_text()],
             vec![],
             vec![(
@@ -813,6 +821,20 @@ async fn configured_summarizer_gets_the_transcript_and_falls_back_on_failure() {
         ),
         (
             "summarizer fails",
+            rho_sdk::CompactionTrigger::Manual,
+            vec![rejected()],
+            vec![summary_text()],
+            vec![
+                (
+                    summarizer_identity.clone(),
+                    transcript(rho_sdk::ReasoningLevel::Low),
+                ),
+                (session_identity.clone(), cached()),
+            ],
+        ),
+        (
+            "summarizer fails during overflow recovery",
+            rho_sdk::CompactionTrigger::ContextOverflow,
             vec![rejected()],
             vec![summary_text()],
             vec![
@@ -847,7 +869,7 @@ async fn configured_summarizer_gets_the_transcript_and_falls_back_on_failure() {
         );
 
         compactor
-            .compact(cached_session_request(history.clone()))
+            .compact(cached_session_request(history.clone()).with_trigger(trigger))
             .await
             .unwrap();
 

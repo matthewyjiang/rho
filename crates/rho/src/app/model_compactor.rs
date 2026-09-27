@@ -221,6 +221,11 @@ struct SummaryPlan<'a> {
     partition: CompactionPartition<'a>,
     tools: &'a [ToolSpec],
     reasoning: rho_sdk::ReasoningLevel,
+    /// Only the session-history plan sends one. It has to match the session
+    /// turn or the cache misses. Other plans share no prefix, and copying the
+    /// session tier onto them can bill a summarizer or a transcript at the
+    /// priority rate.
+    service_tier: Option<rho_sdk::model::ServiceTier>,
     prompt_cache_key: Option<&'a str>,
     from_elided: bool,
 }
@@ -251,9 +256,10 @@ impl ModelCompactor {
     /// - The configured summarizer, if any, on the rendered transcript.
     /// - The session model on the session's own unelided history, tools,
     ///   reasoning, service tier, and cache key, so the provider serves the
-    ///   prefix from its cache. Skipped when a summarizer is configured, when
-    ///   recovering from overflow, or when it would not fit the window.
-    /// - The session model on the rendered transcript.
+    ///   prefix from its cache. Also the fallback when the summarizer fails,
+    ///   so a bad summarizer does not cost more than no summarizer. Skipped
+    ///   when recovering from overflow, or when it would not fit the window.
+    /// - The session model on the rendered transcript, with no service tier.
     ///
     /// Any failure except cancellation moves on to the next plan, so a broken
     /// summarizer or a provider that rejects the cache-shaped request still
@@ -274,10 +280,12 @@ impl ModelCompactor {
                 partition: partition.clone(),
                 tools: &[],
                 reasoning: summarizer.model.reasoning,
+                service_tier: None,
                 prompt_cache_key: None,
                 from_elided: true,
             });
-        } else if let Some(plan) = self.session_history_plan(request, budget) {
+        }
+        if let Some(plan) = self.session_history_plan(request, budget) {
             plans.push(plan);
         }
         plans.push(SummaryPlan {
@@ -287,6 +295,7 @@ impl ModelCompactor {
             partition: partition.clone(),
             tools: &[],
             reasoning: self.reasoning,
+            service_tier: None,
             // The rendered transcript shares no prefix with the session.
             prompt_cache_key: None,
             from_elided: true,
@@ -330,7 +339,7 @@ impl ModelCompactor {
                 .as_ref(),
         };
         let cancellation = request.cancellation().clone();
-        let options = match request.service_tier() {
+        let options = match plan.service_tier {
             Some(tier) => ModelRequestOptions::default().with_service_tier(tier),
             None => ModelRequestOptions::default(),
         };
@@ -393,6 +402,7 @@ impl ModelCompactor {
             partition,
             tools,
             reasoning: self.reasoning,
+            service_tier: request.service_tier(),
             prompt_cache_key: request.prompt_cache_key(),
             from_elided: false,
         })

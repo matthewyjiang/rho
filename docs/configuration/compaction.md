@@ -73,7 +73,7 @@ If those messages are the only history left to remove, they are summarized too.
 
 The session-model summary request resends the conversation as the session model last saw it, with the same system prompt, messages, tool definitions, reasoning level, service tier, and prompt cache key, then adds one user message asking for the summary. The provider has already cached most of that prefix, so the request is billed mostly as cache reads. Its usage is recorded with purpose `compaction`, including cache reads, so it shows up in `/spend` and `/info`.
 
-That request resends old tool results in full, even when [elision](#tool-result-elision) stubbed them, because stubs would change the cached prefix. Rho renders the history as one transcript instead, with elided stubs, when:
+That request resends old tool results in full, even when [elision](#tool-result-elision) stubbed them, because stubs would change the cached prefix. The instruction appended after that history names the span compaction will delete, so the model does not summarize the whole conversation or skip the turns that are about to disappear. Rho renders the history as one transcript instead, with elided stubs and no service tier, when:
 
 - the full request would not leave room for the summary in the model's window
 - the provider rejects it, for example as too large
@@ -95,7 +95,7 @@ auth = "api-key"
 reasoning = "low" # optional; defaults to low
 ```
 
-A different model cannot reuse the session's prompt cache, so it always gets the rendered transcript. A smaller model may also drop more detail from the summary. If the summarizer fails, for example because its credentials are missing, its window is too small, or it returns no summary, Rho logs a warning and summarizes with the session model instead. **Use conversation model** removes the override, and compaction goes back to the session model at the session's reasoning level. In the interactive TUI, changes apply when the session is next idle. Other hosts pick them up on the next start.
+A different model cannot reuse the session's prompt cache, so it always gets the rendered transcript and does not inherit the session's service tier. A smaller model may also drop more detail from the summary. If the summarizer fails, for example because its credentials are missing, its window is too small, or it returns no summary, Rho logs a warning and tries the cached session-history request, then the transcript. A failed summarizer does not cost more than compaction with no summarizer, when the session-history request fits. **Use conversation model** removes the override, and compaction goes back to the session model at the session's reasoning level. In the interactive TUI, changes apply when the session is next idle. Other hosts pick them up on the next start.
 
 Native compaction ignores this setting.
 
