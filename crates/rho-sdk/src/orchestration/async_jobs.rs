@@ -95,8 +95,9 @@ impl AsyncJobSet {
         !self.jobs.is_empty()
     }
 
-    pub(super) fn pending_count(&self) -> usize {
-        self.jobs.len()
+    /// Provider call IDs of running jobs, whose results are not in history yet.
+    pub(super) fn pending_call_ids(&self) -> BTreeSet<&str> {
+        self.jobs.keys().map(ToolCallId::as_str).collect()
     }
 
     /// Takes one ready completion, leaving other jobs owned until it is forwarded.

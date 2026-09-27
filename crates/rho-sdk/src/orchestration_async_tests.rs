@@ -1114,3 +1114,107 @@ async fn steer_during_await_jobs_applies_at_boundary() {
         "tool result missing from last request: {last:?}"
     );
 }
+
+/// Replaces the first compacted history with one summary, then keeps history.
+#[derive(Clone, Default)]
+struct SummarizeOnceCompactor(Arc<Mutex<Vec<Vec<Message>>>>);
+
+impl crate::Compactor for SummarizeOnceCompactor {
+    fn compact<'a>(&'a self, request: crate::CompactionRequest) -> crate::CompactionFuture<'a> {
+        let mut requests = self.0.lock().unwrap();
+        requests.push(request.messages().to_vec());
+        let output = if requests.len() == 1 {
+            vec![Message::user_text("summary")]
+        } else {
+            request.messages().to_vec()
+        };
+        Box::pin(async move { crate::CompactionOutput::new(output) })
+    }
+}
+
+// Covers: automatic compaction while an async job runs rewrites only the prefix
+// before the running call, and the late result still pairs with that call in
+// the next request.
+// Owner: sdk orchestration
+#[tokio::test]
+async fn pending_job_compacts_prefix_and_keeps_call_paired() {
+    let gate = Arc::new(Notify::new());
+    let provider = ScriptedProvider::new(
+        identity(),
+        [
+            text_turn("ok"),
+            async_call_turn("call-a", "slow"),
+            text_turn("waiting"),
+            text_turn("done"),
+        ],
+    );
+    let compactor = SummarizeOnceCompactor::default();
+    let session = Rho::builder()
+        .provider(provider.clone())
+        .tool(GatedAsyncTool {
+            name: "slow",
+            gate: Arc::clone(&gate),
+            exclusive: false,
+        })
+        .compactor(compactor.clone())
+        .compaction_policy(crate::CompactionPolicy::after_messages(
+            NonZeroUsize::new(4).unwrap(),
+        ))
+        .build()
+        .unwrap()
+        .session(SessionOptions::default())
+        .await
+        .unwrap();
+    session
+        .start(UserInput::text("warmup"))
+        .await
+        .unwrap()
+        .outcome()
+        .await
+        .unwrap();
+    let before = session.history();
+
+    let mut run = session.start(UserInput::text("start")).await.unwrap();
+    let mut extent = None;
+    loop {
+        match next_event(&mut run).await {
+            RunEvent::CompactionStarted { .. } if extent.is_none() => {
+                extent = Some(session.last_compaction_decision().unwrap().extent());
+            }
+            RunEvent::CompactionCompleted { .. } => gate.notify_one(),
+            RunEvent::Completed { .. } => break,
+            RunEvent::Failed { message, .. } => panic!("run failed: {message}"),
+            _ => {}
+        }
+    }
+    let assistant_call = session.history()[1].clone();
+    assert_eq!(
+        assistant_call.completed_assistant_content(),
+        Some(&[ContentBlock::ToolCall(tool_call("call-a", "slow"))][..])
+    );
+    assert_eq!(
+        extent,
+        Some(crate::CompactionExtent::BeforePendingAsyncTools)
+    );
+    let mut prefix = before;
+    prefix.push(Message::user_text("start"));
+    assert_eq!(compactor.0.lock().unwrap()[0], prefix);
+
+    let requests = provider
+        .recorded_requests()
+        .into_iter()
+        .map(|request| request.messages)
+        .collect::<Vec<_>>();
+    let summarized = vec![Message::user_text("summary"), assistant_call];
+    assert_eq!(requests[2], summarized);
+    let mut paired = summarized;
+    paired.extend([
+        session.history()[2].clone(),
+        Message::ToolResult(ToolResult {
+            id: "call-a".into(),
+            ok: true,
+            content: "slow done".into(),
+        }),
+    ]);
+    assert_eq!(requests[3], paired);
+}

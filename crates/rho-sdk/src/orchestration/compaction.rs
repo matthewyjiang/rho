@@ -5,18 +5,24 @@ use tokio::sync::mpsc;
 use crate::{
     model::{Message, ToolSpec},
     session::{HistoryMetrics, SessionCore},
-    CancellationToken, CompactionDecision, CompactionTrigger, ContextEstimate, Error,
-    ProviderError, ProviderErrorKind, RunEvent,
+    CancellationToken, CompactionDecision, CompactionSkipReason, CompactionTrigger,
+    ContextEstimate, Error, ProviderError, ProviderErrorKind, RunEvent,
 };
 
-use super::{emit, provider_request::ProviderRequestScope};
+use super::{compaction_limit::PendingAsyncCalls, emit, provider_request::ProviderRequestScope};
 
+/// Runs automatic compaction when the policy asks for it.
+///
+/// `preserve_from` protects fresh completion input and `pending` protects
+/// running async tool calls; the compactor sees only history before both.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn maybe_compact(
     core: &Arc<SessionCore>,
     scope: ProviderRequestScope<'_>,
     tool_specs: &[ToolSpec],
     history: &mut Vec<Message>,
     preserve_from: Option<usize>,
+    pending: PendingAsyncCalls,
     cancellation: &CancellationToken,
     events: &mpsc::Sender<RunEvent>,
 ) -> Result<Option<ContextEstimate>, Error> {
@@ -26,14 +32,24 @@ pub(super) async fn maybe_compact(
         history.len(),
         estimate,
     );
+    let (decision, compact_end) = match pending {
+        PendingAsyncCalls::None => (decision, preserve_from.unwrap_or(history.len())),
+        PendingAsyncCalls::CompactBefore(end) => (
+            decision.before_pending_tools(),
+            preserve_from.map_or(end, |start| start.min(end)),
+        ),
+        PendingAsyncCalls::Blocking => (decision.blocked_by_pending_tools(), 0),
+    };
     core.record_compaction_decision(decision);
+    if decision.skip_reason() == Some(CompactionSkipReason::PendingAsyncTools) {
+        tracing::warn!("skipping compaction: nothing compactable before pending async tool jobs");
+    }
     if decision.skip_reason().is_some() {
         return Ok(Some(estimate));
     }
-    // Fresh completion input must reach one provider request verbatim. Evaluate
-    // the full history above, but give the compactor only the older prefix and
-    // that prefix's accounting so a protected suffix cannot distort tail sizing.
-    let compact_end = preserve_from.unwrap_or(history.len());
+    // Evaluate the full history above, but give the compactor only the older
+    // prefix and that prefix's accounting so a protected suffix cannot distort
+    // tail sizing.
     let prefix_estimate = if compact_end == history.len() {
         estimate
     } else {

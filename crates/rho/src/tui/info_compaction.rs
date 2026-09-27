@@ -76,10 +76,11 @@ pub(super) fn push_fields(block: &mut CommandBlock, diagnostics: &CompactionDiag
         block.push_field(
             "SDK check",
             &format!(
-                "{} tokens, threshold {:?}, skip {:?}",
+                "{} tokens, threshold {:?}, skip {:?}, extent {:?}",
                 check.estimate().tokens(),
                 check.threshold(),
                 check.skip_reason(),
+                check.extent(),
             ),
         );
     }

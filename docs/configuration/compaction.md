@@ -15,6 +15,8 @@ Models without a known context window get no automatic compaction or overflow re
 
 If the provider rejects a request as larger than the model's context window, Rho compacts and retries that request once. This only happens when `auto_compact` is on. Recovery uses the same half-current retention cap as `/compact`, so it still shrinks history when the configured window is larger than the provider's real limit. If compaction does not shrink the context, or the retry overflows again, the turn fails with the provider error. Recovery is skipped while background tool jobs are pending.
 
+While background tool jobs run, automatic compaction summarizes only the history before the earliest running tool call. That call and everything after it stay as they are, so the job's result still lines up with its call when it arrives. If a job started in the first reply of the conversation, there is nothing to compact and the check is skipped.
+
 `/config` changes apply when the session is idle, before the next automatic check or model turn. Edits during a model turn or compaction wait for that operation to finish. Applying settings keeps the current provider-calibrated context estimate. External file edits require a restart.
 
 ## What the status line counts

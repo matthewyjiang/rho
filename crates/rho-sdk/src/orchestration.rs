@@ -36,6 +36,7 @@ pub(super) const MAX_HONORED_RETRY_AFTER: std::time::Duration = std::time::Durat
 mod async_jobs;
 mod boundary_input;
 mod compaction;
+mod compaction_limit;
 mod model_call_timer;
 mod pending_tool_outputs;
 mod provider_cancellation;
@@ -52,6 +53,7 @@ use async_jobs::{
     AsyncJobSet, AwaitJobs,
 };
 use compaction::{maybe_compact, recover_context_overflow, OverflowRecovery};
+use compaction_limit::PendingAsyncCalls;
 use model_call_timer::ModelCallTimer;
 use provider_cancellation::{
     drain_cancelled_provider_events, drain_cooperative_provider_on_cancellation,
@@ -185,48 +187,37 @@ async fn execute_turn_loop(
             run_id: &run_id,
             step_index: step,
         };
-        let mut compaction_estimate;
         // Completion input stays protected through overflow recovery too. It
         // remains a history suffix across automatic compaction, so re-address
         // it by length; later boundary input and steering append after it.
         let protected_len = preserve_from.map(|start| history.len() - start);
-        let mut overflow_preserve_from = None;
-        if !control.async_jobs.has_pending() {
-            match maybe_compact(
-                &core,
-                request_scope,
-                &tool_specs,
-                &mut history,
-                preserve_from.take(),
-                &cancellation,
-                &events,
-            )
-            .await
-            {
-                Ok(estimate) => compaction_estimate = estimate,
-                Err(error) => {
-                    return control.terminate(core, history, error).await;
-                }
+        // Running async calls stay verbatim with everything after them, so
+        // their late results still pair. Only the prefix before them compacts.
+        let pending_calls =
+            PendingAsyncCalls::locate(&history, &control.async_jobs.pending_call_ids());
+        let mut compaction_estimate = match maybe_compact(
+            &core,
+            request_scope,
+            &tool_specs,
+            &mut history,
+            preserve_from.take(),
+            pending_calls,
+            &cancellation,
+            &events,
+        )
+        .await
+        {
+            Ok(estimate) => estimate,
+            Err(error) => {
+                return control.terminate(core, history, error).await;
             }
-            overflow_preserve_from = protected_len.map(|len| history.len() - len);
-        } else {
-            if runtime.compaction_policy.is_some() {
-                tracing::warn!(
-                    pending = control.async_jobs.pending_count(),
-                    "skipping compaction while async tool jobs are pending"
-                );
-            }
-            let estimate = core.advance_context(&history, &tool_specs);
-            core.record_compaction_decision(
-                crate::CompactionDecision::evaluate(
-                    runtime.compaction_policy.as_ref(),
-                    history.len(),
-                    estimate,
-                )
-                .with_pending_tools(),
-            );
-            compaction_estimate = Some(estimate);
-        }
+        };
+        // Overflow recovery stays off while jobs run: a job can finish during
+        // the request, and its parked result must not lose its call.
+        let overflow_preserve_from = match pending_calls {
+            PendingAsyncCalls::None => protected_len.map(|len| history.len() - len),
+            PendingAsyncCalls::CompactBefore(_) | PendingAsyncCalls::Blocking => None,
+        };
         if !control.async_jobs.has_pending() {
             match boundary_input::collect(
                 &runtime,

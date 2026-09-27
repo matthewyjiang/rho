@@ -166,7 +166,7 @@ pub use compaction::{
     CompactionState, CompactionThreshold, CompactionTrigger, Compactor, CompactorCancellationMode,
     ScriptedCompactor,
 };
-pub use compaction_decision::{CompactionDecision, CompactionSkipReason};
+pub use compaction_decision::{CompactionDecision, CompactionExtent, CompactionSkipReason};
 pub use context_estimate::ContextEstimate;
 pub use diagnostics::{DiagnosticsSnapshot, PromptSource, PromptSourceKind, ToolDiagnostic};
 pub use error::{
