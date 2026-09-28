@@ -24,6 +24,8 @@ impl InteractiveRuntime {
             self.sessions.session().last_compaction_decision(),
             self.sessions.session().compaction_state(),
         );
+        self.diagnostics
+            .observe_prompt_tokens(estimate.provider_reported_tokens());
     }
 
     pub(super) fn refresh_context_usage(&mut self) {

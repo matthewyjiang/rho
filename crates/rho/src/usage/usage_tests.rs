@@ -390,7 +390,7 @@ fn concurrent_initializers_migrate_once() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 1);
+    assert_eq!(version, super::migrations::SCHEMA_VERSION);
 }
 
 #[test]

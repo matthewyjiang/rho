@@ -31,7 +31,13 @@ Text-summary compaction converts the retained-tail budget into local-estimator u
 
 `/info` includes compaction counts and decisions. For structured output, ask the agent to call `rho` with `action = "compaction"`. The report includes calibrated and local counts, the provider request baseline, window, threshold, target, and the last idle and SDK checks with skip reasons.
 
-`Last tier` (`last_tier` in structured output) shows which tier the last compaction used, `elision`, `native`, `text_summary`, or `unchanged`, and how many tool results it elided.
+The `Last run`, `Run cost`, and `After run` rows (`last_compaction` in structured output) describe the latest compactor call, committed or not:
+
+- **Last run**: trigger (`automatic`, `manual`, or `context_overflow`; idle auto-compaction before a prompt reports `manual`), outcome (`completed`, `failed`, or `cancelled`), tier (`elision`, `native`, `text_summary`, or `unchanged`), the text-summary request path (`session_history`, `transcript`, or `summarizer`, the last one tried), and how many tool results were elided.
+- **Run cost**: wall-clock latency, the `provider/model` that served the last request, and provider-reported prompt, output, and cache-read tokens and cost, summed over every request the compaction sent, including failed attempts.
+- **After run**: the first provider-reported prompt size after the commit, and a re-read count. For the next 24 tool calls, Rho counts calls that repeat a `read_file` path or shell command whose result the compaction removed, either summarized away or elided. 24 is the p75 gap between a call and its repeat across 135 local sessions. The count is a trend signal for comparing tiers, not a pass/fail gate: some repeats are legitimate, for example after the file changed. Only the interactive TUI collects these follow-up numbers. Headless and ACP runs record the rest.
+
+Each compactor call is also saved as a row in the usage ledger's `compaction_events` table, so numbers can be compared across sessions. See [usage ledger](/usage-ledger).
 
 A check that requests compaction is not proof that it finished. `Completed` counts committed compactions, including unchanged results. `Last completed` shows the last before and after local token counts and whether they decreased, stayed the same, or increased. This survives resume and appears under `completed` in structured output. Failed or cancelled attempts do not replace the last committed result. Their `compact` card shows the error or cancellation. These diagnostics contain token counts and configuration, not conversation text.
 

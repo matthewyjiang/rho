@@ -1,5 +1,6 @@
 //! Durable, provider-neutral accounting for individual model requests.
 
+mod compaction;
 mod event;
 mod migrations;
 mod model_request;
@@ -9,6 +10,7 @@ pub(crate) mod report;
 mod sdk;
 mod sqlite;
 
+pub(crate) use compaction::save_compaction;
 pub(crate) use model_request::{
     send_recorded, send_recorded_observing, send_recorded_with, RecordedRequest,
 };

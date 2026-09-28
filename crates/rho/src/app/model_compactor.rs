@@ -25,7 +25,11 @@ use crate::{
         partition_messages_for_compaction, summary_replacement, summary_reserve_tokens,
         CompactionConfig, CompactionPartition, SummarizerModel,
     },
-    diagnostics::{CompactionTier, CompactionTierReport, RuntimeDiagnostics},
+    compaction_metrics::{
+        removed_tool_calls, CompactionRecord, CompactionRunOutcome, CompactionTier, RecordIdentity,
+        SummaryRequestPath,
+    },
+    diagnostics::RuntimeDiagnostics,
     session::recall::RecallStore,
 };
 
@@ -91,97 +95,61 @@ impl Summarizer {
 impl Compactor for ModelCompactor {
     fn compact<'a>(&'a self, request: CompactionRequest) -> CompactionFuture<'a> {
         Box::pin(async move {
-            let cancellation = request.cancellation().clone();
-            let mut next_attempt_index = 1usize;
-
-            // Tier 1: elide old tool results. Commit without a model request
-            // when that alone reaches the target; otherwise later tiers see the
-            // elided history.
-            let context = request.context_estimate().unwrap_or_else(|| {
-                ContextEstimate::from_estimated_tokens(estimate_context_tokens(
-                    request.messages(),
-                    &self.tool_specs,
-                ))
-            });
-            let target_tokens = self.config.target_tokens_for_context(
-                self.context_window,
-                request.trigger(),
-                context,
-            );
-            let (elided, elided_tool_results) = match self.elide(&request, target_tokens) {
-                Some(elision) => (Some(elision.messages), elision.originals.len()),
-                None => (None, 0),
+            let started = std::time::Instant::now();
+            let occurred_at_ms = chrono::Utc::now().timestamp_millis();
+            let mut trace = Trace::default();
+            let result = self.compact_tiers(&request, &mut trace).await;
+            let removed = match &result {
+                Ok(output) => removed_tool_calls(request.messages(), output.messages()),
+                Err(_) => Default::default(),
             };
-            let report = |tier| {
-                self.diagnostics
-                    .record_compaction_tier(CompactionTierReport {
-                        tier,
-                        elided_tool_results,
-                    })
-            };
-            if let Some(elided) = &elided {
-                let tokens = estimate_context_tokens(elided, &self.tool_specs);
-                if tokens <= target_tokens {
-                    report(CompactionTier::Elision);
-                    return CompactionOutput::new(elided.clone());
-                }
+            let record = CompactionRecord {
+                identity: record_identity(&request, occurred_at_ms),
+                outcome: CompactionRunOutcome::of(&result),
+                trigger: request.trigger().into(),
+                tier: trace.tier,
+                request_path: trace.request_path,
+                model: trace.model,
+                elided_tool_results: trace.elided_tool_results,
+                context_tokens: trace.context_tokens,
+                prompt_tokens: None,
+                output_tokens: None,
+                cache_read_tokens: None,
+                cost_usd_micros: None,
+                latency_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                next_prompt_tokens: None,
+                reread: None,
             }
-            let messages = elided.as_deref().unwrap_or(request.messages());
-
-            match self
-                .try_native_compaction(
-                    messages,
-                    request.service_tier(),
-                    cancellation.clone(),
-                    usage_context(&request, self.provider.identity()),
-                    &mut next_attempt_index,
-                )
-                .await
-            {
-                NativeCompactionResult::Success(output) => {
-                    report(CompactionTier::Native);
-                    return Ok(output);
-                }
-                NativeCompactionResult::Cancelled => return Err(Error::Cancelled),
-                // Explicit fallback to portable text-summary compaction.
-                NativeCompactionResult::Unavailable | NativeCompactionResult::Failed => {}
-            }
-
-            let Some(partition) =
-                partition_messages_for_compaction(messages, &self.tool_specs, target_tokens)
-            else {
-                report(match elided {
-                    Some(_) => CompactionTier::Elision,
-                    None => CompactionTier::Unchanged,
-                });
-                return CompactionOutput::new(messages.to_vec());
-            };
-            let summary = self
-                .summarize(
-                    &request,
-                    &partition,
-                    SummaryBudget {
-                        context,
-                        target_tokens,
-                    },
-                    &mut next_attempt_index,
-                )
-                .await?;
-            self.diagnostics
-                .record_compaction_tier(CompactionTierReport {
-                    tier: CompactionTier::TextSummary,
-                    elided_tool_results: if summary.from_elided {
-                        elided_tool_results
-                    } else {
-                        0
-                    },
-                });
-            CompactionOutput::with_usage(summary.replacement, summary.usage)
+            .with_usage(&trace.usage);
+            self.diagnostics.record_compaction(record, removed);
+            result
         })
     }
 
     fn cancellation_mode(&self) -> rho_sdk::CompactorCancellationMode {
         rho_sdk::CompactorCancellationMode::Cooperative
+    }
+}
+
+/// What one compactor call did, filled in as tiers run.
+#[derive(Default)]
+struct Trace {
+    tier: Option<CompactionTier>,
+    request_path: Option<SummaryRequestPath>,
+    model: Option<String>,
+    elided_tool_results: usize,
+    context_tokens: u64,
+    /// Usage from every compaction request whose usage came back.
+    usage: ModelUsage,
+}
+
+impl Trace {
+    fn charge(&mut self, identity: &ModelIdentity, usage: &ModelUsage) {
+        self.model = Some(rho_providers::provider::model_reference(
+            &identity.provider,
+            &identity.model,
+        ));
+        self.usage = self.usage.saturating_add(usage);
     }
 }
 
@@ -213,7 +181,7 @@ struct Summary {
 /// plans in order and falls through to the next on any failure other than
 /// cancellation.
 struct SummaryPlan<'a> {
-    label: &'static str,
+    path: SummaryRequestPath,
     /// `None` means the configured summarizer, built on first use.
     provider: Option<&'a dyn ModelProvider>,
     messages: Vec<Message>,
@@ -231,6 +199,90 @@ struct SummaryPlan<'a> {
 }
 
 impl ModelCompactor {
+    /// Tier 1 elides old tool results and commits without a model request
+    /// when that alone reaches the target; later tiers see the elided history.
+    async fn compact_tiers(
+        &self,
+        request: &CompactionRequest,
+        trace: &mut Trace,
+    ) -> Result<CompactionOutput, Error> {
+        let cancellation = request.cancellation().clone();
+        let mut next_attempt_index = 1usize;
+        let context = request.context_estimate().unwrap_or_else(|| {
+            ContextEstimate::from_estimated_tokens(estimate_context_tokens(
+                request.messages(),
+                &self.tool_specs,
+            ))
+        });
+        trace.context_tokens = context.tokens();
+        let target_tokens =
+            self.config
+                .target_tokens_for_context(self.context_window, request.trigger(), context);
+        let (elided, elided_tool_results) = match self.elide(request, target_tokens) {
+            Some(elision) => (Some(elision.messages), elision.originals.len()),
+            None => (None, 0),
+        };
+        trace.elided_tool_results = elided_tool_results;
+        if let Some(elided) = &elided {
+            let tokens = estimate_context_tokens(elided, &self.tool_specs);
+            if tokens <= target_tokens {
+                trace.tier = Some(CompactionTier::Elision);
+                return CompactionOutput::new(elided.clone());
+            }
+        }
+        let messages = elided.as_deref().unwrap_or(request.messages());
+
+        match self
+            .try_native_compaction(
+                messages,
+                request.service_tier(),
+                cancellation.clone(),
+                usage_context(request, self.provider.identity()),
+                &mut next_attempt_index,
+                trace,
+            )
+            .await
+        {
+            NativeCompactionResult::Success(output) => {
+                trace.tier = Some(CompactionTier::Native);
+                return Ok(output);
+            }
+            NativeCompactionResult::Cancelled => {
+                trace.tier = Some(CompactionTier::Native);
+                return Err(Error::Cancelled);
+            }
+            // Explicit fallback to portable text-summary compaction.
+            NativeCompactionResult::Unavailable | NativeCompactionResult::Failed => {}
+        }
+
+        let Some(partition) =
+            partition_messages_for_compaction(messages, &self.tool_specs, target_tokens)
+        else {
+            trace.tier = Some(match elided {
+                Some(_) => CompactionTier::Elision,
+                None => CompactionTier::Unchanged,
+            });
+            return CompactionOutput::new(messages.to_vec());
+        };
+        trace.tier = Some(CompactionTier::TextSummary);
+        let summary = self
+            .summarize(
+                request,
+                &partition,
+                SummaryBudget {
+                    context,
+                    target_tokens,
+                },
+                &mut next_attempt_index,
+                trace,
+            )
+            .await?;
+        if !summary.from_elided {
+            trace.elided_tool_results = 0;
+        }
+        CompactionOutput::with_usage(summary.replacement, summary.usage)
+    }
+
     /// Elides only when the agent can recall, and only after the originals are
     /// saved. A failed save skips elision rather than stranding a stub.
     fn elide(
@@ -270,11 +322,12 @@ impl ModelCompactor {
         partition: &CompactionPartition<'a>,
         budget: SummaryBudget,
         next_attempt_index: &mut usize,
+        trace: &mut Trace,
     ) -> Result<Summary, Error> {
         let mut plans = Vec::new();
         if let Some(summarizer) = &self.summarizer {
             plans.push(SummaryPlan {
-                label: "configured summarizer",
+                path: SummaryRequestPath::Summarizer,
                 provider: None,
                 messages: build_summary_request_messages(partition),
                 partition: partition.clone(),
@@ -289,7 +342,7 @@ impl ModelCompactor {
             plans.push(plan);
         }
         plans.push(SummaryPlan {
-            label: "session model transcript",
+            path: SummaryRequestPath::Transcript,
             provider: Some(self.provider.as_ref()),
             messages: build_summary_request_messages(partition),
             partition: partition.clone(),
@@ -304,16 +357,17 @@ impl ModelCompactor {
         let mut spent = ModelUsage::default();
         let mut plans = plans.into_iter().peekable();
         while let Some(plan) = plans.next() {
-            let label = plan.label;
+            let path = plan.path;
+            trace.request_path = Some(path);
             match self
-                .try_plan(request, plan, &mut spent, next_attempt_index)
+                .try_plan(request, plan, &mut spent, next_attempt_index, trace)
                 .await
             {
                 Ok(summary) => return Ok(summary),
                 Err(Error::Cancelled) => return Err(Error::Cancelled),
                 Err(error) if plans.peek().is_none() => return Err(error),
                 Err(error) => {
-                    tracing::warn!(%error, plan = label, "compaction summary failed; trying the next request");
+                    tracing::warn!(%error, plan = path.label(), "compaction summary failed; trying the next request");
                 }
             }
         }
@@ -327,6 +381,7 @@ impl ModelCompactor {
         plan: SummaryPlan<'_>,
         spent: &mut ModelUsage,
         next_attempt_index: &mut usize,
+        trace: &mut Trace,
     ) -> Result<Summary, Error> {
         let provider = match plan.provider {
             Some(provider) => provider,
@@ -343,6 +398,7 @@ impl ModelCompactor {
             Some(tier) => ModelRequestOptions::default().with_service_tier(tier),
             None => ModelRequestOptions::default(),
         };
+        let mut reported = ModelUsage::default();
         let result = crate::usage::send_recorded_with(
             provider,
             crate::usage::RecordedRequest {
@@ -358,9 +414,13 @@ impl ModelCompactor {
                 recording: self.usage_recording.clone(),
             },
             next_attempt_index,
+            &mut reported,
             |_| {},
         )
         .await;
+        // Every attempt, including failed ones and internal retries, is
+        // compaction cost even when the plan fails.
+        trace.charge(&provider.identity(), &reported);
         let (ModelResponse::Assistant(blocks), usage) = match result {
             Ok(result) => result,
             Err(_) if cancellation.is_cancelled() => return Err(Error::Cancelled),
@@ -396,7 +456,7 @@ impl ModelCompactor {
             tokens.saturating_add(summary_reserve_tokens(budget.target_tokens)) <= window
         });
         fits.then_some(SummaryPlan {
-            label: "session model history",
+            path: SummaryRequestPath::SessionHistory,
             provider: Some(self.provider.as_ref()),
             messages,
             partition,
@@ -415,6 +475,7 @@ impl ModelCompactor {
         cancellation: rho_sdk::CancellationToken,
         usage_context: ProviderRequestUsageContext,
         next_attempt_index: &mut usize,
+        trace: &mut Trace,
     ) -> NativeCompactionResult {
         let model_request = ModelRequest {
             messages,
@@ -437,7 +498,9 @@ impl ModelCompactor {
         };
         let response = future.await;
         let (result, failed_attempts) = response.into_parts();
+        let identity = self.provider.identity();
         for attempt in failed_attempts {
+            trace.charge(&identity, &attempt.usage);
             self.usage_recording
                 .record(ProviderRequestUsageEvent::observed(
                     usage_context
@@ -458,6 +521,7 @@ impl ModelCompactor {
             .as_ref()
             .map(|output| output.usage().clone())
             .unwrap_or_default();
+        trace.charge(&identity, &usage);
         self.usage_recording
             .record(ProviderRequestUsageEvent::observed(
                 usage_context.with_attempt_index(*next_attempt_index),
@@ -496,6 +560,20 @@ fn usage_context(
         context = context.with_workspace_path(workspace_path.to_path_buf());
     }
     context
+}
+
+/// Ledger identity for the record of `request`.
+fn record_identity(request: &CompactionRequest, occurred_at_ms: i64) -> RecordIdentity {
+    RecordIdentity {
+        event_id: uuid::Uuid::new_v4().to_string(),
+        occurred_at_ms,
+        session_id: request.session_id().map(ToString::to_string),
+        parent_session_id: request.parent_session_id().map(ToString::to_string),
+        run_id: request.run_id().map(ToString::to_string),
+        workspace_path: request
+            .workspace_path()
+            .map(|path| path.to_string_lossy().into_owned()),
+    }
 }
 
 /// Scales a local estimate by how much larger the provider measured the

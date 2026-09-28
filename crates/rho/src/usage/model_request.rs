@@ -46,6 +46,7 @@ pub(crate) async fn send_recorded_observing(
             recording,
         },
         &mut next_attempt_index,
+        &mut ModelUsage::default(),
         on_event,
     )
     .await
@@ -62,10 +63,13 @@ pub(crate) struct RecordedRequest<'a> {
 /// Sends `recorded` and records one usage event per physical attempt, indexed
 /// from `next_attempt_index`, which is left just past the last one recorded.
 /// Callers that send several requests for one operation share the cursor.
+/// `reported` gains the usage of every attempt, failed or not, so callers can
+/// charge an operation for requests whose error discards the final usage.
 pub(crate) async fn send_recorded_with(
     provider: &dyn ModelProvider,
     recorded: RecordedRequest<'_>,
     next_attempt_index: &mut usize,
+    reported: &mut ModelUsage,
     mut on_event: impl FnMut(&ProviderStreamEvent) + Send,
 ) -> Result<(ModelResponse, ModelUsage), ProviderError> {
     let RecordedRequest {
@@ -117,6 +121,7 @@ pub(crate) async fn send_recorded_with(
     };
     *next_attempt_index = (*next_attempt_index).max(1);
     for (kind, usage) in failed_attempts {
+        *reported = reported.saturating_add(&usage);
         recording
             .record(ProviderRequestUsageEvent::observed(
                 context.clone().with_attempt_index(*next_attempt_index),
@@ -133,6 +138,7 @@ pub(crate) async fn send_recorded_with(
             outcome,
         ))
         .await;
+    *reported = reported.saturating_add(&usage);
     *next_attempt_index += 1;
     result.map(|response| (response, usage))
 }
