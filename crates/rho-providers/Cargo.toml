@@ -31,7 +31,7 @@ sha2 = "0.10"
 base64 = "0.23"
 url = "2"
 webbrowser = "1"
-ssh-key = { version = "0.6", features = ["ed25519", "std", "alloc"] }
+ssh-key = { version = "0.6", features = ["ed25519", "std", "alloc", "getrandom"] }
 signature = "2"
 gethostname = "1"
 

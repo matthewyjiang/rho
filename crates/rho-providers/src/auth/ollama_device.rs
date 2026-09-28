@@ -12,9 +12,8 @@ use std::{
 };
 
 use base64::{engine::general_purpose, Engine as _};
-use rand::rngs::OsRng;
 use signature::Signer;
-use ssh_key::{Algorithm, LineEnding, PrivateKey};
+use ssh_key::{rand_core::OsRng, Algorithm, LineEnding, PrivateKey};
 
 const DEFAULT_PRIVATE_KEY_NAME: &str = "id_ed25519";
 const DEFAULT_PUBLIC_KEY_NAME: &str = "id_ed25519.pub";
