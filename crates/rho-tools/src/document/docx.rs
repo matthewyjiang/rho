@@ -51,54 +51,53 @@ fn extract_document_xml(xml: &[u8], max_characters: usize) -> Result<ExtractedTe
     loop {
         match reader.read_event().map_err(|error| error.to_string())? {
             Event::Start(event) => match event.local_name().as_ref() {
-                b"t" => in_text = true,
-                b"tbl" => table_depth += 1,
-                b"tr" => {
+                "t" => in_text = true,
+                "tbl" => table_depth += 1,
+                "tr" => {
                     output.push('|');
                 }
-                b"tc" => cell_depth += 1,
-                b"tab" => {
+                "tc" => cell_depth += 1,
+                "tab" => {
                     output.push('\t');
                 }
-                b"br" | b"cr" => push_separator(&mut output, '\n'),
+                "br" | "cr" => push_separator(&mut output, '\n'),
                 _ => {}
             },
             Event::Empty(event) => match event.local_name().as_ref() {
-                b"tab" => {
+                "tab" => {
                     output.push('\t');
                 }
-                b"br" | b"cr" => push_separator(&mut output, '\n'),
+                "br" | "cr" => push_separator(&mut output, '\n'),
                 _ => {}
             },
             Event::Text(text) if in_text => {
-                output.push_str(&text.decode().map_err(|error| error.to_string())?);
+                output.push_str(&text.xml10_content());
             }
             Event::CData(text) if in_text => {
-                output.push_str(&text.decode().map_err(|error| error.to_string())?);
+                output.push_str(&text.xml10_content());
             }
             Event::GeneralRef(reference) if in_text => {
-                let reference = reference.decode().map_err(|error| error.to_string())?;
-                let encoded = format!("&{reference};");
+                let encoded = format!("&{};", &*reference);
                 output.push_str(&unescape(&encoded).map_err(|error| error.to_string())?);
             }
             Event::End(event) => match event.local_name().as_ref() {
-                b"t" => in_text = false,
-                b"tc" => {
+                "t" => in_text = false,
+                "tc" => {
                     cell_depth = cell_depth.saturating_sub(1);
                     output.remove_suffix("<br>");
                     output.push_str(" |");
                 }
-                b"tr" => {
+                "tr" => {
                     push_separator(&mut output, '\n');
                 }
-                b"tbl" => {
+                "tbl" => {
                     table_depth = table_depth.saturating_sub(1);
                     push_separator(&mut output, '\n');
                 }
-                b"p" if cell_depth > 0 => {
+                "p" if cell_depth > 0 => {
                     output.push_str("<br>");
                 }
-                b"p" if table_depth == 0 => push_separator(&mut output, '\n'),
+                "p" if table_depth == 0 => push_separator(&mut output, '\n'),
                 _ => {}
             },
             Event::Eof => break,
