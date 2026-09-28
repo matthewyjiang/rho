@@ -122,7 +122,7 @@ fn push_last_compaction(block: &mut CommandBlock, record: &CompactionRecord) {
     }
     if let Some(reread) = record.reread {
         after.push(format!(
-            "{}/{} calls repeated removed reads ({} watched, window {})",
+            "{}/{} calls repeated removed reads or commands ({} watched, window {})",
             reread.repeated, reread.tool_calls, reread.tracked, reread.window
         ));
     }

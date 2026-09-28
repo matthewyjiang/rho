@@ -398,6 +398,7 @@ impl ModelCompactor {
             Some(tier) => ModelRequestOptions::default().with_service_tier(tier),
             None => ModelRequestOptions::default(),
         };
+        let mut reported = ModelUsage::default();
         let result = crate::usage::send_recorded_with(
             provider,
             crate::usage::RecordedRequest {
@@ -413,16 +414,19 @@ impl ModelCompactor {
                 recording: self.usage_recording.clone(),
             },
             next_attempt_index,
+            &mut reported,
             |_| {},
         )
         .await;
+        // Every attempt, including failed ones and internal retries, is
+        // compaction cost even when the plan fails.
+        trace.charge(&provider.identity(), &reported);
         let (ModelResponse::Assistant(blocks), usage) = match result {
             Ok(result) => result,
             Err(_) if cancellation.is_cancelled() => return Err(Error::Cancelled),
             Err(error) => return Err(error.into()),
         };
         *spent = spent.saturating_add(&usage);
-        trace.charge(&provider.identity(), &usage);
         Ok(Summary {
             replacement: summary_replacement(&plan.partition, request.trigger(), &blocks)?,
             usage: spent.clone(),

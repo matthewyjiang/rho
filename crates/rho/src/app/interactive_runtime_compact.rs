@@ -163,7 +163,6 @@ impl InteractiveRuntime {
         &mut self,
         outcome: rho_sdk::CompactionOutcome,
     ) -> anyhow::Result<Option<rho_sdk::CompactionOutcome>> {
-        self.diagnostics.compaction_committed();
         if let Err(error) = self.sessions.save_compaction_snapshot(&[], &outcome) {
             // Compact mutates live history first. A failed save truncates the
             // partial append, so capturing after failure still reads the
@@ -186,6 +185,8 @@ impl InteractiveRuntime {
                 )),
             };
         }
+        // Follow-up starts only once the compaction is durable.
+        self.diagnostics.compaction_committed();
         self.refresh_context_usage();
         if crate::compaction::outcome_reduced_context(&outcome) {
             self.invalidate_live_context();

@@ -945,3 +945,48 @@ async fn configured_summarizer_gets_the_transcript_and_falls_back_on_failure() {
         );
     }
 }
+
+// Covers: a summary request that fails after streaming usage still charges the
+// compaction record, even though the committed output only carries the usage
+// of the plan that succeeded.
+// Owner: ModelCompactor compaction metrics.
+#[tokio::test]
+async fn failed_summary_request_usage_is_charged_to_the_compaction_record() {
+    let history = summarized_history();
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("anthropic", "anthropic-messages", "claude-test"),
+        [
+            ScriptedTurn::streaming_failed(
+                vec![rho_sdk::model::ModelEvent::Usage(usage_with_cache_reads(
+                    900,
+                ))],
+                ProviderError::new(
+                    ProviderErrorKind::InvalidResponse,
+                    "rejected",
+                    Retryability::Permanent,
+                ),
+            ),
+            ScriptedTurn::streaming(
+                vec![rho_sdk::model::ModelEvent::Usage(usage_with_cache_reads(
+                    100,
+                ))],
+                ModelResponse::Assistant(vec![ContentBlock::Text("summary text".into())]),
+            ),
+        ],
+    );
+    let usage = RecordingUsage::default();
+    let compactor = session_compactor(provider, usage.clone(), Some(100_000), None);
+    let output = compactor
+        .compact(cached_session_request(history))
+        .await
+        .unwrap();
+
+    assert_eq!(output.usage().cache_read_tokens, Some(100));
+    let record = compactor
+        .diagnostics
+        .compaction()
+        .and_then(|compaction| compaction.last_compaction)
+        .unwrap();
+    assert_eq!(record.request_path, Some(SummaryRequestPath::Transcript));
+    assert_eq!(record.cache_read_tokens, Some(1_000));
+}

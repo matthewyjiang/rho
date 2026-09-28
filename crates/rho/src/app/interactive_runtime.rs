@@ -371,10 +371,8 @@ impl InteractiveRuntime {
 
     pub(crate) async fn next_event(&mut self) -> Option<RunEvent> {
         let event = self.runs.next_event().await;
-        match &event {
-            Some(RunEvent::CompactionCompleted { .. }) => self.diagnostics.compaction_committed(),
-            Some(RunEvent::ToolProposed { call }) => self.diagnostics.observe_tool_call(call),
-            _ => {}
+        if let Some(RunEvent::ToolProposed { call }) = &event {
+            self.diagnostics.observe_tool_call(call);
         }
         if matches!(
             event,
@@ -416,8 +414,13 @@ impl InteractiveRuntime {
                         // happy path.
                         self.pending_persistence_checkpoint =
                             self.capture_durable_session().ok().flatten();
-                    } else if self.sessions.storage().is_some() {
-                        self.runs.mark_display_checkpoint(display);
+                    } else {
+                        // Follow-up starts only once the compaction is durable;
+                        // a failed save restores the old history.
+                        self.diagnostics.compaction_committed();
+                        if self.sessions.storage().is_some() {
+                            self.runs.mark_display_checkpoint(display);
+                        }
                     }
                 }
                 Err(error) => {
