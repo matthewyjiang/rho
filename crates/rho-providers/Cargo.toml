@@ -22,7 +22,7 @@ async-trait = "0.1"
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 rustls = { workspace = true }
-rusqlite = { version = "0.40" }
+rusqlite = { version = "0.40", features = ["fallible_uint"] }
 memchr = "2"
 keyring = "4.1.2"
 libc = "0.2"
