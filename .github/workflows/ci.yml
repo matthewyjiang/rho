@@ -18,7 +18,7 @@ jobs:
     name: quality and workspace tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check architecture guardrails
         run: python3 scripts/check_architecture.py
       - name: Test architecture guardrails
@@ -56,7 +56,7 @@ jobs:
     name: interactive TUI smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
@@ -71,7 +71,7 @@ jobs:
         run: cargo run -p rho-tui-pty --bin rho-pty-scenario --locked -- --smoke --artifacts pty-artifacts
       - name: Upload failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pty-smoke-artifacts
           path: pty-artifacts/
@@ -82,7 +82,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
@@ -93,7 +93,7 @@ jobs:
         run: RHO_BENCH_OUTPUT="$RUNNER_TEMP/sdk-release-benchmarks.json" ./scripts/run_sdk_release_benchmarks.sh
       - name: Upload benchmark evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdk-release-benchmarks-${{ github.event.pull_request.head.sha }}
           path: ${{ runner.temp }}/sdk-release-benchmarks.json
@@ -104,7 +104,7 @@ jobs:
     name: SDK feature and downstream contracts
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
@@ -130,7 +130,7 @@ jobs:
             manifest: crates/rho/Cargo.toml
             command: cargo check --workspace --all-targets --locked
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Read MSRV from Cargo metadata
         id: msrv
         shell: bash
@@ -156,7 +156,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry
@@ -171,7 +171,7 @@ jobs:
         run: cargo test --workspace --all-targets --locked --jobs 8
       - name: Upload native PTY failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-pty-${{ matrix.os }}-artifacts
           path: ${{ runner.temp }}/rho-pty-native-artifacts/
@@ -181,7 +181,7 @@ jobs:
     name: release package checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo registry

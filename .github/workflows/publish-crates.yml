@@ -30,7 +30,7 @@ jobs:
       package: ${{ steps.crate.outputs.package }}
       sha: ${{ steps.candidate.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.candidate-sha }}
       - name: Select crate
@@ -69,7 +69,7 @@ jobs:
     needs: [candidate, sdk-release-evidence]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.sdk-release-evidence.outputs.candidate-sha }}
       - name: Install Rust
