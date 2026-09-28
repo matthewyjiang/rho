@@ -189,9 +189,9 @@ pub(crate) async fn run_planner_worker() -> anyhow::Result<()> {
 }
 
 fn planner_token() -> String {
-    use rand::RngCore;
+    use rand::{rand_core::UnwrapErr, rngs::SysRng, Rng};
     let mut bytes = [0_u8; PLANNER_TOKEN_BYTES];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    UnwrapErr(SysRng).fill_bytes(&mut bytes);
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

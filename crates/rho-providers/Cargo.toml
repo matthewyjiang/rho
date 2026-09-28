@@ -26,12 +26,12 @@ rusqlite = { version = "0.32" }
 memchr = "2"
 keyring = "4.1.2"
 libc = "0.2"
-rand = "0.8"
+rand = "0.10"
 sha2 = "0.10"
 base64 = "0.23"
 url = "2"
 webbrowser = "1"
-ssh-key = { version = "0.6", features = ["ed25519", "std", "alloc"] }
+ssh-key = { version = "0.6", features = ["ed25519", "std", "alloc", "getrandom"] }
 signature = "2"
 gethostname = "1"
 

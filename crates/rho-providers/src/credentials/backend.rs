@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use rand::{distributions::Alphanumeric, Rng};
+use rand::{distr::Alphanumeric, RngExt};
 
 use super::{
     file::FileCredentialStore,
@@ -165,8 +165,8 @@ fn probe_secret_value() -> String {
 }
 
 fn random_token(len: usize) -> String {
-    rand::thread_rng()
-        .sample_iter(&Alphanumeric)
+    rand::rng()
+        .sample_iter(Alphanumeric)
         .take(len)
         .map(char::from)
         .collect()
