@@ -415,8 +415,7 @@ impl InteractiveRuntime {
                         self.pending_persistence_checkpoint =
                             self.capture_durable_session().ok().flatten();
                     } else {
-                        // Follow-up starts only once the compaction is durable;
-                        // a failed save restores the old history.
+                        // Follow-up starts only once the compaction is durable.
                         self.diagnostics.compaction_committed();
                         if self.sessions.storage().is_some() {
                             self.runs.mark_display_checkpoint(display);
