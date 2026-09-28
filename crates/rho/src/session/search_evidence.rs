@@ -23,7 +23,7 @@ impl Evidence {
         digest.update(text.as_bytes());
         digest.update((omitted_blocks as u64).to_le_bytes());
         Self {
-            anchor: format!("{position}:{:x}", digest.finalize()),
+            anchor: format!("{position}:{}", hex::encode(digest.finalize())),
             role: role.into(),
             text,
             omitted_blocks,

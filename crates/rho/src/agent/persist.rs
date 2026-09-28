@@ -128,7 +128,10 @@ pub(crate) fn persist_definition(
 }
 
 pub(crate) fn content_revision(contents: &str) -> String {
-    format!("sha256:{:x}", Sha256::digest(contents.as_bytes()))
+    format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(contents.as_bytes()))
+    )
 }
 
 pub(crate) fn persist_destination_path(

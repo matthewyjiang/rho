@@ -158,7 +158,7 @@ pub(super) fn parse(path: &Path, source: &str) -> Result<(Frontmatter, ModelProm
                     path: path.to_owned(),
                     mode,
                     body: body.to_owned(),
-                    sha256: format!("{:x}", Sha256::digest(source.as_bytes())),
+                    sha256: hex::encode(Sha256::digest(source.as_bytes())),
                 },
             ));
         }

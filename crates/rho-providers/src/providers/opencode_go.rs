@@ -28,8 +28,11 @@ impl SessionHeaders {
         // SDK cache keys need not be valid HTTP header values. Hash those keys
         // rather than dropping their conversation identity or failing a request.
         let value = HeaderValue::from_str(session).unwrap_or_else(|_| {
-            HeaderValue::from_str(&format!("rho:{:x}", Sha256::digest(session.as_bytes())))
-                .expect("hex digest is a valid header value")
+            HeaderValue::from_str(&format!(
+                "rho:{}",
+                hex::encode(Sha256::digest(session.as_bytes()))
+            ))
+            .expect("hex digest is a valid header value")
         });
         headers.insert("x-opencode-session", value);
         headers.insert(

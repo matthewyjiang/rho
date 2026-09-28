@@ -46,7 +46,7 @@ impl CollectedSources {
             let digest = Sha256::digest(source.as_bytes());
             let manifest = &self.manifest.modules[label];
             if manifest.bytes != source.len() as u64
-                || manifest.digest.0 != format!("sha256:{digest:x}")
+                || manifest.digest.0 != format!("sha256:{}", hex::encode(digest))
             {
                 return Err(WorkflowError::Starlark(format!(
                     "collected source '{label}' does not match its authorized identity"
@@ -146,7 +146,7 @@ impl<'a> SourceCollector<'a> {
                 (
                     label.clone(),
                     SourceFile {
-                        digest: Digest(format!("sha256:{digest:x}")),
+                        digest: Digest(format!("sha256:{}", hex::encode(digest))),
                         bytes: source.len() as u64,
                     },
                 )

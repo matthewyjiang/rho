@@ -808,7 +808,7 @@ fn run_relative(id: RunId, child: &Path) -> PathBuf {
 }
 fn sha256(bytes: &[u8]) -> String {
     use sha2::{Digest as _, Sha256};
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 #[cfg(test)]

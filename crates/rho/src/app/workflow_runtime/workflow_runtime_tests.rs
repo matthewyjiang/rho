@@ -627,10 +627,7 @@ fn checkout_gate_rejects_symlink_lock() {
     let locks = home.path().join("workflows/checkout-locks");
     std::fs::create_dir_all(&locks).unwrap();
     let canonical = workspace.path().canonicalize().unwrap();
-    let key = format!(
-        "{:x}",
-        Sha256::digest(canonical.to_string_lossy().as_bytes())
-    );
+    let key = hex::encode(Sha256::digest(canonical.to_string_lossy().as_bytes()));
     let target = home.path().join("attacker-file");
     std::fs::write(&target, "do not open").unwrap();
     symlink(&target, locks.join(format!("{key}.lock"))).unwrap();
@@ -648,10 +645,7 @@ async fn checkout_gate_lock_wait_honors_cancellation() {
     let workspace = tempfile::tempdir().unwrap();
     let gate = CheckoutGate::new(home.path(), workspace.path()).unwrap();
     let canonical = workspace.path().canonicalize().unwrap();
-    let key = format!(
-        "{:x}",
-        Sha256::digest(canonical.to_string_lossy().as_bytes())
-    );
+    let key = hex::encode(Sha256::digest(canonical.to_string_lossy().as_bytes()));
     let contender = std::fs::OpenOptions::new()
         .read(true)
         .write(true)

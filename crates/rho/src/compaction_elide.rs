@@ -39,7 +39,7 @@ pub(crate) fn recall_id(result: &ToolResult) -> String {
     digest.update(result.id.as_bytes());
     digest.update([0]);
     digest.update(result.content.as_bytes());
-    let digest = format!("{:x}", digest.finalize());
+    let digest = hex::encode(digest.finalize());
     format!("r{}", &digest[..16])
 }
 

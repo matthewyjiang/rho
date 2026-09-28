@@ -16,7 +16,7 @@ pub(crate) fn canonical_bytes(workflow: &FrozenWorkflow) -> WorkflowResult<Vec<u
 
 pub(crate) fn program_digest(workflow: &FrozenWorkflow) -> WorkflowResult<Digest> {
     let digest = Sha256::digest(canonical_bytes(workflow)?);
-    Ok(Digest(format!("sha256:{digest:x}")))
+    Ok(Digest(format!("sha256:{}", hex::encode(digest))))
 }
 
 // Tags are part of program format v1: null, false, true, signed integer,
