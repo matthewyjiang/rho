@@ -512,10 +512,13 @@ pub(super) fn verified_from_open_file(
 ) -> WorkflowResult<VerifiedPath> {
     let metadata = file.metadata()?;
     let content_digest = if content_hash == ContentHash::Compute {
-        let mut hasher = Sha256::new();
+        let mut hasher = digest_io::IoWrapper(Sha256::new());
         std::io::copy(&mut file, &mut hasher)?;
         file.seek(SeekFrom::Start(0))?;
-        Some(Digest(format!("sha256:{:x}", hasher.finalize())))
+        Some(Digest(format!(
+            "sha256:{}",
+            hex::encode(hasher.0.finalize())
+        )))
     } else {
         None
     };

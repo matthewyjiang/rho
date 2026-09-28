@@ -59,7 +59,7 @@ pub(super) fn write_artifact_with_observation(
         relative_path: relative.to_string_lossy().replace('\\', "/"),
         retained_bytes: bytes.len() as u64,
         observed,
-        digest: Digest(format!("sha256:{:x}", Sha256::digest(bytes))),
+        digest: Digest(format!("sha256:{}", hex::encode(Sha256::digest(bytes)))),
     })
 }
 

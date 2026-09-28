@@ -185,7 +185,7 @@ fn source_digest(run: &StoredRun) -> Digest {
         hash.update(source.digest.0.as_bytes());
         hash.update([0]);
     }
-    Digest(format!("sha256:{:x}", hash.finalize()))
+    Digest(format!("sha256:{}", hex::encode(hash.finalize())))
 }
 
 fn terminal_reason(state: &NodeState) -> Option<TerminalReason> {

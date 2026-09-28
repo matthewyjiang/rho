@@ -516,8 +516,8 @@ fn executable_freeze_uses_the_authorized_open_file() {
     assert_eq!(
         identity.file.content_digest.unwrap().0,
         format!(
-            "sha256:{:x}",
-            sha2::Sha256::digest(b"authorized executable")
+            "sha256:{}",
+            hex::encode(sha2::Sha256::digest(b"authorized executable"))
         )
     );
 }
@@ -609,8 +609,8 @@ fn interpreter_freeze_uses_the_authorized_open_file() {
     assert_eq!(
         identity.interpreter.unwrap().content_digest.unwrap().0,
         format!(
-            "sha256:{:x}",
-            sha2::Sha256::digest(b"authorized interpreter")
+            "sha256:{}",
+            hex::encode(sha2::Sha256::digest(b"authorized interpreter"))
         )
     );
 }

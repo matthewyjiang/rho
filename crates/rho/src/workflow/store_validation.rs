@@ -280,9 +280,9 @@ fn validate_completion_artifacts(
             );
         }
         use sha2::Digest as _;
-        let mut hasher = sha2::Sha256::new();
+        let mut hasher = digest_io::IoWrapper(sha2::Sha256::new());
         std::io::copy(&mut file, &mut hasher).map_err(WorkflowError::Io)?;
-        let digest = format!("sha256:{:x}", hasher.finalize());
+        let digest = format!("sha256:{}", hex::encode(hasher.0.finalize()));
         if artifact.digest.0 != digest {
             return corrupt(
                 &artifact_path,

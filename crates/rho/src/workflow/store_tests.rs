@@ -472,7 +472,7 @@ fn artifact(run: &std::path::Path, name: &str, bytes: &[u8]) -> ArtifactRef {
         observed: ArtifactObservation::Complete {
             observed_bytes: bytes.len() as u64,
         },
-        digest: Digest(format!("sha256:{:x}", Sha256::digest(bytes))),
+        digest: Digest(format!("sha256:{}", hex::encode(Sha256::digest(bytes)))),
     }
 }
 

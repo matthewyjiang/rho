@@ -47,10 +47,7 @@ impl CheckoutGate {
         };
         let locks = rho_home.join("workflows").join("checkout-locks");
         ensure_private_directory(&locks)?;
-        let key = format!(
-            "{:x}",
-            Sha256::digest(workspace.to_string_lossy().as_bytes())
-        );
+        let key = hex::encode(Sha256::digest(workspace.to_string_lossy().as_bytes()));
         let lock_path = locks.join(format!("{key}.lock"));
         let lock_file = open_lock_no_follow(&lock_path)?;
         Ok(Self {

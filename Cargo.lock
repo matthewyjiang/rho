@@ -1479,6 +1479,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "digest-io"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2de63d600bc7fab91180bc17385f29b342468dc8ef2af09dceba450a293de3da"
+dependencies = [
+ "digest 0.11.3",
+]
+
+[[package]]
 name = "dispatch2"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4848,8 +4857,10 @@ dependencies = [
  "chrono",
  "clap",
  "crossterm",
+ "digest-io",
  "fs2",
  "futures-util",
+ "hex",
  "http",
  "humantime",
  "image",
@@ -4911,6 +4922,7 @@ dependencies = [
  "base64 0.23.1",
  "futures-util",
  "gethostname",
+ "hex",
  "http",
  "keyring",
  "libc",

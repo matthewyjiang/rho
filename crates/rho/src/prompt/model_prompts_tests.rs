@@ -67,7 +67,7 @@ fn preserves_body_and_hashes_complete_source() {
                     path: path.to_owned(),
                     mode,
                     body,
-                    sha256: format!("{:x}", Sha256::digest(source.as_bytes())),
+                    sha256: hex::encode(Sha256::digest(source.as_bytes())),
                 }
             );
         }

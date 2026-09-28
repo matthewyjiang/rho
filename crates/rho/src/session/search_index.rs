@@ -360,7 +360,7 @@ fn index_file(
     );
     let workspace = resolve_workspace(&cwd, indexed);
     let path_string = path.to_string_lossy();
-    let key = format!("{:x}", Sha256::digest(path_string.as_bytes()));
+    let key = hex::encode(Sha256::digest(path_string.as_bytes()));
     connection.execute(
         "insert into files(key,path,id,cwd,worktree,repo,size,stamp,omitted) values(?1,?2,?3,?4,?5,?6,?7,?8,0)",
         params![key, path_string, id, cwd.to_string_lossy(), workspace.worktree.to_string_lossy(), workspace.repo.to_string_lossy(), stamp.size, stamp.modified],
