@@ -11,6 +11,7 @@ mod cli_runtime;
 mod clipboard;
 mod commands;
 mod compaction;
+mod compaction_metrics;
 mod config;
 mod config_writer;
 mod credential_store;

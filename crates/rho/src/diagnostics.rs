@@ -5,9 +5,10 @@ use serde::Serialize;
 #[path = "diagnostics_compaction.rs"]
 mod compaction;
 pub(crate) use compaction::{
-    CompactionContext, CompactionDiagnostics, CompactionTier, CompactionTierReport,
-    IdleCompactionCheck, IdleCompactionReason,
+    CompactionContext, CompactionDiagnostics, IdleCompactionCheck, IdleCompactionReason,
 };
+
+use crate::compaction_metrics::{CompactionMetrics, CompactionRecord, ToolFingerprint};
 
 use {
     crate::compaction::CompactionConfig, crate::config::Config, rho_providers::model::ContextUsage,
@@ -117,8 +118,9 @@ struct RuntimeState {
     identity: RuntimeIdentity,
     context: Option<ContextUsage>,
     compaction: Option<CompactionDiagnostics>,
-    /// Last compactor tier, kept apart so context refreshes do not drop it.
-    compaction_tier: Option<CompactionTierReport>,
+    /// Latest compaction record, kept apart so context refreshes do not drop it.
+    #[serde(skip)]
+    compaction_metrics: CompactionMetrics,
     prompt_sources: Vec<crate::prompt::PromptSource>,
     tools: Vec<String>,
     config: SanitizedConfig,
@@ -128,11 +130,11 @@ struct RuntimeState {
 }
 
 impl RuntimeState {
-    /// Context refreshes rebuild `compaction`; the tier lives apart and is
+    /// Context refreshes rebuild `compaction`; the record lives apart and is
     /// joined only on read so it has one source of truth.
-    fn compaction_with_tier(&self) -> Option<CompactionDiagnostics> {
+    fn compaction_with_metrics(&self) -> Option<CompactionDiagnostics> {
         self.compaction.clone().map(|mut compaction| {
-            compaction.last_tier = self.compaction_tier;
+            compaction.last_compaction = self.compaction_metrics.last().cloned();
             compaction
         })
     }
@@ -150,7 +152,7 @@ impl RuntimeDiagnostics {
                 identity: RuntimeIdentity::new(&config.provider, &config.model, config.reasoning),
                 context: None,
                 compaction: None,
-                compaction_tier: None,
+                compaction_metrics: CompactionMetrics::default(),
                 prompt_sources: Vec::new(),
                 tools: Vec::new(),
                 config: config.into(),
@@ -172,7 +174,9 @@ impl RuntimeDiagnostics {
         state.identity.agent_fingerprint = agent_fingerprint;
         state.context = None;
         state.compaction = None;
-        state.compaction_tier = None;
+        let unfinished = std::mem::take(&mut state.compaction_metrics).take_unfinished();
+        drop(state);
+        crate::usage::save_compaction(unfinished);
     }
 
     pub fn update_agent(&self, id: &str, fingerprint: &str) {
@@ -186,13 +190,15 @@ impl RuntimeDiagnostics {
     }
 
     pub(crate) fn compaction(&self) -> Option<CompactionDiagnostics> {
-        self.read().compaction_with_tier()
+        self.read().compaction_with_metrics()
     }
 
     pub(crate) fn clear_compaction(&self) {
         let mut state = self.write();
         state.compaction = None;
-        state.compaction_tier = None;
+        let unfinished = std::mem::take(&mut state.compaction_metrics).take_unfinished();
+        drop(state);
+        crate::usage::save_compaction(unfinished);
     }
 
     pub(crate) fn record_compaction_context(
@@ -210,15 +216,44 @@ impl RuntimeDiagnostics {
             current,
             last_idle_check,
             last_provider_check: last_provider_check.map(Into::into),
-            last_tier: None,
+            last_compaction: None,
             completed,
         });
     }
 
-    /// Records which tier the compactor used. Compactors call this, so it
-    /// covers automatic, manual, and overflow-recovery compactions alike.
-    pub(crate) fn record_compaction_tier(&self, report: CompactionTierReport) {
-        self.write().compaction_tier = Some(report);
+    /// Records one compactor call and saves it to the usage ledger.
+    /// Compactors call this, so it covers automatic, manual, and
+    /// overflow-recovery compactions alike, whether they succeed or fail.
+    /// `removed` identifies the tool calls whose results the replacement drops.
+    pub(crate) fn record_compaction(
+        &self,
+        record: CompactionRecord,
+        removed: std::collections::HashSet<ToolFingerprint>,
+    ) {
+        let saved = record.clone();
+        let superseded = self.write().compaction_metrics.record(record, removed);
+        crate::usage::save_compaction(superseded);
+        crate::usage::save_compaction(Some(saved));
+    }
+
+    /// The SDK committed the latest compactor result; start its follow-up.
+    pub(crate) fn compaction_committed(&self) {
+        self.write().compaction_metrics.committed();
+    }
+
+    /// Feeds the latest provider-reported prompt size to the follow-up.
+    pub(crate) fn observe_prompt_tokens(&self, tokens: Option<u64>) {
+        let finished = self
+            .write()
+            .compaction_metrics
+            .observe_prompt_tokens(tokens);
+        crate::usage::save_compaction(finished);
+    }
+
+    /// Feeds a proposed tool call to the follow-up.
+    pub(crate) fn observe_tool_call(&self, call: &rho_sdk::model::ToolCall) {
+        let finished = self.write().compaction_metrics.observe_tool_call(call);
+        crate::usage::save_compaction(finished);
     }
 
     pub(crate) fn record_idle_compaction(&self, check: IdleCompactionCheck) {
@@ -294,7 +329,7 @@ impl RuntimeDiagnostics {
         let value = match action {
             "info" => serde_json::to_value(&state.identity),
             "context" => serde_json::to_value(&state.context),
-            "compaction" => serde_json::to_value(state.compaction_with_tier()),
+            "compaction" => serde_json::to_value(state.compaction_with_metrics()),
             "prompt_sources" => serde_json::to_value(&state.prompt_sources),
             "tools" => serde_json::to_value(&state.tools),
             "config" => serde_json::to_value(&state.config),

@@ -163,6 +163,7 @@ impl InteractiveRuntime {
         &mut self,
         outcome: rho_sdk::CompactionOutcome,
     ) -> anyhow::Result<Option<rho_sdk::CompactionOutcome>> {
+        self.diagnostics.compaction_committed();
         if let Err(error) = self.sessions.save_compaction_snapshot(&[], &outcome) {
             // Compact mutates live history first. A failed save truncates the
             // partial append, so capturing after failure still reads the

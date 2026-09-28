@@ -13,7 +13,10 @@ use super::{
     super::runtime_builder::{build_compaction, CompactionSetup},
     ModelCompactor,
 };
-use crate::{compaction::CompactionConfig, diagnostics::CompactionTier};
+use crate::{
+    compaction::CompactionConfig,
+    compaction_metrics::{CompactionRunOutcome, CompactionTier, SummaryRequestPath},
+};
 
 #[derive(Clone, Default)]
 struct RecordingUsage {
@@ -67,10 +70,26 @@ fn compactor(
         },
         context_window,
         usage_recording: ProviderRequestUsageRecording::new(usage),
-        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+        diagnostics: seeded_diagnostics(),
         recall: None,
     })
     .0
+}
+
+/// Diagnostics that report compaction, as a live runtime's do after its
+/// first context refresh.
+fn seeded_diagnostics() -> crate::diagnostics::RuntimeDiagnostics {
+    let diagnostics = crate::diagnostics::test_diagnostics("test", "test");
+    diagnostics.record_compaction_context(
+        crate::diagnostics::CompactionContext::new(
+            rho_sdk::ContextEstimate::from_estimated_tokens(0),
+            None,
+            &CompactionConfig::default(),
+        ),
+        None,
+        Default::default(),
+    );
+    diagnostics
 }
 
 #[tokio::test]
@@ -367,16 +386,7 @@ fn tiered_compactor(
     usage: RecordingUsage,
     recall: Option<crate::session::recall::RecallStore>,
 ) -> (ModelCompactor, crate::diagnostics::RuntimeDiagnostics) {
-    let diagnostics = crate::diagnostics::test_diagnostics("test", "test");
-    diagnostics.record_compaction_context(
-        crate::diagnostics::CompactionContext::new(
-            rho_sdk::ContextEstimate::from_estimated_tokens(0),
-            None,
-            &CompactionConfig::default(),
-        ),
-        None,
-        Default::default(),
-    );
+    let diagnostics = seeded_diagnostics();
     let compactor = build_compaction(CompactionSetup {
         provider: Arc::new(provider) as Arc<dyn ModelProvider>,
         tools: &[],
@@ -394,8 +404,8 @@ fn tiered_compactor(
 fn last_tier(diagnostics: &crate::diagnostics::RuntimeDiagnostics) -> Option<CompactionTier> {
     diagnostics
         .compaction()
-        .and_then(|compaction| compaction.last_tier)
-        .map(|report| report.tier)
+        .and_then(|compaction| compaction.last_compaction)
+        .and_then(|record| record.tier)
 }
 
 fn summary_provider() -> ScriptedProvider {
@@ -513,13 +523,13 @@ async fn escalation_elides_only_the_transcript_summary() {
             .await
             .unwrap();
 
-        let report = diagnostics
+        let record = diagnostics
             .compaction()
-            .and_then(|compaction| compaction.last_tier)
+            .and_then(|compaction| compaction.last_compaction)
             .unwrap();
         assert_eq!(
-            (report.tier, report.elided_tool_results),
-            (CompactionTier::TextSummary, elided),
+            (record.tier, record.elided_tool_results),
+            (Some(CompactionTier::TextSummary), elided),
             "{case}"
         );
         let requests = [session.recorded_requests(), summarizer.recorded_requests()].concat();
@@ -671,6 +681,8 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
         trigger: rho_sdk::CompactionTrigger,
         sent: Vec<SentSummary>,
         cache_read_tokens: u64,
+        /// The request that wrote the committed summary.
+        path: SummaryRequestPath,
     }
     let manual = rho_sdk::CompactionTrigger::Manual;
     let cases = [
@@ -680,6 +692,7 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
             window: 100_000,
             trigger: manual,
             sent: vec![cached()],
+            path: SummaryRequestPath::SessionHistory,
             cache_read_tokens: 100,
         },
         Case {
@@ -688,6 +701,7 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
             window: 100_000,
             trigger: manual,
             sent: vec![cached(), transcript()],
+            path: SummaryRequestPath::Transcript,
             cache_read_tokens: 1_000,
         },
         Case {
@@ -696,6 +710,7 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
             window: 100_000,
             trigger: manual,
             sent: vec![cached(), transcript()],
+            path: SummaryRequestPath::Transcript,
             cache_read_tokens: 100,
         },
         Case {
@@ -704,6 +719,7 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
             window: 100_000,
             trigger: manual,
             sent: vec![cached(), transcript()],
+            path: SummaryRequestPath::Transcript,
             cache_read_tokens: 100,
         },
         Case {
@@ -712,6 +728,7 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
             window: 2_000,
             trigger: manual,
             sent: vec![transcript()],
+            path: SummaryRequestPath::Transcript,
             cache_read_tokens: 100,
         },
         Case {
@@ -720,6 +737,7 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
             window: 100_000,
             trigger: rho_sdk::CompactionTrigger::ContextOverflow,
             sent: vec![transcript()],
+            path: SummaryRequestPath::Transcript,
             cache_read_tokens: 100,
         },
     ];
@@ -731,7 +749,8 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
             case.turns,
         );
         let usage = RecordingUsage::default();
-        let output = session_compactor(provider.clone(), usage.clone(), Some(case.window), None)
+        let compactor = session_compactor(provider.clone(), usage.clone(), Some(case.window), None);
+        let output = compactor
             .compact(cached_session_request(history.clone()).with_trigger(case.trigger))
             .await
             .unwrap();
@@ -772,6 +791,29 @@ async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcr
             (1..=requests.len())
                 .map(|index| ("compaction", Some(index)))
                 .collect::<Vec<_>>(),
+            "{}",
+            case.name
+        );
+        let record = compactor
+            .diagnostics
+            .compaction()
+            .and_then(|compaction| compaction.last_compaction)
+            .unwrap();
+        assert_eq!(
+            (
+                record.outcome,
+                record.tier,
+                record.request_path,
+                record.model.as_deref(),
+                record.cache_read_tokens,
+            ),
+            (
+                CompactionRunOutcome::Completed,
+                Some(CompactionTier::TextSummary),
+                Some(case.path),
+                Some("anthropic/claude-test"),
+                Some(case.cache_read_tokens),
+            ),
             "{}",
             case.name
         );

@@ -371,6 +371,11 @@ impl InteractiveRuntime {
 
     pub(crate) async fn next_event(&mut self) -> Option<RunEvent> {
         let event = self.runs.next_event().await;
+        match &event {
+            Some(RunEvent::CompactionCompleted { .. }) => self.diagnostics.compaction_committed(),
+            Some(RunEvent::ToolProposed { call }) => self.diagnostics.observe_tool_call(call),
+            _ => {}
+        }
         if matches!(
             event,
             Some(

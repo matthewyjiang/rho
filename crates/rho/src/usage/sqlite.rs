@@ -11,7 +11,7 @@ use super::{
 /// allowing clones and independent Rho processes to write concurrently.
 #[derive(Clone, Debug)]
 pub struct SqliteUsageRecorder {
-    db: OwnerOnlySqlite,
+    pub(super) db: OwnerOnlySqlite,
 }
 
 impl SqliteUsageRecorder {
@@ -98,7 +98,7 @@ impl UsageRecorder for SqliteUsageRecorder {
     }
 }
 
-fn sqlite_integer(
+pub(super) fn sqlite_integer(
     field: &'static str,
     value: Option<u64>,
 ) -> Result<Option<i64>, UsageLedgerError> {
