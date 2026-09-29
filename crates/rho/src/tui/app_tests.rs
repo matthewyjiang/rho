@@ -72,6 +72,7 @@ pub(super) fn test_bootstrap() -> TuiBootstrap {
             session_id: None,
             recovered_messages: Vec::new(),
             open_resume_picker: false,
+            resume_launch: Default::default(),
             startup_prompt: None,
         },
         services: ApplicationServices {

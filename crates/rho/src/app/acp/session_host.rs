@@ -46,7 +46,7 @@ use crate::{
     compaction::CompactionConfig,
     config::Config,
     credential_store::{build_provider_from_config_ensuring_catalog, AppCredentialStore},
-    herdr::{HerdrReporter, HerdrState},
+    herdr::{HerdrReporter, HerdrSession, HerdrState},
     session::Session as StoredSession,
 };
 
@@ -233,11 +233,14 @@ impl SessionHost {
         let input = user_input_from_prompt(&request.prompt)?;
         self.prompt_gate.begin();
         let _guard = PromptGuard(Arc::clone(&self.prompt_gate));
-        self.herdr
+        let _ = self
+            .herdr
             .report_state(
                 HerdrState::Working,
                 None,
-                Some(self.acp_session_id.0.as_ref()),
+                Some(&HerdrSession::without_resume(
+                    self.acp_session_id.0.as_ref(),
+                )),
             )
             .await;
         let mut delegation = crate::app::headless_delegation::HeadlessDelegation::attach(
@@ -258,8 +261,15 @@ impl SessionHost {
             // next prompt, including runs still alive after shutdown timed out.
             manager.end_automatic_delivery(self.built.session.id().as_str());
         }
-        self.herdr
-            .report_state(HerdrState::Idle, None, Some(self.acp_session_id.0.as_ref()))
+        let _ = self
+            .herdr
+            .report_state(
+                HerdrState::Idle,
+                None,
+                Some(&HerdrSession::without_resume(
+                    self.acp_session_id.0.as_ref(),
+                )),
+            )
             .await;
         result
     }
@@ -388,7 +398,7 @@ impl SessionHost {
         self.prompt_gate.cancel();
         let Self { built, herdr, .. } = self;
         built.teardown().await;
-        herdr.release().await;
+        let _ = herdr.release().await;
     }
 
     fn current_model(&self) -> CurrentModel {

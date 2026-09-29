@@ -563,11 +563,7 @@ impl App {
         self.scroll_history_to_bottom();
         self.clamp_history_scroll_for_terminal(terminal)?;
         self.set_status(format!("resumed session {short_id}"));
-        self.info
-            .services
-            .herdr
-            .report_session(self.info.session.session_id.as_deref())
-            .await;
+        self.sync_herdr_session().await;
         self.reconcile_auto_classifier_gate(agent).await?;
         Ok(())
     }

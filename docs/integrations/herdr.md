@@ -11,7 +11,7 @@ Herdr support is Unix-only. On other platforms Rho ignores Herdr environment var
 | Feature | Behavior |
 | --- | --- |
 | Agent state | Rho reports `idle`, `working`, and `blocked` so Herdr can show pane status |
-| Session identity | Rho reports the active session id (and the attach run id in `rho attach`) |
+| Session restore | After a Herdr server restart, the pane reopens the same Rho session |
 | Subagent attach | Click a subagent row in the activity rail to open the in-place attach view. `rho attach <id>` remains available for another terminal. |
 | Image paste | A single-line paste of an image path becomes an attachment instead of plain text |
 | Image previews | Standard Kitty graphics, rendered natively by Herdr 0.9.2 or later |
@@ -44,6 +44,22 @@ Rho keeps Herdr in sync with the session:
 On exit, Rho releases the agent marker for the pane.
 
 Interactive sessions and `rho run` both report state when they detect Herdr. `rho attach <id>` reports state for the watched run and releases on detach.
+
+## Session restore
+
+Rho reports a resume command for each saved session, so Herdr can reopen that session in the same pane and directory after its server restarts:
+
+```text
+rho [--config <path>] [--agent <id>] [--no-system-prompt] [--no-tools] [--no-subagents] \
+  [--model <provider/model>] [--auth <profile>] [--reasoning <level>] \
+  [--permission-mode <mode>] --resume <session-id>
+```
+
+Launch flags are repeated as given. Model, auth, reasoning, and permission mode are added only where the session differs from what a plain relaunch would select (your config, plus the `--agent` definition's model when one was given), for example after another pane saves a different model. Otherwise the restored session reads them from config, exactly like a plain `rho --resume`. Rho re-reports the command when the session, its selection, or the config file changes, including while the pane is idle, and retries until Herdr accepts it. Switching to another session with `/resume` moves the pane to that session.
+
+A session that is not saved yet (before the first prompt, after `/new`, or with `--no-save`) has no resume command. Resume needs Herdr 0.9.2 or later. To turn it off, set `[session] resume_agents_on_restore = false` in Herdr's config.
+
+`rho attach`, `rho run`, and `rho acp` report state but no resume command. `rho run` and `rho acp` report under their own source, so one started from a tool inside an interactive pane cannot clear that session's resume command.
 
 ## Watch a subagent
 

@@ -18,7 +18,7 @@ use rho_sdk::model::ContextUsage;
 use rho_tools::tool_card::ToolCard;
 
 use crate::{
-    herdr::{HerdrReporter, HerdrState},
+    herdr::{HerdrReporter, HerdrSession, HerdrState},
     run_artifacts::{AttachmentEvent, AttachmentReader},
     subagent::{self, RunState, RunStatus},
 };
@@ -171,13 +171,17 @@ pub(crate) async fn run(
     let directory =
         tokio::task::spawn_blocking(move || subagent::resolve_run_directory(&lookup_id)).await??;
     let message = format!("attached to agent run {id}");
-    herdr
-        .report_state(HerdrState::Working, Some(&message), Some(&id))
+    let _ = herdr
+        .report_state(
+            HerdrState::Working,
+            Some(&message),
+            Some(&HerdrSession::without_resume(&id)),
+        )
         .await;
     let result = AttachmentApp::new(&id, directory, display)
         .run(&mut terminal, &mut events, &herdr)
         .await;
-    herdr.release().await;
+    let _ = herdr.release().await;
     result
 }
 
@@ -331,8 +335,12 @@ impl AttachmentApp {
             return;
         }
         let (state, message) = herdr_status(&self.id, status);
-        herdr
-            .report_state(state, Some(&message), Some(&self.id))
+        let _ = herdr
+            .report_state(
+                state,
+                Some(&message),
+                Some(&HerdrSession::without_resume(&self.id)),
+            )
             .await;
         *reported_state = Some(status.state);
     }

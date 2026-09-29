@@ -252,11 +252,7 @@ impl App {
                 }
                 self.reset_input_history_navigation();
                 self.ensure_session(agent)?;
-                self.info
-                    .services
-                    .herdr
-                    .report_session(self.info.session.session_id.as_deref())
-                    .await;
+                self.sync_herdr_session().await;
                 // Runtime capability notices can precede the first user prompt.
                 // They must not suppress titling the first assistant turn.
                 let generate_session_title_after_completion = !agent
@@ -277,11 +273,7 @@ impl App {
                     self.restore_turn_boundary_batch(agent, delivery.batch);
                     return Err(error);
                 }
-                self.info
-                    .services
-                    .herdr
-                    .report_session(self.info.session.session_id.as_deref())
-                    .await;
+                self.sync_herdr_session().await;
                 let failed_turn = FailedTurn {
                     input: rho_sdk::UserInput::text(delivery.model.clone()),
                     display_user: vec![delivery.transcript.display_message()],
@@ -297,11 +289,7 @@ impl App {
             }
             PromptTurnRequest::Retry(mut failed_turn) => {
                 self.ensure_session(agent)?;
-                self.info
-                    .services
-                    .herdr
-                    .report_session(self.info.session.session_id.as_deref())
-                    .await;
+                self.sync_herdr_session().await;
                 self.insert_entry(&Entry::Notice(
                     "retrying the previous goal turn without duplicating the prompt".into(),
                 ));

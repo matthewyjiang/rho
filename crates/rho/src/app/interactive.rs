@@ -89,6 +89,18 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
     let mut prompt_templates = crate::prompt_templates::discover(&cwd);
     crate::prompt_templates::merge(&mut prompt_templates, config.prompt_templates.clone());
     let theme = config.theme.clone();
+    let resume_launch = tui::ResumeLaunchOptions {
+        config: cli.config.is_some().then(|| config_path.clone()),
+        agent: cli.agent.clone(),
+        // Only `--agent` is replayed, so only its binding is part of the baseline.
+        definition: cli
+            .agent
+            .is_some()
+            .then(|| std::sync::Arc::new(agent.definition().clone())),
+        no_system_prompt: cli.no_system_prompt,
+        no_tools: cli.no_tools,
+        no_subagents: cli.no_subagents,
+    };
     let mut runtime = InteractiveRuntime::new(InteractiveRuntimeOptions {
         config: &config,
         catalog: Some(catalog),
@@ -139,6 +151,7 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
                 session_id,
                 recovered_messages,
                 open_resume_picker,
+                resume_launch,
                 startup_prompt: cli.prompt.clone(),
             },
             services: ApplicationServices {

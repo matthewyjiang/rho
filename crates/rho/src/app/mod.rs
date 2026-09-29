@@ -43,6 +43,7 @@ mod tools_prompt;
 pub(crate) mod workflow_cli;
 pub(crate) mod workflow_runtime;
 
+pub(crate) use agent_binding::relaunch_config;
 pub use automation::{AutomationExit, AutomationInterrupted};
 pub use bootstrap::run;
 pub(crate) use subagent_manager::SubagentManager;
