@@ -3,6 +3,9 @@ use std::time::{Duration, Instant};
 use crossterm::event::{Event, KeyEventKind};
 use ratatui::DefaultTerminal;
 
+use crate::herdr::{HerdrDelivery, HerdrSession};
+
+use super::herdr_resume::HerdrSyncStep;
 use super::{
     media_attach, mouse_capture, ActivityPhase, ActivityStatus, App, BackgroundCounts,
     ComposerMode, ExitReceipt, HerdrState, HerdrUserWait, InteractiveRuntime, PanelOverlay,
@@ -68,6 +71,7 @@ impl App {
                 || self.prompt_history.load_finished()
                 || agent.startup_hydrate_ready();
             needs_redraw |= self.poll_background(terminal, agent, first_frame).await?;
+            self.sync_herdr_session().await;
             needs_redraw |= background_ready;
             needs_redraw |= self.update_activity_panels(agent)?;
             needs_redraw |= self
@@ -124,6 +128,8 @@ impl App {
                 || self.questionnaire_timeout_running()
             {
                 Duration::from_millis(500)
+            } else if self.info.services.herdr.is_enabled() {
+                super::herdr_resume::HERDR_SYNC_INTERVAL
             } else {
                 Duration::from_secs(3600)
             };
@@ -328,24 +334,110 @@ impl App {
                 .is_some_and(|until| now < until)
     }
 
-    pub(super) async fn report_herdr_state(&self, state: HerdrState, message: Option<&str>) {
-        self.info
+    pub(super) async fn report_herdr_state(&mut self, state: HerdrState, message: Option<&str>) {
+        if !self.info.services.herdr.is_enabled() {
+            return;
+        }
+        let (key, session) = self.current_herdr_session();
+        self.herdr_sync.note_sent(session.as_ref());
+        let delivery = self
+            .info
             .services
             .herdr
-            .report_state(state, message, self.info.session.session_id.as_deref())
+            .report_state(state, message, session.as_ref())
             .await;
+        self.confirm_herdr_claim(key, session.as_ref(), delivery);
     }
 
-    pub(super) async fn report_herdr_working(&self) {
+    /// Claims the pane before the first frame without delaying it. The report
+    /// is built here so its `seq` precedes any report the first frame sends.
+    /// Delivery is not awaited: until a claim is confirmed,
+    /// [`Self::sync_herdr_session`] keeps claiming.
+    pub(super) fn spawn_initial_herdr_report(&mut self) {
+        let herdr = self.info.services.herdr.clone();
+        if !herdr.is_enabled() {
+            return;
+        }
+        let session = self.herdr_session();
+        let message = self.info.services.auth_unavailable.as_deref();
+        let state = if message.is_some() {
+            HerdrState::Blocked
+        } else {
+            HerdrState::Idle
+        };
+        if let Some(report) = herdr.state_report(state, message, session.as_ref()) {
+            self.herdr_sync.note_sent(session.as_ref());
+            tokio::spawn(async move {
+                let _ = herdr.send(report).await;
+            });
+        }
+    }
+
+    /// Brings Herdr in line with the session and the resume command pins:
+    /// a new, switched, or dropped session, `/model`, `/permissions`,
+    /// reasoning, or a config change from another pane. Runs every loop pass;
+    /// a failed report stays pending and is retried on the next pass.
+    pub(super) async fn sync_herdr_session(&mut self) {
+        if !self.info.services.herdr.is_enabled() {
+            return;
+        }
+        let (key, step) = self.herdr_sync_step();
+        let herdr = self.info.services.herdr.clone();
+        match step {
+            HerdrSyncStep::InSync => {}
+            HerdrSyncStep::Claim(session) => self.claim_herdr_pane(key, session).await,
+            HerdrSyncStep::Report(session) => {
+                self.herdr_sync.note_sent(Some(&session));
+                if let HerdrDelivery::Accepted = herdr.report_session(&session).await {
+                    self.accept_herdr_key(key);
+                }
+            }
+            HerdrSyncStep::Reclaim(session) => match herdr.release().await {
+                HerdrDelivery::Accepted => {
+                    self.herdr_sync.note_released();
+                    self.claim_herdr_pane(key, session).await;
+                }
+                HerdrDelivery::Failed => {}
+            },
+        }
+    }
+
+    /// Claims the pane in the current resting state. Herdr takes a resume
+    /// command on a claim like this, not on a session update before one.
+    async fn claim_herdr_pane(
+        &mut self,
+        key: super::herdr_resume::HerdrResumeKey,
+        session: Option<HerdrSession>,
+    ) {
+        let (state, message) = self.resting_herdr_state();
+        let message = message.map(str::to_string);
+        self.herdr_sync.note_sent(session.as_ref());
+        let delivery = self
+            .info
+            .services
+            .herdr
+            .report_state(state, message.as_deref(), session.as_ref())
+            .await;
+        self.confirm_herdr_claim(key, session.as_ref(), delivery);
+    }
+
+    pub(super) async fn report_herdr_working(&mut self) {
         self.report_herdr_state(HerdrState::Working, None).await;
     }
 
-    pub(super) async fn report_herdr_waiting_for_user(&self, wait: HerdrUserWait) {
+    pub(super) async fn report_herdr_waiting_for_user(&mut self, wait: HerdrUserWait) {
         self.report_herdr_state(HerdrState::Blocked, Some(wait.message()))
             .await;
     }
 
-    pub(super) async fn report_resting_herdr_state(&self) {
+    pub(super) async fn report_resting_herdr_state(&mut self) {
+        let (state, message) = self.resting_herdr_state();
+        let message = message.map(str::to_string);
+        self.report_herdr_state(state, message.as_deref()).await;
+    }
+
+    /// The state Herdr should show while no turn runs.
+    fn resting_herdr_state(&self) -> (HerdrState, Option<&str>) {
         let user_wait = match self.input_ui.composer() {
             ComposerMode::Approval(_) => Some(HerdrUserWait::Approval),
             ComposerMode::Questionnaire(_) => Some(HerdrUserWait::Questionnaire),
@@ -360,8 +452,7 @@ impl App {
             | ComposerMode::InlineChoice(_) => None,
         };
         if let Some(wait) = user_wait {
-            self.report_herdr_waiting_for_user(wait).await;
-            return;
+            return (HerdrState::Blocked, Some(wait.message()));
         }
         let goal_blocked_reason = self
             .goal
@@ -379,7 +470,7 @@ impl App {
         } else {
             HerdrState::Idle
         };
-        self.report_herdr_state(state, message).await;
+        (state, message)
     }
 
     pub(super) fn activity_status(&self) -> Option<ActivityStatus> {

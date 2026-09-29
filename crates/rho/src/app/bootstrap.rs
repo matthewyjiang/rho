@@ -107,6 +107,11 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
     cli_config::prepare_model_metadata(&config, &store, &provider_refresh).await;
     cli_config::normalize_reasoning_for_cli(&mut config, bound_reasoning_source)?;
     let herdr = HerdrReporter::from_env();
+    let headless_herdr = || {
+        herdr
+            .clone()
+            .with_source(crate::herdr::HerdrSource::Headless)
+    };
     if let Some(prompt) = automation_prompt {
         return run_automation_startup(AutomationStartup {
             prompt,
@@ -119,7 +124,7 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
             output,
             max_steps,
             timeout,
-            herdr,
+            herdr: headless_herdr(),
         })
         .await;
     }
@@ -130,7 +135,7 @@ async fn run_startup(cli: Cli) -> anyhow::Result<()> {
             cwd,
             cli,
             bound_agent,
-            herdr,
+            herdr: headless_herdr(),
         })
         .await;
     }

@@ -97,6 +97,7 @@ mod exclusive_screen;
 mod exit_receipt;
 mod goal_command;
 mod help_picker;
+mod herdr_resume;
 mod history_cache;
 mod history_soft_settings;
 mod hook_actions;
@@ -423,6 +424,8 @@ pub struct SessionBootstrap {
     /// transcript entries and drops the `Message` vec.
     pub recovered_messages: Vec<Message>,
     pub open_resume_picker: bool,
+    /// Launch options the Herdr resume command repeats.
+    pub resume_launch: ResumeLaunchOptions,
     /// Take-once CLI prompt. After the first frame, the TUI submits it as the
     /// first turn once the composer is free.
     pub startup_prompt: Option<String>,
@@ -451,6 +454,7 @@ pub(crate) use attachment::{
     run as run_attachment, translate_run_event, AttachmentDisplaySettings,
 };
 pub(crate) use exit_receipt::{print_exit_receipt, ExitReceipt};
+pub use herdr_resume::ResumeLaunchOptions;
 
 pub(crate) async fn run(
     agent: &mut InteractiveRuntime,
@@ -460,21 +464,6 @@ pub(crate) async fn run(
     Theme::initialize_from_terminal();
     Theme::apply_committed(&info.services.theme);
     let herdr = info.services.herdr.clone();
-    let initial_state = if info.services.auth_unavailable.is_some() {
-        HerdrState::Blocked
-    } else {
-        HerdrState::Idle
-    };
-    {
-        let herdr = herdr.clone();
-        let message = info.services.auth_unavailable.clone();
-        let session_id = info.session.session_id.clone();
-        tokio::spawn(async move {
-            herdr
-                .report_state(initial_state, message.as_deref(), session_id.as_deref())
-                .await;
-        });
-    }
     let result = {
         let injected = smoke_injection::after_terminal_init();
 
@@ -486,6 +475,7 @@ pub(crate) async fn run(
                     agent.mcp_catalog().clone(),
                     agent.plugins_report().clone(),
                 );
+                app.spawn_initial_herdr_report();
                 app.terminal_session = Some(TerminalSession::acquire());
                 if let Some(manager) = agent.subagents() {
                     app.subagent_inbox.bind(manager);
@@ -506,7 +496,7 @@ pub(crate) async fn run(
             Err(error) => Err(error),
         }
     };
-    herdr.release().await;
+    let _ = herdr.release().await;
     ratatui::restore();
     result
 }
@@ -619,6 +609,8 @@ struct App {
     plugins_report: crate::plugins::PluginLoadReport,
     /// In-memory `/side` aside. Survives overlay close until `/new` or resume.
     side_chat: Option<side_chat::SideChat>,
+    /// What Herdr last heard about the session, so idle changes are re-sent.
+    herdr_sync: herdr_resume::HerdrSync,
 }
 
 struct PendingSubagentQuestionnaire {

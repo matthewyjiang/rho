@@ -552,6 +552,26 @@ fn may_omit_unavailable_tool(tool: &ToolCapability, role: AgentRole) -> bool {
     }
 }
 
+/// The config a fresh launch of `definition` would run with on top of
+/// `host_config`: its model policy and reasoning applied, as startup does after
+/// CLI overrides. External-runtime and failing definitions keep `host_config`.
+pub(crate) fn relaunch_config(definition: &AgentDefinition, host_config: &Config) -> Config {
+    let AgentRuntimeSpec::Rho {
+        model, reasoning, ..
+    } = &definition.runtime
+    else {
+        return host_config.clone();
+    };
+    bind_rho_config(
+        definition.id.as_str(),
+        model,
+        *reasoning,
+        host_config,
+        &crate::credential_store::AppCredentialStore,
+    )
+    .unwrap_or_else(|_| host_config.clone())
+}
+
 fn bind_rho_config(
     agent_id: &str,
     model: &ModelPolicy,

@@ -150,6 +150,7 @@ impl App {
                 super::mcp_argument_completion::McpArgumentCompletions::default(),
             plugins_report,
             side_chat: None,
+            herdr_sync: Default::default(),
         };
         if let Some(status) = initial_status {
             app.set_status(status);

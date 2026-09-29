@@ -2,14 +2,23 @@ use serde_json::json;
 use std::{
     env,
     path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
 #[cfg(unix)]
 const MAX_RESPONSE_BYTES: u64 = 64 * 1024;
-const SOURCE: &str = "herdr:rho";
 const AGENT: &str = "rho";
+/// Herdr's `resume_argv` limits (`validate_resume_argv` in Herdr 0.9.2). Herdr
+/// rejects the whole report when they are exceeded, so Rho drops the command
+/// instead of losing the state update.
+const MAX_RESUME_ARGS: usize = 64;
+const MAX_RESUME_ARGV_BYTES: usize = 8 * 1024;
+
+/// Last `seq` sent from this process. Shared by every reporter clone so reports
+/// stay ordered however they are spawned.
+static LAST_SEQ: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HerdrReporter {
@@ -20,6 +29,30 @@ pub struct HerdrReporter {
 struct HerdrConfig {
     socket_path: PathBuf,
     pane_id: String,
+    source: HerdrSource,
+}
+
+/// Which Rho process kind is reporting. Herdr only lets a source release its
+/// own claim, so a `rho run` started from a tool inside an interactive pane
+/// cannot release the interactive session or drop its resume command.
+///
+/// Herdr reserves the `herdr:` prefix for its own integrations.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HerdrSource {
+    /// The interactive TUI and `rho attach`.
+    #[default]
+    Interactive,
+    /// `rho run` and `rho acp`.
+    Headless,
+}
+
+impl HerdrSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Interactive => "rho",
+            Self::Headless => "rho-headless",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,6 +61,52 @@ pub enum HerdrState {
     Working,
     Blocked,
 }
+
+/// The Rho session a report belongs to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HerdrSession {
+    pub id: String,
+    /// Command Herdr runs in the restored pane after a server restart to reopen
+    /// this session. `None` when the session cannot be resumed from a shell.
+    pub resume_argv: Option<Vec<String>>,
+}
+
+impl HerdrSession {
+    /// A session reference without a resume command.
+    pub fn without_resume(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            resume_argv: None,
+        }
+    }
+}
+
+/// Whether Herdr answered a report without an error. Callers that must keep
+/// Herdr in sync retry on [`Self::Failed`]; the rest ignore it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[must_use]
+pub enum HerdrDelivery {
+    Accepted,
+    Failed,
+}
+
+impl HerdrDelivery {
+    fn from_exchange(response: std::io::Result<Vec<u8>>) -> Self {
+        let accepted = response.is_ok_and(|response| {
+            serde_json::from_slice::<serde_json::Value>(&response)
+                .is_ok_and(|value| value.get("error").is_none())
+        });
+        if accepted {
+            Self::Accepted
+        } else {
+            Self::Failed
+        }
+    }
+}
+
+/// A report whose `seq` is already allocated.
+#[derive(Debug)]
+pub struct HerdrReport(serde_json::Value);
 
 impl HerdrState {
     fn as_str(self) -> &'static str {
@@ -54,8 +133,17 @@ impl HerdrReporter {
             .map(|(socket_path, pane_id)| HerdrConfig {
                 socket_path: PathBuf::from(socket_path),
                 pane_id,
+                source: HerdrSource::default(),
             });
         Self { config }
+    }
+
+    /// The same reporter under another source.
+    pub fn with_source(mut self, source: HerdrSource) -> Self {
+        if let Some(config) = &mut self.config {
+            config.source = source;
+        }
+        self
     }
 
     pub fn is_enabled(&self) -> bool {
@@ -67,67 +155,86 @@ impl HerdrReporter {
         Some(socket_is_reachable(&config.socket_path))
     }
 
+    /// Reports agent state. Carrying the session also holds the pane for Rho,
+    /// which Herdr requires before it accepts a resume command.
     pub async fn report_state(
         &self,
         state: HerdrState,
         message: Option<&str>,
-        session_id: Option<&str>,
-    ) {
-        let Some(config) = &self.config else {
-            return;
-        };
+        session: Option<&HerdrSession>,
+    ) -> HerdrDelivery {
+        match self.state_report(state, message, session) {
+            Some(report) => self.send(report).await,
+            None => HerdrDelivery::Failed,
+        }
+    }
 
+    /// Builds a state report now so its `seq` orders it against reports built
+    /// later, even when it is sent from a spawned task.
+    pub fn state_report(
+        &self,
+        state: HerdrState,
+        message: Option<&str>,
+        session: Option<&HerdrSession>,
+    ) -> Option<HerdrReport> {
+        let config = self.config.as_ref()?;
         let mut params = json!({
             "pane_id": config.pane_id,
-            "source": SOURCE,
+            "source": config.source.as_str(),
             "agent": AGENT,
             "state": state.as_str(),
+            "seq": next_seq(),
         });
         if let Some(message) = message {
             params["message"] = json!(message);
         }
-        if let Some(session_id) = session_id {
-            params["agent_session_id"] = json!(session_id);
+        if let Some(session) = session {
+            add_session_params(&mut params, session);
         }
-
-        let _ = self
-            .exchange(json_rpc_request("pane.report_agent", params))
-            .await;
+        Some(HerdrReport(json_rpc_request("pane.report_agent", params)))
     }
 
-    pub async fn report_session(&self, session_id: Option<&str>) {
-        let (Some(config), Some(session_id)) = (&self.config, session_id) else {
-            return;
-        };
-
-        let _ = self
-            .exchange(json_rpc_request(
-                "pane.report_agent_session",
-                json!({
-                    "pane_id": config.pane_id,
-                    "source": SOURCE,
-                    "agent": AGENT,
-                    "agent_session_id": session_id,
-                }),
-            ))
-            .await;
+    /// Sends a report built by [`Self::state_report`].
+    pub async fn send(&self, report: HerdrReport) -> HerdrDelivery {
+        HerdrDelivery::from_exchange(self.exchange(report.0).await)
     }
 
-    pub async fn release(&self) {
+    /// Reports a session change without changing agent state.
+    pub async fn report_session(&self, session: &HerdrSession) -> HerdrDelivery {
         let Some(config) = &self.config else {
-            return;
+            return HerdrDelivery::Failed;
         };
 
-        let _ = self
+        let mut params = json!({
+            "pane_id": config.pane_id,
+            "source": config.source.as_str(),
+            "agent": AGENT,
+            "seq": next_seq(),
+        });
+        add_session_params(&mut params, session);
+        HerdrDelivery::from_exchange(
+            self.exchange(json_rpc_request("pane.report_agent_session", params))
+                .await,
+        )
+    }
+
+    pub async fn release(&self) -> HerdrDelivery {
+        let Some(config) = &self.config else {
+            return HerdrDelivery::Failed;
+        };
+
+        let response = self
             .exchange(json_rpc_request(
                 "pane.release_agent",
                 json!({
                     "pane_id": config.pane_id,
-                    "source": SOURCE,
+                    "source": config.source.as_str(),
                     "agent": AGENT,
+                    "seq": next_seq(),
                 }),
             ))
             .await;
+        HerdrDelivery::from_exchange(response)
     }
 
     async fn exchange(&self, request: serde_json::Value) -> std::io::Result<Vec<u8>> {
@@ -150,6 +257,51 @@ impl HerdrReporter {
     }
 }
 
+fn add_session_params(params: &mut serde_json::Value, session: &HerdrSession) {
+    params["agent_session_id"] = json!(session.id);
+    match session.resume_argv.as_deref() {
+        Some(argv) if resume_argv_is_valid(argv) => params["resume_argv"] = json!(argv),
+        Some(argv) => {
+            tracing::debug!(?argv, "herdr resume command dropped: outside herdr limits");
+        }
+        None => {}
+    }
+}
+
+/// Mirrors Herdr's `resume_argv` rules: a bare command name first, no
+/// apostrophes or control characters, and bounded size.
+pub(crate) fn resume_argv_is_valid(argv: &[String]) -> bool {
+    let Some(command) = argv.first() else {
+        return false;
+    };
+    let plain_command = !command.is_empty()
+        && !command.starts_with('-')
+        && command
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'));
+    plain_command
+        && argv.len() <= MAX_RESUME_ARGS
+        && argv.iter().map(String::len).sum::<usize>() <= MAX_RESUME_ARGV_BYTES
+        && !argv
+            .iter()
+            .any(|arg| arg.contains('\'') || arg.chars().any(char::is_control))
+}
+
+/// Herdr ignores a report whose `seq` is not above the last one it accepted
+/// from this source, including across Rho restarts in the same pane. Wall-clock
+/// microseconds carry the order across processes; the counter keeps it strictly
+/// increasing within one. A backward clock step makes a new Rho process in the
+/// same pane go unheard until real time passes the old value.
+fn next_seq() -> u64 {
+    let now = u64::try_from(request_id_suffix()).unwrap_or(u64::MAX);
+    let previous = LAST_SEQ
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
+            Some(now.max(last.saturating_add(1)))
+        })
+        .unwrap_or_else(|last| last);
+    now.max(previous.saturating_add(1))
+}
+
 #[cfg(unix)]
 fn socket_is_reachable(path: &Path) -> bool {
     std::os::unix::net::UnixStream::connect(path).is_ok()
@@ -162,7 +314,7 @@ fn socket_is_reachable(_path: &Path) -> bool {
 
 fn json_rpc_request(method: &str, params: serde_json::Value) -> serde_json::Value {
     json!({
-        "id": format!("{SOURCE}:{}", request_id_suffix()),
+        "id": format!("{AGENT}:{}", request_id_suffix()),
         "method": method,
         "params": params,
     })

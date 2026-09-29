@@ -522,7 +522,7 @@ async fn run_session_with_output(
     if let Some(adapter) = jsonl.as_deref_mut() {
         adapter.set_run_context(session.id(), &workspace_root);
     }
-    startup
+    let _ = startup
         .herdr
         .report_state(HerdrState::Working, None, None)
         .await;
@@ -555,11 +555,11 @@ async fn run_session_with_output(
         ),
     }
     built.teardown().await;
-    startup
+    let _ = startup
         .herdr
         .report_state(HerdrState::Idle, None, None)
         .await;
-    startup.herdr.release().await;
+    let _ = startup.herdr.release().await;
 
     result
 }
