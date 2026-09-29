@@ -14,7 +14,7 @@ Herdr support is Unix-only. On other platforms Rho ignores Herdr environment var
 | Session identity | Rho reports the active session id (and the attach run id in `rho attach`) |
 | Subagent attach | Click a subagent row in the activity rail to open the in-place attach view. `rho attach <id>` remains available for another terminal. |
 | Image paste | A single-line paste of an image path becomes an attachment instead of plain text |
-| Image previews | Standard Kitty graphics, rendered natively by Herdr |
+| Image previews | Standard Kitty graphics, rendered natively by Herdr 0.9.2 or later |
 
 Nothing extra is required after you start Rho under Herdr.
 
@@ -55,7 +55,7 @@ Activating a subagent row, or choosing one from `/attach`, opens a read-only att
 
 Hosts such as Herdr may paste clipboard images as a filesystem path. Rho treats a single-line paste of a PNG, JPEG, GIF, or WebP path as an image attachment. Details: [attachments](/interactive-tui/attachments).
 
-In-feed image previews use standard Kitty graphics written to the pane, which Herdr renders natively. Rho does not use a Herdr-specific graphics API.
+In-feed image previews use standard Kitty graphics written to the pane, which Herdr 0.9.2 and later render natively. Rho does not use a Herdr-specific graphics API. Older Herdr releases may leave blank rows where previews should appear; upgrade Herdr to fix this.
 
 See [documents and images](/tools-workspace/documents-and-images#where-thumbnails-paint).
 

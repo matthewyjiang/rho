@@ -91,10 +91,7 @@ impl HerdrReporter {
         }
 
         let _ = self
-            .exchange(
-                json_rpc_request("pane.report_agent", params),
-                REQUEST_TIMEOUT,
-            )
+            .exchange(json_rpc_request("pane.report_agent", params))
             .await;
     }
 
@@ -104,18 +101,15 @@ impl HerdrReporter {
         };
 
         let _ = self
-            .exchange(
-                json_rpc_request(
-                    "pane.report_agent_session",
-                    json!({
-                        "pane_id": config.pane_id,
-                        "source": SOURCE,
-                        "agent": AGENT,
-                        "agent_session_id": session_id,
-                    }),
-                ),
-                REQUEST_TIMEOUT,
-            )
+            .exchange(json_rpc_request(
+                "pane.report_agent_session",
+                json!({
+                    "pane_id": config.pane_id,
+                    "source": SOURCE,
+                    "agent": AGENT,
+                    "agent_session_id": session_id,
+                }),
+            ))
             .await;
     }
 
@@ -125,25 +119,18 @@ impl HerdrReporter {
         };
 
         let _ = self
-            .exchange(
-                json_rpc_request(
-                    "pane.release_agent",
-                    json!({
-                        "pane_id": config.pane_id,
-                        "source": SOURCE,
-                        "agent": AGENT,
-                    }),
-                ),
-                REQUEST_TIMEOUT,
-            )
+            .exchange(json_rpc_request(
+                "pane.release_agent",
+                json!({
+                    "pane_id": config.pane_id,
+                    "source": SOURCE,
+                    "agent": AGENT,
+                }),
+            ))
             .await;
     }
 
-    async fn exchange(
-        &self,
-        request: serde_json::Value,
-        timeout: Duration,
-    ) -> std::io::Result<Vec<u8>> {
+    async fn exchange(&self, request: serde_json::Value) -> std::io::Result<Vec<u8>> {
         let Some(config) = &self.config else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
@@ -159,7 +146,7 @@ impl HerdrReporter {
                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, error));
             }
         };
-        exchange_payload(config.socket_path.clone(), payload, timeout).await
+        exchange_payload(config.socket_path.clone(), payload).await
     }
 }
 
@@ -193,14 +180,10 @@ fn platform_supported() -> bool {
 }
 
 #[cfg(unix)]
-async fn exchange_payload(
-    socket_path: PathBuf,
-    payload: Vec<u8>,
-    timeout: Duration,
-) -> std::io::Result<Vec<u8>> {
+async fn exchange_payload(socket_path: PathBuf, payload: Vec<u8>) -> std::io::Result<Vec<u8>> {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-    tokio::time::timeout(timeout, async move {
+    tokio::time::timeout(REQUEST_TIMEOUT, async move {
         let stream = tokio::net::UnixStream::connect(socket_path).await?;
         let (reader, mut writer) = stream.into_split();
         writer.write_all(&payload).await?;
@@ -221,11 +204,7 @@ async fn exchange_payload(
 }
 
 #[cfg(not(unix))]
-async fn exchange_payload(
-    _socket_path: PathBuf,
-    _payload: Vec<u8>,
-    _timeout: Duration,
-) -> std::io::Result<Vec<u8>> {
+async fn exchange_payload(_socket_path: PathBuf, _payload: Vec<u8>) -> std::io::Result<Vec<u8>> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "herdr socket transport is unix-only",
