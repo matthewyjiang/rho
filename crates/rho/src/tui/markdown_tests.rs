@@ -51,6 +51,14 @@ fn wraps_only_list_paragraphs_with_a_hanging_indent() {
             vec!["  12. nested items", "      hang under", "      their text"],
         ),
         (
+            "* item with *emphasis* that wraps onto the next row",
+            vec![
+                "* item with emphasis",
+                "  that wraps onto",
+                "  the next row",
+            ],
+        ),
+        (
             "## 1. Overview of the architecture",
             vec!["1. Overview of the", "architecture"],
         ),
