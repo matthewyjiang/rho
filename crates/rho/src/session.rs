@@ -22,6 +22,7 @@ mod layout;
 mod performance_benchmarks;
 mod persistence;
 pub(crate) mod recall;
+pub(crate) mod replay_points;
 pub(crate) mod search;
 mod search_evidence;
 mod search_index;

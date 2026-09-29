@@ -140,14 +140,34 @@ impl RuntimeState {
     }
 }
 
+/// Where finished compaction records go.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CompactionLedger {
+    /// The usage ledger, for `/spend` and the #1280 metrics.
+    Usage,
+    /// Nowhere. Offline replays must not mix into real usage.
+    Off,
+}
+
 #[derive(Clone, Debug)]
 pub struct RuntimeDiagnostics {
     state: Arc<RwLock<RuntimeState>>,
+    ledger: CompactionLedger,
 }
 
 impl RuntimeDiagnostics {
     pub fn new(config: &Config) -> Self {
+        Self::with_ledger(config, CompactionLedger::Usage)
+    }
+
+    /// Diagnostics whose compaction records are kept in memory only.
+    pub(crate) fn without_ledger(config: &Config) -> Self {
+        Self::with_ledger(config, CompactionLedger::Off)
+    }
+
+    fn with_ledger(config: &Config, ledger: CompactionLedger) -> Self {
         Self {
+            ledger,
             state: Arc::new(RwLock::new(RuntimeState {
                 identity: RuntimeIdentity::new(&config.provider, &config.model, config.reasoning),
                 context: None,
@@ -158,6 +178,13 @@ impl RuntimeDiagnostics {
                 config: config.into(),
                 hooks: None,
             })),
+        }
+    }
+
+    fn save_compaction(&self, record: Option<CompactionRecord>) {
+        match self.ledger {
+            CompactionLedger::Usage => crate::usage::save_compaction(record),
+            CompactionLedger::Off => {}
         }
     }
 
@@ -176,7 +203,7 @@ impl RuntimeDiagnostics {
         state.compaction = None;
         let unfinished = std::mem::take(&mut state.compaction_metrics).take_unfinished();
         drop(state);
-        crate::usage::save_compaction(unfinished);
+        self.save_compaction(unfinished);
     }
 
     pub fn update_agent(&self, id: &str, fingerprint: &str) {
@@ -198,7 +225,7 @@ impl RuntimeDiagnostics {
         state.compaction = None;
         let unfinished = std::mem::take(&mut state.compaction_metrics).take_unfinished();
         drop(state);
-        crate::usage::save_compaction(unfinished);
+        self.save_compaction(unfinished);
     }
 
     pub(crate) fn record_compaction_context(
@@ -232,8 +259,13 @@ impl RuntimeDiagnostics {
     ) {
         let saved = record.clone();
         let superseded = self.write().compaction_metrics.record(record, removed);
-        crate::usage::save_compaction(superseded);
-        crate::usage::save_compaction(Some(saved));
+        self.save_compaction(superseded);
+        self.save_compaction(Some(saved));
+    }
+
+    /// The latest compactor call's record.
+    pub(crate) fn last_compaction(&self) -> Option<CompactionRecord> {
+        self.read().compaction_metrics.last().cloned()
     }
 
     /// The SDK committed the latest compactor result; start its follow-up.
@@ -247,13 +279,13 @@ impl RuntimeDiagnostics {
             .write()
             .compaction_metrics
             .observe_prompt_tokens(tokens);
-        crate::usage::save_compaction(finished);
+        self.save_compaction(finished);
     }
 
     /// Feeds a proposed tool call to the follow-up.
     pub(crate) fn observe_tool_call(&self, call: &rho_sdk::model::ToolCall) {
         let finished = self.write().compaction_metrics.observe_tool_call(call);
-        crate::usage::save_compaction(finished);
+        self.save_compaction(finished);
     }
 
     pub(crate) fn record_idle_compaction(&self, check: IdleCompactionCheck) {
