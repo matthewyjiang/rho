@@ -1,5 +1,27 @@
 # Changelog
 
+## [2.17.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.16.0...rho-coding-agent-v2.17.0) (2026-09-29)
+
+
+### Features
+
+* **herdr:** reopen the same rho session after a herdr server restart ([#1334](https://github.com/matthewyjiang/rho/issues/1334)) ([e17c0bc](https://github.com/matthewyjiang/rho/commit/e17c0bc5fe150b30465f9cc9f8162b46b8a2c10b))
+
+
+### Bug Fixes
+
+* **compaction:** save partial re-read metrics when the session exits ([#1331](https://github.com/matthewyjiang/rho/issues/1331)) ([4d19596](https://github.com/matthewyjiang/rho/commit/4d19596463b980f8025065c5cc27b49d1841af34))
+* **herdr:** restore kitty image previews under herdr 0.9.2 ([#1333](https://github.com/matthewyjiang/rho/issues/1333)) ([87258aa](https://github.com/matthewyjiang/rho/commit/87258aa2fa6869b6269db302f95b508b1b9ac589))
+* **tests:** stop test runs from leaking dirs and files into /tmp ([#1336](https://github.com/matthewyjiang/rho/issues/1336)) ([415ce61](https://github.com/matthewyjiang/rho/commit/415ce61ac57af9b8fde8cd4a0609e414dca581ab))
+* **tui:** keep wrapped list items indented under their text ([#1337](https://github.com/matthewyjiang/rho/issues/1337)) ([64c0a65](https://github.com/matthewyjiang/rho/commit/64c0a65f811b7af93adc7639f895bd55c00d01a8))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.12.0 to 2.13.0
+
 ## [2.16.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.15.0...rho-coding-agent-v2.16.0) (2026-09-29)
 
 

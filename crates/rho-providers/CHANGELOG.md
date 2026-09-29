@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.13.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.12.0...rho-providers-v2.13.0) (2026-09-29)
+
+
+### Features
+
+* **codex:** add gpt-6.1-sol with fast mode ([#1335](https://github.com/matthewyjiang/rho/issues/1335)) ([5ece39d](https://github.com/matthewyjiang/rho/commit/5ece39da6a935b600cd4c9ae0a595c6732bc14c4))
+
+
+### Bug Fixes
+
+* **tests:** stop test runs from leaking dirs and files into /tmp ([#1336](https://github.com/matthewyjiang/rho/issues/1336)) ([415ce61](https://github.com/matthewyjiang/rho/commit/415ce61ac57af9b8fde8cd4a0609e414dca581ab))
+
 ## [2.12.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.11.0...rho-providers-v2.12.0) (2026-09-29)
 
 
