@@ -68,7 +68,7 @@ jobs:
           echo "name=arch-package-${APP_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout release tag
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.app-tag }}
           persist-credentials: false
@@ -89,7 +89,7 @@ jobs:
           runuser -u builder -- bash -lc "cd '$GITHUB_WORKSPACE' && makepkg -s --noconfirm --nocheck"
 
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.artifact.outputs.name }}
           path: ./*.pkg.tar.zst
@@ -119,7 +119,7 @@ jobs:
           pacman -Sy --noconfirm base-devel git pacman-contrib
 
       - name: Checkout publish helper
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Use the workflow revision, not the package tag, so recovery keeps the
           # latest publish helper even when packaging an older tag.
@@ -129,13 +129,13 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Download package artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ needs.build.outputs.artifact-name }}
           path: packages
 
       - name: Checkout mjiang-extras
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: matthewyjiang/mjiang-extras
           token: ${{ secrets.MJIANG_EXTRAS_PUSH_TOKEN }}
