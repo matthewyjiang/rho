@@ -24,8 +24,12 @@ use crate::{
     agent::{AgentCapabilities, ToolCapability},
     app::policy::AppPolicy,
     compaction::CompactionConfig,
+    compaction_metrics::{
+        CompactionRecord, CompactionRunOutcome, CompactionTier, CompactionTriggerKind,
+        RecordIdentity, RereadStats, ToolFingerprint, REREAD_WINDOW_TOOL_CALLS,
+    },
     config::Config,
-    diagnostics::RuntimeDiagnostics,
+    diagnostics::{CompactionSave, RuntimeDiagnostics},
     permission::{PermissionMode, WriteAuthority},
     session::Session as StoredSession,
     tools::sdk_registry::{AppToolSet, DelegationConfig, ToolSetOptions},
@@ -1229,4 +1233,73 @@ async fn advisor_notices_name_the_reviewer_model_including_a_model_only_change()
         .unwrap();
     assert_eq!(unchanged, None);
     assert_eq!(interactive.history().len(), history_after_enable + 1);
+}
+
+fn completed_compaction() -> CompactionRecord {
+    CompactionRecord {
+        identity: RecordIdentity::default(),
+        outcome: CompactionRunOutcome::Completed,
+        trigger: CompactionTriggerKind::Manual,
+        tier: Some(CompactionTier::Native),
+        request_path: None,
+        model: None,
+        elided_tool_results: 3,
+        context_tokens: 1_000,
+        prompt_tokens: None,
+        output_tokens: None,
+        cache_read_tokens: None,
+        cost_usd_micros: None,
+        latency_ms: 1,
+        next_prompt_tokens: None,
+        reread: None,
+    }
+}
+
+// Covers: quitting before the re-read window fills must hand the partial
+// counts to the synchronous ledger write. The deferred save can be dropped
+// when the process exits.
+// Owner: interactive runtime shutdown
+#[tokio::test]
+async fn shutdown_saves_a_partial_reread_window_inline() {
+    let mut interactive = test_runtime(Vec::new()).await;
+    let reread = rho_sdk::model::ToolCall {
+        id: "read".into(),
+        name: "read_file".into(),
+        arguments: serde_json::json!({ "path": "src/lib.rs" }),
+    };
+    let removed = ToolFingerprint::of(&reread).expect("read_file path");
+    interactive.diagnostics.record_compaction(
+        completed_compaction(),
+        std::collections::HashSet::from([removed]),
+    );
+    interactive.diagnostics.compaction_committed();
+    interactive.diagnostics.observe_tool_call(&reread);
+    interactive.diagnostics.observe_prompt_tokens(Some(500));
+
+    assert!(interactive
+        .diagnostics
+        .captured_compactions()
+        .iter()
+        .all(|save| save.save == CompactionSave::Deferred));
+
+    interactive.shutdown().await;
+
+    let inline = interactive
+        .diagnostics
+        .captured_compactions()
+        .into_iter()
+        .filter(|save| save.save == CompactionSave::Inline)
+        .map(|save| save.record)
+        .collect::<Vec<_>>();
+    let expected = CompactionRecord {
+        next_prompt_tokens: Some(500),
+        reread: Some(RereadStats {
+            window: REREAD_WINDOW_TOOL_CALLS,
+            tool_calls: 1,
+            repeated: 1,
+            tracked: 1,
+        }),
+        ..completed_compaction()
+    };
+    assert_eq!(inline, vec![expected]);
 }

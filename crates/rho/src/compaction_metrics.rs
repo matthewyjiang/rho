@@ -144,7 +144,7 @@ pub(crate) struct RereadStats {
     /// Tool calls this record watches, [`REREAD_WINDOW_TOOL_CALLS`].
     pub window: u32,
     /// Tool calls seen so far, at most `window`. Lower than `window` when a
-    /// later compaction or session change cut the window short.
+    /// later compaction, a session change, or process exit cut the window short.
     pub tool_calls: u32,
     /// Seen calls that repeat a removed `read_file` path or shell command.
     pub repeated: u32,
@@ -354,8 +354,9 @@ impl CompactionMetrics {
         self.take_finished()
     }
 
-    /// Ends any follow-up in progress, for a session change. Returns the
-    /// record if its follow-up was cut short.
+    /// Ends any follow-up in progress. Returns the record when its follow-up
+    /// was cut short, so a session change or process exit can save the partial
+    /// counts.
     pub(crate) fn take_unfinished(&mut self) -> Option<CompactionRecord> {
         let unfinished = (self.phase == Phase::Following)
             .then(|| self.last.clone())

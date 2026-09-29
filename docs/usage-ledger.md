@@ -39,7 +39,7 @@ All token and cost fields are independently nullable. `NULL` means the provider 
 
 ## Compaction events
 
-`compaction_events` has one row per compactor call, including failed and cancelled ones, for comparing compaction tiers. The provider requests a compaction sends also appear in `usage_events` with purpose `compaction`. Rho inserts the row when the compactor returns. In the interactive TUI it fills `next_prompt_tokens` once the next response reports usage, and the `reread_*` columns once the window ends. Every other column is written once.
+`compaction_events` has one row per compactor call, including failed and cancelled ones, for comparing compaction tiers. The provider requests a compaction sends also appear in `usage_events` with purpose `compaction`. Rho inserts the row when the compactor returns. In the interactive TUI it fills `next_prompt_tokens` once the next response reports usage, and the `reread_*` columns when the window ends or the session exits with the window still open. A `reread_tool_calls` below `reread_window` is a partial window. Every other column is written once.
 
 | Column | Semantics |
 | --- | --- |
@@ -57,12 +57,12 @@ All token and cost fields are independently nullable. `NULL` means the provider 
 | `latency_ms` | Wall-clock duration of the compactor call. |
 | `next_prompt_tokens` | First provider-reported prompt size after the commit. |
 | `reread_window` | Tool calls watched after the commit, currently 24. |
-| `reread_tool_calls` | Tool calls seen, at most `reread_window`. Lower when a later compaction or session change ended the window early. |
+| `reread_tool_calls` | Tool calls seen, at most `reread_window`. Lower when a later compaction, a session change, or exiting Rho ended the window early. |
 | `reread_repeated` | Seen calls that repeat a `read_file` path or shell command whose result the compaction removed. |
 | `reread_tracked` | Distinct removed `read_file` paths and shell commands being watched. |
 | `rho_version` | Rho version that wrote the row. |
 
-The follow-up columns are `NULL` when they were never collected: for a failed compaction, in headless and ACP runs, or, for the `reread_*` columns, when Rho exited before the window ended.
+The follow-up columns are `NULL` when they were never collected: a failed or cancelled compaction, a headless or ACP run, or an interactive session that exits before the SDK commits the compaction. After a commit, exiting mid-window writes the partial `reread_*` counts instead of leaving them `NULL`.
 
 ## Privacy
 

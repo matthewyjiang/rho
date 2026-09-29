@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::sync::Mutex;
 use std::sync::{Arc, RwLock};
 
 use serde::Serialize;
@@ -149,10 +151,29 @@ enum CompactionLedger {
     Off,
 }
 
+/// Whether a ledger write has to finish before the caller continues.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CompactionSave {
+    /// Queued off the async runtime. May not finish if the process exits.
+    Deferred,
+    /// Runs to completion on the caller. Required on shutdown.
+    Inline,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CapturedCompaction {
+    pub(crate) save: CompactionSave,
+    pub(crate) record: CompactionRecord,
+}
+
 #[derive(Clone, Debug)]
 pub struct RuntimeDiagnostics {
     state: Arc<RwLock<RuntimeState>>,
     ledger: CompactionLedger,
+    /// Records handed to the ledger during tests. Production saves skip this.
+    #[cfg(test)]
+    saves: Arc<Mutex<Vec<CapturedCompaction>>>,
 }
 
 impl RuntimeDiagnostics {
@@ -168,6 +189,8 @@ impl RuntimeDiagnostics {
     fn with_ledger(config: &Config, ledger: CompactionLedger) -> Self {
         Self {
             ledger,
+            #[cfg(test)]
+            saves: Arc::new(Mutex::new(Vec::new())),
             state: Arc::new(RwLock::new(RuntimeState {
                 identity: RuntimeIdentity::new(&config.provider, &config.model, config.reasoning),
                 context: None,
@@ -182,9 +205,45 @@ impl RuntimeDiagnostics {
     }
 
     fn save_compaction(&self, record: Option<CompactionRecord>) {
-        match self.ledger {
-            CompactionLedger::Usage => crate::usage::save_compaction(record),
-            CompactionLedger::Off => {}
+        self.persist(record, CompactionSave::Deferred);
+    }
+
+    /// Writes a follow-up that is still open so quitting mid-window keeps the
+    /// partial re-read counts. The write is inline: the usual save is
+    /// `spawn_blocking` and can be dropped when the process exits.
+    pub(crate) fn flush_unfinished_compaction(&self) {
+        let unfinished = self.write().compaction_metrics.take_unfinished();
+        self.persist(unfinished, CompactionSave::Inline);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn captured_compactions(&self) -> Vec<CapturedCompaction> {
+        self.saves
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    fn persist(&self, record: Option<CompactionRecord>, save: CompactionSave) {
+        let Some(record) = record else {
+            return;
+        };
+        #[cfg(test)]
+        self.saves
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(CapturedCompaction {
+                save,
+                record: record.clone(),
+            });
+        match (self.ledger, save) {
+            (CompactionLedger::Off, _) => {}
+            (CompactionLedger::Usage, CompactionSave::Deferred) => {
+                crate::usage::save_compaction(Some(record));
+            }
+            (CompactionLedger::Usage, CompactionSave::Inline) => {
+                crate::usage::save_compaction_inline(Some(record));
+            }
         }
     }
 

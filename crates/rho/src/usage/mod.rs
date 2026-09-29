@@ -10,7 +10,7 @@ pub(crate) mod report;
 mod sdk;
 mod sqlite;
 
-pub(crate) use compaction::save_compaction;
+pub(crate) use compaction::{save_compaction, save_compaction_inline};
 pub(crate) use model_request::{
     send_recorded, send_recorded_observing, send_recorded_with, RecordedRequest,
 };
