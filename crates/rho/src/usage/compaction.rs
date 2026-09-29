@@ -18,29 +18,42 @@ pub(crate) fn save_compaction(record: Option<CompactionRecord>) {
     if cfg!(test) {
         return;
     }
-    let save = move || {
-        let recorder = DEFAULT_RECORDER.get_or_init(|| {
-            SqliteUsageRecorder::at_default_path()
-                .inspect_err(|error| tracing::warn!(%error, "compaction metrics are unavailable"))
-                .ok()
-        });
-        if let Some(recorder) = recorder {
-            if let Err(error) = recorder.record_compaction(&record) {
-                tracing::warn!(%error, "could not record compaction metrics");
-            }
-        }
-    };
     match tokio::runtime::Handle::try_current() {
-        Ok(runtime) => drop(runtime.spawn_blocking(save)),
-        Err(_) => save(),
+        Ok(runtime) => drop(runtime.spawn_blocking(move || write_compaction(record))),
+        Err(_) => write_compaction(record),
+    }
+}
+
+/// Saves `record` before the caller continues. Shutdown uses this because a
+/// `spawn_blocking` task may not run before the process exits.
+pub(crate) fn save_compaction_inline(record: Option<CompactionRecord>) {
+    let Some(record) = record else {
+        return;
+    };
+    if cfg!(test) {
+        return;
+    }
+    write_compaction(record);
+}
+
+fn write_compaction(record: CompactionRecord) {
+    let recorder = DEFAULT_RECORDER.get_or_init(|| {
+        SqliteUsageRecorder::at_default_path()
+            .inspect_err(|error| tracing::warn!(%error, "compaction metrics are unavailable"))
+            .ok()
+    });
+    if let Some(recorder) = recorder {
+        if let Err(error) = recorder.record_compaction(&record) {
+            tracing::warn!(%error, "could not record compaction metrics");
+        }
     }
 }
 
 impl SqliteUsageRecorder {
     /// Inserts `record`, or fills in follow-up fields of an existing row.
     ///
-    /// A record is written when the compactor returns, again when the next
-    /// prompt size is known, and again when its re-read window ends. Writes
+    /// A record is written when the compactor returns, when the next prompt
+    /// size is known, and when its re-read window ends or is cut short. Writes
     /// may land in any order, so each follow-up column keeps its first
     /// non-null value and every other column never changes.
     pub(crate) fn record_compaction(

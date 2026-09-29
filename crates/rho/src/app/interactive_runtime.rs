@@ -36,6 +36,8 @@ mod mcp;
 mod provider;
 #[path = "interactive_runtime_hooks.rs"]
 mod session_hooks;
+#[path = "interactive_runtime_shutdown.rs"]
+mod shutdown;
 #[path = "interactive_runtime_start.rs"]
 mod start;
 #[path = "interactive_runtime_startup.rs"]
@@ -698,23 +700,6 @@ impl InteractiveRuntime {
                 Err(error)
             }
         }
-    }
-
-    pub(crate) async fn shutdown(&mut self) {
-        if self.runs.is_active() {
-            debug_assert_eq!(
-                active_run_disposition(ActiveRunCommand::Quit),
-                ActiveRunDisposition::CancelAndWait
-            );
-            self.cancel();
-            let _ = self.finish_run().await;
-        }
-        // Release the model before the sessions close, so a late server request
-        // finds nothing bound rather than a provider on its way out.
-        self.mcp_sampling.unbind();
-        self.runtime.shutdown();
-        self.drain_hooks().await;
-        self.tools.shutdown().await;
     }
 
     pub(crate) fn has_tool(&self, name: &str) -> bool {
