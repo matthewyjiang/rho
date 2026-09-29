@@ -12,9 +12,10 @@ use super::{
     storage::{self, StoredItem, WebAccessStore},
 };
 
+/// Context for calls that are rejected before touching the workspace, so no private cwd is needed.
 fn test_context() -> ToolContext {
     ToolContext {
-        cwd: tempfile::tempdir().unwrap().keep(),
+        cwd: std::env::temp_dir(),
         max_output_bytes: 12000,
     }
 }

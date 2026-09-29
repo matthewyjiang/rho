@@ -715,12 +715,27 @@ pub(super) fn test_cache_dir() -> Option<PathBuf> {
     TEST_CACHE_DIR.with(|path| path.borrow().clone())
 }
 
+/// Per-process cache for tests that do not install their own override.
+///
+/// The dir outlives every test in the binary, so no `TempDir` guard can own it;
+/// an exit hook removes it instead of leaking one dir into `/tmp` per run.
 #[cfg(test)]
 fn default_test_cache_dir() -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "rho-provider-models-default-test-cache-{}",
-        std::process::id()
-    ))
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    extern "C" fn remove_dir() {
+        if let Some(dir) = DIR.get() {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+    DIR.get_or_init(|| {
+        // SAFETY: `remove_dir` is a plain extern "C" fn that only touches an initialized static.
+        unsafe { libc::atexit(remove_dir) };
+        std::env::temp_dir().join(format!(
+            "rho-provider-models-default-test-cache-{}",
+            std::process::id()
+        ))
+    })
+    .clone()
 }
 
 #[doc(hidden)]
