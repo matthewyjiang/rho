@@ -52,6 +52,7 @@ Environment variables are CI/development escape hatches and override stored cred
 Codex OAuth uses this static model allowlist rather than a refreshable API list:
 
 - `gpt-6-astra` (default; reasoning effort `low` through `max`)
+- `gpt-6.1-sol`
 - `gpt-6-sol`
 - `gpt-6-luna`
 - `gpt-5.6-sol`
