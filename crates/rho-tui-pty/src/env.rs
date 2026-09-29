@@ -69,6 +69,7 @@ impl IsolatedHome {
         let rho_dir = home.join(".rho");
         fs::create_dir_all(&rho_dir)?;
         fs::create_dir_all(&workspace)?;
+        fs::create_dir_all(temp.path().join("tmp"))?;
         let config_path = rho_dir.join("config.toml");
         fs::write(
             &config_path,
@@ -113,6 +114,12 @@ impl RhoLaunchPlan {
     pub fn matrix(binary: impl Into<PathBuf>, home: &IsolatedHome, size: PtySize) -> Self {
         let mut env = default_clean_env();
         env.push(("HOME".into(), home.home.display().to_string()));
+        // Child temp files (installer logs, recovery drafts) die with the isolated home.
+        // Later pairs win, overriding the host TMPDIR kept by default_clean_env.
+        env.push((
+            "TMPDIR".into(),
+            home.path().join("tmp").display().to_string(),
+        ));
         // Windows home/config discovery must not fall back to the real profile.
         #[cfg(windows)]
         for (key, path) in [

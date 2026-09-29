@@ -37,7 +37,8 @@ impl Fixture {
         self
     }
 
-    fn engine(self) -> Arc<HookEngine> {
+    /// Returns the engine with its home dir; hold the `TempDir` for the test's lifetime.
+    fn engine(self) -> (TempDir, Arc<HookEngine>) {
         std::fs::write(
             self.home.path().join("hooks.toml"),
             format!("version = 1\n\n{}", self.entries.join("\n")),
@@ -45,9 +46,10 @@ impl Fixture {
         .unwrap();
         let catalog =
             HookCatalog::discover(Some(self.home.path()), None, ProjectTrust::Untrusted).unwrap();
-        // The TempDir must outlive the engine, so leak it for the test's lifetime.
-        std::mem::forget(self.home);
-        Arc::new(HookEngine::new(catalog, HookPayloadBounds::default()))
+        (
+            self.home,
+            Arc::new(HookEngine::new(catalog, HookPayloadBounds::default())),
+        )
     }
 }
 
@@ -73,7 +75,7 @@ async fn decide(engine: Arc<HookEngine>) -> HookDecision {
 
 #[tokio::test]
 async fn no_matching_hook_lets_the_call_continue() {
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook("post", "after_tool_use", "5s", "true")
         .engine();
 
@@ -82,7 +84,7 @@ async fn no_matching_hook_lets_the_call_continue() {
 
 #[tokio::test]
 async fn a_valid_continue_lets_the_call_proceed() {
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook("gate", "before_tool_use", "10s", CONTINUE)
         .engine();
 
@@ -92,7 +94,7 @@ async fn a_valid_continue_lets_the_call_proceed() {
 
 #[tokio::test]
 async fn a_valid_deny_stops_the_call_and_names_the_hook() {
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook("gate", "before_tool_use", "10s", DENY)
         .engine();
 
@@ -107,7 +109,7 @@ async fn a_valid_deny_stops_the_call_and_names_the_hook() {
 
 #[tokio::test]
 async fn hooks_run_in_configured_order_and_the_first_denial_wins() {
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook("first", "before_tool_use", "10s", CONTINUE)
         .hook("second", "before_tool_use", "10s", DENY)
         .hook("third", "before_tool_use", "10s", DENY)
@@ -132,7 +134,7 @@ async fn hooks_run_in_configured_order_and_the_first_denial_wins() {
 
 #[tokio::test]
 async fn a_timeout_denies_and_says_so() {
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook("slow", "before_tool_use", "1s", "sleep 30")
         .engine();
 
@@ -145,7 +147,7 @@ async fn a_timeout_denies_and_says_so() {
 
 #[tokio::test]
 async fn a_crash_denies_and_reports_the_exit_status() {
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook(
             "broken",
             "before_tool_use",
@@ -167,7 +169,7 @@ async fn a_crash_denies_and_reports_the_exit_status() {
 
 #[tokio::test]
 async fn malformed_output_denies_rather_than_continuing() {
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook("garbled", "before_tool_use", "10s", "echo not-json")
         .engine();
 
@@ -183,7 +185,7 @@ async fn malformed_output_denies_rather_than_continuing() {
 
 #[tokio::test]
 async fn silence_denies_rather_than_continuing() {
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook("silent", "before_tool_use", "10s", "true")
         .engine();
 
@@ -198,7 +200,7 @@ async fn silence_denies_rather_than_continuing() {
 
 #[tokio::test]
 async fn a_wrong_schema_version_denies() {
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook(
             "future",
             "before_tool_use",
@@ -218,7 +220,7 @@ async fn a_wrong_schema_version_denies() {
 
 #[tokio::test]
 async fn a_nonzero_exit_that_still_writes_a_valid_deny_is_honored() {
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook(
             "strict",
             "before_tool_use",
@@ -237,7 +239,7 @@ async fn a_nonzero_exit_that_still_writes_a_valid_deny_is_honored() {
 async fn a_reload_cannot_change_the_hook_set_midway_through_a_dispatch() {
     use std::{future::Future, task::Poll};
 
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook("gate", "before_tool_use", "10s", DENY)
         .engine();
     let replacement = HookCatalog::default();
@@ -262,7 +264,7 @@ async fn a_reload_cannot_change_the_hook_set_midway_through_a_dispatch() {
 
 #[tokio::test]
 async fn an_observational_failure_is_recorded_but_never_denies() {
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook("post", "after_tool_use", "10s", "exit 4")
         .engine();
     let (observer, worker) =
@@ -279,7 +281,7 @@ async fn an_observational_failure_is_recorded_but_never_denies() {
 
 #[tokio::test]
 async fn an_observational_success_is_recorded() {
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook("post", "after_tool_use", "10s", "cat > /dev/null")
         .engine();
     let (observer, worker) =
@@ -298,7 +300,7 @@ async fn an_observational_success_is_recorded() {
 async fn workflow_hook_failure_and_output_do_not_return_to_the_caller() {
     let fixture = Fixture::new();
     let recorded = fixture.home.path().join("workflow-event.json");
-    let engine = fixture
+    let (_home, engine) = fixture
         .hook(
             "workflow",
             "workflow_node_finished",
@@ -367,7 +369,7 @@ async fn observational_handlers_are_isolated_from_each_other() {
         .unwrap()
         .success());
     let signal = signal.display();
-    let engine = fixture
+    let (_home, engine) = fixture
         .hook(
             "waiting",
             "after_tool_use",
@@ -404,7 +406,7 @@ async fn observational_handlers_are_isolated_from_each_other() {
 
 #[tokio::test]
 async fn an_event_no_hook_matches_records_nothing() {
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook("post", "after_tool_use", "10s", "true")
         .engine();
     let (observer, worker) =
@@ -421,7 +423,7 @@ async fn an_event_no_hook_matches_records_nothing() {
 // Owner: host observational dispatcher.
 #[tokio::test]
 async fn drain_cancels_the_worker_after_its_grace_expires() {
-    let engine = Fixture::new()
+    let (_home, engine) = Fixture::new()
         .hook("post", "after_tool_use", "10s", "sleep 10")
         .engine();
     let cancellation = rho_sdk::CancellationToken::new();
