@@ -126,7 +126,6 @@ pub(super) fn test_app() -> App {
     App::new_with_credentials(
         test_bootstrap(),
         store,
-        crate::herdr::HerdrGraphicsCapability::NotHerdr,
         crate::tools::mcp::McpSessionReport::default(),
         crate::tools::mcp::McpCatalog::default(),
         crate::plugins::PluginLoadReport::default(),

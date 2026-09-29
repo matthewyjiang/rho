@@ -461,13 +461,10 @@ impl super::App {
 /// sessions are kept on the text fallback because terminal-specific variables
 /// can describe a previous client rather than the active attachment.
 ///
-/// Under Herdr, Ghostty/Kitty environment variables describe the outer host
-/// terminal. Herdr intercepts Kitty sequences and only paints them when the
-/// active client reports cell metrics. When that path is unavailable, Rho keeps
-/// previews on halfblocks so reserved feed rows are not left blank.
-pub(super) fn picker_from_environment(
-    herdr_graphics: crate::herdr::HerdrGraphicsCapability,
-) -> Option<Picker> {
+/// Under Herdr, Ghostty/Kitty variables describe the outer host terminal.
+/// Herdr renders standard Kitty graphics from pane PTYs natively and reports
+/// pixel sizes through the pane winsize, so it takes the same path.
+pub(super) fn picker_from_environment() -> Option<Picker> {
     let in_tmux = std::env::var_os("TMUX").is_some()
         || std::env::var("TERM_PROGRAM").is_ok_and(|value| value.eq_ignore_ascii_case("tmux"));
     let host_supports_kitty = kitty_graphics_environment(
@@ -477,25 +474,8 @@ pub(super) fn picker_from_environment(
         std::env::var("TERM_PROGRAM").ok().as_deref(),
         std::env::var("TERM").ok().as_deref(),
     );
-    picker_for_environment(host_supports_kitty, herdr_graphics)
-}
-
-pub(super) fn picker_for_environment(
-    host_supports_kitty: bool,
-    herdr_graphics: crate::herdr::HerdrGraphicsCapability,
-) -> Option<Picker> {
-    if !host_supports_kitty {
-        return None;
-    }
-    Some(match herdr_graphics {
-        crate::herdr::HerdrGraphicsCapability::Unpaintable => Picker::halfblocks(),
-        crate::herdr::HerdrGraphicsCapability::Paintable { width, height } => {
-            kitty_picker(FontSize::new(width, height))
-        }
-        crate::herdr::HerdrGraphicsCapability::NotHerdr => {
-            kitty_picker(font_size_from_winsize().unwrap_or(FALLBACK_KITTY_FONT))
-        }
-    })
+    host_supports_kitty
+        .then(|| kitty_picker(font_size_from_winsize().unwrap_or(FALLBACK_KITTY_FONT)))
 }
 
 /// `Picker::halfblocks()` default. Used for native Kitty when the terminal
@@ -505,8 +485,8 @@ const FALLBACK_KITTY_FONT: FontSize = FontSize::new(10, 20);
 
 fn kitty_picker(font: FontSize) -> Picker {
     // `from_fontsize` is deprecated in favor of `from_query_stdio`, but the
-    // stdio query needs raw mode and cannot see through Herdr's PTY. It is the
-    // only constructor that accepts externally known cell metrics.
+    // stdio query needs raw mode. It is the only constructor that accepts
+    // externally known cell metrics.
     #[allow(deprecated)]
     let mut picker = Picker::from_fontsize(font);
     picker.set_protocol_type(ProtocolType::Kitty);
