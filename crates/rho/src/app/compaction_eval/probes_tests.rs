@@ -32,6 +32,7 @@ fn references_come_from_the_history() {
         Message::user_text("fix the parser, keep the public API"),
         // Host notifications are not user requests.
         Message::user_text("[process notification]\n\nProcess status:\nexited"),
+        Message::user_text("[advisor mode on]\n\nThe `advisor` tool is now available."),
         // A failed exploration call is not an error to remember.
         call("0", "bash", json!({"command": "grep -n missing src"})),
         result("0", false, "exit 1"),
@@ -97,6 +98,8 @@ fn path_recall_matches_path_suffixes() {
         ("both relative", "src/lib.rs\nsrc/new.rs", 1.0),
         ("absolute", "/home/me/repo/src/new.rs", 0.5),
         ("bare file name", "lib.rs", 0.0),
+        ("longer file name", "src/newer.rs and notsrc/lib.rs", 0.0),
+        ("quoted in prose", "Edited `src/lib.rs`.", 0.5),
         ("unknown", "I do not know", 0.0),
     ];
 
@@ -120,6 +123,8 @@ fn check_commands_are_invocations_not_words() {
         ("git diff --check && git diff", false),
         ("git commit -m 'fix: make tests pass'", false),
         ("gh pr checks 12", false),
+        ("npm run dev", false),
+        ("npm run test -- --watch=false", true),
         (
             "git commit -F - <<'EOF'\nran python3 scripts/validate.py full\nEOF",
             false,

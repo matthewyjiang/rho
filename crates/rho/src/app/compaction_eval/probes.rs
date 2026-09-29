@@ -16,7 +16,7 @@ use serde::Serialize;
 use crate::history_message::HistoryMessage;
 
 /// Bump when a question, a reference, or scoring changes.
-pub(super) const PROBE_SET_VERSION: u32 = 3;
+pub(super) const PROBE_SET_VERSION: u32 = 4;
 /// Most recent user messages and failed tool results given to the judge.
 /// Enough to cover a long session without a huge judge prompt.
 const MAX_REFERENCE_ITEMS: usize = 8;
@@ -168,16 +168,29 @@ pub(super) fn references(history: &[Message]) -> BTreeMap<Probe, Reference> {
 }
 
 /// Fraction of `paths` the answer names. A path counts when the answer holds
-/// its last two components, so absolute and relative spellings both match.
+/// its last two components as a whole path token, so absolute and relative
+/// spellings both match but `data.rs` does not match `a.rs`.
 pub(super) fn path_recall(paths: &[String], answer: &str) -> f64 {
     if paths.is_empty() {
         return 0.0;
     }
     let found = paths
         .iter()
-        .filter(|path| answer.contains(&path_suffix(path)))
+        .filter(|path| names_path(answer, &path_suffix(path)))
         .count();
     found as f64 / paths.len() as f64
+}
+
+/// Whether `suffix` appears in `answer` starting at a path boundary (start of
+/// text, a separator, or a non-path character) and ending at a non-path
+/// character or the end.
+fn names_path(answer: &str, suffix: &str) -> bool {
+    let is_path_char = |c: char| c.is_alphanumeric() || matches!(c, '.' | '_' | '-');
+    answer.match_indices(suffix).any(|(start, _)| {
+        let before = answer[..start].chars().next_back();
+        let after = answer[start + suffix.len()..].chars().next();
+        before.is_none_or(|c| !is_path_char(c)) && after.is_none_or(|c| !is_path_char(c))
+    })
 }
 
 fn path_suffix(path: &str) -> String {
@@ -227,12 +240,20 @@ fn changed_paths(call: &ToolCall) -> Vec<String> {
 /// agent notifications and runtime context updates. Each starts with a
 /// bracketed header such as `[process notification]`.
 fn is_host_context(text: &str) -> bool {
-    const HEADERS: [&str; 5] = [
+    // Keep in sync with the host notices in `prompt.rs`, `tools/`, and
+    // `tui/subagent_questionnaires.rs`.
+    const HEADERS: [&str; 11] = [
         "[process notification]",
         "[agent notification]",
+        "[workflow notification]",
+        "[workflow started]",
         "[runtime notifications ",
         "[computer use context]",
         "[conversation model switched ",
+        "[advisor model switched ",
+        "[advisor mode on]",
+        "[advisor mode off]",
+        "[edit tool switched]",
     ];
     let text = text.trim_start();
     HEADERS.iter().any(|header| text.starts_with(header))
@@ -256,7 +277,7 @@ fn shell_command(call: &ToolCall) -> Option<&str> {
 /// rather than words keeps `git diff --check`, `gh pr create`, and commit
 /// messages that mention tests from counting.
 fn is_check_command(command: &str) -> bool {
-    const INVOCATIONS: [&[&str]; 16] = [
+    const INVOCATIONS: [&[&str]; 18] = [
         &["cargo", "test"],
         &["cargo", "nextest"],
         &["cargo", "clippy"],
@@ -267,7 +288,9 @@ fn is_check_command(command: &str) -> bool {
         &["python3", "-m", "unittest"],
         &["python3", "scripts/validate.py"],
         &["npm", "test"],
-        &["npm", "run"],
+        &["npm", "run", "test"],
+        &["npm", "run", "lint"],
+        &["npm", "run", "build"],
         &["pnpm", "test"],
         &["go", "test"],
         &["make"],

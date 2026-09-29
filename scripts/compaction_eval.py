@@ -160,6 +160,8 @@ def main() -> int:
 
     args.out.mkdir(parents=True, exist_ok=True)
     args.out.chmod(0o700)
+    # A run renders only its own variants; --render-only redraws every saved report.
+    reports = sorted(args.out.glob("*.json"))
     if not args.render_only:
         sessions = list(args.session)
         if args.recent:
@@ -189,9 +191,10 @@ def main() -> int:
                 print(f"{name} failed; see {log_path}", file=sys.stderr)
         if failed:
             return 1
+        reports = [args.out / f"{name}.json" for name, _ in args.variant]
 
     summaries = {}
-    for path in sorted(args.out.glob("*.json")):
+    for path in reports:
         report = json.loads(path.read_text())
         summaries[path.stem] = summarize(report)
         print(f"{path.stem}: {json.dumps(report['configuration'])}", file=sys.stderr)
