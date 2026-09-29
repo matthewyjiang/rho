@@ -35,7 +35,13 @@ Write \"None\" under a section with nothing to report.
 ## Exact next step
 
 Keep exact paths, commands, identifiers, error text, and numbers. Be concise \
-and factual. Do not invent progress that the transcript does not show.";
+and factual. Do not invent progress that the transcript does not show.
+
+Under commands, list only ones whose outcome still matters: builds, tests, \
+checks, commits, and pushes. Leave out exploration such as reads, searches, \
+and listings. Do not record that a skill or instructions were loaded; they \
+are removed with this history. If later work depends on one, name it under \
+open tasks as something to reload.";
 
 const PREVIOUS_SUMMARY_INSTRUCTION: &str = "\
 An earlier compaction already summarized the conversation before these turns. \
