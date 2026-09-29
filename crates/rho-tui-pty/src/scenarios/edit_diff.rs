@@ -75,7 +75,13 @@ const EDIT_DIFF_STEPS: &[Step] = &[
         text: "questionnaire cancelled",
         timeout: STREAM,
     },
-    Step::AssertText("Choose one color"),
+    // The modal copy leaves with the composer. The status toast can paint
+    // before the retained card fact, so wait for that fact instead of asserting
+    // the modal text on the toast frame.
+    Step::WaitText {
+        text: "1. Choose one color",
+        timeout: STREAM,
+    },
     Step::Custom(assert_one_questionnaire_card),
     Step::ExitCommand,
 ];
