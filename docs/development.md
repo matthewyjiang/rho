@@ -277,7 +277,7 @@ For each replay point, the eval runs the production compactor on a saved session
 | `user_requests` | the latest user messages | judge model |
 | `errors` | the latest failed tool calls | judge model |
 
-A probe is skipped when the history has nothing for it. Run a `--tiers none` variant alongside the others. It answers from the uncompacted history, so its score is the ceiling that answer and judge noise allow. The judge sees only the question, the reference facts, and the answer, never the whole transcript. Pin the answer and judge models within a comparison; changing either one changes the scores. The report records the probe-set version, so only compare reports that share it.
+A probe is skipped when the history has nothing for it. `files_changed` sees only `write` and edit-tool calls. Files changed by shell commands, such as a `mv` or a generated file, are not in its reference, so it measures part of what changed. Naming extra paths costs nothing. Run a `--tiers none` variant alongside the others. It answers from the uncompacted history, so its score is the ceiling that answer and judge noise allow. The judge sees only the question, the reference facts, and the answer, never the whole transcript. Pin the answer and judge models within a comparison; changing either one changes the scores. The report records the probe-set version, so only compare reports that share it.
 
 ```bash
 cargo build -p rho-coding-agent -j 8
@@ -290,7 +290,7 @@ python3 scripts/compaction_eval.py --recent 8 --points 2 \
 
 Each `--variant` passes arguments to the hidden `rho __compaction_eval` command. You can set threshold and target percents, a fixed `--context-window`, a `--summarizer provider/model` (or `session`), `--tiers text` to turn off native compaction, `--tiers none` for the ceiling, and `--answer-model` and `--judge-model`. Root `--provider` and `--model` choose the session model. Without `--context-window`, each point's window is sized so the point sits exactly at the threshold, as a live automatic compaction would. Points below 32,768 estimated tokens are skipped. Across 221 local sessions, the median peak before any compaction was about 51,000 tokens, and 131 sessions reached 32,768. Replay stops at a session's first compaction, so an earlier summary never counts toward the score.
 
-The script prints a Markdown table: mean probe scores, post-compaction size as a fraction of the original, summary output tokens, cost, and latency. Reports are saved under `--out` (default `/tmp/rho-compaction-eval`) with private permissions. `--render-only` redraws the table from saved reports.
+The script prints a Markdown table: mean probe scores, post-compaction size as a fraction of the original, summary output tokens, cost, and latency. Each point in a report also carries the text summary the compaction wrote (`summary`, empty for native compaction and for points that needed no summary), so you can read what a configuration kept. Reports are saved under `--out` (default `/tmp/rho-compaction-eval`) with private permissions. `--render-only` redraws the table from saved reports.
 
 Saved sessions contain your code and any secrets you pasted or printed. The eval sends them to the models you configure, the same way the original session did. Reports quote transcript excerpts, so keep them local and never commit them. Eval requests do not reach the usage ledger or `compaction_events`, and elided tool results go to a temporary directory that is deleted after each point.
 

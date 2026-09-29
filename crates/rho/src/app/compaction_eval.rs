@@ -41,7 +41,7 @@ mod probes;
 use probes::{Probe, Reference, Scoring};
 
 /// Bump when the report shape changes.
-const REPORT_SCHEMA_VERSION: u32 = 2;
+const REPORT_SCHEMA_VERSION: u32 = 3;
 /// Points below this many estimated tokens are skipped: too little history
 /// for a compaction to remove. Receipt: across 221 local sessions, the median
 /// pre-compaction peak was 51k tokens and 131 sessions reached 32k.
@@ -254,6 +254,7 @@ impl EvalSetup {
                     context_window,
                     before_tokens,
                     after_tokens: None,
+                    summary: None,
                     compaction: record,
                     error: Some(error),
                     probes: Vec::new(),
@@ -273,6 +274,10 @@ impl EvalSetup {
             context_window,
             before_tokens,
             after_tokens: Some(after_tokens),
+            summary: after
+                .iter()
+                .find_map(Message::as_compaction_summary)
+                .map(|summary| summary.text().to_owned()),
             compaction: record,
             error: None,
             probes: results,
@@ -598,6 +603,10 @@ struct PointReport {
     context_window: u64,
     before_tokens: u64,
     after_tokens: Option<u64>,
+    /// Text of the summary the compaction wrote, for reviewing its quality.
+    /// `None` for native compaction, whose output is opaque, and for points
+    /// that needed no summary.
+    summary: Option<String>,
     /// The production compactor's own record: tier, request path, usage,
     /// and latency.
     compaction: Option<CompactionRecord>,

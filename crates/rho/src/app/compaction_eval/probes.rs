@@ -188,7 +188,9 @@ fn path_suffix(path: &str) -> String {
     parts[parts.len().saturating_sub(2)..].join("/")
 }
 
-/// Paths a file-changing tool call names. Covers every edit format.
+/// Paths a file-changing tool call names. Covers every edit format. Shell
+/// commands that move or write files are not parsed, so the reference is a
+/// subset of what changed.
 fn changed_paths(call: &ToolCall) -> Vec<String> {
     let string = |key: &str| call.arguments.get(key).and_then(|value| value.as_str());
     match call.name.as_str() {
