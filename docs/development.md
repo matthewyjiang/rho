@@ -264,6 +264,36 @@ python3 scripts/measure_workflow_cancellation.py \
 
 That command needs Linux with Unix sockets and `pidfd_open`, and `rustc` on `PATH`. It uses a new temporary `RHO_HOME` for each sample. The checked run measured 33 ms for acknowledgement, final command cleanup, and workflow owner completion. The accepted limits are 2,000 ms, 2,000 ms, and 2,500 ms. The cancellation command checks both the accepted limits and twice the checked baseline.
 
+## Compaction replay eval
+
+Live [compaction metrics](/configuration/compaction#diagnostics) show how often compaction runs and what it costs. They cannot show what a summary lost. The offline replay eval answers that. Use it before you change summarizer prompts or models, or compaction defaults. It is a local tool: it runs on your own saved sessions and never in CI.
+
+For each replay point, the eval runs the production compactor on a saved session's uncompacted history. It then asks fixed probe questions from the compacted context and scores each answer against the full transcript. References come from the whole history, not just the removed span, so every variant answers the same questions at the same point:
+
+| Probe | Reference | Scoring |
+| --- | --- | --- |
+| `files_changed` | paths named by `write` and edit-tool calls | exact match on path suffix |
+| `test_result` | the latest test, build, or check command and its status | judge model |
+| `user_requests` | the latest user messages | judge model |
+| `errors` | the latest failed tool calls | judge model |
+
+A probe is skipped when the history has nothing for it. Run a `--tiers none` variant alongside the others. It answers from the uncompacted history, so its score is the ceiling that answer and judge noise allow. The judge sees only the question, the reference facts, and the answer, never the whole transcript. Pin the answer and judge models within a comparison; changing either one changes the scores. The report records the probe-set version, so only compare reports that share it.
+
+```bash
+cargo build -p rho-coding-agent -j 8
+python3 scripts/compaction_eval.py --recent 8 --points 2 \
+  --rho-args '--provider openai-codex --model gpt-6-luna --auth codex' \
+  --variant 'none=--tiers none' \
+  --variant 'default=--tiers text --summarizer session' \
+  --variant 'target30=--tiers text --summarizer session --target-percent 30'
+```
+
+Each `--variant` passes arguments to the hidden `rho __compaction_eval` command. You can set threshold and target percents, a fixed `--context-window`, a `--summarizer provider/model` (or `session`), `--tiers text` to turn off native compaction, `--tiers none` for the ceiling, and `--answer-model` and `--judge-model`. Root `--provider` and `--model` choose the session model. Without `--context-window`, each point's window is sized so the point sits exactly at the threshold, as a live automatic compaction would. Points below 32,768 estimated tokens are skipped. Across 221 local sessions, the median peak before any compaction was about 51,000 tokens, and 131 sessions reached 32,768. Replay stops at a session's first compaction, so an earlier summary never counts toward the score.
+
+The script prints a Markdown table: mean probe scores, post-compaction size as a fraction of the original, summary output tokens, cost, and latency. Reports are saved under `--out` (default `/tmp/rho-compaction-eval`) with private permissions. `--render-only` redraws the table from saved reports.
+
+Saved sessions contain your code and any secrets you pasted or printed. The eval sends them to the models you configure, the same way the original session did. Reports quote transcript excerpts, so keep them local and never commit them. Eval requests do not reach the usage ledger or `compaction_events`, and elided tool results go to a temporary directory that is deleted after each point.
+
 ## Provider identity and auth modes
 
 A provider identifies one API or product surface. If two login methods use the same API base, wire protocol, and model catalog, add both to that provider's `auth_modes` list rather than adding a second provider. The first mode is the default. Keep separate providers when endpoints, protocols, catalogs, or product surfaces differ. For example, OpenRouter API-key and OAuth access share `openrouter`, while the OpenAI API and Codex remain `openai` and `openai-codex`.

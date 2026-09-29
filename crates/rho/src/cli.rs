@@ -278,6 +278,65 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
     /// Internal supervised workflow planner worker. Not a public command.
     #[command(name = "__workflow_planner_worker", hide = true)]
     WorkflowPlannerWorker,
+    /// Offline compaction replay eval. A development tool, not a public
+    /// command: `scripts/compaction_eval.py` drives it.
+    #[command(name = "__compaction_eval", hide = true)]
+    CompactionEval(CompactionEvalArgs),
+}
+
+/// Settings for one compaction eval run. Unset compaction settings come from
+/// the loaded config; root `--provider`/`--model`/`--auth`/`--reasoning`
+/// choose the session model that compacts.
+#[derive(clap::Args, Debug)]
+pub struct CompactionEvalArgs {
+    /// Saved session transcript (`session.jsonl`) or its session folder.
+    #[arg(long = "session", value_name = "PATH", required = true)]
+    pub sessions: Vec<PathBuf>,
+    /// Replay points per session, spread evenly by context size.
+    #[arg(long, value_name = "N", default_value = "3")]
+    pub points: NonZeroUsize,
+    /// Points replayed at once. Each point's probes also run together, so
+    /// up to four times this many requests can be in flight.
+    #[arg(long, value_name = "N", default_value = "8")]
+    pub jobs: NonZeroUsize,
+    /// Context window to replay against. Default: size each point's window
+    /// so the point sits exactly at the compaction threshold.
+    #[arg(long, value_name = "TOKENS")]
+    pub context_window: Option<std::num::NonZeroU64>,
+    /// Automatic compaction threshold. Default: `compact_threshold_percent`.
+    #[arg(long, value_name = "PERCENT", value_parser = clap::value_parser!(u8).range(1..=100))]
+    pub threshold_percent: Option<u8>,
+    /// Post-compaction target. Default: `compact_target_percent`.
+    #[arg(long, value_name = "PERCENT", value_parser = clap::value_parser!(u8).range(1..=100))]
+    pub target_percent: Option<u8>,
+    /// Text-summary model as `provider/model`, or `session` to summarize with
+    /// the session model. Default: `[internal_agents.compaction]`.
+    #[arg(long, value_name = "MODEL")]
+    pub summarizer: Option<String>,
+    /// Compaction tiers the compactor may use.
+    #[arg(long, value_enum, default_value_t)]
+    pub tiers: CompactionEvalTiers,
+    /// Model that answers probe questions, as `provider/model`. Default: the
+    /// session model.
+    #[arg(long, value_name = "MODEL")]
+    pub answer_model: Option<String>,
+    /// Model that scores probe answers, as `provider/model`. Default: the
+    /// answer model.
+    #[arg(long, value_name = "MODEL")]
+    pub judge_model: Option<String>,
+}
+
+/// Compactor tiers a compaction eval allows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum CompactionEvalTiers {
+    /// Elision, provider-native compaction, then a text summary.
+    #[default]
+    All,
+    /// Elision, then a text summary. Native compaction is off.
+    Text,
+    /// No compaction: probes are answered from the full history. The
+    /// ceiling that shows answer and judge noise.
+    None,
 }
 
 /// Argv entry for the internal supervised planner worker process.
