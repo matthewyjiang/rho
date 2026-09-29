@@ -1,5 +1,15 @@
 # Changelog
 
+## [5.6.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.5.0...rho-sdk-v5.6.0) (2026-09-29)
+
+
+### Features
+
+* **compaction:** cut summary cost by reusing the session prompt cache, and allow a cheaper summarizer ([#1313](https://github.com/matthewyjiang/rho/issues/1313)) ([07a5780](https://github.com/matthewyjiang/rho/commit/07a5780c6f1f2fc491284a766ce383c14078690b))
+* **compaction:** keep compacting while async tool jobs run ([#1317](https://github.com/matthewyjiang/rho/issues/1317)) ([2803104](https://github.com/matthewyjiang/rho/commit/28031042329bf6fa135959de4632469c09cc7121))
+* **compaction:** keep summaries from degrading across repeated compactions ([#1303](https://github.com/matthewyjiang/rho/issues/1303)) ([e56768a](https://github.com/matthewyjiang/rho/commit/e56768ae6fb62a40a76dc5c1e09b95e8f42fe5ff))
+* **compaction:** recover from context-window overflows instead of failing the run ([#1282](https://github.com/matthewyjiang/rho/issues/1282)) ([7e614a7](https://github.com/matthewyjiang/rho/commit/7e614a7c04b29acafb057d273d14955fe8e6357d))
+
 ## [5.5.0](https://github.com/matthewyjiang/rho/compare/rho-sdk-v5.4.1...rho-sdk-v5.5.0) (2026-09-21)
 
 

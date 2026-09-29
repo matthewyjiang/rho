@@ -1,5 +1,36 @@
 # Changelog
 
+## [2.16.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.15.0...rho-coding-agent-v2.16.0) (2026-09-29)
+
+
+### Features
+
+* **compaction:** cut summary cost by reusing the session prompt cache, and allow a cheaper summarizer ([#1313](https://github.com/matthewyjiang/rho/issues/1313)) ([07a5780](https://github.com/matthewyjiang/rho/commit/07a5780c6f1f2fc491284a766ce383c14078690b))
+* **compaction:** elide old tool outputs first so compaction can skip the model call ([#1288](https://github.com/matthewyjiang/rho/issues/1288)) ([f730108](https://github.com/matthewyjiang/rho/commit/f730108bbc86f12152c8736da57c41d88b7edc02))
+* **compaction:** enable auto_compact by default ([#1285](https://github.com/matthewyjiang/rho/issues/1285)) ([515c370](https://github.com/matthewyjiang/rho/commit/515c3709b68cba14c12aa31c76e707d80ad2b93e)), closes [#1272](https://github.com/matthewyjiang/rho/issues/1272)
+* **compaction:** keep compacting while async tool jobs run ([#1317](https://github.com/matthewyjiang/rho/issues/1317)) ([2803104](https://github.com/matthewyjiang/rho/commit/28031042329bf6fa135959de4632469c09cc7121))
+* **compaction:** keep summaries from degrading across repeated compactions ([#1303](https://github.com/matthewyjiang/rho/issues/1303)) ([e56768a](https://github.com/matthewyjiang/rho/commit/e56768ae6fb62a40a76dc5c1e09b95e8f42fe5ff))
+* **compaction:** measure what compaction loses with an offline replay eval ([#1326](https://github.com/matthewyjiang/rho/issues/1326)) ([6b37357](https://github.com/matthewyjiang/rho/commit/6b37357da030ac0de47a6359685791cc4bafa726))
+* **compaction:** record what every compaction costs and what it loses ([#1319](https://github.com/matthewyjiang/rho/issues/1319)) ([cb2c37d](https://github.com/matthewyjiang/rho/commit/cb2c37dcb4f7f9104c126940d20e6bd44e12e3a0))
+* **compaction:** recover from context-window overflows instead of failing the run ([#1282](https://github.com/matthewyjiang/rho/issues/1282)) ([7e614a7](https://github.com/matthewyjiang/rho/commit/7e614a7c04b29acafb057d273d14955fe8e6357d))
+* **compaction:** render tool calls and results as readable text ([#1316](https://github.com/matthewyjiang/rho/issues/1316)) ([0edfb43](https://github.com/matthewyjiang/rho/commit/0edfb431ab4911a4da824244865447f407293c4a))
+* **tui:** add /spend usage summary overlay ([#1307](https://github.com/matthewyjiang/rho/issues/1307)) ([12ee3c1](https://github.com/matthewyjiang/rho/commit/12ee3c188a210fe951e2fd8111b086f26eb4c3b9))
+* **tui:** browse /diff file by file in a popup instead of scrolling the transcript ([#1284](https://github.com/matthewyjiang/rho/issues/1284)) ([e3b0875](https://github.com/matthewyjiang/rho/commit/e3b08753d7fb265a043e4a113c00c34203ab1d6f))
+* **tui:** mouse control and hover feedback across the TUI ([#1271](https://github.com/matthewyjiang/rho/issues/1271)) ([9720170](https://github.com/matthewyjiang/rho/commit/9720170f5132a4a0a3ccbb01b86f661133c313c0))
+
+
+### Bug Fixes
+
+* **compaction:** keep skill loads and exploration out of text summaries ([#1327](https://github.com/matthewyjiang/rho/issues/1327)) ([459cae8](https://github.com/matthewyjiang/rho/commit/459cae8a202cf54e76b830e1d60f908f0330ddc6))
+* **tui:** stop keys typed right after a resize from being lost ([#1320](https://github.com/matthewyjiang/rho/issues/1320)) ([de65595](https://github.com/matthewyjiang/rho/commit/de655959ac382476fe4e7b8392db7696c23069d1))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * rho-providers bumped from 2.11.0 to 2.12.0
+
 ## [2.15.0](https://github.com/matthewyjiang/rho/compare/rho-coding-agent-v2.14.0...rho-coding-agent-v2.15.0) (2026-09-24)
 
 
