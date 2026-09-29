@@ -30,6 +30,7 @@ struct RenderableSplit {
     byte_index: usize,
     skip_leading_newline: bool,
     ends_with_wrap: bool,
+    line_start: StreamLineStart,
 }
 
 impl AppendOnlyStream {
@@ -77,9 +78,11 @@ impl AppendOnlyStream {
         in_code_block: bool,
     ) -> Option<StreamPreview> {
         let split = self.markdown_renderable_split(inner_width, in_code_block, true)?;
-        let mut preview = self.pending_preview(split.byte_index, split.skip_leading_newline);
-        preview.line_start = self.line_start(split.skip_leading_newline, in_code_block);
-        Some(preview)
+        Some(self.pending_preview(
+            split.byte_index,
+            split.skip_leading_newline,
+            split.line_start,
+        ))
     }
 
     pub(super) fn finish(&mut self) -> Option<StreamFragment> {
@@ -132,6 +135,7 @@ impl AppendOnlyStream {
             byte_index: split_at,
             skip_leading_newline,
             ends_with_wrap,
+            line_start,
         })
     }
 
@@ -141,7 +145,7 @@ impl AppendOnlyStream {
         let scan_start = usize::from(skip_leading_newline);
         let pending = &self.pending[scan_start..];
         let split_at = scan_start + self.preview_byte_index(pending, rendered_width)?;
-        Some(self.pending_preview(split_at, skip_leading_newline))
+        Some(self.pending_preview(split_at, skip_leading_newline, StreamLineStart::Fresh))
     }
 
     #[cfg(test)]
@@ -191,10 +195,15 @@ impl AppendOnlyStream {
         }
     }
 
-    fn pending_preview(&self, byte_index: usize, skip_leading_newline: bool) -> StreamPreview {
+    fn pending_preview(
+        &self,
+        byte_index: usize,
+        skip_leading_newline: bool,
+        line_start: StreamLineStart,
+    ) -> StreamPreview {
         StreamPreview {
             text: self.pending[..byte_index].to_string(),
-            line_start: StreamLineStart::Fresh,
+            line_start,
             // Prior entries own the separator blank. Stream text never inserts one.
             include_leading_blank: false,
             skip_leading_newline,

@@ -1,7 +1,7 @@
 use ratatui::text::Line;
 
 use super::{
-    markdown::push_stream_preview_markdown,
+    markdown::push_wrapped_markdown_without_copy_button,
     render::{pad_display_line, padded_content_width},
     theme::Theme,
     StreamKind, StreamPreviewRenderCache, StreamUi,
@@ -43,7 +43,7 @@ impl StreamUi {
             StreamKind::Assistant => self.assistant_stream_code_fence.clone(),
             StreamKind::Reasoning => self.reasoning_stream_code_fence.clone(),
         };
-        push_stream_preview_markdown(
+        push_wrapped_markdown_without_copy_button(
             &mut text_lines,
             &text,
             padded_content_width(width),

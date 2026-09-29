@@ -45,6 +45,7 @@ pub(super) struct ActiveFrame {
     pub(in crate::tui) lines: Vec<Line<'static>>,
 }
 
+#[derive(PartialEq, Eq)]
 pub(super) struct LiveStreamPreview {
     pub(in crate::tui) kind: StreamKind,
     pub(in crate::tui) text: String,
@@ -122,16 +123,7 @@ impl StreamUi {
 
     /// Replace the live preview. Drops the paint cache when identity changes.
     pub(super) fn set_live_preview(&mut self, preview: Option<LiveStreamPreview>) {
-        let changed = match (&self.live_stream_preview, &preview) {
-            (None, None) => false,
-            (Some(current), Some(next)) => {
-                current.kind != next.kind
-                    || current.text != next.text
-                    || current.line_start != next.line_start
-                    || current.include_leading_blank != next.include_leading_blank
-            }
-            (None, Some(_)) | (Some(_), None) => true,
-        };
+        let changed = self.live_stream_preview != preview;
         if changed {
             self.live_stream_preview = preview;
             self.preview_render_cache = None;

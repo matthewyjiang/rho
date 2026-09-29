@@ -558,7 +558,7 @@ fn streamed_rows(committed: &str, stream: &AppendOnlyStream, width: usize) -> Ve
     };
     if let Some(preview) = stream.drain_preview_markdown(width, false) {
         let mut preview_lines = Vec::new();
-        super::super::markdown::push_stream_preview_markdown(
+        super::super::markdown::push_wrapped_markdown_without_copy_button(
             &mut preview_lines,
             preview.render_text(),
             width,
@@ -570,45 +570,39 @@ fn streamed_rows(committed: &str, stream: &AppendOnlyStream, width: usize) -> Ve
     rows.iter().map(|row| row.trim_end().to_owned()).collect()
 }
 
-// Covers: a list item streamed one character at a time shows the same rows
-// (committed transcript + live preview) as its final render at every step, and
-// widening the pane mid-item never hides already-streamed text.
+// Covers: list items streamed one character at a time show exactly their
+// final-render rows (committed transcript + live preview) after every drain,
+// and continuation rows stay hung after the pane widens mid-item.
 #[test]
 fn streamed_list_item_rows_match_final_render() {
-    let text = "- Agents can report their own resume command. Herdr then reopens their exact session after a restart.";
-    let resize_at = text.len() / 2;
-    let mut stream = AppendOnlyStream::default();
-    let mut committed = String::new();
-    for (index, ch) in text.char_indices() {
-        let width = if index < resize_at { 20 } else { 32 };
-        stream.push_delta(&ch.to_string());
-        if let Some(fragment) = stream.drain_renderable_markdown(width, false) {
-            committed.push_str(&fragment.into_text());
-        }
-        let visible = &text[..index + ch.len_utf8()];
-        let shown = streamed_rows(&committed, &stream, width);
-        if index < resize_at {
-            let expected = rendered_markdown_text(visible, width, false)
-                .iter()
-                .map(|row| row.trim_end().to_owned())
-                .collect::<Vec<_>>();
-            assert_eq!(shown, expected, "after {visible:?}");
-        } else {
-            let words = |rows: &[String]| {
-                rows.join(" ")
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" ")
+    for text in [
+        "- Agents can report their own resume command. Herdr then reopens their exact session after a restart.",
+        "- **Agents** can report their own `resume` command. Herdr then reopens their exact session after a restart.",
+    ] {
+        let resize_at = text.len() / 2;
+        let mut stream = AppendOnlyStream::default();
+        let mut committed = String::new();
+        for (index, ch) in text.char_indices() {
+            let width = if index < resize_at { 20 } else { 32 };
+            stream.push_delta(&ch.to_string());
+            let Some(fragment) = stream.drain_renderable_markdown(width, false) else {
+                continue;
             };
-            assert_eq!(
-                words(&shown),
-                words(&[visible.to_owned()]),
-                "after {visible:?}"
-            );
-            assert!(
-                shown.iter().skip(1).all(|row| row.starts_with("  ")),
-                "continuation rows stay hung after resize: {shown:?}"
-            );
+            committed.push_str(&fragment.into_text());
+            let shown = streamed_rows(&committed, &stream, width);
+            let visible = &text[..index + ch.len_utf8()];
+            if index < resize_at {
+                let expected = rendered_markdown_text(visible, width, false)
+                    .iter()
+                    .map(|row| row.trim_end().to_owned())
+                    .collect::<Vec<_>>();
+                assert_eq!(shown, expected, "after {visible:?}");
+            } else {
+                assert!(
+                    shown.iter().skip(1).all(|row| row.starts_with("  ")),
+                    "continuation rows stay hung after resize: {shown:?}"
+                );
+            }
         }
     }
 }

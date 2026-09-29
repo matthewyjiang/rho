@@ -26,8 +26,9 @@ pub(in crate::tui) fn markdown_stream_bounds(
     line_start: StreamLineStart,
 ) -> MarkdownStreamBounds {
     let current_line_start = text.rfind('\n').map_or(0, |index| index + '\n'.len_utf8());
-    let continued_indent = (current_line_start == 0)
-        .then(|| line_start.continued_indent(width.max(1)))
+    // Only the first pending line can continue a committed list item.
+    let continued_policy = (current_line_start == 0)
+        .then(|| line_start.continued_policy())
         .flatten();
     let current_line_in_code_block =
         line_starts_in_code_block(text, current_line_start, in_code_block);
@@ -75,7 +76,7 @@ pub(in crate::tui) fn markdown_stream_bounds(
         display_width(&rendered_line),
     );
 
-    if continued_indent.is_none()
+    if continued_policy.is_none()
         && !matches!(
             heading_stream_state(current_line),
             HeadingStreamState::NotHeading
@@ -92,8 +93,9 @@ pub(in crate::tui) fn markdown_stream_bounds(
         };
     }
 
-    let indent = continued_indent
-        .unwrap_or_else(|| ContinuationIndent::for_paragraph(&rendered_line, width.max(1)));
+    let indent = continued_policy
+        .unwrap_or_else(|| WrapPolicy::for_paragraph(current_line))
+        .resolve(width.max(1));
     let complete = complete_word_wrap_prefix(&rendered_line, width, indent);
     if complete.byte_index == 0 {
         return MarkdownStreamBounds { drain, preview_end };
@@ -244,13 +246,7 @@ fn complete_word_wrap_prefix(
     wrap_markdown_line_ranges(text, width, indent)
         .into_iter()
         .rfind(|range| {
-            let row_width = match indent {
-                ContinuationIndent::Flush => width,
-                ContinuationIndent::Hang(_) if range.start == 0 => width,
-                ContinuationIndent::Hang(hang) | ContinuationIndent::Continued(hang) => {
-                    width - hang
-                }
-            };
+            let row_width = width - indent.row_indent(range.start);
             range.end < text.len()
                 || (text.ends_with(char::is_whitespace)
                     && display_width(&text[range.clone()]) >= row_width)

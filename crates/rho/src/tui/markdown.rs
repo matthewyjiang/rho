@@ -6,6 +6,7 @@ use ratatui::{
 mod code_fence;
 mod heading;
 mod inline;
+mod list_wrap;
 mod math;
 mod mermaid;
 mod panel;
@@ -24,6 +25,8 @@ pub(in crate::tui) use code_fence::{
 use super::markdown_image::standalone_markdown_image;
 use super::syntax::BlockHighlighter;
 use inline::{inline_markdown_stable_prefix_len, markdown_inline_segments, markdown_inline_text};
+pub(in crate::tui) use list_wrap::StreamLineStart;
+use list_wrap::{wrap_markdown_line_ranges, ContinuationIndent, WrapPolicy};
 use panel::ClosedPanel;
 
 pub(in crate::tui) use heading::HeadingLevel;
@@ -44,18 +47,10 @@ use super::{
     theme::Theme,
 };
 
-pub(super) fn push_wrapped_markdown_without_copy_button_from_fence_state(
-    lines: &mut Vec<Line<'static>>,
-    text: &str,
-    width: usize,
-    state: &mut CodeFenceState,
-) {
-    push_stream_preview_markdown(lines, text, width, state, StreamLineStart::Fresh);
-}
-
-/// Live-preview paint of pending stream text. `line_start` says whether the
-/// first line continues a committed list item, so it wraps as hung rows.
-pub(super) fn push_stream_preview_markdown(
+/// Render markdown without code-block copy buttons (notification cards and
+/// the live stream preview). `line_start` says whether the first line
+/// continues a committed list item; pass [`StreamLineStart::Fresh`] otherwise.
+pub(super) fn push_wrapped_markdown_without_copy_button(
     lines: &mut Vec<Line<'static>>,
     text: &str,
     width: usize,
@@ -160,11 +155,11 @@ fn render_markdown_from_fence_state(
         // A continued list item's tail is prose, not a new block: skip block
         // detection so text like `# x` mid-item is not read as a heading.
         if line_index == 0 && active.is_none() {
-            if let Some(indent) = line_start.continued_indent(width) {
+            if let Some(policy) = line_start.continued_policy() {
                 lines.extend(wrap_styled_segments(
                     &markdown_inline_segments(raw_line),
                     width,
-                    indent,
+                    policy,
                 ));
                 line_index += 1;
                 continue;
@@ -318,7 +313,7 @@ fn render_markdown_from_fence_state(
         lines.extend(wrap_styled_segments(
             &markdown_inline_segments(raw_line),
             width,
-            ContinuationIndent::for_paragraph(raw_line, width),
+            WrapPolicy::for_paragraph(raw_line),
         ));
         line_index += 1;
     }
@@ -542,151 +537,15 @@ fn markdown_heading_lines(heading: heading::AtxHeading<'_>, width: usize) -> Vec
         .into_iter()
         .map(|segment| StyledSegment::new(segment.text, heading_style.patch(segment.style)))
         .collect::<Vec<_>>();
-    wrap_styled_segments(&segments, width, ContinuationIndent::Flush)
-}
-
-/// How a wrapped markdown line indents its continuation rows.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ContinuationIndent {
-    /// Every row starts at column 0 (prose, headings, table cells).
-    Flush,
-    /// List item: the first row spans the full width; later rows hang this
-    /// many columns in, under the item text.
-    Hang(usize),
-    /// Tail of a list item whose first row is already committed: every row is
-    /// a continuation row, hung this many columns in.
-    Continued(usize),
-}
-
-impl ContinuationIndent {
-    /// Hanging indent for a paragraph `line` that is a list item.
-    fn for_paragraph(line: &str, width: usize) -> Self {
-        match effective_hang(markdown_list_marker_width(line), width) {
-            0 => Self::Flush,
-            hang => Self::Hang(hang),
-        }
-    }
-}
-
-/// `hang` when continuation rows still have room for text at `width`, else 0.
-fn effective_hang(hang: usize, width: usize) -> usize {
-    if hang < width {
-        hang
-    } else {
-        0
-    }
-}
-
-/// Where pending stream text starts relative to its markdown source line.
-///
-/// Streams commit long lines at wrap boundaries, so pending text can begin in
-/// the middle of a list item whose marker is already in the transcript. Drains
-/// and the live preview wrap that tail as hung continuation rows so they match
-/// the final render.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::tui) enum StreamLineStart {
-    /// Pending text begins its own line, or continues a line that wraps flush.
-    #[default]
-    Fresh,
-    /// Pending text continues a committed list item with this marker width.
-    ContinuesListItem { hang: usize },
-}
-
-impl StreamLineStart {
-    /// Line start for text appended after `emitted`. `in_code_block` is the
-    /// fence state after `emitted`; code lines hard-wrap without a hang.
-    pub(in crate::tui) fn after(emitted: &str, in_code_block: bool) -> Self {
-        if in_code_block {
-            return Self::Fresh;
-        }
-        let line_start = emitted
-            .rfind('\n')
-            .map_or(0, |index| index + '\n'.len_utf8());
-        match markdown_list_marker_width(&emitted[line_start..]) {
-            0 => Self::Fresh,
-            hang => Self::ContinuesListItem { hang },
-        }
-    }
-
-    /// Indent for the first pending line at `width`, when it continues a list item.
-    fn continued_indent(self, width: usize) -> Option<ContinuationIndent> {
-        match self {
-            Self::Fresh => None,
-            Self::ContinuesListItem { hang } => match effective_hang(hang, width) {
-                0 => None,
-                hang => Some(ContinuationIndent::Continued(hang)),
-            },
-        }
-    }
-}
-
-/// Covering soft-wrap ranges for one rendered markdown line.
-///
-/// Hung rows wrap at `width - hang`; [`wrap_styled_segments`] pads them under
-/// the item text. Streaming bounds share these ranges to stay in lockstep.
-fn wrap_markdown_line_ranges(
-    line: &str,
-    width: usize,
-    indent: ContinuationIndent,
-) -> Vec<std::ops::Range<usize>> {
-    match indent {
-        ContinuationIndent::Flush => {
-            let protected_prefix_end = markdown_list_body_start(line).unwrap_or_default();
-            wrap_line_at_whitespace_ranges_with_protected_prefix(line, width, protected_prefix_end)
-        }
-        ContinuationIndent::Hang(hang) => {
-            let body_start = markdown_list_body_start(line).unwrap_or_default();
-            let mut ranges =
-                wrap_line_at_whitespace_ranges_with_protected_prefix(line, width, body_start);
-            if ranges.len() < 2 {
-                return ranges;
-            }
-            let rest_start = ranges[0].end;
-            ranges.truncate(1);
-            ranges.extend(
-                wrap_line_at_whitespace_ranges(&line[rest_start..], width - hang)
-                    .into_iter()
-                    .map(|range| range.start + rest_start..range.end + rest_start),
-            );
-            ranges
-        }
-        ContinuationIndent::Continued(hang) => wrap_line_at_whitespace_ranges(line, width - hang),
-    }
-}
-
-/// Display width of `line`'s list marker and separator, or 0 when `line` is
-/// not a list item.
-fn markdown_list_marker_width(line: &str) -> usize {
-    markdown_list_body_start(line).map_or(0, |start| display_width(&line[..start]))
-}
-
-fn markdown_list_body_start(line: &str) -> Option<usize> {
-    let trimmed = line.trim_start_matches(char::is_whitespace);
-    let leading_whitespace_len = line.len() - trimmed.len();
-    let marker_len = trimmed.find(char::is_whitespace)?;
-    let marker = &trimmed[..marker_len];
-    let is_list_marker = matches!(marker, "-" | "+" | "*")
-        || marker.strip_suffix(['.', ')']).is_some_and(|digits| {
-            (1..=9).contains(&digits.len()) && digits.bytes().all(|byte| byte.is_ascii_digit())
-        });
-    if !is_list_marker {
-        return None;
-    }
-
-    let separator_len = trimmed[marker_len..]
-        .chars()
-        .take_while(|ch| ch.is_whitespace())
-        .map(char::len_utf8)
-        .sum::<usize>();
-    let body_start = leading_whitespace_len + marker_len + separator_len;
-    (body_start < line.len()).then_some(body_start)
+    wrap_styled_segments(&segments, width, WrapPolicy::Flush)
 }
 
 fn wrap_styled_segments(
     segments: &[StyledSegment],
     width: usize,
-    indent: ContinuationIndent,
+    policy: WrapPolicy,
 ) -> Vec<Line<'static>> {
+    let indent = policy.resolve(width);
     let text = segments
         .iter()
         .map(|segment| segment.text.as_str())
@@ -698,13 +557,16 @@ fn wrap_styled_segments(
 
     let lines = soft_wrap_visible_ranges(&text, wrap_markdown_line_ranges(&text, width, indent))
         .map(|range| {
-            let mut chunk = slice_spans_by_bytes(&spans, range.start, range.end);
-            let pad = match indent {
-                ContinuationIndent::Flush => 0,
-                ContinuationIndent::Hang(hang) if range.start > 0 => hang,
-                ContinuationIndent::Hang(_) => 0,
-                ContinuationIndent::Continued(hang) => hang,
+            // A continued tail can start with the break space of its committed
+            // row; drop it like any other row-leading break padding.
+            let range = if indent.row_indent(range.start) > 0 && range.start == 0 {
+                let trimmed = text[range.clone()].trim_start();
+                range.end - trimmed.len()..range.end
+            } else {
+                range
             };
+            let mut chunk = slice_spans_by_bytes(&spans, range.start, range.end);
+            let pad = indent.row_indent(range.start);
             if pad > 0 && !chunk.is_empty() {
                 chunk.insert(0, Span::styled(" ".repeat(pad), Theme::text()));
             }
