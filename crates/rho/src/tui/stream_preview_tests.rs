@@ -12,6 +12,7 @@ fn line_text(line: &ratatui::text::Line<'_>) -> String {
 fn preview(text: &str) -> LiveStreamPreview {
     LiveStreamPreview {
         kind: StreamKind::Assistant,
+        line_prefix: String::new(),
         text: text.into(),
         include_leading_blank: false,
     }

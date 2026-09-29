@@ -1,4 +1,4 @@
-use super::markdown::markdown_stream_bounds;
+use super::markdown::{markdown_stream_bounds, MarkdownStreamBounds, MarkdownStreamPrefix};
 #[cfg(test)]
 use super::render::{complete_visual_prefix, display_width};
 
@@ -19,6 +19,8 @@ pub(super) struct StreamFragment {
 
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct StreamPreview {
+    /// Committed start of the line `text` continues; see [`Self::line_prefix`].
+    line_prefix: String,
     text: String,
     include_leading_blank: bool,
     skip_leading_newline: bool,
@@ -108,7 +110,25 @@ impl AppendOnlyStream {
         let skip_leading_newline = self.should_skip_leading_newline();
         let scan_start = usize::from(skip_leading_newline);
         let pending = &self.pending[scan_start..];
-        let bounds = markdown_stream_bounds(pending, inner_width, in_code_block);
+        // Measure wraps over the whole current line so a mid-line continuation
+        // (for example, a list item's hanging indent) splits like the final render.
+        let line_prefix = self.committed_line_prefix(skip_leading_newline);
+        let bounds = if line_prefix.is_empty() {
+            markdown_stream_bounds(pending, inner_width, in_code_block)
+        } else {
+            let combined = format!("{line_prefix}{pending}");
+            let bounds = markdown_stream_bounds(&combined, inner_width, in_code_block);
+            MarkdownStreamBounds {
+                drain: MarkdownStreamPrefix {
+                    byte_index: bounds.drain.byte_index.saturating_sub(line_prefix.len()),
+                    ends_with_wrap: bounds.drain.ends_with_wrap,
+                },
+                preview_end: bounds
+                    .preview_end
+                    .and_then(|end| end.checked_sub(line_prefix.len()))
+                    .filter(|end| *end > 0),
+            }
+        };
         // Previews may include the stable open-line prefix even when earlier
         // complete lines or wraps are also ready. Drain still uses the drain
         // bound only, so mid-line prose is not committed early.
@@ -177,8 +197,22 @@ impl AppendOnlyStream {
         ))
     }
 
+    /// Already-emitted start of the line that pending text continues, or empty
+    /// when pending begins a fresh line.
+    fn committed_line_prefix(&self, skip_leading_newline: bool) -> &str {
+        if skip_leading_newline {
+            return "";
+        }
+        let start = self
+            .emitted_text
+            .rfind('\n')
+            .map_or(0, |index| index + '\n'.len_utf8());
+        &self.emitted_text[start..]
+    }
+
     fn pending_preview(&self, byte_index: usize, skip_leading_newline: bool) -> StreamPreview {
         StreamPreview {
+            line_prefix: self.committed_line_prefix(skip_leading_newline).to_string(),
             text: self.pending[..byte_index].to_string(),
             // Prior entries own the separator blank. Stream text never inserts one.
             include_leading_blank: false,
@@ -234,6 +268,13 @@ impl StreamPreview {
 
     pub(super) fn include_leading_blank(&self) -> bool {
         self.include_leading_blank
+    }
+
+    /// Already-committed start of the line this preview continues. Renderers
+    /// wrap `line_prefix + text` and drop the prefix rows so continuation rows
+    /// match the final layout.
+    pub(super) fn line_prefix(&self) -> &str {
+        &self.line_prefix
     }
 }
 

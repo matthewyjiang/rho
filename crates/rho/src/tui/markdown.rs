@@ -28,7 +28,10 @@ use panel::ClosedPanel;
 
 pub(in crate::tui) use heading::HeadingLevel;
 use heading::{heading_stream_state, parse_atx_heading, HeadingStreamState};
-pub(super) use stream::{incremental_markdown_tail_start, markdown_stream_bounds};
+pub(super) use stream::{
+    incremental_markdown_tail_start, markdown_stream_bounds, MarkdownStreamBounds,
+    MarkdownStreamPrefix,
+};
 pub(in crate::tui) use table::{streaming_table, streaming_table_bottom_border, StreamingTable};
 
 #[cfg(test)]
@@ -505,9 +508,39 @@ fn markdown_heading_lines(heading: heading::AtxHeading<'_>, width: usize) -> Vec
     wrap_styled_segments(&segments, width)
 }
 
+/// Covering soft-wrap ranges for one rendered markdown line.
+///
+/// List items wrap with a hanging indent: the first row spans `width`, and
+/// continuation rows get `width - hang` so [`wrap_styled_segments`] can pad them
+/// under the item text. Streaming bounds share these ranges to stay in lockstep.
 fn wrap_markdown_line_ranges(line: &str, width: usize) -> Vec<std::ops::Range<usize>> {
-    let protected_prefix_end = markdown_list_body_start(line).unwrap_or_default();
-    wrap_line_at_whitespace_ranges_with_protected_prefix(line, width, protected_prefix_end)
+    let Some(body_start) = markdown_list_body_start(line) else {
+        return wrap_line_at_whitespace_ranges_with_protected_prefix(line, width, 0);
+    };
+    let mut ranges = wrap_line_at_whitespace_ranges_with_protected_prefix(line, width, body_start);
+    let hang = markdown_list_hang_width(line, width);
+    if hang == 0 || ranges.len() < 2 {
+        return ranges;
+    }
+    let rest_start = ranges[0].end;
+    ranges.truncate(1);
+    ranges.extend(
+        wrap_line_at_whitespace_ranges_with_protected_prefix(&line[rest_start..], width - hang, 0)
+            .into_iter()
+            .map(|range| range.start + rest_start..range.end + rest_start),
+    );
+    ranges
+}
+
+/// Display columns that wrapped list continuation rows are indented by, or 0
+/// when `line` is not a list item or the pane is too narrow to hang.
+fn markdown_list_hang_width(line: &str, width: usize) -> usize {
+    let hang = markdown_list_body_start(line).map_or(0, |start| display_width(&line[..start]));
+    if hang > 0 && hang < width {
+        hang
+    } else {
+        0
+    }
 }
 
 fn markdown_list_body_start(line: &str) -> Option<usize> {
@@ -542,9 +575,13 @@ fn wrap_styled_segments(segments: &[StyledSegment], width: usize) -> Vec<Line<'s
         .map(|segment| Span::styled(segment.text.clone(), segment.style))
         .collect::<Vec<_>>();
 
+    let hang = markdown_list_hang_width(&text, width);
     let lines = soft_wrap_visible_ranges(&text, wrap_markdown_line_ranges(&text, width))
         .map(|range| {
-            let chunk = slice_spans_by_bytes(&spans, range.start, range.end);
+            let mut chunk = slice_spans_by_bytes(&spans, range.start, range.end);
+            if hang > 0 && range.start > 0 && !chunk.is_empty() {
+                chunk.insert(0, Span::styled(" ".repeat(hang), Theme::text()));
+            }
             if chunk.is_empty() {
                 // Preserve an empty content row so underline/style state does not
                 // leak from adjacent lines when a wrap yields no visible glyphs.

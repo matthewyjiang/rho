@@ -548,3 +548,26 @@ fn markdown_drain_holds_row_that_fills_width_mid_word() {
     assert_eq!(fragment.text.as_str(), "for ");
     assert_eq!(stream.pending_text(), "generating");
 }
+
+// Covers: a streamed list item commits at the same hanging-indent wrap rows as
+// the final render, and the live preview paints continuation rows indented.
+#[test]
+fn markdown_drain_wraps_list_items_at_hanging_indent_rows() {
+    let text = "- Agents can report their own resume command";
+    let mut stream = AppendOnlyStream::default();
+    let mut fragments = Vec::new();
+    for ch in text.chars() {
+        stream.push_delta(&ch.to_string());
+        if let Some(fragment) = stream.drain_renderable_markdown(20, false) {
+            fragments.push(fragment.text);
+        }
+    }
+    let preview = stream.drain_preview_markdown(20, false).unwrap();
+
+    assert_eq!(fragments, vec!["- Agents can report ", "their own resume "]);
+    assert_eq!(
+        preview.line_prefix(),
+        "- Agents can report their own resume "
+    );
+    assert_eq!(preview.render_text(), "command");
+}

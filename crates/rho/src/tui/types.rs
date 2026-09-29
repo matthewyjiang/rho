@@ -47,6 +47,9 @@ pub(super) struct ActiveFrame {
 
 pub(super) struct LiveStreamPreview {
     pub(in crate::tui) kind: StreamKind,
+    /// Committed start of the line `text` continues. Painted for layout only;
+    /// its rows are already in the transcript and are dropped from the preview.
+    pub(in crate::tui) line_prefix: String,
     pub(in crate::tui) text: String,
     pub(in crate::tui) include_leading_blank: bool,
 }
@@ -123,6 +126,7 @@ impl StreamUi {
             (None, None) => false,
             (Some(current), Some(next)) => {
                 current.kind != next.kind
+                    || current.line_prefix != next.line_prefix
                     || current.text != next.text
                     || current.include_leading_blank != next.include_leading_blank
             }

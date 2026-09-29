@@ -26,9 +26,37 @@ fn keeps_list_markers_with_a_long_path_in_narrow_output() {
             lines.iter().map(line_text).collect::<Vec<_>>(),
             vec![
                 format!("{marker} {}", &path[..first_line_suffix_len]),
-                path[first_line_suffix_len..].to_string(),
+                format!(
+                    "{}{}",
+                    " ".repeat(marker.len() + 1),
+                    &path[first_line_suffix_len..]
+                ),
             ]
         );
+    }
+}
+
+// Covers: wrapped list items hang continuation rows under the item text,
+// including nested items, and the indent keeps rows inside the pane width.
+#[test]
+fn wraps_list_items_with_a_hanging_indent() {
+    let cases = [
+        (
+            "- Agents can report their own resume command",
+            vec!["- Agents can report", "  their own resume", "  command"],
+        ),
+        (
+            "  12. nested items hang under their text",
+            vec!["  12. nested items", "      hang under", "      their text"],
+        ),
+    ];
+    for (markdown, expected) in cases {
+        let mut fence_state = CodeFenceState::default();
+        let rows = markdown_lines(markdown, 20, &mut fence_state)
+            .iter()
+            .map(|line| line_text(line).trim_end().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(rows, expected);
     }
 }
 
