@@ -1,4 +1,7 @@
-use super::super::markdown::{markdown_lines, update_code_block_state, CodeFenceState};
+use super::super::markdown::{
+    markdown_lines, push_wrapped_markdown_without_copy_button, update_code_block_state,
+    CodeFenceState,
+};
 use super::*;
 use ratatui::text::Line;
 
@@ -558,7 +561,7 @@ fn streamed_rows(committed: &str, stream: &AppendOnlyStream, width: usize) -> Ve
     };
     if let Some(preview) = stream.drain_preview_markdown(width, false) {
         let mut preview_lines = Vec::new();
-        super::super::markdown::push_wrapped_markdown_without_copy_button(
+        push_wrapped_markdown_without_copy_button(
             &mut preview_lines,
             preview.render_text(),
             width,
@@ -570,25 +573,40 @@ fn streamed_rows(committed: &str, stream: &AppendOnlyStream, width: usize) -> Ve
     rows.iter().map(|row| row.trim_end().to_owned()).collect()
 }
 
-// Covers: list items streamed one character at a time show exactly their
-// final-render rows (committed transcript + live preview) after every drain,
-// and continuation rows stay hung after the pane widens mid-item.
+// Covers: plain list items streamed one character at a time show exactly
+// their final-render rows (committed transcript + live preview) on every tick,
+// including a row that fills the width exactly before a space; items with
+// inline markup match after every drain; continuation rows stay hung after
+// the pane widens mid-item.
 #[test]
 fn streamed_list_item_rows_match_final_render() {
-    for text in [
-        "- Agents can report their own resume command. Herdr then reopens their exact session after a restart.",
-        "- **Agents** can report their own `resume` command. Herdr then reopens their exact session after a restart.",
-    ] {
+    let exact_fill = "- 123456789012345678 then more words keep wrapping here";
+    assert_eq!(exact_fill.find(" then"), Some(20), "row 1 fills width 20");
+    let cases = [
+        (exact_fill, EveryTick),
+        (
+            "- Agents can report their own resume command. Herdr then reopens their exact session after a restart.",
+            EveryTick,
+        ),
+        (
+            "- **Agents** can report their own `resume` command. Herdr then reopens their exact session after a restart.",
+            AfterDrain,
+        ),
+    ];
+    for (text, check) in cases {
         let resize_at = text.len() / 2;
         let mut stream = AppendOnlyStream::default();
         let mut committed = String::new();
         for (index, ch) in text.char_indices() {
             let width = if index < resize_at { 20 } else { 32 };
             stream.push_delta(&ch.to_string());
-            let Some(fragment) = stream.drain_renderable_markdown(width, false) else {
+            let drained = stream
+                .drain_renderable_markdown(width, false)
+                .map(|fragment| committed.push_str(&fragment.into_text()))
+                .is_some();
+            if !drained && check == AfterDrain {
                 continue;
-            };
-            committed.push_str(&fragment.into_text());
+            }
             let shown = streamed_rows(&committed, &stream, width);
             let visible = &text[..index + ch.len_utf8()];
             if index < resize_at {
@@ -606,3 +624,13 @@ fn streamed_list_item_rows_match_final_render() {
         }
     }
 }
+
+/// When [`streamed_list_item_rows_match_final_render`] compares rows.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LockstepCheck {
+    EveryTick,
+    /// Markup lines can commit a partial row; the preview catches up at the
+    /// next drain.
+    AfterDrain,
+}
+use LockstepCheck::{AfterDrain, EveryTick};

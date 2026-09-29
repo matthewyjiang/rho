@@ -13,7 +13,7 @@ use super::{
     inline_shell::InlineShellMode,
     limits_command,
     login::SecretInput,
-    markdown::CodeFenceState,
+    markdown::{CodeFenceState, StreamLineStart},
     picker::UiPicker,
     prompt_turn::FailedTurn,
     questionnaire::QuestionnaireComposer,
@@ -51,7 +51,7 @@ pub(super) struct LiveStreamPreview {
     pub(in crate::tui) text: String,
     /// Whether `text` continues a committed list item, so its first line wraps
     /// as hung continuation rows.
-    pub(in crate::tui) line_start: super::markdown::StreamLineStart,
+    pub(in crate::tui) line_start: StreamLineStart,
     pub(in crate::tui) include_leading_blank: bool,
 }
 

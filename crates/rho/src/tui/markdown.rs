@@ -26,7 +26,7 @@ use super::markdown_image::standalone_markdown_image;
 use super::syntax::BlockHighlighter;
 use inline::{inline_markdown_stable_prefix_len, markdown_inline_segments, markdown_inline_text};
 pub(in crate::tui) use list_wrap::StreamLineStart;
-use list_wrap::{wrap_markdown_line_ranges, ContinuationIndent, WrapPolicy};
+use list_wrap::{wrap_markdown_line_ranges, ContinuationIndent};
 use panel::ClosedPanel;
 
 pub(in crate::tui) use heading::HeadingLevel;
@@ -155,11 +155,11 @@ fn render_markdown_from_fence_state(
         // A continued list item's tail is prose, not a new block: skip block
         // detection so text like `# x` mid-item is not read as a heading.
         if line_index == 0 && active.is_none() {
-            if let Some(policy) = line_start.continued_policy() {
+            if let Some(indent) = line_start.continued_indent(width) {
                 lines.extend(wrap_styled_segments(
                     &markdown_inline_segments(raw_line),
                     width,
-                    policy,
+                    indent,
                 ));
                 line_index += 1;
                 continue;
@@ -313,7 +313,7 @@ fn render_markdown_from_fence_state(
         lines.extend(wrap_styled_segments(
             &markdown_inline_segments(raw_line),
             width,
-            WrapPolicy::for_paragraph(raw_line),
+            ContinuationIndent::list_item(raw_line, width),
         ));
         line_index += 1;
     }
@@ -537,15 +537,14 @@ fn markdown_heading_lines(heading: heading::AtxHeading<'_>, width: usize) -> Vec
         .into_iter()
         .map(|segment| StyledSegment::new(segment.text, heading_style.patch(segment.style)))
         .collect::<Vec<_>>();
-    wrap_styled_segments(&segments, width, WrapPolicy::Flush)
+    wrap_styled_segments(&segments, width, ContinuationIndent::Flush)
 }
 
 fn wrap_styled_segments(
     segments: &[StyledSegment],
     width: usize,
-    policy: WrapPolicy,
+    indent: ContinuationIndent,
 ) -> Vec<Line<'static>> {
-    let indent = policy.resolve(width);
     let text = segments
         .iter()
         .map(|segment| segment.text.as_str())
@@ -557,14 +556,6 @@ fn wrap_styled_segments(
 
     let lines = soft_wrap_visible_ranges(&text, wrap_markdown_line_ranges(&text, width, indent))
         .map(|range| {
-            // A continued tail can start with the break space of its committed
-            // row; drop it like any other row-leading break padding.
-            let range = if indent.row_indent(range.start) > 0 && range.start == 0 {
-                let trimmed = text[range.clone()].trim_start();
-                range.end - trimmed.len()..range.end
-            } else {
-                range
-            };
             let mut chunk = slice_spans_by_bytes(&spans, range.start, range.end);
             let pad = indent.row_indent(range.start);
             if pad > 0 && !chunk.is_empty() {
@@ -583,7 +574,9 @@ fn wrap_styled_segments(
         })
         .collect::<Vec<_>>();
 
-    if lines.is_empty() {
+    // A whitespace-only continued tail is break padding for rows already on
+    // screen; it adds no row of its own.
+    if lines.is_empty() && !matches!(indent, ContinuationIndent::Continued(_)) {
         vec![Line::from(Span::styled(
             String::new(),
             Style::default().remove_modifier(ratatui::style::Modifier::UNDERLINED),

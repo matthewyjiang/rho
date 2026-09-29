@@ -1,8 +1,9 @@
 //! Hanging-indent wrapping for markdown list items.
 //!
 //! A wrapped list item keeps its marker on the first row and hangs later rows
-//! under the item text. List-ness is read from the markdown *source* line, so
-//! the final render and streaming bounds agree (and `` `-` x`` stays prose).
+//! under the item text. Whether a line hangs is read from its markdown source,
+//! so `` `-` x`` does not hang; the final render and streaming bounds share
+//! [`wrap_markdown_line_ranges`] to stay in lockstep.
 
 use std::ops::Range;
 
@@ -11,53 +12,32 @@ use super::{
     wrap_line_at_whitespace_ranges_with_protected_prefix,
 };
 
-/// Caller-chosen wrap behavior for one rendered markdown line.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum WrapPolicy {
-    /// Every row starts at column 0 (headings, table cells).
-    Flush,
-    /// List item whose marker (with separator) is `hang` columns wide.
-    ListItem { hang: usize },
-    /// Tail of a list item whose marker row is already committed; every row
-    /// is a continuation row hung `hang` columns in.
-    ContinuedListItem { hang: usize },
-}
-
-impl WrapPolicy {
-    /// Policy for a paragraph whose markdown source is `source_line`.
-    pub(super) fn for_paragraph(source_line: &str) -> Self {
-        match markdown_list_marker_width(source_line) {
-            0 => Self::Flush,
-            hang => Self::ListItem { hang },
-        }
-    }
-
-    /// Resolve at `width`. Hangs that leave no room for text wrap flush.
-    pub(super) fn resolve(self, width: usize) -> ContinuationIndent {
-        let fit = |hang: usize| (hang > 0 && hang < width).then_some(hang);
-        match self {
-            Self::Flush => ContinuationIndent::Flush,
-            Self::ListItem { hang } => {
-                fit(hang).map_or(ContinuationIndent::Flush, ContinuationIndent::Hang)
-            }
-            Self::ContinuedListItem { hang } => {
-                fit(hang).map_or(ContinuationIndent::Flush, ContinuationIndent::Continued)
-            }
-        }
-    }
-}
-
-/// Resolved indent for the rows of one wrapped line.
+/// Resolved indent for the rows of one wrapped markdown line.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ContinuationIndent {
+    /// Every row starts at column 0 (prose, headings, table cells).
     Flush,
-    /// First row spans the full width; later rows hang this many columns in.
+    /// List item: the first row spans the full width; later rows hang this
+    /// many columns in, under the item text.
     Hang(usize),
-    /// Every row hangs this many columns in.
+    /// Tail of a list item whose marker row is already committed: every row
+    /// is a continuation row, hung this many columns in.
     Continued(usize),
 }
 
 impl ContinuationIndent {
+    /// Indent for a paragraph whose markdown source is `source_line`.
+    pub(super) fn list_item(source_line: &str, width: usize) -> Self {
+        list_hang(source_line)
+            .and_then(|hang| fit_hang(hang, width))
+            .map_or(Self::Flush, Self::Hang)
+    }
+
+    /// Indent for the tail of a committed list item with marker width `hang`.
+    fn continued(hang: usize, width: usize) -> Self {
+        fit_hang(hang, width).map_or(Self::Flush, Self::Continued)
+    }
+
     /// Columns of padding before the row that starts at byte `row_start`.
     pub(super) fn row_indent(self, row_start: usize) -> usize {
         match self {
@@ -66,6 +46,11 @@ impl ContinuationIndent {
             Self::Hang(hang) | Self::Continued(hang) => hang,
         }
     }
+}
+
+/// `hang` when continuation rows still leave room for text at `width`.
+fn fit_hang(hang: usize, width: usize) -> Option<usize> {
+    (hang < width).then_some(hang)
 }
 
 /// Where pending stream text starts relative to its markdown source line.
@@ -95,65 +80,65 @@ impl StreamLineStart {
         let line_start = emitted
             .rfind('\n')
             .map_or(0, |index| index + '\n'.len_utf8());
-        match WrapPolicy::for_paragraph(&emitted[line_start..]) {
-            WrapPolicy::ListItem { hang } => Self::ContinuesListItem { hang },
-            WrapPolicy::Flush | WrapPolicy::ContinuedListItem { .. } => Self::Fresh,
-        }
+        list_hang(&emitted[line_start..])
+            .map_or(Self::Fresh, |hang| Self::ContinuesListItem { hang })
     }
 
-    /// Policy for the first pending line, or `None` when it starts a fresh
-    /// source line and goes through normal block detection.
-    pub(super) fn continued_policy(self) -> Option<WrapPolicy> {
+    /// Indent for the first pending line at `width`, or `None` when it starts
+    /// a fresh source line and goes through normal block detection.
+    pub(super) fn continued_indent(self, width: usize) -> Option<ContinuationIndent> {
         match self {
             Self::Fresh => None,
-            Self::ContinuesListItem { hang } => Some(WrapPolicy::ContinuedListItem { hang }),
+            Self::ContinuesListItem { hang } => Some(ContinuationIndent::continued(hang, width)),
         }
     }
 }
 
-/// Covering soft-wrap ranges for one rendered markdown line.
+/// Soft-wrap ranges for one rendered markdown line.
 ///
-/// Hung rows wrap at `width - hang`; callers pad them by
-/// [`ContinuationIndent::row_indent`]. Streaming bounds share these ranges to
-/// stay in lockstep with the final render.
+/// Hung rows wrap at `width - hang` and skip leading break whitespace, so a
+/// continued tail wraps exactly like the rows after an item's first row; a
+/// whitespace-only tail has no rows. Callers pad rows by
+/// [`ContinuationIndent::row_indent`].
 pub(super) fn wrap_markdown_line_ranges(
     line: &str,
     width: usize,
     indent: ContinuationIndent,
 ) -> Vec<Range<usize>> {
-    let protected_prefix_end = markdown_list_body_start(line).unwrap_or_default();
+    let protected = |line: &str| {
+        let protected_prefix_end = markdown_list_body_start(line).unwrap_or_default();
+        wrap_line_at_whitespace_ranges_with_protected_prefix(line, width, protected_prefix_end)
+    };
     match indent {
-        ContinuationIndent::Flush => {
-            wrap_line_at_whitespace_ranges_with_protected_prefix(line, width, protected_prefix_end)
-        }
+        ContinuationIndent::Flush => protected(line),
         ContinuationIndent::Hang(hang) => {
-            let first = wrap_line_at_whitespace_ranges_with_protected_prefix(
-                line,
-                width,
-                protected_prefix_end,
-            )
-            .into_iter()
-            .next()
-            .unwrap_or(0..line.len());
-            let rest_start = first.end;
-            let mut ranges = vec![first];
-            if rest_start < line.len() {
-                ranges.extend(
-                    wrap_line_at_whitespace_ranges(&line[rest_start..], width - hang)
-                        .into_iter()
-                        .map(|range| range.start + rest_start..range.end + rest_start),
-                );
-            }
+            let mut ranges = protected(line);
+            ranges.truncate(1);
+            let rest_start = ranges.first().map_or(0, |first| first.end);
+            ranges.extend(hung_ranges(line, rest_start, width - hang));
             ranges
         }
-        ContinuationIndent::Continued(hang) => wrap_line_at_whitespace_ranges(line, width - hang),
+        ContinuationIndent::Continued(hang) => hung_ranges(line, 0, width - hang),
     }
 }
 
-/// Display width of `line`'s list marker and separator, or 0 when `line` is
-/// not a list item.
-fn markdown_list_marker_width(line: &str) -> usize {
-    markdown_list_body_start(line).map_or(0, |start| display_width(&line[..start]))
+/// Ranges for `line[start..]` wrapped at `width`, skipping leading whitespace.
+fn hung_ranges(line: &str, start: usize, width: usize) -> Vec<Range<usize>> {
+    let rest = &line[start..];
+    let start = start + (rest.len() - rest.trim_start().len());
+    if start == line.len() {
+        return Vec::new();
+    }
+    wrap_line_at_whitespace_ranges(&line[start..], width)
+        .into_iter()
+        .map(|range| range.start + start..range.end + start)
+        .collect()
+}
+
+/// Display width of a list item's marker and separator, or `None` when
+/// `line` is not a list item.
+fn list_hang(line: &str) -> Option<usize> {
+    markdown_list_body_start(line).map(|start| display_width(&line[..start]))
 }
 
 fn markdown_list_body_start(line: &str) -> Option<usize> {
