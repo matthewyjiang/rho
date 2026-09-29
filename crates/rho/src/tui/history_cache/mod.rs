@@ -611,6 +611,12 @@ impl HistoryLineCache {
                 }
             }
             std::cmp::Ordering::Equal => {}
+            // The previous last entry may have been rendered as an open stream
+            // tail without its trailing blank. It is no longer last, so it must
+            // be rendered again or it abuts the new entry.
+            std::cmp::Ordering::Greater if self.open_stream_tail => {
+                self.invalidate_from(cached_end.saturating_sub(1));
+            }
             std::cmp::Ordering::Greater => self.invalidate_from(cached_end),
         }
 

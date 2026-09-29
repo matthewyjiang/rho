@@ -779,6 +779,59 @@ fn open_stream_tail_omits_trailing_blank_until_closed() {
     );
 }
 
+// Covers: an entry appended while the stream tail is still open must not strand
+// the previous tail without its trailing blank. CI load can paint the cache
+// after a tool card lands but before the tail flag clears, which dropped the
+// gap above the card.
+// Owner: history line cache spacing.
+#[test]
+fn entry_appended_under_open_tail_restores_previous_tail_blank() {
+    let _guard = crate::tui::theme::theme_test_lock();
+    use crate::tui::ToolEntry;
+
+    let mut entries = vec![Entry::Assistant("I'll inspect the middleware.\n".into())];
+    let mut cache = HistoryLineCache::default();
+    cache.set_open_stream_tail(true);
+    let _ = cache.line_count(&entries, settings(60), &no_images);
+
+    entries.push(Entry::Tool(ToolEntry::new(
+        rho_tools::tool_card::ToolCard::new(
+            rho_tools::tool_card::ToolStatus::Ok,
+            rho_tools::tool_card::ToolFamily::Default,
+            rho_tools::tool_card::ToolHeader::call("read_file(a.rs)", None),
+        ),
+        false,
+        None,
+        None,
+    )));
+    let _ = cache.line_count(&entries, settings(60), &no_images);
+    cache.set_open_stream_tail(false);
+
+    let mut lines = Vec::new();
+    cache.extend_visible_lines(
+        &entries,
+        settings(60),
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut lines,
+        &no_images,
+    );
+    let mut fresh_lines = Vec::new();
+    HistoryLineCache::default().extend_visible_lines(
+        &entries,
+        settings(60),
+        HistoryLineSlice {
+            start: 0,
+            count: usize::MAX,
+        },
+        &mut fresh_lines,
+        &no_images,
+    );
+    assert_eq!(lines, fresh_lines);
+}
+
 // Covers: zen mode suppresses tool/reasoning lines while keeping entry indices stable.
 // Owner: history line cache display policy.
 #[test]
