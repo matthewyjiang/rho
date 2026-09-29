@@ -36,7 +36,6 @@ pub(super) enum TaskId {
     CustomModels,
     CursorModels,
     SyntaxWarmup,
-    HerdrGraphics,
     InteractiveLogin,
     GithubPr,
     UsageLimits(LimitsSectionId),
@@ -81,7 +80,6 @@ pub(super) enum SessionOutput {
     CustomModels,
     CursorModels(Result<crate::cursor_runtime::models::RefreshResult, JoinError>),
     SyntaxWarmup,
-    HerdrGraphics(Result<crate::herdr::HerdrGraphicsCapability, JoinError>),
     InteractiveLogin(super::login::FinishedInteractiveLogin),
 }
 
@@ -376,12 +374,6 @@ impl App {
                 // paint gets roles.
                 self.history.invalidate_from(0);
                 Ok(true)
-            }
-            SessionOutput::HerdrGraphics(result) => {
-                if let Ok(capability) = result {
-                    self.image_picker = super::feed_image::picker_from_environment(capability);
-                }
-                Ok(false)
             }
             SessionOutput::InteractiveLogin(finished) => {
                 self.apply_interactive_login(finished, terminal, agent)

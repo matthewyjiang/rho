@@ -134,8 +134,7 @@ placements are not cropped mid-scroll.
 | Environment | Behavior |
 | --- | --- |
 | Kitty, Ghostty | Graphics protocol preview in the feed |
-| [Herdr](/integrations/herdr) with paintable Kitty client | Kitty placements through the host |
-| [Herdr](/integrations/herdr) without host cell metrics | Halfblock preview so reserved rows are not blank |
+| [Herdr](/integrations/herdr) in Kitty or Ghostty | Standard Kitty graphics, rendered natively by Herdr |
 | Persistent tmux | Text fallback (no graphics probe; env can describe a stale client) |
 | Other terminals | Text tool result only; no graphics escape sequences |
 

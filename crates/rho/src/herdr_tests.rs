@@ -1,6 +1,6 @@
+use super::HerdrReporter;
 #[cfg(unix)]
 use super::HerdrState;
-use super::{graphics_info_host_cells, HerdrGraphicsCapability, HerdrReporter};
 use std::collections::HashMap;
 
 #[test]
@@ -120,66 +120,4 @@ async fn release_sends_release_request() {
     assert_eq!(request["params"]["pane_id"], "w1:p1");
     assert_eq!(request["params"]["agent"], "rho");
     assert!(request["params"].get("seq").is_none());
-}
-
-#[test]
-fn graphics_info_parses_host_cell_metrics() {
-    let cases = [
-        (
-            br#"{"id":"1","result":{"type":"pane_graphics_info","cell_width_px":14,"cell_height_px":32}}"#
-                as &[u8],
-            Some((14, 32)),
-        ),
-        (
-            br#"{"id":"1","result":{"type":"pane_graphics_info","cell_width_px":14}}"#,
-            None,
-        ),
-        (
-            br#"{"id":"1","result":{"type":"pane_graphics_info","cell_width_px":0,"cell_height_px":32}}"#,
-            None,
-        ),
-        (
-            br#"{"id":"1","error":{"code":"cell_size_unavailable","message":"host cell size is unavailable"}}"#,
-            None,
-        ),
-    ];
-    for (response, expected) in cases {
-        assert_eq!(graphics_info_host_cells(response), expected);
-    }
-}
-
-#[tokio::test]
-async fn graphics_capability_is_not_herdr_when_disabled() {
-    let reporter = HerdrReporter::default();
-    assert_eq!(
-        reporter.graphics_capability().await,
-        HerdrGraphicsCapability::NotHerdr
-    );
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn graphics_capability_paintable_when_result_present_without_eof() {
-    let socket_dir = tempfile::tempdir().unwrap();
-    let socket_path = socket_dir.path().join("herdr.sock");
-    let mut server = super::test_support::TestHerdrServer::bind_with_response(
-        &socket_path,
-        br#"{"id":"1","result":{"type":"pane_graphics_info","cell_width_px":14,"cell_height_px":32}}
-"#,
-    )
-    .await;
-    let reporter = super::test_support::reporter_for_socket(&socket_path);
-
-    let capability = reporter.graphics_capability().await;
-    let request = server.next_request().await;
-
-    assert_eq!(
-        capability,
-        HerdrGraphicsCapability::Paintable {
-            width: 14,
-            height: 32
-        }
-    );
-    assert_eq!(request["method"], "pane.graphics.info");
-    assert_eq!(request["params"]["pane_id"], "w1:p1");
 }

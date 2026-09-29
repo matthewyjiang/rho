@@ -12,7 +12,6 @@ use std::{
 use questionnaire::QuestionnaireCancelReason;
 use ratatui::DefaultTerminal;
 use tokio::sync::oneshot;
-use tracing::Instrument;
 mod activity;
 mod advisor_command;
 mod advisor_status;
@@ -461,13 +460,6 @@ pub(crate) async fn run(
     Theme::initialize_from_terminal();
     Theme::apply_committed(&info.services.theme);
     let herdr = info.services.herdr.clone();
-    let pending_herdr_graphics = {
-        let herdr = herdr.clone();
-        tokio::spawn(
-            async move { herdr.graphics_capability().await }
-                .instrument(tracing::info_span!("startup.herdr_graphics")),
-        )
-    };
     let initial_state = if info.services.auth_unavailable.is_some() {
         HerdrState::Blocked
     } else {
@@ -490,12 +482,10 @@ pub(crate) async fn run(
             Ok(()) => {
                 let mut app = App::new(
                     info,
-                    crate::herdr::HerdrGraphicsCapability::NotHerdr,
                     agent.mcp_report().clone(),
                     agent.mcp_catalog().clone(),
                     agent.plugins_report().clone(),
                 );
-                app.track_herdr_graphics(pending_herdr_graphics);
                 app.terminal_session = Some(TerminalSession::acquire());
                 if let Some(manager) = agent.subagents() {
                     app.subagent_inbox.bind(manager);

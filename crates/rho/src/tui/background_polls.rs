@@ -8,7 +8,7 @@ use rho_sdk::ReasoningLevel;
 use tokio::task::JoinError;
 
 use super::{
-    background_tasks::{OnCancel, SessionOutput, TaskId},
+    background_tasks::{SessionOutput, TaskId},
     reasoning_metadata, App, ComposerMode, Entry, InteractiveRuntime, StatusSource,
 };
 
@@ -41,17 +41,6 @@ impl App {
             let _ = self.execute_mcp_command();
         }
         Ok(true)
-    }
-
-    /// Adopt the Herdr graphics probe `tui::run` started before the app.
-    pub(super) fn track_herdr_graphics(
-        &mut self,
-        handle: tokio::task::JoinHandle<crate::herdr::HerdrGraphicsCapability>,
-    ) {
-        self.tasks
-            .track(TaskId::HerdrGraphics, handle, OnCancel::Await, |result| {
-                SessionOutput::HerdrGraphics(result).into()
-            });
     }
 
     /// Returns whether the runtime accepted the context window.

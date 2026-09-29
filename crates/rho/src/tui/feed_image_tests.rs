@@ -7,9 +7,8 @@ use rho_sdk::tool::ToolAsset;
 
 use super::{
     cell_font_size, feed_image_height_budget, kitty_graphics_environment, max_feed_image_height,
-    picker_for_environment, quantize_content_image_cap, reserve_image_rows, FeedImage,
-    COMPACT_IMAGE_HEIGHT, DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT, MIN_IMAGE_HEIGHT,
-    TALL_IMAGE_HEIGHT,
+    quantize_content_image_cap, reserve_image_rows, FeedImage, COMPACT_IMAGE_HEIGHT,
+    DEFAULT_IMAGE_HEIGHT, MAX_IMAGE_HEIGHT, MIN_IMAGE_HEIGHT, TALL_IMAGE_HEIGHT,
 };
 use crate::tui::{
     history_cache::{HistoryLineCache, HistoryLineSlice, HistoryRenderSettings},
@@ -100,41 +99,6 @@ fn terminal_hints_enable_direct_kitty_and_ghostty_but_not_tmux() {
         Some("Apple_Terminal"),
         Some("xterm-256color")
     ));
-}
-
-#[test]
-fn herdr_without_paintable_kitty_uses_halfblocks() {
-    let picker = picker_for_environment(
-        /*host_supports_kitty*/ true,
-        crate::herdr::HerdrGraphicsCapability::Unpaintable,
-    )
-    .unwrap();
-    assert_eq!(picker.protocol_type(), ProtocolType::Halfblocks);
-}
-
-#[test]
-fn herdr_with_paintable_kitty_uses_host_cell_metrics() {
-    let picker = picker_for_environment(
-        /*host_supports_kitty*/ true,
-        crate::herdr::HerdrGraphicsCapability::Paintable {
-            width: 14,
-            height: 32,
-        },
-    )
-    .unwrap();
-    assert_eq!(picker.protocol_type(), ProtocolType::Kitty);
-    let font = picker.font_size();
-    assert_eq!((font.width, font.height), (14, 32));
-}
-
-#[test]
-fn native_kitty_without_herdr_uses_kitty_protocol() {
-    let picker = picker_for_environment(
-        /*host_supports_kitty*/ true,
-        crate::herdr::HerdrGraphicsCapability::NotHerdr,
-    )
-    .unwrap();
-    assert_eq!(picker.protocol_type(), ProtocolType::Kitty);
 }
 
 // Covers: inconsistent TIOCGWINSZ pixels must not produce a 0-height font

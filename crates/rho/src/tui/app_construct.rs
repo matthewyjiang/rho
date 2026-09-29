@@ -23,7 +23,6 @@ use super::smoke_injection;
 impl App {
     pub(super) fn new(
         info: TuiBootstrap,
-        herdr_graphics: crate::herdr::HerdrGraphicsCapability,
         mcp_report: crate::tools::mcp::McpSessionReport,
         mcp_catalog: crate::tools::mcp::McpCatalog,
         plugins_report: crate::plugins::PluginLoadReport,
@@ -35,7 +34,6 @@ impl App {
             return Self::new_with_credentials(
                 info,
                 Arc::new(rho_providers::credentials::MemoryCredentialStore::default()),
-                herdr_graphics,
                 mcp_report,
                 mcp_catalog,
                 plugins_report,
@@ -44,7 +42,6 @@ impl App {
         Self::new_with_credentials(
             info,
             Arc::new(AppCredentialStore),
-            herdr_graphics,
             mcp_report,
             mcp_catalog,
             plugins_report,
@@ -54,7 +51,6 @@ impl App {
     pub(super) fn new_with_credentials(
         info: TuiBootstrap,
         credential_store: Arc<dyn CredentialStore>,
-        herdr_graphics: crate::herdr::HerdrGraphicsCapability,
         mcp_report: crate::tools::mcp::McpSessionReport,
         mcp_catalog: crate::tools::mcp::McpCatalog,
         plugins_report: crate::plugins::PluginLoadReport,
@@ -105,7 +101,7 @@ impl App {
                 ..StreamUi::default()
             },
             turn: TurnUi::default(),
-            image_picker: picker_from_environment(herdr_graphics),
+            image_picker: picker_from_environment(),
             pending: PendingWorkUi::default(),
             pending_inline_shells: Vec::new(),
             deferred_inline_shell_context: Vec::new(),

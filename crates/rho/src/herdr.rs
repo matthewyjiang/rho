@@ -6,7 +6,6 @@ use std::{
 };
 
 const REQUEST_TIMEOUT: Duration = Duration::from_millis(500);
-const GRAPHICS_PROBE_TIMEOUT: Duration = Duration::from_millis(100);
 #[cfg(unix)]
 const MAX_RESPONSE_BYTES: u64 = 64 * 1024;
 const SOURCE: &str = "herdr:rho";
@@ -28,18 +27,6 @@ pub enum HerdrState {
     Idle,
     Working,
     Blocked,
-}
-
-/// Whether the active Herdr client can paint Kitty graphics placements.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HerdrGraphicsCapability {
-    /// Not running under a configured Herdr pane.
-    NotHerdr,
-    /// Herdr can paint Kitty placements for this pane.
-    Paintable { width: u16, height: u16 },
-    /// Under Herdr, but the probe failed or the host did not report both
-    /// positive cell pixel sizes.
-    Unpaintable,
 }
 
 impl HerdrState {
@@ -78,21 +65,6 @@ impl HerdrReporter {
     pub fn socket_is_reachable(&self) -> Option<bool> {
         let config = self.config.as_ref()?;
         Some(socket_is_reachable(&config.socket_path))
-    }
-
-    /// Probes whether the active Herdr client can paint Kitty placements.
-    ///
-    /// Herdr intercepts Kitty graphics from pane PTYs. Painting needs host cell
-    /// metrics; when those are missing, Rho should keep image previews in the
-    /// character grid (halfblocks) instead of reserving blank Kitty rows.
-    pub async fn graphics_capability(&self) -> HerdrGraphicsCapability {
-        let Some(config) = &self.config else {
-            return HerdrGraphicsCapability::NotHerdr;
-        };
-        match probe_kitty_graphics(config).await {
-            Some((width, height)) => HerdrGraphicsCapability::Paintable { width, height },
-            None => HerdrGraphicsCapability::Unpaintable,
-        }
     }
 
     pub async fn report_state(
@@ -191,38 +163,6 @@ impl HerdrReporter {
     }
 }
 
-/// `Some` when the host reported both positive cell pixel sizes.
-async fn probe_kitty_graphics(config: &HerdrConfig) -> Option<(u16, u16)> {
-    let request = json_rpc_request("pane.graphics.info", json!({ "pane_id": config.pane_id }));
-    let mut payload = serde_json::to_vec(&request).ok()?;
-    payload.push(b'\n');
-    let response = exchange_payload(config.socket_path.clone(), payload, GRAPHICS_PROBE_TIMEOUT)
-        .await
-        .ok()?;
-    graphics_info_host_cells(&response)
-}
-
-/// Parses a `pane.graphics.info` response. `None` means unpaintable: error,
-/// malformed, or missing/zero cell metrics.
-pub(crate) fn graphics_info_host_cells(response: &[u8]) -> Option<(u16, u16)> {
-    let value = serde_json::from_slice::<serde_json::Value>(response).ok()?;
-    if value.get("error").is_some() {
-        return None;
-    }
-    let result = value.get("result")?;
-    let px = |key: &str| {
-        result
-            .get(key)
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|px| u16::try_from(px).ok())
-            .filter(|px| *px > 0)
-    };
-    match (px("cell_width_px"), px("cell_height_px")) {
-        (Some(width), Some(height)) => Some((width, height)),
-        _ => None,
-    }
-}
-
 #[cfg(unix)]
 fn socket_is_reachable(path: &Path) -> bool {
     std::os::unix::net::UnixStream::connect(path).is_ok()
@@ -317,13 +257,6 @@ pub(crate) mod test_support {
 
     impl TestHerdrServer {
         pub(crate) async fn bind(socket_path: &Path) -> Self {
-            Self::bind_with_response(socket_path, b"{}\n").await
-        }
-
-        pub(crate) async fn bind_with_response(
-            socket_path: &Path,
-            response: &'static [u8],
-        ) -> Self {
             let listener = tokio::net::UnixListener::bind(socket_path).unwrap();
             let (tx, requests) = tokio::sync::mpsc::unbounded_channel();
             tokio::spawn(async move {
@@ -340,7 +273,7 @@ pub(crate) mod test_support {
                         tx.send(request).unwrap();
                         // Keep the connection open after the framed response so
                         // clients must read a newline rather than waiting for EOF.
-                        stream.get_mut().write_all(response).await.unwrap();
+                        stream.get_mut().write_all(b"{}\n").await.unwrap();
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     });
                 }

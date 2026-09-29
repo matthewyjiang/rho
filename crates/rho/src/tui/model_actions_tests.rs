@@ -252,7 +252,6 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
     let mut app = App::new_with_credentials(
         test_bootstrap(),
         store,
-        crate::herdr::HerdrGraphicsCapability::NotHerdr,
         crate::tools::mcp::McpSessionReport::default(),
         crate::tools::mcp::McpCatalog::default(),
         crate::plugins::PluginLoadReport::default(),
@@ -290,7 +289,6 @@ async fn select_model_report_auto_edit_tool_follows_provider_change() {
     let mut app = App::new_with_credentials(
         test_bootstrap(),
         store,
-        crate::herdr::HerdrGraphicsCapability::NotHerdr,
         crate::tools::mcp::McpSessionReport::default(),
         crate::tools::mcp::McpCatalog::default(),
         crate::plugins::PluginLoadReport::default(),
@@ -395,7 +393,6 @@ async fn select_model_report_tells_the_model_about_a_mid_session_switch() {
         let app = App::new_with_credentials(
             test_bootstrap(),
             store,
-            crate::herdr::HerdrGraphicsCapability::NotHerdr,
             crate::tools::mcp::McpSessionReport::default(),
             crate::tools::mcp::McpCatalog::default(),
             crate::plugins::PluginLoadReport::default(),
