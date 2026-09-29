@@ -47,10 +47,10 @@ pub(super) struct ActiveFrame {
 
 pub(super) struct LiveStreamPreview {
     pub(in crate::tui) kind: StreamKind,
-    /// Committed start of the line `text` continues. Painted for layout only;
-    /// its rows are already in the transcript and are dropped from the preview.
-    pub(in crate::tui) line_prefix: String,
     pub(in crate::tui) text: String,
+    /// Whether `text` continues a committed list item, so its first line wraps
+    /// as hung continuation rows.
+    pub(in crate::tui) line_start: super::markdown::StreamLineStart,
     pub(in crate::tui) include_leading_blank: bool,
 }
 
@@ -126,8 +126,8 @@ impl StreamUi {
             (None, None) => false,
             (Some(current), Some(next)) => {
                 current.kind != next.kind
-                    || current.line_prefix != next.line_prefix
                     || current.text != next.text
+                    || current.line_start != next.line_start
                     || current.include_leading_blank != next.include_leading_blank
             }
             (None, Some(_)) | (Some(_), None) => true,

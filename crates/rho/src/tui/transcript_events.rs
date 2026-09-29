@@ -219,8 +219,8 @@ impl App {
         if let Some(preview) = preview {
             self.streams.set_live_preview(Some(LiveStreamPreview {
                 kind,
-                line_prefix: preview.line_prefix().to_string(),
                 text: preview.render_text().to_string(),
+                line_start: preview.line_start(),
                 include_leading_blank: preview.include_leading_blank(),
             }));
             Ok(true)

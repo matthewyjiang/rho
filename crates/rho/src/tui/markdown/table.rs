@@ -3,7 +3,10 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use super::{display_width, markdown_inline_segments, wrap_styled_segments, StyledSegment, Theme};
+use super::{
+    display_width, markdown_inline_segments, wrap_styled_segments, ContinuationIndent,
+    StyledSegment, Theme,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TableAlignment {
@@ -284,7 +287,9 @@ fn paint_table_row(
     let wrapped_cells = row
         .iter()
         .zip(column_widths)
-        .map(|(cell, column_width)| wrap_styled_segments(cell, *column_width))
+        .map(|(cell, column_width)| {
+            wrap_styled_segments(cell, *column_width, ContinuationIndent::Flush)
+        })
         .collect::<Vec<_>>();
     let row_height = wrapped_cells.iter().map(Vec::len).max().unwrap_or(1);
     let mut lines = Vec::with_capacity(row_height);

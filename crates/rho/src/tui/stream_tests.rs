@@ -549,25 +549,66 @@ fn markdown_drain_holds_row_that_fills_width_mid_word() {
     assert_eq!(stream.pending_text(), "generating");
 }
 
-// Covers: a streamed list item commits at the same hanging-indent wrap rows as
-// the final render, and the live preview paints continuation rows indented.
+/// Rows a stream currently shows: committed transcript text plus live preview.
+fn streamed_rows(committed: &str, stream: &AppendOnlyStream, width: usize) -> Vec<String> {
+    let mut rows = if committed.is_empty() {
+        Vec::new()
+    } else {
+        rendered_markdown_text(committed, width, false)
+    };
+    if let Some(preview) = stream.drain_preview_markdown(width, false) {
+        let mut preview_lines = Vec::new();
+        super::super::markdown::push_stream_preview_markdown(
+            &mut preview_lines,
+            preview.render_text(),
+            width,
+            &mut CodeFenceState::default(),
+            preview.line_start(),
+        );
+        rows.extend(preview_lines.iter().map(line_text));
+    }
+    rows.iter().map(|row| row.trim_end().to_owned()).collect()
+}
+
+// Covers: a list item streamed one character at a time shows the same rows
+// (committed transcript + live preview) as its final render at every step, and
+// widening the pane mid-item never hides already-streamed text.
 #[test]
-fn markdown_drain_wraps_list_items_at_hanging_indent_rows() {
-    let text = "- Agents can report their own resume command";
+fn streamed_list_item_rows_match_final_render() {
+    let text = "- Agents can report their own resume command. Herdr then reopens their exact session after a restart.";
+    let resize_at = text.len() / 2;
     let mut stream = AppendOnlyStream::default();
-    let mut fragments = Vec::new();
-    for ch in text.chars() {
+    let mut committed = String::new();
+    for (index, ch) in text.char_indices() {
+        let width = if index < resize_at { 20 } else { 32 };
         stream.push_delta(&ch.to_string());
-        if let Some(fragment) = stream.drain_renderable_markdown(20, false) {
-            fragments.push(fragment.text);
+        if let Some(fragment) = stream.drain_renderable_markdown(width, false) {
+            committed.push_str(&fragment.into_text());
+        }
+        let visible = &text[..index + ch.len_utf8()];
+        let shown = streamed_rows(&committed, &stream, width);
+        if index < resize_at {
+            let expected = rendered_markdown_text(visible, width, false)
+                .iter()
+                .map(|row| row.trim_end().to_owned())
+                .collect::<Vec<_>>();
+            assert_eq!(shown, expected, "after {visible:?}");
+        } else {
+            let words = |rows: &[String]| {
+                rows.join(" ")
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            assert_eq!(
+                words(&shown),
+                words(&[visible.to_owned()]),
+                "after {visible:?}"
+            );
+            assert!(
+                shown.iter().skip(1).all(|row| row.starts_with("  ")),
+                "continuation rows stay hung after resize: {shown:?}"
+            );
         }
     }
-    let preview = stream.drain_preview_markdown(20, false).unwrap();
-
-    assert_eq!(fragments, vec!["- Agents can report ", "their own resume "]);
-    assert_eq!(
-        preview.line_prefix(),
-        "- Agents can report their own resume "
-    );
-    assert_eq!(preview.render_text(), "command");
 }

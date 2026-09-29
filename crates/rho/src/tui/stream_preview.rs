@@ -1,7 +1,7 @@
 use ratatui::text::Line;
 
 use super::{
-    markdown::push_wrapped_markdown_without_copy_button_from_fence_state,
+    markdown::push_stream_preview_markdown,
     render::{pad_display_line, padded_content_width},
     theme::Theme,
     StreamKind, StreamPreviewRenderCache, StreamUi,
@@ -32,39 +32,24 @@ impl StreamUi {
 
         let kind = preview.kind;
         let include_leading_blank = preview.include_leading_blank;
-        let text = format!("{}{}", preview.line_prefix, preview.text);
-        let line_prefix = preview.line_prefix.clone();
+        let text = preview.text.clone();
+        let line_start = preview.line_start;
         let mut lines = Vec::new();
         if include_leading_blank {
             lines.push(Line::raw(""));
         }
         let mut text_lines = Vec::new();
-        let code_fence = match kind {
+        let mut code_fence = match kind {
             StreamKind::Assistant => self.assistant_stream_code_fence.clone(),
             StreamKind::Reasoning => self.reasoning_stream_code_fence.clone(),
         };
-        let content_width = padded_content_width(width);
-        // The committed prefix ends on a wrap boundary, so its rows are a
-        // stable leading run of the combined render; drop them.
-        let committed_rows = if line_prefix.is_empty() {
-            0
-        } else {
-            let mut prefix_lines = Vec::new();
-            push_wrapped_markdown_without_copy_button_from_fence_state(
-                &mut prefix_lines,
-                &line_prefix,
-                content_width,
-                &mut code_fence.clone(),
-            );
-            prefix_lines.len()
-        };
-        push_wrapped_markdown_without_copy_button_from_fence_state(
+        push_stream_preview_markdown(
             &mut text_lines,
             &text,
-            content_width,
-            &mut code_fence.clone(),
+            padded_content_width(width),
+            &mut code_fence,
+            line_start,
         );
-        text_lines.drain(..committed_rows.min(text_lines.len()));
         if matches!(kind, StreamKind::Reasoning) {
             Theme::reasoning_output(&mut text_lines);
         }

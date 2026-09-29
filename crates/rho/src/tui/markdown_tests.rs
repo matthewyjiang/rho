@@ -37,9 +37,10 @@ fn keeps_list_markers_with_a_long_path_in_narrow_output() {
 }
 
 // Covers: wrapped list items hang continuation rows under the item text,
-// including nested items, and the indent keeps rows inside the pane width.
+// every row stays inside the pane width, and headings and table cells that
+// start with a list-like marker keep flush wrapping.
 #[test]
-fn wraps_list_items_with_a_hanging_indent() {
+fn wraps_only_list_paragraphs_with_a_hanging_indent() {
     let cases = [
         (
             "- Agents can report their own resume command",
@@ -49,14 +50,31 @@ fn wraps_list_items_with_a_hanging_indent() {
             "  12. nested items hang under their text",
             vec!["  12. nested items", "      hang under", "      their text"],
         ),
+        (
+            "## 1. Overview of the architecture",
+            vec!["1. Overview of the", "architecture"],
+        ),
+        (
+            "| a | b |\n| --- | --- |\n| - foo bar baz | x |",
+            vec![
+                "┌──────────────┬───┐",
+                "│ a            │ b │",
+                "├──────────────┼───┤",
+                "│ - foo bar    │ x │",
+                "│ baz          │   │",
+                "└──────────────┴───┘",
+            ],
+        ),
     ];
     for (markdown, expected) in cases {
         let mut fence_state = CodeFenceState::default();
-        let rows = markdown_lines(markdown, 20, &mut fence_state)
+        let lines = markdown_lines(markdown, 20, &mut fence_state);
+        assert!(lines.iter().all(|line| line.width() <= 20), "{markdown}");
+        let rows = lines
             .iter()
             .map(|line| line_text(line).trim_end().to_owned())
             .collect::<Vec<_>>();
-        assert_eq!(rows, expected);
+        assert_eq!(rows, expected, "{markdown}");
     }
 }
 
@@ -64,7 +82,7 @@ fn wraps_list_items_with_a_hanging_indent() {
 fn streams_list_lines_at_the_same_wrap_boundary_as_final_rendering() {
     let markdown = "- fixtures/downstream/no-default-features/Cargo.toml: package 0.0.0";
 
-    let bounds = markdown_stream_bounds(markdown, 39, false);
+    let bounds = markdown_stream_bounds(markdown, 39, false, StreamLineStart::Fresh);
 
     assert_eq!(bounds.drain.byte_index, 39);
     assert!(bounds.drain.ends_with_wrap);
