@@ -6,6 +6,7 @@ use ratatui::{
 mod code_fence;
 mod heading;
 mod inline;
+mod list_wrap;
 mod math;
 mod mermaid;
 mod panel;
@@ -24,6 +25,8 @@ pub(in crate::tui) use code_fence::{
 use super::markdown_image::standalone_markdown_image;
 use super::syntax::BlockHighlighter;
 use inline::{inline_markdown_stable_prefix_len, markdown_inline_segments, markdown_inline_text};
+pub(in crate::tui) use list_wrap::StreamLineStart;
+use list_wrap::{wrap_markdown_line_ranges, ContinuationIndent};
 use panel::ClosedPanel;
 
 pub(in crate::tui) use heading::HeadingLevel;
@@ -38,20 +41,31 @@ mod table_tests;
 use super::{
     render::{
         char_display_width, display_width, hard_wrap_styled_spans, slice_spans_by_bytes,
-        soft_wrap_visible_ranges, truncate_to_display_width,
+        soft_wrap_visible_ranges, truncate_to_display_width, wrap_line_at_whitespace_ranges,
         wrap_line_at_whitespace_ranges_with_protected_prefix,
     },
     theme::Theme,
 };
 
-pub(super) fn push_wrapped_markdown_without_copy_button_from_fence_state(
+/// Render markdown without code-block copy buttons (notification cards and
+/// the live stream preview). `line_start` says whether the first line
+/// continues a committed list item; pass [`StreamLineStart::Fresh`] otherwise.
+pub(super) fn push_wrapped_markdown_without_copy_button(
     lines: &mut Vec<Line<'static>>,
     text: &str,
     width: usize,
     state: &mut CodeFenceState,
+    line_start: StreamLineStart,
 ) {
     lines.extend(
-        render_markdown_from_fence_state(text, width, state, CodeBlockCopyButton::Hidden).lines,
+        render_markdown_from_fence_state(
+            text,
+            width,
+            state,
+            CodeBlockCopyButton::Hidden,
+            line_start,
+        )
+        .lines,
     );
 }
 
@@ -104,7 +118,13 @@ pub(super) fn render_markdown(
     width: usize,
     state: &mut CodeFenceState,
 ) -> RenderedMarkdown {
-    render_markdown_from_fence_state(text, width, state, CodeBlockCopyButton::Visible)
+    render_markdown_from_fence_state(
+        text,
+        width,
+        state,
+        CodeBlockCopyButton::Visible,
+        StreamLineStart::Fresh,
+    )
 }
 
 fn render_markdown_from_fence_state(
@@ -112,6 +132,7 @@ fn render_markdown_from_fence_state(
     width: usize,
     state: &mut CodeFenceState,
     copy_button: CodeBlockCopyButton,
+    line_start: StreamLineStart,
 ) -> RenderedMarkdown {
     let width = width.max(1);
     let mut lines = Vec::new();
@@ -131,6 +152,19 @@ fn render_markdown_from_fence_state(
     let mut line_index = 0;
     while line_index < raw_lines.len() {
         let raw_line = raw_lines[line_index];
+        // A continued list item's tail is prose, not a new block: skip block
+        // detection so text like `# x` mid-item is not read as a heading.
+        if line_index == 0 && active.is_none() {
+            if let Some(indent) = line_start.continued_indent(width) {
+                lines.extend(wrap_styled_segments(
+                    &markdown_inline_segments(raw_line),
+                    width,
+                    indent,
+                ));
+                line_index += 1;
+                continue;
+            }
+        }
         if active.is_none() {
             if let Some(opening) = mermaid_opening_fence(raw_line) {
                 if let Some(closing_offset) = raw_lines[line_index + 1..]
@@ -279,6 +313,7 @@ fn render_markdown_from_fence_state(
         lines.extend(wrap_styled_segments(
             &markdown_inline_segments(raw_line),
             width,
+            ContinuationIndent::list_item(raw_line, width),
         ));
         line_index += 1;
     }
@@ -502,37 +537,14 @@ fn markdown_heading_lines(heading: heading::AtxHeading<'_>, width: usize) -> Vec
         .into_iter()
         .map(|segment| StyledSegment::new(segment.text, heading_style.patch(segment.style)))
         .collect::<Vec<_>>();
-    wrap_styled_segments(&segments, width)
+    wrap_styled_segments(&segments, width, ContinuationIndent::Flush)
 }
 
-fn wrap_markdown_line_ranges(line: &str, width: usize) -> Vec<std::ops::Range<usize>> {
-    let protected_prefix_end = markdown_list_body_start(line).unwrap_or_default();
-    wrap_line_at_whitespace_ranges_with_protected_prefix(line, width, protected_prefix_end)
-}
-
-fn markdown_list_body_start(line: &str) -> Option<usize> {
-    let trimmed = line.trim_start_matches(char::is_whitespace);
-    let leading_whitespace_len = line.len() - trimmed.len();
-    let marker_len = trimmed.find(char::is_whitespace)?;
-    let marker = &trimmed[..marker_len];
-    let is_list_marker = matches!(marker, "-" | "+" | "*")
-        || marker.strip_suffix(['.', ')']).is_some_and(|digits| {
-            (1..=9).contains(&digits.len()) && digits.bytes().all(|byte| byte.is_ascii_digit())
-        });
-    if !is_list_marker {
-        return None;
-    }
-
-    let separator_len = trimmed[marker_len..]
-        .chars()
-        .take_while(|ch| ch.is_whitespace())
-        .map(char::len_utf8)
-        .sum::<usize>();
-    let body_start = leading_whitespace_len + marker_len + separator_len;
-    (body_start < line.len()).then_some(body_start)
-}
-
-fn wrap_styled_segments(segments: &[StyledSegment], width: usize) -> Vec<Line<'static>> {
+fn wrap_styled_segments(
+    segments: &[StyledSegment],
+    width: usize,
+    indent: ContinuationIndent,
+) -> Vec<Line<'static>> {
     let text = segments
         .iter()
         .map(|segment| segment.text.as_str())
@@ -542,9 +554,13 @@ fn wrap_styled_segments(segments: &[StyledSegment], width: usize) -> Vec<Line<'s
         .map(|segment| Span::styled(segment.text.clone(), segment.style))
         .collect::<Vec<_>>();
 
-    let lines = soft_wrap_visible_ranges(&text, wrap_markdown_line_ranges(&text, width))
+    let lines = soft_wrap_visible_ranges(&text, wrap_markdown_line_ranges(&text, width, indent))
         .map(|range| {
-            let chunk = slice_spans_by_bytes(&spans, range.start, range.end);
+            let mut chunk = slice_spans_by_bytes(&spans, range.start, range.end);
+            let pad = indent.row_indent(range.start);
+            if pad > 0 && !chunk.is_empty() {
+                chunk.insert(0, Span::styled(" ".repeat(pad), Theme::text()));
+            }
             if chunk.is_empty() {
                 // Preserve an empty content row so underline/style state does not
                 // leak from adjacent lines when a wrap yields no visible glyphs.
@@ -558,7 +574,9 @@ fn wrap_styled_segments(segments: &[StyledSegment], width: usize) -> Vec<Line<'s
         })
         .collect::<Vec<_>>();
 
-    if lines.is_empty() {
+    // A whitespace-only continued tail is break padding for rows already on
+    // screen; it adds no row of its own.
+    if lines.is_empty() && !matches!(indent, ContinuationIndent::Continued(_)) {
         vec![Line::from(Span::styled(
             String::new(),
             Style::default().remove_modifier(ratatui::style::Modifier::UNDERLINED),

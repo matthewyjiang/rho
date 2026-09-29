@@ -1,6 +1,8 @@
 use pretty_assertions::assert_eq;
 
-use super::super::{theme::Theme, LiveStreamPreview, StreamKind, StreamUi};
+use super::super::{
+    markdown::StreamLineStart, theme::Theme, LiveStreamPreview, StreamKind, StreamUi,
+};
 
 fn line_text(line: &ratatui::text::Line<'_>) -> String {
     line.spans
@@ -13,6 +15,7 @@ fn preview(text: &str) -> LiveStreamPreview {
     LiveStreamPreview {
         kind: StreamKind::Assistant,
         text: text.into(),
+        line_start: StreamLineStart::Fresh,
         include_leading_blank: false,
     }
 }

@@ -220,6 +220,7 @@ impl App {
             self.streams.set_live_preview(Some(LiveStreamPreview {
                 kind,
                 text: preview.render_text().to_string(),
+                line_start: preview.line_start(),
                 include_leading_blank: preview.include_leading_blank(),
             }));
             Ok(true)

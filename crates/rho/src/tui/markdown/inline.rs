@@ -557,6 +557,13 @@ fn next_delimited(line: &str, marker: &str, style: Style) -> Option<MarkdownSpan
             search_from = start + marker.len();
             continue;
         }
+        // Emphasis follows the streaming rules (and CommonMark): an opener
+        // cannot run into whitespace, so a `* ` list bullet never pairs with a
+        // later `*`. Code spans may pad their content with spaces.
+        if marker != "`" && !is_valid_stream_opener(line, marker, start) {
+            search_from = start + marker.len();
+            continue;
+        }
 
         let content_start = start + marker.len();
         let mut end_search_from = content_start;
@@ -567,6 +574,10 @@ fn next_delimited(line: &str, marker: &str, style: Style) -> Option<MarkdownSpan
                 continue;
             }
             if marker == "_" && !is_valid_underscore_delimiter(line, end) {
+                end_search_from = end + marker.len();
+                continue;
+            }
+            if marker != "`" && !is_valid_stream_closer(line, marker, end) {
                 end_search_from = end + marker.len();
                 continue;
             }

@@ -7,7 +7,7 @@ use crate::presentation::{
 };
 
 use super::{
-    markdown::{push_wrapped_markdown_without_copy_button_from_fence_state, CodeFenceState},
+    markdown::{push_wrapped_markdown_without_copy_button, CodeFenceState, StreamLineStart},
     render::{push_wrapped_text, truncate_one_line, LineFill},
     theme::Theme,
     tool_card_render::CardSections,
@@ -52,11 +52,12 @@ pub(super) fn notification_card_sections(
     let mut body = Vec::new();
     // Empty bodies (e.g. a silent process) would otherwise render a blank row.
     if !message.body.trim().is_empty() {
-        push_wrapped_markdown_without_copy_button_from_fence_state(
+        push_wrapped_markdown_without_copy_button(
             &mut body,
             &safe_message_text(&message.body),
             content_width,
             &mut CodeFenceState::default(),
+            StreamLineStart::Fresh,
         );
     }
     for line in &mut body {

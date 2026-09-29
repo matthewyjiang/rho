@@ -17,12 +17,19 @@ pub(in crate::tui) struct MarkdownStreamBounds {
     pub(in crate::tui) preview_end: Option<usize>,
 }
 
+/// `line_start` says whether `text` begins mid-way through a committed list
+/// item; its first line then wraps as hung continuation rows.
 pub(in crate::tui) fn markdown_stream_bounds(
     text: &str,
     width: usize,
     in_code_block: bool,
+    line_start: StreamLineStart,
 ) -> MarkdownStreamBounds {
     let current_line_start = text.rfind('\n').map_or(0, |index| index + '\n'.len_utf8());
+    // Only the first pending line can continue a committed list item.
+    let continued_indent = (current_line_start == 0)
+        .then(|| line_start.continued_indent(width.max(1)))
+        .flatten();
     let current_line_in_code_block =
         line_starts_in_code_block(text, current_line_start, in_code_block);
     let current_line = &text[current_line_start..];
@@ -69,10 +76,12 @@ pub(in crate::tui) fn markdown_stream_bounds(
         display_width(&rendered_line),
     );
 
-    if !matches!(
-        heading_stream_state(current_line),
-        HeadingStreamState::NotHeading
-    ) {
+    if continued_indent.is_none()
+        && !matches!(
+            heading_stream_state(current_line),
+            HeadingStreamState::NotHeading
+        )
+    {
         // Headings drain only once the line completes.
         return MarkdownStreamBounds { drain, preview_end };
     }
@@ -84,7 +93,9 @@ pub(in crate::tui) fn markdown_stream_bounds(
         };
     }
 
-    let complete = complete_word_wrap_prefix(&rendered_line, width);
+    let indent = continued_indent
+        .unwrap_or_else(|| ContinuationIndent::list_item(current_line, width.max(1)));
+    let complete = complete_word_wrap_prefix(&rendered_line, width, indent);
     if complete.byte_index == 0 {
         return MarkdownStreamBounds { drain, preview_end };
     }
@@ -225,13 +236,19 @@ struct CompleteStreamPrefix {
 /// Rows followed by more text are complete. A trailing row that fills the
 /// width is complete only once it ends in whitespace: otherwise it may end
 /// mid-word, and the next character would pull that word onto the next row.
-fn complete_word_wrap_prefix(text: &str, width: usize) -> CompleteStreamPrefix {
-    wrap_markdown_line_ranges(text, width)
+fn complete_word_wrap_prefix(
+    text: &str,
+    width: usize,
+    indent: ContinuationIndent,
+) -> CompleteStreamPrefix {
+    let width = width.max(1);
+    wrap_markdown_line_ranges(text, width, indent)
         .into_iter()
         .rfind(|range| {
+            let row_width = width - indent.row_indent(range.start);
             range.end < text.len()
                 || (text.ends_with(char::is_whitespace)
-                    && display_width(&text[range.clone()]) >= width.max(1))
+                    && display_width(&text[range.clone()]) >= row_width)
         })
         .map(|range| CompleteStreamPrefix {
             byte_index: range.end,

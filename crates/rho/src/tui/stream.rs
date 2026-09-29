@@ -1,4 +1,4 @@
-use super::markdown::markdown_stream_bounds;
+use super::markdown::{markdown_stream_bounds, StreamLineStart};
 #[cfg(test)]
 use super::render::{complete_visual_prefix, display_width};
 
@@ -20,6 +20,7 @@ pub(super) struct StreamFragment {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct StreamPreview {
     text: String,
+    line_start: StreamLineStart,
     include_leading_blank: bool,
     skip_leading_newline: bool,
 }
@@ -29,6 +30,7 @@ struct RenderableSplit {
     byte_index: usize,
     skip_leading_newline: bool,
     ends_with_wrap: bool,
+    line_start: StreamLineStart,
 }
 
 impl AppendOnlyStream {
@@ -76,7 +78,11 @@ impl AppendOnlyStream {
         in_code_block: bool,
     ) -> Option<StreamPreview> {
         let split = self.markdown_renderable_split(inner_width, in_code_block, true)?;
-        Some(self.pending_preview(split.byte_index, split.skip_leading_newline))
+        Some(self.pending_preview(
+            split.byte_index,
+            split.skip_leading_newline,
+            split.line_start,
+        ))
     }
 
     pub(super) fn finish(&mut self) -> Option<StreamFragment> {
@@ -108,7 +114,8 @@ impl AppendOnlyStream {
         let skip_leading_newline = self.should_skip_leading_newline();
         let scan_start = usize::from(skip_leading_newline);
         let pending = &self.pending[scan_start..];
-        let bounds = markdown_stream_bounds(pending, inner_width, in_code_block);
+        let line_start = self.line_start(skip_leading_newline, in_code_block);
+        let bounds = markdown_stream_bounds(pending, inner_width, in_code_block, line_start);
         // Previews may include the stable open-line prefix even when earlier
         // complete lines or wraps are also ready. Drain still uses the drain
         // bound only, so mid-line prose is not committed early.
@@ -128,6 +135,7 @@ impl AppendOnlyStream {
             byte_index: split_at,
             skip_leading_newline,
             ends_with_wrap,
+            line_start,
         })
     }
 
@@ -137,7 +145,7 @@ impl AppendOnlyStream {
         let scan_start = usize::from(skip_leading_newline);
         let pending = &self.pending[scan_start..];
         let split_at = scan_start + self.preview_byte_index(pending, rendered_width)?;
-        Some(self.pending_preview(split_at, skip_leading_newline))
+        Some(self.pending_preview(split_at, skip_leading_newline, StreamLineStart::Fresh))
     }
 
     #[cfg(test)]
@@ -177,9 +185,25 @@ impl AppendOnlyStream {
         ))
     }
 
-    fn pending_preview(&self, byte_index: usize, skip_leading_newline: bool) -> StreamPreview {
+    /// Whether pending text continues a committed list item. A skipped
+    /// leading newline ends that line, so pending then starts fresh.
+    fn line_start(&self, skip_leading_newline: bool, in_code_block: bool) -> StreamLineStart {
+        if skip_leading_newline {
+            StreamLineStart::Fresh
+        } else {
+            StreamLineStart::after(&self.emitted_text, in_code_block)
+        }
+    }
+
+    fn pending_preview(
+        &self,
+        byte_index: usize,
+        skip_leading_newline: bool,
+        line_start: StreamLineStart,
+    ) -> StreamPreview {
         StreamPreview {
             text: self.pending[..byte_index].to_string(),
+            line_start,
             // Prior entries own the separator blank. Stream text never inserts one.
             include_leading_blank: false,
             skip_leading_newline,
@@ -234,6 +258,10 @@ impl StreamPreview {
 
     pub(super) fn include_leading_blank(&self) -> bool {
         self.include_leading_blank
+    }
+
+    pub(super) fn line_start(&self) -> StreamLineStart {
+        self.line_start
     }
 }
 

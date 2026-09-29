@@ -1,7 +1,7 @@
 use ratatui::text::Line;
 
 use super::{
-    markdown::push_wrapped_markdown_without_copy_button_from_fence_state,
+    markdown::push_wrapped_markdown_without_copy_button,
     render::{pad_display_line, padded_content_width},
     theme::Theme,
     StreamKind, StreamPreviewRenderCache, StreamUi,
@@ -33,6 +33,7 @@ impl StreamUi {
         let kind = preview.kind;
         let include_leading_blank = preview.include_leading_blank;
         let text = preview.text.clone();
+        let line_start = preview.line_start;
         let mut lines = Vec::new();
         if include_leading_blank {
             lines.push(Line::raw(""));
@@ -42,11 +43,12 @@ impl StreamUi {
             StreamKind::Assistant => self.assistant_stream_code_fence.clone(),
             StreamKind::Reasoning => self.reasoning_stream_code_fence.clone(),
         };
-        push_wrapped_markdown_without_copy_button_from_fence_state(
+        push_wrapped_markdown_without_copy_button(
             &mut text_lines,
             &text,
             padded_content_width(width),
             &mut code_fence,
+            line_start,
         );
         if matches!(kind, StreamKind::Reasoning) {
             Theme::reasoning_output(&mut text_lines);

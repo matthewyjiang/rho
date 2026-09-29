@@ -13,7 +13,7 @@ use super::{
     inline_shell::InlineShellMode,
     limits_command,
     login::SecretInput,
-    markdown::CodeFenceState,
+    markdown::{CodeFenceState, StreamLineStart},
     picker::UiPicker,
     prompt_turn::FailedTurn,
     questionnaire::QuestionnaireComposer,
@@ -45,9 +45,13 @@ pub(super) struct ActiveFrame {
     pub(in crate::tui) lines: Vec<Line<'static>>,
 }
 
+#[derive(PartialEq, Eq)]
 pub(super) struct LiveStreamPreview {
     pub(in crate::tui) kind: StreamKind,
     pub(in crate::tui) text: String,
+    /// Whether `text` continues a committed list item, so its first line wraps
+    /// as hung continuation rows.
+    pub(in crate::tui) line_start: StreamLineStart,
     pub(in crate::tui) include_leading_blank: bool,
 }
 
@@ -119,15 +123,7 @@ impl StreamUi {
 
     /// Replace the live preview. Drops the paint cache when identity changes.
     pub(super) fn set_live_preview(&mut self, preview: Option<LiveStreamPreview>) {
-        let changed = match (&self.live_stream_preview, &preview) {
-            (None, None) => false,
-            (Some(current), Some(next)) => {
-                current.kind != next.kind
-                    || current.text != next.text
-                    || current.include_leading_blank != next.include_leading_blank
-            }
-            (None, Some(_)) | (Some(_), None) => true,
-        };
+        let changed = self.live_stream_preview != preview;
         if changed {
             self.live_stream_preview = preview;
             self.preview_render_cache = None;
