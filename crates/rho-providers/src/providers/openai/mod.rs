@@ -23,7 +23,7 @@ pub fn supports_fast_mode(provider: &str, model: &str) -> bool {
     provider == "openai-codex"
         && (matches!(
             model,
-            "gpt-5.5" | "gpt-5.6" | "gpt-6-astra" | "gpt-6-sol" | "gpt-6-luna"
+            "gpt-5.5" | "gpt-5.6" | "gpt-6-astra" | "gpt-6.1-sol" | "gpt-6-sol" | "gpt-6-luna"
         ) || model
             .strip_prefix("gpt-5.6-")
             .is_some_and(|suffix| !suffix.is_empty()))

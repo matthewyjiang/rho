@@ -74,7 +74,13 @@ fn codex_model_switch_preserves_native_context_on_repeated_sends() {
 
 #[tokio::test]
 async fn priority_service_tier_is_sent_as_fast_mode() {
-    for model in ["gpt-5.5", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"] {
+    for model in [
+        "gpt-5.5",
+        "gpt-6-astra",
+        "gpt-6.1-sol",
+        "gpt-6-sol",
+        "gpt-6-luna",
+    ] {
         let body = build_codex_responses_body_with_tier(
             model,
             ModelRequest {
