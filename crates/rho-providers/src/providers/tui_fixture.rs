@@ -16,6 +16,7 @@ mod response_scenarios;
 mod sessions;
 mod stream_scenarios;
 mod streaming_controls;
+mod write_stream;
 
 #[cfg(test)]
 #[path = "tui_fixture/semantic_tests.rs"]
@@ -160,6 +161,9 @@ async fn fixture_stream(
         return response;
     }
     if let Some(response) = edit::intercept(&prompt, &request, &events).await {
+        return response;
+    }
+    if let Some(response) = write_stream::intercept(&prompt, &request, &events).await {
         return response;
     }
     if let Some(response) = advisor::intercept(&prompt, &request, &events).await {

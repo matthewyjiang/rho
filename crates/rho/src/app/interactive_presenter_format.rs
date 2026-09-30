@@ -160,14 +160,22 @@ pub(super) fn preview_card(
                 Some(read_path(arguments, cwd)).filter(|p| !p.is_empty()),
             ),
         ),
-        ToolKind::WriteFile => kind_card(
-            status,
-            kind,
-            ToolHeader::call(
-                "write",
-                Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
-            ),
-        ),
+        ToolKind::WriteFile => {
+            let mut card = kind_card(
+                status,
+                kind,
+                ToolHeader::call(
+                    "write",
+                    Some(display_path(arguments, cwd)).filter(|p| !p.is_empty()),
+                ),
+            );
+            // Preview the payload, not a guessed diff against the current file.
+            // Completion replaces this with the tool's actual diff.
+            if let Some(content) = arguments.get("content").and_then(serde_json::Value::as_str) {
+                card.body = ToolBody::Lines(split_body_lines(content));
+            }
+            card
+        }
         ToolKind::Edit(format) => edit_preview_card(format, arguments, cwd, status),
         ToolKind::Skill => kind_card(
             status,
