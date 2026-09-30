@@ -1,6 +1,6 @@
 //! Streamed markdown rendering scenarios.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::Result;
 
@@ -45,8 +45,8 @@ const MARKDOWN_HEADINGS_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
-// Covers: already-drawn stream prose must stay visible through an open emphasis
-// span and finish without leaking raw markers.
+// Covers: already-drawn prose stays visible through open emphasis, and closing
+// inline Markdown must not commit a partial wrapped row before later text fills it.
 // Owner: interactive TUI
 const STREAMING_MARKDOWN_STABILITY_STEPS: &[Step] = &[
     Step::Phase("startup"),
@@ -104,63 +104,40 @@ fn assert_markdown_headings_rendered(harness: &mut PtyHarness) -> Result<()> {
 }
 
 fn assert_streaming_markdown_keeps_stable_prefix(harness: &mut PtyHarness) -> Result<()> {
-    // Own the open-marker window: ALPHA must remain while the second delta is
-    // visible and BETA has not arrived yet, then again through completion.
-    let open_deadline = Instant::now() + Duration::from_secs(10);
-    let mut saw_open_window = false;
-    while Instant::now() < open_deadline {
-        harness.poll(Duration::from_millis(10));
+    // Release only after observing each durable checkpoint, never a timed window.
+    for (phase, marker) in [
+        ("open_emphasis", OPEN_EMPHASIS_WINDOW),
+        ("closed_partial_row", "PARTIAL"),
+        ("fill_partial_row", BETA_MARKER),
+        ("completed_markdown", "Markdown stream complete"),
+    ] {
+        harness.set_phase(phase);
+        super::fixture_release::release_fixture(harness, ".rho-fixture-release-markdown")?;
+        harness.wait_for_text(marker, STREAM)?;
         let screen = harness.screen().contents();
         if !screen.contains(ALPHA_MARKER) {
+            anyhow::bail!("stable stream prefix disappeared at {phase}:\n{screen}");
+        }
+        if marker != OPEN_EMPHASIS_WINDOW {
+            if !screen.contains(EMPHASIS_BODY) || screen.contains("**") {
+                anyhow::bail!("closed emphasis did not render at {phase}:\n{screen}");
+            }
+            if screen
+                .lines()
+                .any(|line| line.contains(ALPHA_MARKER) && line.contains("PARTIAL"))
+            {
+                anyhow::bail!("fixture did not wrap before its partial last row:\n{screen}");
+            }
+        }
+        if matches!(marker, BETA_MARKER | "Markdown stream complete")
+            && !screen
+                .lines()
+                .any(|line| line.contains("PARTIAL FILLS this same row BETA"))
+        {
             anyhow::bail!(
-                "stable stream prefix {ALPHA_MARKER} disappeared before emphasis closed:\n{screen}"
+                "later text split instead of filling the partial row at {phase}:\n{screen}"
             );
         }
-        if screen.contains(BETA_MARKER) {
-            break;
-        }
-        if screen.contains(OPEN_EMPHASIS_WINDOW) {
-            saw_open_window = true;
-            // Sample again so a one-frame flash cannot pass.
-            harness.poll(Duration::from_millis(20));
-            let again = harness.screen().contents();
-            if !again.contains(ALPHA_MARKER) {
-                anyhow::bail!(
-                    "stable stream prefix {ALPHA_MARKER} blanked during open emphasis:\n{again}"
-                );
-            }
-            if again.contains(BETA_MARKER) {
-                break;
-            }
-        }
     }
-    if !saw_open_window {
-        anyhow::bail!(
-            "never observed the open-emphasis window before {BETA_MARKER}\n{}",
-            harness.screen().contents()
-        );
-    }
-
-    let finish_deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < finish_deadline {
-        harness.poll(Duration::from_millis(30));
-        let screen = harness.screen().contents();
-        if !screen.contains(ALPHA_MARKER) {
-            anyhow::bail!(
-                "stable stream prefix {ALPHA_MARKER} disappeared before stream finished:\n{screen}"
-            );
-        }
-        if screen.contains(BETA_MARKER) && screen.contains(EMPHASIS_BODY) {
-            if screen.contains("**") {
-                anyhow::bail!(
-                    "raw emphasis markers leaked onto the finished stream screen:\n{screen}"
-                );
-            }
-            return Ok(());
-        }
-    }
-    anyhow::bail!(
-        "stream never finished with {BETA_MARKER} and rendered emphasis body\n{}",
-        harness.screen().contents()
-    )
+    Ok(())
 }

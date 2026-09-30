@@ -58,9 +58,8 @@ fn fit_hang(hang: usize, width: usize) -> Option<usize> {
 /// Streams commit long lines in pieces, so pending text can begin in the middle
 /// of a list item whose marker is already in the transcript. Its first line
 /// then wraps as hung continuation rows, matching the final render whenever the
-/// committed piece ended on a row boundary. Lines with inline markup may commit
-/// a partial last row; the next drain re-renders the whole line, so the preview
-/// row split lasts one tick.
+/// committed piece ended on a row boundary. Inline spans that cannot be split
+/// at that boundary stay in the live preview until a safe cut is available.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::tui) enum StreamLineStart {
     /// Pending text begins its own line, or continues a line that wraps flush.

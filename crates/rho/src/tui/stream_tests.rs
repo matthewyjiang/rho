@@ -294,16 +294,6 @@ fn markdown_drain_allows_literal_markdown_characters() {
 }
 
 #[test]
-fn markdown_drain_emits_complete_long_spans() {
-    let mut stream = AppendOnlyStream::default();
-
-    stream.push_delta("**supercalifragilistic** ");
-    let fragment = stream.drain_renderable_markdown(5, false).unwrap();
-    assert_eq!(fragment.text.as_str(), "**supercalifragilistic**");
-    assert_eq!(stream.emitted_text(), "**supercalifragilistic**");
-}
-
-#[test]
 fn markdown_drain_hard_wraps_code_block_content() {
     let mut stream = AppendOnlyStream::default();
 
@@ -629,8 +619,8 @@ fn streamed_list_item_rows_match_final_render() {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LockstepCheck {
     EveryTick,
-    /// Markup lines can commit a partial row; the preview catches up at the
-    /// next drain.
+    /// Open inline markers remain hidden, so compare against the full source
+    /// only when a complete fragment drains.
     AfterDrain,
 }
 use LockstepCheck::{AfterDrain, EveryTick};

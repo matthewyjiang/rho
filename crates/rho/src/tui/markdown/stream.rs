@@ -137,9 +137,10 @@ fn stable_wrap_drain_prefix(
         }
     }
 
-    // Last-match scan: a later fuzzy hit wins over an earlier exact wrap.
-    // The last non-whitespace prefix is that last fuzzy candidate. One
-    // render of it replaces scanning every char on a long marked line.
+    // A source cut must render exactly the completed rows. Committing a
+    // whole inline span that also contains a partial row would put the next
+    // preview on a new row instead of continuing that unfinished row.
+    // Try the full non-whitespace prefix before scanning earlier cuts.
     let cut = stable_line.trim_end();
     if !cut.is_empty() && cut.len() != rendered_line.len() && !starts_with_code_fence_fragment(cut)
     {
@@ -150,12 +151,6 @@ fn stable_wrap_drain_prefix(
             cut_rendered = markdown_inline_text(cut);
             &cut_rendered
         };
-        if cut.len() != cut_rendered.len() && cut_rendered.starts_with(rendered_prefix) {
-            return Some(CompleteStreamPrefix {
-                byte_index: cut.len(),
-                ends_with_wrap: false,
-            });
-        }
         if cut_rendered == rendered_prefix {
             return Some(CompleteStreamPrefix {
                 byte_index: cut.len(),
@@ -192,17 +187,6 @@ fn scan_stable_wrap_drain_prefix(
             matched = Some(CompleteStreamPrefix {
                 byte_index: candidate,
                 ends_with_wrap: complete.ends_with_wrap,
-            });
-        } else if candidate_source.len() != candidate_rendered.len()
-            && !candidate_source
-                .chars()
-                .last()
-                .is_some_and(char::is_whitespace)
-            && candidate_rendered.starts_with(rendered_prefix)
-        {
-            matched = Some(CompleteStreamPrefix {
-                byte_index: candidate,
-                ends_with_wrap: false,
             });
         }
     }

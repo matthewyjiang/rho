@@ -236,19 +236,24 @@ async fn stream_markdown_emphasis(
     request: &ModelRequest<'_>,
     events: &ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
-    // Hold the open-emphasis delta longer so PTY scenarios can sample
-    // ALPHA staying visible before BETA arrives. CI runners under load
-    // miss a shorter window when the PTY poll thread is starved.
-    stream_paused_deltas(
-        request,
-        events,
-        [
-            ("Stable prose ALPHA remains drawn ", 250),
-            ("while **hold", 1500),
-            ("ing closes** and trailing BETA completes.", 250),
-        ],
-    )
-    .await
+    // Each checkpoint stays visible until the PTY acknowledges it. In
+    // particular, closing emphasis wraps to a partial last row at 100 columns;
+    // the next delta must fill that row rather than prematurely commit it.
+    const RELEASE_MARKER: &str = ".rho-fixture-release-markdown";
+    super::release::consume_release(RELEASE_MARKER)?;
+    let mut response = String::new();
+    for delta in [
+        "Stable prose ALPHA remains drawn ",
+        "while **hold",
+        "ing closes** and additional ordinary words extend this paragraph beyond its first terminal row PARTIAL",
+        " FILLS this same row BETA.",
+    ] {
+        events.send(ModelEvent::OutputDelta(delta.into())).await?;
+        response.push_str(delta);
+        super::release::wait_for_release_or_cancel(RELEASE_MARKER, &request.cancellation).await?;
+    }
+    response.push_str("\n\nMarkdown stream complete");
+    completed(response)
 }
 
 async fn stream_mermaid(
