@@ -186,11 +186,11 @@ impl App {
     }
 
     pub(super) fn side_overlay_frame(
-        &self,
+        &mut self,
         area: Rect,
     ) -> Option<super::overlay_panel::OverlayPanelFrame> {
-        let side = self.side_chat.as_ref()?;
-        side_overlay_frame(&side.overlay, area).map(|(frame, _)| frame)
+        let side = self.side_chat.as_mut()?;
+        side_overlay_frame(&mut side.overlay, area).map(|(frame, _)| frame)
     }
 
     /// Pointer state of the side overlay, for painting hover and selection.
@@ -348,7 +348,7 @@ impl App {
         let Some(side) = self.side_chat.as_mut() else {
             return;
         };
-        if let Some(metrics) = side_scroll_metrics(&side.overlay, area) {
+        if let Some(metrics) = side_scroll_metrics(&mut side.overlay, area) {
             side.overlay.scroll_by(delta, &metrics);
         }
     }
@@ -385,7 +385,7 @@ impl App {
         // Hit-test against the frame the user sees, then mutate the overlay.
         // The pointer never changes the body, so the frame's metrics stay
         // valid for the scroll it asks for.
-        let Some((frame, metrics)) = side_overlay_frame(&side.overlay, screen) else {
+        let Some((frame, metrics)) = side_overlay_frame(&mut side.overlay, screen) else {
             return;
         };
         match side.overlay.pointer.handle(event, column, row, &frame) {

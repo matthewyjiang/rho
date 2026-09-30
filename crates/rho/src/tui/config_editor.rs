@@ -242,7 +242,7 @@ impl ConfigNumberInput {
 }
 
 pub(super) fn config_number_input_frame(
-    input: &ConfigNumberInput,
+    input: &mut ConfigNumberInput,
     width: usize,
 ) -> super::view_composer::ComposerFrame {
     let label = input.key.label();
@@ -251,8 +251,9 @@ pub(super) fn config_number_input_frame(
             "edit {label}  {}",
             super::composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
         ),
-        &input.editor.value,
-        input.editor.cursor,
+        input
+            .editor
+            .viewport(super::line_editor_view::EditorPresentation::Plain, width),
         width,
     );
     if input.key == ConfigNumberKey::QuestionnaireTimeout {

@@ -3,7 +3,9 @@
 use rho_providers::model::catalog::LoginTarget;
 
 use super::{
-    composer_chrome, line_editor::LineEditor, line_editor_view::editor_frame,
+    composer_chrome,
+    line_editor::LineEditor,
+    line_editor_view::{editor_frame, EditorPresentation},
     view_composer::ComposerFrame,
 };
 
@@ -43,7 +45,7 @@ impl SecretInput {
     }
 }
 
-pub(super) fn secret_input_frame(secret: &SecretInput, width: usize) -> ComposerFrame {
+pub(super) fn secret_input_frame(secret: &mut SecretInput, width: usize) -> ComposerFrame {
     let prompt = if secret.allow_empty {
         format!(
             "enter API key (optional)  {}",
@@ -56,6 +58,9 @@ pub(super) fn secret_input_frame(secret: &SecretInput, width: usize) -> Composer
             composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
         )
     };
-    let display_value = "•".repeat(secret.editor.value.chars().count());
-    editor_frame(&prompt, &display_value, secret.editor.cursor, width)
+    editor_frame(
+        &prompt,
+        secret.editor.viewport(EditorPresentation::Masked, width),
+        width,
+    )
 }

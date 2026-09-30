@@ -98,7 +98,7 @@ impl App {
     pub(super) fn composer_frame(&mut self, width: usize, viewport_height: usize) -> ComposerFrame {
         self.refresh_composer_attachment_layout_cache(width);
         let composer_copy_hovered = self.input_ui.hovered_composer_copy();
-        match self.input_ui.composer() {
+        match self.input_ui.composer_mut() {
             ComposerMode::Input => {
                 let focused_paste = self
                     .focused_paste_segment()

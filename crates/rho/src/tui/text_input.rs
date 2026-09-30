@@ -3,8 +3,11 @@
 use rho_providers::credentials::WebSearchCredential;
 
 use super::{
-    line_editor::LineEditor, line_editor_view::editor_frame, picker::UiPicker,
-    view_composer::ComposerFrame, web_search_config::WebSearchUrlField,
+    line_editor::LineEditor,
+    line_editor_view::{editor_frame, EditorPresentation},
+    picker::UiPicker,
+    view_composer::ComposerFrame,
+    web_search_config::WebSearchUrlField,
 };
 
 /// Which overlay owns a [`TextInput`].
@@ -96,8 +99,13 @@ impl TextInput {
         self.editor.take_return_picker()
     }
 
-    pub(super) fn is_masked(&self) -> bool {
-        matches!(self.target, TextInputTarget::ConfigApiKey(_))
+    fn presentation(&self) -> EditorPresentation {
+        match self.target {
+            TextInputTarget::ConfigApiKey(_) => EditorPresentation::Masked,
+            TextInputTarget::ConfigUrl(_)
+            | TextInputTarget::AgentField(_)
+            | TextInputTarget::CustomHost(_) => EditorPresentation::Plain,
+        }
     }
 
     pub(super) fn label(&self) -> &str {
@@ -118,25 +126,14 @@ impl TextInput {
             | TextInputTarget::AgentField(_) => "Enter save",
         }
     }
-
-    pub(super) fn display_value(&self) -> String {
-        if self.is_masked() {
-            "•".repeat(self.editor.value.chars().count())
-        } else {
-            self.editor.value.replace('\n', " ")
-        }
-    }
 }
 
-pub(super) fn text_input_frame(input: &TextInput, width: usize) -> ComposerFrame {
-    editor_frame(
-        &format!(
-            "edit {}  {}",
-            input.label(),
-            super::composer_chrome::join_footer_parts([input.confirm_verb(), "Esc cancel"])
-        ),
-        &input.display_value(),
-        input.editor.cursor,
-        width,
-    )
+pub(super) fn text_input_frame(input: &mut TextInput, width: usize) -> ComposerFrame {
+    let prompt = format!(
+        "edit {}  {}",
+        input.label(),
+        super::composer_chrome::join_footer_parts([input.confirm_verb(), "Esc cancel"])
+    );
+    let presentation = input.presentation();
+    editor_frame(&prompt, input.editor.viewport(presentation, width), width)
 }

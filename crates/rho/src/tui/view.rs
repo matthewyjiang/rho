@@ -447,7 +447,7 @@ impl App {
         }
     }
 
-    fn draw_cursor(&self, frame: &mut Frame<'_>, surface: DrawSurface<'_>) {
+    fn draw_cursor(&mut self, frame: &mut Frame<'_>, surface: DrawSurface<'_>) {
         let DrawSurface {
             area,
             width,

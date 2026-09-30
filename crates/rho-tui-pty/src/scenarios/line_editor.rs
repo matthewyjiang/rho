@@ -18,6 +18,8 @@ const STEPS: &[Step] = &[
         text: "gpt-5.5",
         timeout: STARTUP,
     },
+    Step::Phase("side_chat_viewport"),
+    Step::Custom(check_side_editor),
     Step::SubmitText("/login"),
     Step::WaitText {
         text: "Select provider to login",
@@ -62,7 +64,7 @@ const STEPS: &[Step] = &[
         text: "TAI",
         timeout: SETTLE,
     },
-    Step::Key(Key::Left),
+    Step::Custom(check_navigation_window),
     Step::TypeText("X"),
     Step::WaitText {
         text: "TAXI",
@@ -97,6 +99,56 @@ const STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+// Moving inside the visible window must move the caret, not shift the text.
+fn check_navigation_window(harness: &mut PtyHarness) -> Result<()> {
+    harness.wait_for_quiet(Duration::from_millis(150), SETTLE)?;
+    let (row, column) = harness.screen().cursor();
+    let before = harness.screen().rows_text()[usize::from(row)]
+        .trim_end()
+        .to_owned();
+    harness.inject_key(&Key::Left)?;
+    harness.wait_for_cursor((row, column - 1), SETTLE)?;
+    let after_cursor = harness.screen().cursor();
+    let after = harness.screen().rows_text()[usize::from(row)]
+        .trim_end()
+        .to_owned();
+    ensure!(
+        (after, after_cursor) == (before, (row, column - 1)),
+        "moving left within the viewport shifted the text or pinned the caret\n{}",
+        harness.screen().debug_dump()
+    );
+    Ok(())
+}
+
+fn check_side_editor(harness: &mut PtyHarness) -> Result<()> {
+    harness.submit_text("/side")?;
+    harness.wait_for_text("Side chat", SETTLE)?;
+    harness.submit_text("fixture code block")?;
+    harness.wait_for_text("COPY", STARTUP)?;
+    harness.wait_for_text("Enter send", SETTLE)?;
+    // Force a scrollbar so its final content width participates in scrolling.
+    harness.resize(12, 40)?;
+    harness.paste(&format!("SIDE-HEAD-{}-SIDE-TAIL", "a".repeat(50)))?;
+    harness.wait_for_text("SIDE-TAIL", SETTLE)?;
+    harness.inject_key(&Key::Backspace)?;
+    harness.wait_for_text_gone("SIDE-TAIL", SETTLE)?;
+    harness.wait_for_text("SIDE-TAI", SETTLE)?;
+    check_navigation_window(harness)?;
+    harness.inject_key(&Key::Home)?;
+    harness.wait_for_text("SIDE-HEAD", SETTLE)?;
+    harness.inject_key(&Key::End)?;
+    harness.wait_for_text("SIDE-TAI", SETTLE)?;
+    harness.paste("界界e\u{301}END")?;
+    harness.wait_for_text("e\u{301}END", SETTLE)?;
+    harness.resize(24, 20)?;
+    harness.inject_key(&Key::Backspace)?;
+    harness.wait_for_text_gone("e\u{301}END", SETTLE)?;
+    harness.wait_for_text("e\u{301}EN", SETTLE)?;
+    harness.inject_key(&Key::Esc)?;
+    harness.wait_for_text_gone("Side chat", SETTLE)?;
+    harness.resize(24, 40)
+}
+
 // Covers: secret glyph widths must not move the caret away from the mask, and
 // scrolling must not expose the underlying key. Owner: interactive TUI.
 fn check_masked_editor(harness: &mut PtyHarness) -> Result<()> {
@@ -127,7 +179,8 @@ fn check_masked_editor(harness: &mut PtyHarness) -> Result<()> {
             harness.screen().rows_text()[usize::from(row)].trim_end(),
             column
         ) == (visible_mask.as_str(), caret_column),
-        "masked tail must leave a cell for the caret"
+        "masked tail must leave a cell for the caret\n{}",
+        harness.screen().debug_dump()
     );
     harness.inject_key(&Key::Esc)
 }

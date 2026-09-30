@@ -398,6 +398,37 @@ impl PtyHarness {
         }
     }
 
+    /// Wait for a visible caret at `(row, column)`, including the cursor flush
+    /// that can follow text paint. Quiet output alone does not prove a key ran.
+    pub(crate) fn wait_for_cursor(
+        &mut self,
+        position: (u16, u16),
+        timeout: WaitTimeout,
+    ) -> Result<()> {
+        self.set_phase(format!("wait_for_cursor:{position:?}"));
+        let deadline = Instant::now() + timeout.duration;
+        loop {
+            self.poll(Duration::from_millis(25));
+            if !self.screen.hide_cursor() && self.screen.cursor() == position {
+                self.log(format!("observed cursor at {position:?}"));
+                return Ok(());
+            }
+            if !self.pty.is_running() {
+                return self.fail_unit(format!(
+                    "child exited before the caret reached {position:?} during {}",
+                    timeout.label
+                ));
+            }
+            if Instant::now() >= deadline {
+                return self.fail_unit(format!(
+                    "timeout waiting for caret at {position:?} ({}); cursor at {:?}",
+                    timeout.label,
+                    self.screen.cursor()
+                ));
+            }
+        }
+    }
+
     /// Wait until `needle` is off the screen. The counterpart to
     /// [`Self::wait_for_text`], for steps that must know something is gone
     /// before acting, such as a composer clearing on submit.

@@ -1,4 +1,4 @@
-//! Shared text viewport and caret for single-line overlay editors.
+//! Shared presentation, horizontal scrolling, and caret for single-line editors.
 
 use ratatui::layout::Position;
 use unicode_segmentation::UnicodeSegmentation;
@@ -7,70 +7,108 @@ use super::{
     display_width, styled_line, truncate_one_line, view_composer::ComposerFrame, LineFill, Theme,
 };
 
-#[derive(Debug, PartialEq, Eq)]
-struct EditorViewport<'a> {
-    value: &'a str,
-    cursor_column: usize,
+#[derive(Clone, Copy, Debug)]
+pub(super) enum EditorPresentation {
+    Plain,
+    Masked,
 }
 
-/// Crop on grapheme boundaries, reserving a cell for an end-of-value caret.
-/// The editor tracks scalar indices; a caret inside a grapheme is painted at
-/// that grapheme's end, since terminals cannot address its individual scalars.
-fn editor_viewport(value: &str, cursor: usize, width: usize) -> EditorViewport<'_> {
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct EditorViewport {
+    pub(super) value: String,
+    pub(super) cursor_column: usize,
+}
+
+/// Project source text and its scalar cursor together, so masked callers never
+/// construct a display string or translate the cursor. `start` is the source
+/// scalar index of the first visible grapheme; preserve it while the caret fits.
+/// A caret inside a grapheme is painted at its end, since terminals cannot
+/// address individual scalars. An end-of-value caret needs its own cell.
+pub(super) fn editor_viewport(
+    value: &str,
+    cursor: usize,
+    presentation: EditorPresentation,
+    width: usize,
+    start: &mut usize,
+) -> EditorViewport {
+    let display_value = match presentation {
+        EditorPresentation::Plain => value.replace('\n', " "),
+        EditorPresentation::Masked => "•".repeat(value.chars().count()),
+    };
+    let value = display_value.as_str();
     if width == 0 {
         return EditorViewport {
-            value: "",
+            value: String::new(),
             cursor_column: 0,
         };
     }
-    let cursor_byte = value
-        .char_indices()
-        .nth(cursor)
-        .map_or(value.len(), |(index, _)| index);
     let mut cursor_column = 0;
     let mut cursor_end = 0;
+    let mut start_byte = 0;
+    let mut start_column = 0;
+    let mut chars = 0;
+    let mut columns = 0;
     for (index, grapheme) in value.grapheme_indices(true) {
-        if index >= cursor_byte {
+        let grapheme_width = display_width(grapheme);
+        if chars <= *start {
+            start_byte = index;
+            start_column = columns;
+        }
+        if chars < cursor {
+            cursor_column = columns + grapheme_width;
+            cursor_end = index + grapheme.len();
+        }
+        chars += grapheme.chars().count();
+        columns += grapheme_width;
+    }
+    if *start >= chars {
+        start_byte = value.len();
+        start_column = columns;
+    }
+    if start_byte > cursor_end {
+        start_byte = cursor_end;
+        start_column = cursor_column;
+    }
+    // Backfill newly available space after deletion or a wider resize, rather
+    // than leaving the tail of a shortened value stranded in an empty field.
+    for (index, grapheme) in value[..start_byte].grapheme_indices(true).rev() {
+        let grapheme_width = display_width(grapheme);
+        if columns - start_column + grapheme_width >= width {
             break;
         }
-        cursor_column += display_width(grapheme);
-        cursor_end = index + grapheme.len();
+        start_byte = index;
+        start_column -= grapheme_width;
     }
-
-    let mut start = 0;
-    for (index, grapheme) in value[..cursor_end].grapheme_indices(true) {
+    cursor_column -= start_column;
+    let previous_start = start_byte;
+    for (index, grapheme) in value[previous_start..cursor_end].grapheme_indices(true) {
         if cursor_column < width {
             break;
         }
-        cursor_column = cursor_column.saturating_sub(display_width(grapheme));
-        start = index + grapheme.len();
+        cursor_column -= display_width(grapheme);
+        start_byte = previous_start + index + grapheme.len();
     }
+    *start = value[..start_byte].chars().count();
 
-    let mut end = start;
+    let mut end = start_byte;
     let mut used = 0;
-    for (index, grapheme) in value[start..].grapheme_indices(true) {
+    for (index, grapheme) in value[start_byte..].grapheme_indices(true) {
         let grapheme_width = display_width(grapheme);
         if used + grapheme_width > width {
             break;
         }
         used += grapheme_width;
-        end = start + index + grapheme.len();
+        end = start_byte + index + grapheme.len();
     }
     EditorViewport {
-        value: &value[start..end],
+        value: value[start_byte..end].to_owned(),
         cursor_column,
     }
 }
 
-/// Derive the displayed value and caret together. Masked callers must supply
-/// the mask string, not the underlying secret, so both use the same cell widths.
-pub(super) fn editor_frame(
-    prompt: &str,
-    display_value: &str,
-    cursor: usize,
-    width: usize,
-) -> ComposerFrame {
-    let viewport = editor_viewport(display_value, cursor, width);
+/// Overlay chrome consumes only the viewport; editor state and presentation
+/// policy stay with the caller.
+pub(super) fn editor_frame(prompt: &str, viewport: EditorViewport, width: usize) -> ComposerFrame {
     ComposerFrame::new(
         vec![
             styled_line(
@@ -79,12 +117,7 @@ pub(super) fn editor_frame(
                 Theme::dim(),
                 LineFill::Natural,
             ),
-            styled_line(
-                viewport.value.to_owned(),
-                width,
-                Theme::text(),
-                LineFill::Natural,
-            ),
+            styled_line(viewport.value, width, Theme::text(), LineFill::Natural),
         ],
         Position {
             x: viewport.cursor_column as u16,
