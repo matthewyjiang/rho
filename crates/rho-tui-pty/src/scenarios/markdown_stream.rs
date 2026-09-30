@@ -23,6 +23,16 @@ const ALPHA_MARKER: &str = "ALPHA";
 const OPEN_EMPHASIS_WINDOW: &str = "while";
 const BETA_MARKER: &str = "BETA";
 const EMPHASIS_BODY: &str = "holding closes";
+const PARTIAL_MARKER: &str = "PARTIAL";
+const FILLED_ROW: &str = "PARTIAL FILLS this same row BETA";
+const COMPLETION_MARKER: &str = "Markdown stream complete";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MarkdownCheckpoint {
+    OpenEmphasis,
+    ClosedEmphasis,
+    FilledRow,
+}
 
 // Covers: streamed ATX headings render without retaining `#` markers.
 // Owner: interactive TUI
@@ -105,11 +115,27 @@ fn assert_markdown_headings_rendered(harness: &mut PtyHarness) -> Result<()> {
 
 fn assert_streaming_markdown_keeps_stable_prefix(harness: &mut PtyHarness) -> Result<()> {
     // Release only after observing each durable checkpoint, never a timed window.
-    for (phase, marker) in [
-        ("open_emphasis", OPEN_EMPHASIS_WINDOW),
-        ("closed_partial_row", "PARTIAL"),
-        ("fill_partial_row", BETA_MARKER),
-        ("completed_markdown", "Markdown stream complete"),
+    for (phase, marker, checkpoint) in [
+        (
+            "open_emphasis",
+            OPEN_EMPHASIS_WINDOW,
+            MarkdownCheckpoint::OpenEmphasis,
+        ),
+        (
+            "closed_partial_row",
+            PARTIAL_MARKER,
+            MarkdownCheckpoint::ClosedEmphasis,
+        ),
+        (
+            "fill_partial_row",
+            BETA_MARKER,
+            MarkdownCheckpoint::FilledRow,
+        ),
+        (
+            "completed_markdown",
+            COMPLETION_MARKER,
+            MarkdownCheckpoint::FilledRow,
+        ),
     ] {
         harness.set_phase(phase);
         super::fixture_release::release_fixture(harness, ".rho-fixture-release-markdown")?;
@@ -118,21 +144,19 @@ fn assert_streaming_markdown_keeps_stable_prefix(harness: &mut PtyHarness) -> Re
         if !screen.contains(ALPHA_MARKER) {
             anyhow::bail!("stable stream prefix disappeared at {phase}:\n{screen}");
         }
-        if marker != OPEN_EMPHASIS_WINDOW {
+        if checkpoint != MarkdownCheckpoint::OpenEmphasis {
             if !screen.contains(EMPHASIS_BODY) || screen.contains("**") {
                 anyhow::bail!("closed emphasis did not render at {phase}:\n{screen}");
             }
             if screen
                 .lines()
-                .any(|line| line.contains(ALPHA_MARKER) && line.contains("PARTIAL"))
+                .any(|line| line.contains(ALPHA_MARKER) && line.contains(PARTIAL_MARKER))
             {
                 anyhow::bail!("fixture did not wrap before its partial last row:\n{screen}");
             }
         }
-        if matches!(marker, BETA_MARKER | "Markdown stream complete")
-            && !screen
-                .lines()
-                .any(|line| line.contains("PARTIAL FILLS this same row BETA"))
+        if checkpoint == MarkdownCheckpoint::FilledRow
+            && !screen.lines().any(|line| line.contains(FILLED_ROW))
         {
             anyhow::bail!(
                 "later text split instead of filling the partial row at {phase}:\n{screen}"

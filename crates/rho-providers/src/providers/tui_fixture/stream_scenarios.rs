@@ -252,7 +252,9 @@ async fn stream_markdown_emphasis(
         response.push_str(delta);
         super::release::wait_for_release_or_cancel(RELEASE_MARKER, &request.cancellation).await?;
     }
-    response.push_str("\n\nMarkdown stream complete");
+    let ending = "\n\nMarkdown stream complete";
+    events.send(ModelEvent::OutputDelta(ending.into())).await?;
+    response.push_str(ending);
     completed(response)
 }
 
