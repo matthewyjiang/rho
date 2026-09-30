@@ -64,7 +64,7 @@ pub(super) fn streaming_preview_card(
     cwd: &std::path::Path,
 ) -> ToolCard {
     match kind {
-        ToolKind::Agent => agent_format::agent_streaming_preview_card(
+        ToolKind::Agent => agent_format::agent_start_card(
             arguments.unwrap_or(&serde_json::Value::Object(Default::default())),
         ),
         ToolKind::Edit(format) => arguments.map_or_else(

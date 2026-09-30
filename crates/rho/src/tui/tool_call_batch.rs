@@ -121,8 +121,16 @@ impl ToolCallBatch {
     }
 
     pub(super) fn started(&mut self, call_id: ToolCallId, card: ToolCard) {
+        let mut expanded = self
+            .running
+            .get(&call_id)
+            .is_some_and(|entry| entry.expanded);
         if let Some(index) = self.preview_call_ids.remove(&call_id) {
-            self.previews.remove(&index);
+            // Promotion changes the card's lifecycle, not the user's expansion choice.
+            expanded |= self
+                .previews
+                .remove(&index)
+                .is_some_and(|entry| entry.expanded);
             self.model_order
                 .insert(index, LiveToolKey::Running(call_id.clone()));
             self.unindexed_running_order
@@ -132,7 +140,7 @@ impl ToolCallBatch {
         }
         let started_at = live_started_at(self.running.get(&call_id), ToolStatus::Running);
         self.running
-            .insert(call_id, running_entry(card, /*expanded*/ false, started_at));
+            .insert(call_id, running_entry(card, expanded, started_at));
     }
 
     pub(super) fn detach(&mut self, call_id: ToolCallId) {

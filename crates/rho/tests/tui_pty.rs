@@ -938,6 +938,14 @@ fn goal_waits_for_subagents_before_retrying() {
     assert_pass("goal_waits_for_subagents_during_retry");
 }
 
+// Covers: full prompt expansion survives streaming and launch while collapsed
+// receipts and finished errors remain visible above the retained prompt.
+// Owner: interactive UX; the scenario holds each intermediate phase explicitly.
+#[test]
+fn agent_prompt_streaming_preserves_expansion_and_collapsed_results() {
+    assert_pass("agent_prompt_streaming");
+}
+
 #[test]
 fn background_agent_completion_is_delivered_after_turn_end() {
     assert_pass("background_agent_auto_delivery");

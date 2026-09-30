@@ -1,39 +1,16 @@
-use rho_sdk::{floor_char_boundary, ELLIPSIS};
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolHeader, ToolStatus};
 
 use super::{format::draft_card, ToolView};
-
-const TASK_PREVIEW_BYTES: usize = 160;
-/// Live agent prompts are long; show a trailing window so argument streaming keeps
-/// moving instead of freezing on a short prefix summary.
-const STREAMING_PROMPT_CHARS: usize = 400;
-const STREAMING_PROMPT_LINES: usize = 8;
 
 pub(super) fn agent_start_card(arguments: &serde_json::Value) -> ToolCard {
     agent_card(
         arguments,
         ToolStatus::Running,
-        agent_identity(arguments).unwrap_or("agent"),
+        agent_identity(arguments)
+            .filter(|id| !id.is_empty())
+            .unwrap_or("agent"),
         starting_detail(bool_value(arguments, "background")),
     )
-}
-
-/// Streaming preview for an in-progress `agent` tool call.
-///
-/// Uses the shared incomplete-JSON path so agent previews share one parser and
-/// the same large-buffer stride as other tools.
-pub(super) fn agent_streaming_preview_card(arguments: &serde_json::Value) -> ToolCard {
-    let agent_id = agent_identity(arguments)
-        .filter(|id| !id.is_empty())
-        .unwrap_or("agent");
-    let background = bool_value(arguments, "background");
-    let mut card = bare_agent_card(ToolStatus::Running, agent_id, starting_detail(background));
-    if let Some(prompt) = string_value(arguments, "prompt").filter(|prompt| !prompt.is_empty()) {
-        for line in live_tail_prompt_lines(prompt) {
-            card.push_fact(ToolFact::Text { text: line });
-        }
-    }
-    card
 }
 
 pub(super) fn agent_interrupted_card(arguments: &serde_json::Value) -> ToolCard {
@@ -58,7 +35,7 @@ pub(super) fn agent_progress_card(view: &ToolView, content: &str) -> ToolCard {
     let agent_id = agent_identity(&view.arguments).unwrap_or("agent");
     let mut card = agent_card(&view.arguments, ToolStatus::Running, agent_id, "running");
     if let Some(run_id) = run_id_from_agent_line(content.lines().next().unwrap_or_default()) {
-        card.body = ToolBody::Lines(vec![run_id.to_string()]);
+        prepend_result_body(&mut card, vec![run_id.to_string()]);
     }
     card
 }
@@ -71,7 +48,7 @@ pub(super) fn agent_finished_card(view: &ToolView, content: &str, ok: bool) -> T
             receipt.agent_id,
             "running in background",
         );
-        card.body = ToolBody::Lines(vec![receipt.run_id.to_string()]);
+        prepend_result_body(&mut card, vec![receipt.run_id.to_string()]);
         return card;
     }
     if let Some(snapshot) = parse_snapshot(content) {
@@ -90,7 +67,7 @@ pub(super) fn agent_finished_card(view: &ToolView, content: &str, ok: bool) -> T
         agent_identity(&view.arguments).unwrap_or("agent"),
         if ok { "completed" } else { "failed" },
     );
-    set_content_body(&mut card, content);
+    prepend_result_body(&mut card, content.lines().map(str::to_string).collect());
     card
 }
 
@@ -115,7 +92,7 @@ pub(super) fn agents_finished_card(view: &ToolView, content: &str, ok: bool) -> 
     if !ok {
         let action = string_argument(view, "action").unwrap_or("request");
         let mut card = bare_agent_card(ToolStatus::Error, "agents", format!("{action} failed"));
-        set_content_body(&mut card, content);
+        prepend_result_body(&mut card, content.lines().map(str::to_string).collect());
         return card;
     }
 
@@ -143,7 +120,7 @@ pub(super) fn agents_finished_card(view: &ToolView, content: &str, ok: bool) -> 
             .unwrap_or_else(|| agents_result_fallback_card(view, content)),
         _ => {
             let mut card = bare_agent_card(ToolStatus::Ok, "agents", "result");
-            set_content_body(&mut card, content);
+            prepend_result_body(&mut card, content.lines().map(str::to_string).collect());
             card
         }
     }
@@ -156,8 +133,12 @@ fn agent_card(
     detail: impl Into<String>,
 ) -> ToolCard {
     let mut card = bare_agent_card(status, identity, detail);
-    if let Some(task) = task_preview(arguments) {
-        push_agent_fact(&mut card, task);
+    // Keep the prompt intact; the shared renderer limits wrapped rows and lets
+    // users expand the card during streaming and after launch.
+    if let Some(prompt) =
+        string_value(arguments, "prompt").filter(|prompt| !prompt.trim().is_empty())
+    {
+        card.body = ToolBody::Lines(prompt.lines().map(str::to_string).collect());
     }
     card
 }
@@ -185,14 +166,6 @@ fn push_agent_fact(card: &mut ToolCard, text: String) {
     }
 }
 
-fn task_preview(arguments: &serde_json::Value) -> Option<String> {
-    let task = string_value(arguments, "prompt")?
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    (!task.is_empty()).then(|| truncate_preview(&task))
-}
-
 fn starting_detail(background: bool) -> &'static str {
     if background {
         "starting in background"
@@ -208,67 +181,20 @@ fn agents_result_fallback_card(view: &ToolView, content: &str) -> ToolCard {
         string_argument(view, "id").unwrap_or("agents"),
         format!("{action} result"),
     );
-    set_content_body(&mut card, content);
+    prepend_result_body(&mut card, content.lines().map(str::to_string).collect());
     card
 }
 
-fn set_content_body(card: &mut ToolCard, content: &str) {
-    if !content.trim().is_empty() {
-        card.body = ToolBody::Lines(content.lines().map(str::to_string).collect());
+/// Receipts and results lead the collapsed card; the full prompt remains expandable.
+fn prepend_result_body(card: &mut ToolCard, mut result: Vec<String>) {
+    if result.iter().all(|line| line.trim().is_empty()) {
+        return;
     }
-}
-
-fn live_tail_prompt_lines(task: &str) -> Vec<String> {
-    // Walk backward once so long prompts do not pay a full char count + rescan.
-    let mut kept_chars = 0usize;
-    let mut start = 0usize;
-    let mut dropped_chars = false;
-    for (index, _) in task.char_indices().rev() {
-        kept_chars += 1;
-        start = index;
-        if kept_chars == STREAMING_PROMPT_CHARS {
-            dropped_chars = index > 0;
-            break;
-        }
+    if !card.body.is_empty() {
+        result.push(String::new());
+        result.extend(card.body.plain_lines());
     }
-    let body = &task[start..];
-
-    let raw_lines = body.lines().collect::<Vec<_>>();
-    let dropped_lines = raw_lines.len() > STREAMING_PROMPT_LINES;
-    let kept = if dropped_lines {
-        &raw_lines[raw_lines.len() - STREAMING_PROMPT_LINES..]
-    } else {
-        raw_lines.as_slice()
-    };
-    if kept.is_empty() {
-        return Vec::new();
-    }
-
-    let mark_omission = dropped_chars || dropped_lines;
-    kept.iter()
-        .enumerate()
-        .map(|(index, line)| {
-            if index == 0 && mark_omission {
-                format!("…{}", line.trim_start())
-            } else {
-                (*line).to_string()
-            }
-        })
-        .collect()
-}
-
-fn truncate_preview(text: &str) -> String {
-    if text.len() <= TASK_PREVIEW_BYTES {
-        return text.to_string();
-    }
-    let boundary = floor_char_boundary(text, TASK_PREVIEW_BYTES);
-    let prefix = &text[..boundary];
-    let boundary = prefix
-        .char_indices()
-        .rev()
-        .find_map(|(index, character)| character.is_whitespace().then_some(index))
-        .unwrap_or(boundary);
-    format!("{}{ELLIPSIS}", text[..boundary].trim_end())
+    card.body = ToolBody::Lines(result);
 }
 
 fn agent_list_lines(content: &str) -> Vec<String> {
@@ -381,9 +307,7 @@ fn snapshot_card(
         });
     }
     body.extend(result_lines);
-    if !body.is_empty() {
-        card.body = ToolBody::Lines(body);
-    }
+    prepend_result_body(&mut card, body);
     card
 }
 

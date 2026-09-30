@@ -241,7 +241,7 @@ Pinned values stay fixed across provider changes. From `/config`, the change app
 
 `max_output_bytes` is how much output Rho keeps from [tool](/tools-workspace) calls such as command output, file reads, and loaded skills. It defaults to `64000`.
 
-`max_tool_output_lines` is how many lines of a tool result show inline before the TUI collapses the rest. It defaults to `10` and is clamped to at least one line on load.
+`max_tool_output_lines` is how many wrapped screen rows of a tool card show inline before the TUI collapses the rest. It defaults to `10` and is clamped to at least one line on load. Delegated agent prompts use the same limit: they stream from the beginning, then keep a stable collapsed preview. Click the card or press `Ctrl+O` to expand the full prompt while it streams or after launch. Once the agent starts or finishes, run receipts and results appear before the prompt so they remain visible when collapsed.
 
 `prompt_history_limit` is how many sent composer prompts Rho keeps in `~/.rho/prompt-history.sqlite3` for up-arrow recall across sessions. `$RHO_HOME` moves that file. It defaults to `1000`. `0` disables persistence. Values above `10000` clamp to `10000` on load. `/config` → **Context & limits** edits the cap and can clear saved history. Lowering the cap below the number of stored prompts asks first, then deletes the oldest extras. Clear also asks first. This is separate from `/new` and `/clear`, which reset the conversation, not composer recall.
 
