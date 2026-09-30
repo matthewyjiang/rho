@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.13.1](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.13.0...rho-providers-v2.13.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **tui:** keep delegated prompts readable and expandable ([#1339](https://github.com/matthewyjiang/rho/issues/1339)) ([cd1ea74](https://github.com/matthewyjiang/rho/commit/cd1ea74b34c4d815a9312fbf3cdc3755e994d2cc))
+* **tui:** keep streamed text on unfinished rows ([#1340](https://github.com/matthewyjiang/rho/issues/1340)) ([8a2eeea](https://github.com/matthewyjiang/rho/commit/8a2eeea0012a5675d8f9045902a0ed9de4796e48))
+* **tui:** preview streamed write content ([#1342](https://github.com/matthewyjiang/rho/issues/1342)) ([a9eca8c](https://github.com/matthewyjiang/rho/commit/a9eca8cc9278a807607bdf14ec1a70be2c97164f))
+
 ## [2.13.0](https://github.com/matthewyjiang/rho/compare/rho-providers-v2.12.0...rho-providers-v2.13.0) (2026-09-29)
 
 
