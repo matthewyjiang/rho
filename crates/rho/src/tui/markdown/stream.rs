@@ -218,21 +218,12 @@ fn complete_word_wrap_prefix(
 
 fn complete_hard_wrap_prefix(text: &str, width: usize) -> CompleteStreamPrefix {
     let width = width.max(1);
-    let mut line_width = 0;
-    let mut last_complete = 0;
-    for (index, ch) in text.char_indices() {
-        let ch_width = char_display_width(ch);
-        if line_width > 0 && line_width + ch_width > width {
-            last_complete = index;
-            line_width = 0;
-        }
-        line_width += ch_width;
-        let next = index + ch.len_utf8();
-        if line_width >= width {
-            last_complete = next;
-            line_width = 0;
-        }
-    }
+    // Appended text can still extend the last grapheme (and change its width),
+    // so even a full final row must remain pending until another cluster arrives.
+    let last_complete = hard_wrap_ranges(text, width)
+        .into_iter()
+        .rfind(|range| range.end < text.len())
+        .map_or(0, |range| range.end);
 
     if last_complete == 0 {
         CompleteStreamPrefix::default()

@@ -226,7 +226,8 @@ fn markdown_drain_resumes_wrapping_once_hash_prefix_is_not_a_heading() {
 fn markdown_drain_allows_markers_inside_code_blocks() {
     let mut stream = AppendOnlyStream::default();
 
-    stream.push_delta("__init__");
+    // Following text makes the final underscore's grapheme boundary stable.
+    stream.push_delta("__init__ ");
     let fragment = stream.drain_renderable_markdown(4, true).unwrap();
     assert_eq!(fragment.text.as_str(), "__init__");
     assert_eq!(stream.emitted_text(), "__init__");
@@ -303,15 +304,28 @@ fn markdown_drain_hard_wraps_code_block_content() {
     assert_eq!(stream.emitted_text(), "ab c");
 }
 
+// Covers: streamed code must not commit a full row while its final grapheme
+// can still grow or change width in the next delta.
+// Owner: pure streaming boundary policy.
 #[test]
-fn markdown_drain_uses_display_width_in_code_blocks() {
-    let mut stream = AppendOnlyStream::default();
-
-    stream.push_delta("你a");
-    let fragment = stream.drain_renderable_markdown(2, true).unwrap();
-    assert_eq!(fragment.text.as_str(), "你");
-    assert_eq!(stream.emitted_text(), "你");
-    assert_eq!(stream.drain_renderable_markdown(2, true), None);
+fn markdown_drain_preserves_code_graphemes_across_deltas() {
+    for (first, second, width, first_emitted, second_emitted) in [
+        ("你a", "", 2, Some("你"), None),
+        ("ab❤", "\u{fe0f}", 3, None, Some("ab")),
+        ("👨", "‍👩‍👧‍👦x", 2, None, Some("👨‍👩‍👧‍👦")),
+        ("e", "\u{301}x", 1, None, Some("e\u{301}")),
+        ("🇺", "🇸x", 2, None, Some("🇺🇸")),
+        ("👍", "🏽x", 2, None, Some("👍🏽")),
+    ] {
+        let mut stream = AppendOnlyStream::default();
+        for (delta, expected) in [(first, first_emitted), (second, second_emitted)] {
+            stream.push_delta(delta);
+            let emitted = stream
+                .drain_renderable_markdown(width, true)
+                .map(|fragment| fragment.text);
+            assert_eq!(emitted.as_deref(), expected, "deltas {first:?}, {second:?}");
+        }
+    }
 }
 
 #[test]

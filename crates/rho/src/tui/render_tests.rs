@@ -77,6 +77,9 @@ fn truncate_one_line_matches_expected_outputs() {
         ("wide truncation", "界ab", 3, "界…"),
         ("combining exact fit", "e\u{301}x", 2, "e\u{301}x"),
         ("combining truncation", "e\u{301}xy", 2, "e\u{301}…"),
+        ("emoji selector truncation", "❤️ab", 3, "❤️…"),
+        ("joined emoji truncation", "👨‍👩‍👧‍👦ab", 3, "👨‍👩‍👧‍👦…"),
+        ("indivisible emoji", "❤️ab", 2, "…"),
         ("one newline", "ab\ncd", 5, "ab cd"),
         ("multiple newlines", "a\n\nbc", 4, "a  …"),
     ];
@@ -100,6 +103,9 @@ fn truncate_keep_end_matches_expected_outputs() {
         ("wide truncation", "ab界", 3, "…界"),
         ("combining exact fit", "be\u{301}", 2, "be\u{301}"),
         ("combining truncation", "xabe\u{301}", 3, "…be\u{301}"),
+        ("emoji selector truncation", "ab❤️", 3, "…❤️"),
+        ("joined emoji truncation", "ab👨‍👩‍👧‍👦", 3, "…👨‍👩‍👧‍👦"),
+        ("indivisible emoji", "ab❤️", 2, "…"),
         ("one newline", "ab\ncd", 5, "ab cd"),
         ("multiple newlines", "a\n\nbc", 4, "… bc"),
     ];
@@ -315,6 +321,12 @@ fn visual_cursor_index_maps_row_and_column_to_char_index() {
         // Exact-width first word: preserve mode keeps the break space on row 1.
         ("hello world", 5, 1, 0, 5),
         ("hello world", 5, 1, 1, 6),
+        // Hit-testing lands at cluster boundaries, not inside selectors or joins.
+        ("❤️ab", 8, 0, 1, 0),
+        ("❤️ab", 8, 0, 2, 2),
+        ("👨‍👩‍👧‍👦ab", 8, 0, 2, 7),
+        ("👨‍👩‍👧‍👦ab", 8, 0, 3, 8),
+        ("e\u{301}x", 8, 0, 1, 2),
     ];
 
     for (input, width, row, column, expected) in cases {
