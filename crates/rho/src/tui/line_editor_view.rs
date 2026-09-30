@@ -44,6 +44,7 @@ pub(super) fn editor_viewport(
     }
     let mut cursor_column = 0;
     let mut cursor_end = 0;
+    let mut cursor_cell_width = 1;
     let mut start_byte = 0;
     let mut start_column = 0;
     let mut chars = 0;
@@ -53,6 +54,11 @@ pub(super) fn editor_viewport(
         if chars <= *start {
             start_byte = index;
             start_column = columns;
+        }
+        // Only a caret at the grapheme's first scalar must keep that glyph
+        // visible. Interior and end-of-value carets still need a spare cell.
+        if chars == cursor && grapheme_width <= width {
+            cursor_cell_width = grapheme_width.max(1);
         }
         if chars < cursor {
             cursor_column = columns + grapheme_width;
@@ -82,7 +88,7 @@ pub(super) fn editor_viewport(
     cursor_column -= start_column;
     let previous_start = start_byte;
     for (index, grapheme) in value[previous_start..cursor_end].grapheme_indices(true) {
-        if cursor_column < width {
+        if cursor_column + cursor_cell_width <= width {
             break;
         }
         cursor_column -= display_width(grapheme);
