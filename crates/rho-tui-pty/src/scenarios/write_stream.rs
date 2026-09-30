@@ -69,7 +69,8 @@ fn exercise_write_stream(harness: &mut PtyHarness) -> Result<()> {
     harness.set_phase("completed_write");
     super::release_fixture(harness, ".rho-fixture-release-write-complete")?;
     harness.wait_for_text("streamed write completed successfully", STREAM)?;
-    // The completion notice can paint before the card body in a PTY read.
+    // Payload text also appears in the preview; only the completed diff has stats.
+    harness.wait_for_text("+2 -0 lines", STREAM)?;
     harness.wait_for_text(SECOND, STREAM)?;
     ensure!(
         harness.screen().contains_text(FIRST),
