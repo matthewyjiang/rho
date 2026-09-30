@@ -1,12 +1,18 @@
 mod entry_render;
 mod list_picker;
 mod styled_text;
+mod wrapping;
 
 pub(super) use entry_render::{
     apply_markdown_images, entry_lines, render_entry_with_options, TrailingBlank,
 };
 pub(super) use list_picker::list_picker_frame;
 pub(super) use styled_text::{clip_line, fit_line, wrap_text_lines};
+pub(super) use wrapping::{
+    hard_wrap_ranges, soft_wrap_visible_ranges, wrap_line_at_whitespace,
+    wrap_line_at_whitespace_ranges, wrap_line_at_whitespace_ranges_with_protected_prefix,
+    wrap_line_hard,
+};
 
 use super::{
     changelog_command::changelog_lines,
@@ -17,7 +23,8 @@ use super::{
     theme::Theme,
     Entry, FeedImage,
 };
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use std::borrow::Cow;
 
@@ -160,12 +167,12 @@ fn truncate_keep_end_owned(text: &str, width: usize) -> String {
     let target = width - 1;
     let mut start = text.len();
     let mut used = 0usize;
-    for (index, ch) in text.char_indices().rev() {
-        let ch_width = char_display_width(ch);
-        if used + ch_width > target {
+    for (index, grapheme) in text.grapheme_indices(true).rev() {
+        let grapheme_width = display_width(grapheme);
+        if used + grapheme_width > target {
             break;
         }
-        used += ch_width;
+        used += grapheme_width;
         start = index;
     }
     format!("…{}", &text[start..])
@@ -177,23 +184,19 @@ pub(super) fn display_width(text: &str) -> usize {
         .sum()
 }
 
-pub(super) fn char_display_width(ch: char) -> usize {
-    UnicodeWidthChar::width(ch).unwrap_or(0)
-}
-
 pub(super) fn truncate_to_display_width(text: &str, max_width: usize) -> Cow<'_, str> {
     if display_width(text) <= max_width {
         return Cow::Borrowed(text);
     }
     let mut end = 0;
     let mut width = 0;
-    for (index, ch) in text.char_indices() {
-        let ch_width = char_display_width(ch);
-        if width + ch_width > max_width {
+    for (index, grapheme) in text.grapheme_indices(true) {
+        let grapheme_width = display_width(grapheme);
+        if width + grapheme_width > max_width {
             break;
         }
-        width += ch_width;
-        end = index + ch.len_utf8();
+        width += grapheme_width;
+        end = index + grapheme.len();
     }
     Cow::Owned(text[..end].to_string())
 }
@@ -373,13 +376,14 @@ pub(super) fn visual_caret_position(
 }
 
 pub(super) fn char_prefix_display_width(value: &str, cursor: usize) -> usize {
-    value
-        .chars()
-        .take(cursor)
-        .map(char_display_width)
-        .sum::<usize>()
+    let end = value
+        .char_indices()
+        .nth(cursor)
+        .map_or(value.len(), |(byte, _)| byte);
+    display_width(&value[..end])
 }
 
+/// Map display columns to source character indices at whole-grapheme boundaries.
 pub(super) fn input_cursor_index_on_visual_line(
     input: &str,
     visual_lines: &[String],
@@ -406,13 +410,13 @@ pub(super) fn input_cursor_index_on_visual_line(
     let mut cursor = line_start;
     let mut column = 0;
     if let Some(line) = visual_lines.get(target_row) {
-        for ch in line.chars() {
-            let next_column = column + char_display_width(ch);
+        for grapheme in line.graphemes(true) {
+            let next_column = column + display_width(grapheme);
             if next_column > target_column {
                 break;
             }
             column = next_column;
-            cursor += 1;
+            cursor += grapheme.chars().count();
         }
     }
     cursor
@@ -561,163 +565,6 @@ pub(super) fn styled_line(
 
 pub(super) fn styled_blank_line(width: usize, style: Style) -> Line<'static> {
     Line::from(Span::styled(pad_spaces(width.max(1)), style))
-}
-
-/// Word-wrap a line for display. Break-boundary whitespace is collapsed so
-/// continuation rows are not indented; pure whitespace lines still wrap.
-pub(super) fn wrap_line_at_whitespace(line: &str, width: usize) -> Vec<&str> {
-    soft_wrap_visible_ranges(line, wrap_line_at_whitespace_ranges(line, width))
-        .map(|range| &line[range])
-        .collect()
-}
-
-/// Covering soft-wrap ranges: every source byte belongs to exactly one range.
-///
-/// Display callers that should not indent continuations must run the result
-/// through [`soft_wrap_visible_ranges`]. Composer lockstep uses the covering
-/// ranges directly so break spaces stay addressable.
-pub(super) fn wrap_line_at_whitespace_ranges(
-    line: &str,
-    width: usize,
-) -> Vec<std::ops::Range<usize>> {
-    wrap_line_at_whitespace_ranges_with_protected_prefix(line, width, 0)
-}
-
-/// Wrap at whitespace without allowing the first break to strand a semantic prefix.
-///
-/// `protected_prefix_end` is a byte offset whose preceding whitespace cannot be
-/// used as the first wrap point. If the following token overflows, the first
-/// line is filled to `width` instead.
-pub(super) fn wrap_line_at_whitespace_ranges_with_protected_prefix(
-    line: &str,
-    width: usize,
-    protected_prefix_end: usize,
-) -> Vec<std::ops::Range<usize>> {
-    let width = width.max(1);
-    if line.is_empty() {
-        return std::iter::once(0..0).collect();
-    }
-
-    let mut ranges = Vec::new();
-    let mut start = 0;
-    while start < line.len() {
-        let mut count = 0usize;
-        let mut last_fitting_split = None;
-        let mut whitespace_break = None;
-        let mut saw_non_whitespace = false;
-        let mut overflow = false;
-        let mut prefer_width_split = false;
-
-        for (relative_index, ch) in line[start..].char_indices() {
-            let ch_width = char_display_width(ch);
-            if count > 0 && count + ch_width > width {
-                overflow = true;
-                prefer_width_split = ch.is_whitespace();
-                break;
-            }
-
-            count += ch_width;
-            let next = start + relative_index + ch.len_utf8();
-            last_fitting_split = Some(next);
-            if ch.is_whitespace() {
-                if saw_non_whitespace {
-                    whitespace_break = Some(next);
-                }
-            } else {
-                saw_non_whitespace = true;
-            }
-        }
-
-        if !overflow {
-            ranges.push(start..line.len());
-            break;
-        }
-
-        let split = if prefer_width_split
-            || (start == 0 && whitespace_break.is_some_and(|split| split <= protected_prefix_end))
-        {
-            last_fitting_split.expect("overflow requires a fitting split")
-        } else {
-            whitespace_break
-                .filter(|split| *split > start)
-                .unwrap_or_else(|| last_fitting_split.expect("overflow requires a fitting split"))
-        };
-        ranges.push(start..split);
-        start = split;
-    }
-
-    ranges
-}
-
-/// Collapse break-boundary whitespace from covering soft-wrap ranges for display.
-///
-/// After a range that contained non-whitespace, leading whitespace on the next
-/// range is break padding and is dropped so the continuation is not indented.
-/// Pure whitespace segments keep their spaces so blank padding still wraps.
-pub(super) fn soft_wrap_visible_ranges<'a>(
-    line: &'a str,
-    ranges: impl IntoIterator<Item = std::ops::Range<usize>> + 'a,
-) -> impl Iterator<Item = std::ops::Range<usize>> + 'a {
-    let mut prev_had_non_whitespace = false;
-    ranges.into_iter().filter_map(move |range| {
-        let end = range.end;
-        let mut start = range.start;
-        if prev_had_non_whitespace {
-            while start < end {
-                let ch = line[start..].chars().next().expect("start < end");
-                if !ch.is_whitespace() {
-                    break;
-                }
-                start += ch.len_utf8();
-            }
-            if start >= end {
-                return None;
-            }
-        }
-        prev_had_non_whitespace = line[start..end].chars().any(|ch| !ch.is_whitespace());
-        Some(start..end)
-    })
-}
-
-/// Hard-wrap `text` into display-width columns as byte ranges into `text`.
-///
-/// Empty input yields one empty range. Wide characters are never split. A
-/// chunk that exactly fills `width` breaks after it.
-pub(super) fn hard_wrap_ranges(text: &str, width: usize) -> Vec<std::ops::Range<usize>> {
-    let width = width.max(1);
-    if text.is_empty() {
-        return vec![std::ops::Range { start: 0, end: 0 }];
-    }
-    let mut ranges = Vec::new();
-    let mut chunk_start = 0usize;
-    let mut offset = 0usize;
-    let mut current_width = 0usize;
-    for ch in text.chars() {
-        let ch_width = char_display_width(ch);
-        if current_width > 0 && current_width + ch_width > width {
-            ranges.push(chunk_start..offset);
-            chunk_start = offset;
-            current_width = 0;
-        }
-        offset += ch.len_utf8();
-        current_width += ch_width;
-        if current_width >= width {
-            ranges.push(chunk_start..offset);
-            chunk_start = offset;
-            current_width = 0;
-        }
-    }
-    if chunk_start < text.len() {
-        ranges.push(chunk_start..text.len());
-    }
-    ranges
-}
-
-pub(super) fn wrap_line_hard(line: &str, width: usize) -> Vec<&str> {
-    hard_wrap_ranges(line, width)
-        .into_iter()
-        .map(|range| &line[range])
-        .collect()
 }
 
 /// Hard-wrap a pre-styled line at display columns, preserving span styles.

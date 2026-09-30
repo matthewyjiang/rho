@@ -40,7 +40,7 @@ mod table_tests;
 
 use super::{
     render::{
-        char_display_width, display_width, hard_wrap_styled_spans, slice_spans_by_bytes,
+        display_width, hard_wrap_ranges, hard_wrap_styled_spans, slice_spans_by_bytes,
         soft_wrap_visible_ranges, truncate_to_display_width, wrap_line_at_whitespace_ranges,
         wrap_line_at_whitespace_ranges_with_protected_prefix,
     },

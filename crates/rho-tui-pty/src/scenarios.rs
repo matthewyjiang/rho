@@ -13,6 +13,7 @@ mod calibrated_context;
 mod changelog;
 mod command_palette;
 mod compact;
+mod composer_unicode;
 #[cfg(unix)]
 mod computer;
 #[cfg(unix)]
@@ -480,6 +481,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         true,
     ),
     PASTE_MULTILINE_SCENARIO,
+    composer_unicode::COMPOSER_UNICODE_SCENARIO,
     questionnaire_timeout::TIMEOUT,
     questionnaire_timeout::PAUSE,
     DOCUMENT_ATTACHMENT_SCENARIO,

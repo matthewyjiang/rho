@@ -7,6 +7,8 @@
 
 #[path = "support/claude_e2e.rs"]
 mod claude_e2e;
+#[path = "support/composer_unicode.rs"]
+mod composer_unicode;
 
 use std::{
     fs::{self, OpenOptions},
