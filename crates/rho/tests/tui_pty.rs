@@ -938,6 +938,13 @@ fn goal_waits_for_subagents_before_retrying() {
     assert_pass("goal_waits_for_subagents_during_retry");
 }
 
+// Covers: full agent prompt expansion survives argument deltas and launch.
+// Owner: interactive UX; the scenario holds each intermediate phase explicitly.
+#[test]
+fn agent_prompt_prefix_and_expansion_survive_streaming_and_launch() {
+    assert_pass("agent_prompt_streaming");
+}
+
 #[test]
 fn background_agent_completion_is_delivered_after_turn_end() {
     assert_pass("background_agent_auto_delivery");

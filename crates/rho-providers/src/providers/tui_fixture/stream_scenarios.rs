@@ -1,5 +1,8 @@
 //! Exact-match streaming prompt table for matrix mode.
 
+#[path = "agent_prompt.rs"]
+mod agent_prompt;
+
 use std::time::Duration;
 
 use rho_sdk::{
@@ -22,6 +25,9 @@ pub(super) async fn intercept(
     request: &ModelRequest<'_>,
     events: &ProviderEventSender,
 ) -> Option<Result<ModelResponse, ProviderError>> {
+    if let Some(response) = agent_prompt::intercept(prompt, request, events).await {
+        return Some(response);
+    }
     match prompt {
         "fixture slow stream" => {
             if let Err(error) = fixture_sleep(&request.cancellation, Duration::from_secs(4)).await {

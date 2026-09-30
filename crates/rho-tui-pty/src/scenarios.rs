@@ -3,6 +3,7 @@
 mod activity_anchor;
 mod advisor;
 mod agent_messages;
+mod agent_prompt;
 mod assert_helpers;
 mod attach_picker;
 mod attach_view;
@@ -80,6 +81,7 @@ use advisor::{
     setup_advisor_ready, setup_advisor_without_model, ADVISOR_COMMAND_STEPS,
     ADVISOR_MISSING_MODEL_STEPS, ADVISOR_REVIEW_STEPS, XAI_KEY_ENV,
 };
+use agent_prompt::AGENT_PROMPT_SCENARIO;
 use attach_picker::{
     ATTACH_CLI_EMPTY_SCENARIO, ATTACH_PICKER_EMPTY_SCENARIO, ATTACH_PICKER_SCENARIO,
 };
@@ -405,6 +407,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     NO_SAVE_SESSION_SCENARIO,
     REASONING_OUTPUT_RETROACTIVE_SCENARIO,
     STREAMING_CONTROLS_SCENARIO,
+    AGENT_PROMPT_SCENARIO,
     Scenario::new(
         "cancel_and_resubmit",
         "Cancel a long fixture stream and submit another prompt",
