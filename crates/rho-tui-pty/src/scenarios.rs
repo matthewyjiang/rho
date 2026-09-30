@@ -74,6 +74,7 @@ mod web_search;
 mod workflow;
 mod workflow_hub_legacy;
 mod workspace_rewind;
+mod write_stream;
 
 use activity_anchor::{SPINNER_ACTIVITY_ANCHOR_SCENARIO, SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO};
 use advisor::{
@@ -556,6 +557,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     ),
     EDIT_DIFF_SCENARIO,
+    write_stream::WRITE_INPUT_STREAM_SCENARIO,
     Scenario::new(
         "concurrent_progress",
         "Keep concurrent progress visible through out-of-order completion",

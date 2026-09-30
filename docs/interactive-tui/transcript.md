@@ -58,6 +58,14 @@ Assistant Markdown renders in the feed as it streams.
 
 Heading-like text inside code fences, or invalid heading lines, stays literal.
 
+### Write previews
+
+While a `write` call's inputs stream, its card shows the destination path and
+received file content, including a partial final line. This is proposed content,
+not a diff against the existing file. When the tool completes, the card shows the
+actual file diff. Interrupting generation retains the received content without
+executing the unfinished write.
+
 ## Copy
 
 - `/copy` opens a tree-style picker of assistant outputs in the current

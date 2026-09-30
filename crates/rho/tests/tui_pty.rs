@@ -340,6 +340,13 @@ fn edit_diff_streams_and_survives_cancellation() {
     assert_pass("edit_diff");
 }
 
+// Covers: write content updates before the incomplete call can execute.
+// Owner: interactive TUI
+#[test]
+fn write_input_stream() {
+    assert_pass("write_input_stream");
+}
+
 // Covers: enabling fast mode must update the persistent model indicator without a restart.
 // Owner: interactive TUI
 #[test]
