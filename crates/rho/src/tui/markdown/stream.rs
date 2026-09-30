@@ -137,76 +137,35 @@ fn stable_wrap_drain_prefix(
         }
     }
 
-    // Last-match scan: a later fuzzy hit wins over an earlier exact wrap.
-    // The last non-whitespace prefix is that last fuzzy candidate. One
-    // render of it replaces scanning every char on a long marked line.
-    let cut = stable_line.trim_end();
-    if !cut.is_empty() && cut.len() != rendered_line.len() && !starts_with_code_fence_fragment(cut)
-    {
-        let cut_rendered;
-        let cut_rendered = if cut.len() == stable_line.len() {
-            rendered_line
-        } else {
-            cut_rendered = markdown_inline_text(cut);
-            &cut_rendered
-        };
-        if cut.len() != cut_rendered.len() && cut_rendered.starts_with(rendered_prefix) {
-            return Some(CompleteStreamPrefix {
-                byte_index: cut.len(),
-                ends_with_wrap: false,
-            });
-        }
-        if cut_rendered == rendered_prefix {
-            return Some(CompleteStreamPrefix {
-                byte_index: cut.len(),
-                ends_with_wrap: complete.ends_with_wrap,
-            });
-        }
-    }
-
-    scan_stable_wrap_drain_prefix(stable_line, rendered_prefix, complete)
-}
-
-/// Fallback last-match scan. Used when the line ends in whitespace so an
-/// earlier exact wrap (the space that completed a visual row) can still win.
-fn scan_stable_wrap_drain_prefix(
-    stable_line: &str,
-    rendered_prefix: &str,
-    complete: CompleteStreamPrefix,
-) -> Option<CompleteStreamPrefix> {
-    let mut matched = None;
+    // A source cut must render exactly the completed rows. Committing a
+    // whole inline span that also contains a partial row would put the next
+    // preview on a new row instead of continuing that unfinished row.
+    // Find the latest exact match backward so earlier prefixes need not render.
     for candidate in stable_line
         .char_indices()
         .map(|(index, _)| index)
         .chain(std::iter::once(stable_line.len()))
-        .skip(1)
+        .rev()
+        .take_while(|&index| index > 0)
     {
-        // Candidates already sit inside the stable prefix. The only remaining
-        // local hazard is a short prefix that looks like an open fence marker.
         if starts_with_code_fence_fragment(&stable_line[..candidate]) {
             continue;
         }
-        let candidate_source = &stable_line[..candidate];
-        let candidate_rendered = markdown_inline_text(candidate_source);
+        let candidate_rendered;
+        let candidate_rendered = if candidate == stable_line.len() {
+            rendered_line
+        } else {
+            candidate_rendered = markdown_inline_text(&stable_line[..candidate]);
+            &candidate_rendered
+        };
         if candidate_rendered == rendered_prefix {
-            matched = Some(CompleteStreamPrefix {
+            return Some(CompleteStreamPrefix {
                 byte_index: candidate,
                 ends_with_wrap: complete.ends_with_wrap,
             });
-        } else if candidate_source.len() != candidate_rendered.len()
-            && !candidate_source
-                .chars()
-                .last()
-                .is_some_and(char::is_whitespace)
-            && candidate_rendered.starts_with(rendered_prefix)
-        {
-            matched = Some(CompleteStreamPrefix {
-                byte_index: candidate,
-                ends_with_wrap: false,
-            });
         }
     }
-    matched
+    None
 }
 
 /// Byte end of the live preview when the stable open-line prefix renders non-empty.
