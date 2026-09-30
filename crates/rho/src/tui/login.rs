@@ -15,7 +15,7 @@ use {
     rho_providers::provider,
 };
 
-pub(super) use super::login_secret_input::{secret_input_lines, SecretInput};
+pub(super) use super::login_secret_input::{secret_input_frame, SecretInput};
 
 /// A finished interactive login task and the target it signed in to.
 pub(super) struct FinishedInteractiveLogin {

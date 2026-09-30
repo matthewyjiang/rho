@@ -56,7 +56,8 @@ fn setup_body_shows_pending_login_url_and_code() {
             ),
         }));
     let lines: Vec<String> = app
-        .setup_body_lines(80, 12)
+        .setup_body_frame(80, 12)
+        .lines
         .iter()
         .map(|line| {
             line.spans

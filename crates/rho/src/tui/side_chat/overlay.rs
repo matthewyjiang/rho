@@ -6,6 +6,7 @@ use ratatui::{
 use super::super::{
     copy_interaction::CopyHit,
     line_editor::LineEditor,
+    line_editor_view::{EditorPresentation, EditorWindow},
     overlay_panel::{
         clamp_panel_scroll, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
         OverlayPanelFrame,
@@ -35,8 +36,15 @@ struct SidePanelBody {
 
 struct PreparedSidePanel {
     body: SidePanelBody,
-    inner_width: usize,
     metrics: SideScrollMetrics,
+    input_cursor_column: usize,
+    editor_window: EditorWindow,
+}
+
+pub(super) struct SideOverlayFrame {
+    pub(super) frame: OverlayPanelFrame,
+    pub(super) metrics: SideScrollMetrics,
+    pub(super) editor_window: EditorWindow,
 }
 
 #[derive(Debug)]
@@ -180,20 +188,6 @@ impl SideOverlay {
     }
 }
 
-fn side_overlay_panel_body(overlay: &SideOverlay, inner_width: usize) -> SidePanelBody {
-    let mut body = overlay.body_lines(inner_width);
-    body.lines.push(Line::from(Span::styled(
-        "─".repeat(inner_width),
-        Theme::dim(),
-    )));
-    let input = format!("{INPUT_PREFIX}{}", overlay.composer.value);
-    body.lines.push(Line::from(Span::styled(
-        truncate_input(&input, inner_width),
-        Theme::input_prompt(),
-    )));
-    body
-}
-
 pub(super) fn side_scroll_metrics(overlay: &SideOverlay, area: Rect) -> Option<SideScrollMetrics> {
     Some(prepare_side_panel(overlay, area)?.metrics)
 }
@@ -203,18 +197,34 @@ fn prepare_side_panel(overlay: &SideOverlay, area: Rect) -> Option<PreparedSideP
         return None;
     }
     let mut inner_width = overlay_panel_inner_width(area);
-    let mut body = side_overlay_panel_body(overlay, inner_width);
-    if body.lines.len() > overlay_panel_layout(area, body.lines.len()).body_rows {
-        // Only reflow when the scrollbar takes a content column. Metrics,
-        // hit targets and the frame all consume this final render.
+    let mut body = overlay.body_lines(inner_width);
+    let body_len = body.lines.len() + 2; // Divider and single-line composer.
+    if body_len > overlay_panel_layout(area, body_len).body_rows {
+        // Resolve the scrollbar width before updating the editor's window;
+        // a speculative wider viewport would disturb mid-value navigation.
         inner_width = inner_width.saturating_sub(1).max(1);
-        body = side_overlay_panel_body(overlay, inner_width);
+        body = overlay.body_lines(inner_width);
     }
+    body.lines.push(Line::from(Span::styled(
+        "─".repeat(inner_width),
+        Theme::dim(),
+    )));
+    let prefix_width = display_width(INPUT_PREFIX);
+    let input = overlay.composer.viewport(
+        EditorPresentation::Plain,
+        inner_width.saturating_sub(prefix_width),
+    );
+    let input_cursor_column = prefix_width + input.cursor_column;
+    body.lines.push(Line::from(Span::styled(
+        format!("{INPUT_PREFIX}{}", input.value),
+        Theme::input_prompt(),
+    )));
     let body_len = body.lines.len();
     let body_rows = overlay_panel_layout(area, body_len).body_rows;
     Some(PreparedSidePanel {
         body,
-        inner_width,
+        input_cursor_column,
+        editor_window: input.window,
         metrics: SideScrollMetrics {
             body_len,
             body_rows,
@@ -241,14 +251,12 @@ fn resolve_side_scroll(scroll: usize, metrics: &SideScrollMetrics) -> usize {
 
 /// The side overlay as painted at `area`, with the scroll metrics of that
 /// same render so pointer scrolling needs no second body render.
-pub(super) fn side_overlay_frame(
-    overlay: &SideOverlay,
-    area: Rect,
-) -> Option<(OverlayPanelFrame, SideScrollMetrics)> {
+pub(super) fn side_overlay_frame(overlay: &SideOverlay, area: Rect) -> Option<SideOverlayFrame> {
     let PreparedSidePanel {
         body,
-        inner_width,
         metrics,
+        input_cursor_column,
+        editor_window,
     } = prepare_side_panel(overlay, area)?;
     let scroll = resolve_side_scroll(overlay.scroll, &metrics);
     let input_row = body.lines.len().saturating_sub(1);
@@ -260,11 +268,6 @@ pub(super) fn side_overlay_frame(
     };
     let mut frame = render_overlay_panel(TITLE, footer, body.lines, scroll, area);
     frame.copy_hits = body.copy_hits;
-    let cursor_x = INPUT_PREFIX
-        .chars()
-        .count()
-        .saturating_add(overlay.composer.cursor)
-        .min(inner_width.saturating_sub(1));
     let input_screen_row = metrics
         .body_rows
         .saturating_sub(1)
@@ -274,21 +277,18 @@ pub(super) fn side_overlay_frame(
             .outer
             .x
             .saturating_add(1)
-            .saturating_add(cursor_x as u16),
+            .saturating_add(input_cursor_column as u16),
         y: frame
             .outer
             .y
             .saturating_add(1)
             .saturating_add(input_screen_row as u16),
     });
-    Some((frame, metrics))
-}
-
-fn truncate_input(input: &str, width: usize) -> String {
-    if display_width(input) <= width {
-        return input.to_string();
-    }
-    crate::tui::render::truncate_one_line(input, width)
+    Some(SideOverlayFrame {
+        frame,
+        metrics,
+        editor_window,
+    })
 }
 
 #[cfg(test)]

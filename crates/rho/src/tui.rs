@@ -65,6 +65,7 @@ mod frame_context;
 mod frame_scheduler;
 mod goal;
 mod line_editor;
+mod line_editor_view;
 mod panel_overlay;
 mod subagent_inbox;
 mod subagent_questionnaires;
@@ -242,7 +243,7 @@ use chat_media::{
 };
 use clipboard::Clipboard;
 use config_editor::{
-    config_number_input_lines, resolve_web_search_editor_value, ConfigNumberInput, ConfigNumberKey,
+    config_number_input_frame, resolve_web_search_editor_value, ConfigNumberInput, ConfigNumberKey,
     ConfigToggle,
 };
 use copy_interaction::CodeBlockCopyTarget;
@@ -270,8 +271,8 @@ use questionnaire::{
     QuestionnaireResponseChannel,
 };
 use render::{
-    char_prefix_display_width, display_width, input_frame, list_picker_frame, session_header_lines,
-    styled_line, tool_entry_lines, truncate_one_line, InputFrame, LineFill,
+    display_width, input_frame, list_picker_frame, session_header_lines, styled_line,
+    tool_entry_lines, truncate_one_line, InputFrame, LineFill,
 };
 use scrollbar::HistoryScrollbar;
 use session_title::PendingSessionTitle;

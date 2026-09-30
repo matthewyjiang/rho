@@ -36,6 +36,7 @@ mod hooks;
 mod hover_clicks;
 mod inline_choice_click;
 mod limits;
+mod line_editor;
 mod login;
 mod markdown_stream;
 mod mcp;
@@ -776,6 +777,8 @@ const ALL_SCENARIOS: &[Scenario] = &[
         false,
     ),
     LOGIN_OAUTH_FLOW_CHOICE_SCENARIO,
+    line_editor::LINE_EDITOR_SCENARIO,
+    line_editor::SETUP_LINE_EDITOR_SCENARIO,
     Scenario::new(
         "login_custom_provider",
         "Create a custom OpenAI-compatible host from /login without an API key",

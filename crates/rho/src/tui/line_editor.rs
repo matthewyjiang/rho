@@ -1,6 +1,9 @@
 //! Shared single-line text buffer used by overlay text inputs.
 
-use super::picker::UiPicker;
+use super::{
+    line_editor_view::{editor_viewport, EditorPresentation, EditorViewport, EditorWindow},
+    picker::UiPicker,
+};
 
 /// Cursor-aware single-line editor with an optional picker to restore on cancel/save.
 #[derive(Clone, Debug)]
@@ -8,6 +11,7 @@ pub(super) struct LineEditor {
     pub(super) value: String,
     pub(super) cursor: usize,
     return_picker: Option<Box<UiPicker>>,
+    viewport_window: EditorWindow,
 }
 
 impl LineEditor {
@@ -18,7 +22,28 @@ impl LineEditor {
             value,
             cursor,
             return_picker: None,
+            viewport_window: EditorWindow::default(),
         }
+    }
+
+    pub(super) fn viewport(
+        &self,
+        presentation: EditorPresentation,
+        width: usize,
+    ) -> EditorViewport {
+        editor_viewport(
+            &self.value,
+            self.cursor,
+            presentation,
+            width,
+            self.viewport_window,
+        )
+    }
+
+    /// Retain only the window that was actually painted, not a speculative
+    /// layout at another width (for example history behind the setup screen).
+    pub(super) fn retain_window(&mut self, window: EditorWindow) {
+        self.viewport_window = window;
     }
 
     pub(super) fn with_return_picker(mut self, picker: UiPicker) -> Self {
@@ -100,10 +125,12 @@ impl LineEditor {
     pub(super) fn clear(&mut self) {
         self.value.clear();
         self.cursor = 0;
+        self.viewport_window = EditorWindow::default();
     }
 
     pub(super) fn take_value(&mut self) -> String {
         self.cursor = 0;
+        self.viewport_window = EditorWindow::default();
         std::mem::take(&mut self.value)
     }
 }

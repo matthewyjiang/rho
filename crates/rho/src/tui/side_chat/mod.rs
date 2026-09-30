@@ -23,7 +23,7 @@ use rho_sdk::{
 };
 
 use command::{side_command_action, SideCommandAction};
-use overlay::{side_overlay_frame, side_scroll_metrics, SideOverlay};
+use overlay::{side_overlay_frame, side_scroll_metrics, SideOverlay, SideOverlayFrame};
 use snapshot::frozen_parent_snapshot;
 
 pub(super) struct SideChat {
@@ -185,12 +185,16 @@ impl App {
         changed
     }
 
-    pub(super) fn side_overlay_frame(
-        &self,
+    /// Prepare the painted overlay and retain only its final editor window.
+    /// Pointer and scroll queries use the read-only projection below instead.
+    pub(super) fn prepare_side_overlay_for_paint(
+        &mut self,
         area: Rect,
     ) -> Option<super::overlay_panel::OverlayPanelFrame> {
-        let side = self.side_chat.as_ref()?;
-        side_overlay_frame(&side.overlay, area).map(|(frame, _)| frame)
+        let side = self.side_chat.as_mut()?;
+        let prepared = side_overlay_frame(&side.overlay, area)?;
+        side.overlay.composer.retain_window(prepared.editor_window);
+        Some(prepared.frame)
     }
 
     /// Pointer state of the side overlay, for painting hover and selection.
@@ -385,7 +389,9 @@ impl App {
         // Hit-test against the frame the user sees, then mutate the overlay.
         // The pointer never changes the body, so the frame's metrics stay
         // valid for the scroll it asks for.
-        let Some((frame, metrics)) = side_overlay_frame(&side.overlay, screen) else {
+        let Some(SideOverlayFrame { frame, metrics, .. }) =
+            side_overlay_frame(&side.overlay, screen)
+        else {
             return;
         };
         match side.overlay.pointer.handle(event, column, row, &frame) {

@@ -3,7 +3,10 @@
 use rho_providers::model::catalog::LoginTarget;
 
 use super::{
-    composer_chrome, line_editor::LineEditor, styled_line, truncate_one_line, LineFill, Theme,
+    composer_chrome,
+    line_editor::LineEditor,
+    line_editor_view::EditorPresentation,
+    view_composer::{editor_frame, ComposerFrame},
 };
 
 #[derive(Clone, Debug)]
@@ -42,10 +45,7 @@ impl SecretInput {
     }
 }
 
-pub(super) fn secret_input_lines(
-    secret: &SecretInput,
-    width: usize,
-) -> Vec<ratatui::text::Line<'static>> {
+pub(super) fn secret_input_frame(secret: &SecretInput, width: usize) -> ComposerFrame {
     let prompt = if secret.allow_empty {
         format!(
             "enter API key (optional)  {}",
@@ -58,19 +58,9 @@ pub(super) fn secret_input_lines(
             composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
         )
     };
-    let display_value = "•".repeat(secret.editor.value.chars().count());
-    vec![
-        styled_line(
-            truncate_one_line(&prompt, width),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ),
-        styled_line(
-            truncate_one_line(&display_value, width),
-            width,
-            Theme::text(),
-            LineFill::Natural,
-        ),
-    ]
+    editor_frame(
+        &prompt,
+        secret.editor.viewport(EditorPresentation::Masked, width),
+        width,
+    )
 }

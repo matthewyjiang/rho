@@ -1,14 +1,12 @@
 //! Overlay single-line text input for config keys and agent fields.
 
-use ratatui::text::Line;
-
 use rho_providers::credentials::WebSearchCredential;
 
 use super::{
     line_editor::LineEditor,
+    line_editor_view::EditorPresentation,
     picker::UiPicker,
-    render::{styled_line, truncate_one_line, LineFill},
-    theme::Theme,
+    view_composer::{editor_frame, ComposerFrame},
     web_search_config::WebSearchUrlField,
 };
 
@@ -101,8 +99,13 @@ impl TextInput {
         self.editor.take_return_picker()
     }
 
-    pub(super) fn is_masked(&self) -> bool {
-        matches!(self.target, TextInputTarget::ConfigApiKey(_))
+    fn presentation(&self) -> EditorPresentation {
+        match self.target {
+            TextInputTarget::ConfigApiKey(_) => EditorPresentation::Masked,
+            TextInputTarget::ConfigUrl(_)
+            | TextInputTarget::AgentField(_)
+            | TextInputTarget::CustomHost(_) => EditorPresentation::Plain,
+        }
     }
 
     pub(super) fn label(&self) -> &str {
@@ -123,36 +126,14 @@ impl TextInput {
             | TextInputTarget::AgentField(_) => "Enter save",
         }
     }
-
-    pub(super) fn display_value(&self) -> String {
-        if self.is_masked() {
-            "•".repeat(self.editor.value.chars().count())
-        } else {
-            self.editor.value.clone()
-        }
-    }
 }
 
-pub(super) fn text_input_lines(input: &TextInput, width: usize) -> Vec<Line<'static>> {
-    vec![
-        styled_line(
-            truncate_one_line(
-                &format!(
-                    "edit {}  {}",
-                    input.label(),
-                    super::composer_chrome::join_footer_parts([input.confirm_verb(), "Esc cancel"])
-                ),
-                width,
-            ),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
-        ),
-        styled_line(
-            truncate_one_line(&input.display_value(), width),
-            width,
-            Theme::text(),
-            LineFill::Natural,
-        ),
-    ]
+pub(super) fn text_input_frame(input: &TextInput, width: usize) -> ComposerFrame {
+    let prompt = format!(
+        "edit {}  {}",
+        input.label(),
+        super::composer_chrome::join_footer_parts([input.confirm_verb(), "Esc cancel"])
+    );
+    let presentation = input.presentation();
+    editor_frame(&prompt, input.editor.viewport(presentation, width), width)
 }

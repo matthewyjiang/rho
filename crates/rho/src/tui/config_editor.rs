@@ -8,8 +8,9 @@ use {
 use super::{
     config_picker,
     line_editor::LineEditor,
-    render::{styled_line, truncate_one_line, LineFill},
+    line_editor_view::EditorPresentation,
     theme::Theme,
+    view_composer::{editor_frame, ComposerFrame},
 };
 
 #[derive(Clone, Debug)]
@@ -246,38 +247,23 @@ impl ConfigNumberInput {
     }
 }
 
-pub(super) fn config_number_input_lines(
-    input: &ConfigNumberInput,
-    width: usize,
-) -> Vec<Line<'static>> {
+pub(super) fn config_number_input_frame(input: &ConfigNumberInput, width: usize) -> ComposerFrame {
     let label = input.key.label();
-    let mut lines = vec![
-        styled_line(
-            truncate_one_line(
-                &format!(
-                    "edit {label}  {}",
-                    super::composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
-                ),
-                width,
-            ),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
+    let mut frame = editor_frame(
+        &format!(
+            "edit {label}  {}",
+            super::composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
         ),
-        styled_line(
-            truncate_one_line(&input.editor.value, width),
-            width,
-            Theme::text(),
-            LineFill::Natural,
-        ),
-    ];
+        input.editor.viewport(EditorPresentation::Plain, width),
+        width,
+    );
     if input.key == ConfigNumberKey::QuestionnaireTimeout {
-        lines.extend(super::render::wrap_line_at_whitespace(
+        frame.lines.extend(super::render::wrap_line_at_whitespace(
             "Positive seconds; empty = Disabled. Only forms with explicit fallback answers time out. Applies when the next form opens.",
             width,
         ).into_iter().map(|line| Line::styled(line.to_owned(), Theme::dim())));
     }
-    lines
+    frame
 }
 
 #[cfg(test)]
