@@ -5,12 +5,7 @@ use {
     rho_providers::credentials::{CredentialError, CredentialResult},
 };
 
-use super::{
-    config_picker,
-    line_editor::LineEditor,
-    render::{styled_line, truncate_one_line, LineFill},
-    theme::Theme,
-};
+use super::{config_picker, line_editor::LineEditor, theme::Theme};
 
 #[derive(Clone, Debug)]
 pub(super) struct ConfigNumberInput {
@@ -246,38 +241,27 @@ impl ConfigNumberInput {
     }
 }
 
-pub(super) fn config_number_input_lines(
+pub(super) fn config_number_input_frame(
     input: &ConfigNumberInput,
     width: usize,
-) -> Vec<Line<'static>> {
+) -> super::view_composer::ComposerFrame {
     let label = input.key.label();
-    let mut lines = vec![
-        styled_line(
-            truncate_one_line(
-                &format!(
-                    "edit {label}  {}",
-                    super::composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
-                ),
-                width,
-            ),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
+    let mut frame = super::line_editor_view::editor_frame(
+        &format!(
+            "edit {label}  {}",
+            super::composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
         ),
-        styled_line(
-            truncate_one_line(&input.editor.value, width),
-            width,
-            Theme::text(),
-            LineFill::Natural,
-        ),
-    ];
+        &input.editor.value,
+        input.editor.cursor,
+        width,
+    );
     if input.key == ConfigNumberKey::QuestionnaireTimeout {
-        lines.extend(super::render::wrap_line_at_whitespace(
+        frame.lines.extend(super::render::wrap_line_at_whitespace(
             "Positive seconds; empty = Disabled. Only forms with explicit fallback answers time out. Applies when the next form opens.",
             width,
         ).into_iter().map(|line| Line::styled(line.to_owned(), Theme::dim())));
     }
-    lines
+    frame
 }
 
 #[cfg(test)]

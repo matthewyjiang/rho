@@ -72,7 +72,7 @@ Use a multiline prompt when you need to paste or write a longer request. Type `@
 
 ### Keyboard shortcuts
 
-Most editing keys work the way they do in a normal terminal input. Run `/help` for a searchable overlay of the same shortcuts.
+Most editing keys work the way they do in a normal terminal input. Run `/help` for a searchable overlay of the same shortcuts. Single-line fields in login and configuration overlays scroll horizontally to keep the insertion point visible, including when you move with Home, End, or the arrow keys. Secret fields stay masked while scrolling.
 
 | Key | Action |
 | --- | --- |

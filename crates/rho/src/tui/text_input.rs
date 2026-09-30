@@ -1,15 +1,10 @@
 //! Overlay single-line text input for config keys and agent fields.
 
-use ratatui::text::Line;
-
 use rho_providers::credentials::WebSearchCredential;
 
 use super::{
-    line_editor::LineEditor,
-    picker::UiPicker,
-    render::{styled_line, truncate_one_line, LineFill},
-    theme::Theme,
-    web_search_config::WebSearchUrlField,
+    line_editor::LineEditor, line_editor_view::editor_frame, picker::UiPicker,
+    view_composer::ComposerFrame, web_search_config::WebSearchUrlField,
 };
 
 /// Which overlay owns a [`TextInput`].
@@ -128,31 +123,20 @@ impl TextInput {
         if self.is_masked() {
             "•".repeat(self.editor.value.chars().count())
         } else {
-            self.editor.value.clone()
+            self.editor.value.replace('\n', " ")
         }
     }
 }
 
-pub(super) fn text_input_lines(input: &TextInput, width: usize) -> Vec<Line<'static>> {
-    vec![
-        styled_line(
-            truncate_one_line(
-                &format!(
-                    "edit {}  {}",
-                    input.label(),
-                    super::composer_chrome::join_footer_parts([input.confirm_verb(), "Esc cancel"])
-                ),
-                width,
-            ),
-            width,
-            Theme::dim(),
-            LineFill::Natural,
+pub(super) fn text_input_frame(input: &TextInput, width: usize) -> ComposerFrame {
+    editor_frame(
+        &format!(
+            "edit {}  {}",
+            input.label(),
+            super::composer_chrome::join_footer_parts([input.confirm_verb(), "Esc cancel"])
         ),
-        styled_line(
-            truncate_one_line(&input.display_value(), width),
-            width,
-            Theme::text(),
-            LineFill::Natural,
-        ),
-    ]
+        &input.display_value(),
+        input.editor.cursor,
+        width,
+    )
 }

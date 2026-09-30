@@ -7,22 +7,22 @@ use ratatui::{
 
 use super::{
     advisor_status::AdvisorStatus,
-    approval_frame, char_prefix_display_width,
+    approval_frame,
     composer_chrome::ComposerDividerSlot,
     composer_layout::{content_width, prompt_width, PROMPT_PREFIX},
     composer_pointer::{ComposerChoice, ComposerHit},
-    config_number_input_lines,
+    config_number_input_frame,
     copy_interaction::CopyHit,
     display_width,
     divider::{labeled_divider_line, DividerCaption},
     file_picker,
     inline_choice::inline_choice_frame,
     inline_shell, input_frame, list_picker_frame,
-    login::secret_input_lines,
+    login::secret_input_frame,
     login_presentation::login_composer_view,
     palette::{ActivePalette, PaletteFrame, PaletteRow},
     questionnaire_frame, styled_line,
-    text_input::text_input_lines,
+    text_input::text_input_frame,
     truncate_one_line, App, ComposerMode, InputFrame, LineFill, Theme, MAX_COMMAND_SUGGESTIONS,
     MIN_COMMAND_DESCRIPTION_WIDTH,
 };
@@ -35,13 +35,6 @@ pub(super) struct ComposerFrame {
     pub(super) cursor: Position,
     pub(super) copy_hit: Option<CopyHit>,
     pub(super) choice_hits: Vec<ComposerHit<ComposerChoice>>,
-}
-
-fn overlay_editor_caret(value: &str, cursor: usize, width: usize) -> Position {
-    Position {
-        x: char_prefix_display_width(value, cursor).min(width.max(1)) as u16,
-        y: 1,
-    }
 }
 
 impl ComposerFrame {
@@ -174,18 +167,9 @@ impl App {
                     ..ComposerFrame::new(frame.lines, cursor)
                 }
             }
-            ComposerMode::SecretInput(secret) => ComposerFrame::new(
-                secret_input_lines(secret, width),
-                overlay_editor_caret(&secret.editor.value, secret.editor.cursor, width),
-            ),
-            ComposerMode::ConfigNumberInput(input) => ComposerFrame::new(
-                config_number_input_lines(input, width),
-                overlay_editor_caret(&input.editor.value, input.editor.cursor, width),
-            ),
-            ComposerMode::TextInput(input) => ComposerFrame::new(
-                text_input_lines(input, width),
-                overlay_editor_caret(&input.editor.value, input.editor.cursor, width),
-            ),
+            ComposerMode::SecretInput(secret) => secret_input_frame(secret, width),
+            ComposerMode::ConfigNumberInput(input) => config_number_input_frame(input, width),
+            ComposerMode::TextInput(input) => text_input_frame(input, width),
             ComposerMode::InteractivePending(pending) => {
                 let view =
                     login_composer_view(pending, width, /*hovered*/ composer_copy_hovered);

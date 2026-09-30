@@ -375,14 +375,6 @@ pub(super) fn visual_caret_position(
     }
 }
 
-pub(super) fn char_prefix_display_width(value: &str, cursor: usize) -> usize {
-    let end = value
-        .char_indices()
-        .nth(cursor)
-        .map_or(value.len(), |(byte, _)| byte);
-    display_width(&value[..end])
-}
-
 /// Map display columns to source character indices at whole-grapheme boundaries.
 pub(super) fn input_cursor_index_on_visual_line(
     input: &str,
