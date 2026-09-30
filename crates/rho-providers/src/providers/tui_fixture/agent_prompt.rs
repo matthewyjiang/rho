@@ -6,9 +6,10 @@ use rho_sdk::{
     ProviderError,
 };
 
-use super::super::{completed, completed_tool_call, release, tool_result};
+use super::{completed, completed_tool_call, release, tool_result};
 
 const CALL: &str = "agent-prompt-prefix";
+const FINISHED_CALL: &str = "agent-prompt-finished";
 const RELEASE: &str = ".rho-fixture-release-agent-prompt";
 // Exceeds the old 400-character / eight-line tail preview while fitting the
 // expanded PTY viewport. Losing either prefix budget must fail the scenario.
@@ -27,6 +28,23 @@ pub(super) async fn intercept(
         return Some(Err(ProviderError::interrupted(
             "agent prompt child stopped",
         )));
+    }
+    if prompt == "fixture agent prompt finished" {
+        if tool_result(request, FINISHED_CALL).is_some() {
+            return Some(completed("agent prompt result received"));
+        }
+        // A missing catalog entry finishes the actual agent ToolCall with an
+        // error instead of a background launch. This exercises the finished
+        // card's plain-text failure fallback without inventing a foreground agent mode.
+        let prompt = PREFIX
+            .replace("prompt-prefix", "finished-prompt-prefix")
+            .replace("wrapped-prefix", "wrapped-finished-prefix")
+            .replace("prompt-tail-one", "finished-prompt-tail");
+        return Some(completed_tool_call(
+            FINISHED_CALL,
+            "agent",
+            serde_json::json!({"agent_id": "absent", "prompt": prompt}),
+        ));
     }
     if prompt != "fixture agent prompt" {
         return None;

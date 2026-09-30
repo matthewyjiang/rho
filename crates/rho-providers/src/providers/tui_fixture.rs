@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 mod advisor;
 mod agent_message;
+mod agent_prompt;
 mod attach;
 mod boundary_notifications;
 mod calibrated_context;
@@ -132,6 +133,9 @@ async fn fixture_stream(
         return response;
     }
     if let Some(response) = agent_message::intercept(&prompt, &request).await {
+        return response;
+    }
+    if let Some(response) = agent_prompt::intercept(&prompt, &request, &events).await {
         return response;
     }
     if let Some(response) = quiet_subagent::intercept(&prompt, &request, &events).await {

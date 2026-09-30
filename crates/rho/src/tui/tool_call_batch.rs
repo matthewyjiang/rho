@@ -127,7 +127,7 @@ impl ToolCallBatch {
             .is_some_and(|entry| entry.expanded);
         if let Some(index) = self.preview_call_ids.remove(&call_id) {
             // Promotion changes the card's lifecycle, not the user's expansion choice.
-            expanded = self
+            expanded |= self
                 .previews
                 .remove(&index)
                 .is_some_and(|entry| entry.expanded);
