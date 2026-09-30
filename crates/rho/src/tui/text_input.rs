@@ -4,9 +4,9 @@ use rho_providers::credentials::WebSearchCredential;
 
 use super::{
     line_editor::LineEditor,
-    line_editor_view::{editor_frame, EditorPresentation},
+    line_editor_view::EditorPresentation,
     picker::UiPicker,
-    view_composer::ComposerFrame,
+    view_composer::{editor_frame, ComposerFrame},
     web_search_config::WebSearchUrlField,
 };
 
@@ -128,7 +128,7 @@ impl TextInput {
     }
 }
 
-pub(super) fn text_input_frame(input: &mut TextInput, width: usize) -> ComposerFrame {
+pub(super) fn text_input_frame(input: &TextInput, width: usize) -> ComposerFrame {
     let prompt = format!(
         "edit {}  {}",
         input.label(),

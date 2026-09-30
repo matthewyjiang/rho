@@ -5,7 +5,13 @@ use {
     rho_providers::credentials::{CredentialError, CredentialResult},
 };
 
-use super::{config_picker, line_editor::LineEditor, theme::Theme};
+use super::{
+    config_picker,
+    line_editor::LineEditor,
+    line_editor_view::EditorPresentation,
+    theme::Theme,
+    view_composer::{editor_frame, ComposerFrame},
+};
 
 #[derive(Clone, Debug)]
 pub(super) struct ConfigNumberInput {
@@ -241,19 +247,14 @@ impl ConfigNumberInput {
     }
 }
 
-pub(super) fn config_number_input_frame(
-    input: &mut ConfigNumberInput,
-    width: usize,
-) -> super::view_composer::ComposerFrame {
+pub(super) fn config_number_input_frame(input: &ConfigNumberInput, width: usize) -> ComposerFrame {
     let label = input.key.label();
-    let mut frame = super::line_editor_view::editor_frame(
+    let mut frame = editor_frame(
         &format!(
             "edit {label}  {}",
             super::composer_chrome::join_footer_parts(["Enter save", "Esc cancel"])
         ),
-        input
-            .editor
-            .viewport(super::line_editor_view::EditorPresentation::Plain, width),
+        input.editor.viewport(EditorPresentation::Plain, width),
         width,
     );
     if input.key == ConfigNumberKey::QuestionnaireTimeout {

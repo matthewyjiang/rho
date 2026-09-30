@@ -5,8 +5,8 @@ use rho_providers::model::catalog::LoginTarget;
 use super::{
     composer_chrome,
     line_editor::LineEditor,
-    line_editor_view::{editor_frame, EditorPresentation},
-    view_composer::ComposerFrame,
+    line_editor_view::EditorPresentation,
+    view_composer::{editor_frame, ComposerFrame},
 };
 
 #[derive(Clone, Debug)]
@@ -45,7 +45,7 @@ impl SecretInput {
     }
 }
 
-pub(super) fn secret_input_frame(secret: &mut SecretInput, width: usize) -> ComposerFrame {
+pub(super) fn secret_input_frame(secret: &SecretInput, width: usize) -> ComposerFrame {
     let prompt = if secret.allow_empty {
         format!(
             "enter API key (optional)  {}",

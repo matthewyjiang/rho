@@ -363,6 +363,9 @@ impl App {
             layout,
             ..
         } = surface;
+        if layout.composer.height > 0 {
+            self.retain_composer_window(&composer);
+        }
         let composer_visible = composer
             .lines
             .into_iter()
@@ -480,7 +483,7 @@ impl App {
                 }
                 cursor
             }),
-            ComposerMode::Side => self.side_overlay_frame(area).map(|overlay| {
+            ComposerMode::Side => self.prepare_side_overlay_for_paint(area).map(|overlay| {
                 let pointer = self.side_overlay_pointer().unwrap_or_default();
                 let at = self.last_mouse_position.map(Position::from);
                 let cursor = pointer.paint_overlay(frame, overlay, at);

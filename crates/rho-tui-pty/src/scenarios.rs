@@ -778,6 +778,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     LOGIN_OAUTH_FLOW_CHOICE_SCENARIO,
     line_editor::LINE_EDITOR_SCENARIO,
+    line_editor::SETUP_LINE_EDITOR_SCENARIO,
     Scenario::new(
         "login_custom_provider",
         "Create a custom OpenAI-compatible host from /login without an API key",

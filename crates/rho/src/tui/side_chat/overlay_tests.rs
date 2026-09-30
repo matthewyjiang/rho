@@ -62,7 +62,7 @@ fn side_scroll_metrics_follow_wrapped_body() {
         .entries
         .push(Entry::Assistant(["word"; 80].join(" ").into()));
     let area = Rect::new(0, 0, 40, 20);
-    let prepared = prepare_side_panel(&mut overlay, area).expect("panel fits");
+    let prepared = prepare_side_panel(&overlay, area).expect("panel fits");
     let metrics = prepared.metrics;
     let body_len = prepared.body.lines.len();
 

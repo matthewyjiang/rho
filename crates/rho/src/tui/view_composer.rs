@@ -17,7 +17,9 @@ use super::{
     divider::{labeled_divider_line, DividerCaption},
     file_picker,
     inline_choice::inline_choice_frame,
-    inline_shell, input_frame, list_picker_frame,
+    inline_shell, input_frame,
+    line_editor_view::{EditorViewport, EditorWindow},
+    list_picker_frame,
     login::secret_input_frame,
     login_presentation::login_composer_view,
     palette::{ActivePalette, PaletteFrame, PaletteRow},
@@ -35,6 +37,9 @@ pub(super) struct ComposerFrame {
     pub(super) cursor: Position,
     pub(super) copy_hit: Option<CopyHit>,
     pub(super) choice_hits: Vec<ComposerHit<ComposerChoice>>,
+    /// Proposed window of a single-line field. Retained only when this frame
+    /// is painted, never by history measurements or pointer hit testing.
+    pub(super) editor_window: Option<EditorWindow>,
 }
 
 impl ComposerFrame {
@@ -44,11 +49,56 @@ impl ComposerFrame {
             cursor,
             copy_hit: None,
             choice_hits: Vec::new(),
+            editor_window: None,
         }
     }
 }
 
+/// Composer chrome consumes the projected text and caret together. The window
+/// travels with the frame so measurement remains read-only until paint.
+pub(super) fn editor_frame(prompt: &str, viewport: EditorViewport, width: usize) -> ComposerFrame {
+    ComposerFrame {
+        editor_window: Some(viewport.window),
+        ..ComposerFrame::new(
+            vec![
+                styled_line(
+                    truncate_one_line(prompt, width),
+                    width,
+                    Theme::dim(),
+                    LineFill::Natural,
+                ),
+                styled_line(viewport.value, width, Theme::text(), LineFill::Natural),
+            ],
+            Position {
+                x: viewport.cursor_column as u16,
+                y: 1,
+            },
+        )
+    }
+}
+
 impl App {
+    /// Called only by the session/setup paint paths, after resolving the real
+    /// field width. Other frame consumers must not retain the proposed window.
+    pub(super) fn retain_composer_window(&mut self, frame: &ComposerFrame) {
+        let Some(window) = frame.editor_window else {
+            return;
+        };
+        match self.input_ui.composer_mut() {
+            ComposerMode::SecretInput(input) => input.editor.retain_window(window),
+            ComposerMode::ConfigNumberInput(input) => input.editor.retain_window(window),
+            ComposerMode::TextInput(input) => input.editor.retain_window(window),
+            ComposerMode::Input
+            | ComposerMode::Picker(_)
+            | ComposerMode::InteractivePending(_)
+            | ComposerMode::InlineChoice(_)
+            | ComposerMode::Questionnaire(_)
+            | ComposerMode::Approval(_)
+            | ComposerMode::Panel(_)
+            | ComposerMode::Side => {}
+        }
+    }
+
     pub(super) fn divider_line(&self, width: usize, slot: ComposerDividerSlot) -> Line<'static> {
         let width = width.max(1);
         let style = match self.input_ui.composer() {
@@ -98,7 +148,7 @@ impl App {
     pub(super) fn composer_frame(&mut self, width: usize, viewport_height: usize) -> ComposerFrame {
         self.refresh_composer_attachment_layout_cache(width);
         let composer_copy_hovered = self.input_ui.hovered_composer_copy();
-        match self.input_ui.composer_mut() {
+        match self.input_ui.composer() {
             ComposerMode::Input => {
                 let focused_paste = self
                     .focused_paste_segment()

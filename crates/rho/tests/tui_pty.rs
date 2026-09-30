@@ -112,6 +112,13 @@ fn single_line_editor_keeps_insertion_point_visible() {
     assert_pass("line_editor_viewport");
 }
 
+// Covers: history and mouse geometry must not re-anchor setup's capped field
+// viewport at the full terminal width. Owner: interactive TUI.
+#[test]
+fn setup_line_editor_keeps_its_capped_viewport() {
+    assert_pass("setup_line_editor_viewport");
+}
+
 // Covers: menu and shortcut share a saved streaming preference during a turn.
 // Owner: interactive TUI
 #[test]

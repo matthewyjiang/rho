@@ -1,11 +1,15 @@
 //! Shared presentation, horizontal scrolling, and caret for single-line editors.
 
-use ratatui::layout::Position;
 use unicode_segmentation::UnicodeSegmentation;
 
-use super::{
-    display_width, styled_line, truncate_one_line, view_composer::ComposerFrame, LineFill, Theme,
-};
+use super::display_width;
+
+/// Source scalar at the left edge of a projected editor window. Only painting
+/// retains this anchor; speculative layout and hit testing must not change it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct EditorWindow {
+    pub(super) start: usize,
+}
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum EditorPresentation {
@@ -17,11 +21,12 @@ pub(super) enum EditorPresentation {
 pub(super) struct EditorViewport {
     pub(super) value: String,
     pub(super) cursor_column: usize,
+    pub(super) window: EditorWindow,
 }
 
 /// Project source text and its scalar cursor together, so masked callers never
-/// construct a display string or translate the cursor. `start` is the source
-/// scalar index of the first visible grapheme; preserve it while the caret fits.
+/// construct a display string or translate the cursor. Preserve `window` while
+/// the caret fits, and return the proposed anchor without retaining it.
 /// A caret inside a grapheme is painted at its end, since terminals cannot
 /// address individual scalars. An end-of-value caret needs its own cell.
 pub(super) fn editor_viewport(
@@ -29,7 +34,7 @@ pub(super) fn editor_viewport(
     cursor: usize,
     presentation: EditorPresentation,
     width: usize,
-    start: &mut usize,
+    window: EditorWindow,
 ) -> EditorViewport {
     let display_value = match presentation {
         EditorPresentation::Plain => value.replace('\n', " "),
@@ -40,6 +45,7 @@ pub(super) fn editor_viewport(
         return EditorViewport {
             value: String::new(),
             cursor_column: 0,
+            window,
         };
     }
     let mut cursor_column = 0;
@@ -51,7 +57,7 @@ pub(super) fn editor_viewport(
     let mut columns = 0;
     for (index, grapheme) in value.grapheme_indices(true) {
         let grapheme_width = display_width(grapheme);
-        if chars <= *start {
+        if chars <= window.start {
             start_byte = index;
             start_column = columns;
         }
@@ -67,7 +73,7 @@ pub(super) fn editor_viewport(
         chars += grapheme.chars().count();
         columns += grapheme_width;
     }
-    if *start >= chars {
+    if window.start >= chars {
         start_byte = value.len();
         start_column = columns;
     }
@@ -94,7 +100,9 @@ pub(super) fn editor_viewport(
         cursor_column -= display_width(grapheme);
         start_byte = previous_start + index + grapheme.len();
     }
-    *start = value[..start_byte].chars().count();
+    let window = EditorWindow {
+        start: value[..start_byte].chars().count(),
+    };
 
     let mut end = start_byte;
     let mut used = 0;
@@ -109,27 +117,8 @@ pub(super) fn editor_viewport(
     EditorViewport {
         value: value[start_byte..end].to_owned(),
         cursor_column,
+        window,
     }
-}
-
-/// Overlay chrome consumes only the viewport; editor state and presentation
-/// policy stay with the caller.
-pub(super) fn editor_frame(prompt: &str, viewport: EditorViewport, width: usize) -> ComposerFrame {
-    ComposerFrame::new(
-        vec![
-            styled_line(
-                truncate_one_line(prompt, width),
-                width,
-                Theme::dim(),
-                LineFill::Natural,
-            ),
-            styled_line(viewport.value, width, Theme::text(), LineFill::Natural),
-        ],
-        Position {
-            x: viewport.cursor_column as u16,
-            y: 1,
-        },
-    )
 }
 
 #[cfg(test)]

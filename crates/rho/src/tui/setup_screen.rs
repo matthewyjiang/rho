@@ -19,11 +19,8 @@ use ratatui::{
 };
 
 use super::{
-    exclusive_screen::ExclusiveOccupant,
-    first_run::SetupEntry,
-    render::{display_width, truncate_one_line},
-    theme::Theme,
-    App, ComposerMode,
+    exclusive_screen::ExclusiveOccupant, first_run::SetupEntry, render::truncate_one_line,
+    theme::Theme, view_composer::ComposerFrame, App, ComposerMode,
 };
 
 /// Widest content column the screen uses. Wider terminals centre this rather
@@ -221,11 +218,26 @@ impl App {
         let width = column.width as usize;
 
         let origin = setup_composer_origin(area, step);
-        let body_row = origin.y.saturating_sub(column.y);
+        let body = self.setup_body_frame(width, origin.height);
+        self.retain_composer_window(&body);
+        let cursor = match self.input_ui.composer() {
+            ComposerMode::Picker(_)
+            | ComposerMode::SecretInput(_)
+            | ComposerMode::ConfigNumberInput(_)
+            | ComposerMode::TextInput(_) => Some(body.cursor),
+            ComposerMode::Input
+            | ComposerMode::InteractivePending(_)
+            | ComposerMode::InlineChoice(_)
+            | ComposerMode::Questionnaire(_)
+            | ComposerMode::Approval(_)
+            | ComposerMode::Panel(_)
+            | ComposerMode::Side => None,
+        }
+        .filter(|cursor| cursor.x < origin.width && cursor.y < origin.height);
         let mut lines = welcome_lines(width);
         lines.extend(step_lines(step, width));
         lines.push(Line::raw(""));
-        lines.extend(self.setup_body_lines(width, origin.height));
+        lines.extend(body.lines);
         if let Some(hint) = setup_skip_hint(self.input_ui.composer()) {
             lines.push(Line::raw(""));
             lines.push(Line::from(Span::styled(
@@ -235,40 +247,28 @@ impl App {
         }
 
         frame.render_widget(Paragraph::new(lines).style(Theme::surface()), column);
-        if let Some(position) = self.setup_filter_cursor(column, body_row) {
-            frame.set_cursor_position(position);
+        if let Some(cursor) = cursor {
+            frame.set_cursor_position(ratatui::layout::Position {
+                x: origin.x.saturating_add(cursor.x),
+                y: origin.y.saturating_add(cursor.y),
+            });
         }
     }
 
-    /// The active picker, or a progress line while a login is in flight.
-    fn setup_body_lines(&mut self, width: usize, height: u16) -> Vec<Line<'static>> {
+    /// The active composer, or a progress line while a login is in flight.
+    fn setup_body_frame(&mut self, width: usize, height: u16) -> ComposerFrame {
         match self.input_ui.composer() {
             // Between two pickers the composer is briefly plain. Report what
             // the session is doing instead of the "type a message" prompt.
-            ComposerMode::Input => vec![Line::from(Span::styled(
-                truncate_one_line(self.status(), width),
-                Theme::dim(),
-            ))],
-            _ => self.composer_frame(width, height as usize).lines,
+            ComposerMode::Input => ComposerFrame::new(
+                vec![Line::from(Span::styled(
+                    truncate_one_line(self.status(), width),
+                    Theme::dim(),
+                ))],
+                ratatui::layout::Position::default(),
+            ),
+            _ => self.composer_frame(width, height as usize),
         }
-    }
-
-    /// The picker's filter cursor, placed on the first body row.
-    fn setup_filter_cursor(
-        &self,
-        column: Rect,
-        body_row: u16,
-    ) -> Option<ratatui::layout::Position> {
-        let ComposerMode::Picker(picker) = self.input_ui.composer() else {
-            return None;
-        };
-        let offset = display_width(&picker.filter).saturating_add(2);
-        Some(ratatui::layout::Position {
-            x: column
-                .x
-                .saturating_add(offset.min(column.width.saturating_sub(1) as usize) as u16),
-            y: column.y.saturating_add(body_row),
-        })
     }
 }
 

@@ -6,7 +6,7 @@ use ratatui::{
 use super::super::{
     copy_interaction::CopyHit,
     line_editor::LineEditor,
-    line_editor_view::EditorPresentation,
+    line_editor_view::{EditorPresentation, EditorWindow},
     overlay_panel::{
         clamp_panel_scroll, overlay_panel_inner_width, overlay_panel_layout, render_overlay_panel,
         OverlayPanelFrame,
@@ -38,6 +38,13 @@ struct PreparedSidePanel {
     body: SidePanelBody,
     metrics: SideScrollMetrics,
     input_cursor_column: usize,
+    editor_window: EditorWindow,
+}
+
+pub(super) struct SideOverlayFrame {
+    pub(super) frame: OverlayPanelFrame,
+    pub(super) metrics: SideScrollMetrics,
+    pub(super) editor_window: EditorWindow,
 }
 
 #[derive(Debug)]
@@ -181,14 +188,11 @@ impl SideOverlay {
     }
 }
 
-pub(super) fn side_scroll_metrics(
-    overlay: &mut SideOverlay,
-    area: Rect,
-) -> Option<SideScrollMetrics> {
+pub(super) fn side_scroll_metrics(overlay: &SideOverlay, area: Rect) -> Option<SideScrollMetrics> {
     Some(prepare_side_panel(overlay, area)?.metrics)
 }
 
-fn prepare_side_panel(overlay: &mut SideOverlay, area: Rect) -> Option<PreparedSidePanel> {
+fn prepare_side_panel(overlay: &SideOverlay, area: Rect) -> Option<PreparedSidePanel> {
     if area.width < 8 || area.height < 8 {
         return None;
     }
@@ -220,6 +224,7 @@ fn prepare_side_panel(overlay: &mut SideOverlay, area: Rect) -> Option<PreparedS
     Some(PreparedSidePanel {
         body,
         input_cursor_column,
+        editor_window: input.window,
         metrics: SideScrollMetrics {
             body_len,
             body_rows,
@@ -246,14 +251,12 @@ fn resolve_side_scroll(scroll: usize, metrics: &SideScrollMetrics) -> usize {
 
 /// The side overlay as painted at `area`, with the scroll metrics of that
 /// same render so pointer scrolling needs no second body render.
-pub(super) fn side_overlay_frame(
-    overlay: &mut SideOverlay,
-    area: Rect,
-) -> Option<(OverlayPanelFrame, SideScrollMetrics)> {
+pub(super) fn side_overlay_frame(overlay: &SideOverlay, area: Rect) -> Option<SideOverlayFrame> {
     let PreparedSidePanel {
         body,
         metrics,
         input_cursor_column,
+        editor_window,
     } = prepare_side_panel(overlay, area)?;
     let scroll = resolve_side_scroll(overlay.scroll, &metrics);
     let input_row = body.lines.len().saturating_sub(1);
@@ -281,7 +284,11 @@ pub(super) fn side_overlay_frame(
             .saturating_add(1)
             .saturating_add(input_screen_row as u16),
     });
-    Some((frame, metrics))
+    Some(SideOverlayFrame {
+        frame,
+        metrics,
+        editor_window,
+    })
 }
 
 #[cfg(test)]
