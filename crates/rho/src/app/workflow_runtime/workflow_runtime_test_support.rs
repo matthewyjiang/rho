@@ -199,6 +199,7 @@ pub(super) fn test_workflow() -> FrozenWorkflow {
                 capabilities: Default::default(),
                 permission_ceiling: "auto".into(),
                 auth_profile: None,
+                fast: false,
                 executable: None,
                 executable_identity: None,
                 arguments: Vec::new(),

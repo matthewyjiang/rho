@@ -275,6 +275,7 @@ fn bind_side_agent(host_config: &Config) -> anyhow::Result<BoundAgent> {
             tools: ToolPolicy::Allow(tools.clone()),
             model: ModelPolicy::Inherit,
             reasoning: None,
+            fast: false,
         },
     });
     AgentBinder::bind(

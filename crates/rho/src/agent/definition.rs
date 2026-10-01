@@ -366,6 +366,12 @@ pub enum AgentRuntimeSpec {
         tools: ToolPolicy,
         model: ModelPolicy,
         reasoning: Option<ReasoningLevel>,
+        /// Fast serving for this agent's pinned model (`fast: true`).
+        ///
+        /// Independent of the parent's `/fast`: delegated runs use exactly this
+        /// value. Parse requires a pinned model; bind fails when the resolved
+        /// model and auth do not support fast mode.
+        fast: bool,
     },
     ClaudeCli(ClaudeAgentConfig),
     Cursor(CursorAgentConfig),
@@ -377,6 +383,7 @@ impl Default for AgentRuntimeSpec {
             tools: ToolPolicy::All,
             model: ModelPolicy::Inherit,
             reasoning: None,
+            fast: false,
         }
     }
 }
@@ -443,6 +450,14 @@ impl AgentDefinition {
             AgentRuntimeSpec::Rho { reasoning, .. } => *reasoning,
             AgentRuntimeSpec::ClaudeCli(config) => config.reasoning,
             AgentRuntimeSpec::Cursor(_) => None,
+        }
+    }
+
+    /// Whether this definition asks for fast serving. Only Rho agents can.
+    pub fn fast(&self) -> bool {
+        match &self.runtime {
+            AgentRuntimeSpec::Rho { fast, .. } => *fast,
+            AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => false,
         }
     }
 
@@ -565,6 +580,11 @@ impl AgentDefinition {
                 hash_field(&mut hash, b"inherit_claude_config:true");
             } else {
                 hash_field(&mut hash, b"inherit_claude_config:false");
+            }
+            // Only hash an explicit opt-in so definitions without `fast`
+            // keep the fingerprint they had before this field existed.
+            if self.fast() {
+                hash_field(&mut hash, b"fast:true");
             }
         }
         AgentFingerprint(hash.finalize().into())

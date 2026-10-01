@@ -25,6 +25,7 @@ fn definition(tools: ToolPolicy) -> Arc<AgentDefinition> {
             tools,
             model: ModelPolicy::Inherit,
             reasoning: None,
+            fast: false,
         },
     })
 }
@@ -217,6 +218,7 @@ fn frozen_binding_does_not_rebind_and_narrows_current_policy() {
             .collect(),
         permission_ceiling: "auto".into(),
         auth_profile: Some("anthropic".into()),
+        fast: false,
         executable: None,
         executable_identity: None,
         arguments: Vec::new(),
@@ -266,6 +268,7 @@ fn frozen_claude_cli_bypass_ceiling_narrows_to_current_auto() {
             .collect(),
         permission_ceiling: "bypass".into(),
         auth_profile: None,
+        fast: false,
         executable: None,
         executable_identity: None,
         arguments: Vec::new(),
@@ -349,6 +352,7 @@ fn definition_with_model(model: ModelPolicy) -> Arc<AgentDefinition> {
             tools: ToolPolicy::All,
             model,
             reasoning: None,
+            fast: false,
         },
         ..definition(ToolPolicy::All).as_ref().clone()
     })
@@ -1079,6 +1083,7 @@ fn cursor_frozen_bind_narrows_plan_to_read_only_tools() {
             .collect(),
         permission_ceiling: "bypass".into(),
         auth_profile: None,
+        fast: false,
         executable: None,
         executable_identity: None,
         arguments: Vec::new(),
@@ -1134,6 +1139,7 @@ fn cursor_frozen_capabilities_fail_closed_on_unknown_tool() {
             .collect(),
         permission_ceiling: "bypass".into(),
         auth_profile: None,
+        fast: false,
         executable: None,
         executable_identity: None,
         arguments: Vec::new(),
@@ -1142,4 +1148,79 @@ fn cursor_frozen_capabilities_fail_closed_on_unknown_tool() {
     let message = error.to_string();
     assert!(message.contains("unknown Cursor tool"), "{message}");
     assert!(message.contains("not_a_cursor_tool"), "{message}");
+}
+
+// Covers: a delegated agent's fast mode comes from its own definition, never
+// the parent's /fast, and an unsupported pin fails bind instead of running.
+// Owner: agent binding policy
+#[test]
+fn delegated_fast_mode_follows_definition_not_parent() {
+    let pinned = |provider: &str, model: &str, auth: &str, fast: bool| {
+        Arc::new(AgentDefinition {
+            runtime: AgentRuntimeSpec::Rho {
+                tools: ToolPolicy::All,
+                model: ModelPolicy::Select(ModelSelection {
+                    provider: Some(provider.into()),
+                    model: model.into(),
+                    auth: Some(auth.into()),
+                }),
+                reasoning: None,
+                fast,
+            },
+            ..definition(ToolPolicy::All).as_ref().clone()
+        })
+    };
+    let inherit = definition(ToolPolicy::All);
+    let store = credentials(&["codex", "xai-oauth", "xai-api-key"]);
+    // (definition, parent fast_mode, expected child fast_mode or bind error)
+    let cases: [(Arc<AgentDefinition>, bool, Result<bool, ()>); 6] = [
+        (
+            pinned("openai-codex", "gpt-5.5", "codex", true),
+            false,
+            Ok(true),
+        ),
+        (
+            pinned("openai-codex", "gpt-5.5", "codex", false),
+            true,
+            Ok(false),
+        ),
+        (inherit.clone(), true, Ok(false)),
+        (
+            pinned("xai", "grok-4.7", "xai-oauth", true),
+            false,
+            Ok(true),
+        ),
+        (
+            pinned("xai", "grok-4.7", "xai-api-key", true),
+            false,
+            Err(()),
+        ),
+        (
+            pinned("openai-codex", "gpt-5.3-codex", "codex", true),
+            true,
+            Err(()),
+        ),
+    ];
+    for (index, (definition, parent_fast, expected)) in cases.into_iter().enumerate() {
+        let host = Config {
+            provider: "openai-codex".into(),
+            model: "gpt-5.5".into(),
+            auth: "codex".into(),
+            fast_mode: parent_fast,
+            ..Config::default()
+        };
+        let result = AgentBinder::bind_with_credentials(
+            definition,
+            AgentInvocation {
+                role: AgentRole::Delegated,
+                available_tools: capabilities(),
+            },
+            &host,
+            &store,
+        );
+        let actual = result
+            .map(|bound| bound.rho_config().expect("rho config").fast_mode)
+            .map_err(|_| ());
+        assert_eq!(actual, expected, "case {index}");
+    }
 }

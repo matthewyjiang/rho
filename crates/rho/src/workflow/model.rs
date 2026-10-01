@@ -381,6 +381,10 @@ pub(crate) struct ResolvedAgent {
     pub(crate) capabilities: BTreeSet<String>,
     pub(crate) permission_ceiling: String,
     pub(crate) auth_profile: Option<String>,
+    /// Fast serving for a Rho agent, settled at plan time. Omitted when off
+    /// so plans frozen before this field existed keep loading and hashing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) fast: bool,
     pub(crate) executable: Option<String>,
     pub(crate) executable_identity: Option<ExecutableIdentity>,
     pub(crate) arguments: Vec<String>,

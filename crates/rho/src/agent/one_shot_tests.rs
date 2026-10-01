@@ -36,6 +36,7 @@ fn definition() -> AgentDefinition {
             tools: ToolPolicy::Allow(BTreeSet::new()),
             model: ModelPolicy::Inherit,
             reasoning: Some(rho_providers::reasoning::ReasoningLevel::Low),
+            fast: false,
         },
     }
 }
@@ -73,6 +74,7 @@ fn rejects_definitions_with_tools() {
         tools: ToolPolicy::Allow(BTreeSet::from([ToolCapability::ReadFile])),
         model: ModelPolicy::Inherit,
         reasoning: Some(rho_providers::reasoning::ReasoningLevel::Low),
+        fast: false,
     };
     assert!(validate_definition(&definition)
         .unwrap_err()

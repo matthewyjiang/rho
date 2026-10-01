@@ -274,6 +274,7 @@ fn sampling_definition(
             tools: crate::agent::ToolPolicy::Allow(std::collections::BTreeSet::new()),
             model: crate::agent::ModelPolicy::Inherit,
             reasoning: Some(crate::agent::ReasoningLevel::Low),
+            fast: false,
         },
     })
 }

@@ -125,6 +125,51 @@ impl AgentDefinition {
         }
     }
 
+    /// Sets `fast` from an `on`/`off` choice. Only Rho agents accept it.
+    pub(crate) fn set_fast_kind(&mut self, value: &str) -> bool {
+        let enabled = match value {
+            "on" => true,
+            "off" => false,
+            _ => return false,
+        };
+        match &mut self.runtime {
+            AgentRuntimeSpec::Rho { fast, .. } => {
+                *fast = enabled;
+                true
+            }
+            AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => !enabled,
+        }
+    }
+
+    /// Whether the pinned Rho selection can run in fast mode.
+    ///
+    /// Needs an explicit provider. With an auth pin that exact profile must
+    /// support it; without one, any login for the provider may, since bind
+    /// picks the host's compatible auth.
+    pub(crate) fn fast_mode_available(&self) -> bool {
+        let AgentRuntimeSpec::Rho { model, .. } = &self.runtime else {
+            return false;
+        };
+        let Some(selection) = model.selection() else {
+            return false;
+        };
+        let Some(provider) = selection.provider.as_deref() else {
+            return false;
+        };
+        let supports = |auth: &str| {
+            rho_providers::providers::fast_mode::supports_fast_mode(
+                provider,
+                &selection.model,
+                auth,
+            )
+        };
+        match selection.auth.as_deref() {
+            Some(auth) => supports(auth),
+            None => rho_providers::provider::provider_descriptor(provider)
+                .is_some_and(|descriptor| descriptor.auth_modes().any(|mode| supports(mode.id))),
+        }
+    }
+
     pub(crate) fn set_description_text(&mut self, value: String) {
         self.description = value;
     }
@@ -540,6 +585,12 @@ impl AgentDefinition {
                 return Some("prompt policy 'replace' requires a non-empty prompt body".into());
             }
         }
+        if self.fast() && !self.fast_mode_available() {
+            return Some(format!(
+                "fast mode is not available for {}; pick a supported model and provider or turn fast off",
+                self.model_badge()
+            ));
+        }
         match &self.runtime {
             AgentRuntimeSpec::Cursor(config) if config.tools.is_empty() => {
                 Some("cursor agents need at least one tool".into())
@@ -571,6 +622,8 @@ fn build_runtime_spec(
                 tools: ToolPolicy::All,
                 model,
                 reasoning,
+                // Fast is Rho-only; a runtime switch starts it off.
+                fast: false,
             }
         }
         AgentRuntime::ClaudeCli => {

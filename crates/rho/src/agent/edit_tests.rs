@@ -18,6 +18,7 @@ fn rho_draft() -> AgentDefinition {
             tools: ToolPolicy::All,
             model: ModelPolicy::Inherit,
             reasoning: None,
+            fast: false,
         },
     }
 }
@@ -56,6 +57,7 @@ fn switching_to_claude_cli_resets_incompatible_fields() {
                 auth: None,
             }),
             reasoning: Some(ReasoningLevel::Off),
+            fast: false,
         },
     };
 
@@ -92,6 +94,7 @@ fn switching_to_cursor_resets_reasoning_and_requires_tools() {
                 auth: None,
             }),
             reasoning: Some(ReasoningLevel::High),
+            fast: false,
         },
     };
 
@@ -146,6 +149,7 @@ fn switching_to_rho_keeps_compatible_fields() {
             tools,
             model,
             reasoning,
+            ..
         } => {
             assert!(matches!(tools, ToolPolicy::All));
             assert!(matches!(model, ModelPolicy::Select(_)));
@@ -318,6 +322,7 @@ fn toggle_tool_flips_membership_per_runtime() {
             tools: ToolPolicy::Allow(narrow),
             model: ModelPolicy::Inherit,
             reasoning: None,
+            fast: false,
         }
     );
 
@@ -432,6 +437,7 @@ fn save_definition_rejects_empty_replace_without_writing() {
             tools: ToolPolicy::All,
             model: ModelPolicy::Inherit,
             reasoning: None,
+            fast: false,
         },
     };
     let error = save_definition(&draft, &path, "").unwrap_err();

@@ -48,6 +48,7 @@ fn tools_picker_marks_current_allow_list_per_runtime() {
                 tools: ToolPolicy::All,
                 model: ModelPolicy::Inherit,
                 reasoning: None,
+                fast: false,
             },
             expected_on: std::iter::once(AGENT_TOOL_ALL)
                 .chain(BUILTIN_TOOL_CAPABILITIES.iter().map(ToolCapability::as_str))
@@ -64,6 +65,7 @@ fn tools_picker_marks_current_allow_list_per_runtime() {
                 ),
                 model: ModelPolicy::Inherit,
                 reasoning: None,
+                fast: false,
             },
             expected_on: vec!["read_file", "shell"],
             expected_len: BUILTIN_TOOL_CAPABILITIES.len() + 1,
@@ -105,6 +107,7 @@ fn tools_picker_escape_rows_follow_runtime() {
         tools: ToolPolicy::All,
         model: ModelPolicy::Inherit,
         reasoning: None,
+        fast: false,
     }));
     let claude = agent_tools_picker(&draft(AgentRuntimeSpec::ClaudeCli(ClaudeAgentConfig {
         tools: ClaudeToolPolicy::None,

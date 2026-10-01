@@ -50,6 +50,7 @@ fn empty_extend_body_stays_empty() {
             tools: ToolPolicy::All,
             model: ModelPolicy::Inherit,
             reasoning: None,
+            fast: false,
         },
     };
 
@@ -118,6 +119,7 @@ fn canonicalizes_ordered_fields() {
                 auth: None,
             }),
             reasoning: Some(ReasoningLevel::Low),
+            fast: false,
         },
     };
 

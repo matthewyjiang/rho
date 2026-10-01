@@ -249,6 +249,7 @@ fn resolve_agent(
         capabilities: BTreeSet::new(),
         permission_ceiling,
         auth_profile: None,
+        fast: false,
         executable: None,
         executable_identity: None,
         arguments: Vec::new(),
@@ -263,6 +264,7 @@ fn resolve_agent(
             reasoning: Some(config.reasoning.to_string()),
             capabilities: frozen_capabilities(capabilities),
             auth_profile: Some(config.auth.clone()),
+            fast: config.fast_mode,
             ..common
         },
         BoundRuntime::ClaudeCli {

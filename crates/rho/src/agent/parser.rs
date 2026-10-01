@@ -29,6 +29,7 @@ struct RawDefinition {
     reasoning: Option<String>,
     runtime: Option<String>,
     inherit_claude_config: Option<bool>,
+    fast: Option<bool>,
     tools: Option<RawTools>,
 }
 
@@ -141,6 +142,7 @@ fn parse_definition_with_fallback(
             runtime,
             raw.tools,
             raw.inherit_claude_config.unwrap_or(false),
+            raw.fast.unwrap_or(false),
             model,
             reasoning,
         )?,
@@ -382,9 +384,26 @@ fn parse_runtime_spec(
     runtime: AgentRuntime,
     tools: Option<RawTools>,
     inherit_claude_config: bool,
+    fast: bool,
     model: ModelPolicy,
     reasoning: Option<ReasoningLevel>,
 ) -> Result<AgentRuntimeSpec, AgentCatalogError> {
+    if fast && runtime != AgentRuntime::Rho {
+        return Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "fast",
+            "is only valid with runtime: rho",
+        ));
+    }
+    // Fast mode is a property of a specific model. An inherited model would
+    // make it depend on whatever the parent happens to run.
+    if fast && matches!(model, ModelPolicy::Inherit) {
+        return Err(AgentCatalogError::at_field(
+            path.to_path_buf(),
+            "fast",
+            "requires a pinned model; set model (and provider) instead of model-policy: inherit",
+        ));
+    }
     if runtime != AgentRuntime::ClaudeCli && inherit_claude_config {
         return Err(AgentCatalogError::at_field(
             path.to_path_buf(),
@@ -402,6 +421,7 @@ fn parse_runtime_spec(
                 tools,
                 model,
                 reasoning,
+                fast,
             })
         }
         AgentRuntime::ClaudeCli => {
@@ -733,6 +753,7 @@ fn parse_fields(path: &Path, lines: &[&str]) -> Result<RawDefinition, AgentCatal
                 | "reasoning"
                 | "runtime"
                 | "inherit_claude_config"
+                | "fast"
                 | "tools"
         ) {
             return Err(AgentCatalogError::at_field(
@@ -775,6 +796,7 @@ fn parse_fields(path: &Path, lines: &[&str]) -> Result<RawDefinition, AgentCatal
             "inherit_claude_config" => {
                 raw.inherit_claude_config = Some(parse_bool(path, "inherit_claude_config", &value)?)
             }
+            "fast" => raw.fast = Some(parse_bool(path, "fast", &value)?),
             "tools" if value == "all" => raw.tools = Some(RawTools::All),
             "tools" => raw.tools = Some(RawTools::Names(parse_inline_list(path, &value)?)),
             _ => unreachable!(),

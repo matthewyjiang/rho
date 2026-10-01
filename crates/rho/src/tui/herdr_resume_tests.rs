@@ -328,6 +328,7 @@ fn agent_bound_model_is_not_drift() {
                 auth: Some("api-key".into()),
             }),
             reasoning: Some(ReasoningLevel::Low),
+            fast: false,
         },
     };
     let host = crate::config::Config {

@@ -289,14 +289,17 @@ impl AgentBinder {
                 tools,
                 model,
                 reasoning,
+                fast,
             } => {
-                let config = Box::new(bind_rho_config(
+                let mut config = bind_rho_config(
                     definition.id.as_str(),
                     model,
                     *reasoning,
                     host_config,
                     store,
-                )?);
+                )?;
+                apply_fast_mode(definition.id.as_str(), *fast, invocation.role, &mut config)?;
+                let config = Box::new(config);
                 BoundRuntime::Rho {
                     capabilities: bind_rho_capabilities(&definition, tools, &invocation)?,
                     config,
@@ -357,6 +360,9 @@ impl AgentBinder {
                 if let Some(auth) = &frozen.auth_profile {
                     config.auth.clone_from(auth);
                 }
+                // Plan time already validated support; never inherit the
+                // current session's /fast.
+                config.fast_mode = frozen.fast;
                 config.permission_mode = permission_mode;
                 let capabilities = frozen_capabilities(frozen, current_tools);
                 BoundRuntime::Rho {
@@ -585,6 +591,39 @@ fn bind_rho_config(
         config.reasoning = reasoning;
     }
     Ok(config)
+}
+
+/// Settles fast mode for a bound Rho agent.
+///
+/// Delegated and workflow runs use exactly the definition's `fast` value, so
+/// the parent's `/fast` never leaks into children. Roots keep the user's saved
+/// preference and `fast: true` can only turn it on. An explicit request must
+/// be servable by the bound provider, model, and auth.
+fn apply_fast_mode(
+    agent_id: &str,
+    fast: bool,
+    role: AgentRole,
+    config: &mut Config,
+) -> anyhow::Result<()> {
+    if fast
+        && !rho_providers::providers::fast_mode::supports_fast_mode(
+            &config.provider,
+            &config.model,
+            &config.auth,
+        )
+    {
+        anyhow::bail!(
+            "agent '{agent_id}': fast mode is not available for {}/{} with auth '{}'",
+            config.provider,
+            config.model,
+            config.auth
+        );
+    }
+    config.fast_mode = match role {
+        AgentRole::Delegated | AgentRole::Workflow => fast,
+        AgentRole::InteractiveRoot | AgentRole::AutomationRoot => config.fast_mode || fast,
+    };
+    Ok(())
 }
 
 /// Applies an agent's Rho model policy onto a host config clone.

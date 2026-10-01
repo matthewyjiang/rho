@@ -21,6 +21,7 @@ fn rho_draft() -> AgentDefinition {
             tools: ToolPolicy::All,
             model: ModelPolicy::Inherit,
             reasoning: None,
+            fast: false,
         },
     }
 }
@@ -221,6 +222,7 @@ fn edit_session_all_toggle_round_trips_explicit_tools() {
         tools: ToolPolicy::Allow(narrow.clone()),
         model: ModelPolicy::Inherit,
         reasoning: None,
+        fast: false,
     };
     let mut session = AgentEditSession::new(
         draft,

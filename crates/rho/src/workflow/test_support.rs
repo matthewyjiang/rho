@@ -74,6 +74,7 @@ pub(crate) fn workflow(nodes: Vec<Node>) -> FrozenWorkflow {
                     capabilities: Default::default(),
                     permission_ceiling: "auto".to_owned(),
                     auth_profile: None,
+                    fast: false,
                     executable: None,
                     executable_identity: None,
                     arguments: Vec::new(),

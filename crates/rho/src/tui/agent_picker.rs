@@ -216,6 +216,9 @@ fn agent_detail(
         agent_reasoning_field(entry, models),
         agent_tools_field(definition),
     ];
+    if definition.fast() {
+        fields.push(DetailField::new("Fast", "on", DetailTone::Normal));
+    }
     if let AgentRuntimeSpec::ClaudeCli(config) = &definition.runtime {
         fields.push(if config.inherit_claude_config {
             DetailField::new("Claude config", "inherit", DetailTone::Normal)

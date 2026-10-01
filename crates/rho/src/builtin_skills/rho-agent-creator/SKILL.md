@@ -87,6 +87,8 @@ For `runtime: rho`, ask for one model policy: `inherit`, `prefer`, `require`, or
 
 If the answer is not `inherit`, ask for the model ID and optional provider. Both values must be non-empty and contain no whitespace when present. A model is required for `prefer`, `require`, and `select`. When the provider has more than one login method (for example xAI API key vs OAuth), also ask for optional `auth` using a known auth profile id such as `xai-oauth` or `xai-api-key`. Only offer auth profiles the user already has configured when that is known; otherwise explain that unset `auth` keeps a compatible host login for the provider. Do not emit `model`, `provider`, or `auth` for `inherit`. Rho may resolve `@alias` model values against `[model.aliases]`.
 
+When the pinned provider and model support fast mode (Codex GPT-5.5 or later and GPT-6 models, or `xai/grok-4.7` with `xai-oauth`), ask whether to set `fast: true`. It bills at a higher rate and is independent of the parent's `/fast`. Never emit `fast` for `inherit` or for `claude-cli`.
+
 For `runtime: claude-cli`, do **not** invent or guess Claude model IDs from memory, marketing names, or Rho provider catalogs beyond the recommended list below. Claude `--model` is an opaque pass-through string. Ask with a choice questionnaire that names the default explicitly:
 
 1. **Use default (`claude-opus-5`)** - emit `model: claude-opus-5`. Always say the default id in the label/help so the user knows exactly what will be written.
