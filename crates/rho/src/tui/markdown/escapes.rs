@@ -12,10 +12,17 @@ pub(in crate::tui) fn is_escaped(text: &str, index: usize) -> bool {
 }
 
 pub(in crate::tui) fn find_unescaped(text: &str, marker: &str, from: usize) -> Option<usize> {
-    text[from..]
-        .match_indices(marker)
-        .map(|(index, _)| from + index)
-        .find(|index| !is_escaped(text, *index))
+    let mut current = from;
+    while let Some(offset) = text[current..].find(marker) {
+        let index = current + offset;
+        if !is_escaped(text, index) {
+            return Some(index);
+        }
+        // Skip only the escaped character, not the whole marker: in `\***`,
+        // the last two asterisks can still open or close bold.
+        current = index + text[index..].chars().next()?.len_utf8();
+    }
+    None
 }
 
 pub(in crate::tui) fn unescape(text: &str) -> String {

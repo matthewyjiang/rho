@@ -550,9 +550,8 @@ fn find_marker_outside_ranges(
     ignored_ranges: &[std::ops::Range<usize>],
 ) -> Option<usize> {
     let mut current = search_from;
-    while let Some(relative_index) = line[current..].find(marker) {
-        let index = current + relative_index;
-        if !is_escaped(line, index) && !is_inside_ranges(index, ignored_ranges) {
+    while let Some(index) = find_unescaped(line, marker, current) {
+        if !is_inside_ranges(index, ignored_ranges) {
             return Some(index);
         }
         current = index + marker.len();
@@ -587,8 +586,13 @@ fn next_delimited(line: &str, marker: &str, style: Style) -> Option<MarkdownSpan
 
         let content_start = start + marker.len();
         let mut end_search_from = content_start;
-        while let Some(relative_end) = line[end_search_from..].find(marker) {
-            let end = end_search_from + relative_end;
+        while let Some(end) = if marker == "`" {
+            line[end_search_from..]
+                .find(marker)
+                .map(|offset| end_search_from + offset)
+        } else {
+            find_unescaped(line, marker, end_search_from)
+        } {
             if marker == "*" && line[end..].starts_with("**") {
                 end_search_from = end + "**".len();
                 continue;
@@ -597,9 +601,7 @@ fn next_delimited(line: &str, marker: &str, style: Style) -> Option<MarkdownSpan
                 end_search_from = end + marker.len();
                 continue;
             }
-            if marker != "`"
-                && (is_escaped(line, end) || !is_valid_stream_closer(line, marker, end))
-            {
+            if marker != "`" && !is_valid_stream_closer(line, marker, end) {
                 end_search_from = end + marker.len();
                 continue;
             }
