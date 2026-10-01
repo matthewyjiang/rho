@@ -294,6 +294,8 @@ pub(crate) fn resume_argv_is_valid(argv: &[String]) -> bool {
 /// same pane go unheard until real time passes the old value.
 fn next_seq() -> u64 {
     let now = u64::try_from(request_id_suffix()).unwrap_or(u64::MAX);
+    // Newer stable renames this to `try_update`, unstable at our 1.92 MSRV.
+    #[allow(deprecated)]
     let previous = LAST_SEQ
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |last| {
             Some(now.max(last.saturating_add(1)))

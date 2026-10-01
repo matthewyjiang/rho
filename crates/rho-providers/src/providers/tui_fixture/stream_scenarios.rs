@@ -12,9 +12,9 @@ use super::{
     completed, completed_tool_call, fixture_sleep, tool_result, AGENTS_LIST_CALL_ID,
     BACKGROUND_AGENT_CALL_ID, BACKGROUND_CLAUDE_AGENT_CALL_ID,
     BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID, CLAUDE_AGENT_CALL_ID, CLAUDE_AGENT_ERROR_CALL_ID,
-    CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID, HOVER_TOOL_CALL_ID, LONG_APPROVAL_CALL_ID,
-    PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID, QUESTIONNAIRE_CALL_ID, SUBAGENT_RAIL_AGENT_CALL_ID,
-    TOOL_CALL_ID,
+    COMPUTER_CALL_ID, CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID, HOVER_TOOL_CALL_ID,
+    LONG_APPROVAL_CALL_ID, PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID, QUESTIONNAIRE_CALL_ID,
+    SUBAGENT_RAIL_AGENT_CALL_ID, TOOL_CALL_ID,
 };
 
 pub(super) async fn intercept(
@@ -78,6 +78,18 @@ pub(super) async fn intercept(
                 serde_json::json!({
                     "action": "start",
                     "command": "sleep 60",
+                }),
+            ))
+        }
+        // Desktop observation through the fake Cua driver; the card must name it.
+        "fixture computer observe" if tool_result(request, COMPUTER_CALL_ID).is_none() => {
+            Some(completed_tool_call(
+                COMPUTER_CALL_ID,
+                "computer",
+                serde_json::json!({
+                    "action": "call",
+                    "tool": "get_window_state",
+                    "arguments": {"pid": 7},
                 }),
             ))
         }

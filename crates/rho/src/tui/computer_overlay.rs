@@ -14,7 +14,8 @@ use super::{
 use crate::tools::computer_use::{desktop_warning, ComputerUseControl, ComputerUseStatus};
 
 const TITLE: &str = "Computer use";
-const FOOTER_REVOCABLE: &str = "r cancel setup / revoke access · Enter/Esc close";
+const FOOTER_INSTALLING: &str = "r cancel setup · Enter/Esc close";
+const FOOTER_REVOCABLE: &str = "r revoke · Enter/Esc close";
 const FOOTER: &str = "Enter/Esc close";
 
 pub(super) struct ComputerOverlay {
@@ -87,18 +88,6 @@ impl ComputerOverlay {
         };
         let mut lines = vec![heading_with_status("Session", status, width)];
         lines.extend(indented_wrapped_lines(access, 0, width, Theme::text()));
-        lines.extend(indented_wrapped_lines(next, 0, width, Theme::warning()));
-        if matches!(
-            state,
-            ComputerUseStatus::Connecting | ComputerUseStatus::Connected
-        ) {
-            lines.extend(indented_wrapped_lines(
-                "r revoke access now",
-                0,
-                width,
-                Theme::warning(),
-            ));
-        }
         lines.extend(indented_wrapped_lines(
             "Desktop permissions: not checked",
             0,
@@ -201,10 +190,10 @@ impl PanelBody for ComputerOverlay {
     }
 
     fn footer(&self) -> &str {
-        if self.revocable() {
-            FOOTER_REVOCABLE
-        } else {
-            FOOTER
+        match &self.control {
+            Some(control) if control.installation_pending() => FOOTER_INSTALLING,
+            _ if self.revocable() => FOOTER_REVOCABLE,
+            _ => FOOTER,
         }
     }
 

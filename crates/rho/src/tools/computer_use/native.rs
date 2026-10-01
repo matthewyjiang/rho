@@ -1,15 +1,18 @@
 use rho_sdk::{
     model::ToolSpec,
     tool::{
-        Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolOutput,
-        ToolSecurity,
+        OperationKind, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation,
+        ToolMetadata, ToolOutput, ToolSecurity,
     },
 };
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
-use super::{ComputerUseSession, RevokeOnDrop, State};
-use crate::tools::mcp::tool::McpCallCompletion;
+use super::{recovery::is_trusted_read_only, ComputerUseSession, RevokeOnDrop, State};
+use crate::tools::mcp::{
+    display::{argument_summary, primary_display},
+    tool::McpCallCompletion,
+};
 
 pub(super) struct ComputerTool(pub(super) ComputerUseSession);
 
@@ -23,6 +26,37 @@ enum Request {
         tool: String,
         arguments: Map<String, Value>,
     },
+}
+
+impl Request {
+    /// Card-facing description of this request, replacing the wrapped MCP
+    /// transport summary. Observations read; anything else may act.
+    fn metadata(&self) -> ToolMetadata {
+        match self {
+            Self::List { tool } => ToolMetadata::new()
+                .operation(OperationKind::Read)
+                .command_summary(match tool.as_deref().and_then(primary_display) {
+                    Some(tool) => format!("list · {tool}"),
+                    None => "list".into(),
+                }),
+            Self::Call { tool, arguments } => {
+                let operation = if is_trusted_read_only(tool, arguments) {
+                    OperationKind::Read
+                } else {
+                    OperationKind::Execute
+                };
+                let name = primary_display(tool).unwrap_or_default();
+                let arguments = Value::Object(arguments.clone());
+                let summary = match argument_summary(&arguments, /*skip*/ None) {
+                    Some(arguments) => format!("{name} · {arguments}"),
+                    None => name,
+                };
+                ToolMetadata::new()
+                    .operation(operation)
+                    .command_summary(summary)
+            }
+        }
+    }
 }
 
 impl Tool for ComputerTool {
@@ -45,12 +79,20 @@ impl Tool for ComputerTool {
         ToolSecurity::built_in([])
     }
 
+    fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
+        match serde_json::from_value::<Request>(arguments.clone()) {
+            Ok(request) => request.metadata(),
+            Err(_) => ToolMetadata::default(),
+        }
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             let request: Request =
                 serde_json::from_value(invocation.arguments().clone()).map_err(|error| {
                     ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
                 })?;
+            let metadata = request.metadata();
             // Capture the grant before queueing so stale queued calls cannot
             // execute after the host disconnects and establishes a new session.
             let (connection, cancellation) = {
@@ -111,7 +153,7 @@ impl Tool for ComputerTool {
                             ),
                         ));
                     }
-                    Ok(ToolOutput::text(content))
+                    Ok(ToolOutput::text(content).metadata(metadata))
                 }
                 Request::Call { tool, arguments } => {
                     let remote = connection.tools.get(&tool).ok_or_else(|| {
@@ -151,9 +193,22 @@ impl Tool for ComputerTool {
                         McpCallCompletion::Answered => guard.disarm(),
                         McpCallCompletion::Unconfirmed => {}
                     }
-                    // Preserve MCP output metadata and assets without another
-                    // rendering or RPC implementation.
-                    result
+                    // Keep MCP assets and notices; describe the desktop action
+                    // instead of the wrapped driver transport.
+                    result.map(|output| {
+                        let wrapped = output.presentation().clone();
+                        let metadata = wrapped
+                            .assets()
+                            .iter()
+                            .cloned()
+                            .fold(metadata, ToolMetadata::asset);
+                        let metadata = wrapped
+                            .presentation_notices()
+                            .iter()
+                            .cloned()
+                            .fold(metadata, ToolMetadata::presentation_notice);
+                        output.metadata(metadata)
+                    })
                 }
             }
         })

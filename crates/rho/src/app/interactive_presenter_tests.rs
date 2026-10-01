@@ -223,6 +223,65 @@ fn advisor_cards_use_status_first_headers() {
     assert_eq!(failed.header, ToolHeader::status_first("advisor", "failed"));
 }
 
+// Covers: a generic tool's start metadata summary used to be ignored while
+// running and demoted below a raw JSON or transport fact when finished.
+// Owner: interactive presenter
+#[test]
+fn generic_tool_summary_metadata_fills_the_header() {
+    use pretty_assertions::assert_eq;
+    use rho_sdk::{
+        tool::{ToolMetadata, ToolOutput},
+        ToolCompletion,
+    };
+    use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+
+    let header = || ToolHeader::call("desk", Some("click · x 4".into()));
+    let metadata = ToolMetadata::new().command_summary("click · x 4");
+    let mut presenter = InteractiveToolPresenter::new(std::path::PathBuf::from("."));
+    let start = |presenter: &mut InteractiveToolPresenter, id: &str| {
+        presenter.proposed(ToolCall {
+            id: id.into(),
+            name: "desk".into(),
+            arguments: serde_json::json!({"action": "call"}),
+        });
+        presenter.started(
+            ToolCallId::from_string(id).unwrap(),
+            "desk".into(),
+            metadata.clone(),
+        )
+    };
+
+    assert_eq!(
+        start(&mut presenter, "ok").card,
+        ToolCard::new(ToolStatus::Running, ToolFamily::Default, header())
+    );
+    let (_, finished) = presenter.finished(
+        &ToolCallId::from_string("ok").unwrap(),
+        ToolCompletion::Success(ToolOutput::text("clicked").metadata(metadata.clone())),
+    );
+    assert_eq!(
+        finished.presentation,
+        ToolCard::new(ToolStatus::Ok, ToolFamily::Default, header())
+            .with_body(ToolBody::Lines(vec!["clicked".into()]))
+            .into()
+    );
+
+    let view = ToolView {
+        kind: ToolKind::Other,
+        name: "desk".into(),
+        arguments: serde_json::json!({"action": "call"}),
+        metadata,
+    };
+    assert_eq!(
+        finished_card(&view, "no target", false, std::path::Path::new(".")),
+        ToolCard::new(ToolStatus::Error, ToolFamily::Default, header()).with_facts(vec![
+            ToolFact::Error {
+                text: "no target".into()
+            }
+        ])
+    );
+}
+
 // Covers: a failed skill load must show its reason on an ordinary card, not a
 // bare header or a collapsed receipt
 // Owner: interactive presenter
