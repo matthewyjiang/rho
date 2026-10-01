@@ -96,7 +96,7 @@ const STEPS: &[Step] = &[
 ];
 
 // Observe the value row before waiting for the cursor flush at its displayed end.
-fn wait_for_tail_caret(harness: &mut PtyHarness, tail: &str) -> Result<(u16, u16)> {
+pub(super) fn wait_for_tail_caret(harness: &mut PtyHarness, tail: &str) -> Result<(u16, u16)> {
     harness.wait_for_text(tail, SETTLE)?;
     let position = harness
         .screen()
