@@ -132,9 +132,14 @@ pub(in crate::orchestration) async fn execute(
             Err(error)
         };
     }
+    // Model calls must target a tool advertised now; host calls may use any
+    // registered tool (the host chose it, not the model).
     let tools = calls
         .iter()
-        .map(|(call, _, _)| runtime.tools.get(&call.name))
+        .map(|(call, _, source)| match source {
+            ToolInvocationSource::Host => runtime.tools.get(&call.name),
+            ToolInvocationSource::Model => runtime.model_callable_tool(&call.name),
+        })
         .collect::<Vec<_>>();
     let (worker_tx, mut worker_rx) = mpsc::channel(limit.get());
     let (mut batch, preparation_cancelled) = prepare_batch(

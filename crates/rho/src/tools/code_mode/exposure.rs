@@ -344,6 +344,15 @@ impl ExposureController {
     }
 }
 
+/// Advertises exactly the model-facing set: `direct` plus promoted `deferred`.
+/// `codemode`-only and `hidden` tools stay registered but are never sent to the
+/// provider, so MCP schemas stay out of context until promoted.
+impl rho_sdk::tool::ToolVisibility for ExposureController {
+    fn is_advertised(&self, name: &str) -> bool {
+        self.is_model_facing(name)
+    }
+}
+
 fn effective_locked(inner: &ExposureInner, name: &str) -> ToolExposure {
     let base = inner.policy.resolve(name);
     if base == ToolExposure::Deferred && inner.promoted.contains(name) {

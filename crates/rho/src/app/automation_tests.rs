@@ -410,6 +410,7 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
     let runtime = build_runtime(RuntimeBuildOptions {
         provider: shared_provider,
         tools: &tools,
+        tool_visibility: None,
         workspace: Workspace::new(root.path()).unwrap(),
         workspace_policy: AppPolicy::for_mode(PermissionMode::Auto, Default::default()),
         approval_session: None,

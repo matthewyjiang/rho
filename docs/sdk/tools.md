@@ -209,6 +209,17 @@ flowchart TD
 
 `DiagnosticsSnapshot::approval_audit` records bounded, ordered, secret-free decision facts: sequence, capability class, and sanitized result. It intentionally excludes reasons, paths, commands, arguments, environment values, URLs, skill names, and request bodies. Full approval requests remain available only to the approval handler and exact remembered rules remain in session memory.
 
+## Per-request tool advertisement
+
+Registering a tool and advertising it to the model are separate. By default every registered tool is advertised on every request. Install a `ToolVisibility` with `RhoBuilder::tool_visibility_shared` to choose the advertised subset:
+
+- The runtime asks before **every** model request, so a change made by a tool call (for example a search tool promoting a deferred tool) reaches the next request of the same run.
+- Context estimates and compaction count only the advertised schemas.
+- A model call to a registered but unadvertised tool resolves as unavailable and does not execute.
+- Host-sourced calls and nested `ToolHost::child_builder` hosts may still run any registered tool.
+
+Keep `is_advertised` cheap and non-blocking. It runs once per registered tool per request.
+
 ## Provider-free tool host
 
 `ToolHost` executes registered tools without a model loop. It shares the SDK authorization path, approval session, progress channels, host-input path, and hook wiring.

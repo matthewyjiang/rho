@@ -171,8 +171,10 @@ impl SessionCore {
         runtime: Rho,
     ) -> Arc<Self> {
         let approvals = runtime.approvals.clone().unwrap_or_default();
-        let context =
-            crate::context_estimate::ContextAccounting::new(&history, &runtime.tools.specs());
+        let context = crate::context_estimate::ContextAccounting::new(
+            &history,
+            &runtime.advertised_tool_specs(),
+        );
         Arc::new(Self {
             id,
             data: Mutex::new(SessionData {
@@ -288,7 +290,7 @@ impl SessionCore {
 
     pub(crate) fn commit(&self, history: Vec<Message>) -> Result<Revision, Error> {
         let runtime = self.runtime();
-        let tools = runtime.tools.specs();
+        let tools = runtime.advertised_tool_specs();
         let identity = runtime.provider.identity();
         let mut data = self
             .data
@@ -313,7 +315,7 @@ impl SessionCore {
         usage: crate::model::ModelUsage,
     ) -> Result<crate::CompactionOutcome, Error> {
         let runtime = self.runtime();
-        let tools = runtime.tools.specs();
+        let tools = runtime.advertised_tool_specs();
         let identity = runtime.provider.identity();
         let mut data = self
             .data
@@ -681,7 +683,7 @@ impl Session {
             )
             .with_session_turn(
                 runtime.service_tier,
-                runtime.tools.specs(),
+                runtime.advertised_tool_specs(),
                 self.core.prompt_cache_key(),
             );
         let output = compactor.compact(request).await?;
@@ -713,7 +715,7 @@ impl Session {
     pub fn reset(&self) -> Result<(), Error> {
         let _inactive = self.core.lock_inactive()?;
         let runtime = self.core.runtime();
-        let tools = runtime.tools.specs();
+        let tools = runtime.advertised_tool_specs();
         let system_prompt = match &runtime.system_prompt {
             crate::SystemPrompt::Custom(prompt) => Some(Message::System(prompt.clone())),
             crate::SystemPrompt::None => None,

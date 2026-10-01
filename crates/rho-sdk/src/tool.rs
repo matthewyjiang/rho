@@ -615,6 +615,25 @@ impl fmt::Display for ToolError {
 
 impl std::error::Error for ToolError {}
 
+/// Chooses which registered tools a model request advertises.
+///
+/// Install with [`crate::RhoBuilder::tool_visibility_shared`]. The runtime asks
+/// before **every** model request, so a change (for example a search tool that
+/// promotes a deferred tool) takes effect on the next request of the same run.
+/// Context estimates and compaction use the same advertised set.
+///
+/// Registration is separate from advertisement: every registered tool stays
+/// available to host-sourced calls and to nested hosts built with
+/// [`crate::ToolHost::child_builder`]. A model-sourced call to a tool that is
+/// not advertised when the call executes resolves as unavailable.
+///
+/// Implementors must be cheap, non-blocking, and deterministic for a given
+/// state; they are called once per registered tool per request.
+pub trait ToolVisibility: Send + Sync {
+    /// Returns whether the model may see and call `name` on the next request.
+    fn is_advertised(&self, name: &str) -> bool;
+}
+
 /// Extension point for tools available to SDK sessions.
 ///
 /// Implementors provide a stable JSON schema, use only capabilities explicitly

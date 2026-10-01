@@ -27,7 +27,7 @@ impl Session {
     /// on each read, without copying or scanning live history.
     pub fn context_estimate(&self) -> ContextEstimate {
         let runtime = self.core.runtime();
-        let tools = runtime.tools.specs();
+        let tools = runtime.advertised_tool_specs();
         let identity = runtime.provider.identity();
         let mut data = self
             .core
@@ -49,7 +49,7 @@ impl Session {
     /// This does not mutate session state or copy the supplied history.
     pub fn estimate_context(&self, messages: &[Message]) -> ContextEstimate {
         let runtime = self.core.runtime();
-        let tools = runtime.tools.specs();
+        let tools = runtime.advertised_tool_specs();
         self.core.estimate_context(messages, &tools)
     }
 

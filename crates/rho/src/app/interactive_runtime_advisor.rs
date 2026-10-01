@@ -178,6 +178,7 @@ impl InteractiveRuntime {
         let replacement_runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(self.provider.provider()),
             tools: self.tools.tools(),
+            tool_visibility: self.tools.tool_visibility(),
             workspace: self.workspace.clone(),
             workspace_policy: self.workspace_policy(),
             approval_session: self

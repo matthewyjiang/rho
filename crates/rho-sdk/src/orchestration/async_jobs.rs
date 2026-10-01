@@ -20,7 +20,6 @@ use crate::{
         begin_cancellation_cleanup, tool_progress_channel, FirstCapability, ToolAccessMode,
         ToolCancellationPolicy, ToolContext, ToolError, ToolErrorKind, ToolExecutionMode,
         ToolExecutionPolicy, ToolInvocation, ToolOutput, ToolPreparationContext, ToolProgress,
-        ToolRegistry,
     },
     CancellationToken, Error, RunEvent, ToolCallId,
 };
@@ -206,6 +205,8 @@ impl RunControl<'_> {
                 .tools
                 .get(&call.name)
                 .expect("split_tool_calls only routes registered async tools");
+            // Registered tools stay registered for the run; advertisement was
+            // checked by split_tool_calls in this same step.
             let job_cancellation = CancellationToken::new();
             let (progress, progress_receiver) = tool_progress_channel(runtime.event_capacity);
             let context = ToolContext::with_security(
@@ -615,13 +616,15 @@ async fn settle_job(mut job: AsyncJob) -> (ToolResult, ToolCompletion) {
 pub(super) fn split_tool_calls(
     calls: Vec<ToolCall>,
     async_ids: &BTreeSet<String>,
-    tools: &ToolRegistry,
+    runtime: &Rho,
 ) -> (Vec<ToolCall>, Vec<ToolCall>) {
     let mut async_calls = Vec::new();
     let mut sync_calls = Vec::new();
     for call in calls {
-        let declared_async = tools
-            .get(&call.name)
+        // Unadvertised tools route to the sync batch, which reports them
+        // unavailable instead of spawning them detached.
+        let declared_async = runtime
+            .model_callable_tool(&call.name)
             .is_some_and(|tool| tool.execution_mode() == ToolExecutionMode::Async);
         if async_ids.contains(&call.id) && declared_async {
             async_calls.push(call);

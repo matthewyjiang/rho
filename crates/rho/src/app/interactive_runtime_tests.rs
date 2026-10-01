@@ -54,6 +54,7 @@ async fn configured_token_threshold_installs_sdk_automatic_compaction_policy() {
     let runtime = build_runtime(RuntimeBuildOptions {
         provider: shared_provider,
         tools: tools.tools(),
+        tool_visibility: tools.tool_visibility(),
         workspace,
         workspace_policy: AppPolicy::for_mode(PermissionMode::Auto, Default::default()),
         approval_session: None,

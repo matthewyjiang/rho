@@ -83,6 +83,8 @@ When a nested `call_tool` needs approval:
 
 ### 5. Tool exposure modes (Pi-aligned)
 
+Enforcement: the SDK asks a `ToolVisibility` (the app's `ExposureController`) before **every** provider request, so this table is what the provider actually receives. A `tool_search` promotion is advertised on the next request of the same run. A model call to an unadvertised tool resolves as unavailable; nested `call_tool` still reaches any non-hidden registered tool.
+
 | Mode | Model-facing (`specs`) | Script `call_tool` | Notes |
 |------|------------------------|--------------------|-------|
 | `direct` | yes | yes | Core natives default here |
@@ -221,7 +223,7 @@ Prototype may stub the “block Starlark until…” glue if the current `block_
 - [x] Nested progress forwarded onto the parent `codemode` card; host input relayed; parent cancel cancels nested call
 - [x] Typed nested-deny classification (`ToolErrorKind::PolicyDenied` / `Error::PolicyDenied`, no string matching)
 - [x] `/codemode on|off` toggle persisted to `behavior.codemode` (no yolo; nested calls follow `/permissions`)
-- [ ] Tool search / deferred enforced at the **provider request** boundary: `AppToolSet::specs()` filters, but `build_runtime` registers every tool and the SDK advertises `ToolRegistry::specs()`, so MCP schemas still reach requests and promotions do not apply mid-run
+- [x] Exposure enforced at the **provider request** boundary via SDK `ToolVisibility` (per request; promotions apply mid-run; unadvertised model calls resolve unavailable)
 - [ ] Per-server exposure overrides from config (`ExposurePolicy::override_exact/pattern` exists, not yet wired)
 - [ ] Nested pause UX verified end-to-end in a PTY scenario under supervised/auto/bypass
 - [ ] Distinct TUI child cards per nested call (today: status lines inside the parent card)

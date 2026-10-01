@@ -120,6 +120,7 @@ async fn switchable_session(
     let runtime = build_runtime(RuntimeBuildOptions {
         provider: Arc::clone(&provider),
         tools: tools.tools(),
+        tool_visibility: tools.tool_visibility(),
         workspace,
         workspace_policy: AppPolicy::for_mode(PermissionMode::Auto, Default::default()),
         approval_session: None,

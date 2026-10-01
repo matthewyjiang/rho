@@ -131,6 +131,7 @@ pub(super) async fn initialize(
         let runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(&provider),
             tools: tools.tools(),
+            tool_visibility: tools.tool_visibility(),
             workspace: workspace.clone(),
             workspace_policy: AppPolicy::for_mode(permission_mode, session_writes.clone()),
             approval_session: approval_channel

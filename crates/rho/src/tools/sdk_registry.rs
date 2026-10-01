@@ -367,12 +367,14 @@ impl AppToolSet {
         if let Some(bundle) = outcome.bundle {
             self.add_bundle(bundle);
         }
-        self.exposure.reindex_all(&self.tools);
     }
 
+    /// Registers a bundle and refreshes the exposure catalog so `tool_search`
+    /// and per-request advertisement see its tools immediately.
     pub(crate) fn add_bundle(&mut self, bundle: impl ToolBundle + 'static) {
         self.tools.extend(bundle.tools().iter().cloned());
         self.bundles.push(Box::new(bundle));
+        self.exposure.reindex_all(&self.tools);
     }
 
     pub(crate) fn bind_session_search(&self, id: &str) {
@@ -441,6 +443,14 @@ impl AppToolSet {
         &self.tools
     }
 
+    /// Per-request advertisement for runtimes built from [`Self::tools`].
+    ///
+    /// Shares the live exposure controller, so a `tool_search` promotion is
+    /// advertised on the next model request of the same run.
+    pub fn tool_visibility(&self) -> Option<Arc<dyn rho_sdk::tool::ToolVisibility>> {
+        Some(Arc::clone(&self.exposure) as Arc<dyn rho_sdk::tool::ToolVisibility>)
+    }
+
     pub fn specs(&self) -> Vec<rho_sdk::model::ToolSpec> {
         // Keep tools() full for ToolHost execution; filter only model-facing schemas.
         self.exposure.reindex_all(&self.tools);
@@ -463,7 +473,13 @@ impl AppToolSet {
     }
 
     /// Apply Pi-style exposure overrides (exact > pattern). Reindexes immediately.
-    #[allow(dead_code)]
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "exposure overrides are not yet read from config; tests drive them"
+        )
+    )]
     pub fn set_exposure_policy(&self, policy: super::code_mode::ExposurePolicy) {
         self.exposure.set_policy(policy);
     }

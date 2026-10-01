@@ -15,6 +15,9 @@ use {
 pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) provider: Arc<dyn ModelProvider>,
     pub(crate) tools: &'a [Arc<dyn rho_sdk::tool::Tool>],
+    /// Chooses the advertised subset of `tools` per model request, from
+    /// [`crate::tools::AppToolSet::tool_visibility`]. `None` advertises all.
+    pub(crate) tool_visibility: Option<Arc<dyn rho_sdk::tool::ToolVisibility>>,
     pub(crate) workspace: Workspace,
     pub(crate) workspace_policy: P,
     pub(crate) approval_session: Option<rho_sdk::ApprovalSession>,
@@ -59,6 +62,7 @@ where
     let RuntimeBuildOptions {
         provider,
         tools,
+        tool_visibility,
         workspace,
         workspace_policy,
         approval_session,
@@ -109,6 +113,9 @@ where
                 parent_session_id.clone(),
             ))
             .usage_parent_session_id(parent_session_id);
+    }
+    if let Some(visibility) = tool_visibility {
+        builder = builder.tool_visibility_shared(visibility);
     }
     if let Some(session) = approval_session {
         builder = builder.approval_session(session);
@@ -193,3 +200,7 @@ pub(crate) fn configured_context_window(config: &Config) -> Option<u64> {
     cached_model_metadata(&config.provider, &config.model)
         .and_then(|metadata| metadata.display_context_window())
 }
+
+#[cfg(test)]
+#[path = "runtime_builder_exposure_tests.rs"]
+mod exposure_tests;

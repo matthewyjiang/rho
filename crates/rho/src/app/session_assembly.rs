@@ -233,6 +233,7 @@ where
             RuntimeBuildOptions {
                 provider: Arc::clone(&provider),
                 tools: tool_set.tools(),
+                tool_visibility: tool_set.tool_visibility(),
                 workspace,
                 workspace_policy: AppPolicy::for_mode(config.permission_mode, session_writes),
                 approval_session,

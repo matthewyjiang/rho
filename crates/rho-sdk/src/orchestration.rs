@@ -162,9 +162,10 @@ async fn execute_turn_loop(
                 Err(terminal) => return *terminal,
             };
     }
-    // The tool set is immutable for the duration of a run, so build the specs
-    // (which deep-clone every tool's JSON schema) once instead of per step.
-    let tool_specs = runtime.tools.specs();
+    // The registry is immutable for the duration of a run, so build the specs
+    // (which deep-clone every tool's JSON schema) once. The advertised subset
+    // is chosen per step below, so visibility changes reach the next request.
+    let registered_specs = runtime.tools.specs();
     let mut preserve_from = None;
     // End of the prefix a pending-call compaction already rewrote while the
     // same async jobs kept running. Cleared once no job runs.
@@ -183,6 +184,7 @@ async fn execute_turn_loop(
         if let Err(error) = harvest_ready_jobs(&mut control).await {
             return control.terminate(core, history, error).await;
         }
+        let tool_specs = runtime.advertised_specs(&registered_specs);
         control.pending_outputs.drain_finished(&mut history);
         let request_scope = ProviderRequestScope {
             runtime: &runtime,
@@ -383,7 +385,7 @@ async fn execute_turn_loop(
         core.append_context_estimate(history.last().expect("assistant was appended"));
         drain_commands(control.commands, control.steering);
         let was_steered = control.steering.has_staged();
-        let (async_calls, sync_calls) = split_tool_calls(tool_calls, &async_ids, &runtime.tools);
+        let (async_calls, sync_calls) = split_tool_calls(tool_calls, &async_ids, &runtime);
         let spawned_async = !async_calls.is_empty();
         core.publish_in_flight_history(&history);
         if let Err(error) = async {
