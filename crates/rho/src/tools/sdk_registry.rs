@@ -192,6 +192,8 @@ pub struct AppToolSet {
     exposure: std::sync::Arc<super::code_mode::ExposureController>,
     /// Sibling tools for live `codemode`; synced from [`Self::tools`].
     code_mode_nesting: Arc<super::code_mode::CodeModeNesting>,
+    /// `codemode` tool, advertised only while `/codemode` is on.
+    code_mode: Option<HostToolRegistration>,
 }
 
 impl AppToolSet {
@@ -218,6 +220,7 @@ impl AppToolSet {
                 super::code_mode::ExposureController::with_default_policy(),
             ),
             code_mode_nesting: Arc::default(),
+            code_mode: None,
         }
     }
 
@@ -331,14 +334,16 @@ impl AppToolSet {
             tool_set.add_bundle(bundle);
         }
 
-        // Live codemode + discovery. Nested calls inherit the parent call's
-        // authorization (policy, hooks, approvals) via ToolHost::child_builder.
-        tool_set
-            .tools
-            .push(Arc::new(super::code_mode::CodeModeTool::new(
+        // Composition + discovery. Nested codemode calls inherit the parent
+        // call's authorization (policy, hooks, approvals) via
+        // ToolHost::child_builder, so they follow the session permission mode.
+        tool_set.code_mode = Some(HostToolRegistration::new(Arc::new(
+            super::code_mode::CodeModeTool::new(
                 Arc::clone(&tool_set.code_mode_nesting),
                 Arc::clone(&tool_set.exposure),
-            )));
+            ),
+        )));
+        tool_set.set_codemode_registered(config.codemode);
         tool_set
             .tools
             .push(Arc::new(super::code_mode::ToolSearchTool::new(Arc::clone(
@@ -479,6 +484,23 @@ impl AppToolSet {
     }
 
     /// Whether the `advisor` tool is currently advertised to the model.
+    pub fn codemode_registered(&self) -> bool {
+        self.code_mode
+            .as_ref()
+            .is_some_and(|code_mode| code_mode.registered)
+    }
+
+    /// Adds or removes the `codemode` tool for the next runtime build.
+    ///
+    /// Only the composition surface changes; nested calls always follow the
+    /// session permission mode. Returns whether the advertised list changed.
+    pub fn set_codemode_registered(&mut self, registered: bool) -> bool {
+        let Some(code_mode) = self.code_mode.as_mut() else {
+            return false;
+        };
+        code_mode.set_registered(&mut self.tools, registered)
+    }
+
     pub fn advisor_registered(&self) -> bool {
         self.advisor
             .as_ref()

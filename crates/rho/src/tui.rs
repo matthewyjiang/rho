@@ -31,6 +31,7 @@ mod background_tasks;
 mod cache_stats;
 mod click_sequence;
 mod clipboard;
+mod codemode_command;
 mod command_actions;
 mod command_block;
 mod command_palette;

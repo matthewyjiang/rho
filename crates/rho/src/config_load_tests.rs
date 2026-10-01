@@ -388,6 +388,18 @@ enable_subagents = true
     assert_eq!(default_warnings, Vec::<ConfigWarning>::new());
 }
 
+// Covers: behavior.codemode loads and defaults on (composition offered unless disabled)
+// Owner: config load
+#[test]
+fn codemode_loads_from_behavior_group() {
+    let (disabled, warnings) = parse_settings("[behavior]\ncodemode = false\n").unwrap();
+    let (defaulted, _) = parse_settings("[behavior]\nenable_subagents = true\n").unwrap();
+    assert_eq!(
+        (disabled.codemode, defaulted.codemode, warnings),
+        (false, true, Vec::<ConfigWarning>::new())
+    );
+}
+
 // Covers: agent_concurrency defaults to 10 and clamps 0 / over-max with a warning.
 // Owner: config load
 #[test]

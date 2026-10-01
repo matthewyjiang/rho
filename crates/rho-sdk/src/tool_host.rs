@@ -234,6 +234,10 @@ pub struct ToolHostBuilder {
     /// Parent hook wiring from [`ToolHost::child_builder`]; replaces the
     /// individual hook settings above when present.
     inherited_hooks: Option<HookWiring>,
+    /// Parent conversation reader from [`ToolHost::child_builder`], so approval
+    /// handlers that read live history (for example a classifier) see the
+    /// same context for nested calls as for direct ones.
+    inherited_live_history: Option<crate::workspace::LiveHistorySource>,
 }
 
 impl ToolHostBuilder {
@@ -358,6 +362,7 @@ impl ToolHostBuilder {
                     NonZeroUsize::new(crate::client::DEFAULT_EVENT_CAPACITY).unwrap()
                 }),
                 session_id: self.session_id.unwrap_or_default(),
+                live_history: self.inherited_live_history,
             }),
         })
     }
@@ -396,6 +401,7 @@ impl ToolHost {
             workspace_policy: Some(authorization.policy()),
             approval_session: Some(authorization.approval_session()),
             inherited_hooks: Some(authorization.hooks().clone()),
+            inherited_live_history: authorization.live_history(),
             ..ToolHostBuilder::default()
         };
         if let Some(session_id) = authorization.session_id() {
@@ -446,7 +452,7 @@ impl ToolHost {
                     .workspace
                     .as_ref()
                     .map(|workspace| workspace.root().to_path_buf()),
-                live_history: None,
+                live_history: self.core.live_history.clone(),
             },
         ));
         let context = ToolContext::with_security(

@@ -112,6 +112,10 @@ impl AuthorizationServices {
         &self.hooks
     }
 
+    pub(crate) fn live_history(&self) -> Option<LiveHistorySource> {
+        self.scope.live_history.clone()
+    }
+
     pub(crate) fn session_id(&self) -> Option<&crate::SessionId> {
         self.scope.session_id.as_ref()
     }

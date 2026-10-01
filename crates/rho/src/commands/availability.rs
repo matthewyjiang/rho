@@ -36,6 +36,7 @@ impl CommandContext {
             | CommandId::CreateAgent
             | CommandId::Attach
             | CommandId::Changelog
+            | CommandId::Codemode
             | CommandId::Diff
             | CommandId::Doctor
             | CommandId::Limits

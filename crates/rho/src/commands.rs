@@ -30,6 +30,7 @@ pub enum CommandId {
     CreateAgent,
     Attach,
     Changelog,
+    Codemode,
     Diff,
     Doctor,
     Limits,
@@ -191,6 +192,19 @@ const PERMISSIONS_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     },
 ];
 
+const CODEMODE_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
+    CommandArgumentChoice {
+        completion: "/codemode on",
+        usage: "/codemode on",
+        description: "offer the codemode composition tool",
+    },
+    CommandArgumentChoice {
+        completion: "/codemode off",
+        usage: "/codemode off",
+        description: "remove the codemode composition tool",
+    },
+];
+
 const COMPUTER_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     CommandArgumentChoice {
         completion: "/computer status",
@@ -252,6 +266,13 @@ pub static COMMANDS: &[CommandSpec] = &[
         argument_choices: CHANGELOG_ARGUMENT_CHOICES,
     },
     CommandSpec::alias("clear", "/clear", "alias for /new", CommandId::New),
+    CommandSpec {
+        id: CommandId::Codemode,
+        name: "codemode",
+        usage: "/codemode [on|off]",
+        description: "compose tools in a Starlark script; nested calls follow /permissions",
+        argument_choices: CODEMODE_ARGUMENT_CHOICES,
+    },
     CommandSpec {
         id: CommandId::Compact,
         name: "compact",

@@ -18,10 +18,8 @@ use super::nesting::{CodeModeNesting, DEFAULT_MAX_NESTED_CALLS};
 
 /// Starlark code-mode tool (`codemode`).
 ///
-/// TODOs toward ship (not all required for this prototype PR):
-/// - `/codemode on|yolo|off` toggle + config lock
-/// - planner-aware parallel (after sequential v0)
-/// - TUI nested cards for in-script tool calls
+/// Nested calls stream status lines onto this call's progress (see
+/// [`ToolHostBridge`]). Planner-aware parallel `call_tool` is deferred.
 pub struct CodeModeTool {
     nesting: Arc<CodeModeNesting>,
     exposure: Arc<ExposureController>,
@@ -47,8 +45,8 @@ impl Tool for CodeModeTool {
             description: "Run a Starlark script that composes ToolHost tools (native and MCP) \
 via sequential call_tool(name, args). Use search_tools/list_tools inside the script to discover \
 MCP tools (default exposure: codemode). Only the script's distilled result returns to the model; \
-nested tool payloads stay on the host/TUI path. Gated nested tools pause this script until \
-the same session approval knobs as a direct call resolve (approve → continue, deny → error)."
+nested tool payloads stay on the host/TUI path. Nested calls follow the session permission mode \
+exactly like direct calls; a gated call pauses this script until approved (deny → error)."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -83,7 +81,7 @@ the same session approval knobs as a direct call resolve (approve → continue, 
 
             let host = nesting.build_host(&context)?;
             let bridge = Arc::new(GuardedBridge::with_exposure(
-                Arc::new(ToolHostBridge::new(Arc::new(host))),
+                Arc::new(ToolHostBridge::new(Arc::new(host), context.clone())),
                 None,
                 DEFAULT_MAX_NESTED_CALLS,
                 Some(Arc::clone(&exposure)),
@@ -95,7 +93,13 @@ the same session approval knobs as a direct call resolve (approve → continue, 
             let output = tokio::task::block_in_place(|| {
                 evaluate_code_mode_with_exposure(&script, bridge, limits, Some(exposure))
             })
-            .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+            .map_err(|error| {
+                if context.cancellation().is_cancelled() {
+                    ToolError::cancelled()
+                } else {
+                    ToolError::new(ToolErrorKind::Execution, error.to_string())
+                }
+            })?;
             Ok(ToolOutput::text(format_engine_output(&output)))
         })
     }

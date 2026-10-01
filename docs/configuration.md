@@ -233,6 +233,8 @@ Pinned values stay fixed across provider changes. From `/config`, the change app
 
 `advisor_mode` controls whether the advisor tool is available. It defaults to `false`. See [Advisor mode](/configuration/advisor-mode).
 
+`codemode` controls whether the `codemode` composition tool is offered. It defaults to `true` and is set by `/codemode on|off`. Nested tool calls inside a script follow `permission_mode` exactly like direct calls; there is no separate codemode permission level.
+
 ## RTK
 
 `rtk` enables built-in [RTK](/integrations/rtk) command rewriting when the `rtk` binary is available. It defaults to `true`. Set `rtk = false` to leave shell commands unchanged.

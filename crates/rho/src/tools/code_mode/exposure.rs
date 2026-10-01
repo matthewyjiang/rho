@@ -84,11 +84,25 @@ impl ExposurePolicy {
         Self::default()
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "override config waits on provider-boundary exposure; see docs/design/code-mode-starlark-v0.md checklist"
+        )
+    )]
     pub fn override_exact(mut self, name: impl Into<String>, exposure: ToolExposure) -> Self {
         self.overrides.push(ExposureOverride::exact(name, exposure));
         self
     }
 
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "override config waits on provider-boundary exposure; see docs/design/code-mode-starlark-v0.md checklist"
+        )
+    )]
     pub fn override_pattern(mut self, pattern: impl Into<String>, exposure: ToolExposure) -> Self {
         self.overrides
             .push(ExposureOverride::pattern(pattern, exposure));

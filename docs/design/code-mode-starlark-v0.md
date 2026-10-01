@@ -1,6 +1,6 @@
 # Starlark Code Mode v0 — Design Note
 
-Status: early prototype / design + scaffold  
+Status: live wiring (registry, nested authorization, TUI progress, `/codemode on|off`)
 Worktree: `worktree-silver-meadow-a56f`  
 Date: 2026-10-01 (America/New_York)  
 PR: https://github.com/matthewyjiang/rho/pull/1365
@@ -58,24 +58,28 @@ No host `parallel([...])` in v0. Nested calls run one after another inside the s
 
 ### 3. Tool name: `codemode`
 
-The model-facing tool / spec name is **`codemode`** (not `code_mode` / `execute_starlark`). Aligns with future `/codemode on|yolo|off` toggle naming. Rust module paths may stay `tools::code_mode` if renaming directories is noisy.
+The model-facing tool / spec name is **`codemode`** (not `code_mode` / `execute_starlark`). Aligns with the `/codemode on|off` toggle naming. Rust module paths may stay `tools::code_mode` if renaming directories is noisy.
 
 ### 4. Nested approvals: pause the whole script
 
 When a nested `call_tool` needs approval:
 
 1. **Pause** the Starlark evaluation thread on that call (outer `codemode` stays in-flight — one agent turn).
-2. Present the **same** session approval UI / knobs as a **direct** call of that tool (yolo / auto-approve / bypass / trusted allowlist / `AllowForSession`).
+2. Present the **same** session approval UI as a **direct** call of that tool, under the current `/permissions` mode (bypass / auto / allow_edits / plan / supervised, plus `AllowForSession` memory).
 3. **No second approval system** and **no double-prompt** (“approve codemode” + “approve write”).
 4. On **deny** → error into the script (`call_tool` fails with a loud policy error).
 5. On **approve** → continue the script.
 6. **Fuel / timeout:** do not hang forever waiting on approval — honor ToolHost / run cancellation and evaluator fuel.
 
-Mode mapping (future `/codemode` toggle):
+### 4a. `/codemode on|off` — no second permission ladder (locked 2026-10-01)
 
-- `/codemode on` — composition with **normal** write gating (or write-locked per matrix below).
-- `/codemode yolo` — widens **only as far as session policy allows**; config can lock so yolo cannot widen past policy.
-- `/codemode off` — restore normal tools without the composition tool (or hide it).
+- `/codemode on` — register the `codemode` tool (default; `behavior.codemode = true`).
+- `/codemode off` — remove it from the tool list. `tool_search` and exposure stay.
+- Bare `/codemode` toggles. The choice persists to `behavior.codemode`.
+- **No `/codemode yolo`.** Nested calls inherit the session permission mode
+  (`/permissions bypass|auto|allow_edits|plan|supervised`) through
+  `ToolHost::child_builder`. Codemode never widens or narrows what a direct call
+  of the same tool may do; `/permissions` is the only knob.
 
 ### 5. Tool exposure modes (Pi-aligned)
 
@@ -103,7 +107,7 @@ Implementation seam: each `codemode` call builds a child host with `ToolHost::ch
 ### Tool vs mode toggle
 
 - One orchestration tool (`codemode` in current execute-tool.ts; README historically `execute_tools`).
-- Session mode: `/codemode on|yolo|off` (bare toggles `off ↔ on`); config can lock/non-widen.
+- Session mode: Pi uses `/codemode on|yolo|off`. Rho adopts only `on|off`; permissions stay with `/permissions`.
 
 ### Sandbox / host authority
 
@@ -111,7 +115,9 @@ Implementation seam: each `codemode` call builds a child host with `ToolHost::ch
 - No shell-string API in guest; typed allowlisted host ops only (Pi `cli.*`).
 - Type/schema check before exec where applicable; fail closed.
 
-### Write-locking (Pi reference matrix)
+### Write-locking (Pi reference matrix — not adopted)
+
+Rho does not add a codemode-specific write matrix; nested calls use the session permission mode. Kept for reference:
 
 | Door | `on` | `yolo` |
 |------|------|--------|
@@ -123,7 +129,7 @@ Implementation seam: each `codemode` call builds a child host with `ToolHost::ch
 ### TUI / distillate
 
 - Nested results stay out of LLM context; only script distillate returns.
-- Prefer nested ToolHost-visible progress (nghyane event-bridge lesson).
+- Nested ToolHost progress is forwarded onto the parent `codemode` call (nghyane event-bridge lesson): one status line per nested call (`name: running|<progress>|done|failed`) updates the `codemode` card. Nested host-input requests relay through the parent call, and parent cancellation cancels the in-flight nested call.
 
 ### What NOT to copy into Rho v0
 
@@ -210,11 +216,16 @@ Prototype may stub the “block Starlark until…” glue if the current `block_
 
 **Ship (later PRs):**
 
-- [ ] Tool search / deferred wired so MCP catalogs do not dump into context
-- [ ] Nested pause UX verified end-to-end with session yolo/auto/bypass
-- [ ] `/codemode on|yolo|off` toggle + config lock
-- [ ] Default registry wiring + TUI nested cards under parent `codemode`
-- [ ] Planner-aware parallel (optional, after sequential proves out)
+- [x] Default registry wiring (`codemode` + `tool_search` in `AppToolSet`)
+- [x] Nested calls inherit parent authorization via `ToolHost::child_builder` (policy, hooks, approval session, live history) — no double prompt
+- [x] Nested progress forwarded onto the parent `codemode` card; host input relayed; parent cancel cancels nested call
+- [x] Typed nested-deny classification (`ToolErrorKind::PolicyDenied` / `Error::PolicyDenied`, no string matching)
+- [x] `/codemode on|off` toggle persisted to `behavior.codemode` (no yolo; nested calls follow `/permissions`)
+- [ ] Tool search / deferred enforced at the **provider request** boundary: `AppToolSet::specs()` filters, but `build_runtime` registers every tool and the SDK advertises `ToolRegistry::specs()`, so MCP schemas still reach requests and promotions do not apply mid-run
+- [ ] Per-server exposure overrides from config (`ExposurePolicy::override_exact/pattern` exists, not yet wired)
+- [ ] Nested pause UX verified end-to-end in a PTY scenario under supervised/auto/bypass
+- [ ] Distinct TUI child cards per nested call (today: status lines inside the parent card)
+- [ ] Planner-aware parallel (optional, after sequential proves out); embeddings search out of scope
 
 ---
 

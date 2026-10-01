@@ -19,6 +19,8 @@ use {
 mod advisor;
 #[path = "interactive_runtime_cache.rs"]
 mod cache;
+#[path = "interactive_runtime_codemode.rs"]
+mod codemode;
 #[path = "interactive_runtime_compact.rs"]
 mod compact;
 #[path = "interactive_runtime_computer.rs"]

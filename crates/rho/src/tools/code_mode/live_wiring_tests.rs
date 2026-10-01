@@ -142,3 +142,103 @@ async fn nested_call_reuses_parent_session_approval() {
         ]
     );
 }
+
+struct ProgressTool;
+
+impl Tool for ProgressTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "slow_read".into(),
+            description: "report progress then finish".into(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn call<'a>(&'a self, _invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+        Box::pin(async move {
+            context
+                .progress()
+                .send(rho_sdk::tool::ToolProgress::message("halfway"))
+                .await;
+            Ok(ToolOutput::text("read-ok"))
+        })
+    }
+}
+
+// Covers: nested calls must be visible on the parent `codemode` call's progress
+// stream (the TUI card), not silent until the script returns.
+// Owner: codemode ToolHostBridge event forwarding.
+#[tokio::test(flavor = "multi_thread")]
+async fn nested_progress_reaches_parent_call() {
+    let nesting = Arc::new(CodeModeNesting::default());
+    nesting.set_tools(&[Arc::new(ProgressTool) as Arc<dyn Tool>]);
+    let parent = ToolHost::builder()
+        .tool(CodeModeTool::new(
+            nesting,
+            Arc::new(ExposureController::with_default_policy()),
+        ))
+        .build()
+        .expect("parent host");
+    let mut run = parent
+        .start(ToolHostCall::new(
+            CODEMODE_TOOL_NAME,
+            json!({ "script": r#"result = call_tool("slow_read")["content"]"# }),
+        ))
+        .expect("start codemode");
+
+    let mut updates = Vec::new();
+    while let Some(event) = run.next_event().await {
+        if let rho_sdk::ToolHostEvent::Progress(progress) = event {
+            updates.push(progress.text().to_owned());
+        }
+    }
+
+    assert_eq!(
+        updates,
+        vec![
+            "slow_read: running".to_owned(),
+            "slow_read: halfway".to_owned(),
+            "slow_read: done".to_owned(),
+        ]
+    );
+    assert!(run
+        .outcome()
+        .await
+        .expect("codemode")
+        .content()
+        .contains("read-ok"));
+}
+
+// Covers: nested failures are classified by typed SDK kind, so a policy
+// denial reaches the script as `NestedDenied` and other failures stay `Host`.
+// Owner: codemode bridge error classification.
+#[test]
+fn nested_errors_classify_by_kind() {
+    use super::bridge::BridgeError;
+    use rho_sdk::tool::ToolErrorKind;
+    let cases = [
+        (
+            rho_sdk::Error::Tool(ToolError::new(ToolErrorKind::PolicyDenied, "plan mode")),
+            true,
+        ),
+        (
+            rho_sdk::Error::PolicyDenied {
+                message: "no".into(),
+            },
+            true,
+        ),
+        (
+            // Text mentioning "denied" must not be mistaken for a policy denial.
+            rho_sdk::Error::Tool(ToolError::new(ToolErrorKind::Execution, "access denied")),
+            false,
+        ),
+    ];
+    for (error, denied) in cases {
+        let classified = BridgeError::from_nested("host_exec", error);
+        assert_eq!(
+            matches!(classified, BridgeError::NestedDenied { .. }),
+            denied,
+            "{classified}"
+        );
+    }
+}

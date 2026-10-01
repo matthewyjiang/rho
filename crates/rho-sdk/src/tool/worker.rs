@@ -34,6 +34,8 @@ pub(crate) struct ToolWorkerServices {
     pub hooks: HookWiring,
     pub event_capacity: NonZeroUsize,
     pub session_id: SessionId,
+    /// Conversation reader for approval handlers; `None` outside child hosts.
+    pub live_history: Option<crate::workspace::LiveHistorySource>,
 }
 
 pub(crate) struct ToolHostWorker {
