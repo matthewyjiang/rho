@@ -6,6 +6,7 @@ use rho_providers::model::{
     },
     ReasoningCapabilities,
 };
+use rho_providers::reasoning::ReasoningLevel;
 
 use super::*;
 use crate::{commands::parse_command, config::InternalAgentModelConfig, tui::tests::test_app};
@@ -249,4 +250,48 @@ fn advisor_model_config_row_uses_edit_status() {
             Some(InternalAgentModelPickerOrigin::AdvisorModelConfigRow)
         );
     });
+}
+
+// Covers: /advisor model never changes the advisor mode, and pushes the new
+// model and reasoning to the live runtime only while the mode is on.
+// Owner: advisor command
+#[tokio::test]
+async fn advisor_model_command_applies_to_the_runtime_only_while_the_mode_is_on() {
+    for advisor_mode in [true, false] {
+        let mut app = app_with_advisor_model();
+        app.info.runtime.advisor_mode = advisor_mode;
+        let mut agent = FakeAdvisorRuntime::default();
+
+        app.select_internal_agent_model(
+            ADVISOR_AGENT_ID,
+            Some(rho_providers::model::catalog::ModelSelection {
+                provider: "poolside".into(),
+                model: "laguna-m.1".into(),
+                auth: "poolside-api-key".into(),
+                from_catalog: true,
+            }),
+        )
+        .unwrap();
+        app.finish_advisor_model_command_selection(/*selected*/ true, &mut agent)
+            .await;
+        app.commit_advisor_reasoning("off", &mut agent)
+            .await
+            .unwrap();
+
+        let saved = app.info.services.config_repository.load().unwrap();
+        let mut expected = InternalAgentModelConfig::new(
+            "poolside".into(),
+            "laguna-m.1".into(),
+            "poolside-api-key".into(),
+        );
+        expected.reasoning = Some(ReasoningLevel::Off);
+        assert_eq!(app.info.runtime.advisor_mode, advisor_mode);
+        assert!(!saved.advisor_mode, "advisor_mode={advisor_mode}");
+        assert_eq!(saved.internal_agents.get(ADVISOR_AGENT_ID), Some(&expected));
+        assert_eq!(
+            agent.last_applied().cloned(),
+            advisor_mode.then_some(Some(expected)),
+            "advisor_mode={advisor_mode}"
+        );
+    }
 }

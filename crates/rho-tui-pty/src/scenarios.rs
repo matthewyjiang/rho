@@ -83,7 +83,8 @@ mod write_stream;
 use activity_anchor::{SPINNER_ACTIVITY_ANCHOR_SCENARIO, SPINNER_ACTIVITY_JUMP_RAIL_SCENARIO};
 use advisor::{
     setup_advisor_ready, setup_advisor_without_model, ADVISOR_COMMAND_STEPS,
-    ADVISOR_MISSING_MODEL_STEPS, ADVISOR_REVIEW_STEPS, XAI_KEY_ENV,
+    ADVISOR_MISSING_MODEL_STEPS, ADVISOR_MODEL_COMMAND_STEPS, ADVISOR_REVIEW_STEPS,
+    XAI_AND_POOLSIDE_KEY_ENV, XAI_KEY_ENV,
 };
 use agent_prompt::AGENT_PROMPT_SCENARIO;
 use attach_picker::{
@@ -892,6 +893,16 @@ const ALL_SCENARIOS: &[Scenario] = &[
         /*smoke*/ false,
     )
     .with_env(XAI_KEY_ENV),
+    Scenario {
+        id: "advisor_model_command",
+        description: "Swap the advisor model and pick only supported reasoning levels",
+        size: DEFAULT_SIZE,
+        setup: Some(setup_advisor_ready),
+        env: XAI_AND_POOLSIDE_KEY_ENV,
+        args: &[],
+        steps: ADVISOR_MODEL_COMMAND_STEPS,
+        smoke: false,
+    },
     Scenario {
         id: "advisor_missing_model",
         description: "Warn about advisor mode saved without a model and route to a model picker",

@@ -14,6 +14,7 @@ use ratatui::DefaultTerminal;
 use tokio::sync::oneshot;
 mod activity;
 mod advisor_command;
+mod advisor_reasoning;
 mod advisor_status;
 mod agent_creator_command;
 mod agent_delete;

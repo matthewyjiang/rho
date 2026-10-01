@@ -121,6 +121,12 @@ impl App {
                 };
                 self.commit_internal_agent_model(value, agent).await
             }
+            PickerAction::SelectAdvisorReasoning => {
+                let PickerCommit::Idle { agent, .. } = commit else {
+                    unreachable!("advisor reasoning commit is idle-only");
+                };
+                self.commit_advisor_reasoning(value, *agent).await
+            }
             PickerAction::LoginGroup => {
                 let PickerCommit::Idle { terminal, agent } = commit else {
                     unreachable!("login group commit is idle-only");
@@ -388,6 +394,7 @@ impl App {
             PickerAction::ViewAgent => self.prompt_delete_selected_agent(),
             PickerAction::SelectModel
             | PickerAction::SelectInternalAgentModel
+            | PickerAction::SelectAdvisorReasoning
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LoginFlow(_)
@@ -416,6 +423,16 @@ impl App {
         );
         if leaving_edit_agent {
             return self.handle_edit_agent_escape();
+        }
+
+        let leaving_advisor_reasoning = matches!(
+            self.input_ui.composer(),
+            ComposerMode::Picker(picker) if picker.is_advisor_reasoning()
+        );
+        if leaving_advisor_reasoning {
+            self.input_ui.set_composer(ComposerMode::Input);
+            self.report_advisor_reasoning_unchanged();
+            return Ok(());
         }
 
         let leaving_theme = matches!(

@@ -176,6 +176,7 @@ impl App {
             }
             InternalAgentModelPickerOrigin::AgentsPicker
             | InternalAgentModelPickerOrigin::AdvisorCommand
+            | InternalAgentModelPickerOrigin::AdvisorModelCommand
             | InternalAgentModelPickerOrigin::AdvisorConfigRow
             | InternalAgentModelPickerOrigin::AdvisorModelConfigRow
             | InternalAgentModelPickerOrigin::PermissionModeCommand

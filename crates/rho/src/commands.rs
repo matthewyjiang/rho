@@ -143,6 +143,11 @@ const ADVISOR_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
         usage: "/advisor off",
         description: "work without advisor guidance",
     },
+    CommandArgumentChoice {
+        completion: "/advisor model",
+        usage: "/advisor model",
+        description: "choose the advisor model and its reasoning level",
+    },
 ];
 
 const FAST_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
@@ -220,8 +225,8 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Advisor,
         name: "advisor",
-        usage: "/advisor [on|off]",
-        description: "toggle advisor mode, which reviews the session with a second model",
+        usage: "/advisor [on|off|model]",
+        description: "toggle advisor mode or choose the advisor model",
         argument_choices: ADVISOR_ARGUMENT_CHOICES,
     },
     CommandSpec {

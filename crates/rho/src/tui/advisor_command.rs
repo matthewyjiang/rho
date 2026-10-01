@@ -9,6 +9,7 @@ use super::{
 
 const SELECT_ADVISOR_MODEL_STATUS: &str = "select an advisor model to turn advisor mode on";
 const SELECT_ADVISOR_MODEL_EDIT_STATUS: &str = "select an advisor model";
+const ADVISOR_USAGE: &str = "usage: /advisor [on|off|model]";
 
 /// The runtime side of advisor mode.
 ///
@@ -62,8 +63,12 @@ impl App {
             "" => !self.info.runtime.advisor_mode,
             "on" => true,
             "off" => false,
+            "model" => {
+                self.open_advisor_model_prompt(InternalAgentModelPickerOrigin::AdvisorModelCommand);
+                return Ok(());
+            }
             _ => {
-                self.insert_entry(&Entry::Error("usage: /advisor [on|off]".into()));
+                self.insert_entry(&Entry::Error(ADVISOR_USAGE.into()));
                 self.set_status("invalid advisor mode");
                 return Ok(());
             }
@@ -86,17 +91,25 @@ impl App {
     }
 
     /// Opens the advisor model picker. The origin places it: alone in the
-    /// composer for `/advisor on`, under the config picker for its row, so
-    /// escaping returns where the user came from.
+    /// composer for `/advisor on` and `/advisor model`, under the config picker
+    /// for its row, so escaping returns where the user came from.
     pub(super) fn open_advisor_model_prompt(&mut self, origin: InternalAgentModelPickerOrigin) {
         if self.open_internal_agent_model_picker(ADVISOR_AGENT_ID, origin) {
             let status = match origin {
-                InternalAgentModelPickerOrigin::AdvisorModelConfigRow => {
+                InternalAgentModelPickerOrigin::AdvisorModelConfigRow
+                | InternalAgentModelPickerOrigin::AdvisorModelCommand => {
                     SELECT_ADVISOR_MODEL_EDIT_STATUS
                 }
-                // Only advisor origins open this prompt; other variants exist for
-                // exhaustiveness of the shared origin enum.
-                _ => SELECT_ADVISOR_MODEL_STATUS,
+                InternalAgentModelPickerOrigin::AdvisorCommand
+                | InternalAgentModelPickerOrigin::AdvisorConfigRow => SELECT_ADVISOR_MODEL_STATUS,
+                // Only advisor origins open this prompt.
+                InternalAgentModelPickerOrigin::AgentsPicker
+                | InternalAgentModelPickerOrigin::PermissionModeConfigRow
+                | InternalAgentModelPickerOrigin::PermissionModeCommand
+                | InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow
+                | InternalAgentModelPickerOrigin::PermissionModeStartup => {
+                    SELECT_ADVISOR_MODEL_STATUS
+                }
             };
             self.set_status(status);
         }
@@ -114,19 +127,48 @@ impl App {
         self.set_advisor_mode(true, agent).await
     }
 
-    /// Drops a pending `/advisor on` model prompt. Reports whether one was open
-    /// so the caller can leave its own dismissal status alone.
-    pub(super) fn cancel_advisor_model_prompt(&mut self) -> bool {
-        let pending = matches!(
-            self.internal_agent_model_target.as_ref(),
-            Some(target) if target.origin == InternalAgentModelPickerOrigin::AdvisorCommand
-        );
-        if pending {
-            self.internal_agent_model_target = None;
-            self.input_ui.set_composer(ComposerMode::Input);
-            self.set_status("advisor mode stays off: no advisor model selected");
+    /// After `/advisor model` stores a model: applies it when the mode is on,
+    /// then asks for reasoning when the model offers a choice. The picker
+    /// title names the step, so the save status stays visible, including a
+    /// config save failure.
+    pub(super) async fn finish_advisor_model_command_selection(
+        &mut self,
+        selected: bool,
+        agent: &mut impl AdvisorRuntime,
+    ) {
+        if !selected {
+            return;
         }
-        pending
+        if self.info.runtime.advisor_mode {
+            self.sync_advisor_runtime(agent).await;
+        }
+        self.open_advisor_reasoning_picker();
+    }
+
+    /// Drops a pending standalone advisor model prompt from `/advisor on` or
+    /// `/advisor model`. Reports whether one was open so the caller can leave
+    /// its own dismissal status alone.
+    pub(super) fn cancel_advisor_model_prompt(&mut self) -> bool {
+        let status = match self.internal_agent_model_target.as_ref() {
+            Some(target) => match target.origin {
+                InternalAgentModelPickerOrigin::AdvisorCommand => {
+                    "advisor mode stays off: no advisor model selected"
+                }
+                InternalAgentModelPickerOrigin::AdvisorModelCommand => "advisor model unchanged",
+                InternalAgentModelPickerOrigin::AgentsPicker
+                | InternalAgentModelPickerOrigin::AdvisorConfigRow
+                | InternalAgentModelPickerOrigin::AdvisorModelConfigRow
+                | InternalAgentModelPickerOrigin::PermissionModeConfigRow
+                | InternalAgentModelPickerOrigin::PermissionModeCommand
+                | InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow
+                | InternalAgentModelPickerOrigin::PermissionModeStartup => return false,
+            },
+            None => return false,
+        };
+        self.internal_agent_model_target = None;
+        self.input_ui.set_composer(ComposerMode::Input);
+        self.set_status(status);
+        true
     }
 
     pub(super) async fn set_advisor_mode(
