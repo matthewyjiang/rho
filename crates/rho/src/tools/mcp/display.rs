@@ -61,7 +61,8 @@ pub(crate) fn primary_argument(arguments: &Value) -> Option<(String, String)> {
     Some((key.clone(), display))
 }
 
-fn primary_display(text: &str) -> Option<String> {
+/// One control-free line within the header budget; `None` when blank.
+pub(crate) fn primary_display(text: &str) -> Option<String> {
     // Take the first LF-separated line, then flatten leftover controls so a
     // `\r` or tab cannot split the header the same way a second line would.
     let first = one_line(text.lines().next().unwrap_or(""));

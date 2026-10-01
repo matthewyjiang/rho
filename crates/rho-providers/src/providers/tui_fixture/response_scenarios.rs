@@ -10,8 +10,9 @@ use super::{
     tool_result_for_name, AGENTS_LIST_CALL_ID, BACKGROUND_AGENT_CALL_ID,
     BACKGROUND_CLAUDE_AGENT_CALL_ID, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID,
     BACKGROUND_QUESTIONNAIRE_COMPLETION, CLAUDE_AGENT_CALL_ID, CLAUDE_AGENT_ERROR_CALL_ID,
-    CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID, HOVER_TOOL_CALL_ID, PROCESS_RAIL_CALL_ID,
-    PROGRESS_CALL_ID, QUESTIONNAIRE_CALL_ID, SUBAGENT_RAIL_AGENT_CALL_ID, TOOL_CALL_ID,
+    COMPUTER_CALL_ID, CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID, HOVER_TOOL_CALL_ID,
+    PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID, QUESTIONNAIRE_CALL_ID, SUBAGENT_RAIL_AGENT_CALL_ID,
+    TOOL_CALL_ID,
 };
 
 pub(super) fn compaction(
@@ -67,6 +68,9 @@ pub(super) fn intercept(
             "progress tool lifecycle complete with one result: {}",
             result.content
         )));
+    }
+    if tool_result(request, COMPUTER_CALL_ID).is_some() {
+        return Some(completed("computer observation complete"));
     }
     if let Some(result) = tool_result(request, PROCESS_RAIL_CALL_ID) {
         let receipt = result.content.lines().next().unwrap_or_default();
