@@ -24,11 +24,11 @@ use super::bridge::{BridgeError, GuardedBridge};
 
 #[derive(Debug, Error)]
 pub enum EngineError {
-    #[error("code_mode starlark: {0}")]
+    #[error("codemode starlark: {0}")]
     Starlark(String),
     #[error(transparent)]
     Bridge(#[from] BridgeError),
-    #[error("code_mode: {0}")]
+    #[error("codemode: {0}")]
     Message(String),
 }
 
@@ -87,7 +87,7 @@ pub fn evaluate_code_mode(
 ) -> Result<EngineOutput, EngineError> {
     let runtime = tokio::runtime::Handle::try_current().map_err(|_| {
         EngineError::Message(
-            "code_mode requires a Tokio runtime (run inside an async tool call)".into(),
+            "codemode requires a Tokio runtime (run inside an async tool call)".into(),
         )
     })?;
 
@@ -107,7 +107,7 @@ pub fn evaluate_code_mode(
         builder.build()
     };
 
-    let ast = AstModule::parse("code_mode.star", source.to_owned(), &Dialect::Standard)
+    let ast = AstModule::parse("codemode.star", source.to_owned(), &Dialect::Standard)
         .map_err(|error| EngineError::Starlark(error.to_string()))?;
 
     GUEST.with(|slot| {
@@ -168,7 +168,7 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
 
 fn invoke_blocking(name: &str, arguments: JsonValue) -> Result<ToolOutput, EngineError> {
     let state = GUEST.with(|slot| slot.borrow().clone()).ok_or_else(|| {
-        EngineError::Message("internal: missing code_mode guest state".into())
+        EngineError::Message("internal: missing codemode guest state".into())
     })?;
     let bridge = Arc::clone(&state.bridge);
     let name = name.to_owned();

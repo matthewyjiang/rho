@@ -42,7 +42,7 @@ pub(crate) fn canonical_tool_names() -> &'static [&'static str] {
             "agents",
             "bash",
             "computer",
-            "code_mode",
+            "codemode",
             "fetch_content",
             "get_search_content",
             "glob",
@@ -79,7 +79,7 @@ pub(crate) fn canonical_tool_names() -> &'static [&'static str] {
 /// Returns whether a canonical built-in tool can mutate workspace or run state.
 pub(crate) fn canonical_tool_is_mutating(name: &str) -> Option<bool> {
     match name {
-        "agent" | "agents" | "bash" | "code_mode" | "computer" | "powershell" | "process"
+        "agent" | "agents" | "bash" | "codemode" | "computer" | "powershell" | "process"
         | "save_agent" | "workflow" | "workflow_command" | "write" => Some(true),
         name if rho_tools::EditFormat::is_edit_tool_name(name) => Some(true),
         "advisor"

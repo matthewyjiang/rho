@@ -2,6 +2,23 @@
 //!
 //! Nested calls (native **or MCP-backed**) go through [`CodeModeBridge`] so
 //! policy, approvals, and hooks stay on ToolHost. There is no in-guest MCP client.
+//!
+//! # Nested approvals (locked model)
+//!
+//! Production hosts must build [`ToolHostBridge`] from a [`ToolHost`] that
+//! **shares** the parent run's [`rho_sdk::ApprovalHandler`] /
+//! [`rho_sdk::ApprovalSession`] (`ToolHostBuilder::approval_handler_shared` or
+//! `approval_session`). Then:
+//!
+//! - A gated nested `call_tool` **blocks** inside `ToolHost::invoke` until the
+//!   session handler returns Allow*/Deny (or the run is cancelled / times out).
+//! - That pauses the Starlark thread (outer `codemode` stays in-flight).
+//! - Deny surfaces as [`BridgeError::Host`] / policy denial into the script.
+//! - There is **no** second “approve codemode” prompt and no parallel approval
+//!   system — nested calls reuse the same yolo/auto/bypass/allowlist knobs as a
+//!   direct call of that tool.
+//!
+//! See `docs/design/code-mode-starlark-v0.md`.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -12,21 +29,23 @@ use rho_sdk::{Error as SdkError, ToolHost, ToolHostCall};
 use serde_json::Value;
 use thiserror::Error;
 
-/// Stable tool name for this prototype.
-pub const CODE_MODE_TOOL_NAME: &str = "code_mode";
+/// Model-facing tool name (aligns with future `/codemode on|yolo|off`).
+pub const CODEMODE_TOOL_NAME: &str = "codemode";
 
 /// Errors from the code-mode host bridge (loud, actionable).
 #[derive(Debug, Error)]
 pub enum BridgeError {
-    #[error("code_mode: tool `{name}` is not on the allowlist (v0 loud limit)")]
+    #[error("codemode: tool `{name}` is not on the allowlist (v0 loud limit)")]
     NotAllowlisted { name: String },
-    #[error("code_mode: refusing recursive invocation of `{name}`")]
+    #[error("codemode: refusing recursive invocation of `{name}`")]
     Recursive { name: String },
-    #[error("code_mode: nested call limit exceeded (max {max})")]
+    #[error("codemode: nested call limit exceeded (max {max})")]
     CallLimit { max: usize },
-    #[error("code_mode: ToolHost error: {0}")]
+    #[error("codemode: ToolHost error: {0}")]
     Host(#[from] SdkError),
-    #[error("code_mode: {0}")]
+    #[error("codemode: nested tool `{name}` denied by session policy: {reason}")]
+    NestedDenied { name: String, reason: String },
+    #[error("codemode: {0}")]
     Message(String),
 }
 
@@ -70,7 +89,7 @@ impl GuardedBridge {
         if trimmed.is_empty() {
             return Err(BridgeError::Message("tool name must not be empty".into()));
         }
-        if trimmed == CODE_MODE_TOOL_NAME {
+        if trimmed == CODEMODE_TOOL_NAME {
             return Err(BridgeError::Recursive {
                 name: trimmed.to_owned(),
             });
@@ -91,18 +110,26 @@ impl GuardedBridge {
             }
             *calls += 1;
         }
+        // Sequential v0: one nested invoke at a time from the Starlark thread.
+        // When `inner` is ToolHostBridge with a shared ApprovalSession, a gated
+        // tool blocks here until approve/deny/cancel — pausing the whole script.
         self.inner.invoke_tool(trimmed, arguments).await
     }
 }
 
 /// Production bridge: every nested call is `ToolHost::invoke`
 /// (MCP tools included when registered on the host).
+///
+/// Construct the host with the **parent session's** approval handler/session so
+/// nested gating reuses yolo/auto/bypass/allowlist without a second prompt.
 #[allow(dead_code)]
 pub struct ToolHostBridge {
     host: Arc<ToolHost>,
 }
 
 impl ToolHostBridge {
+    /// `host` should already carry the shared session approval wiring.
+    #[allow(dead_code)]
     pub fn new(host: Arc<ToolHost>) -> Self {
         Self { host }
     }
@@ -111,10 +138,27 @@ impl ToolHostBridge {
 #[async_trait]
 impl CodeModeBridge for ToolHostBridge {
     async fn invoke_tool(&self, name: &str, arguments: Value) -> Result<ToolOutput, BridgeError> {
-        let output = self
-            .host
-            .invoke(ToolHostCall::new(name, arguments))
-            .await?;
-        Ok(output)
+        // Blocks until ToolHost finishes — including any nested ApprovalHandler
+        // wait. Fuel/timeout/cancel must come from the ToolHost / run token so
+        // we do not hang forever on an unanswered approval prompt.
+        match self.host.invoke(ToolHostCall::new(name, arguments)).await {
+            Ok(output) => Ok(output),
+            Err(error) => {
+                let message = error.to_string();
+                if message_looks_like_policy_deny(&message) {
+                    Err(BridgeError::NestedDenied {
+                        name: name.to_owned(),
+                        reason: message,
+                    })
+                } else {
+                    Err(BridgeError::Host(error))
+                }
+            }
+        }
     }
+}
+
+fn message_looks_like_policy_deny(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("denied") || lower.contains("policy") || lower.contains("approval")
 }

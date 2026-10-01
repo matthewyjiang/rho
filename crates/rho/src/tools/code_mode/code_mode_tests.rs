@@ -6,7 +6,7 @@ use pretty_assertions::assert_eq;
 use rho_sdk::tool::{Tool, ToolOutput};
 use serde_json::{json, Value};
 
-use super::bridge::{BridgeError, CodeModeBridge, GuardedBridge, CODE_MODE_TOOL_NAME};
+use super::bridge::{BridgeError, CodeModeBridge, GuardedBridge, CODEMODE_TOOL_NAME};
 use super::engine::{evaluate_code_mode, format_engine_output, EngineLimits, EngineOutput};
 use super::tool::CodeModeTool;
 
@@ -90,11 +90,11 @@ async fn deny_tools_not_on_allowlist_loudly() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn refuse_recursive_code_mode() {
+async fn refuse_recursive_codemode() {
     let bridge = guarded(BTreeMap::new(), None);
     let err = tokio::task::block_in_place(|| {
         evaluate_code_mode(
-            &format!(r#"result = call_tool("{CODE_MODE_TOOL_NAME}", {{"script": "1"}})"#),
+            &format!(r#"result = call_tool("{CODEMODE_TOOL_NAME}", {{"script": "1"}})"#),
             bridge,
             EngineLimits::default(),
         )
@@ -107,7 +107,7 @@ async fn refuse_recursive_code_mode() {
 fn tool_spec_and_format_smoke() {
     let bridge = guarded(BTreeMap::new(), None);
     let tool = CodeModeTool::with_bridge(bridge, EngineLimits::default());
-    assert_eq!(tool.spec().name, CODE_MODE_TOOL_NAME);
+    assert_eq!(tool.spec().name, CODEMODE_TOOL_NAME);
     let formatted = format_engine_output(&EngineOutput {
         return_value: json!("pong"),
         prints: vec![],
