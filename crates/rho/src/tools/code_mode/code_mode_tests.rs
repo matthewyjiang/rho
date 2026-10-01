@@ -99,6 +99,36 @@ async fn refuse_recursive_codemode() {
     assert!(err.to_string().contains("refusing recursive"));
 }
 
+// Covers: scripts may use top-level `for`/`if` (models write glue top-level),
+// and the tick limit still stops a top-level loop that runs too long.
+// Owner: codemode Starlark dialect + engine limits.
+#[tokio::test(flavor = "multi_thread")]
+async fn top_level_control_flow_runs_within_limits() {
+    let output = evaluate_code_mode(
+        r#"
+seen = []
+for name in ["a", "b", "c"]:
+    if name != "b":
+        seen.append(call_tool("read_file", {"path": name})["content"])
+result = seen
+"#,
+        guarded(BTreeMap::new(), None),
+        EngineLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        (output.return_value, output.nested_calls),
+        (json!(["ok:read_file", "ok:read_file"]), 2)
+    );
+
+    let runaway = evaluate_code_mode(
+        "total = 0\nfor i in range(10000000):\n    total += i\n",
+        guarded(BTreeMap::new(), None),
+        EngineLimits::default(),
+    );
+    assert!(runaway.is_err(), "tick limit must stop a top-level loop");
+}
+
 #[test]
 fn format_engine_output_includes_return_value() {
     let formatted = format_engine_output(&EngineOutput {

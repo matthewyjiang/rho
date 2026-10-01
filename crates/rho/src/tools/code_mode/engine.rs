@@ -23,6 +23,17 @@ use thiserror::Error;
 use super::bridge::{BridgeError, GuardedBridge};
 use super::exposure::ExposureController;
 
+/// Standard Starlark plus top-level `for`/`if`.
+///
+/// The spec keeps control flow inside `def` so Bazel files stay declarative.
+/// A codemode script is one-off glue, which models write top-level. Allowing
+/// it adds no power: `for` still walks finite values only (there is no
+/// `while`), and [`EngineLimits`] bounds every script either way.
+const CODEMODE_DIALECT: Dialect = Dialect {
+    enable_top_level_stmt: true,
+    ..Dialect::Standard
+};
+
 #[derive(Debug, Error)]
 pub enum EngineError {
     #[error("codemode starlark: {0}")]
@@ -121,7 +132,7 @@ pub fn evaluate_code_mode_with_exposure(
         builder.build()
     };
 
-    let ast = AstModule::parse("codemode.star", source.to_owned(), &Dialect::Standard)
+    let ast = AstModule::parse("codemode.star", source.to_owned(), &CODEMODE_DIALECT)
         .map_err(|error| EngineError::Starlark(error.to_string()))?;
 
     GUEST.with(|slot| {

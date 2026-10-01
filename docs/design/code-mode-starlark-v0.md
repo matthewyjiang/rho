@@ -183,6 +183,7 @@ Optional later: **tool search / deferred** feeds which names/schemas the model (
 - `print(...)` / assign `result = ...` — distilled outer tool result.
 - Loud errors for unknown tools, allowlist denials, recursion, policy denials, timeouts.
 - **Sequential only** — no `parallel([...])` in v0.
+- Dialect: standard Starlark plus top-level `for`/`if` (`enable_top_level_stmt`). Scripts are one-off glue, and models write them top-level; the spec's declarative rule exists for Bazel files. No `while`, so loops walk finite values, and `EngineLimits` (100k ticks, 8 MiB heap, 64 frames) bound every script either way. Workflows keep `Dialect::Standard`.
 
 ### Allowlist / limits
 

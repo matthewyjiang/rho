@@ -450,18 +450,14 @@ todo = {f["path"]: [l["line"] for l in f["lines"]] for f in hits["files"]}
 kinds = {e["name"]: e["kind"] for e in call_tool("list_dir", {"path": "."})["entries"]}
 started = call_tool("process", {"action": "start", "command": "printf hi; exit 4"})
 # A poll returns as soon as output arrives, so follow next_cursor until exit.
-def wait_exit(process_id):
-    cursor = 0
-    out = ""
-    polled = None
-    for _ in range(20):
-        polled = call_tool("process", {"action": "poll", "process_id": process_id, "cursor": cursor, "wait_seconds": 5})
-        out += polled["stdout"]
-        cursor = polled["next_cursor"]
-        if polled["state"] not in ("running", "starting"):
-            break
-    return polled, out, cursor
-polled, out, cursor = wait_exit(started["process_id"])
+cursor = 0
+out = ""
+for _ in range(20):
+    polled = call_tool("process", {"action": "poll", "process_id": started["process_id"], "cursor": cursor, "wait_seconds": 5})
+    out += polled["stdout"]
+    cursor = polled["next_cursor"]
+    if polled["state"] not in ("running", "starting"):
+        break
 result = {
     "paths": sorted(paths),
     "todo": todo,
@@ -535,11 +531,9 @@ async fn many_nested_calls_do_not_block_on_parent_progress() {
                 "script",
                 CODEMODE_TOOL_NAME,
                 json!({"script": r#"
-def run_many():
-    for _ in range(12):
-        call_tool("list_dir", {"path": "."})
-    return "done"
-result = run_many()
+for _ in range(12):
+    call_tool("list_dir", {"path": "."})
+result = "done"
 "#}),
             ),
             text_turn(),
