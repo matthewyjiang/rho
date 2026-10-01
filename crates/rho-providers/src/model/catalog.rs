@@ -35,15 +35,6 @@ pub struct LoginTarget {
     pub label: String,
 }
 
-/// What `/logout <name>` deletes.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum CredentialLogout {
-    /// One auth mode, either because the name is an auth id or the provider has one mode.
-    Mode(LoginTarget),
-    /// A provider with more than one mode. Logout clears every stored mode.
-    Provider(&'static str),
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelSelection {
     pub provider: String,
@@ -226,22 +217,6 @@ pub fn login_target_for_auth(auth: &str) -> Option<LoginTarget> {
     login_targets()
         .into_iter()
         .find(|target| target.auth == auth)
-}
-
-pub fn credential_logout(name: &str) -> Option<CredentialLogout> {
-    if let Some(target) = login_target_for_provider(name) {
-        return Some(CredentialLogout::Mode(target));
-    }
-    let descriptor = provider::provider_descriptor(name)?;
-    let mode_count = descriptor
-        .auth_modes()
-        .filter(|mode| mode.auth_kind != ProviderAuthKind::None)
-        .count();
-    if mode_count > 1 {
-        Some(CredentialLogout::Provider(descriptor.name))
-    } else {
-        None
-    }
 }
 
 pub fn login_target_for_provider(provider: &str) -> Option<LoginTarget> {

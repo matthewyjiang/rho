@@ -45,6 +45,30 @@ pub(super) fn login_group_picker() -> UiPicker {
     })
 }
 
+/// One row per auth mode. The value is the auth id, so confirm deletes that mode only.
+pub(super) fn logout_method_picker(group: catalog::LoginGroup) -> UiPicker {
+    let title = format!("Select {} logout method", group.prompt);
+    let items = group
+        .methods
+        .into_iter()
+        .map(|method| PickerItem {
+            section: None,
+            label: method.prompt,
+            detail: Some(method.target.label.into()),
+            preview: None,
+            badge: None,
+            value: method.target.auth,
+            selection_verb: None,
+            allow_filter_completion: true,
+        })
+        .collect();
+    UiPicker::logout_provider(title, items).with_key_hints(super::PickerKeyHints {
+        tab: super::TabKey::CompleteFilter,
+        row_delete: false,
+        ..Default::default()
+    })
+}
+
 /// Resolve whether a login group continues directly or opens a method picker.
 ///
 /// Built from the same item list the picker would show, so a group with one
@@ -251,4 +275,22 @@ fn provider_picker_for_targets(verb: &str, targets: Vec<catalog::LoginTarget>) -
             ..Default::default()
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Covers: a multi-mode provider logout lists each auth id instead of deleting every mode
+    // Owner: logout picker
+    #[test]
+    fn meta_logout_picker_lists_each_auth_id() {
+        let picker = logout_method_picker(catalog::login_group("meta").expect("meta login group"));
+        let values = picker
+            .items
+            .iter()
+            .map(|item| item.value.as_str())
+            .collect::<Vec<_>>();
+        pretty_assertions::assert_eq!(values, ["meta-api-key", "meta-muse"]);
+    }
 }
