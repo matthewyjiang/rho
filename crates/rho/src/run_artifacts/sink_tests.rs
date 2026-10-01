@@ -98,6 +98,85 @@ fn burst_of_deltas_keeps_recording_and_replays_losslessly() {
     );
 }
 
+// Covers: a detached writer must eventually close its journal even after queue
+// overflow, retaining the truncation diagnostic. Terminal status alone is not
+// a writer-completion signal.
+// Owner: run-artifact sink (finish ordering and queue backpressure)
+#[tokio::test]
+async fn detached_finish_keeps_terminal_attachment_after_queue_overflow() {
+    use crate::run_artifacts::test_support::wait_for_writer;
+
+    fn queue_pause(sink: &RunArtifactSink) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let (resume_tx, resume_rx) = mpsc::channel();
+        assert!(sink
+            .tx
+            .as_ref()
+            .unwrap()
+            .try_send(WriterCommand::Pause {
+                entered: entered_tx,
+                resume: resume_rx,
+            })
+            .is_ok());
+        (entered_rx, resume_tx)
+    }
+
+    // Use the process-session failure bound only around explicit gate signals.
+    const GATE_BUDGET: Duration = Duration::from_secs(30);
+    for overflow in [false, true] {
+        let directory = TempDir::new().unwrap();
+        let path = directory.path().join(subagent::RESULT_FILE_NAME);
+        let (status_tx, status_rx) = watch::channel(RunStatus::default());
+        let mut sink =
+            RunArtifactSink::open(path.clone(), &test_identity(), "prompt", Some(status_tx))
+                .unwrap();
+        let (entered, mut resume) = queue_pause(&sink);
+        entered.recv_timeout(GATE_BUDGET).unwrap();
+
+        if overflow {
+            // Fill every slot while the writer is held, then force a real
+            // enqueue-budget failure. A second gate lets the queue drain before
+            // Finish without letting its terminal event reach disk yet.
+            for _ in 0..QUEUE_CAPACITY - 1 {
+                assert!(sink.enqueue(WriterCommand::Status(sink.status.clone())));
+            }
+            let (entered, next_resume) = queue_pause(&sink);
+            sink.write_attachment(AttachmentEvent::Notice("overflow".into()));
+            assert!(sink.status.attachment_error.is_some());
+            assert!(!sink.attachment_enabled);
+            resume.send(()).unwrap();
+            resume = next_resume;
+            entered.recv_timeout(GATE_BUDGET).unwrap();
+        }
+
+        sink.status.state = RunState::Ok;
+        sink.status.mark_finished_now();
+        // The gate, not elapsed time, holds the writer beyond this budget.
+        sink.finish_with_join_budget(Some(AttachmentEvent::Completed), Duration::ZERO);
+        let early_status = subagent::read_status(&path).unwrap();
+        assert_eq!(early_status.state, RunState::Ok);
+        assert_eq!(early_status.attachment_error.is_some(), overflow);
+        let journal = path.with_file_name(subagent::ATTACHMENT_FILE_NAME);
+        assert_eq!(replay(&journal), vec![Replayed::Prompt("prompt".into())]);
+        drop(sink);
+        assert!(
+            status_rx.has_changed().is_ok(),
+            "detached writer owns sender"
+        );
+
+        resume.send(()).unwrap();
+        let final_status = wait_for_writer(status_rx).await;
+        assert_eq!(final_status.attachment_error, early_status.attachment_error);
+        assert_eq!(subagent::read_status(&path).unwrap(), final_status);
+        assert_eq!(
+            replay(&journal),
+            vec![Replayed::Prompt("prompt".into()), Replayed::Completed],
+            "overflow: {overflow}; attachment_error: {:?}",
+            final_status.attachment_error
+        );
+    }
+}
+
 // Covers: reasoning and assistant text are separate streams, so coalescing must
 // never fold one into the other or reorder them.
 // Owner: run-artifact sink (journal replay)

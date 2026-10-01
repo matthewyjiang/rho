@@ -2,7 +2,9 @@
 //!
 //! Callers update in-memory state and enqueue work. One OS thread owns disk I/O
 //! so high-volume stream drains never block on `fsync`. Terminal finish waits
-//! once for the queue to drain - no emergency dual-write path.
+//! for the queue to drain within a budget, then lets a slow writer finish in
+//! the background. Terminal status can therefore precede the terminal journal
+//! event. The detached writer retains its watch sender through its final write.
 
 use std::{
     path::{Path, PathBuf},
@@ -82,6 +84,12 @@ impl RunArtifactIdentity {
 enum WriterCommand {
     Status(RunStatus),
     Attachment(AttachmentEvent),
+    /// Hold this writer at an explicit boundary to exercise slow-disk paths.
+    #[cfg(test)]
+    Pause {
+        entered: SyncSender<()>,
+        resume: mpsc::Receiver<()>,
+    },
     /// Final ordered write, then stop the worker.
     Finish {
         status: RunStatus,
@@ -364,13 +372,20 @@ impl RunArtifactSink {
     }
 
     fn finish(&mut self, terminal_attachment: Option<AttachmentEvent>) {
+        self.finish_with_join_budget(terminal_attachment, FINISH_JOIN_BUDGET);
+    }
+
+    fn finish_with_join_budget(
+        &mut self,
+        terminal_attachment: Option<AttachmentEvent>,
+        join_budget: Duration,
+    ) {
         self.merge_live_title();
         self.closed = true;
-        let terminal_attachment = if self.attachment_enabled {
-            terminal_attachment
-        } else {
-            None
-        };
+        // Queue overflow disables new stream events, not the writer itself.
+        // Still close the journal with its terminal event; the sticky error
+        // tells readers that earlier output is incomplete. Disk failures are
+        // handled by the worker, which owns the remaining AttachmentWriter.
         if let Some(tx) = self.tx.take() {
             let _ = tx.send(WriterCommand::Finish {
                 status: self.status.clone(),
@@ -383,12 +398,12 @@ impl RunArtifactSink {
         if let Some(join) = self.join.take() {
             let finished = match done_rx {
                 Some(done_rx) => !matches!(
-                    done_rx.recv_timeout(FINISH_JOIN_BUDGET),
+                    done_rx.recv_timeout(join_budget),
                     Err(RecvTimeoutError::Timeout)
                 ),
                 // No completion signal (thread failed to start wiring): fall back to join budget.
                 None => {
-                    let deadline = Instant::now() + FINISH_JOIN_BUDGET;
+                    let deadline = Instant::now() + join_budget;
                     while !join.is_finished() && Instant::now() < deadline {
                         std::thread::sleep(Duration::from_millis(1));
                     }
@@ -561,6 +576,11 @@ fn writer_loop(
         };
 
         match command {
+            #[cfg(test)]
+            WriterCommand::Pause { entered, resume } => {
+                let _ = entered.send(());
+                let _ = resume.recv();
+            }
             WriterCommand::Status(status) => {
                 pending_status = Some(status);
             }

@@ -81,6 +81,7 @@ async fn run_with_fake(
     permission_mode: PermissionMode,
     cancellation: RunCancellation,
 ) {
+    let (status_tx, status_rx) = tokio::sync::watch::channel(subagent::RunStatus::default());
     run_session(CursorSessionRequest {
         system_prompt: system_prompt(),
         identity: cursor_identity(),
@@ -90,7 +91,7 @@ async fn run_with_fake(
         cwd: cwd.to_path_buf(),
         permission_mode,
         cancellation,
-        status_tx: None,
+        status_tx: Some(status_tx),
         started_status: None,
         auth_status: Some(Ok(logged_in())),
         overrides: CliSessionOverrides {
@@ -100,6 +101,8 @@ async fn run_with_fake(
     })
     .await
     .unwrap();
+    let status = crate::run_artifacts::test_support::wait_for_writer(status_rx).await;
+    assert_eq!(status.attachment_error, None, "artifact writer: {status:?}");
 }
 
 // Covers: a successful Cursor stream-json run writes Ok, session id, usage,
@@ -132,7 +135,8 @@ async fn success_stream_and_exit_zero_writes_ok() {
     assert_eq!(
         count_terminal_events(&events),
         1,
-        "exactly one terminal attachment"
+        "exactly one terminal attachment; attachment_error: {:?}",
+        status.attachment_error
     );
     assert!(events
         .iter()

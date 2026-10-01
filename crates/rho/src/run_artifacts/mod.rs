@@ -8,6 +8,9 @@ mod journal;
 mod sink;
 
 #[cfg(test)]
+pub(crate) mod test_support;
+
+#[cfg(test)]
 pub(crate) use journal::AttachmentWriter;
 pub(crate) use journal::{read_prompt, AttachmentEvent, AttachmentReader};
 pub(crate) use sink::{LiveRunTitle, RunArtifactIdentity, RunArtifactSink};
