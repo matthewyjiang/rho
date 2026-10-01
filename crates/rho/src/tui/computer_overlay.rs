@@ -11,11 +11,16 @@ use super::{
     theme::Theme,
     App, ComposerMode, PanelOverlay,
 };
-use crate::tools::computer_use::{desktop_warning, ComputerUseControl, ComputerUseStatus};
+use crate::tools::computer_use::{
+    desktop_warning, ComputerUseControl, ComputerUseStatus, InstallKind, UpdateCheckStatus,
+    UpdateOutcome,
+};
 
 const TITLE: &str = "Computer use";
 const FOOTER_INSTALLING: &str = "r cancel setup · Enter/Esc close";
+const FOOTER_UPDATING: &str = "r cancel update · Enter/Esc close";
 const FOOTER_REVOCABLE: &str = "r revoke · Enter/Esc close";
+const FOOTER_CHECKABLE: &str = "u check for driver updates · Enter/Esc close";
 const FOOTER: &str = "Enter/Esc close";
 
 pub(super) struct ComputerOverlay {
@@ -59,7 +64,18 @@ impl ComputerOverlay {
             .as_ref()
             .map(ComputerUseControl::status)
             .unwrap_or(ComputerUseStatus::Off);
+        let updating = matches!(
+            self.control
+                .as_ref()
+                .and_then(ComputerUseControl::pending_install),
+            Some(InstallKind::Update { .. })
+        );
         let (status, access, next) = match state {
+            ComputerUseStatus::Installing if updating => (
+                "Updating",
+                "Cua Driver update pending; desktop access remains off",
+                "r or /computer off cancels the update",
+            ),
             ComputerUseStatus::Installing => (
                 "Installing",
                 "Cua Driver installation pending; desktop access remains off",
@@ -135,11 +151,15 @@ impl ComputerOverlay {
             width,
         ));
         let path = driver
+            .as_ref()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| {
                 "/computer setup installs the missing driver after separate consent".into()
             });
         lines.extend(indented_wrapped_lines(&path, 0, width, Theme::dim()));
+        if driver.is_some() {
+            self.update_lines(&self.update_status(), &mut lines, width);
+        }
         lines.extend(indented_wrapped_lines(
             "cua-driver doctor  installation diagnostics",
             0,
@@ -169,10 +189,75 @@ impl ComputerOverlay {
         for command in [
             next,
             "/computer setup  install, configure and verify connection",
+            "/computer update  check for and install a newer driver",
         ] {
             lines.extend(indented_wrapped_lines(command, 0, width, Theme::text()));
         }
         lines
+    }
+
+    fn update_status(&self) -> UpdateCheckStatus {
+        self.control.as_ref().map_or(
+            UpdateCheckStatus::NotChecked,
+            ComputerUseControl::update_check_status,
+        )
+    }
+
+    /// `u` (re)checks; installing is `/computer update`, which owns eligibility.
+    fn checkable(&self, update: &UpdateCheckStatus) -> bool {
+        self.control.as_ref().is_some_and(|control| {
+            control.driver_path().is_some()
+                && control.status() != ComputerUseStatus::Installing
+                && !matches!(update, UpdateCheckStatus::Checking)
+        })
+    }
+
+    fn update_lines(
+        &self,
+        update: &UpdateCheckStatus,
+        lines: &mut Vec<Line<'static>>,
+        width: usize,
+    ) {
+        let hint = self
+            .control
+            .as_ref()
+            .map_or("", ComputerUseControl::update_hint);
+        let (text, notes, style) = match update {
+            UpdateCheckStatus::NotChecked => (
+                "Updates: not checked · u check (runs cua-driver check-update)".to_owned(),
+                None,
+                Theme::dim(),
+            ),
+            UpdateCheckStatus::Checking => ("Updates: checking…".to_owned(), None, Theme::dim()),
+            UpdateCheckStatus::Failed(error) => (
+                format!("Updates: check failed: {error} · u retry"),
+                None,
+                Theme::warning(),
+            ),
+            UpdateCheckStatus::Checked(UpdateOutcome::Unavailable { current, reason }) => (
+                format!("Version {current} · update check unavailable: {reason}"),
+                None,
+                Theme::warning(),
+            ),
+            UpdateCheckStatus::Checked(UpdateOutcome::Available {
+                current,
+                latest,
+                notes,
+            }) => (
+                format!("Version {current} · {latest} available · {hint}"),
+                notes.as_deref(),
+                Theme::warning(),
+            ),
+            UpdateCheckStatus::Checked(UpdateOutcome::UpToDate { current }) => (
+                format!("Version {current} · up to date"),
+                None,
+                Theme::dim(),
+            ),
+        };
+        lines.extend(indented_wrapped_lines(&text, 0, width, style));
+        if let Some(notes) = notes {
+            lines.extend(indented_wrapped_lines(notes, 0, width, Theme::dim()));
+        }
     }
 }
 
@@ -191,9 +276,14 @@ impl PanelBody for ComputerOverlay {
 
     fn footer(&self) -> &str {
         match &self.control {
-            Some(control) if control.installation_pending() => FOOTER_INSTALLING,
-            _ if self.revocable() => FOOTER_REVOCABLE,
-            _ => FOOTER,
+            Some(control) => match control.pending_install() {
+                Some(InstallKind::Install) => FOOTER_INSTALLING,
+                Some(InstallKind::Update { .. }) => FOOTER_UPDATING,
+                None if self.revocable() => FOOTER_REVOCABLE,
+                None if self.checkable(&self.update_status()) => FOOTER_CHECKABLE,
+                None => FOOTER,
+            },
+            None => FOOTER,
         }
     }
 
@@ -202,16 +292,20 @@ impl PanelBody for ComputerOverlay {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> PanelKeyOutcome {
-        if key.code != KeyCode::Char('r') || !key.modifiers.is_empty() {
+        if !key.modifiers.is_empty() {
             return PanelKeyOutcome::Unhandled;
         }
-        if !self.revocable() {
-            return PanelKeyOutcome::Handled;
+        match key.code {
+            KeyCode::Char('r') if self.revocable() => PanelKeyOutcome::Run(|app| {
+                app.revoke_computer_preference();
+                app.show_computer_off();
+            }),
+            KeyCode::Char('u') if self.checkable(&self.update_status()) => {
+                PanelKeyOutcome::Run(App::check_computer_update)
+            }
+            KeyCode::Char('r' | 'u') => PanelKeyOutcome::Handled,
+            _ => PanelKeyOutcome::Unhandled,
         }
-        PanelKeyOutcome::Run(|app| {
-            app.revoke_computer_preference();
-            app.show_computer_off();
-        })
     }
 }
 
