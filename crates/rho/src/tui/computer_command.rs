@@ -2,7 +2,7 @@
 
 use crate::app::interactive_runtime::{ComputerUseEligibilityError, ComputerUseUpdate};
 use crate::tools::computer_use::{
-    desktop_warning, ComputerUseControl, ComputerUsePreference, ComputerUseStatus,
+    desktop_warning, ComputerUseControl, ComputerUsePreference, ComputerUseStatus, InstallKind,
 };
 
 use super::{
@@ -121,13 +121,28 @@ impl App {
     }
 
     pub(super) fn show_computer_off(&mut self) {
-        if self.computer_installation_pending() {
-            self.insert_entry(&Entry::Notice(format!(
-                "Cua Driver installation cancellation requested; desktop access not granted. {}",
-                crate::tools::computer_use::INSTALLATION_RECOVERY
-            )));
-            self.set_status("computer setup cancellation requested; desktop access off");
-            return;
+        let pending = self
+            .computer_use
+            .as_ref()
+            .and_then(ComputerUseControl::pending_install);
+        match pending {
+            Some(kind @ InstallKind::Install) => {
+                self.insert_entry(&Entry::Notice(format!(
+                    "Cua Driver installation cancellation requested; desktop access not granted. {}",
+                    kind.recovery()
+                )));
+                self.set_status("computer setup cancellation requested; desktop access off");
+                return;
+            }
+            Some(kind @ InstallKind::Update { .. }) => {
+                self.insert_entry(&Entry::Notice(format!(
+                    "Cua Driver update cancellation requested; desktop access stays off. {}",
+                    kind.recovery()
+                )));
+                self.set_status("computer update cancellation requested; desktop access off");
+                return;
+            }
+            None => {}
         }
         self.insert_entry(&Entry::Notice("computer use off; access revoked while the transport closes. Completed desktop actions cannot be undone by disconnecting".into()));
         self.set_status("computer use off");

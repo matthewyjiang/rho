@@ -100,8 +100,9 @@ impl App {
                 )));
             }
             ComputerSetupUpdate::Cancelled(InstallKind::Install) => self.insert_entry(&Entry::Notice(format!("Cua Driver installation cancelled; desktop access was not granted. {INSTALLATION_RECOVERY}"))),
-            ComputerSetupUpdate::Cancelled(InstallKind::Update { from, .. }) => self.insert_entry(&Entry::Notice(format!(
-                "Cua Driver update cancelled; partial files may remain. Desktop access is still off. Reopen /computer status to confirm the driver still reports {from}"
+            ComputerSetupUpdate::Cancelled(kind @ InstallKind::Update { .. }) => self.insert_entry(&Entry::Notice(format!(
+                "Cua Driver update cancelled; desktop access is still off. {}",
+                kind.recovery()
             ))),
             ComputerSetupUpdate::Failed(InstallKind::Install, error) => self.insert_entry(&Entry::Error(format!(
                 "could not complete Cua Driver setup: {error}"

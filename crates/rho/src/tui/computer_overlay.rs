@@ -18,6 +18,7 @@ use crate::tools::computer_use::{
 
 const TITLE: &str = "Computer use";
 const FOOTER_INSTALLING: &str = "r cancel setup · Enter/Esc close";
+const FOOTER_UPDATING: &str = "r cancel update · Enter/Esc close";
 const FOOTER_REVOCABLE: &str = "r revoke · Enter/Esc close";
 const FOOTER_CHECKABLE: &str = "u check for driver updates · Enter/Esc close";
 const FOOTER: &str = "Enter/Esc close";
@@ -275,10 +276,14 @@ impl PanelBody for ComputerOverlay {
 
     fn footer(&self) -> &str {
         match &self.control {
-            Some(control) if control.installation_pending() => FOOTER_INSTALLING,
-            _ if self.revocable() => FOOTER_REVOCABLE,
-            _ if self.checkable(&self.update_status()) => FOOTER_CHECKABLE,
-            _ => FOOTER,
+            Some(control) => match control.pending_install() {
+                Some(InstallKind::Install) => FOOTER_INSTALLING,
+                Some(InstallKind::Update { .. }) => FOOTER_UPDATING,
+                None if self.revocable() => FOOTER_REVOCABLE,
+                None if self.checkable(&self.update_status()) => FOOTER_CHECKABLE,
+                None => FOOTER,
+            },
+            None => FOOTER,
         }
     }
 

@@ -48,6 +48,18 @@ pub(crate) fn setup_platform() -> ComputerSetupPlatform {
 
 pub(crate) const INSTALLATION_RECOVERY: &str = "Partial files may remain and the saved telemetry preference may be unchanged. If /computer setup detects the driver, it skips installation and does not retry the saved opt-out; run cua-driver telemetry disable manually to save it. Rho still forces telemetry off for managed connections.";
 
+pub(crate) const UPDATE_RECOVERY: &str = "Partial files may remain, and the driver may still be the previous release. Your saved telemetry preference is unchanged. Reopen /computer status to check the version, then retry with /computer update.";
+
+impl InstallKind {
+    /// What a failed or cancelled run may have left behind, for this kind.
+    pub(crate) fn recovery(&self) -> &'static str {
+        match self {
+            Self::Install => INSTALLATION_RECOVERY,
+            Self::Update { .. } => UPDATE_RECOVERY,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ComputerSetupUpdate {
     Installed,
@@ -205,8 +217,9 @@ impl ComputerUseSession {
             }
             installer::run(command, &token).await.map_err(|error| {
                 anyhow!(
-                    "{error}; installer log: {}. {INSTALLATION_RECOVERY}",
-                    log_path.display()
+                    "{error}; installer log: {}. {}",
+                    log_path.display(),
+                    task_kind.recovery()
                 )
             })?;
             installer_done.store(true, Ordering::Release);
