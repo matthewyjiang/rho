@@ -39,7 +39,8 @@ pub(crate) use super::agent_output::MODEL_NOTIFICATION_BYTES as NOTIFICATION_CON
 
 pub struct AgentTool {
     manager: SubagentManager,
-    catalog: Arc<AgentCatalog>,
+    /// Directory definitions are rediscovered from at each launch.
+    cwd: PathBuf,
     agent_summaries: Vec<(String, String)>,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 }
@@ -65,7 +66,7 @@ impl AgentTool {
             .collect();
         Self {
             manager,
-            catalog,
+            cwd: cwd.to_path_buf(),
             agent_summaries,
             mutation_observer: Arc::new(()),
         }
@@ -84,8 +85,16 @@ impl AgentTool {
         args: AgentArgs,
         context: &rho_sdk::tool::AuthorizedToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let definition = self
-            .catalog
+        // Resolve from disk, not the startup snapshot: the user may have
+        // deleted or edited the definition (for example in `/agents`) since
+        // the session began. The spec's agent list stays stable on purpose.
+        let catalog = AgentCatalog::discover(&self.cwd).map_err(|error| {
+            ToolError::new(
+                ToolErrorKind::Execution,
+                format!("could not reload agent definitions: {error}"),
+            )
+        })?;
+        let definition = catalog
             .find(&args.agent_id)
             .map_err(|error| ToolError::new(ToolErrorKind::InvalidArguments, error.to_string()))?
             .definition
