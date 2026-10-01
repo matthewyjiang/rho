@@ -145,10 +145,9 @@ fn wait_for_row_highlight(
 }
 
 fn assert_info_overlay_dismissed(harness: &mut PtyHarness) -> Result<()> {
+    // The composer caret is the durable dismissal signal. The copy notice can
+    // cover the header brand independently of whether the overlay has closed.
     harness.wait_for_visible_cursor(SETTLE)?;
-    // The copy notice covers the header brand until it expires and the loop
-    // redraws. Wait for that paint instead of reading the covered frame once.
-    harness.wait_for_text("rho", SETTLE)?;
     let screen = harness.screen().contents();
     if screen.contains(" Info ") {
         bail!("info overlay still visible after Esc:\n{screen}");

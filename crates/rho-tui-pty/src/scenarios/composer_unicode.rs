@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use anyhow::{ensure, Result};
 
 use crate::{
@@ -29,12 +27,9 @@ fn check_unicode_composer(harness: &mut PtyHarness) -> Result<()> {
             "input {input:?}: caret is not after the four-column trailing row: {end:?}",
         );
         harness.inject_key(&Key::Home)?;
-        harness.wait_for_quiet(Duration::from_millis(150), SETTLE)?;
-        let start = harness.screen().cursor();
-        ensure!(
-            start == (end.0 - extra_rows, content_column),
-            "input {input:?}: wrong wrap height: start {start:?}, end {end:?}",
-        );
+        // A quiet PTY can mean the input has not been processed yet. Wait for
+        // Home's observable caret movement, not an idle interval under CI load.
+        harness.wait_for_cursor((end.0 - extra_rows, content_column), SETTLE)?;
         harness.inject_key(&Key::Ctrl('c'))?;
         harness.wait_for_text_gone("ab", SETTLE)?;
     }
