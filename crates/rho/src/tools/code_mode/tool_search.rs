@@ -69,9 +69,8 @@ Does not dump full server or tool catalogs."
             if context.cancellation().is_cancelled() {
                 return Err(ToolError::cancelled());
             }
-            let parsed: ToolSearchArgs = serde_json::from_value(args).map_err(|err| {
-                ToolError::new(ToolErrorKind::InvalidArguments, err.to_string())
-            })?;
+            let parsed: ToolSearchArgs = serde_json::from_value(args)
+                .map_err(|err| ToolError::new(ToolErrorKind::InvalidArguments, err.to_string()))?;
             let hits = exposure.search(&parsed.query, parsed.limit);
             let mut promoted = Vec::new();
             for hit in &hits {

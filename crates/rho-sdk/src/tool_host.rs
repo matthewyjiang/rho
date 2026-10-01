@@ -231,6 +231,9 @@ pub struct ToolHostBuilder {
     hook_delegation: HookDelegation,
     hook_host_labels: HookHostLabels,
     session_id: Option<SessionId>,
+    /// Parent hook wiring from [`ToolHost::child_builder`]; replaces the
+    /// individual hook settings above when present.
+    inherited_hooks: Option<HookWiring>,
 }
 
 impl ToolHostBuilder {
@@ -342,13 +345,15 @@ impl ToolHostBuilder {
                 approval_handler: approval_session.handler(),
                 approvals: approval_session.remembered(),
                 approval_audit: approval_session.audit_log(),
-                hooks: HookWiring::new(
-                    self.hook_observer,
-                    self.pre_tool_gate,
-                    self.hook_payload_bounds,
-                    self.hook_delegation,
-                )
-                .with_host_labels(self.hook_host_labels),
+                hooks: self.inherited_hooks.unwrap_or_else(|| {
+                    HookWiring::new(
+                        self.hook_observer,
+                        self.pre_tool_gate,
+                        self.hook_payload_bounds,
+                        self.hook_delegation,
+                    )
+                    .with_host_labels(self.hook_host_labels)
+                }),
                 event_capacity: self.event_capacity.unwrap_or_else(|| {
                     NonZeroUsize::new(crate::client::DEFAULT_EVENT_CAPACITY).unwrap()
                 }),
@@ -374,6 +379,29 @@ pub struct ToolHost {
 impl ToolHost {
     pub fn builder() -> ToolHostBuilder {
         ToolHostBuilder::default()
+    }
+
+    /// Starts a nested host that inherits the active call's authorization.
+    ///
+    /// For tools that run other tools (for example a scripting tool). The child
+    /// reuses the parent call's workspace, workspace policy, hook gate and
+    /// observer, session id, and approval session (handler, exact-request
+    /// memory, audit). Nested calls are therefore judged exactly like direct
+    /// calls of the parent run. Register tools on the returned builder; prefer
+    /// not to override the inherited security settings.
+    pub fn child_builder(parent: &ToolContext) -> ToolHostBuilder {
+        let authorization = parent.authorization();
+        let mut builder = ToolHostBuilder {
+            workspace: parent.workspace().cloned(),
+            workspace_policy: Some(authorization.policy()),
+            approval_session: Some(authorization.approval_session()),
+            inherited_hooks: Some(authorization.hooks().clone()),
+            ..ToolHostBuilder::default()
+        };
+        if let Some(session_id) = authorization.session_id() {
+            builder.session_id = Some(session_id.clone());
+        }
+        builder
     }
 
     pub fn session_id(&self) -> &SessionId {

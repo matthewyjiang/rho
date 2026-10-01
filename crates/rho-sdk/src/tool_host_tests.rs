@@ -590,3 +590,102 @@ async fn call_emits_progress_and_accepts_host_input() {
 
     assert_eq!(run.outcome().await.unwrap().content(), "yes");
 }
+
+/// Runs `host_exec` through a child host built from its own call context.
+struct NestingTool {
+    order: Arc<Mutex<Vec<&'static str>>>,
+}
+
+impl Tool for NestingTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "nest".into(),
+            description: "run host_exec in a child host".into(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn call<'a>(&'a self, _invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+        Box::pin(async move {
+            let child = ToolHost::child_builder(&context)
+                .tool(AuthorizingTool {
+                    order: Arc::clone(&self.order),
+                })
+                .build()
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+            child
+                .invoke(call())
+                .await
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))
+        })
+    }
+}
+
+// Covers: a child host must not bypass the parent's policy, hook gate, or
+// approval memory/audit (no silent allow, no second prompt).
+// Owner: SDK ToolHost child authorization inheritance.
+#[tokio::test]
+async fn child_host_inherits_parent_authorization() {
+    struct Case {
+        hook: HookDecision,
+        approval: ApprovalDecision,
+        order: Vec<&'static str>,
+        audit: Vec<ApprovalAuditDecision>,
+    }
+    let cases = [
+        Case {
+            hook: HookDecision::Continue,
+            approval: ApprovalDecision::AllowOnce,
+            order: vec!["policy", "hook", "approval", "execution"],
+            audit: vec![ApprovalAuditDecision::AllowedOnce],
+        },
+        Case {
+            hook: HookDecision::deny("blocked by parent hook"),
+            approval: ApprovalDecision::AllowOnce,
+            order: vec!["policy", "hook"],
+            audit: vec![ApprovalAuditDecision::DeniedByHook],
+        },
+        Case {
+            hook: HookDecision::Continue,
+            approval: ApprovalDecision::Deny {
+                reason: "denied by parent host".into(),
+            },
+            order: vec!["policy", "hook", "approval"],
+            audit: vec![ApprovalAuditDecision::DeniedByHost],
+        },
+    ];
+    for case in cases {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        // Only "nest" is authorized by the parent; the child must reuse all of it.
+        let parent = ToolHost::builder()
+            .tool(NestingTool {
+                order: Arc::clone(&order),
+            })
+            .workspace_policy(OrderedPolicy {
+                order: Arc::clone(&order),
+            })
+            .pre_tool_gate_shared(Arc::new(OrderedGate {
+                order: Arc::clone(&order),
+                decision: case.hook,
+                requests: Arc::default(),
+            }))
+            .approval_handler(OrderedApproval {
+                order: Arc::clone(&order),
+                decision: case.approval,
+            })
+            .build()
+            .unwrap();
+
+        let _ = parent.invoke(ToolHostCall::new("nest", json!({}))).await;
+
+        assert_eq!(*order.lock().unwrap(), case.order);
+        assert_eq!(
+            parent
+                .approval_audit()
+                .iter()
+                .map(|record| record.decision())
+                .collect::<Vec<_>>(),
+            case.audit
+        );
+    }
+}

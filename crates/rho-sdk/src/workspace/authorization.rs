@@ -104,6 +104,18 @@ impl AuthorizationServices {
         &self.audit
     }
 
+    pub(crate) fn policy(&self) -> Arc<dyn WorkspacePolicy> {
+        Arc::clone(&self.policy)
+    }
+
+    pub(crate) fn hooks(&self) -> &HookWiring {
+        &self.hooks
+    }
+
+    pub(crate) fn session_id(&self) -> Option<&crate::SessionId> {
+        self.scope.session_id.as_ref()
+    }
+
     pub(crate) fn approval_session(&self) -> super::ApprovalSession {
         super::ApprovalSession::from_parts(
             Arc::clone(&self.approvals),

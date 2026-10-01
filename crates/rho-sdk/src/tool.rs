@@ -459,6 +459,10 @@ impl ToolContext {
         self.authorization.approval_session()
     }
 
+    pub(crate) fn authorization(&self) -> &crate::workspace::AuthorizationServices {
+        &self.authorization
+    }
+
     pub fn workspace(&self) -> Option<&Workspace> {
         self.workspace.as_ref()
     }

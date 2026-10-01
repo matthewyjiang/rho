@@ -16,10 +16,7 @@ fn exact_override_beats_pattern_and_default() {
     let policy = ExposurePolicy::new()
         .override_pattern("mcp__computer__*", ToolExposure::Direct)
         .override_exact("mcp__computer__screenshot", ToolExposure::Hidden);
-    assert_eq!(
-        policy.resolve("mcp__computer__click"),
-        ToolExposure::Direct
-    );
+    assert_eq!(policy.resolve("mcp__computer__click"), ToolExposure::Direct);
     assert_eq!(
         policy.resolve("mcp__computer__screenshot"),
         ToolExposure::Hidden
@@ -81,8 +78,7 @@ fn script_search_finds_mcp_codemode_tools() {
 
 #[test]
 fn override_to_direct_makes_mcp_model_facing() {
-    let policy =
-        ExposurePolicy::new().override_pattern("mcp__computer__*", ToolExposure::Direct);
+    let policy = ExposurePolicy::new().override_pattern("mcp__computer__*", ToolExposure::Direct);
     let ctrl = ExposureController::new(policy);
     ctrl.index_tool("mcp__computer__click", "click");
     ctrl.index_tool("mcp__fs__read", "read");

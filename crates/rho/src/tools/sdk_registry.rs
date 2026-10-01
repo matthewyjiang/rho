@@ -190,6 +190,8 @@ pub struct AppToolSet {
     recall: Option<crate::session::recall::RecallStore>,
     /// Pi-style exposure + deferred promotions for model-facing specs.
     exposure: std::sync::Arc<super::code_mode::ExposureController>,
+    /// Sibling tools for live `codemode`; synced from [`Self::tools`].
+    code_mode_nesting: Arc<super::code_mode::CodeModeNesting>,
 }
 
 impl AppToolSet {
@@ -212,7 +214,10 @@ impl AppToolSet {
             file_view: rho_tools::FileViewPolicy::default(),
             session_search: super::sessions::SessionBinding::default(),
             recall: None,
-            exposure: std::sync::Arc::new(super::code_mode::ExposureController::with_default_policy()),
+            exposure: std::sync::Arc::new(
+                super::code_mode::ExposureController::with_default_policy(),
+            ),
+            code_mode_nesting: Arc::default(),
         }
     }
 
@@ -326,10 +331,19 @@ impl AppToolSet {
             tool_set.add_bundle(bundle);
         }
 
-        // Model-facing discovery tool; MCP tools stay callable via ToolHost / codemode.
-        tool_set.tools.push(std::sync::Arc::new(super::code_mode::ToolSearchTool::new(
-            std::sync::Arc::clone(&tool_set.exposure),
-        )));
+        // Live codemode + discovery. Nested calls inherit the parent call's
+        // authorization (policy, hooks, approvals) via ToolHost::child_builder.
+        tool_set
+            .tools
+            .push(Arc::new(super::code_mode::CodeModeTool::new(
+                Arc::clone(&tool_set.code_mode_nesting),
+                Arc::clone(&tool_set.exposure),
+            )));
+        tool_set
+            .tools
+            .push(Arc::new(super::code_mode::ToolSearchTool::new(Arc::clone(
+                &tool_set.exposure,
+            ))));
         tool_set.exposure.reindex_all(&tool_set.tools);
 
         tool_set
@@ -413,7 +427,12 @@ impl AppToolSet {
         &self.mcp_report
     }
 
+    /// Full executable tool list for a runtime build.
+    ///
+    /// Also syncs `codemode` siblings, so nested `call_tool` sees exactly the
+    /// tools of the runtime built from this list, however `self.tools` changed.
     pub fn tools(&self) -> &[Arc<dyn Tool>] {
+        self.code_mode_nesting.set_tools(&self.tools);
         &self.tools
     }
 

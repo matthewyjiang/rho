@@ -3,7 +3,6 @@
 //! Nested approvals pause the script via shared ToolHost session approvals — see
 //! [`super::bridge`] and `docs/design/code-mode-starlark-v0.md`.
 
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use rho_sdk::model::ToolSpec;
@@ -13,43 +12,31 @@ use rho_sdk::tool::{
 use serde_json::json;
 
 use super::bridge::{GuardedBridge, ToolHostBridge, CODEMODE_TOOL_NAME};
-use super::engine::{evaluate_code_mode, format_engine_output, EngineLimits};
+use super::engine::{evaluate_code_mode_with_exposure, format_engine_output, EngineLimits};
+use super::exposure::ExposureController;
+use super::nesting::{CodeModeNesting, DEFAULT_MAX_NESTED_CALLS};
 
 /// Starlark code-mode tool (`codemode`).
 ///
 /// TODOs toward ship (not all required for this prototype PR):
-/// - wire shared ApprovalSession when registering into a live run
-/// - tool search / deferred (see [`super::search`])
 /// - `/codemode on|yolo|off` toggle + config lock
 /// - planner-aware parallel (after sequential v0)
-/// - default coding-tool registry entry + TUI nested cards
+/// - TUI nested cards for in-script tool calls
 pub struct CodeModeTool {
-    bridge: Arc<GuardedBridge>,
+    nesting: Arc<CodeModeNesting>,
+    exposure: Arc<ExposureController>,
     limits: EngineLimits,
 }
 
 impl CodeModeTool {
-    /// Build against a live [`rho_sdk::ToolHost`].
-    ///
-    /// The host **must** share the parent session approval handler/session so
-    /// nested gated tools pause the script under the same yolo/auto/bypass
-    /// knobs as a direct call (no double-prompt).
-    #[allow(dead_code)]
-    pub fn with_tool_host(
-        host: Arc<rho_sdk::ToolHost>,
-        allowlist: Option<BTreeSet<String>>,
-        max_nested_calls: usize,
-    ) -> Self {
-        let inner = Arc::new(ToolHostBridge::new(host));
+    /// Live constructor: `nesting` supplies sibling tools; each call builds a
+    /// child ToolHost that inherits the parent call's authorization.
+    pub fn new(nesting: Arc<CodeModeNesting>, exposure: Arc<ExposureController>) -> Self {
         Self {
-            bridge: Arc::new(GuardedBridge::new(inner, allowlist, max_nested_calls)),
+            nesting,
+            exposure,
             limits: EngineLimits::default(),
         }
-    }
-
-    /// Test / custom bridge constructor.
-    pub fn with_bridge(bridge: Arc<GuardedBridge>, limits: EngineLimits) -> Self {
-        Self { bridge, limits }
     }
 }
 
@@ -58,7 +45,8 @@ impl Tool for CodeModeTool {
         ToolSpec {
             name: CODEMODE_TOOL_NAME.into(),
             description: "Run a Starlark script that composes ToolHost tools (native and MCP) \
-via sequential call_tool(name, args). Only the script's distilled result returns to the model; \
+via sequential call_tool(name, args). Use search_tools/list_tools inside the script to discover \
+MCP tools (default exposure: codemode). Only the script's distilled result returns to the model; \
 nested tool payloads stay on the host/TUI path. Gated nested tools pause this script until \
 the same session approval knobs as a direct call resolve (approve → continue, deny → error)."
                 .into(),
@@ -68,7 +56,7 @@ the same session approval knobs as a direct call resolve (approve → continue, 
                     "script": {
                         "type": "string",
                         "description": "Starlark body. Use call_tool(name, args) for nested tools \
-(including MCP), sequentially. Assign `result = ...` for the distilled return. print() is captured."
+            (including MCP), sequentially. Assign `result = ...` for the distilled return. print() is captured."
                     }
                 },
                 "required": ["script"]
@@ -82,7 +70,8 @@ the same session approval knobs as a direct call resolve (approve → continue, 
             .get("script")
             .and_then(|value| value.as_str())
             .map(str::to_owned);
-        let bridge = Arc::clone(&self.bridge);
+        let nesting = Arc::clone(&self.nesting);
+        let exposure = Arc::clone(&self.exposure);
         let limits = self.limits.clone();
         Box::pin(async move {
             if context.cancellation().is_cancelled() {
@@ -91,11 +80,20 @@ the same session approval knobs as a direct call resolve (approve → continue, 
             let script = script.ok_or_else(|| {
                 ToolError::new(ToolErrorKind::InvalidArguments, "missing script argument")
             })?;
+
+            let host = nesting.build_host(&context)?;
+            let bridge = Arc::new(GuardedBridge::with_exposure(
+                Arc::new(ToolHostBridge::new(Arc::new(host))),
+                None,
+                DEFAULT_MAX_NESTED_CALLS,
+                Some(Arc::clone(&exposure)),
+            ));
+
             // Starlark is sync; nested ToolHost::invoke (incl. approval waits)
             // runs under block_in_place on this async tool call — outer codemode
             // stays the in-flight agent turn until the script finishes or errors.
             let output = tokio::task::block_in_place(|| {
-                evaluate_code_mode(&script, bridge, limits)
+                evaluate_code_mode_with_exposure(&script, bridge, limits, Some(exposure))
             })
             .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
             Ok(ToolOutput::text(format_engine_output(&output)))

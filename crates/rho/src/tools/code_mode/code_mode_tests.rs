@@ -3,12 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use pretty_assertions::assert_eq;
-use rho_sdk::tool::{Tool, ToolOutput};
+use rho_sdk::tool::ToolOutput;
 use serde_json::{json, Value};
 
 use super::bridge::{BridgeError, CodeModeBridge, GuardedBridge, CODEMODE_TOOL_NAME};
 use super::engine::{evaluate_code_mode, format_engine_output, EngineLimits, EngineOutput};
-use super::tool::CodeModeTool;
 
 struct StubBridge {
     calls: Mutex<Vec<(String, Value)>>,
@@ -50,10 +49,7 @@ async fn script_can_call_native_and_mcp_named_tools() {
     let mut responses = BTreeMap::new();
     responses.insert("read_file".into(), "file-bytes".into());
     responses.insert("mcp_demo__search".into(), r#"{"hits":2}"#.into());
-    let allow = BTreeSet::from([
-        "read_file".to_owned(),
-        "mcp_demo__search".to_owned(),
-    ]);
+    let allow = BTreeSet::from(["read_file".to_owned(), "mcp_demo__search".to_owned()]);
     let bridge = guarded(responses, Some(allow));
     let script = r#"
 native = call_tool("read_file", {"path": "README.md"})
@@ -104,10 +100,7 @@ async fn refuse_recursive_codemode() {
 }
 
 #[test]
-fn tool_spec_and_format_smoke() {
-    let bridge = guarded(BTreeMap::new(), None);
-    let tool = CodeModeTool::with_bridge(bridge, EngineLimits::default());
-    assert_eq!(tool.spec().name, CODEMODE_TOOL_NAME);
+fn format_engine_output_includes_return_value() {
     let formatted = format_engine_output(&EngineOutput {
         return_value: json!("pong"),
         prints: vec![],
@@ -116,11 +109,10 @@ fn tool_spec_and_format_smoke() {
     assert!(formatted.contains("pong"), "{formatted}");
 }
 
-
 #[tokio::test(flavor = "multi_thread")]
 async fn script_search_tools_finds_mcp_and_call_tool() {
-    use super::exposure::ExposureController;
     use super::engine::evaluate_code_mode_with_exposure;
+    use super::exposure::ExposureController;
 
     let mut responses = BTreeMap::new();
     responses.insert("mcp__github__create_issue".into(), "created".into());
@@ -151,14 +143,17 @@ result = {"found": hits[0]["name"], "content": out["content"]}
         )
     })
     .expect("evaluate");
-    assert_eq!(output.return_value["found"], json!("mcp__github__create_issue"));
+    assert_eq!(
+        output.return_value["found"],
+        json!("mcp__github__create_issue")
+    );
     assert_eq!(output.return_value["content"], json!("created"));
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn hidden_tool_unreachable_from_script() {
-    use super::exposure::{ExposureController, ExposurePolicy, ToolExposure};
     use super::engine::evaluate_code_mode_with_exposure;
+    use super::exposure::{ExposureController, ExposurePolicy, ToolExposure};
 
     let policy = ExposurePolicy::new().override_exact("secret", ToolExposure::Hidden);
     let exposure = Arc::new(ExposureController::new(policy));
@@ -181,8 +176,5 @@ async fn hidden_tool_unreachable_from_script() {
         )
     })
     .expect_err("hidden");
-    assert!(
-        err.to_string().contains("hidden"),
-        "unexpected: {err}"
-    );
+    assert!(err.to_string().contains("hidden"), "unexpected: {err}");
 }

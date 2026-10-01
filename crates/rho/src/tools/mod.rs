@@ -7,8 +7,8 @@ pub(crate) use crate::app::subagent_manager::RAIL_TERMINAL_RETENTION;
 pub mod advisor;
 pub mod agent;
 mod agent_output;
-mod coding;
 pub(crate) mod code_mode;
+mod coding;
 pub(crate) mod computer_use;
 pub(crate) mod mcp;
 mod notification_format;
@@ -43,7 +43,7 @@ pub(crate) fn canonical_tool_names() -> &'static [&'static str] {
             "bash",
             "computer",
             "codemode",
-                        "fetch_content",
+            "fetch_content",
             "get_search_content",
             "glob",
             "grep",

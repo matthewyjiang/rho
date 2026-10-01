@@ -85,8 +85,7 @@ impl ExposurePolicy {
     }
 
     pub fn override_exact(mut self, name: impl Into<String>, exposure: ToolExposure) -> Self {
-        self.overrides
-            .push(ExposureOverride::exact(name, exposure));
+        self.overrides.push(ExposureOverride::exact(name, exposure));
         self
     }
 

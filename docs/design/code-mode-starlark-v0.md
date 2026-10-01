@@ -22,7 +22,7 @@ Pi 0.99 / Earendil (MCP + composition):
 
 Rho grounding:
 
-- `crates/rho-sdk/src/tool_host.rs` — policy + approvals seam (`ApprovalHandler` / `approval_session`)
+- `crates/rho-sdk/src/tool_host.rs` — policy + approvals seam (`ToolHost::child_builder` for nested hosts)
 - `crates/rho/src/workflow/starlark*.rs` — existing Starlark evaluator
 - Workflow command nodes via ToolHost — closest in-tree pattern for tool-calling-tools
 
@@ -94,7 +94,7 @@ Mode mapping (future `/codemode` toggle):
 
 
 
-Implementation seam: nested calls go through `ToolHost::invoke` on a host that **shares** the session `ApprovalHandler` / `ApprovalSession` with the parent run (`ToolHostBuilder::approval_session` / `approval_handler_shared`). That is the reuse path — not a new nested-only approver.
+Implementation seam: each `codemode` call builds a child host with `ToolHost::child_builder(&context)`, which inherits the parent call's workspace, workspace policy, hook gate/observer, session id, and approval session (handler, exact-request memory, audit). Nested calls go through `ToolHost::invoke` on that child. That is the reuse path — not a new nested-only approver, and no policy snapshot that could drift from the running mode.
 
 ---
 
@@ -181,7 +181,7 @@ Optional later: **tool search / deferred** feeds which names/schemas the model (
 
 ```text
 call_tool("write", ...) 
-  → ToolHost::invoke (same ApprovalSession as parent)
+  → ToolHost::invoke (child host: same policy, hooks, ApprovalSession as parent)
   → if gated: block Starlark thread until Allow*/Deny (or cancel/timeout)
   → Deny → BridgeError into script
   → Allow → ToolOutput back into script

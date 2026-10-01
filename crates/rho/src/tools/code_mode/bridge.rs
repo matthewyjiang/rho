@@ -5,10 +5,9 @@
 //!
 //! # Nested approvals (locked model)
 //!
-//! Production hosts must build [`ToolHostBridge`] from a [`ToolHost`] that
-//! **shares** the parent run's [`rho_sdk::ApprovalHandler`] /
-//! [`rho_sdk::ApprovalSession`] (`ToolHostBuilder::approval_handler_shared` or
-//! `approval_session`). Then:
+//! Production hosts build [`ToolHostBridge`] from a child [`ToolHost`] made with
+//! [`ToolHost::child_builder`] (see [`super::nesting`]), which inherits the
+//! parent call's workspace policy, hook gate, and approval session. Then:
 //!
 //! - A gated nested `call_tool` **blocks** inside `ToolHost::invoke` until the
 //!   session handler returns Allow*/Deny (or the run is cancelled / times out).
@@ -70,6 +69,7 @@ impl GuardedBridge {
     /// `allowlist = None` means all ToolHost-registered names are eligible
     /// (still subject to ToolHost policy). `Some(...)` is a loud v0 gate for
     /// tests / gradual rollout; include MCP tool names the same way as native.
+    #[cfg(test)]
     pub fn new(
         inner: Arc<dyn CodeModeBridge>,
         allowlist: Option<BTreeSet<String>>,
@@ -140,16 +140,14 @@ impl GuardedBridge {
 /// Production bridge: every nested call is `ToolHost::invoke`
 /// (MCP tools included when registered on the host).
 ///
-/// Construct the host with the **parent session's** approval handler/session so
-/// nested gating reuses yolo/auto/bypass/allowlist without a second prompt.
-#[allow(dead_code)]
+/// Build the host with [`ToolHost::child_builder`] so nested gating reuses the
+/// parent's policy, hooks, and approvals without a second prompt.
 pub struct ToolHostBridge {
     host: Arc<ToolHost>,
 }
 
 impl ToolHostBridge {
-    /// `host` should already carry the shared session approval wiring.
-    #[allow(dead_code)]
+    /// `host` should already carry the parent call's authorization.
     pub fn new(host: Arc<ToolHost>) -> Self {
         Self { host }
     }

@@ -82,6 +82,7 @@ impl PrintHandler for StatePrint {
 }
 
 /// Evaluate a Starlark code-mode body on the current Tokio runtime.
+#[cfg(test)]
 pub fn evaluate_code_mode(
     source: &str,
     bridge: Arc<GuardedBridge>,
@@ -171,8 +172,8 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
         } else {
             starlark_to_json(args).map_err(|error| anyhow::Error::msg(error.to_string()))?
         };
-        let output =
-            invoke_blocking(name, arguments).map_err(|error| anyhow::Error::msg(error.to_string()))?;
+        let output = invoke_blocking(name, arguments)
+            .map_err(|error| anyhow::Error::msg(error.to_string()))?;
         let payload = tool_output_to_json(&output);
         let heap = eval.heap();
         Ok(json_to_starlark(heap, &payload))
@@ -224,9 +225,9 @@ fn discovery_search(
     query: &str,
     limit: usize,
 ) -> Result<Vec<super::exposure::ToolCatalogEntry>, EngineError> {
-    let state = GUEST.with(|slot| slot.borrow().clone()).ok_or_else(|| {
-        EngineError::Message("internal: missing codemode guest state".into())
-    })?;
+    let state = GUEST
+        .with(|slot| slot.borrow().clone())
+        .ok_or_else(|| EngineError::Message("internal: missing codemode guest state".into()))?;
     let Some(exposure) = state.exposure.as_ref() else {
         return Ok(Vec::new());
     };
@@ -234,9 +235,9 @@ fn discovery_search(
 }
 
 fn discovery_list(limit: usize) -> Result<Vec<super::exposure::ToolCatalogEntry>, EngineError> {
-    let state = GUEST.with(|slot| slot.borrow().clone()).ok_or_else(|| {
-        EngineError::Message("internal: missing codemode guest state".into())
-    })?;
+    let state = GUEST
+        .with(|slot| slot.borrow().clone())
+        .ok_or_else(|| EngineError::Message("internal: missing codemode guest state".into()))?;
     let Some(exposure) = state.exposure.as_ref() else {
         return Ok(Vec::new());
     };
@@ -244,9 +245,9 @@ fn discovery_list(limit: usize) -> Result<Vec<super::exposure::ToolCatalogEntry>
 }
 
 fn invoke_blocking(name: &str, arguments: JsonValue) -> Result<ToolOutput, EngineError> {
-    let state = GUEST.with(|slot| slot.borrow().clone()).ok_or_else(|| {
-        EngineError::Message("internal: missing codemode guest state".into())
-    })?;
+    let state = GUEST
+        .with(|slot| slot.borrow().clone())
+        .ok_or_else(|| EngineError::Message("internal: missing codemode guest state".into()))?;
     let bridge = Arc::clone(&state.bridge);
     let name = name.to_owned();
     let output = tokio::task::block_in_place(|| {
@@ -281,13 +282,13 @@ fn json_to_starlark<'v>(heap: Heap<'v>, value: &JsonValue) -> Value<'v> {
             }
         }
         JsonValue::String(text) => heap.alloc(text.as_str()),
-        JsonValue::Array(items) => {
-            heap.alloc(AllocList(items.iter().map(|item| json_to_starlark(heap, item))))
-        }
-        JsonValue::Object(map) => heap.alloc(AllocDict(
-            map.iter()
-                .map(|(key, item)| (heap.alloc(key.as_str()), json_to_starlark(heap, item))),
+        JsonValue::Array(items) => heap.alloc(AllocList(
+            items.iter().map(|item| json_to_starlark(heap, item)),
         )),
+        JsonValue::Object(map) => heap
+            .alloc(AllocDict(map.iter().map(|(key, item)| {
+                (heap.alloc(key.as_str()), json_to_starlark(heap, item))
+            }))),
     }
 }
 
@@ -304,10 +305,7 @@ pub fn format_engine_output(output: &EngineOutput) -> String {
         );
     }
     if parts.is_empty() {
-        format!(
-            "(no output; {} nested tool call(s))",
-            output.nested_calls
-        )
+        format!("(no output; {} nested tool call(s))", output.nested_calls)
     } else {
         parts.join("\n\n")
     }
