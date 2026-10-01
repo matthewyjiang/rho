@@ -206,6 +206,14 @@ struct ExposureInner {
     /// Deferred tools promoted into the active direct set for subsequent model turns.
     promoted: BTreeSet<String>,
     catalog: BTreeMap<String, ToolCatalogEntry>,
+    /// Pi `codemode.mode`. `Only` hides policy-`direct` tools (except the
+    /// orchestration tools) so the model composes through `codemode`.
+    mode: crate::config::CodemodeMode,
+}
+
+/// Model-only orchestration tools: always declared, never hidden by `only`.
+fn is_orchestration_tool(name: &str) -> bool {
+    name == super::CODEMODE_TOOL_NAME || name == super::TOOL_SEARCH_NAME
 }
 
 impl ExposureController {
@@ -215,6 +223,7 @@ impl ExposureController {
                 policy,
                 promoted: BTreeSet::new(),
                 catalog: BTreeMap::new(),
+                mode: crate::config::CodemodeMode::default(),
             }),
         }
     }
@@ -274,8 +283,32 @@ impl ExposureController {
         effective_locked(&inner, name)
     }
 
+    /// Single advertisement predicate for prompt specs and provider requests.
+    ///
+    /// Matches Pi: `on` declares every `direct` tool next to `codemode`;
+    /// `only` leaves policy-`direct` tools out of requests (scripts still call
+    /// them). Promoted `deferred` tools stay declared in both modes, as in Pi,
+    /// since their exposure is `deferred`, not `direct`.
     pub fn is_model_facing(&self, name: &str) -> bool {
-        self.effective(name) == ToolExposure::Direct
+        let inner = self.inner.lock().expect("exposure");
+        if effective_locked(&inner, name) != ToolExposure::Direct {
+            return false;
+        }
+        match inner.mode {
+            crate::config::CodemodeMode::On => true,
+            crate::config::CodemodeMode::Only => {
+                is_orchestration_tool(name) || inner.policy.resolve(name) != ToolExposure::Direct
+            }
+        }
+    }
+
+    pub fn mode(&self) -> crate::config::CodemodeMode {
+        self.inner.lock().expect("exposure").mode
+    }
+
+    /// Sets Pi's `codemode.mode`; takes effect on the next model request.
+    pub fn set_mode(&self, mode: crate::config::CodemodeMode) {
+        self.inner.lock().expect("exposure").mode = mode;
     }
 
     /// Scripts may call anything except `hidden`.

@@ -233,7 +233,19 @@ Pinned values stay fixed across provider changes. From `/config`, the change app
 
 `advisor_mode` controls whether the advisor tool is available. It defaults to `false`. See [Advisor mode](/configuration/advisor-mode).
 
-`codemode` controls whether the `codemode` composition tool is offered. It defaults to `true` and is set by `/codemode on|off`. Nested tool calls inside a script follow `permission_mode` exactly like direct calls; there is no separate codemode permission level.
+## Codemode
+
+The `codemode` tool composes other tools, including MCP tools, in a Starlark script. It is always available. `[codemode] mode` matches Pi's `codemode.mode` and controls how the other tools are presented:
+
+```toml
+[codemode]
+mode = "on" # or "only"
+```
+
+- `on` (default): direct tools such as `read_file`, `write`, and `bash` stay declared next to `codemode`, and the model may use either. The `codemode` description suggests it for multi-step work, MCP tools, and filtering large output.
+- `only`: direct tools are not declared to the model. Scripts reach them with `call_tool`, so all work goes through `codemode`. `codemode` and `tool_search` stay declared.
+
+`/codemode on|only` changes the mode for the next model request and saves it. Neither mode is a permission level: nested calls follow `permission_mode` exactly like direct calls. MCP exposure (codemode-only by default, found with `tool_search`) is separate from this mode.
 
 ## RTK
 

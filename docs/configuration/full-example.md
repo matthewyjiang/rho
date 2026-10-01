@@ -93,9 +93,11 @@ base_url = "http://127.0.0.1:8787/v1"
 # catalog_mode = "model-id" # look up unsplit slug/model ids in models.dev
 # edit_tool = "apply_patch" # auto preference: hashline, apply_patch, or str_replace
 
+[codemode]
+mode = "on" # "on": natives and codemode both declared; "only": natives reached through codemode
+
 [behavior]
 advisor_mode = false
-codemode = true
 check_for_updates = true
 enable_subagents = true
 agent_concurrency = 10

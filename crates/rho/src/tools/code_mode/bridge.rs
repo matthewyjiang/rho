@@ -30,7 +30,7 @@ use rho_sdk::{Error as SdkError, ToolHost, ToolHostCall, ToolHostEvent, ToolHost
 use serde_json::Value;
 use thiserror::Error;
 
-/// Model-facing tool name (also the `/codemode on|off` command name).
+/// Model-facing tool name (also the `/codemode on|only` command name).
 pub const CODEMODE_TOOL_NAME: &str = "codemode";
 
 /// Errors from the code-mode host bridge (loud, actionable).

@@ -43,7 +43,9 @@ impl Tool for CodeModeTool {
         ToolSpec {
             name: CODEMODE_TOOL_NAME.into(),
             description: "Run a Starlark script that composes ToolHost tools (native and MCP) \
-via sequential call_tool(name, args). Use search_tools/list_tools inside the script to discover \
+via sequential call_tool(name, args). Prefer it over many separate calls for multi-step work, \
+MCP tools, or filtering large output; call a declared tool directly for a single step. \
+Use search_tools/list_tools inside the script to discover \
 MCP tools (default exposure: codemode). Only the script's distilled result returns to the model; \
 nested tool payloads stay on the host/TUI path. Nested calls follow the session permission mode \
 exactly like direct calls; a gated call pauses this script until approved (deny → error)."

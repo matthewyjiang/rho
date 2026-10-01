@@ -196,12 +196,12 @@ const CODEMODE_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
     CommandArgumentChoice {
         completion: "/codemode on",
         usage: "/codemode on",
-        description: "offer the codemode composition tool",
+        description: "declare direct tools next to codemode; use either",
     },
     CommandArgumentChoice {
-        completion: "/codemode off",
-        usage: "/codemode off",
-        description: "remove the codemode composition tool",
+        completion: "/codemode only",
+        usage: "/codemode only",
+        description: "hide direct tools; compose through codemode",
     },
 ];
 
@@ -269,7 +269,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Codemode,
         name: "codemode",
-        usage: "/codemode [on|off]",
+        usage: "/codemode [on|only]",
         description: "compose tools in a Starlark script; nested calls follow /permissions",
         argument_choices: CODEMODE_ARGUMENT_CHOICES,
     },

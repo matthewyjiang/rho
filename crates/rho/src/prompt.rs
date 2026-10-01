@@ -356,26 +356,25 @@ Follow the live tool list.\n"
     (model, display)
 }
 
-/// Model and display text when `/codemode on` registers the `codemode` tool.
-pub(crate) fn codemode_enabled_context(spec: &ToolSpec) -> (String, String) {
+/// Model and display text for a `/codemode on|only` change.
+pub(crate) fn codemode_mode_context(mode: crate::config::CodemodeMode) -> (String, String) {
+    use crate::config::CodemodeMode;
+    let body = match mode {
+        CodemodeMode::On => {
+            "Direct tools are declared again next to `codemode`. Call them directly for \
+single steps; prefer `codemode` for multi-step work, MCP tools, or filtering large output."
+        }
+        CodemodeMode::Only => {
+            "Direct tools are no longer declared. Reach them with `call_tool` inside a \
+`codemode` script; use `list_tools()` or `search_tools()` in the script to find them."
+        }
+    };
+    let label = mode.as_str();
     let model = format!(
-        "[codemode on]\n\n\
-The `codemode` tool is now available. Nested `call_tool` calls follow the \
-current permission mode exactly like direct tool calls.\n\n\
-{}\n",
-        tool_schema_block(spec),
+        "[codemode {label}]\n\n{body} Nested calls follow the current permission mode \
+exactly like direct tool calls. Follow the live tool list.\n"
     );
-    (model, "codemode on".into())
-}
-
-/// Model and display text when `/codemode off` removes the `codemode` tool.
-pub fn codemode_disabled_context() -> (String, String) {
-    let model = "\
-[codemode off]\n\n\
-The `codemode` tool is no longer available. Do not call `codemode`. \
-Follow the live tool list.\n"
-        .into();
-    (model, "codemode off".into())
+    (model, format!("codemode {label}"))
 }
 
 /// Model and display text for a mid-session edit-tool switch.

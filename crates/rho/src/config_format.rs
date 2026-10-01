@@ -39,6 +39,8 @@ pub enum EffectiveModelSource {
 struct GroupedConfig<'a> {
     #[serde(skip_serializing_if = "super::QuestionnaireConfig::is_disabled")]
     questionnaire: &'a super::QuestionnaireConfig,
+    #[serde(skip_serializing_if = "super::CodemodeConfig::is_default")]
+    codemode: &'a super::CodemodeConfig,
     model: ModelConfig<'a>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     internal_agents: BTreeMap<&'a str, PersistedInternalAgentModelConfig<'a>>,
@@ -217,7 +219,6 @@ struct BehaviorConfig<'a> {
     enable_subagents: bool,
     agent_concurrency: usize,
     advisor_mode: bool,
-    codemode: bool,
     experimental_workspace_rewind: bool,
     edit_tool: EditTool,
     permission_mode: PermissionMode,
@@ -231,6 +232,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
     fn from(config: &'a Config) -> Self {
         Self {
             questionnaire: &config.questionnaire,
+            codemode: &config.codemode,
             model: ModelConfig {
                 provider: &config.provider,
                 model: persisted_model_reference(config.current_model_alias(), &config.model),
@@ -297,7 +299,6 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
                 enable_subagents: config.enable_subagents,
                 agent_concurrency: config.agent_concurrency,
                 advisor_mode: config.advisor_mode,
-                codemode: config.codemode,
                 experimental_workspace_rewind: config.experimental_workspace_rewind,
                 edit_tool: config.edit_tool,
                 permission_mode: config.permission_mode,

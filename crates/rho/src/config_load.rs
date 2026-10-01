@@ -85,6 +85,9 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
     if let Some(group) = file.questionnaire {
         cfg.questionnaire = group;
     }
+    if let Some(group) = file.codemode {
+        cfg.codemode = group;
+    }
     if let Some(group) = file.display {
         if let Some(value) = group.show_reasoning_output {
             cfg.show_reasoning_output = value;
@@ -210,9 +213,6 @@ pub(super) fn parse_settings(text: &str) -> anyhow::Result<(Config, Vec<ConfigWa
         if let Some(value) = group.advisor_mode {
             cfg.advisor_mode = value;
         }
-        if let Some(value) = group.codemode {
-            cfg.codemode = value;
-        }
         if let Some(value) = group.experimental_workspace_rewind {
             cfg.experimental_workspace_rewind = value;
         }
@@ -275,6 +275,7 @@ fn non_empty_secret(secret: String) -> Option<String> {
 #[serde(deny_unknown_fields)]
 struct PartialConfig {
     questionnaire: Option<super::QuestionnaireConfig>,
+    codemode: Option<super::CodemodeConfig>,
     provider: Option<String>,
     model: Option<ModelSetting>,
     max_output_bytes: Option<usize>,
@@ -406,7 +407,6 @@ impl PartialConfig {
                 enable_subagents: None,
                 agent_concurrency: None,
                 advisor_mode: None,
-                codemode: None,
                 experimental_workspace_rewind: None,
                 permission_mode: None,
                 edit_tool: None,
@@ -419,7 +419,6 @@ impl PartialConfig {
                 enable_subagents: group.enable_subagents.or(enable_subagents),
                 agent_concurrency: group.agent_concurrency,
                 advisor_mode: group.advisor_mode,
-                codemode: group.codemode,
                 experimental_workspace_rewind: group.experimental_workspace_rewind,
                 permission_mode: group.permission_mode.or(permission_mode),
                 edit_tool: group.edit_tool,
@@ -688,7 +687,6 @@ struct PartialBehaviorConfig {
     enable_subagents: Option<bool>,
     agent_concurrency: Option<usize>,
     advisor_mode: Option<bool>,
-    codemode: Option<bool>,
     experimental_workspace_rewind: Option<bool>,
     #[serde(default)]
     permission_mode: Option<PermissionMode>,

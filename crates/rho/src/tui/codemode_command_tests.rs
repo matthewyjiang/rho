@@ -8,24 +8,21 @@ use crate::{
 
 #[derive(Default)]
 struct FakeRuntime {
-    enabled: bool,
-    /// Each `set_codemode` argument, in order.
-    calls: Vec<bool>,
+    mode: CodemodeMode,
+    /// Each `set_codemode_mode` argument, in order.
+    calls: Vec<CodemodeMode>,
 }
 
 impl CodemodeRuntime for FakeRuntime {
-    fn codemode_enabled(&self) -> bool {
-        self.enabled
+    fn codemode_mode(&self) -> CodemodeMode {
+        self.mode
     }
 
-    fn set_codemode(
-        &mut self,
-        enabled: bool,
-    ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send {
-        self.calls.push(enabled);
-        let changed = self.enabled != enabled;
-        self.enabled = enabled;
-        std::future::ready(Ok(changed.then(|| format!("codemode {enabled}"))))
+    fn set_codemode_mode(&mut self, mode: CodemodeMode) -> anyhow::Result<Option<String>> {
+        self.calls.push(mode);
+        let changed = self.mode != mode;
+        self.mode = mode;
+        Ok(changed.then(|| format!("codemode {}", mode.as_str())))
     }
 
     fn tool_specs(&self) -> Vec<rho_sdk::model::ToolSpec> {
@@ -37,61 +34,75 @@ fn invocation(command: &str) -> CommandInvocation {
     parse_command(command).unwrap().unwrap()
 }
 
-// Covers: /codemode toggles and on/off reach the runtime and persist; a bad
-// argument (including the removed `yolo`) changes nothing.
+// Covers: /codemode on|only reach the runtime and persist as codemode.mode;
+// bare /codemode only reports; unknown modes (old `off`, Pi-less `yolo`)
+// change nothing.
 // Owner: /codemode command
-#[tokio::test]
-async fn codemode_command_applies_and_persists_requested_state() {
+#[test]
+fn codemode_command_applies_and_persists_requested_mode() {
+    use CodemodeMode::{On, Only};
     struct Case {
         command: &'static str,
-        initially: bool,
-        calls: Vec<bool>,
-        saved: bool,
+        initially: CodemodeMode,
+        calls: Vec<CodemodeMode>,
+        saved: CodemodeMode,
     }
     let cases = [
         Case {
-            command: "/codemode off",
-            initially: true,
-            calls: vec![false],
-            saved: false,
+            command: "/codemode only",
+            initially: On,
+            calls: vec![Only],
+            saved: Only,
         },
         Case {
             command: "/codemode on",
-            initially: false,
-            calls: vec![true],
-            saved: true,
+            initially: Only,
+            calls: vec![On],
+            saved: On,
         },
         Case {
             command: "/codemode",
-            initially: true,
-            calls: vec![false],
-            saved: false,
+            initially: Only,
+            calls: vec![],
+            saved: On,
         },
         Case {
-            command: "/codemode on",
-            initially: true,
+            command: "/codemode only",
+            initially: Only,
             calls: vec![],
-            saved: true,
+            saved: On,
+        },
+        Case {
+            command: "/codemode off",
+            initially: On,
+            calls: vec![],
+            saved: On,
         },
         Case {
             command: "/codemode yolo",
-            initially: false,
+            initially: On,
             calls: vec![],
-            saved: true,
+            saved: On,
         },
     ];
     for case in cases {
         let mut app = test_app();
         let mut runtime = FakeRuntime {
-            enabled: case.initially,
+            mode: case.initially,
             calls: Vec::new(),
         };
 
-        app.execute_codemode_command_with_runtime(invocation(case.command), &mut runtime)
-            .await
+        app.execute_codemode_command(invocation(case.command), &mut runtime)
             .unwrap();
 
-        let saved = app.info.services.config_repository.load().unwrap().codemode;
+        let saved = app
+            .info
+            .services
+            .config_repository
+            .load()
+            .unwrap()
+            .codemode
+            .mode;
         assert_eq!(
             (runtime.calls, saved),
             (case.calls, case.saved),
@@ -101,22 +112,21 @@ async fn codemode_command_applies_and_persists_requested_state() {
     }
 }
 
-// Covers: a failed config save must not leave the runtime in the new state.
+// Covers: a failed config save must not leave the runtime in the new mode.
 // Owner: /codemode command
-#[tokio::test]
-async fn failed_config_save_rolls_back_codemode() {
+#[test]
+fn failed_config_save_rolls_back_codemode() {
     let directory = tempdir().unwrap();
     let mut app = test_app();
     app.info.services.config_repository =
         ConfigRepository::new(Some(directory.path().to_path_buf()));
-    let mut runtime = FakeRuntime {
-        enabled: true,
-        calls: Vec::new(),
-    };
+    let mut runtime = FakeRuntime::default();
 
-    app.execute_codemode_command_with_runtime(invocation("/codemode off"), &mut runtime)
-        .await
+    app.execute_codemode_command(invocation("/codemode only"), &mut runtime)
         .unwrap();
 
-    assert_eq!((runtime.enabled, runtime.calls), (true, vec![false, true]));
+    assert_eq!(
+        (runtime.mode, runtime.calls),
+        (CodemodeMode::On, vec![CodemodeMode::Only, CodemodeMode::On])
+    );
 }

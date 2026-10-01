@@ -53,6 +53,42 @@ fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> ScriptedTurn
     )]))
 }
 
+fn runtime_for(
+    config: &Config,
+    tools: &AppToolSet,
+    provider: &ScriptedProvider,
+    workspace: Workspace,
+) -> rho_sdk::Rho {
+    let shared: Arc<dyn ModelProvider> = Arc::new(provider.clone());
+    build_runtime(RuntimeBuildOptions {
+        provider: shared,
+        tools: tools.tools(),
+        tool_visibility: tools.tool_visibility(),
+        workspace,
+        workspace_policy: AppPolicy::for_mode(PermissionMode::Bypass, Default::default()),
+        approval_session: None,
+        system_prompt: SystemPrompt::None,
+        reasoning: rho_sdk::ReasoningLevel::Off,
+        service_tier: None,
+        compaction: CompactionConfig::from(config),
+        context_window: None,
+        usage_purpose: "agent",
+        usage_parent_session_id: None,
+        usage_recording: Default::default(),
+        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+        hooks: None,
+        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+        recall: None,
+    })
+    .unwrap()
+}
+
+fn text_turn() -> ScriptedTurn {
+    ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+        "done".into(),
+    )]))
+}
+
 // Covers: the provider tool list follows exposure per request — MCP tools
 // default to codemode-only (absent), hidden tools stay absent, natives stay
 // direct, and a tool_search promotion is advertised on the next request of
@@ -86,28 +122,12 @@ async fn provider_tool_list_follows_exposure_and_promotion() {
             )])),
         ],
     );
-    let shared: Arc<dyn ModelProvider> = Arc::new(provider.clone());
-    let runtime = build_runtime(RuntimeBuildOptions {
-        provider: shared,
-        tools: tools.tools(),
-        tool_visibility: tools.tool_visibility(),
-        workspace: Workspace::new(std::env::current_dir().unwrap()).unwrap(),
-        workspace_policy: AppPolicy::for_mode(PermissionMode::Auto, Default::default()),
-        approval_session: None,
-        system_prompt: SystemPrompt::None,
-        reasoning: rho_sdk::ReasoningLevel::Off,
-        service_tier: None,
-        compaction: CompactionConfig::from(&config),
-        context_window: None,
-        usage_purpose: "agent",
-        usage_parent_session_id: None,
-        usage_recording: Default::default(),
-        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-        hooks: None,
-        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
-        recall: None,
-    })
-    .unwrap();
+    let runtime = runtime_for(
+        &config,
+        &tools,
+        &provider,
+        Workspace::new(std::env::current_dir().unwrap()).unwrap(),
+    );
     let session = runtime.session(SessionOptions::default()).await.unwrap();
 
     let outcome = session.complete("make the report").await.unwrap();
@@ -159,4 +179,113 @@ async fn provider_tool_list_follows_exposure_and_promotion() {
         message,
         rho_sdk::model::Message::ToolResult(result) if result.ok && result.content == "rare_report ran"
     )));
+}
+
+// Covers: Pi `codemode.mode` at the provider boundary. `on` declares natives
+// next to codemode; `only` hides policy-direct natives while codemode and
+// tool_search stay declared, and an already-promoted deferred tool stays
+// declared (its exposure is deferred, not direct). Switching back restores.
+// MCP stays codemode-only in both modes.
+// Owner: app exposure + SDK per-request visibility.
+#[tokio::test]
+async fn codemode_mode_selects_provider_tool_list() {
+    use crate::config::CodemodeMode::{On, Only};
+    let watched = [
+        CODEMODE_TOOL_NAME,
+        TOOL_SEARCH_NAME,
+        "read_file",
+        "write",
+        "bash",
+        "mcp__docs__lookup",
+        "rare_report",
+    ];
+    let config = Config::default();
+    let mut tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default(),
+    );
+    tools.add_bundle(FixtureBundle(vec![
+        tool("mcp__docs__lookup", "look up documentation pages"),
+        tool("rare_report", "generate the quarterly widget report"),
+    ]));
+    tools.set_exposure_policy(
+        ExposurePolicy::new().override_exact("rare_report", ToolExposure::Deferred),
+    );
+    assert!(tools.exposure().promote("rare_report"));
+
+    let cases = [
+        (On, [true, true, true, true, true, false, true]),
+        (Only, [true, true, false, false, false, false, true]),
+        (On, [true, true, true, true, true, false, true]),
+    ];
+    let mut observed = Vec::new();
+    for (mode, _) in &cases {
+        tools.set_codemode_mode(*mode);
+        let provider =
+            ScriptedProvider::new(ModelIdentity::new("test", "test", "test"), [text_turn()]);
+        let runtime = runtime_for(
+            &config,
+            &tools,
+            &provider,
+            Workspace::new(std::env::current_dir().unwrap()).unwrap(),
+        );
+        let session = runtime.session(SessionOptions::default()).await.unwrap();
+        session.complete("hi").await.unwrap();
+        let declared = &provider.recorded_requests()[0].tools;
+        observed.push((
+            *mode,
+            watched.map(|name| declared.iter().any(|spec| spec.name == name)),
+        ));
+    }
+    assert_eq!(observed, cases.to_vec());
+}
+
+// Covers: in `only` a direct model call to a hidden native does not execute,
+// while the same native runs through `codemode` under the session permission
+// mode (`only` is presentation, not a permission level).
+// Owner: app codemode only routing + nested ToolHost authorization.
+#[tokio::test(flavor = "multi_thread")]
+async fn only_mode_routes_natives_through_codemode() {
+    let root = tempfile::tempdir().unwrap();
+    let config = Config::default();
+    let tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default(),
+    );
+    tools.set_codemode_mode(crate::config::CodemodeMode::Only);
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "test"),
+        [
+            tool_call(
+                "direct",
+                "write",
+                json!({"path": "direct.txt", "content": "direct"}),
+            ),
+            tool_call(
+                "nested",
+                CODEMODE_TOOL_NAME,
+                json!({"script": r#"result = call_tool("write", {"path": "nested.txt", "content": "nested"})["content"]"#}),
+            ),
+            text_turn(),
+        ],
+    );
+    let runtime = runtime_for(
+        &config,
+        &tools,
+        &provider,
+        Workspace::new(root.path()).unwrap(),
+    );
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+
+    session.complete("write files").await.unwrap();
+
+    assert_eq!(
+        (
+            root.path().join("direct.txt").exists(),
+            std::fs::read_to_string(root.path().join("nested.txt")).ok(),
+        ),
+        (false, Some("nested".to_owned()))
+    );
 }

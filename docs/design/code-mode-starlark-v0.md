@@ -1,6 +1,6 @@
 # Starlark Code Mode v0 — Design Note
 
-Status: live wiring (registry, nested authorization, TUI progress, `/codemode on|off`)
+Status: live wiring (registry, nested authorization, TUI progress, `/codemode on|only`)
 Worktree: `worktree-silver-meadow-a56f`  
 Date: 2026-10-01 (America/New_York)  
 PR: https://github.com/matthewyjiang/rho/pull/1365
@@ -58,7 +58,7 @@ No host `parallel([...])` in v0. Nested calls run one after another inside the s
 
 ### 3. Tool name: `codemode`
 
-The model-facing tool / spec name is **`codemode`** (not `code_mode` / `execute_starlark`). Aligns with the `/codemode on|off` toggle naming. Rust module paths may stay `tools::code_mode` if renaming directories is noisy.
+The model-facing tool / spec name is **`codemode`** (not `code_mode` / `execute_starlark`). Aligns with the `/codemode on|only` command naming. Rust module paths may stay `tools::code_mode` if renaming directories is noisy.
 
 ### 4. Nested approvals: pause the whole script
 
@@ -71,15 +71,26 @@ When a nested `call_tool` needs approval:
 5. On **approve** → continue the script.
 6. **Fuel / timeout:** do not hang forever waiting on approval — honor ToolHost / run cancellation and evaluator fuel.
 
-### 4a. `/codemode on|off` — no second permission ladder (locked 2026-10-01)
+### 4a. `codemode.mode = on | only` — Pi built-in semantics (locked 2026-10-01)
 
-- `/codemode on` — register the `codemode` tool (default; `behavior.codemode = true`).
-- `/codemode off` — remove it from the tool list. `tool_search` and exposure stay.
-- Bare `/codemode` toggles. The choice persists to `behavior.codemode`.
-- **No `/codemode yolo`.** Nested calls inherit the session permission mode
-  (`/permissions bypass|auto|allow_edits|plan|supervised`) through
-  `ToolHost::child_builder`. Codemode never widens or narrows what a direct call
-  of the same tool may do; `/permissions` is the only knob.
+Rho matches built-in Pi (`earendil-works/pi`, `codemode.mode`), **not** the boozedog write-lock package:
+
+| | `on` (default) | `only` |
+|---|---|---|
+| `codemode` tool | declared | declared |
+| `tool_search` | declared | declared |
+| Policy-`direct` natives (`read_file`, `write`, `edit`, `bash`, …) | declared — model may use either | **not declared**; reached via `call_tool` |
+| Promoted `deferred` tools | declared | declared (exposure is `deferred`, not `direct`, as in Pi) |
+| MCP (`codemode` exposure) | script-only | script-only |
+| `hidden` | unreachable | unreachable |
+
+- `codemode` is **always registered**. There is no mode that removes it (Pi has none).
+- `on` adds a soft nudge in the `codemode` description: prefer it for multi-step work, MCP tools, and filtering large output; call a declared tool directly for a single step.
+- No write/edit/bash strip in `on`; `only` hides **all** policy-direct tools (Pi hides active direct tools), not a mutation-classified subset.
+- Config: `[codemode] mode = "on" | "only"` (Pi's `codemode.mode`). `/codemode on|only` sets it and saves; bare `/codemode` reports the mode.
+- Enforcement is the SDK `ToolVisibility` hook, resolved per model request, so a mode change needs no runtime rebuild. A direct model call to a tool hidden by `only` resolves unavailable.
+- **No permission ladder.** Neither mode is a permission level and there is no `yolo`: nested calls inherit the session permission mode (`/permissions bypass|auto|allow_edits|plan|supervised`) through `ToolHost::child_builder`.
+- MCP exposure (`direct`/`codemode`/`deferred`/`hidden`, section 5) is a separate axis from the mode.
 
 ### 5. Tool exposure modes (Pi-aligned)
 
@@ -109,7 +120,7 @@ Implementation seam: each `codemode` call builds a child host with `ToolHost::ch
 ### Tool vs mode toggle
 
 - One orchestration tool (`codemode` in current execute-tool.ts; README historically `execute_tools`).
-- Session mode: Pi uses `/codemode on|yolo|off`. Rho adopts only `on|off`; permissions stay with `/permissions`.
+- Session mode: built-in Pi uses `codemode.mode = on|only` (the boozedog package's `on|yolo|off` write lock is not the model). Rho adopts `on|only`; permissions stay with `/permissions`.
 
 ### Sandbox / host authority
 
@@ -117,16 +128,9 @@ Implementation seam: each `codemode` call builds a child host with `ToolHost::ch
 - No shell-string API in guest; typed allowlisted host ops only (Pi `cli.*`).
 - Type/schema check before exec where applicable; fail closed.
 
-### Write-locking (Pi reference matrix — not adopted)
+### Write-locking (boozedog package — not adopted)
 
-Rho does not add a codemode-specific write matrix; nested calls use the session permission mode. Kept for reference:
-
-| Door | `on` | `yolo` |
-|------|------|--------|
-| Guest mutation helpers | denied / read-only | denied / read-only |
-| Patch tools | root-scoped | unrestricted |
-| Native write/edit | DENY | DENY |
-| Native bash | DENY | ALLOW (escape) |
+The boozedog `pi-codemode` package strips native write/edit/bash and adds a `yolo` escape. Built-in Pi does not, and neither does Rho: `only` hides every direct tool for composition, and authorization stays with `/permissions`.
 
 ### TUI / distillate
 
@@ -222,7 +226,7 @@ Prototype may stub the “block Starlark until…” glue if the current `block_
 - [x] Nested calls inherit parent authorization via `ToolHost::child_builder` (policy, hooks, approval session, live history) — no double prompt
 - [x] Nested progress forwarded onto the parent `codemode` card; host input relayed; parent cancel cancels nested call
 - [x] Typed nested-deny classification (`ToolErrorKind::PolicyDenied` / `Error::PolicyDenied`, no string matching)
-- [x] `/codemode on|off` toggle persisted to `behavior.codemode` (no yolo; nested calls follow `/permissions`)
+- [x] `/codemode on|only` (Pi `codemode.mode`) persisted to `[codemode] mode`; `codemode` always registered; no yolo, no write strip
 - [x] Exposure enforced at the **provider request** boundary via SDK `ToolVisibility` (per request; promotions apply mid-run; unadvertised model calls resolve unavailable)
 - [ ] Per-server exposure overrides from config (`ExposurePolicy::override_exact/pattern` exists, not yet wired)
 - [ ] Nested pause UX verified end-to-end in a PTY scenario under supervised/auto/bypass

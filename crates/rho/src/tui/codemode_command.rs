@@ -1,38 +1,36 @@
-//! `/codemode [on|off]`: offer or remove the `codemode` composition tool.
+//! `/codemode [on|only]`: Pi's `codemode.mode` for the always-registered
+//! `codemode` tool.
 //!
-//! There is deliberately no `yolo` level. Nested `call_tool` calls inherit the
-//! session permission mode, so `/permissions` is the only permission ladder.
+//! `on` declares direct tools next to `codemode`; `only` hides them so the
+//! model composes through `codemode`. Bare `/codemode` reports the mode. There
+//! is no mode that removes `codemode` and no `yolo` level: nested calls
+//! inherit the session permission mode, so `/permissions` is the only
+//! permission ladder.
 
-use std::future::Future;
+use crate::config::CodemodeMode;
 
 use super::{App, CommandInvocation, Entry, InteractiveRuntime};
 
-const CODEMODE_USAGE: &str = "usage: /codemode [on|off]";
+const CODEMODE_USAGE: &str = "usage: /codemode [on|only]";
 
-/// Runtime side of `/codemode`. Implementors apply the change to the next turn
-/// and return transcript notice text when the advertised tool list changed.
+/// Runtime side of `/codemode`. Implementors apply the mode to the next model
+/// request and return transcript notice text when it changed.
 pub(super) trait CodemodeRuntime {
-    fn codemode_enabled(&self) -> bool;
+    fn codemode_mode(&self) -> CodemodeMode;
 
-    fn set_codemode(
-        &mut self,
-        enabled: bool,
-    ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send;
+    fn set_codemode_mode(&mut self, mode: CodemodeMode) -> anyhow::Result<Option<String>>;
 
     /// Live tool specs after a change, for the diagnostics mirror.
     fn tool_specs(&self) -> Vec<rho_sdk::model::ToolSpec>;
 }
 
 impl CodemodeRuntime for InteractiveRuntime {
-    fn codemode_enabled(&self) -> bool {
-        InteractiveRuntime::codemode_enabled(self)
+    fn codemode_mode(&self) -> CodemodeMode {
+        InteractiveRuntime::codemode_mode(self)
     }
 
-    fn set_codemode(
-        &mut self,
-        enabled: bool,
-    ) -> impl Future<Output = anyhow::Result<Option<String>>> + Send {
-        InteractiveRuntime::set_codemode(self, enabled)
+    fn set_codemode_mode(&mut self, mode: CodemodeMode) -> anyhow::Result<Option<String>> {
+        InteractiveRuntime::set_codemode_mode(self, mode)
     }
 
     fn tool_specs(&self) -> Vec<rho_sdk::model::ToolSpec> {
@@ -41,25 +39,19 @@ impl CodemodeRuntime for InteractiveRuntime {
 }
 
 impl App {
-    pub(super) async fn execute_codemode_command(
-        &mut self,
-        invocation: CommandInvocation,
-        agent: &mut InteractiveRuntime,
-    ) -> anyhow::Result<()> {
-        self.execute_codemode_command_with_runtime(invocation, agent)
-            .await
-    }
-
-    async fn execute_codemode_command_with_runtime(
+    pub(super) fn execute_codemode_command(
         &mut self,
         invocation: CommandInvocation,
         agent: &mut impl CodemodeRuntime,
     ) -> anyhow::Result<()> {
-        let current = agent.codemode_enabled();
+        let current = agent.codemode_mode();
         let requested = match invocation.args.trim().to_ascii_lowercase().as_str() {
-            "" => !current,
-            "on" => true,
-            "off" => false,
+            "" => {
+                self.report_codemode(current);
+                return Ok(());
+            }
+            "on" => CodemodeMode::On,
+            "only" => CodemodeMode::Only,
             _ => {
                 self.insert_entry(&Entry::Error(CODEMODE_USAGE.into()));
                 self.set_status("invalid codemode mode");
@@ -71,7 +63,7 @@ impl App {
             return Ok(());
         }
 
-        let notice = match agent.set_codemode(requested).await {
+        let notice = match agent.set_codemode_mode(requested) {
             Ok(notice) => notice,
             Err(error) => {
                 self.insert_entry(&Entry::Error(format!(
@@ -85,11 +77,10 @@ impl App {
             .info
             .services
             .config_repository
-            .update(|config| config.codemode = requested)
+            .update(|config| config.codemode.mode = requested)
         {
             // Keep runtime and saved preference aligned with the failed save.
-            let rollback = agent.set_codemode(current).await;
-            let detail = match rollback {
+            let detail = match agent.set_codemode_mode(current) {
                 Ok(_) => format!("could not save codemode: {error}"),
                 Err(rollback_error) => format!(
                     "could not save codemode: {error}; runtime rollback failed: {rollback_error}"
@@ -110,11 +101,10 @@ impl App {
         Ok(())
     }
 
-    fn report_codemode(&mut self, enabled: bool) {
-        let status = if enabled {
-            "codemode is on: nested tools follow the current permission mode"
-        } else {
-            "codemode is off"
+    fn report_codemode(&mut self, mode: CodemodeMode) {
+        let status = match mode {
+            CodemodeMode::On => "codemode on: direct tools and codemode are both available",
+            CodemodeMode::Only => "codemode only: direct tools are reached through codemode",
         };
         self.set_status(status);
     }
