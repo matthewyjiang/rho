@@ -45,6 +45,7 @@ fn agent_leaf() -> (Node, ResolvedNode) {
         capabilities: Default::default(),
         permission_ceiling: "auto".into(),
         auth_profile: None,
+        fast: false,
         executable: None,
         executable_identity: None,
         arguments: Vec::new(),

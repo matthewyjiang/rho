@@ -116,6 +116,7 @@ fn canonicalizes_ordered_fields() {
                 provider: Some("openai".into()),
                 model: "model-x".into(),
                 auth: None,
+                fast: false,
             }),
             reasoning: Some(ReasoningLevel::Low),
         },

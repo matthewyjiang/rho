@@ -563,13 +563,21 @@ fn request_body(
         OpenAiCompatibleDialect::OpenRouter => "openrouter",
         OpenAiCompatibleDialect::KimiCode => "kimi-code",
     };
-    let mut provider = OpenAiCompatibleProvider::new(
-        crate::reqwest_client(),
-        provider_name,
-        model.into(),
-        dialect,
-        CompatibleAuth::ApiKey("secret".into()),
-        "https://example.com".into(),
+    // Reasoning profiles read the models.dev cache at construction. Pin an
+    // empty one so a host or runner cache cannot change the expected body.
+    let cache = tempfile::tempdir().unwrap();
+    let mut provider = crate::model::models_dev::with_models_dev_cache_dir_for_tests(
+        cache.path().to_path_buf(),
+        || {
+            OpenAiCompatibleProvider::new(
+                crate::reqwest_client(),
+                provider_name,
+                model.into(),
+                dialect,
+                CompatibleAuth::ApiKey("secret".into()),
+                "https://example.com".into(),
+            )
+        },
     );
     if dialect == OpenAiCompatibleDialect::Moonshot {
         provider.reasoning =

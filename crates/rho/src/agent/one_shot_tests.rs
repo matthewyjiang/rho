@@ -88,6 +88,7 @@ fn rejects_definitions_that_select_a_model() {
             provider: None,
             model: "other-model".into(),
             auth: None,
+            fast: false,
         });
     }
     assert!(validate_definition(&definition)

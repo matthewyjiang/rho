@@ -38,6 +38,7 @@ pub(super) const AGENT_FIELD_AUTH: &str = "agent_field:auth";
 pub(super) const AGENT_FIELD_REASONING: &str = "agent_field:reasoning";
 pub(super) const AGENT_FIELD_TOOLS: &str = AgentField::Tools.value();
 pub(super) const AGENT_FIELD_INHERIT_CLAUDE_CONFIG: &str = "agent_field:inherit_claude_config";
+pub(super) const AGENT_FIELD_FAST: &str = "agent_field:fast";
 pub(super) const AGENT_FIELD_SAVE: &str = "agent_field:save";
 pub(super) const AGENT_FIELD_CANCEL: &str = "agent_field:cancel";
 
@@ -77,6 +78,7 @@ pub(super) enum AgentChoiceField {
     Auth,
     Reasoning,
     InheritClaudeConfig,
+    Fast,
 }
 
 /// Conversation model identity consulted when a draft inherits or
@@ -107,6 +109,7 @@ impl AgentChoiceField {
             Self::Auth => AGENT_FIELD_AUTH,
             Self::Reasoning => AGENT_FIELD_REASONING,
             Self::InheritClaudeConfig => AGENT_FIELD_INHERIT_CLAUDE_CONFIG,
+            Self::Fast => AGENT_FIELD_FAST,
         }
     }
 
@@ -119,6 +122,7 @@ impl AgentChoiceField {
             Self::Auth => "agent_choice:auth:",
             Self::Reasoning => "agent_choice:reasoning:",
             Self::InheritClaudeConfig => "agent_choice:inherit_claude_config:",
+            Self::Fast => "agent_choice:fast:",
         }
     }
 
@@ -131,6 +135,7 @@ impl AgentChoiceField {
             Self::Auth => "auth",
             Self::Reasoning => "reasoning",
             Self::InheritClaudeConfig => "inherit Claude config",
+            Self::Fast => "fast mode",
         }
     }
 }
@@ -334,6 +339,15 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
                     Some(draft.auth_badge()),
                     AGENT_FIELD_AUTH,
                 ));
+                // Keep the row while fast is on so an unsupported pin can be cleared.
+                if draft.fast() || draft.fast_mode_available() {
+                    items.push(field_item(
+                        "Fast mode",
+                        "Faster serving for this agent's model at a higher credit rate. Independent of the conversation's /fast.",
+                        Some(if draft.fast() { "on" } else { "off" }.into()),
+                        AGENT_FIELD_FAST,
+                    ));
+                }
             }
             items.push(field_item(
                 "Reasoning",
@@ -618,6 +632,17 @@ fn agent_choice_picker(
                 ),
             )
         }
+        AgentChoiceField::Fast => (
+            "fast mode",
+            choice_items(
+                &[
+                    ("off", "Standard response speed and credit rate."),
+                    ("on", "Faster responses at a higher credit rate."),
+                ],
+                if draft.fast() { "on" } else { "off" },
+                prefix,
+            ),
+        ),
     };
     UiPicker::edit_agent(title, items).with_confirm_verb("set")
 }

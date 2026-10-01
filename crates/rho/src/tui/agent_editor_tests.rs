@@ -114,6 +114,7 @@ fn rho_field_picker_lists_runtime_specific_fields() {
             provider: None,
             model: "gpt-5.5".into(),
             auth: None,
+            fast: false,
         });
     }
     let explicit_picker = agent_field_picker(&explicit);
@@ -331,6 +332,7 @@ fn reasoning_picker_offers_catalog_valid_levels() {
                     provider: Some("meta".into()),
                     model: "muse-spark-1.2".into(),
                     auth: None,
+                    fast: false,
                 }),
                 Some(ReasoningLevel::Max),
             ),
@@ -348,6 +350,7 @@ fn reasoning_picker_offers_catalog_valid_levels() {
                     provider: None,
                     model: "muse-spark-1.2".into(),
                     auth: None,
+                    fast: false,
                 }),
                 None,
             ),
@@ -363,6 +366,7 @@ fn reasoning_picker_offers_catalog_valid_levels() {
                     provider: None,
                     model: "@spark".into(),
                     auth: None,
+                    fast: false,
                 }),
                 None,
             ),
@@ -382,6 +386,7 @@ fn reasoning_picker_offers_catalog_valid_levels() {
                     provider: Some("meta".into()),
                     model: String::new(),
                     auth: None,
+                    fast: false,
                 }),
                 None,
             ),
@@ -417,6 +422,7 @@ fn reasoning_picker_offers_catalog_valid_levels() {
                     provider: Some("meta".into()),
                     model: "muse-stone-1.0".into(),
                     auth: None,
+                    fast: false,
                 }),
                 Some(ReasoningLevel::High),
             ),
@@ -510,6 +516,7 @@ fn auth_choice_lists_only_available_modes_for_provider() {
             provider: Some("xai".into()),
             model: "grok-4.5".into(),
             auth: None,
+            fast: false,
         });
     }
     let available = vec!["xai-oauth".into(), "anthropic-api-key".into()];
@@ -534,6 +541,7 @@ fn rho_field_picker_includes_auth_when_model_is_pinned() {
             provider: Some("xai".into()),
             model: "grok-4.5".into(),
             auth: Some("xai-oauth".into()),
+            fast: false,
         });
     }
     let picker = agent_field_picker(&draft);

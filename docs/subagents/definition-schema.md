@@ -45,6 +45,7 @@ flowchart TD
 | `provider` | string | no | unset | Non-empty; no whitespace. **Rho only**. Rejected on `claude-cli` and `cursor` |
 | `auth` | string | no | unset | Auth profile id (for example `xai-oauth`, `xai-api-key`). **Rho only**. Rejected on `claude-cli`, `cursor`, and with `model-policy: inherit`. Must be a known profile; when set with `provider`, must be valid for that provider |
 | `reasoning` | enum | no | unset (inherit) | Rho: `off` \| `minimal` \| `low` \| `medium` \| `high` \| `xhigh` \| `max`. Claude: `low` \| `medium` \| `high` \| `xhigh` \| `max` only (maps to `--effort`). `off` / `minimal` rejected on Claude. Rejected on `cursor` (no reasoning flag; put effort in `model`) |
+| `fast` | bool | no | `false` | `true` \| `false`. **Rho only**, and requires a pinned model (not `model-policy: inherit`). Turns on fast serving for this agent, independent of the parent's `/fast`. Bind fails when the resolved provider, model, and auth do not support fast mode (Codex GPT-5.5+/GPT-6, xAI OAuth `grok-4.7`). For xAI, pin `auth: xai-oauth`; with `auth` unset bind may select the API-key login |
 | `tools` | `all` or string list | no | runtime-specific | See tool vocabulary. Mixing Rho, Claude, and Cursor names is a parse error. Required and nonempty on `cursor` |
 | `inherit_claude_config` | bool | no | `false` | `true` \| `false`. `true` only with `runtime: claude-cli` |
 
@@ -268,6 +269,10 @@ Machine-readable shape for the frontmatter object after parse. Runtime-specific 
     "inherit_claude_config": {
       "type": "boolean",
       "default": false
+    },
+    "fast": {
+      "type": "boolean",
+      "default": false
     }
   },
   "allOf": [
@@ -280,6 +285,7 @@ Machine-readable shape for the frontmatter object after parse. Runtime-specific 
         "properties": {
           "provider": false,
           "auth": false,
+          "fast": false,
           "model-policy": { "enum": ["inherit", "select"] },
           "reasoning": { "enum": ["low", "medium", "high", "xhigh", "max"] },
           "tools": {
@@ -310,6 +316,7 @@ Machine-readable shape for the frontmatter object after parse. Runtime-specific 
           "prompt": { "const": "extend" },
           "model-policy": { "enum": ["inherit", "select"] },
           "reasoning": false,
+          "fast": false,
           "inherit_claude_config": false,
           "tools": {
             "type": "array",
@@ -361,7 +368,8 @@ Machine-readable shape for the frontmatter object after parse. Runtime-specific 
           "anyOf": [
             { "required": ["model"] },
             { "required": ["provider"] },
-            { "required": ["auth"] }
+            { "required": ["auth"] },
+            { "required": ["fast"] }
           ]
         }
       }
@@ -403,10 +411,11 @@ id: worker
 description: Implements delegated tasks
 runtime: rho
 model-policy: prefer
-model: grok-4.5
+model: grok-4.7
 provider: xai
 auth: xai-oauth
 reasoning: medium
+fast: true
 tools: all
 ---
 Complete the delegated task fully before finishing.
@@ -440,4 +449,4 @@ tools: [read_tool_call, grep_tool_call, glob_tool_call, edit_tool_call]
 Review the requested changes. Prefer reading before editing.
 ```
 
-Unknown fields, values, and tool references fail before execution. Definitions contain no credentials or mutable runtime state. New sessions store a v2 semantic fingerprint over behaviorally relevant fields, including `runtime`, tools, and `inherit_claude_config`, not file paths or formatting. Resume also accepts the exact pre-runtime-axis v1 fingerprint for unchanged default Rho definitions (`runtime: rho`, `inherit_claude_config: false`, Rho tools encoding). Real definition changes still fail resume.
+Unknown fields, values, and tool references fail before execution. Definitions contain no credentials or mutable runtime state. New sessions store a v2 semantic fingerprint over behaviorally relevant fields, including `runtime`, tools, `inherit_claude_config`, and `fast` when enabled, not file paths or formatting. Resume also accepts the exact pre-runtime-axis v1 fingerprint for unchanged default Rho definitions (`runtime: rho`, `inherit_claude_config: false`, Rho tools encoding). Real definition changes still fail resume.

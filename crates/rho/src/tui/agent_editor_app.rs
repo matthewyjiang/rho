@@ -177,6 +177,7 @@ impl App {
             AGENT_FIELD_INHERIT_CLAUDE_CONFIG => {
                 self.open_agent_choice(AgentChoiceField::InheritClaudeConfig, &draft);
             }
+            AGENT_FIELD_FAST => self.open_agent_choice(AgentChoiceField::Fast, &draft),
             AGENT_FIELD_SAVE => self.save_agent_editor()?,
             AGENT_FIELD_CANCEL => self.cancel_agent_editor(),
             _ => {}
@@ -236,6 +237,7 @@ impl App {
                         AgentChoiceField::InheritClaudeConfig => {
                             draft.set_inherit_claude_config(rest)
                         }
+                        AgentChoiceField::Fast => draft.set_fast_kind(rest),
                         AgentChoiceField::Runtime => unreachable!("handled above"),
                     })
                 })

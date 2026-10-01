@@ -326,6 +326,7 @@ fn agent_bound_model_is_not_drift() {
                 provider: Some("openai".into()),
                 model: "gpt-5.5-mini".into(),
                 auth: Some("api-key".into()),
+                fast: false,
             }),
             reasoning: Some(ReasoningLevel::Low),
         },

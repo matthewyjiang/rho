@@ -217,6 +217,7 @@ fn frozen_binding_does_not_rebind_and_narrows_current_policy() {
             .collect(),
         permission_ceiling: "auto".into(),
         auth_profile: Some("anthropic".into()),
+        fast: false,
         executable: None,
         executable_identity: None,
         arguments: Vec::new(),
@@ -266,6 +267,7 @@ fn frozen_claude_cli_bypass_ceiling_narrows_to_current_auto() {
             .collect(),
         permission_ceiling: "bypass".into(),
         auth_profile: None,
+        fast: false,
         executable: None,
         executable_identity: None,
         arguments: Vec::new(),
@@ -383,6 +385,7 @@ fn agent_model_aliases_resolve_qualified_and_bare_targets() {
                 provider: None,
                 model: alias.into(),
                 auth: None,
+                fast: false,
             })),
             AgentInvocation {
                 role: AgentRole::Delegated,
@@ -409,6 +412,7 @@ fn agent_model_alias_conflicting_with_pinned_provider_errors() {
             provider: Some("openai".into()),
             model: "@deep".into(),
             auth: None,
+            fast: false,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -433,6 +437,7 @@ fn undefined_agent_model_alias_names_agent_and_reference() {
             provider: None,
             model: "@missing".into(),
             auth: None,
+            fast: false,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -484,6 +489,7 @@ fn claude_binding_is_typed_and_does_not_resolve_aliases_or_mutate_host_config() 
             provider: None,
             model: "opus".into(),
             auth: None,
+            fast: false,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -555,6 +561,7 @@ fn claude_runtime_rejects_alias_models_at_bind() {
             provider: None,
             model: "@deep".into(),
             auth: None,
+            fast: false,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -689,6 +696,7 @@ fn provider_without_auth_keeps_compatible_host_auth() {
             provider: Some("xai".into()),
             model: "grok-4.5".into(),
             auth: None,
+            fast: false,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -719,6 +727,7 @@ fn explicit_auth_pin_overrides_host_auth() {
             provider: Some("xai".into()),
             model: "grok-4.5".into(),
             auth: Some("xai-api-key".into()),
+            fast: false,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -853,6 +862,7 @@ fn bound_agent_prompt_model_reflects_model_policy() {
                 provider: None,
                 model: "gpt-5.6-sol".into(),
                 auth: None,
+                fast: false,
             }),
             PromptModel::Rho {
                 provider: "openai".into(),
@@ -865,6 +875,7 @@ fn bound_agent_prompt_model_reflects_model_policy() {
                 provider: Some("xai".into()),
                 model: "grok-4.5".into(),
                 auth: None,
+                fast: false,
             }),
             PromptModel::Rho {
                 provider: "xai".into(),
@@ -877,6 +888,7 @@ fn bound_agent_prompt_model_reflects_model_policy() {
                 provider: None,
                 model: "@fast".into(),
                 auth: None,
+                fast: false,
             }),
             PromptModel::Rho {
                 provider: "xai".into(),
@@ -889,6 +901,7 @@ fn bound_agent_prompt_model_reflects_model_policy() {
                 provider: None,
                 model: "@bare".into(),
                 auth: None,
+                fast: false,
             }),
             PromptModel::Rho {
                 provider: "openai".into(),
@@ -901,6 +914,7 @@ fn bound_agent_prompt_model_reflects_model_policy() {
                 provider: None,
                 model: "claude-fable-5".into(),
                 auth: Some("anthropic-api-key".into()),
+                fast: false,
             }),
             PromptModel::Rho {
                 provider: "anthropic".into(),
@@ -1079,6 +1093,7 @@ fn cursor_frozen_bind_narrows_plan_to_read_only_tools() {
             .collect(),
         permission_ceiling: "bypass".into(),
         auth_profile: None,
+        fast: false,
         executable: None,
         executable_identity: None,
         arguments: Vec::new(),
@@ -1134,6 +1149,7 @@ fn cursor_frozen_capabilities_fail_closed_on_unknown_tool() {
             .collect(),
         permission_ceiling: "bypass".into(),
         auth_profile: None,
+        fast: false,
         executable: None,
         executable_identity: None,
         arguments: Vec::new(),
@@ -1142,4 +1158,119 @@ fn cursor_frozen_capabilities_fail_closed_on_unknown_tool() {
     let message = error.to_string();
     assert!(message.contains("unknown Cursor tool"), "{message}");
     assert!(message.contains("not_a_cursor_tool"), "{message}");
+}
+
+// Covers: a delegated agent's fast mode comes from its own definition, never
+// the parent's /fast, and an unsupported pin fails bind instead of running.
+// Owner: agent binding policy
+#[test]
+fn delegated_fast_mode_follows_definition_not_parent() {
+    let pinned = |provider: &str, model: &str, auth: &str, fast: bool| {
+        Arc::new(AgentDefinition {
+            runtime: AgentRuntimeSpec::Rho {
+                tools: ToolPolicy::All,
+                model: ModelPolicy::Select(ModelSelection {
+                    provider: Some(provider.into()),
+                    model: model.into(),
+                    auth: Some(auth.into()),
+                    fast,
+                }),
+                reasoning: None,
+            },
+            ..definition(ToolPolicy::All).as_ref().clone()
+        })
+    };
+    let inherit = definition(ToolPolicy::All);
+    let store = credentials(&["codex", "xai-oauth", "xai-api-key"]);
+    // (definition, parent fast_mode, expected child fast_mode or bind error)
+    let cases: [(Arc<AgentDefinition>, bool, Result<bool, ()>); 6] = [
+        (
+            pinned("openai-codex", "gpt-5.5", "codex", true),
+            false,
+            Ok(true),
+        ),
+        (
+            pinned("openai-codex", "gpt-5.5", "codex", false),
+            true,
+            Ok(false),
+        ),
+        (inherit.clone(), true, Ok(false)),
+        (
+            pinned("xai", "grok-4.7", "xai-oauth", true),
+            false,
+            Ok(true),
+        ),
+        (
+            pinned("xai", "grok-4.7", "xai-api-key", true),
+            false,
+            Err(()),
+        ),
+        (
+            pinned("openai-codex", "gpt-5.3-codex", "codex", true),
+            true,
+            Err(()),
+        ),
+    ];
+    for (index, (definition, parent_fast, expected)) in cases.into_iter().enumerate() {
+        let host = Config {
+            provider: "openai-codex".into(),
+            model: "gpt-5.5".into(),
+            auth: "codex".into(),
+            fast_mode: parent_fast,
+            ..Config::default()
+        };
+        let result = AgentBinder::bind_with_credentials(
+            definition,
+            AgentInvocation {
+                role: AgentRole::Delegated,
+                available_tools: capabilities(),
+            },
+            &host,
+            &store,
+        );
+        let actual = result
+            .map(|bound| bound.rho_config().expect("rho config").fast_mode)
+            .map_err(|_| ());
+        assert_eq!(actual, expected, "case {index}");
+    }
+}
+
+// Covers: `/side`-style host asides keep the session's /fast across a
+// delegated bind, but only when the inherited selection can serve it.
+// Owner: agent binding policy
+#[test]
+fn keep_host_fast_mode_restores_session_fast_when_servable() {
+    let store = credentials(&["codex", "xai-api-key"]);
+    // (host provider, model, auth, host fast_mode, expected bound fast_mode)
+    for (provider, model, auth, host_fast, expected) in [
+        ("openai-codex", "gpt-5.5", "codex", true, true),
+        ("openai-codex", "gpt-5.5", "codex", false, false),
+        ("openai-codex", "gpt-5.3-codex", "codex", true, false),
+        ("xai", "grok-4.7", "xai-api-key", true, false),
+    ] {
+        let host = Config {
+            provider: provider.into(),
+            model: model.into(),
+            auth: auth.into(),
+            fast_mode: host_fast,
+            ..Config::default()
+        };
+        let mut bound = AgentBinder::bind_with_credentials(
+            definition(ToolPolicy::All),
+            AgentInvocation {
+                role: AgentRole::Delegated,
+                available_tools: capabilities(),
+            },
+            &host,
+            &store,
+        )
+        .expect("bind");
+        assert!(!bound.rho_config().expect("rho config").fast_mode);
+        bound.keep_host_fast_mode(&host);
+        assert_eq!(
+            bound.rho_config().expect("rho config").fast_mode,
+            expected,
+            "{provider}/{model} {auth} fast={host_fast}"
+        );
+    }
 }

@@ -29,6 +29,7 @@ struct RawDefinition {
     reasoning: Option<String>,
     runtime: Option<String>,
     inherit_claude_config: Option<bool>,
+    fast: Option<bool>,
     tools: Option<RawTools>,
 }
 
@@ -129,6 +130,7 @@ fn parse_definition_with_fallback(
         raw.model,
         raw.provider,
         raw.auth,
+        raw.fast.unwrap_or(false),
         raw.model_policy,
     )?;
     let reasoning = parse_reasoning(path, runtime, raw.reasoning)?;
@@ -194,9 +196,17 @@ fn parse_model_policy(
     model: Option<String>,
     provider: Option<String>,
     auth: Option<String>,
+    fast: bool,
     policy: Option<String>,
 ) -> Result<ModelPolicy, AgentCatalogError> {
     if runtime.is_external_cli() {
+        if fast {
+            return Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "fast",
+                "is only valid with runtime: rho",
+            ));
+        }
         return parse_external_runtime_model_policy(path, runtime, model, provider, auth, policy);
     }
 
@@ -209,6 +219,15 @@ fn parse_model_policy(
                 path.to_path_buf(),
                 "model-policy",
                 "inherit cannot specify model, provider, or auth",
+            ));
+        }
+        // Fast mode belongs to a specific model; an inherited one would make
+        // it depend on whatever the parent happens to run.
+        if fast {
+            return Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "fast",
+                "requires a pinned model; set model (and provider) instead of model-policy: inherit",
             ));
         }
         return Ok(ModelPolicy::Inherit);
@@ -274,6 +293,7 @@ fn parse_model_policy(
         provider,
         model,
         auth,
+        fast,
     };
     Ok(match policy {
         "prefer" => ModelPolicy::Prefer(selection),
@@ -352,6 +372,7 @@ set a model name (for example opus or gpt-5.3-codex-high), not '{model}'"
                 provider: None,
                 model,
                 auth: None,
+                fast: false,
             }))
         }
     }
@@ -733,6 +754,7 @@ fn parse_fields(path: &Path, lines: &[&str]) -> Result<RawDefinition, AgentCatal
                 | "reasoning"
                 | "runtime"
                 | "inherit_claude_config"
+                | "fast"
                 | "tools"
         ) {
             return Err(AgentCatalogError::at_field(
@@ -775,6 +797,7 @@ fn parse_fields(path: &Path, lines: &[&str]) -> Result<RawDefinition, AgentCatal
             "inherit_claude_config" => {
                 raw.inherit_claude_config = Some(parse_bool(path, "inherit_claude_config", &value)?)
             }
+            "fast" => raw.fast = Some(parse_bool(path, "fast", &value)?),
             "tools" if value == "all" => raw.tools = Some(RawTools::All),
             "tools" => raw.tools = Some(RawTools::Names(parse_inline_list(path, &value)?)),
             _ => unreachable!(),

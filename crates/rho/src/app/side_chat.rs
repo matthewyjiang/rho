@@ -277,12 +277,16 @@ fn bind_side_agent(host_config: &Config) -> anyhow::Result<BoundAgent> {
             reasoning: None,
         },
     });
-    AgentBinder::bind(
+    let mut agent = AgentBinder::bind(
         definition,
         AgentInvocation {
             role: AgentRole::Delegated,
             available_tools: AgentCapabilities::new(tools),
         },
         host_config,
-    )
+    )?;
+    // The aside continues the conversation, so it keeps the session's `/fast`
+    // even though delegated binds otherwise take `fast` from the definition.
+    agent.keep_host_fast_mode(host_config);
+    Ok(agent)
 }

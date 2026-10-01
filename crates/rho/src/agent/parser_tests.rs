@@ -229,6 +229,7 @@ fn allows_model_and_rejects_provider_on_claude_runtime() {
             provider: None,
             model: "claude-opus-4-6".into(),
             auth: None,
+            fast: false,
         })
     );
     match &definition.runtime {
@@ -500,4 +501,45 @@ fn cursor_runtime_frontmatter_rules() {
         let error = parse(contents).expect_err(name);
         assert_eq!(error.field.as_deref(), Some(field), "{name}: {error}");
     }
+}
+
+// Covers: `fast` is Rho-only, needs a pinned model, and round-trips through
+// the serializer so the editor can save it.
+// Owner: agent parser
+#[test]
+fn fast_requires_rho_runtime_and_pinned_model() {
+    let frontmatter = |extra: &str| format!("---\ndescription: d\n{extra}\n---\nbody\n");
+    for (extra, expected) in [
+        (
+            "model: gpt-5.5\nprovider: openai-codex\nfast: true",
+            Ok(true),
+        ),
+        (
+            "model: gpt-5.5\nprovider: openai-codex\nfast: false",
+            Ok(false),
+        ),
+        ("model: gpt-5.5\nprovider: openai-codex", Ok(false)),
+        ("fast: true", Err("fast")),
+        ("model-policy: inherit\nfast: true", Err("fast")),
+        ("runtime: claude-cli\nmodel: opus\nfast: true", Err("fast")),
+        ("model: gpt-5.5\nfast: yes", Err("fast")),
+    ] {
+        let actual = parse(&frontmatter(extra))
+            .map(|definition| definition.fast())
+            .map_err(|error| error.field.unwrap_or_default());
+        assert_eq!(actual, expected.map_err(str::to_string), "{extra}");
+    }
+
+    let parsed = parse(&frontmatter(
+        "model: gpt-5.5\nprovider: openai-codex\nfast: true",
+    ))
+    .unwrap();
+    let reparsed = parse(&crate::agent::serialize_definition(&parsed)).unwrap();
+    assert_eq!(reparsed, parsed);
+    assert_ne!(
+        parsed.fingerprint(),
+        parse(&frontmatter("model: gpt-5.5\nprovider: openai-codex"))
+            .unwrap()
+            .fingerprint()
+    );
 }
