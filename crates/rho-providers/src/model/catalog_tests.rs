@@ -594,6 +594,19 @@ fn login_groups_include_meta_and_merge_openai_codex() {
     assert_eq!(meta.methods[0].prompt, "API Key");
     assert_eq!(meta.methods[1].target.auth, "meta-muse");
     assert_eq!(meta.methods[1].prompt, "Subscription");
+    assert_eq!(
+        credential_logout("meta"),
+        Some(CredentialLogout::Provider("meta"))
+    );
+    assert!(matches!(
+        credential_logout("meta-muse"),
+        Some(CredentialLogout::Mode(target)) if target.auth == "meta-muse"
+    ));
+    assert!(matches!(
+        credential_logout("openai"),
+        Some(CredentialLogout::Mode(target)) if target.auth == "api-key"
+    ));
+    assert_eq!(credential_logout("not-a-provider"), None);
 
     let opencode_go = groups
         .iter()

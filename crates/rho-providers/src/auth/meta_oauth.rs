@@ -67,6 +67,8 @@ pub enum MetaOAuthError {
     Setup(String),
     #[error("Meta device login failed: {0}")]
     Device(String),
+    #[error("Meta API-key mint was rate limited")]
+    RateLimited,
     #[error("timed out waiting for Meta device login")]
     Timeout,
     #[error("Meta login response was missing {0}")]
@@ -86,14 +88,12 @@ struct DeviceTokenResponse {
     error_description: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 struct MintResponse {
     api_key: Option<String>,
     action_url: Option<String>,
+    require_payment_action_url: Option<String>,
     error: Option<String>,
-    error_description: Option<String>,
-    detail: Option<String>,
-    message: Option<String>,
 }
 
 pub async fn start_meta_device_login() -> Result<MetaDeviceLogin, MetaOAuthError> {
@@ -143,6 +143,7 @@ async fn start_with_endpoint(
     let response = client
         .post(endpoint)
         .header(ACCEPT, "application/json")
+        .header(API_VERSION_HEADER, API_VERSION)
         .form(&[("client_id", CLIENT_ID)])
         .send()
         .await?;
@@ -180,7 +181,10 @@ async fn complete_with_endpoint(
         ("device_code", login.device_code.as_str()),
         ("grant_type", DEVICE_GRANT),
     ];
-    let extra_headers = [("accept", "application/json")];
+    let extra_headers = [
+        ("accept", "application/json"),
+        (API_VERSION_HEADER, API_VERSION),
+    ];
     match poll_device_token(
         DevicePollRequest {
             client,
@@ -243,14 +247,18 @@ async fn mint_api_key(
         .send()
         .await?;
     let status = response.status();
-    let body: MintResponse = response.json().await?;
+    let bytes = response.bytes().await?;
+    let body = serde_json::from_slice::<MintResponse>(&bytes).unwrap_or_default();
+    if status == StatusCode::TOO_MANY_REQUESTS {
+        return Err(MetaOAuthError::RateLimited);
+    }
     if !status.is_success() {
-        let detail = mint_detail(&body);
+        let code = short_error_code(&body);
         if status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN {
-            return Err(MetaOAuthError::Unauthorized(session_expired(detail)));
+            return Err(MetaOAuthError::Unauthorized(session_expired(code)));
         }
         return Err(MetaOAuthError::Device(format!(
-            "Meta API-key mint failed (HTTP {status}){detail}"
+            "Meta API-key mint failed (HTTP {status}){code}"
         )));
     }
     let api_key = body.api_key.as_deref().filter(|key| !key.is_empty());
@@ -270,27 +278,33 @@ fn session_expired(detail: String) -> String {
 
 fn missing_key_message(body: &MintResponse) -> String {
     let mut message = "Meta did not issue a Muse API key".to_string();
-    if let Some(url) = body.action_url.as_deref().filter(|url| !url.is_empty()) {
+    if let Some(url) = setup_url(body) {
         message.push_str(". Complete setup at ");
         message.push_str(url);
         message.push('.');
-    } else {
-        message.push_str(&mint_detail(body));
     }
     message
 }
 
-fn mint_detail(body: &MintResponse) -> String {
-    let detail = body
-        .error_description
+fn setup_url(body: &MintResponse) -> Option<&str> {
+    body.action_url
         .as_deref()
-        .or(body.detail.as_deref())
-        .or(body.message.as_deref())
-        .or(body.error.as_deref())
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    match detail {
-        Some(detail) => format!(": {detail}"),
+        .filter(|url| !url.is_empty())
+        .or_else(|| {
+            body.require_payment_action_url
+                .as_deref()
+                .filter(|url| !url.is_empty())
+        })
+}
+
+/// Short OAuth `error` code only. Mint bodies can also carry `api_key`, so
+/// free-form `message` and `detail` text stay off the user-facing error.
+fn short_error_code(body: &MintResponse) -> String {
+    let code = body.error.as_deref().map(str::trim).filter(|code| {
+        !code.is_empty() && code.len() <= 64 && !code.chars().any(char::is_whitespace)
+    });
+    match code {
+        Some(code) => format!(": {code}"),
         None => String::new(),
     }
 }

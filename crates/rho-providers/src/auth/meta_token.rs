@@ -7,7 +7,7 @@ use crate::{
         mint_meta_tokens, now_unix, MetaOAuthError, API_KEY_MINT_URL, SESSION_EXPIRED,
     },
     credentials::{save_meta_tokens, CredentialStore, MetaTokens},
-    model::ModelError,
+    model::{ModelError, ProviderReportedErrorKind},
 };
 
 /// Remint this long before the assumed 24 hour key lifetime.
@@ -92,10 +92,18 @@ pub(crate) async fn ensure_fresh(
     tokens: &mut MetaTokens,
     mint_url: &str,
 ) -> Result<(), ModelError> {
-    if meta_api_key_is_expiring(tokens, now_unix()) {
-        refresh_locked(client, store, tokens, mint_url).await?;
+    let now = now_unix();
+    if !meta_api_key_is_expiring(tokens, now) {
+        return Ok(());
     }
-    Ok(())
+    // The 24 hour lifetime is assumed. A key Meta has not expired yet still
+    // works if the proactive mint is rate limited or blips.
+    let still_accepted = tokens.api_key_expires_at_unix > now;
+    match refresh_locked(client, store, tokens, mint_url).await {
+        Ok(()) => Ok(()),
+        Err(_) if still_accepted => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 pub(crate) async fn refresh_locked(
@@ -123,6 +131,11 @@ async fn refresh_meta_tokens(
         .await
         .map_err(|error| match error {
             MetaOAuthError::Unauthorized(_) => ModelError::missing_credentials(SESSION_EXPIRED),
+            MetaOAuthError::RateLimited => ModelError::ProviderReported {
+                kind: ProviderReportedErrorKind::RateLimit,
+                error_type: "rate_limit".into(),
+                message: error.to_string(),
+            },
             error => ModelError::InvalidResponse(error.to_string()),
         })
 }

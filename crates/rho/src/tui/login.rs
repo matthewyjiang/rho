@@ -879,7 +879,7 @@ impl App {
         agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let provider = provider.trim();
-        let Some(target) = catalog::login_target_for_provider(provider) else {
+        let Some(subject) = catalog::credential_logout(provider) else {
             self.insert_entry(&Entry::Error(format!(
                 "unsupported logout provider '{provider}'. Use /logout {}, /logout {}",
                 catalog::implemented_providers().join(", /logout "),
@@ -888,30 +888,36 @@ impl App {
             self.set_status("logout failed");
             return Ok(());
         };
+        let active_runtime_auth = self.info.runtime.auth.clone();
+        let (provider_name, delete_arg, active_auth) = match subject {
+            catalog::CredentialLogout::Mode(target) => {
+                (target.provider, target.auth.clone(), target.auth)
+            }
+            catalog::CredentialLogout::Provider(name) => {
+                (name.to_string(), name.to_string(), active_runtime_auth)
+            }
+        };
 
         self.cancel_limits_command().await;
         self.cancel_doctor_command().await;
-        let deleted = ProviderAuthentication::delete_credentials(
-            self.credential_store.as_ref(),
-            &target.auth,
-        );
+        let deleted =
+            ProviderAuthentication::delete_credentials(self.credential_store.as_ref(), &delete_arg);
 
         match deleted {
             Ok(deleted) => {
                 self.refresh_available_auths();
-                let env_active = ProviderAuthentication::has_environment_override(&target.auth);
+                let env_active = ProviderAuthentication::has_environment_override(&delete_arg);
                 let message = if env_active {
                     format!(
-                        "deleted stored credentials for {}, but an env override is still active",
-                        target.provider
+                        "deleted stored credentials for {provider_name}, but an env override is still active"
                     )
                 } else if deleted {
-                    format!("deleted stored credentials for {}", target.provider)
+                    format!("deleted stored credentials for {provider_name}")
                 } else {
-                    format!("no stored credentials for {} were present", target.provider)
+                    format!("no stored credentials for {provider_name} were present")
                 };
                 self.insert_entry(&Entry::Notice(message));
-                if self.invalidate_active_provider_if_needed(&target, agent) {
+                if self.invalidate_active_provider_if_needed(&provider_name, &active_auth, agent) {
                     self.insert_entry(&Entry::Notice(
                             "the active provider no longer has credentials. Run /login or switch with /model."
                                 .into(),
@@ -931,28 +937,29 @@ impl App {
 
     fn invalidate_active_provider_if_needed(
         &mut self,
-        target: &LoginTarget,
+        provider: &str,
+        auth: &str,
         agent: &mut InteractiveRuntime,
     ) -> bool {
-        if self.info.runtime.provider != target.provider || self.info.runtime.auth != target.auth {
+        if self.info.runtime.provider != provider || self.info.runtime.auth != auth {
             self.set_status("logout complete");
             return false;
         }
-        if ProviderAuthentication::has_credentials(self.credential_store.as_ref(), &target.auth)
+        if ProviderAuthentication::has_credentials(self.credential_store.as_ref(), auth)
             .unwrap_or(false)
         {
             self.set_status("logout complete");
             return false;
         }
 
-        let error = registry::missing_credentials_error(&target.provider);
+        let error = registry::missing_credentials_error(provider);
         // Credentials are gone either way; only claim the stub is active after
         // replace_provider succeeds (it rolls back on post-replace failures).
         self.info.services.auth_unavailable = Some(error.to_string());
         match agent.replace_provider(
             std::sync::Arc::new(UnavailableProvider::new(error)),
             self.info.runtime.reasoning,
-            &self.info.runtime.auth,
+            auth,
         ) {
             Ok(_) => {
                 self.using_unavailable_provider = true;

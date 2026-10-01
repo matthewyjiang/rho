@@ -21,6 +21,7 @@ async fn device_authorization_posts_client_id_and_parses_user_code() {
         assert!(request.starts_with("POST /oidc/device/authorization/ HTTP/1.1"));
         assert!(request.contains("application/x-www-form-urlencoded"));
         assert!(request.contains(&format!("client_id={CLIENT_ID}")));
+        assert!(request.contains("x-api-version: 1.0.0"));
         let body = r#"{"device_code":"device-secret","user_code":"ABCD-1234","verification_uri":"https://auth.meta.com/oauth/device","verification_uri_complete":"https://auth.meta.com/oauth/device/?code=ABCD-1234","expires_in":300,"interval":5}"#;
         let response = format!(
             "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
@@ -111,7 +112,7 @@ async fn mint_unauthorized_asks_for_login() {
         let (mut stream, _) = listener.accept().await.unwrap();
         let mut request = vec![0; 1024];
         let _ = stream.read(&mut request).await.unwrap();
-        let body = r#"{"error":"invalid_token"}"#;
+        let body = r#"{"error":"invalid_token","detail":"LLM|leaked-key"}"#;
         let response = format!(
             "HTTP/1.1 401 Unauthorized\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
             body.len()
@@ -127,5 +128,31 @@ async fn mint_unauthorized_asks_for_login() {
     };
     assert!(message.contains("meta-muse"), "{message}");
     assert!(message.contains("invalid_token"), "{message}");
+    assert!(!message.contains("LLM|leaked-key"), "{message}");
+    server.await.unwrap();
+}
+
+// Covers: a non-JSON 429 is rate limited, not a body-parse failure
+// Owner: Meta subscription login
+#[tokio::test]
+async fn mint_rate_limit_does_not_require_json() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/muse-code/key", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = vec![0; 1024];
+        let _ = stream.read(&mut request).await.unwrap();
+        let body = "slow down";
+        let response = format!(
+            "HTTP/1.1 429 Too Many Requests\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+    });
+
+    let error = mint_meta_tokens(&crate::reqwest_client(), "identity-token", &endpoint)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, MetaOAuthError::RateLimited), "{error}");
     server.await.unwrap();
 }
