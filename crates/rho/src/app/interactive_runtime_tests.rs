@@ -335,7 +335,6 @@ fn test_bound_agent() -> crate::app::agent_binding::BoundAgent {
                 tools: crate::agent::ToolPolicy::All,
                 model: crate::agent::ModelPolicy::Inherit,
                 reasoning: None,
-                fast: false,
             },
         }),
         crate::app::agent_binding::AgentInvocation {

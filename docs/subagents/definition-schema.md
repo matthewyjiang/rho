@@ -45,7 +45,7 @@ flowchart TD
 | `provider` | string | no | unset | Non-empty; no whitespace. **Rho only**. Rejected on `claude-cli` and `cursor` |
 | `auth` | string | no | unset | Auth profile id (for example `xai-oauth`, `xai-api-key`). **Rho only**. Rejected on `claude-cli`, `cursor`, and with `model-policy: inherit`. Must be a known profile; when set with `provider`, must be valid for that provider |
 | `reasoning` | enum | no | unset (inherit) | Rho: `off` \| `minimal` \| `low` \| `medium` \| `high` \| `xhigh` \| `max`. Claude: `low` \| `medium` \| `high` \| `xhigh` \| `max` only (maps to `--effort`). `off` / `minimal` rejected on Claude. Rejected on `cursor` (no reasoning flag; put effort in `model`) |
-| `fast` | bool | no | `false` | `true` \| `false`. **Rho only**, and requires a pinned model (not `model-policy: inherit`). Turns on fast serving for this agent, independent of the parent's `/fast`. Bind fails when the resolved provider, model, and auth do not support fast mode (Codex GPT-5.5+/GPT-6, xAI OAuth `grok-4.7`) |
+| `fast` | bool | no | `false` | `true` \| `false`. **Rho only**, and requires a pinned model (not `model-policy: inherit`). Turns on fast serving for this agent, independent of the parent's `/fast`. Bind fails when the resolved provider, model, and auth do not support fast mode (Codex GPT-5.5+/GPT-6, xAI OAuth `grok-4.7`). For xAI, pin `auth: xai-oauth`; with `auth` unset bind may select the API-key login |
 | `tools` | `all` or string list | no | runtime-specific | See tool vocabulary. Mixing Rho, Claude, and Cursor names is a parse error. Required and nonempty on `cursor` |
 | `inherit_claude_config` | bool | no | `false` | `true` \| `false`. `true` only with `runtime: claude-cli` |
 

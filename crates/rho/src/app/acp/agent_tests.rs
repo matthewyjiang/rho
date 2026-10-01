@@ -60,7 +60,6 @@ fn test_agent() -> Arc<RhoAcpAgent> {
                 tools: ToolPolicy::All,
                 model: ModelPolicy::Inherit,
                 reasoning: None,
-                fast: false,
             },
         }),
         AgentInvocation {

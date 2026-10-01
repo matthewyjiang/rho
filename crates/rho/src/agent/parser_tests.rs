@@ -37,7 +37,6 @@ fn defaults_runtime_to_rho() {
             tools: ToolPolicy::All,
             model: ModelPolicy::Inherit,
             reasoning: None,
-            fast: false,
         }
     );
 }
@@ -230,6 +229,7 @@ fn allows_model_and_rejects_provider_on_claude_runtime() {
             provider: None,
             model: "claude-opus-4-6".into(),
             auth: None,
+            fast: false,
         })
     );
     match &definition.runtime {

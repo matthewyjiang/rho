@@ -8,7 +8,7 @@
 //!
 //! Field order is fixed so diffs stay small when one field changes:
 //! `id`, `description`, `prompt`, `runtime`, `model-policy`, `model`,
-//! `provider`, `auth`, `reasoning`, `fast`, `inherit_claude_config`, `tools`.
+//! `provider`, `auth`, `fast`, `reasoning`, `inherit_claude_config`, `tools`.
 
 use std::fmt::Write;
 
@@ -49,9 +49,6 @@ fn write_frontmatter(out: &mut String, definition: &AgentDefinition) {
     write_runtime(out, &definition.runtime);
     write_model(out, &definition.runtime);
     write_reasoning(out, &definition.runtime);
-    if definition.fast() {
-        let _ = writeln!(out, "fast: true");
-    }
     write_inherit_claude_config(out, &definition.runtime);
     write_tools(out, &definition.runtime);
 }
@@ -92,6 +89,9 @@ fn write_model(out: &mut String, runtime: &AgentRuntimeSpec) {
                 }
                 if let Some(auth) = selection.auth.as_deref() {
                     let _ = writeln!(out, "auth: {}", scalar(auth));
+                }
+                if selection.fast {
+                    let _ = writeln!(out, "fast: true");
                 }
             }
         },

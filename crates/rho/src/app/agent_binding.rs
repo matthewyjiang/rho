@@ -132,6 +132,23 @@ impl BoundAgent {
         }
     }
 
+    /// Carries the host session's `/fast` onto a Rho bind that inherits the
+    /// host model, when the bound selection can serve it.
+    ///
+    /// For synthetic host-owned asides such as `/side`, which follow the
+    /// conversation rather than an agent file. Catalog agents must not use
+    /// this: their definition's `fast` is authoritative.
+    pub(crate) fn keep_host_fast_mode(&mut self, host_config: &Config) {
+        if let BoundRuntime::Rho { config, .. } = &mut self.runtime {
+            config.fast_mode = host_config.fast_mode
+                && rho_providers::providers::fast_mode::supports_fast_mode(
+                    &config.provider,
+                    &config.model,
+                    &config.auth,
+                );
+        }
+    }
+
     /// Rho-bound capabilities. Claude-cli agents do not bind host tools.
     pub(crate) fn rho_capabilities(&self) -> Option<&AgentCapabilities> {
         match &self.runtime {
@@ -289,7 +306,6 @@ impl AgentBinder {
                 tools,
                 model,
                 reasoning,
-                fast,
             } => {
                 let mut config = bind_rho_config(
                     definition.id.as_str(),
@@ -298,11 +314,10 @@ impl AgentBinder {
                     host_config,
                     store,
                 )?;
-                apply_fast_mode(definition.id.as_str(), *fast, invocation.role, &mut config)?;
-                let config = Box::new(config);
+                apply_fast_mode(&definition, invocation.role, &mut config)?;
                 BoundRuntime::Rho {
                     capabilities: bind_rho_capabilities(&definition, tools, &invocation)?,
-                    config,
+                    config: Box::new(config),
                 }
             }
             AgentRuntimeSpec::ClaudeCli(config) => {
@@ -600,11 +615,11 @@ fn bind_rho_config(
 /// preference and `fast: true` can only turn it on. An explicit request must
 /// be servable by the bound provider, model, and auth.
 fn apply_fast_mode(
-    agent_id: &str,
-    fast: bool,
+    definition: &AgentDefinition,
     role: AgentRole,
     config: &mut Config,
 ) -> anyhow::Result<()> {
+    let fast = definition.fast();
     if fast
         && !rho_providers::providers::fast_mode::supports_fast_mode(
             &config.provider,
@@ -613,7 +628,8 @@ fn apply_fast_mode(
         )
     {
         anyhow::bail!(
-            "agent '{agent_id}': fast mode is not available for {}/{} with auth '{}'",
+            "agent '{}': fast mode is not available for {}/{} with auth '{}'",
+            definition.id,
             config.provider,
             config.model,
             config.auth

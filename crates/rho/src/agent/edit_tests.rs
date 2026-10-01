@@ -18,7 +18,6 @@ fn rho_draft() -> AgentDefinition {
             tools: ToolPolicy::All,
             model: ModelPolicy::Inherit,
             reasoning: None,
-            fast: false,
         },
     }
 }
@@ -55,9 +54,9 @@ fn switching_to_claude_cli_resets_incompatible_fields() {
                 provider: Some("openai".into()),
                 model: "gpt-5.5".into(),
                 auth: None,
+                fast: false,
             }),
             reasoning: Some(ReasoningLevel::Off),
-            fast: false,
         },
     };
 
@@ -92,9 +91,9 @@ fn switching_to_cursor_resets_reasoning_and_requires_tools() {
                 provider: Some("openai".into()),
                 model: "gpt-5.3-codex-high".into(),
                 auth: None,
+                fast: false,
             }),
             reasoning: Some(ReasoningLevel::High),
-            fast: false,
         },
     };
 
@@ -149,7 +148,6 @@ fn switching_to_rho_keeps_compatible_fields() {
             tools,
             model,
             reasoning,
-            ..
         } => {
             assert!(matches!(tools, ToolPolicy::All));
             assert!(matches!(model, ModelPolicy::Select(_)));
@@ -322,7 +320,6 @@ fn toggle_tool_flips_membership_per_runtime() {
             tools: ToolPolicy::Allow(narrow),
             model: ModelPolicy::Inherit,
             reasoning: None,
-            fast: false,
         }
     );
 
@@ -419,6 +416,7 @@ fn setting_model_text_pins_select_policy_for_rho() {
             provider: None,
             model: "gpt-5.5".into(),
             auth: None,
+            fast: false,
         })
     );
 }
@@ -437,7 +435,6 @@ fn save_definition_rejects_empty_replace_without_writing() {
             tools: ToolPolicy::All,
             model: ModelPolicy::Inherit,
             reasoning: None,
-            fast: false,
         },
     };
     let error = save_definition(&draft, &path, "").unwrap_err();
@@ -503,6 +500,7 @@ fn set_model_selection_preserves_compatible_auth_only() {
         provider: Some("xai".into()),
         model: "grok-4.5".into(),
         auth: Some("xai-oauth".into()),
+        fast: false,
     }));
     assert_eq!(draft.auth_text(), "xai-oauth");
 

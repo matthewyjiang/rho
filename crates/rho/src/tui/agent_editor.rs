@@ -339,6 +339,15 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
                     Some(draft.auth_badge()),
                     AGENT_FIELD_AUTH,
                 ));
+                // Keep the row while fast is on so an unsupported pin can be cleared.
+                if draft.fast() || draft.fast_mode_available() {
+                    items.push(field_item(
+                        "Fast mode",
+                        "Faster serving for this agent's model at a higher credit rate. Independent of the conversation's /fast.",
+                        Some(if draft.fast() { "on" } else { "off" }.into()),
+                        AGENT_FIELD_FAST,
+                    ));
+                }
             }
             items.push(field_item(
                 "Reasoning",
@@ -346,15 +355,6 @@ pub(super) fn agent_field_picker(draft: &AgentDefinition) -> UiPicker {
                 draft.reasoning().map(|level| level.to_string()),
                 AGENT_FIELD_REASONING,
             ));
-            // Keep the row while fast is on so an unsupported pin can be cleared.
-            if draft.fast() || draft.fast_mode_available() {
-                items.push(field_item(
-                    "Fast mode",
-                    "Faster serving for this agent's model at a higher credit rate. Independent of the conversation's /fast.",
-                    Some(if draft.fast() { "on" } else { "off" }.into()),
-                    AGENT_FIELD_FAST,
-                ));
-            }
             items.push(field_item(
                 "Tools",
                 format!(

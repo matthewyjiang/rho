@@ -197,6 +197,11 @@ pub struct ModelSelection {
     /// When unset, bind keeps the host auth if it is valid for the selected
     /// provider; otherwise it falls back to that provider's default auth.
     pub auth: Option<String>,
+    /// Fast serving for this pinned model (`fast: true`). Rho only.
+    ///
+    /// Independent of the parent's `/fast`: delegated runs use exactly this
+    /// value. Bind fails when the resolved model and auth cannot serve it.
+    pub fast: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -209,6 +214,15 @@ pub enum ModelPolicy {
 
 impl ModelPolicy {
     /// Embedded selection for prefer/require/select policies.
+    pub fn selection_mut(&mut self) -> Option<&mut ModelSelection> {
+        match self {
+            Self::Prefer(selection) | Self::Require(selection) | Self::Select(selection) => {
+                Some(selection)
+            }
+            Self::Inherit => None,
+        }
+    }
+
     pub fn selection(&self) -> Option<&ModelSelection> {
         match self {
             Self::Prefer(selection) | Self::Require(selection) | Self::Select(selection) => {
@@ -366,12 +380,6 @@ pub enum AgentRuntimeSpec {
         tools: ToolPolicy,
         model: ModelPolicy,
         reasoning: Option<ReasoningLevel>,
-        /// Fast serving for this agent's pinned model (`fast: true`).
-        ///
-        /// Independent of the parent's `/fast`: delegated runs use exactly this
-        /// value. Parse requires a pinned model; bind fails when the resolved
-        /// model and auth do not support fast mode.
-        fast: bool,
     },
     ClaudeCli(ClaudeAgentConfig),
     Cursor(CursorAgentConfig),
@@ -383,7 +391,6 @@ impl Default for AgentRuntimeSpec {
             tools: ToolPolicy::All,
             model: ModelPolicy::Inherit,
             reasoning: None,
-            fast: false,
         }
     }
 }
@@ -453,12 +460,12 @@ impl AgentDefinition {
         }
     }
 
-    /// Whether this definition asks for fast serving. Only Rho agents can.
+    /// Whether this definition asks for fast serving. Only pinned Rho
+    /// selections can.
     pub fn fast(&self) -> bool {
-        match &self.runtime {
-            AgentRuntimeSpec::Rho { fast, .. } => *fast,
-            AgentRuntimeSpec::ClaudeCli(_) | AgentRuntimeSpec::Cursor(_) => false,
-        }
+        self.model_policy()
+            .selection()
+            .is_some_and(|selection| selection.fast)
     }
 
     /// Current semantic fingerprint (v2). New sessions store this value.
@@ -581,11 +588,6 @@ impl AgentDefinition {
             } else {
                 hash_field(&mut hash, b"inherit_claude_config:false");
             }
-            // Only hash an explicit opt-in so definitions without `fast`
-            // keep the fingerprint they had before this field existed.
-            if self.fast() {
-                hash_field(&mut hash, b"fast:true");
-            }
         }
         AgentFingerprint(hash.finalize().into())
     }
@@ -608,6 +610,7 @@ fn pass_through_model_policy(model: Option<&str>) -> ModelPolicy {
             provider: None,
             model: model.to_string(),
             auth: None,
+            fast: false,
         }),
     }
 }
@@ -621,6 +624,10 @@ fn hash_selection(hash: &mut Sha256, policy: &[u8], selection: &ModelSelection) 
     if let Some(auth) = selection.auth.as_deref() {
         hash_field(hash, b"auth");
         hash_field(hash, auth.as_bytes());
+    }
+    // Likewise only an explicit opt-in changes the fingerprint.
+    if selection.fast {
+        hash_field(hash, b"fast:true");
     }
 }
 

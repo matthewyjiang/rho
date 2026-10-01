@@ -25,7 +25,6 @@ fn sample_definition(id: &str) -> crate::agent::AgentDefinition {
             tools: crate::agent::ToolPolicy::All,
             model: crate::agent::ModelPolicy::Inherit,
             reasoning: None,
-            fast: false,
         },
     }
 }

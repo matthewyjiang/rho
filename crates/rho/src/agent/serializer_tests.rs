@@ -50,7 +50,6 @@ fn empty_extend_body_stays_empty() {
             tools: ToolPolicy::All,
             model: ModelPolicy::Inherit,
             reasoning: None,
-            fast: false,
         },
     };
 
@@ -117,9 +116,9 @@ fn canonicalizes_ordered_fields() {
                 provider: Some("openai".into()),
                 model: "model-x".into(),
                 auth: None,
+                fast: false,
             }),
             reasoning: Some(ReasoningLevel::Low),
-            fast: false,
         },
     };
 

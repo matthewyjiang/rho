@@ -45,7 +45,6 @@ fn bound_agent(config: &Config) -> crate::app::agent_binding::BoundAgent {
                 ),
                 model: ModelPolicy::Inherit,
                 reasoning: None,
-                fast: false,
             },
         }),
         AgentInvocation {

@@ -44,7 +44,6 @@ static INTERNAL_AGENTS: LazyLock<Vec<InternalAgent>> = LazyLock::new(|| {
                     tools: ToolPolicy::Allow(BTreeSet::new()),
                     model: ModelPolicy::Inherit,
                     reasoning: Some(ReasoningLevel::Low),
-                    fast: false,
                 },
             },
             requires_own_model: false,
@@ -60,7 +59,6 @@ static INTERNAL_AGENTS: LazyLock<Vec<InternalAgent>> = LazyLock::new(|| {
                     tools: ToolPolicy::Allow(BTreeSet::new()),
                     model: ModelPolicy::Inherit,
                     reasoning: Some(ReasoningLevel::Low),
-                    fast: false,
                 },
             },
             requires_own_model: false,
@@ -77,7 +75,6 @@ static INTERNAL_AGENTS: LazyLock<Vec<InternalAgent>> = LazyLock::new(|| {
                     // Unused: the advisor requires its own model (below).
                     model: ModelPolicy::Inherit,
                     reasoning: Some(ReasoningLevel::Medium),
-                    fast: false,
                 },
             },
             // An advisor that mirrors the executor adds nothing, so it stays
@@ -102,7 +99,6 @@ static INTERNAL_AGENTS: LazyLock<Vec<InternalAgent>> = LazyLock::new(|| {
                     // and must not fall back to the executor.
                     model: ModelPolicy::Inherit,
                     reasoning: Some(ReasoningLevel::Low),
-                    fast: false,
                 },
             },
             requires_own_model: true,
@@ -122,7 +118,6 @@ static INTERNAL_AGENTS: LazyLock<Vec<InternalAgent>> = LazyLock::new(|| {
                     // at `OVERRIDE_DEFAULT_REASONING`.
                     model: ModelPolicy::Inherit,
                     reasoning: None,
-                    fast: false,
                 },
             },
             requires_own_model: false,

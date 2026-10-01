@@ -130,6 +130,7 @@ fn parse_definition_with_fallback(
         raw.model,
         raw.provider,
         raw.auth,
+        raw.fast.unwrap_or(false),
         raw.model_policy,
     )?;
     let reasoning = parse_reasoning(path, runtime, raw.reasoning)?;
@@ -142,7 +143,6 @@ fn parse_definition_with_fallback(
             runtime,
             raw.tools,
             raw.inherit_claude_config.unwrap_or(false),
-            raw.fast.unwrap_or(false),
             model,
             reasoning,
         )?,
@@ -196,9 +196,17 @@ fn parse_model_policy(
     model: Option<String>,
     provider: Option<String>,
     auth: Option<String>,
+    fast: bool,
     policy: Option<String>,
 ) -> Result<ModelPolicy, AgentCatalogError> {
     if runtime.is_external_cli() {
+        if fast {
+            return Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "fast",
+                "is only valid with runtime: rho",
+            ));
+        }
         return parse_external_runtime_model_policy(path, runtime, model, provider, auth, policy);
     }
 
@@ -211,6 +219,15 @@ fn parse_model_policy(
                 path.to_path_buf(),
                 "model-policy",
                 "inherit cannot specify model, provider, or auth",
+            ));
+        }
+        // Fast mode belongs to a specific model; an inherited one would make
+        // it depend on whatever the parent happens to run.
+        if fast {
+            return Err(AgentCatalogError::at_field(
+                path.to_path_buf(),
+                "fast",
+                "requires a pinned model; set model (and provider) instead of model-policy: inherit",
             ));
         }
         return Ok(ModelPolicy::Inherit);
@@ -276,6 +293,7 @@ fn parse_model_policy(
         provider,
         model,
         auth,
+        fast,
     };
     Ok(match policy {
         "prefer" => ModelPolicy::Prefer(selection),
@@ -354,6 +372,7 @@ set a model name (for example opus or gpt-5.3-codex-high), not '{model}'"
                 provider: None,
                 model,
                 auth: None,
+                fast: false,
             }))
         }
     }
@@ -384,26 +403,9 @@ fn parse_runtime_spec(
     runtime: AgentRuntime,
     tools: Option<RawTools>,
     inherit_claude_config: bool,
-    fast: bool,
     model: ModelPolicy,
     reasoning: Option<ReasoningLevel>,
 ) -> Result<AgentRuntimeSpec, AgentCatalogError> {
-    if fast && runtime != AgentRuntime::Rho {
-        return Err(AgentCatalogError::at_field(
-            path.to_path_buf(),
-            "fast",
-            "is only valid with runtime: rho",
-        ));
-    }
-    // Fast mode is a property of a specific model. An inherited model would
-    // make it depend on whatever the parent happens to run.
-    if fast && matches!(model, ModelPolicy::Inherit) {
-        return Err(AgentCatalogError::at_field(
-            path.to_path_buf(),
-            "fast",
-            "requires a pinned model; set model (and provider) instead of model-policy: inherit",
-        ));
-    }
     if runtime != AgentRuntime::ClaudeCli && inherit_claude_config {
         return Err(AgentCatalogError::at_field(
             path.to_path_buf(),
@@ -421,7 +423,6 @@ fn parse_runtime_spec(
                 tools,
                 model,
                 reasoning,
-                fast,
             })
         }
         AgentRuntime::ClaudeCli => {

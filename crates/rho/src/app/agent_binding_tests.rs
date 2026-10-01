@@ -25,7 +25,6 @@ fn definition(tools: ToolPolicy) -> Arc<AgentDefinition> {
             tools,
             model: ModelPolicy::Inherit,
             reasoning: None,
-            fast: false,
         },
     })
 }
@@ -352,7 +351,6 @@ fn definition_with_model(model: ModelPolicy) -> Arc<AgentDefinition> {
             tools: ToolPolicy::All,
             model,
             reasoning: None,
-            fast: false,
         },
         ..definition(ToolPolicy::All).as_ref().clone()
     })
@@ -387,6 +385,7 @@ fn agent_model_aliases_resolve_qualified_and_bare_targets() {
                 provider: None,
                 model: alias.into(),
                 auth: None,
+                fast: false,
             })),
             AgentInvocation {
                 role: AgentRole::Delegated,
@@ -413,6 +412,7 @@ fn agent_model_alias_conflicting_with_pinned_provider_errors() {
             provider: Some("openai".into()),
             model: "@deep".into(),
             auth: None,
+            fast: false,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -437,6 +437,7 @@ fn undefined_agent_model_alias_names_agent_and_reference() {
             provider: None,
             model: "@missing".into(),
             auth: None,
+            fast: false,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -488,6 +489,7 @@ fn claude_binding_is_typed_and_does_not_resolve_aliases_or_mutate_host_config() 
             provider: None,
             model: "opus".into(),
             auth: None,
+            fast: false,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -559,6 +561,7 @@ fn claude_runtime_rejects_alias_models_at_bind() {
             provider: None,
             model: "@deep".into(),
             auth: None,
+            fast: false,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -693,6 +696,7 @@ fn provider_without_auth_keeps_compatible_host_auth() {
             provider: Some("xai".into()),
             model: "grok-4.5".into(),
             auth: None,
+            fast: false,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -723,6 +727,7 @@ fn explicit_auth_pin_overrides_host_auth() {
             provider: Some("xai".into()),
             model: "grok-4.5".into(),
             auth: Some("xai-api-key".into()),
+            fast: false,
         })),
         AgentInvocation {
             role: AgentRole::Delegated,
@@ -857,6 +862,7 @@ fn bound_agent_prompt_model_reflects_model_policy() {
                 provider: None,
                 model: "gpt-5.6-sol".into(),
                 auth: None,
+                fast: false,
             }),
             PromptModel::Rho {
                 provider: "openai".into(),
@@ -869,6 +875,7 @@ fn bound_agent_prompt_model_reflects_model_policy() {
                 provider: Some("xai".into()),
                 model: "grok-4.5".into(),
                 auth: None,
+                fast: false,
             }),
             PromptModel::Rho {
                 provider: "xai".into(),
@@ -881,6 +888,7 @@ fn bound_agent_prompt_model_reflects_model_policy() {
                 provider: None,
                 model: "@fast".into(),
                 auth: None,
+                fast: false,
             }),
             PromptModel::Rho {
                 provider: "xai".into(),
@@ -893,6 +901,7 @@ fn bound_agent_prompt_model_reflects_model_policy() {
                 provider: None,
                 model: "@bare".into(),
                 auth: None,
+                fast: false,
             }),
             PromptModel::Rho {
                 provider: "openai".into(),
@@ -905,6 +914,7 @@ fn bound_agent_prompt_model_reflects_model_policy() {
                 provider: None,
                 model: "claude-fable-5".into(),
                 auth: Some("anthropic-api-key".into()),
+                fast: false,
             }),
             PromptModel::Rho {
                 provider: "anthropic".into(),
@@ -1163,9 +1173,9 @@ fn delegated_fast_mode_follows_definition_not_parent() {
                     provider: Some(provider.into()),
                     model: model.into(),
                     auth: Some(auth.into()),
+                    fast,
                 }),
                 reasoning: None,
-                fast,
             },
             ..definition(ToolPolicy::All).as_ref().clone()
         })
@@ -1222,5 +1232,45 @@ fn delegated_fast_mode_follows_definition_not_parent() {
             .map(|bound| bound.rho_config().expect("rho config").fast_mode)
             .map_err(|_| ());
         assert_eq!(actual, expected, "case {index}");
+    }
+}
+
+// Covers: `/side`-style host asides keep the session's /fast across a
+// delegated bind, but only when the inherited selection can serve it.
+// Owner: agent binding policy
+#[test]
+fn keep_host_fast_mode_restores_session_fast_when_servable() {
+    let store = credentials(&["codex", "xai-api-key"]);
+    // (host provider, model, auth, host fast_mode, expected bound fast_mode)
+    for (provider, model, auth, host_fast, expected) in [
+        ("openai-codex", "gpt-5.5", "codex", true, true),
+        ("openai-codex", "gpt-5.5", "codex", false, false),
+        ("openai-codex", "gpt-5.3-codex", "codex", true, false),
+        ("xai", "grok-4.7", "xai-api-key", true, false),
+    ] {
+        let host = Config {
+            provider: provider.into(),
+            model: model.into(),
+            auth: auth.into(),
+            fast_mode: host_fast,
+            ..Config::default()
+        };
+        let mut bound = AgentBinder::bind_with_credentials(
+            definition(ToolPolicy::All),
+            AgentInvocation {
+                role: AgentRole::Delegated,
+                available_tools: capabilities(),
+            },
+            &host,
+            &store,
+        )
+        .expect("bind");
+        assert!(!bound.rho_config().expect("rho config").fast_mode);
+        bound.keep_host_fast_mode(&host);
+        assert_eq!(
+            bound.rho_config().expect("rho config").fast_mode,
+            expected,
+            "{provider}/{model} {auth} fast={host_fast}"
+        );
     }
 }
