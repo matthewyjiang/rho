@@ -68,15 +68,11 @@ impl Tool for GatedTool {
     }
 }
 
-// Covers: with codemode enabled the app registry ships codemode + tool_search
-// as model-facing.
+// Covers: default app registry must ship codemode + tool_search as model-facing.
 // Owner: app tool registry wiring.
 #[test]
 fn app_tool_set_registers_codemode_and_tool_search() {
-    let config = Config {
-        codemode: true,
-        ..Config::default()
-    };
+    let config = Config::default();
     let tool_set = AppToolSet::new(
         &config,
         RuntimeDiagnostics::new(&config),

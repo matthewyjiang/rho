@@ -360,10 +360,8 @@ Follow the live tool list.\n"
 pub(crate) fn codemode_enabled_context(spec: &ToolSpec) -> (String, String) {
     let model = format!(
         "[codemode on]\n\n\
-The `codemode` tool is now available. Tools that write files or run \
-processes are no longer direct tools; make those changes with `call_tool` \
-inside a `codemode` script. Nested `call_tool` calls follow the current \
-permission mode exactly like direct tool calls.\n\n\
+The `codemode` tool is now available. Nested `call_tool` calls follow the \
+current permission mode exactly like direct tool calls.\n\n\
 {}\n",
         tool_schema_block(spec),
     );
@@ -375,8 +373,7 @@ pub fn codemode_disabled_context() -> (String, String) {
     let model = "\
 [codemode off]\n\n\
 The `codemode` tool is no longer available. Do not call `codemode`. \
-File-writing, edit, and shell tools are direct tools again. Follow the live \
-tool list.\n"
+Follow the live tool list.\n"
         .into();
     (model, "codemode off".into())
 }

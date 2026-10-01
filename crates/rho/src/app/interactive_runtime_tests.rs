@@ -1095,11 +1095,8 @@ async fn edit_tool_test_runtime() -> InteractiveRuntime {
 /// Shared factory for TUI tests that exercise Auto edit-tool handoff.
 pub(super) async fn edit_tool_runtime(edit_tool: crate::config::EditTool) -> InteractiveRuntime {
     let mut interactive = pending_compaction_runtime("done").await;
-    // Codemode off: these tests exercise the direct edit surface, which the
-    // `/codemode on` write lock removes from the advertised list.
     let config = Config {
         edit_tool,
-        codemode: false,
         ..Config::default()
     };
     interactive.tools = AppToolSet::new(

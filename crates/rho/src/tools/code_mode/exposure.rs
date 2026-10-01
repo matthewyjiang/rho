@@ -206,12 +206,6 @@ struct ExposureInner {
     /// Deferred tools promoted into the active direct set for subsequent model turns.
     promoted: BTreeSet<String>,
     catalog: BTreeMap<String, ToolCatalogEntry>,
-    /// Indexed tools that declare `Write` or `Process` authority.
-    mutating: BTreeSet<String>,
-    /// `/codemode on`: mutating tools are never advertised to the model, so
-    /// mutations route through `codemode`. Separate from `policy` so nested
-    /// `call_tool` reachability and promotions are untouched.
-    write_lock: bool,
 }
 
 impl ExposureController {
@@ -221,8 +215,6 @@ impl ExposureController {
                 policy,
                 promoted: BTreeSet::new(),
                 catalog: BTreeMap::new(),
-                mutating: BTreeSet::new(),
-                write_lock: false,
             }),
         }
     }
@@ -255,12 +247,8 @@ impl ExposureController {
     pub fn reindex_all(&self, tools: &[Arc<dyn Tool>]) {
         let mut inner = self.inner.lock().expect("exposure");
         inner.catalog.clear();
-        inner.mutating.clear();
         for tool in tools {
             let spec = tool.spec();
-            if routes_through_codemode(tool.as_ref()) {
-                inner.mutating.insert(spec.name.clone());
-            }
             inner.catalog.insert(
                 spec.name.clone(),
                 ToolCatalogEntry {
@@ -286,16 +274,8 @@ impl ExposureController {
         effective_locked(&inner, name)
     }
 
-    /// Single advertisement predicate for prompt specs and provider requests.
     pub fn is_model_facing(&self, name: &str) -> bool {
-        let inner = self.inner.lock().expect("exposure");
-        effective_locked(&inner, name) == ToolExposure::Direct
-            && !(inner.write_lock && inner.mutating.contains(name))
-    }
-
-    /// `/codemode on` sets the write lock; `off` clears it.
-    pub fn set_write_lock(&self, locked: bool) {
-        self.inner.lock().expect("exposure").write_lock = locked;
+        self.effective(name) == ToolExposure::Direct
     }
 
     /// Scripts may call anything except `hidden`.
@@ -371,18 +351,6 @@ impl rho_sdk::tool::ToolVisibility for ExposureController {
     fn is_advertised(&self, name: &str) -> bool {
         self.is_model_facing(name)
     }
-}
-
-/// Tools that mutate the workspace or run processes route through `codemode`
-/// while it is on. Classified from declared `ToolSecurity` authority, not
-/// names, so every edit format, shell, and workflow tool is covered.
-fn routes_through_codemode(tool: &dyn Tool) -> bool {
-    tool.security().capabilities().iter().any(|capability| {
-        matches!(
-            capability,
-            rho_sdk::CapabilityKind::Write | rho_sdk::CapabilityKind::Process
-        )
-    })
 }
 
 fn effective_locked(inner: &ExposureInner, name: &str) -> ToolExposure {

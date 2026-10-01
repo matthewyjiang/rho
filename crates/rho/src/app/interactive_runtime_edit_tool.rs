@@ -70,13 +70,10 @@ impl InteractiveRuntime {
         previous: rho_tools::EditFormat,
         current: rho_tools::EditFormat,
     ) -> anyhow::Result<String> {
-        // Registered, not advertised: under the `/codemode` write lock the edit
-        // tool is reached through `codemode` scripts, which still need its schema.
         let spec = self
             .tools
-            .tools()
-            .iter()
-            .map(|tool| tool.spec())
+            .specs()
+            .into_iter()
             .find(|spec| spec.name == current.tool_name())
             .ok_or_else(|| {
                 anyhow::anyhow!(
