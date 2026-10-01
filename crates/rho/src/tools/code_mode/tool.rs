@@ -48,7 +48,10 @@ MCP tools, or filtering large output; call a declared tool directly for a single
 Use search_tools/list_tools inside the script to discover \
 MCP tools (default exposure: codemode). Only the script's distilled result returns to the model; \
 nested tool payloads stay on the host/TUI path. Nested calls follow the session permission mode \
-exactly like direct calls; a gated call pauses this script until approved (deny → error)."
+exactly like direct calls; a gated call pauses this script until approved (deny → error). \
+Scripts get no exit notifications: to wait for a started process, loop process poll, passing \
+next_cursor back as cursor, until state is not running or starting (a poll returns as soon as \
+new output arrives)."
                 .into(),
             input_schema: json!({
                 "type": "object",
