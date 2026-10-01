@@ -97,6 +97,7 @@ impl InteractiveRuntime {
                     .iter()
                     .map(|(identity, text)| (identity.as_str(), text.as_str())),
             );
+            retained.push_str(&self.tools.mcp_servers_catalog_section());
             template.append_retained(&retained);
         }
         let prompt_changed = self.refresh_startup_system_prompt()?;

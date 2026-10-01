@@ -21,6 +21,7 @@ use starlark::PrintHandler;
 use thiserror::Error;
 
 use super::bridge::{BridgeError, GuardedBridge};
+use super::exposure::ExposureController;
 
 #[derive(Debug, Error)]
 pub enum EngineError {
@@ -58,6 +59,7 @@ pub struct EngineOutput {
 
 struct GuestShared {
     bridge: Arc<GuardedBridge>,
+    exposure: Option<Arc<ExposureController>>,
     #[allow(dead_code)]
     prints: Arc<Mutex<Vec<String>>>,
     runtime: tokio::runtime::Handle,
@@ -85,6 +87,16 @@ pub fn evaluate_code_mode(
     bridge: Arc<GuardedBridge>,
     limits: EngineLimits,
 ) -> Result<EngineOutput, EngineError> {
+    evaluate_code_mode_with_exposure(source, bridge, limits, None)
+}
+
+/// Like [`evaluate_code_mode`], with script-side discovery via `search_tools` / `list_tools`.
+pub fn evaluate_code_mode_with_exposure(
+    source: &str,
+    bridge: Arc<GuardedBridge>,
+    limits: EngineLimits,
+    exposure: Option<Arc<ExposureController>>,
+) -> Result<EngineOutput, EngineError> {
     let runtime = tokio::runtime::Handle::try_current().map_err(|_| {
         EngineError::Message(
             "codemode requires a Tokio runtime (run inside an async tool call)".into(),
@@ -94,6 +106,7 @@ pub fn evaluate_code_mode(
     let prints = Arc::new(Mutex::new(Vec::new()));
     let state = Arc::new(GuestShared {
         bridge: bridge.clone(),
+        exposure,
         prints: Arc::clone(&prints),
         runtime,
     });
@@ -164,6 +177,70 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
         let heap = eval.heap();
         Ok(json_to_starlark(heap, &payload))
     }
+
+    /// Keyword/substring search over indexed tools (incl. MCP defaults that are not LLM-declared).
+    fn search_tools<'v>(
+        query: &str,
+        #[starlark(default = 10)] limit: i32,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<Value<'v>> {
+        let hits = discovery_search(query, limit.max(1) as usize)
+            .map_err(|error| anyhow::Error::msg(error.to_string()))?;
+        let payload = JsonValue::Array(
+            hits.into_iter()
+                .map(|hit| {
+                    json!({
+                        "name": hit.name,
+                        "description": hit.description,
+                    })
+                })
+                .collect(),
+        );
+        Ok(json_to_starlark(eval.heap(), &payload))
+    }
+
+    /// List tools visible to scripts (excludes hidden). Prefer search_tools for large catalogs.
+    fn list_tools<'v>(
+        #[starlark(default = 50)] limit: i32,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<Value<'v>> {
+        let hits = discovery_list(limit.max(1) as usize)
+            .map_err(|error| anyhow::Error::msg(error.to_string()))?;
+        let payload = JsonValue::Array(
+            hits.into_iter()
+                .map(|hit| {
+                    json!({
+                        "name": hit.name,
+                        "description": hit.description,
+                    })
+                })
+                .collect(),
+        );
+        Ok(json_to_starlark(eval.heap(), &payload))
+    }
+}
+
+fn discovery_search(
+    query: &str,
+    limit: usize,
+) -> Result<Vec<super::exposure::ToolCatalogEntry>, EngineError> {
+    let state = GUEST.with(|slot| slot.borrow().clone()).ok_or_else(|| {
+        EngineError::Message("internal: missing codemode guest state".into())
+    })?;
+    let Some(exposure) = state.exposure.as_ref() else {
+        return Ok(Vec::new());
+    };
+    Ok(exposure.search(query, limit))
+}
+
+fn discovery_list(limit: usize) -> Result<Vec<super::exposure::ToolCatalogEntry>, EngineError> {
+    let state = GUEST.with(|slot| slot.borrow().clone()).ok_or_else(|| {
+        EngineError::Message("internal: missing codemode guest state".into())
+    })?;
+    let Some(exposure) = state.exposure.as_ref() else {
+        return Ok(Vec::new());
+    };
+    Ok(exposure.list_script_visible(limit))
 }
 
 fn invoke_blocking(name: &str, arguments: JsonValue) -> Result<ToolOutput, EngineError> {

@@ -23,6 +23,8 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use super::exposure::ExposureController;
+
 use async_trait::async_trait;
 use rho_sdk::tool::ToolOutput;
 use rho_sdk::{Error as SdkError, ToolHost, ToolHostCall};
@@ -61,6 +63,7 @@ pub struct GuardedBridge {
     allowlist: Option<BTreeSet<String>>,
     max_calls: usize,
     calls: std::sync::Mutex<usize>,
+    exposure: Option<Arc<ExposureController>>,
 }
 
 impl GuardedBridge {
@@ -72,11 +75,21 @@ impl GuardedBridge {
         allowlist: Option<BTreeSet<String>>,
         max_calls: usize,
     ) -> Self {
+        Self::with_exposure(inner, allowlist, max_calls, None)
+    }
+
+    pub fn with_exposure(
+        inner: Arc<dyn CodeModeBridge>,
+        allowlist: Option<BTreeSet<String>>,
+        max_calls: usize,
+        exposure: Option<Arc<ExposureController>>,
+    ) -> Self {
         Self {
             inner,
             allowlist,
             max_calls: max_calls.max(1),
             calls: std::sync::Mutex::new(0),
+            exposure,
         }
     }
 
@@ -93,6 +106,13 @@ impl GuardedBridge {
             return Err(BridgeError::Recursive {
                 name: trimmed.to_owned(),
             });
+        }
+        if let Some(exposure) = &self.exposure {
+            if !exposure.is_script_callable(trimmed) {
+                return Err(BridgeError::Message(format!(
+                    "tool `{trimmed}` is hidden and unreachable from codemode"
+                )));
+            }
         }
         if let Some(allow) = &self.allowlist {
             if !allow.contains(trimmed) {

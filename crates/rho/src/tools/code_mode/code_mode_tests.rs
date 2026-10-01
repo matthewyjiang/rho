@@ -115,3 +115,74 @@ fn tool_spec_and_format_smoke() {
     });
     assert!(formatted.contains("pong"), "{formatted}");
 }
+
+
+#[tokio::test(flavor = "multi_thread")]
+async fn script_search_tools_finds_mcp_and_call_tool() {
+    use super::exposure::ExposureController;
+    use super::engine::evaluate_code_mode_with_exposure;
+
+    let mut responses = BTreeMap::new();
+    responses.insert("mcp__github__create_issue".into(), "created".into());
+    let allow = BTreeSet::from(["mcp__github__create_issue".to_owned()]);
+    let exposure = Arc::new(ExposureController::with_default_policy());
+    exposure.index_tool("mcp__github__create_issue", "Create a GitHub issue");
+    exposure.index_tool("bash", "shell");
+    let bridge = Arc::new(GuardedBridge::with_exposure(
+        Arc::new(StubBridge {
+            calls: Mutex::new(Vec::new()),
+            responses,
+        }),
+        Some(allow),
+        32,
+        Some(Arc::clone(&exposure)),
+    ));
+    let script = r#"
+hits = search_tools("github")
+out = call_tool(hits[0]["name"], {"title": "x"})
+result = {"found": hits[0]["name"], "content": out["content"]}
+"#;
+    let output = tokio::task::block_in_place(|| {
+        evaluate_code_mode_with_exposure(
+            script,
+            Arc::clone(&bridge),
+            EngineLimits::default(),
+            Some(exposure),
+        )
+    })
+    .expect("evaluate");
+    assert_eq!(output.return_value["found"], json!("mcp__github__create_issue"));
+    assert_eq!(output.return_value["content"], json!("created"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hidden_tool_unreachable_from_script() {
+    use super::exposure::{ExposureController, ExposurePolicy, ToolExposure};
+    use super::engine::evaluate_code_mode_with_exposure;
+
+    let policy = ExposurePolicy::new().override_exact("secret", ToolExposure::Hidden);
+    let exposure = Arc::new(ExposureController::new(policy));
+    exposure.index_tool("secret", "nope");
+    let bridge = Arc::new(GuardedBridge::with_exposure(
+        Arc::new(StubBridge {
+            calls: Mutex::new(Vec::new()),
+            responses: BTreeMap::new(),
+        }),
+        None,
+        32,
+        Some(Arc::clone(&exposure)),
+    ));
+    let err = tokio::task::block_in_place(|| {
+        evaluate_code_mode_with_exposure(
+            r#"result = call_tool("secret", {})"#,
+            bridge,
+            EngineLimits::default(),
+            Some(exposure),
+        )
+    })
+    .expect_err("hidden");
+    assert!(
+        err.to_string().contains("hidden"),
+        "unexpected: {err}"
+    );
+}

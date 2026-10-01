@@ -250,6 +250,8 @@ pub(crate) async fn assemble_tools_and_prompt(
                     .filter_map(|server| Some((server.identity.as_str(), server.instructions()?)))
                     .collect::<Vec<_>>();
                 prompt::append_mcp_instructions(&mut retained, mcp_instructions.iter().copied());
+                // Short server catalog (not full schemas); MCP tools default to codemode.
+                retained.push_str(&tools.mcp_servers_catalog_section());
                 if !extra.is_empty() {
                     retained.push_str(&format!("\n\n# Agent instructions\n\n{extra}"));
                 }

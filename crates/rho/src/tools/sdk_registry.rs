@@ -188,6 +188,8 @@ pub struct AppToolSet {
     /// Present only when the `sessions` tool is installed, since recall is
     /// the only way to read an elided result back.
     recall: Option<crate::session::recall::RecallStore>,
+    /// Pi-style exposure + deferred promotions for model-facing specs.
+    exposure: std::sync::Arc<super::code_mode::ExposureController>,
 }
 
 impl AppToolSet {
@@ -210,6 +212,7 @@ impl AppToolSet {
             file_view: rho_tools::FileViewPolicy::default(),
             session_search: super::sessions::SessionBinding::default(),
             recall: None,
+            exposure: std::sync::Arc::new(super::code_mode::ExposureController::with_default_policy()),
         }
     }
 
@@ -323,6 +326,12 @@ impl AppToolSet {
             tool_set.add_bundle(bundle);
         }
 
+        // Model-facing discovery tool; MCP tools stay callable via ToolHost / codemode.
+        tool_set.tools.push(std::sync::Arc::new(super::code_mode::ToolSearchTool::new(
+            std::sync::Arc::clone(&tool_set.exposure),
+        )));
+        tool_set.exposure.reindex_all(&tool_set.tools);
+
         tool_set
     }
 
@@ -339,6 +348,7 @@ impl AppToolSet {
         if let Some(bundle) = outcome.bundle {
             self.add_bundle(bundle);
         }
+        self.exposure.reindex_all(&self.tools);
     }
 
     pub(crate) fn add_bundle(&mut self, bundle: impl ToolBundle + 'static) {
@@ -408,7 +418,30 @@ impl AppToolSet {
     }
 
     pub fn specs(&self) -> Vec<rho_sdk::model::ToolSpec> {
-        self.tools.iter().map(|tool| tool.spec()).collect()
+        // Keep tools() full for ToolHost execution; filter only model-facing schemas.
+        self.exposure.reindex_all(&self.tools);
+        self.exposure.filter_model_specs(&self.tools)
+    }
+
+    #[allow(dead_code)]
+    pub fn exposure(&self) -> std::sync::Arc<super::code_mode::ExposureController> {
+        std::sync::Arc::clone(&self.exposure)
+    }
+
+    /// Short one-line-per-server MCP catalog for the system prompt (not full schemas).
+    pub fn mcp_servers_catalog_section(&self) -> String {
+        super::code_mode::format_mcp_servers_catalog(
+            self.mcp_report
+                .servers
+                .iter()
+                .map(|server| (server.identity.as_str(), server.status().as_str())),
+        )
+    }
+
+    /// Apply Pi-style exposure overrides (exact > pattern). Reindexes immediately.
+    #[allow(dead_code)]
+    pub fn set_exposure_policy(&self, policy: super::code_mode::ExposurePolicy) {
+        self.exposure.set_policy(policy);
     }
 
     /// Returns registry names without applying any additional capability filter.

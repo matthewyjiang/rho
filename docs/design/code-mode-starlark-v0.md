@@ -46,8 +46,7 @@ Composition alone is **not** “done.” Shipping code-mode means:
 | Nested approvals | Pause whole script on gated nested calls (see below) |
 | Registry wiring | Opt the tool into real sessions |
 
-**Prototype crutch:** dual direct+codemode exposure of MCP tools is OK until search exists.  
-**Ship target:** search + deferred discovery + `codemode` as composition (Pi 0.99 lesson: MCP = capability, codemode = composition, search = discovery).
+**Pi-aligned exposure (locked):** MCP defaults to **`codemode`** (not declared as normal LLM tools). Core natives stay **`direct`**. Hot MCP (e.g. computer-use) *may* be `direct` via per-server/per-tool override. **`tool_search`** promotes `deferred` into the active direct set. Script-side **`search_tools` / `list_tools`** discover MCP names for Starlark. Short **mcp_servers** catalog in the prompt (one line per server), not full schemas.
 
 ### 2. Sequential `call_tool` for v0
 
@@ -77,6 +76,23 @@ Mode mapping (future `/codemode` toggle):
 - `/codemode on` — composition with **normal** write gating (or write-locked per matrix below).
 - `/codemode yolo` — widens **only as far as session policy allows**; config can lock so yolo cannot widen past policy.
 - `/codemode off` — restore normal tools without the composition tool (or hide it).
+
+### 5. Tool exposure modes (Pi-aligned)
+
+| Mode | Model-facing (`specs`) | Script `call_tool` | Notes |
+|------|------------------------|--------------------|-------|
+| `direct` | yes | yes | Core natives default here |
+| `codemode` | no | yes | **MCP default** |
+| `deferred` | only after `tool_search` promote | yes | Keyword/substring v0 (no embeddings) |
+| `hidden` | no | no | Unreachable |
+
+**Overrides:** exact tool name > pattern (`mcp__computer__*`). Do not force computer-use through scripts by default — support the override API so hot MCP *can* be `direct`.
+
+**Prompt:** short `# MCP servers` catalog (one line per server). Do **not** dump full server/tool lists into `codemode` or `tool_search` descriptions (keep prompt stable).
+
+**Dual direct+codemode by default** was a temporary prototype crutch and is **not** the ship model.
+
+
 
 Implementation seam: nested calls go through `ToolHost::invoke` on a host that **shares** the session `ApprovalHandler` / `ApprovalSession` with the parent run (`ToolHostBuilder::approval_session` / `approval_handler_shared`). That is the reuse path — not a new nested-only approver.
 
