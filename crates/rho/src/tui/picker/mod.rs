@@ -318,6 +318,7 @@ impl UiPicker {
     picker_ctors! {
         models => SelectModel,
         internal_agent_models => SelectInternalAgentModel,
+        advisor_reasoning => SelectAdvisorReasoning,
         login_group => LoginGroup,
         login_provider => LoginProvider,
         logout_provider => LogoutProvider,
@@ -350,6 +351,7 @@ impl UiPicker {
         is_attach_subagent => AttachSubagent,
         is_conversation_model => SelectModel,
         is_internal_agent_model => SelectInternalAgentModel,
+        is_advisor_reasoning => SelectAdvisorReasoning,
         is_manage_sessions => ManageSessions,
         is_resume_session => ResumeSession,
         is_workflow => Workflow,

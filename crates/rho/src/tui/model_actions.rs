@@ -489,6 +489,11 @@ impl App {
                 self.internal_agent_model_target = None;
                 self.finish_advisor_model_selection(selected, agent).await?;
             }
+            InternalAgentModelPickerOrigin::AdvisorModelCommand => {
+                self.internal_agent_model_target = None;
+                self.finish_advisor_model_command_selection(selected, agent)
+                    .await;
+            }
             InternalAgentModelPickerOrigin::AdvisorConfigRow => {
                 self.internal_agent_model_target = None;
                 self.finish_advisor_model_selection(selected, agent).await?;

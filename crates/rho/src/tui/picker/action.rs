@@ -8,6 +8,8 @@
 pub(in crate::tui) enum PickerAction {
     SelectModel,
     SelectInternalAgentModel,
+    /// Advisor reasoning level, offered after `/advisor model` picks a model.
+    SelectAdvisorReasoning,
     LoginGroup,
     LoginProvider,
     LoginFlow(Box<crate::tui::login_flow::LoginFlowTarget>),
@@ -87,6 +89,7 @@ impl PickerAction {
             PickerAction::CopyOutput => "copy",
             PickerAction::SelectModel
             | PickerAction::SelectInternalAgentModel
+            | PickerAction::SelectAdvisorReasoning
             | PickerAction::SelectTheme
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
@@ -147,6 +150,9 @@ impl PickerAction {
                     "agent editing is unavailable while a model turn is running",
                 )
             }
+            PickerAction::SelectAdvisorReasoning => DuringTurnSelect::Unavailable(
+                "advisor reasoning cannot change while a model turn is running",
+            ),
             PickerAction::ResumeSession
             | PickerAction::ManageSessions
             | PickerAction::SelectTreeNode
@@ -174,6 +180,7 @@ impl PickerAction {
             PickerAction::SwitchAuthMode => Some(ConfigParentRow::SwitchAuthMode),
             PickerAction::RefreshModelList => Some(ConfigParentRow::RefreshModelList),
             PickerAction::SelectInternalAgentModel
+            | PickerAction::SelectAdvisorReasoning
             | PickerAction::LoginGroup
             | PickerAction::LoginProvider
             | PickerAction::LoginFlow(_)

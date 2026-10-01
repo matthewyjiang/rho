@@ -15,6 +15,13 @@ use super::{SETTLE, STARTUP, STREAM};
 /// Makes `xai` an available auth, so model pickers list its static catalog.
 pub(super) const XAI_KEY_ENV: &[(&str, &str)] = &[("XAI_API_KEY", "fixture-xai-key")];
 
+/// Adds Poolside, whose fixed Off/Max reasoning gives the reasoning picker a
+/// known, short level set without network metadata.
+pub(super) const XAI_AND_POOLSIDE_KEY_ENV: &[(&str, &str)] = &[
+    ("XAI_API_KEY", "fixture-xai-key"),
+    ("POOLSIDE_API_KEY", "fixture-poolside-key"),
+];
+
 const ADVISOR_MODEL: &str = "xai/grok-4.5";
 
 /// Config a user can reach by hand: the mode is on with no advisor model, so
@@ -288,6 +295,106 @@ pub(super) const ADVISOR_COMMAND_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Custom(assert_advisor_indicator_names_the_model),
+    Step::ExitCommand,
+];
+
+/// The reasoning picker must list only the levels the model supports.
+fn assert_reasoning_picker_offers_only_off_and_max(harness: &mut PtyHarness) -> Result<()> {
+    let rows = harness.screen().rows_text();
+    let offered: Vec<&str> = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+        .into_iter()
+        .filter(|level| {
+            rows.iter().any(|row| {
+                row.trim()
+                    .trim_start_matches(['→', ' '])
+                    .split_whitespace()
+                    .next()
+                    == Some(level)
+            })
+        })
+        .collect();
+    ensure!(
+        offered == ["off", "max"],
+        "advisor reasoning picker must offer only the model's levels, got {offered:?}:\n{}",
+        harness.screen().debug_dump()
+    );
+    Ok(())
+}
+
+// Covers: /advisor model swaps the advisor model without touching the mode,
+// follows up with a reasoning picker listing only supported levels, and Esc in
+// either picker leaves the saved choice alone.
+// Owner: interactive TUI
+pub(super) const ADVISOR_MODEL_COMMAND_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "advisor: xai/grok-4.5",
+        timeout: STARTUP,
+    },
+    Step::Phase("dismiss_keeps_the_model"),
+    Step::SubmitText("/advisor model"),
+    Step::WaitText {
+        text: "select model for advisor",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "advisor model unchanged",
+        timeout: SETTLE,
+    },
+    Step::Custom(assert_advisor_indicator_names_the_model),
+    Step::Phase("model_with_levels_asks_for_reasoning"),
+    Step::SubmitText("/advisor model"),
+    Step::WaitText {
+        text: "select model for advisor",
+        timeout: SETTLE,
+    },
+    Step::TypeText("laguna"),
+    Step::WaitText {
+        text: "poolside/laguna-m.1",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "select reasoning for advisor",
+        timeout: SETTLE,
+    },
+    Step::Custom(assert_reasoning_picker_offers_only_off_and_max),
+    Step::TypeText("off"),
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "advisor reasoning: off",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "advisor: poolside/laguna-m.1",
+        timeout: SETTLE,
+    },
+    Step::Phase("dismissing_reasoning_keeps_the_saved_level"),
+    Step::SubmitText("/advisor model"),
+    Step::WaitText {
+        text: "select model for advisor",
+        timeout: SETTLE,
+    },
+    Step::TypeText("laguna"),
+    Step::WaitText {
+        text: "poolside/laguna-m.1",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Enter),
+    Step::WaitText {
+        text: "select reasoning for advisor",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Esc),
+    Step::WaitText {
+        text: "advisor reasoning unchanged: off",
+        timeout: SETTLE,
+    },
+    Step::WaitText {
+        text: "Type a message",
+        timeout: SETTLE,
+    },
     Step::ExitCommand,
 ];
 

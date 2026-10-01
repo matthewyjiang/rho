@@ -22,6 +22,9 @@ pub(super) enum InternalAgentModelPickerOrigin {
     AgentsPicker,
     /// Opened by `/advisor on`; a selection also turns advisor mode on.
     AdvisorCommand,
+    /// Opened by `/advisor model`; a selection keeps the mode as it is and
+    /// follows up with a reasoning picker when the model supports one.
+    AdvisorModelCommand,
     /// Opened from the config picker's advisor mode row when enabling without a
     /// model; a selection also turns advisor mode on and returns to config.
     AdvisorConfigRow,
@@ -48,7 +51,10 @@ impl InternalAgentModelPickerOrigin {
     pub(super) fn opens_standalone(self) -> bool {
         matches!(
             self,
-            Self::AdvisorCommand | Self::PermissionModeStartup | Self::PermissionModeCommand
+            Self::AdvisorCommand
+                | Self::AdvisorModelCommand
+                | Self::PermissionModeStartup
+                | Self::PermissionModeCommand
         )
     }
 }

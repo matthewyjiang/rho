@@ -504,10 +504,7 @@ impl App {
         }
         let current = crate::tools::advisor::advisor_effective_reasoning(&selection);
         let reasoning = capabilities.next_level(current);
-        self.set_advisor_reasoning(reasoning)?;
-        if self.info.runtime.advisor_mode {
-            self.sync_advisor_runtime(agent).await;
-        }
+        self.apply_advisor_reasoning(reasoning, agent).await?;
         let status = self.status().to_string();
         self.refresh_main_config_picker_if_open(config_picker::ADVISOR_REASONING_VALUE)?;
         self.set_status(status);
