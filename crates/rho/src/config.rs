@@ -165,8 +165,10 @@ pub struct Config {
     /// Offer the `advisor` tool, which reviews the session with the model
     /// configured for the `advisor` internal agent.
     pub advisor_mode: bool,
-    /// Offer the `codemode` composition tool (`/codemode on|off`). Nested
-    /// calls follow `permission_mode`; this flag never widens permissions.
+    /// Offer the `codemode` composition tool (`/codemode on|off`, default off).
+    /// On also write-locks the model tool list so Write/Process tools are only
+    /// reached through scripts. Nested calls follow `permission_mode`; this
+    /// flag never widens permissions.
     pub codemode: bool,
     /// Enables native-tool workspace checkpoints and the experimental `/rewind` command.
     pub experimental_workspace_rewind: bool,
@@ -231,7 +233,7 @@ impl Default for Config {
             enable_subagents: true,
             agent_concurrency: DEFAULT_AGENT_CONCURRENCY,
             advisor_mode: false,
-            codemode: true,
+            codemode: false,
             experimental_workspace_rewind: false,
             permission_mode: PermissionMode::Bypass,
             credential_store: None,

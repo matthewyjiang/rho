@@ -73,8 +73,8 @@ When a nested `call_tool` needs approval:
 
 ### 4a. `/codemode on|off` — no second permission ladder (locked 2026-10-01)
 
-- `/codemode on` — register the `codemode` tool (default; `behavior.codemode = true`).
-- `/codemode off` — remove it from the tool list. `tool_search` and exposure stay.
+- `/codemode on` — register the `codemode` tool and **write-lock** the model tool list (see "Write-locking" below). Opt-in: `behavior.codemode` defaults to `false` because the lock removes direct write/edit/bash for every session, including headless automation.
+- `/codemode off` — remove `codemode` and restore the normal tool set, including write/edit/bash. `tool_search` and exposure stay.
 - Bare `/codemode` toggles. The choice persists to `behavior.codemode`.
 - **No `/codemode yolo`.** Nested calls inherit the session permission mode
   (`/permissions bypass|auto|allow_edits|plan|supervised`) through
@@ -117,16 +117,24 @@ Implementation seam: each `codemode` call builds a child host with `ToolHost::ch
 - No shell-string API in guest; typed allowlisted host ops only (Pi `cli.*`).
 - Type/schema check before exec where applicable; fail closed.
 
-### Write-locking (Pi reference matrix — not adopted)
+### Write-locking (Pi matrix — adopted for on/off, 2026-10-01)
 
-Rho does not add a codemode-specific write matrix; nested calls use the session permission mode. Kept for reference:
+Rho adopts Pi's write lock as **advertisement routing**, without Pi's `yolo` column:
 
-| Door | `on` | `yolo` |
-|------|------|--------|
-| Guest mutation helpers | denied / read-only | denied / read-only |
-| Patch tools | root-scoped | unrestricted |
-| Native write/edit | DENY | DENY |
-| Native bash | DENY | ALLOW (escape) |
+| Door | `/codemode on` | `/codemode off` |
+|------|----------------|-----------------|
+| `codemode` tool | direct | not registered |
+| Read/search natives (`read_file`, `list_dir`, search, …) | direct | direct |
+| Native write/edit (every edit format), `save_agent` | **not advertised** — via `codemode` `call_tool` | direct |
+| Native `bash` / `process`, workflow tools | **not advertised** — via `codemode` `call_tool` | direct |
+| Guest Starlark mutation helpers | none (no filesystem builtins) | n/a |
+
+- **Classification is typed:** a tool is write-locked when its `ToolSecurity` declares `CapabilityKind::Write` or `Process`, so every edit format and shell kind is covered without a name list. `web_fetch_content` declares `Process` (repo clone) and so routes through `codemode` too.
+- **Separate mask:** the lock sits beside `ExposurePolicy` in `ExposureController::is_model_facing`. A direct override or a `tool_search` promotion cannot re-advertise a locked tool while on. Promotions survive toggles.
+- **Registration is unchanged:** locked tools stay registered, so nested `call_tool` reaches them through `ToolHost::child_builder` under the session permission mode. A direct model call to a locked tool resolves unavailable at the SDK (it was not advertised).
+- **Not authorization:** the lock never approves or denies anything. `/permissions` stays the only permission ladder, and there is no `yolo` escape.
+- **Known gap:** tools with empty declared capabilities (MCP RPCs, `computer`, delegation, advisor) are not classified as mutating. MCP is already codemode-only by default; a direct MCP override or `computer` (gated by `/computer on`) stays direct. Classifying them needs owner-declared routing metadata, not fake authorization claims.
+- **No root-scoped patch exception:** Rho has no separate root-scoped patch path today, so `apply_patch` is locked like the other edit formats.
 
 ### TUI / distillate
 
@@ -224,6 +232,8 @@ Prototype may stub the “block Starlark until…” glue if the current `block_
 - [x] Typed nested-deny classification (`ToolErrorKind::PolicyDenied` / `Error::PolicyDenied`, no string matching)
 - [x] `/codemode on|off` toggle persisted to `behavior.codemode` (no yolo; nested calls follow `/permissions`)
 - [x] Exposure enforced at the **provider request** boundary via SDK `ToolVisibility` (per request; promotions apply mid-run; unadvertised model calls resolve unavailable)
+- [x] `/codemode on` write lock: Write/Process tools not advertised, routed through `codemode`; `off` restores them
+- [ ] Owner-declared routing metadata for capability-less tools (MCP direct overrides, `computer`, delegation)
 - [ ] Per-server exposure overrides from config (`ExposurePolicy::override_exact/pattern` exists, not yet wired)
 - [ ] Nested pause UX verified end-to-end in a PTY scenario under supervised/auto/bypass
 - [ ] Distinct TUI child cards per nested call (today: status lines inside the parent card)

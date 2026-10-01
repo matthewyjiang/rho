@@ -388,15 +388,15 @@ enable_subagents = true
     assert_eq!(default_warnings, Vec::<ConfigWarning>::new());
 }
 
-// Covers: behavior.codemode loads and defaults on (composition offered unless disabled)
+// Covers: behavior.codemode loads and defaults off (write lock is opt-in)
 // Owner: config load
 #[test]
 fn codemode_loads_from_behavior_group() {
-    let (disabled, warnings) = parse_settings("[behavior]\ncodemode = false\n").unwrap();
+    let (enabled, warnings) = parse_settings("[behavior]\ncodemode = true\n").unwrap();
     let (defaulted, _) = parse_settings("[behavior]\nenable_subagents = true\n").unwrap();
     assert_eq!(
-        (disabled.codemode, defaulted.codemode, warnings),
-        (false, true, Vec::<ConfigWarning>::new())
+        (enabled.codemode, defaulted.codemode, warnings),
+        (true, false, Vec::<ConfigWarning>::new())
     );
 }
 

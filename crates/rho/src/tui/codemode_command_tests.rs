@@ -67,17 +67,18 @@ async fn codemode_command_applies_and_persists_requested_state() {
             calls: vec![false],
             saved: false,
         },
+        // No-ops leave the saved (default off) preference untouched.
         Case {
             command: "/codemode on",
             initially: true,
             calls: vec![],
-            saved: true,
+            saved: false,
         },
         Case {
             command: "/codemode yolo",
             initially: false,
             calls: vec![],
-            saved: true,
+            saved: false,
         },
     ];
     for case in cases {

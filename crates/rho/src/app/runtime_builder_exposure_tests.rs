@@ -24,6 +24,14 @@ use crate::{
     },
 };
 
+/// Codemode is opt-in; these tests exercise exposure with it enabled.
+fn codemode_config() -> Config {
+    Config {
+        codemode: true,
+        ..Config::default()
+    }
+}
+
 struct FixtureBundle(Vec<Arc<dyn Tool>>);
 
 impl ToolBundle for FixtureBundle {
@@ -53,6 +61,37 @@ fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> ScriptedTurn
     )]))
 }
 
+fn runtime_for(
+    config: &Config,
+    tools: &AppToolSet,
+    provider: &ScriptedProvider,
+    workspace: Workspace,
+    mode: PermissionMode,
+) -> rho_sdk::Rho {
+    let shared: Arc<dyn ModelProvider> = Arc::new(provider.clone());
+    build_runtime(RuntimeBuildOptions {
+        provider: shared,
+        tools: tools.tools(),
+        tool_visibility: tools.tool_visibility(),
+        workspace,
+        workspace_policy: AppPolicy::for_mode(mode, Default::default()),
+        approval_session: None,
+        system_prompt: SystemPrompt::None,
+        reasoning: rho_sdk::ReasoningLevel::Off,
+        service_tier: None,
+        compaction: CompactionConfig::from(config),
+        context_window: None,
+        usage_purpose: "agent",
+        usage_parent_session_id: None,
+        usage_recording: Default::default(),
+        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
+        hooks: None,
+        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
+        recall: None,
+    })
+    .unwrap()
+}
+
 // Covers: the provider tool list follows exposure per request — MCP tools
 // default to codemode-only (absent), hidden tools stay absent, natives stay
 // direct, and a tool_search promotion is advertised on the next request of
@@ -60,7 +99,7 @@ fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> ScriptedTurn
 // Owner: app runtime builder + exposure (provider boundary).
 #[tokio::test]
 async fn provider_tool_list_follows_exposure_and_promotion() {
-    let config = Config::default();
+    let config = codemode_config();
     let mut tools = AppToolSet::new(
         &config,
         RuntimeDiagnostics::new(&config),
@@ -86,28 +125,13 @@ async fn provider_tool_list_follows_exposure_and_promotion() {
             )])),
         ],
     );
-    let shared: Arc<dyn ModelProvider> = Arc::new(provider.clone());
-    let runtime = build_runtime(RuntimeBuildOptions {
-        provider: shared,
-        tools: tools.tools(),
-        tool_visibility: tools.tool_visibility(),
-        workspace: Workspace::new(std::env::current_dir().unwrap()).unwrap(),
-        workspace_policy: AppPolicy::for_mode(PermissionMode::Auto, Default::default()),
-        approval_session: None,
-        system_prompt: SystemPrompt::None,
-        reasoning: rho_sdk::ReasoningLevel::Off,
-        service_tier: None,
-        compaction: CompactionConfig::from(&config),
-        context_window: None,
-        usage_purpose: "agent",
-        usage_parent_session_id: None,
-        usage_recording: Default::default(),
-        hook_host_labels: rho_sdk::hooks::HookHostLabels::new(),
-        hooks: None,
-        diagnostics: crate::diagnostics::test_diagnostics("test", "test"),
-        recall: None,
-    })
-    .unwrap();
+    let runtime = runtime_for(
+        &config,
+        &tools,
+        &provider,
+        Workspace::new(std::env::current_dir().unwrap()).unwrap(),
+        PermissionMode::Auto,
+    );
     let session = runtime.session(SessionOptions::default()).await.unwrap();
 
     let outcome = session.complete("make the report").await.unwrap();
@@ -159,4 +183,189 @@ async fn provider_tool_list_follows_exposure_and_promotion() {
         message,
         rho_sdk::model::Message::ToolResult(result) if result.ok && result.content == "rare_report ran"
     )));
+}
+
+fn advertised(provider: &ScriptedProvider, request: usize, names: &[&str]) -> Vec<(String, bool)> {
+    let tools = &provider.recorded_requests()[request].tools;
+    names
+        .iter()
+        .map(|name| {
+            (
+                (*name).to_owned(),
+                tools.iter().any(|spec| spec.name == *name),
+            )
+        })
+        .collect()
+}
+
+// Covers: `/codemode on` write-locks the provider tool list (Write/Process
+// natives, including a promoted deferred one, are not advertised; read tools
+// and codemode are), `/codemode off` restores them and drops codemode, and
+// toggling keeps promotion state.
+// Owner: app tool set write lock + SDK visibility (provider boundary).
+#[tokio::test]
+async fn codemode_toggle_write_locks_provider_tool_list() {
+    let watched = [
+        "read_file",
+        "list_dir",
+        CODEMODE_TOOL_NAME,
+        TOOL_SEARCH_NAME,
+        "write",
+        "edit",
+        "bash",
+        "deferred_writer",
+    ];
+    let config = codemode_config();
+    let mut tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default(),
+    );
+    tools.add_bundle(FixtureBundle(vec![Arc::new(WriteFixture)]));
+    tools.set_exposure_policy(
+        ExposurePolicy::new().override_exact("deferred_writer", ToolExposure::Deferred),
+    );
+    let promoted = {
+        let provider = ScriptedProvider::new(
+            ModelIdentity::new("test", "test", "test"),
+            [
+                tool_call("p-1", TOOL_SEARCH_NAME, json!({"query": "deferred_writer"})),
+                text_turn(),
+            ],
+        );
+        let runtime = runtime_for(
+            &config,
+            &tools,
+            &provider,
+            Workspace::new(std::env::current_dir().unwrap()).unwrap(),
+            PermissionMode::Auto,
+        );
+        let session = runtime.session(SessionOptions::default()).await.unwrap();
+        session.complete("find it").await.unwrap();
+        provider
+    };
+    // Promotion happened but the write lock keeps it off the next request.
+    assert_eq!(
+        advertised(&promoted, 1, &["deferred_writer"]),
+        vec![("deferred_writer".to_owned(), false)]
+    );
+
+    let cases = [
+        (
+            /*codemode*/ true,
+            vec![true, true, true, true, false, false, false, false],
+        ),
+        (
+            /*codemode*/ false,
+            vec![true, true, false, true, true, true, true, true],
+        ),
+        (
+            /*codemode*/ true,
+            vec![true, true, true, true, false, false, false, false],
+        ),
+    ];
+    for (codemode, expected) in cases {
+        tools.set_codemode_registered(codemode);
+        let provider =
+            ScriptedProvider::new(ModelIdentity::new("test", "test", "test"), [text_turn()]);
+        let runtime = runtime_for(
+            &config,
+            &tools,
+            &provider,
+            Workspace::new(std::env::current_dir().unwrap()).unwrap(),
+            PermissionMode::Auto,
+        );
+        let session = runtime.session(SessionOptions::default()).await.unwrap();
+        session.complete("hi").await.unwrap();
+        assert_eq!(
+            advertised(&provider, 0, &watched),
+            watched
+                .iter()
+                .zip(expected)
+                .map(|(name, visible)| ((*name).to_owned(), visible))
+                .collect::<Vec<_>>(),
+            "codemode={codemode}"
+        );
+    }
+}
+
+// Covers: under the write lock a direct model `write` does not execute, while
+// the same mutation through `codemode` succeeds under the session permission
+// mode (no codemode-specific permission level).
+// Owner: app write lock routing + nested ToolHost authorization.
+#[tokio::test(flavor = "multi_thread")]
+async fn write_lock_routes_mutation_through_codemode() {
+    let root = tempfile::tempdir().unwrap();
+    let config = codemode_config();
+    let tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default(),
+    );
+    assert!(tools.codemode_registered());
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "test"),
+        [
+            tool_call(
+                "direct",
+                "write",
+                json!({"path": "direct.txt", "content": "direct"}),
+            ),
+            tool_call(
+                "nested",
+                CODEMODE_TOOL_NAME,
+                json!({"script": r#"result = call_tool("write", {"path": "nested.txt", "content": "nested"})["content"]"#}),
+            ),
+            text_turn(),
+        ],
+    );
+    let runtime = runtime_for(
+        &config,
+        &tools,
+        &provider,
+        Workspace::new(root.path()).unwrap(),
+        PermissionMode::Bypass,
+    );
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+
+    session.complete("write files").await.unwrap();
+
+    assert_eq!(
+        (
+            root.path().join("direct.txt").exists(),
+            std::fs::read_to_string(root.path().join("nested.txt")).ok(),
+        ),
+        (false, Some("nested".to_owned()))
+    );
+}
+
+/// Deferred tool that declares `Write` authority without touching disk.
+struct WriteFixture;
+
+impl Tool for WriteFixture {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "deferred_writer".into(),
+            description: "deferred_writer".into(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn security(&self) -> rho_sdk::tool::ToolSecurity {
+        rho_sdk::tool::ToolSecurity::built_in([rho_sdk::CapabilityKind::Write])
+    }
+
+    fn call<'a>(
+        &'a self,
+        _invocation: rho_sdk::tool::ToolInvocation,
+        _context: rho_sdk::tool::ToolContext,
+    ) -> rho_sdk::tool::ToolFuture<'a> {
+        Box::pin(async { Ok(ToolOutput::text("wrote")) })
+    }
+}
+
+fn text_turn() -> ScriptedTurn {
+    ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+        "done".into(),
+    )]))
 }

@@ -100,6 +100,8 @@ fn canonical_tool_names_match_the_unfiltered_registry() {
         let mut tools = AppToolSet::new(&config, RuntimeDiagnostics::new(&config), options);
         // Advisor mode is off by default; the registry still owns the name.
         tools.set_advisor_registered(true);
+        // Codemode is opt-in too; the registry still owns the name.
+        tools.set_codemode_registered(true);
         let names = tools.unfiltered_names().collect::<Vec<_>>();
         let selected = config.resolved_edit_tool().tool_name();
         for name in ["edit", "apply_patch", "str_replace"] {

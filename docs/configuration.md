@@ -233,7 +233,7 @@ Pinned values stay fixed across provider changes. From `/config`, the change app
 
 `advisor_mode` controls whether the advisor tool is available. It defaults to `false`. See [Advisor mode](/configuration/advisor-mode).
 
-`codemode` controls whether the `codemode` composition tool is offered. It defaults to `true` and is set by `/codemode on|off`. Nested tool calls inside a script follow `permission_mode` exactly like direct calls; there is no separate codemode permission level.
+`codemode` controls whether the `codemode` composition tool is offered. It defaults to `false` and is set by `/codemode on|off`. While it is on, tools that declare write or process authority (`write`, the edit tools, `bash`, `process`, workflow and agent-saving tools, and web fetch, which can clone repositories) are not offered to the model directly; the model makes those changes through `codemode` scripts. This only routes calls and does not change authorization: nested tool calls follow `permission_mode` exactly like direct calls, and there is no separate codemode permission level. `off` removes `codemode` and restores the direct tools.
 
 ## RTK
 

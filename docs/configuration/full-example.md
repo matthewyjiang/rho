@@ -95,7 +95,7 @@ base_url = "http://127.0.0.1:8787/v1"
 
 [behavior]
 advisor_mode = false
-codemode = true
+codemode = false
 check_for_updates = true
 enable_subagents = true
 agent_concurrency = 10

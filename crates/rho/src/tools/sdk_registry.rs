@@ -508,12 +508,15 @@ impl AppToolSet {
 
     /// Adds or removes the `codemode` tool for the next runtime build.
     ///
-    /// Only the composition surface changes; nested calls always follow the
-    /// session permission mode. Returns whether the advertised list changed.
+    /// `on` also write-locks the model tool list: tools declaring `Write` or
+    /// `Process` stay registered (nested `call_tool` reaches them under the
+    /// session permission mode) but are not advertised. `off` restores them.
+    /// Returns whether the advertised list changed.
     pub fn set_codemode_registered(&mut self, registered: bool) -> bool {
         let Some(code_mode) = self.code_mode.as_mut() else {
             return false;
         };
+        self.exposure.set_write_lock(registered);
         code_mode.set_registered(&mut self.tools, registered)
     }
 
