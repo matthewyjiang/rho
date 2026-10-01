@@ -12,6 +12,11 @@ flowchart LR
     load --> run[Follow instructions in session]
 ```
 
+In the interactive TUI, each load appears as a collapsed `skill(<name>)` card.
+Click the card or press `Ctrl+O` to read what the model received: the source,
+front matter, and instructions. If a skill fails to load, the card shows the
+reason.
+
 ## `SKILL.md` format
 
 Create a directory for the skill and add a `SKILL.md` file. Start the file with

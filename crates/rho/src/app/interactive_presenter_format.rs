@@ -422,7 +422,16 @@ pub(super) fn finished_card(
             card
         }
         ToolKind::WriteFile | ToolKind::Edit(_) => file_diff_card(view, content, ok, cwd),
-        ToolKind::Skill => preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status),
+        // Output becomes the body; a failure surfaces its reason as an error fact.
+        ToolKind::Skill | ToolKind::Sessions => {
+            let mut card = preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status);
+            if ok {
+                card.body = ToolBody::Lines(split_body_lines(content));
+            } else {
+                push_error_output(&mut card, content);
+            }
+            card
+        }
         ToolKind::WebSearch => web_search_card(&view.arguments, content, status),
         ToolKind::FetchContent => fetch_content_card(&view.arguments, content, status),
         ToolKind::GetSearchContent => get_search_content_card(content, status),
@@ -431,15 +440,6 @@ pub(super) fn finished_card(
         }
         ToolKind::Mcp => mcp_result_card(view, content, status),
         ToolKind::Other => generic_card(view, content, status),
-        ToolKind::Sessions => {
-            let mut card = sessions_format::preview_card(&view.arguments, status);
-            if !ok {
-                push_error_output(&mut card, content);
-            } else {
-                card.body = ToolBody::Lines(split_body_lines(content));
-            }
-            card
-        }
     }
 }
 

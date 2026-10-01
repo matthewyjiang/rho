@@ -387,7 +387,14 @@ impl InteractiveToolPresenter {
         }
         let presented = presentation(view, finished_card(view, content, ok, &self.cwd));
         FinishedToolPresentation {
-            presentation: presented.card.into(),
+            // A loaded skill collapses to a receipt; expanding shows the text
+            // the model received. A failed load stays an ordinary card so its
+            // reason stays visible.
+            presentation: if view.kind == ToolKind::Skill && ok {
+                crate::presentation::Presentation::SummaryCard(presented.card)
+            } else {
+                presented.card.into()
+            },
             image_asset: presented.image_asset,
         }
     }
