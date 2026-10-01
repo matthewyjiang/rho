@@ -86,7 +86,11 @@ pub(super) const WEB_SEARCH_CONFIG_SCENARIO: Scenario = Scenario::new(
             text: "http://127.0.0.1:3002/proxy",
             timeout: SETTLE,
         },
-        Step::AssertText("https://api.firecrawl.dev"),
+        // The custom URL can leave a frame before the default repaints in.
+        Step::WaitText {
+            text: "https://api.firecrawl.dev",
+            timeout: SETTLE,
+        },
         Step::Key(Key::Esc),
         Step::Custom(clear_filter),
         Step::TypeText("web_search_test"),
