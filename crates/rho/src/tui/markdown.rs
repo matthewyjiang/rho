@@ -4,6 +4,7 @@ use ratatui::{
 };
 
 mod code_fence;
+pub(super) mod escapes;
 mod heading;
 mod inline;
 mod list_wrap;

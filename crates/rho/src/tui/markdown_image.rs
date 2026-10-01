@@ -3,7 +3,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::markdown::{is_closing_fence, parse_opening_fence};
+use super::markdown::{
+    escapes::{find_unescaped, unescape},
+    is_closing_fence, parse_opening_fence,
+};
 use super::{feed_image::FeedImage, Entry};
 use ratatui_image::picker::Picker;
 
@@ -73,9 +76,9 @@ pub(super) fn standalone_markdown_image(line: &str) -> Option<MarkdownImageSourc
 pub(super) fn next_markdown_image(
     line: &str,
 ) -> Option<(MarkdownImageSource, std::ops::Range<usize>)> {
-    let start = line.find("![")?;
+    let start = find_unescaped(line, "![", 0)?;
     let label_start = start + 2;
-    let close_label = line[label_start..].find(']')? + label_start;
+    let close_label = find_unescaped(line, "]", label_start)?;
     let target_start = close_label + 2;
     if !line[close_label + 1..].starts_with('(') || target_start >= line.len() {
         return None;
@@ -108,8 +111,8 @@ pub(super) fn next_markdown_image(
     (!path.is_empty()).then(|| {
         (
             MarkdownImageSource {
-                alt: alt.to_string(),
-                path: path.replace("\\(", "(").replace("\\)", ")"),
+                alt: unescape(alt),
+                path: unescape(path),
             },
             start..target_end + 1,
         )
