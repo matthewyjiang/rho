@@ -93,6 +93,15 @@ fn default_bearer_token_type() -> String {
     "Bearer".into()
 }
 
+/// Muse subscription session. The identity token mints Model API keys; it is
+/// not sent on inference requests.
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct MetaTokens {
+    pub identity_token: String,
+    pub api_key: String,
+    pub api_key_expires_at_unix: i64,
+}
+
 #[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct XaiTokens {
     pub access_token: String,
@@ -125,6 +134,7 @@ redacted_token_debug!(
     copilot_models_endpoint,
 );
 redacted_token_debug!(KimiTokens, expires_at_unix);
+redacted_token_debug!(MetaTokens, api_key_expires_at_unix);
 redacted_token_debug!(XaiTokens, expires_at_unix);
 
 #[derive(Clone, Debug, Error)]
@@ -336,6 +346,21 @@ pub fn save_kimi_tokens(store: &dyn CredentialStore, tokens: &KimiTokens) -> Cre
     store.set_secret(crate::provider::KIMI_TOKENS_ACCOUNT, &secret)
 }
 
+pub fn load_meta_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<MetaTokens>> {
+    let Some(secret) = store.get_secret(crate::provider::META_MUSE_TOKENS_ACCOUNT)? else {
+        return Ok(None);
+    };
+    serde_json::from_str(&secret).map(Some).map_err(|err| {
+        CredentialError::InvalidData(format!("invalid stored Muse subscription JSON: {err}"))
+    })
+}
+
+pub fn save_meta_tokens(store: &dyn CredentialStore, tokens: &MetaTokens) -> CredentialResult<()> {
+    let secret = serde_json::to_string(tokens)
+        .map_err(|err| CredentialError::InvalidData(format!("could not encode tokens: {err}")))?;
+    store.set_secret(crate::provider::META_MUSE_TOKENS_ACCOUNT, &secret)
+}
+
 pub fn load_xai_tokens(store: &dyn CredentialStore) -> CredentialResult<Option<XaiTokens>> {
     let Some(secret) = store.get_secret(XAI_TOKENS_ACCOUNT)? else {
         return Ok(None);
@@ -523,6 +548,10 @@ fn auth_mode_has_credentials(
                     .refresh_token
                     .as_deref()
                     .is_some_and(credential_value_is_usable)
+        })),
+        ProviderAuthKind::MetaOAuth { .. } => Ok(load_meta_tokens(store)?.is_some_and(|tokens| {
+            credential_value_is_usable(&tokens.api_key)
+                || credential_value_is_usable(&tokens.identity_token)
         })),
         ProviderAuthKind::OllamaDeviceKey { .. } => {
             Ok(crate::auth::ollama_device::ollama_device_credentials_available())

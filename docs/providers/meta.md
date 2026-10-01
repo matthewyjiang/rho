@@ -7,8 +7,8 @@ Rho supports [Meta Model API](https://developer.meta.com/ai/products/meta-model-
 | Setting | Value |
 | --- | --- |
 | Provider | `meta` |
-| Auth | `meta-api-key` |
-| Environment override | `MODEL_API_KEY` |
+| Auth | `meta-api-key`, `meta-muse` |
+| Environment override | `MODEL_API_KEY` for `meta-api-key`, `META_API_KEY` for `meta-muse` |
 | API base | `https://api.meta.ai/v1` |
 | Model source | Meta Model API `/models` |
 
@@ -19,10 +19,10 @@ Create an API key in the [Model API dashboard](https://dev.meta.ai/). Meta docum
 In the TUI, run:
 
 ```text
-/login meta
+/login meta-api-key
 ```
 
-Rho asks for your Model API key, stores it, and refreshes the models available to your account. Select one with `/model`, for example:
+`/login meta` asks which method to use. Rho asks for your Model API key, stores it, and refreshes the models available to your account. Select one with `/model`, for example:
 
 ```text
 /model meta/muse-spark-1.2
@@ -31,8 +31,35 @@ Rho asks for your Model API key, stores it, and refreshes the models available t
 Remove the stored key with:
 
 ```text
-/logout meta
+/logout meta-api-key
 ```
+
+## Muse subscription
+
+A Muse Code subscription is a separate login from a pay-as-you-go key. Rho opens a device-code sign-in, stores the session, and mints a short-lived Model API key for requests. That key is replaced before it expires. When the session itself expires, sign in again.
+
+In the TUI, run:
+
+```text
+/login meta-muse
+```
+
+`/login meta` asks you to choose the API key or the subscription. Remove the stored session with:
+
+```text
+/logout meta-muse
+```
+
+`META_API_KEY` overrides a stored subscription session for `meta-muse`. `MODEL_API_KEY` remains the override for `meta-api-key`.
+
+```bash
+rho --provider meta \
+  --auth meta-muse \
+  --model meta/muse-spark-1.2 \
+  run "review this project"
+```
+
+Subscription usage bills to the Muse plan. Rho still estimates an equivalent API cost. `/info` marks that estimate as a subscription.
 
 ## Environment and automation
 

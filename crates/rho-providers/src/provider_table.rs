@@ -10,10 +10,10 @@ use super::{
     OpenAiRuntimeAuth, ProviderAuthKind, ProviderDescriptor, ProviderId, ProviderModelRefreshKind,
     ProviderModelSource, ProviderRuntime, ANTHROPIC_API_KEY_ACCOUNT, CODEX_TOKENS_ACCOUNT,
     GITHUB_COPILOT_TOKENS_ACCOUNT, GOOGLE_API_KEY_ACCOUNT, KIMI_CODE_API_BASE, KIMI_TOKENS_ACCOUNT,
-    META_API_BASE, META_API_KEY_ACCOUNT, MINIMAX_API_BASE, MINIMAX_API_KEY_ACCOUNT,
-    MOONSHOT_API_BASE, MOONSHOT_API_KEY_ACCOUNT, OLLAMA_API_BASE, OLLAMA_API_KEY_ACCOUNT,
-    OLLAMA_CLOUD_API_BASE, OLLAMA_CLOUD_API_KEY_ACCOUNT, OPENAI_API_KEY_ACCOUNT,
-    OPENCODE_GO_API_BASE, OPENCODE_GO_API_KEY_ACCOUNT, OPENROUTER_API_BASE,
+    META_API_BASE, META_API_KEY_ACCOUNT, META_MUSE_TOKENS_ACCOUNT, MINIMAX_API_BASE,
+    MINIMAX_API_KEY_ACCOUNT, MOONSHOT_API_BASE, MOONSHOT_API_KEY_ACCOUNT, OLLAMA_API_BASE,
+    OLLAMA_API_KEY_ACCOUNT, OLLAMA_CLOUD_API_BASE, OLLAMA_CLOUD_API_KEY_ACCOUNT,
+    OPENAI_API_KEY_ACCOUNT, OPENCODE_GO_API_BASE, OPENCODE_GO_API_KEY_ACCOUNT, OPENROUTER_API_BASE,
     OPENROUTER_API_KEY_ACCOUNT, OPENROUTER_OAUTH_KEY_ACCOUNT, POOLSIDE_API_BASE,
     POOLSIDE_API_KEY_ACCOUNT, QWEN_TOKEN_PLAN_API_BASE, QWEN_TOKEN_PLAN_API_KEY_ACCOUNT,
     XAI_API_KEY_ACCOUNT, XAI_TOKENS_ACCOUNT,
@@ -399,16 +399,25 @@ pub const PROVIDERS: &[ProviderDescriptor] = &[
         name: "meta",
         display_name: "Meta Model API",
         auth_modes: &[
-        AuthMode {
-            id: "meta-api-key",
-            login_label: "Meta Model API key",
-            auth_kind: ProviderAuthKind::ApiKey {
-            env_var: "MODEL_API_KEY",
-            account: META_API_KEY_ACCOUNT,
-            entry_label: "Meta Model API key",
-            missing_message: "missing Meta Model API key; run /login meta in the TUI or set MODEL_API_KEY as a CI/dev override",
-        },
-        }
+            AuthMode {
+                id: "meta-api-key",
+                login_label: "Meta Model API key",
+                auth_kind: ProviderAuthKind::ApiKey {
+                    env_var: "MODEL_API_KEY",
+                    account: META_API_KEY_ACCOUNT,
+                    entry_label: "Meta Model API key",
+                    missing_message: "missing Meta Model API key; run /login meta-api-key in the TUI or set MODEL_API_KEY as a CI/dev override",
+                },
+            },
+            AuthMode {
+                id: "meta-muse",
+                login_label: "Muse subscription",
+                auth_kind: ProviderAuthKind::MetaOAuth {
+                    env_var: "META_API_KEY",
+                    account: META_MUSE_TOKENS_ACCOUNT,
+                    missing_message: "missing Muse subscription credentials; run /login meta-muse in the TUI or set META_API_KEY as a CI/dev override",
+                },
+            },
         ],
         model_source: ProviderModelSource::CachedProviderModels,
         model_refresh: Some(ProviderModelRefreshKind::OpenAiCompatible),

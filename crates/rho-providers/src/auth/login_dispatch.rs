@@ -2,12 +2,12 @@ use std::{future::Future, pin::Pin};
 
 use crate::{
     auth::{
-        browser, codex_oauth, github_copilot_device, kimi_oauth, ollama_device, openrouter_oauth,
-        xai_oauth,
+        browser, codex_oauth, github_copilot_device, kimi_oauth, meta_oauth, ollama_device,
+        openrouter_oauth, xai_oauth,
     },
     credentials::{
         self, CodexTokens, CredentialResult, CredentialStore, GitHubCopilotTokens, KimiTokens,
-        XaiTokens,
+        MetaTokens, XaiTokens,
     },
     provider::{
         self, BearerCredentialAcquisition, BrowserOAuthFlow, ProviderAuthKind,
@@ -162,6 +162,7 @@ impl CompletedAuthentication {
                 credentials::save_github_copilot_tokens(store, &tokens)
             }
             LoginCredentials::Kimi(tokens) => credentials::save_kimi_tokens(store, &tokens),
+            LoginCredentials::Meta(tokens) => credentials::save_meta_tokens(store, &tokens),
             LoginCredentials::OpenRouter(key) => {
                 credentials::save_openrouter_oauth_key(store, &key)
             }
@@ -180,6 +181,7 @@ enum LoginCredentials {
     Codex(CodexTokens),
     GithubCopilot(GitHubCopilotTokens),
     Kimi(KimiTokens),
+    Meta(MetaTokens),
     OpenRouter(String),
     Xai(XaiTokens),
 }
@@ -204,6 +206,9 @@ impl ProviderAuthentication {
             ProviderAuthKind::KimiOAuth { .. } => AuthenticationMethod::Interactive {
                 provider_label: "Kimi",
             },
+            ProviderAuthKind::MetaOAuth { .. } => AuthenticationMethod::Interactive {
+                provider_label: "Meta",
+            },
             ProviderAuthKind::XaiOAuth { .. } => AuthenticationMethod::Interactive {
                 provider_label: "xAI",
             },
@@ -227,6 +232,7 @@ impl ProviderAuthentication {
                 ProviderAuthKind::CodexOAuth { .. }
                     | ProviderAuthKind::GithubCopilotDevice { .. }
                     | ProviderAuthKind::KimiOAuth { .. }
+                    | ProviderAuthKind::MetaOAuth { .. }
                     | ProviderAuthKind::XaiOAuth { .. }
                     | ProviderAuthKind::OllamaDeviceKey { .. }
             )
@@ -286,6 +292,7 @@ impl ProviderAuthentication {
             ProviderAuthKind::CodexOAuth { .. } => start_codex(mode).await?,
             ProviderAuthKind::GithubCopilotDevice { .. } => start_github_copilot().await?,
             ProviderAuthKind::KimiOAuth { .. } => start_kimi().await?,
+            ProviderAuthKind::MetaOAuth { .. } => start_meta().await?,
             ProviderAuthKind::XaiOAuth { .. } => start_xai(mode).await?,
             ProviderAuthKind::OllamaDeviceKey { .. } => start_ollama_device().await?,
             ProviderAuthKind::BearerCredential { acquisition, .. } => match acquisition {
@@ -497,6 +504,28 @@ async fn start_kimi() -> Result<StartedLogin, AuthenticationError> {
                 .await
                 .map(|tokens| CompletedAuthentication {
                     credentials: LoginCredentials::Kimi(tokens),
+                })
+                .map_err(flow_error)
+        })),
+    })
+}
+
+async fn start_meta() -> Result<StartedLogin, AuthenticationError> {
+    let login = meta_oauth::start_meta_device_login()
+        .await
+        .map_err(flow_error)?;
+    Ok(StartedLogin {
+        provider_label: "Meta",
+        prompt: device_prompt(
+            login.verification_uri.clone(),
+            login.user_code.clone(),
+            login.verification_uri_complete.clone(),
+        ),
+        completion: InteractiveLoginCompletion::Confirm(Box::pin(async move {
+            meta_oauth::complete_meta_device_login(login)
+                .await
+                .map(|tokens| CompletedAuthentication {
+                    credentials: LoginCredentials::Meta(tokens),
                 })
                 .map_err(flow_error)
         })),

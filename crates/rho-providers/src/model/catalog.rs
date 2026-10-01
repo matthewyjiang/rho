@@ -189,6 +189,7 @@ fn login_method_prompt(auth_kind: ProviderAuthKind) -> &'static str {
         | ProviderAuthKind::XaiOAuth { .. }
         | ProviderAuthKind::BearerCredential { .. }
         | ProviderAuthKind::KimiOAuth { .. } => "OAuth",
+        ProviderAuthKind::MetaOAuth { .. } => "Subscription",
     }
 }
 

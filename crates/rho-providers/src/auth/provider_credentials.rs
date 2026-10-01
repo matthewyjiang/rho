@@ -6,12 +6,13 @@ use crate::{
     auth::{
         github_copilot_token::GitHubCopilotAuthManager,
         kimi_token::{KimiAuthManager, KimiAuthSource},
+        meta_token::MetaAuthManager,
         ollama_device::OllamaDeviceKey,
         xai_token::{XaiAuthManager, XaiAuthSource},
     },
     credentials::{
-        load_codex_tokens, load_kimi_tokens, load_provider_api_key, load_xai_tokens, CodexTokens,
-        CredentialStore, KimiTokens, XaiTokens,
+        load_codex_tokens, load_kimi_tokens, load_meta_tokens, load_provider_api_key,
+        load_xai_tokens, CodexTokens, CredentialStore, KimiTokens, XaiTokens,
     },
     model::{
         registry::{
@@ -121,6 +122,22 @@ impl ProviderCredentialSource for ApplicationCredentialSource {
                             source,
                             tokens,
                         ))
+                    }
+                    ProviderAuthKind::MetaOAuth { .. } => {
+                        let env_var = selected
+                            .auth_kind
+                            .env_var()
+                            .expect("Muse subscription auth must declare an environment variable");
+                        if let Some(api_key) = crate::auth::meta_token::env_api_key(env_var) {
+                            CompatibleAuth::ApiKey(api_key)
+                        } else {
+                            let tokens = load_meta_tokens(self.store.as_ref())?
+                                .ok_or_else(|| missing_credentials_error("meta-muse"))?;
+                            CompatibleAuth::MetaOAuth(MetaAuthManager::from_tokens(
+                                self.store.clone(),
+                                tokens,
+                            ))
+                        }
                     }
                     ProviderAuthKind::OllamaDeviceKey { missing_message } => {
                         CompatibleAuth::OllamaDevice(load_ollama_device_key(missing_message)?)
