@@ -229,8 +229,9 @@ Prototype may stub the “block Starlark until…” glue if the current `block_
 - [x] Typed nested-deny classification (`ToolErrorKind::PolicyDenied` / `Error::PolicyDenied`, no string matching)
 - [x] `/codemode on|only` (Pi `codemode.mode`) persisted to `[codemode] mode`; `codemode` always registered; no yolo, no write strip
 - [x] Exposure enforced at the **provider request** boundary via SDK `ToolVisibility` (per request; promotions apply mid-run; unadvertised model calls resolve unavailable)
-- [x] Structured tool output (SDK `Tool::output_schema` + structured content on `ToolOutput`/`ToolError`); shell and MCP produce it; scripts receive it
-- [ ] Pi's per-tool "Codemode: `call_tool(...)` returns …" description line in `on` (now meaningful with output schemas)
+- [x] Structured tool output (SDK `Tool::output_schema` + structured content on `ToolOutput`/`ToolError`); shell, MCP, `process`, `grep`, `glob`, `list_dir`, `web_search`, `agent`/`agents` produce it; file read/edit tools stay text (the text is the result)
+- [x] Pi's per-tool "Codemode: `call_tool(...)` returns …" line on declared tools in `on` (SDK `ToolVisibility::describe`; omitted in `only` and on `codemode`/`tool_search`)
+- [x] Nested progress never awaits the parent's bounded channel (`try_send`): the script blocks the task that drains it, so an awaited send deadlocked once more nested updates than the channel capacity (the parallel-tool limit, 4) piled up
 - [ ] Per-server exposure overrides from config (`ExposurePolicy::override_exact/pattern` exists, not yet wired)
 - [ ] Nested pause UX verified end-to-end in a PTY scenario under supervised/auto/bypass
 - [ ] Distinct TUI child cards per nested call (today: status lines inside the parent card)

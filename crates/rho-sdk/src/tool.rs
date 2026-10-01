@@ -277,6 +277,15 @@ impl ToolProgressSender {
     pub async fn send(&self, progress: ToolProgress) -> bool {
         self.sender.send(progress).await.is_ok()
     }
+
+    /// Sends progress without waiting; drops it when the channel is full.
+    ///
+    /// For callers that cannot yield to the receiver, such as a tool that
+    /// blocks its own task while it runs, where awaiting capacity would wait
+    /// on itself. Returns `false` if the update was dropped or the host is gone.
+    pub fn try_send(&self, progress: ToolProgress) -> bool {
+        self.sender.try_send(progress).is_ok()
+    }
 }
 
 /// Receiving side of a bounded tool-progress channel.
@@ -668,6 +677,13 @@ impl std::error::Error for ToolError {}
 pub trait ToolVisibility: Send + Sync {
     /// Returns whether the model may see and call `name` on the next request.
     fn is_advertised(&self, name: &str) -> bool;
+
+    /// Adjusts an advertised spec before it is sent, for example to append
+    /// how the tool is reached from another surface. Called only for specs
+    /// that passed [`Self::is_advertised`]. Implementors should keep the result
+    /// stable across requests so provider prompt caches stay warm, and must
+    /// not change `name` or `input_schema`. Default: unchanged.
+    fn describe(&self, _spec: &mut ToolSpec) {}
 }
 
 /// Extension point for tools available to SDK sessions.

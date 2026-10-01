@@ -121,7 +121,7 @@ A tool may declare `Tool::output_schema()` (default `None`) and attach a matchin
 
 A tool that ran to completion but reports failure, such as a shell command that exits nonzero, can attach its result to the error with `ToolError::with_structured_content`. Use this only with `ToolErrorKind::Execution`. Denials, cancellations, and invalid arguments do not carry results.
 
-Built-in shell tools return `{ stdout, stderr, exit_code, truncated, wall_time_ms }`, with `exit_code` set to `null` when a signal ended the command. MCP tools pass through the server's `outputSchema` and `structuredContent`. On success the content is validated against the schema. Error results pass through unvalidated.
+Built-in shell tools return `{ stdout, stderr, exit_code, truncated, wall_time_ms }`, with `exit_code` set to `null` when a signal ended the command. `grep` returns `{ files: [{ path, count, lines: [{ line, text }] }], total_matches, stopped }`, `glob` returns `{ paths, stopped }`, and `list_dir` returns `{ entries: [{ name, kind }], truncated }`. Rho's `process`, `web_search`, `agent`, and `agents` tools also return structured content. File read and edit tools return text only, because the text is already the result. MCP tools pass through the server's `outputSchema` and `structuredContent`. On success the content is validated against the schema. Error results pass through unvalidated.
 
 ## Presentation and progress
 
@@ -227,6 +227,8 @@ Registering a tool and advertising it to the model are separate. By default ever
 - Host-sourced calls and nested `ToolHost::child_builder` hosts may still run any registered tool.
 
 Keep `is_advertised` cheap and non-blocking. It runs once per registered tool per request.
+
+`ToolVisibility::describe` (default: no change) can adjust an advertised spec before it is sent. For example, Rho appends how a script calls the tool. Keep the result stable across requests so provider prompt caches stay warm. Do not change `name` or `input_schema`.
 
 ## Provider-free tool host
 

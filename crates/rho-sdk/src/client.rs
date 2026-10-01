@@ -519,13 +519,17 @@ impl Rho {
         &self,
         all: &'a [crate::model::ToolSpec],
     ) -> std::borrow::Cow<'a, [crate::model::ToolSpec]> {
-        if self.tool_visibility.is_none() {
+        let Some(visibility) = self.tool_visibility.as_ref() else {
             return std::borrow::Cow::Borrowed(all);
-        }
+        };
         std::borrow::Cow::Owned(
             all.iter()
-                .filter(|spec| self.is_advertised(&spec.name))
-                .cloned()
+                .filter(|spec| visibility.is_advertised(&spec.name))
+                .map(|spec| {
+                    let mut spec = spec.clone();
+                    visibility.describe(&mut spec);
+                    spec
+                })
                 .collect(),
         )
     }

@@ -93,6 +93,54 @@ impl Tool for WebSearch {
 
     fn call<'a>(&'a self, args: Value, ctx: ToolContext, id: String) -> AppToolFuture<'a> {
         Box::pin(async move {
+            let (content, _) = self.search(args, ctx.max_output_bytes).await?;
+            Ok(ToolResult {
+                id,
+                ok: true,
+                content,
+            })
+        })
+    }
+}
+
+/// Per-result snippet cap in structured content, matching the Exa backend's
+/// existing 500-char snippet bound so every backend returns the same size.
+const STRUCTURED_SNIPPET_CHARS: usize = 500;
+
+/// JSON Schema for the structured content of [`WebSearch::search`].
+pub(super) fn web_search_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "response_id": {"type": "string", "description": "Pass to get_search_content for stored snippets or pages"},
+            "results": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "title": {"type": ["string", "null"]},
+                        "url": {"type": ["string", "null"]},
+                        "snippet": {"type": "string"}
+                    },
+                    "required": ["query", "title", "url", "snippet"]
+                }
+            }
+        },
+        "required": ["response_id", "results"]
+    })
+}
+
+impl WebSearch {
+    /// Runs the search and stores items; returns the model text (bounded by
+    /// `max_output_bytes`) and the script-facing results. Results are bounded
+    /// by `numResults` (max 20) per query; snippets come from the backend.
+    pub(super) async fn search(
+        &self,
+        args: Value,
+        max_output_bytes: usize,
+    ) -> Result<(String, Value), ToolError> {
+        {
             let args: WebSearchArgs = serde_json::from_value(args)?;
             if !self.client_available() {
                 return Err(ToolError::Message(
@@ -107,6 +155,7 @@ impl Tool for WebSearch {
             let response_id = storage::new_response_id();
             let mut items = Vec::new();
             let mut summaries = Vec::new();
+            let mut results = Vec::new();
 
             for query in queries {
                 let result = search::run_search_query(
@@ -121,6 +170,16 @@ impl Tool for WebSearch {
                 match result {
                     Ok(search_items) if !search_items.is_empty() => {
                         for (index, item) in search_items.into_iter().enumerate() {
+                            results.push(json!({
+                                "query": query,
+                                "title": item.title,
+                                "url": item.url,
+                                "snippet": item
+                                    .snippet
+                                    .chars()
+                                    .take(STRUCTURED_SNIPPET_CHARS)
+                                    .collect::<String>(),
+                            }));
                             let (content, content_kind) =
                                 search::item_content(&item, include_content).await;
                             summaries.push(format!(
@@ -167,15 +226,15 @@ impl Tool for WebSearch {
                 },
             )?;
 
-            Ok(ToolResult {
-                id,
-                ok: true,
-                content: truncate(
-                    format_web_search(&response_id, &summaries),
-                    ctx.max_output_bytes,
-                ),
-            })
-        })
+            let content = truncate(
+                format_web_search(&response_id, &summaries),
+                max_output_bytes,
+            );
+            Ok((
+                content,
+                json!({"response_id": response_id, "results": results}),
+            ))
+        }
     }
 }
 

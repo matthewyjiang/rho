@@ -399,6 +399,64 @@ impl rho_sdk::tool::ToolVisibility for ExposureController {
     fn is_advertised(&self, name: &str) -> bool {
         self.is_model_facing(name)
     }
+
+    /// Pi's `on`-mode hint: a declared tool also says how scripts call it and
+    /// what that resolves to. Orchestration tools and `only` mode (where
+    /// natives are not declared) are left unchanged.
+    fn describe(&self, spec: &mut ToolSpec) {
+        let inner = self.inner.lock().expect("exposure");
+        if inner.mode != crate::config::CodemodeMode::On || is_orchestration_tool(&spec.name) {
+            return;
+        }
+        let Some(entry) = inner.catalog.get(&spec.name) else {
+            return;
+        };
+        let line = script_call_line(&spec.name, entry.returns.as_ref());
+        spec.description = format!("{}\n\n{line}", spec.description.trim_end());
+    }
+}
+
+/// One line telling the model how a script reaches `name` and what it gets.
+fn script_call_line(name: &str, returns: Option<&serde_json::Value>) -> String {
+    format!(
+        "Codemode: `call_tool(\"{name}\", args)` returns {}.",
+        describe_returns(returns)
+    )
+}
+
+/// Compact shape of a tool's script result, after Pi's `describeOutput`:
+/// object fields (optional ones marked `?`), otherwise the schema type.
+fn describe_returns(returns: Option<&serde_json::Value>) -> String {
+    let Some(schema) = returns else {
+        return "`{ content }`".into();
+    };
+    if let Some(properties) = schema.get("properties").and_then(|value| value.as_object()) {
+        let required = schema
+            .get("required")
+            .and_then(|value| value.as_array())
+            .map(|names| {
+                names
+                    .iter()
+                    .filter_map(|name| name.as_str())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let fields = properties
+            .keys()
+            .map(|field| {
+                if required.contains(&field.as_str()) {
+                    field.clone()
+                } else {
+                    format!("{field}?")
+                }
+            })
+            .collect::<Vec<_>>();
+        return format!("`{{ {} }}`", fields.join(", "));
+    }
+    match schema.get("type").and_then(|value| value.as_str()) {
+        Some(kind) => format!("`{kind}`"),
+        None => "a JSON value".into(),
+    }
 }
 
 fn effective_locked(inner: &ExposureInner, name: &str) -> ToolExposure {

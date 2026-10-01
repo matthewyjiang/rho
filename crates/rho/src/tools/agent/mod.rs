@@ -23,7 +23,8 @@ use {
 };
 
 use super::agent_output::{
-    format_background_start, format_list_entry, format_snapshot, SnapshotFormat,
+    agent_run_schema, format_background_start, format_list_entry, format_snapshot, structured_run,
+    structured_start, SnapshotFormat,
 };
 
 const SUBAGENT_MANAGER: &str = "subagents";
@@ -129,7 +130,8 @@ impl AgentTool {
         // the parent through automatic completion delivery.
         Ok(
             ToolOutput::text(format_background_start(&run_id, &definition_id))
-                .metadata(agent_metadata()),
+                .metadata(agent_metadata())
+                .with_structured_content(structured_start(&run_id, &definition_id)),
         )
     }
 }
@@ -185,6 +187,10 @@ impl Tool for AgentTool {
         }
     }
 
+    fn output_schema(&self) -> Option<serde_json::Value> {
+        Some(agent_run_schema())
+    }
+
     fn security(&self) -> ToolSecurity {
         ToolSecurity::built_in([])
     }
@@ -221,9 +227,13 @@ impl AgentsTool {
     }
 
     async fn execute(&self, args: AgentsArgs) -> Result<ToolOutput, ToolError> {
+        let mut structured = None;
         let content = match args.action.as_str() {
             "list" => {
                 let agents = self.manager.list();
+                structured = Some(serde_json::json!({
+                    "runs": agents.iter().map(structured_run).collect::<Vec<_>>(),
+                }));
                 if agents.is_empty() {
                     "no delegated agents".to_string()
                 } else {
@@ -249,6 +259,7 @@ impl AgentsTool {
                 } else {
                     SnapshotFormat::Status
                 };
+                structured = Some(serde_json::json!({ "run": structured_run(&snapshot) }));
                 format_snapshot(&snapshot, format)
             }
             "stop" => {
@@ -257,6 +268,7 @@ impl AgentsTool {
                     self.manager.stop(id).await.map_err(|error| {
                         ToolError::new(ToolErrorKind::Execution, error.to_string())
                     })?;
+                structured = Some(serde_json::json!({ "run": structured_run(&snapshot) }));
                 format_snapshot(&snapshot, SnapshotFormat::Completion)
             }
             "message" => {
@@ -293,7 +305,10 @@ impl AgentsTool {
                 ))
             }
         };
-        Ok(ToolOutput::text(content).metadata(agents_metadata()))
+        // `message` has no run state to report: it resolves to `{}`.
+        Ok(ToolOutput::text(content)
+            .metadata(agents_metadata())
+            .with_structured_content(structured.unwrap_or_else(|| serde_json::json!({}))))
     }
 }
 
@@ -332,6 +347,17 @@ impl Tool for AgentsTool {
                 "additionalProperties": false
             }),
         }
+    }
+
+    fn output_schema(&self) -> Option<serde_json::Value> {
+        // `list` fills `runs`; `status` and `stop` fill `run`; `message` neither.
+        Some(serde_json::json!({
+            "type": "object",
+            "properties": {
+                "runs": {"type": "array", "items": agent_run_schema()},
+                "run": agent_run_schema()
+            }
+        }))
     }
 
     fn security(&self) -> ToolSecurity {

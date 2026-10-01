@@ -167,14 +167,20 @@ impl ToolHostBridge {
     ///
     /// Progress replaces a card's body, so each update carries every nested
     /// call so far. The log is bounded by the nested call budget.
+    ///
+    /// Never waits for channel capacity: the script runs under
+    /// `block_in_place` on the parent call's task, and the runtime drains the
+    /// parent's bounded progress channel from that same task, so an awaited
+    /// send deadlocks once the channel fills. Because each update carries the
+    /// whole log, dropping one when the channel is full loses nothing a later
+    /// update (or the final result) does not restate.
     async fn report(&self, index: usize, state: NestedCallState) {
         let mut log = self.log.lock().await;
         log.set(index, state);
         let _ = self
             .parent
             .progress()
-            .send(ToolProgress::message(log.render()))
-            .await;
+            .try_send(ToolProgress::message(log.render()));
     }
 
     async fn run_nested(&self, mut run: ToolHostRun, index: usize) -> Result<ToolOutput, SdkError> {
@@ -216,7 +222,8 @@ impl CodeModeBridge for ToolHostBridge {
         let index = self.log.lock().await.start(name);
         self.report(index, NestedCallState::Running(String::new()))
             .await;
-        match self.run_nested(run, index).await {
+        let outcome = self.run_nested(run, index).await;
+        match outcome {
             Ok(output) => {
                 self.report(index, NestedCallState::Succeeded).await;
                 Ok(output)

@@ -35,3 +35,35 @@ fn cursor_session_line_uses_cursor_agent_resume() {
         "cursor session: sess-cursor (resume with `cursor-agent --resume sess-cursor`)"
     );
 }
+
+// Covers: a script sees a delegated run's result only once it is done (the
+// same privacy rule as the text), with state and error typed.
+// Owner: agent output structured view.
+#[test]
+fn structured_run_exposes_result_only_when_done() {
+    let snapshot = |state: RunState, done: bool| SubagentSnapshot {
+        prior_notices: Vec::new(),
+        id: "run1".into(),
+        agent_id: "explorer".into(),
+        title: None,
+        elapsed: Duration::from_secs(1),
+        status: RunStatus {
+            state,
+            result: Some("found it".into()),
+            ..RunStatus::default()
+        },
+        done,
+    };
+    assert_eq!(
+        [
+            super::structured_run(&snapshot(RunState::Running, false)),
+            super::structured_run(&snapshot(RunState::Ok, true)),
+        ],
+        [
+            serde_json::json!({"id": "run1", "agent_id": "explorer", "state": "running",
+                "done": false, "result": null, "error": null}),
+            serde_json::json!({"id": "run1", "agent_id": "explorer", "state": "ok",
+                "done": true, "result": "found it", "error": null}),
+        ]
+    );
+}

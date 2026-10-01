@@ -10,7 +10,7 @@ use crate::{
     hashline::FileHash,
     path_glob::PathGlob,
     search::{
-        clamp_limit, stop_reasons, StopReason, WorkspaceSearch, DEFAULT_MAX_RESULTS,
+        clamp_limit, stop_reasons, SearchOutput, StopReason, WorkspaceSearch, DEFAULT_MAX_RESULTS,
         MAX_RESULTS_CEILING, SEARCH_DEADLINE,
     },
     text_view::read_searchable_lines,
@@ -195,14 +195,48 @@ impl WorkspaceSearch for GrepSearch {
         display_root: &str,
         request: &GrepRequest,
         cancelled: &dyn Fn() -> bool,
-    ) -> Result<String, ToolError> {
-        grep_workspace(
+    ) -> Result<SearchOutput, ToolError> {
+        grep_search(
             root,
             display_root,
             request,
             cancelled,
             self.file_view.style(),
         )
+    }
+
+    fn output_schema() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "description": "Relative to the searched path"},
+                            "count": {"type": "integer", "description": "Matching lines in the file"},
+                            "lines": {
+                                "type": "array",
+                                "description": "Retained matches (content mode only); text is a preview",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "line": {"type": "integer"},
+                                        "text": {"type": "string"}
+                                    },
+                                    "required": ["line", "text"]
+                                }
+                            }
+                        },
+                        "required": ["path", "count", "lines"]
+                    }
+                },
+                "total_matches": {"type": "integer"},
+                "stopped": crate::search::stopped_schema()
+            },
+            "required": ["files", "total_matches", "stopped"]
+        })
     }
 }
 
@@ -235,6 +269,8 @@ pub(crate) struct GrepStats {
     pub(crate) reasons: Vec<StopReason>,
 }
 
+/// Text rendering of [`grep_search`].
+#[cfg(test)]
 pub(crate) fn grep_workspace(
     root: &Path,
     display_root: &str,
@@ -242,6 +278,16 @@ pub(crate) fn grep_workspace(
     cancelled: &dyn Fn() -> bool,
     style: FileViewStyle,
 ) -> Result<String, ToolError> {
+    grep_search(root, display_root, request, cancelled, style).map(|output| output.text)
+}
+
+pub(crate) fn grep_search(
+    root: &Path,
+    display_root: &str,
+    request: &GrepRequest,
+    cancelled: &dyn Fn() -> bool,
+    style: FileViewStyle,
+) -> Result<SearchOutput, ToolError> {
     let options = WalkOptions {
         hidden: request.hidden,
         limits: WalkLimits::within(SEARCH_DEADLINE),
@@ -296,16 +342,34 @@ pub(crate) fn grep_workspace(
         walk_stop
     };
 
-    Ok(format_results(
+    let reasons = stop_reasons(walk_stop, per_file_truncated);
+    let structured = json!({
+        "files": hits
+            .iter()
+            .map(|hit| json!({
+                "path": hit.relative,
+                "count": hit.total,
+                "lines": hit
+                    .lines
+                    .iter()
+                    .map(|(line, text)| json!({"line": line, "text": text}))
+                    .collect::<Vec<_>>(),
+            }))
+            .collect::<Vec<_>>(),
+        "total_matches": total_matches,
+        "stopped": crate::search::stopped(&reasons),
+    });
+    let text = format_results(
         request,
         display_root,
         &hits,
         GrepStats {
             shown,
             total_matches,
-            reasons: stop_reasons(walk_stop, per_file_truncated),
+            reasons,
         },
-    ))
+    );
+    Ok(SearchOutput { text, structured })
 }
 
 /// Scans one file, keeping at most `retain` match lines for display.

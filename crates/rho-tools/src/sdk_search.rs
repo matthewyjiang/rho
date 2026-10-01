@@ -75,6 +75,10 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
         ToolSecurity::built_in([CapabilityKind::Read])
     }
 
+    fn output_schema(&self) -> Option<Value> {
+        Some(S::output_schema())
+    }
+
     fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
         start_metadata(arguments)
     }
@@ -112,7 +116,7 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
                         let display = compact_display_path(workspace.root(), &requested_root);
                         let root = resolved.path().to_path_buf();
                         let cancellation = context.cancellation().clone();
-                        let content = tokio::task::spawn_blocking({
+                        let output = tokio::task::spawn_blocking({
                             let display = display.clone();
                             move || {
                                 search
@@ -127,13 +131,15 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
                             )
                         })?
                         .map_err(map_app_error)?;
-                        Ok(
-                            ToolOutput::text(truncate(content, max_output_bytes)).metadata(
+                        // Structured content is already bounded by
+                        // max_results / max_per_file, like the text.
+                        Ok(ToolOutput::text(truncate(output.text, max_output_bytes))
+                            .metadata(
                                 ToolMetadata::new()
                                     .operation(OperationKind::Read)
                                     .affected_path(display),
-                            ),
-                        )
+                            )
+                            .with_structured_content(output.structured))
                     })
                 },
             ))

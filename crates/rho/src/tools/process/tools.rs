@@ -6,11 +6,24 @@ use std::time::Duration;
 
 const STOP_GRACE: Duration = Duration::from_secs(2);
 
-fn result(id: String, content: String) -> Result<ToolResult, ToolError> {
-    Ok(ToolResult {
-        id,
-        ok: true,
-        content,
+/// Text result plus the structured view codemode scripts receive.
+pub(super) struct ProcessRun {
+    pub(super) result: ToolResult,
+    pub(super) structured: serde_json::Value,
+}
+
+fn result(
+    id: String,
+    content: String,
+    structured: serde_json::Value,
+) -> Result<ProcessRun, ToolError> {
+    Ok(ProcessRun {
+        result: ToolResult {
+            id,
+            ok: true,
+            content,
+        },
+        structured,
     })
 }
 
@@ -105,6 +118,7 @@ impl Tool for Process {
         Box::pin(async move {
             self.execute(ProcessArgs::parse(args)?, context, id, on_update)
                 .await
+                .map(|run| run.result)
         })
     }
 }
@@ -116,7 +130,7 @@ impl Process {
         context: ToolContext,
         id: String,
         on_update: &mut (dyn FnMut(Vec<String>) + Send),
-    ) -> Result<ToolResult, ToolError> {
+    ) -> Result<ProcessRun, ToolError> {
         match args {
             ProcessArgs::Start {
                 command,
@@ -132,7 +146,11 @@ impl Process {
                     .await
                     .map_err(ToolError::Message)?;
                 on_update(display::snapshot_progress_lines(&snapshot));
-                result(id, output::format_snapshot(&snapshot))
+                result(
+                    id,
+                    output::format_snapshot(&snapshot),
+                    output::structured_snapshot(&snapshot),
+                )
             }
             ProcessArgs::Poll {
                 process_id,
@@ -150,7 +168,11 @@ impl Process {
                     .await
                     .map_err(ToolError::Message)?;
                 on_update(display::snapshot_progress_lines(&snapshot));
-                result(id, output::format_snapshot(&snapshot))
+                result(
+                    id,
+                    output::format_snapshot(&snapshot),
+                    output::structured_snapshot(&snapshot),
+                )
             }
             ProcessArgs::Stop { process_id } => {
                 self.0
@@ -158,7 +180,11 @@ impl Process {
                     .await
                     .map_err(ToolError::Message)?;
                 on_update(vec![format!("stop requested: {process_id}")]);
-                result(id, output::format_stop(&process_id))
+                result(
+                    id,
+                    output::format_stop(&process_id),
+                    output::structured_stop(&process_id),
+                )
             }
         }
     }

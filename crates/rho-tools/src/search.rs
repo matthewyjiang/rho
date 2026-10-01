@@ -122,5 +122,44 @@ pub(crate) trait WorkspaceSearch: Clone + Send + Sync + 'static {
         display_root: &str,
         request: &Self::Request,
         cancelled: &dyn Fn() -> bool,
-    ) -> Result<String, ToolError>;
+    ) -> Result<SearchOutput, ToolError>;
+
+    /// JSON Schema for [`SearchOutput::structured`].
+    fn output_schema() -> Value;
+}
+
+/// One search result: the model-facing text and the script-facing value.
+pub(crate) struct SearchOutput {
+    pub(crate) text: String,
+    pub(crate) structured: Value,
+}
+
+impl StopReason {
+    /// Stable wire name for structured output.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::ResultLimit => "result_limit",
+            Self::PerFileLimit { .. } => "per_file_limit",
+            Self::ScanLimit => "scan_limit",
+            Self::Deadline => "deadline",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+/// Schema for the `stopped` field: why a search returned a partial answer.
+pub(crate) fn stopped_schema() -> Value {
+    serde_json::json!({
+        "type": "array",
+        "items": {
+            "type": "string",
+            "enum": ["result_limit", "per_file_limit", "scan_limit", "deadline", "cancelled"]
+        },
+        "description": "Why the result is partial; empty when the search completed"
+    })
+}
+
+/// Wire names for `reasons`.
+pub(crate) fn stopped(reasons: &[StopReason]) -> Vec<&'static str> {
+    reasons.iter().map(|reason| reason.as_str()).collect()
 }

@@ -360,3 +360,206 @@ result = {"code": run["exit_code"], "stderr": run["stderr"], "truncated": run["t
         json!({"code": 3, "stderr": "oops", "truncated": false})
     );
 }
+
+// Covers: Pi's on-mode hint at the provider boundary. Declared natives end
+// with a line naming the script call and its result shape (bash: its
+// structured fields; read_file: the {content} fallback); codemode itself and
+// every tool in `only` mode are sent unchanged.
+// Owner: ExposureController ToolVisibility::describe.
+#[cfg(unix)]
+#[tokio::test]
+async fn on_mode_descriptions_name_script_result_shape() {
+    use crate::config::CodemodeMode::{On, Only};
+    let config = Config::default();
+    let tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default(),
+    );
+    let mut observed = Vec::new();
+    for mode in [On, Only] {
+        tools.set_codemode_mode(mode);
+        let provider =
+            ScriptedProvider::new(ModelIdentity::new("test", "test", "test"), [text_turn()]);
+        let runtime = runtime_for(
+            &config,
+            &tools,
+            &provider,
+            Workspace::new(std::env::current_dir().unwrap()).unwrap(),
+        );
+        let session = runtime.session(SessionOptions::default()).await.unwrap();
+        session.complete("hi").await.unwrap();
+        let declared = provider.recorded_requests()[0].tools.clone();
+        let last_line = |name: &str| {
+            declared.iter().find(|spec| spec.name == name).map(|spec| {
+                spec.description
+                    .lines()
+                    .last()
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+        };
+        observed.push((
+            mode,
+            last_line("bash"),
+            last_line("read_file"),
+            last_line(CODEMODE_TOOL_NAME).is_some_and(|line| line.starts_with("Codemode:")),
+        ));
+    }
+    assert_eq!(
+        observed,
+        vec![
+            (
+                On,
+                Some(
+                    "Codemode: `call_tool(\"bash\", args)` returns \
+`{ stdout, stderr, exit_code, truncated, wall_time_ms }`."
+                        .to_owned()
+                ),
+                Some(
+                    "Codemode: `call_tool(\"read_file\", args)` returns `{ content }`.".to_owned()
+                ),
+                false,
+            ),
+            (Only, None, None, false),
+        ]
+    );
+}
+
+// Covers: real workspace tools hand codemode scripts typed results to loop and
+// branch on: glob paths, grep files/lines, list_dir entry kinds, and a process
+// started then polled to exit with its exit_code and next_cursor.
+// Owner: built-in tool structured content, end to end through codemode.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn script_reads_structured_workspace_and_process_results() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("src")).unwrap();
+    std::fs::write(root.path().join("src/a.rs"), "fn a() {}\n// TODO one\n").unwrap();
+    std::fs::write(root.path().join("src/b.rs"), "// TODO two\n// TODO three\n").unwrap();
+    let config = Config::default();
+    let tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default(),
+    );
+    let script = r#"
+paths = call_tool("glob", {"pattern": "*.rs"})["paths"]
+hits = call_tool("grep", {"pattern": "TODO"})
+todo = {f["path"]: [l["line"] for l in f["lines"]] for f in hits["files"]}
+kinds = {e["name"]: e["kind"] for e in call_tool("list_dir", {"path": "."})["entries"]}
+started = call_tool("process", {"action": "start", "command": "printf hi; exit 4"})
+# A poll returns as soon as output arrives, so follow next_cursor until exit.
+def wait_exit(process_id):
+    cursor = 0
+    out = ""
+    polled = None
+    for _ in range(20):
+        polled = call_tool("process", {"action": "poll", "process_id": process_id, "cursor": cursor, "wait_seconds": 5})
+        out += polled["stdout"]
+        cursor = polled["next_cursor"]
+        if polled["state"] not in ("running", "starting"):
+            break
+    return polled, out, cursor
+polled, out, cursor = wait_exit(started["process_id"])
+result = {
+    "paths": sorted(paths),
+    "todo": todo,
+    "total": hits["total_matches"],
+    "stopped": hits["stopped"],
+    "kinds": kinds,
+    "process": [polled["state"], polled["exit_code"], out, cursor > 0],
+}
+"#;
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "test"),
+        [
+            tool_call("script", CODEMODE_TOOL_NAME, json!({ "script": script })),
+            text_turn(),
+        ],
+    );
+    let runtime = runtime_for(
+        &config,
+        &tools,
+        &provider,
+        Workspace::new(root.path()).unwrap(),
+    );
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+
+    session.complete("survey").await.unwrap();
+
+    let output = session
+        .history()
+        .iter()
+        .find_map(|message| match message {
+            rho_sdk::model::Message::ToolResult(result) if result.id == "script" => {
+                Some((result.ok, result.content.clone()))
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert!(output.0, "{}", output.1);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&output.1).unwrap(),
+        json!({
+            "paths": ["src/a.rs", "src/b.rs"],
+            "todo": {"src/a.rs": [2], "src/b.rs": [1, 2]},
+            "total": 3,
+            "stopped": [],
+            "kinds": {"src": "dir"},
+            "process": ["exited", 4, "hi", true],
+        })
+    );
+}
+
+// Covers: nested-call status updates outnumber the parent call's progress
+// channel while the script blocks the task that drains it; the script must
+// still finish rather than deadlock. The coordinator sizes that channel at the
+// parallel-tool limit (4, `sdk_config::parallel_tool_limit`); 12 nested calls
+// emit at least 24 updates (running + done each), well past it. Before the fix
+// this hung in the second `process` call of a start/poll script.
+// Owner: codemode ToolHostBridge progress reporting under block_in_place.
+#[tokio::test(flavor = "multi_thread")]
+async fn many_nested_calls_do_not_block_on_parent_progress() {
+    let root = tempfile::tempdir().unwrap();
+    let config = Config::default();
+    let tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default(),
+    );
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "test"),
+        [
+            tool_call(
+                "script",
+                CODEMODE_TOOL_NAME,
+                json!({"script": r#"
+def run_many():
+    for _ in range(12):
+        call_tool("list_dir", {"path": "."})
+    return "done"
+result = run_many()
+"#}),
+            ),
+            text_turn(),
+        ],
+    );
+    let runtime = runtime_for(
+        &config,
+        &tools,
+        &provider,
+        Workspace::new(root.path()).unwrap(),
+    );
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+
+    tokio::time::timeout(std::time::Duration::from_secs(30), session.complete("loop"))
+        .await
+        .expect("codemode deadlocked on parent progress")
+        .unwrap();
+
+    assert!(session.history().iter().any(|message| matches!(
+        message,
+        rho_sdk::model::Message::ToolResult(result) if result.id == "script" && result.ok
+    )));
+}

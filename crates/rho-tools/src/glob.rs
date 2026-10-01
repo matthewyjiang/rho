@@ -6,8 +6,8 @@ use serde_json::{json, Value};
 use crate::{
     path_glob::PathGlob,
     search::{
-        clamp_limit, stop_reasons, with_reasons, NarrowHint, WorkspaceSearch, DEFAULT_MAX_RESULTS,
-        MAX_RESULTS_CEILING, SEARCH_DEADLINE,
+        clamp_limit, stop_reasons, with_reasons, NarrowHint, SearchOutput, WorkspaceSearch,
+        DEFAULT_MAX_RESULTS, MAX_RESULTS_CEILING, SEARCH_DEADLINE,
     },
     tool::{ToolError, ToolSpec},
     workspace_walk::{visit_files, HiddenFiles, WalkLimits, WalkOptions, WalkStop, WalkedFile},
@@ -88,17 +88,39 @@ impl WorkspaceSearch for GlobSearch {
         display_root: &str,
         request: &GlobRequest,
         cancelled: &dyn Fn() -> bool,
-    ) -> Result<String, ToolError> {
-        glob_workspace(root, display_root, request, cancelled)
+    ) -> Result<SearchOutput, ToolError> {
+        glob_search(root, display_root, request, cancelled)
+    }
+
+    fn output_schema() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Relative to the searched path"},
+                "stopped": crate::search::stopped_schema()
+            },
+            "required": ["paths", "stopped"]
+        })
     }
 }
 
+/// Text rendering of [`glob_search`].
+#[cfg(test)]
 pub(crate) fn glob_workspace(
     root: &Path,
     display_root: &str,
     request: &GlobRequest,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<String, ToolError> {
+    glob_search(root, display_root, request, cancelled).map(|output| output.text)
+}
+
+pub(crate) fn glob_search(
+    root: &Path,
+    display_root: &str,
+    request: &GlobRequest,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<SearchOutput, ToolError> {
     let options = WalkOptions {
         hidden: request.hidden,
         limits: WalkLimits::within(SEARCH_DEADLINE),
@@ -121,6 +143,10 @@ pub(crate) fn glob_workspace(
     });
 
     let reasons = stop_reasons(walk_stop, /*per_file_truncated*/ 0);
+    let structured = json!({
+        "paths": matches,
+        "stopped": crate::search::stopped(&reasons),
+    });
     if matches.is_empty() {
         // Still report why, so a walk cut short by a limit or a cancellation is
         // never mistaken for a directory with no matching files.
@@ -128,15 +154,21 @@ pub(crate) fn glob_workspace(
             "no files matching '{}' under {display_root}",
             request.pattern_display
         );
-        return Ok(with_reasons(counts, &reasons, NARROW));
+        return Ok(SearchOutput {
+            text: with_reasons(counts, &reasons, NARROW),
+            structured,
+        });
     }
 
     let counts = format!("{} files", matches.len());
-    Ok(format!(
-        "{}\n\n{}",
-        matches.join("\n"),
-        with_reasons(counts, &reasons, NARROW)
-    ))
+    Ok(SearchOutput {
+        text: format!(
+            "{}\n\n{}",
+            matches.join("\n"),
+            with_reasons(counts, &reasons, NARROW)
+        ),
+        structured,
+    })
 }
 
 #[cfg(test)]

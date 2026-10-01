@@ -110,6 +110,10 @@ impl Tool for ListDirTool {
         ToolSecurity::built_in([CapabilityKind::Read])
     }
 
+    fn output_schema(&self) -> Option<Value> {
+        Some(crate::list_dir::list_dir_output_schema())
+    }
+
     fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
         path_start_metadata(arguments, OperationKind::Read)
     }
@@ -144,13 +148,15 @@ impl Tool for ListDirTool {
                             .await
                             .map_err(map_app_error)?;
                         let display = compact_display_path(workspace.root(), &args.path);
-                        Ok(
-                            ToolOutput::text(truncate(content, self.max_output_bytes)).metadata(
+                        let structured =
+                            crate::list_dir::structured_listing(&content, self.max_output_bytes);
+                        Ok(ToolOutput::text(truncate(content, self.max_output_bytes))
+                            .metadata(
                                 ToolMetadata::new()
                                     .operation(OperationKind::Read)
                                     .affected_path(display),
-                            ),
-                        )
+                            )
+                            .with_structured_content(structured))
                     })
                 },
             ))

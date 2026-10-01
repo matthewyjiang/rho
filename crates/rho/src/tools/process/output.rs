@@ -30,6 +30,58 @@ pub(super) fn format_snapshot(snapshot: &Snapshot) -> String {
     lines.join("\n")
 }
 
+/// Script-facing view of a snapshot (see [`process_output_schema`]).
+///
+/// Output is the same bounded chunk window the text shows; `next_cursor` is
+/// what a later `poll` passes as `cursor`.
+pub(super) fn structured_snapshot(snapshot: &Snapshot) -> serde_json::Value {
+    let stream = |kind: Stream| {
+        snapshot
+            .chunks
+            .iter()
+            .filter(|chunk| chunk.stream == kind)
+            .map(|chunk| chunk.text.as_str())
+            .collect::<String>()
+    };
+    serde_json::json!({
+        "process_id": snapshot.process_id,
+        "command": snapshot.command,
+        "state": snapshot.state.as_wire_str(),
+        "exit_code": snapshot.exit_code,
+        "stdout": stream(Stream::Stdout),
+        "stderr": stream(Stream::Stderr),
+        "next_cursor": snapshot.next_cursor,
+        "truncated": snapshot.truncated,
+    })
+}
+
+/// Script-facing result of `stop`: the request was accepted, not completed.
+pub(super) fn structured_stop(process_id: &str) -> serde_json::Value {
+    serde_json::json!({ "process_id": process_id, "state": "stop_requested" })
+}
+
+/// JSON Schema shared by every `process` action's structured content.
+pub(crate) fn process_output_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "process_id": {"type": "string"},
+            "command": {"type": "string"},
+            "state": {
+                "type": "string",
+                "enum": ["starting", "running", "exited", "terminated", "timed_out",
+                         "failed_to_start", "stop_requested"]
+            },
+            "exit_code": {"type": ["integer", "null"]},
+            "stdout": {"type": "string"},
+            "stderr": {"type": "string"},
+            "next_cursor": {"type": "integer", "description": "Pass to poll as cursor"},
+            "truncated": {"type": "boolean", "description": "Older output was dropped"}
+        },
+        "required": ["process_id", "state"]
+    })
+}
+
 pub(super) fn format_stop(process_id: &str) -> String {
     format!("process_id: {process_id}\nstop requested")
 }

@@ -138,10 +138,9 @@ impl SdkProcess {
                 break;
             }
         }
-        Ok(
-            ToolOutput::text(super::output::format_snapshot(&snapshot))
-                .metadata(process_metadata()),
-        )
+        Ok(ToolOutput::text(super::output::format_snapshot(&snapshot))
+            .metadata(process_metadata())
+            .with_structured_content(super::output::structured_snapshot(&snapshot)))
     }
 }
 
@@ -152,6 +151,10 @@ impl Tool for SdkProcess {
 
     fn security(&self) -> ToolSecurity {
         ToolSecurity::built_in([CapabilityKind::Process])
+    }
+
+    fn output_schema(&self) -> Option<serde_json::Value> {
+        Some(super::output::process_output_schema())
     }
 
     fn prepare<'a>(
@@ -247,7 +250,7 @@ async fn execute_prepared(
         String::new(),
         &mut collect_update,
     );
-    let result = tokio::select! {
+    let run = tokio::select! {
         result = execution => result,
         () = cancellation.cancelled() => return Err(ToolError::cancelled()),
     }
@@ -257,10 +260,13 @@ async fn execute_prepared(
             break;
         }
     }
-    if !result.ok {
-        return Err(ToolError::new(ToolErrorKind::Execution, result.content));
+    if !run.result.ok {
+        return Err(ToolError::new(ToolErrorKind::Execution, run.result.content)
+            .with_structured_content(run.structured));
     }
-    Ok(ToolOutput::text(result.content).metadata(process_metadata()))
+    Ok(ToolOutput::text(run.result.content)
+        .metadata(process_metadata())
+        .with_structured_content(run.structured))
 }
 
 fn process_metadata() -> ToolMetadata {
