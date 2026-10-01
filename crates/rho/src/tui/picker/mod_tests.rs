@@ -27,7 +27,7 @@ fn action_footer_parts_include_structured_key_hints() {
     )
     .with_key_hints(PickerKeyHints {
         tab: crate::tui::TabKey::CompleteFilter,
-        row_delete: true,
+        row_delete: super::RowDeleteKeys::DOrDelete,
         ..Default::default()
     })
     .with_confirm_verb("resume");

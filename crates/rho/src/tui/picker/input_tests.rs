@@ -89,6 +89,41 @@ fn tab_is_ignored_without_a_tab_binding() {
     assert_eq!(picker.filter, "mo");
 }
 
+// Covers: row-delete bindings map keys exactly; under DeleteOnly, `d` must
+// still type into the filter (agent ids are filtered by name).
+// Owner: tui picker key dispatch
+#[test]
+fn row_delete_keys_map_per_binding() {
+    use super::super::RowDeleteKeys;
+    let cases = [
+        (RowDeleteKeys::Disabled, KeyCode::Char('d'), false),
+        (RowDeleteKeys::Disabled, KeyCode::Delete, false),
+        (RowDeleteKeys::DOrDelete, KeyCode::Char('d'), true),
+        (RowDeleteKeys::DOrDelete, KeyCode::Delete, true),
+        (RowDeleteKeys::DeleteOnly, KeyCode::Char('d'), false),
+        (RowDeleteKeys::DeleteOnly, KeyCode::Delete, true),
+    ];
+    for (binding, code, deletes) in cases {
+        let mut picker = UiPicker::new("list", vec![item("a")], PickerAction::ViewAgent)
+            .with_key_hints(PickerKeyHints {
+                row_delete: binding,
+                ..Default::default()
+            });
+        let effect = apply_picker_key(
+            &mut picker,
+            key(code),
+            None,
+            /*space_confirms*/ false,
+            &keys(),
+        );
+        assert_eq!(
+            effect == PickerKeyEffect::DeleteRow,
+            deletes,
+            "{binding:?} {code:?}"
+        );
+    }
+}
+
 // Covers: Tab completes the selected row only when Tab is bound to CompleteFilter.
 // Owner: tui picker key dispatch
 #[test]
@@ -102,7 +137,7 @@ fn tab_completes_filter_when_tab_complete_enabled() {
         pin_toggle: None,
         scope_toggle: None,
         tab: super::TabKey::CompleteFilter,
-        row_delete: false,
+        ..Default::default()
     });
     picker.filter = "gpt".into();
 
@@ -132,7 +167,7 @@ fn ctrl_o_toggles_model_scope_when_enabled() {
         pin_toggle: Some("Ctrl+P".into()),
         scope_toggle: Some("Ctrl+O".into()),
         tab: super::TabKey::CompleteFilter,
-        row_delete: false,
+        ..Default::default()
     });
     let mut key = key(KeyCode::Char('o'));
     key.modifiers = KeyModifiers::CONTROL;

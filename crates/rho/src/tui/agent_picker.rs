@@ -107,6 +107,11 @@ pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) ->
         .map(|entry| agent_item(entry, &models))
         .collect();
     UiPicker::view_agent("Loaded agents", items)
+        .with_restore_status("loaded agents")
+        .with_key_hints(super::PickerKeyHints {
+            row_delete: super::RowDeleteKeys::DeleteOnly,
+            ..Default::default()
+        })
         .with_layout(PickerLayout::Overlay)
         .with_overlay_chrome(OverlayChrome {
             nav_label: " AGENTS".into(),
@@ -118,14 +123,14 @@ pub(super) fn agent_picker(catalog: AgentCatalog, models: AgentModelView<'_>) ->
 /// What the user may do with an agent. One source of truth for the nav
 /// section, the Enter verb, and the origin markers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AgentAccess {
+pub(super) enum AgentAccess {
     Editable,
     Internal,
     ReadOnly,
 }
 
 impl AgentAccess {
-    fn of(origin: AgentOrigin) -> Self {
+    pub(super) fn of(origin: AgentOrigin) -> Self {
         match origin {
             AgentOrigin::RhoHome | AgentOrigin::Project => Self::Editable,
             AgentOrigin::Internal => Self::Internal,

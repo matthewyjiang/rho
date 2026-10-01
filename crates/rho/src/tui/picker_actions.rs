@@ -385,6 +385,7 @@ impl App {
             PickerAction::ResumeSession => self.prompt_delete_selected_session(),
             PickerAction::ManageSessions => self.prompt_delete_selected_sessions_item(),
             PickerAction::Workflow => self.prompt_delete_selected_workflow_item(),
+            PickerAction::ViewAgent => self.prompt_delete_selected_agent(),
             PickerAction::SelectModel
             | PickerAction::SelectInternalAgentModel
             | PickerAction::LoginGroup
@@ -394,7 +395,6 @@ impl App {
             | PickerAction::SwitchAuthMode
             | PickerAction::RefreshModelList
             | PickerAction::InsertSkillCommand
-            | PickerAction::ViewAgent
             | PickerAction::ViewMcpServers
             | PickerAction::SelectTreeNode
             | PickerAction::CopyOutput

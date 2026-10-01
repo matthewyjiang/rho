@@ -418,6 +418,33 @@ async fn agent_and_agents_prepare_subagent_manager_resources() {
     );
 }
 
+// Covers: launches resolve the definition from disk, so an agent deleted
+// mid-session (for example from `/agents`) stops launching even though the
+// startup catalog listed it.
+// Owner: agent tool launch
+#[tokio::test]
+async fn deleted_agent_no_longer_launches() {
+    let root = tempfile::tempdir().unwrap();
+    let fixture = manager(root.path());
+    let home = std::path::PathBuf::from(std::env::var_os("HOME").expect("isolated home"));
+    let agents = home.join(".rho/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    let path = agents.join("doomed.md");
+    std::fs::write(&path, "---\ndescription: doomed\n---\nbody\n").unwrap();
+    let tool = AgentTool::new(fixture.manager(), root.path(), /*catalog*/ None);
+    std::fs::remove_file(&path).unwrap();
+
+    let error = tool
+        .call(
+            invocation(serde_json::json!({"agent_id": "doomed", "prompt": "task"})),
+            tool_context(root.path()),
+        )
+        .await
+        .expect_err("deleted agent must not launch");
+
+    assert_eq!(error.kind(), ToolErrorKind::InvalidArguments);
+}
+
 #[tokio::test]
 async fn concurrent_background_launches_register_together() {
     let root = tempfile::tempdir().unwrap();

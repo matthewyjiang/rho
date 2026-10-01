@@ -231,7 +231,7 @@ pub(super) fn hub_picker(
     UiPicker::workflow("Workflows", items)
         .with_key_hints(super::PickerKeyHints {
             tab: super::TabKey::None,
-            row_delete: true,
+            row_delete: super::RowDeleteKeys::DOrDelete,
             ..Default::default()
         })
         .with_layout(PickerLayout::Overlay)

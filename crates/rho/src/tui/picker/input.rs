@@ -202,9 +202,7 @@ pub(in crate::tui) fn apply_picker_key(
             picker.pop_filter_char();
             PickerKeyEffect::Handled
         }
-        (KeyModifiers::NONE, KeyCode::Char('d') | KeyCode::Delete)
-            if picker.key_hints.row_delete =>
-        {
+        (KeyModifiers::NONE, code) if picker.key_hints.row_delete.deletes(code) => {
             PickerKeyEffect::DeleteRow
         }
         (KeyModifiers::NONE, KeyCode::Char(' ')) if space_confirms => PickerKeyEffect::Submit,
@@ -567,7 +565,8 @@ impl App {
                 Ok(true)
             }
             PickerKeyEffect::DeleteRow => {
-                // Session switch/delete is idle-only; ignore while a turn runs.
+                // Row deletes are idle-only, like session and agent editing.
+                self.set_status("deleting is unavailable while a model turn is running");
                 Ok(true)
             }
         }

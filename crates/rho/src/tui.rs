@@ -16,6 +16,7 @@ mod activity;
 mod advisor_command;
 mod advisor_status;
 mod agent_creator_command;
+mod agent_delete;
 mod agent_editor;
 mod agent_picker;
 mod agent_tools_picker;
@@ -262,7 +263,7 @@ use login::SecretInput;
 use paste_burst::PasteBurstEnter;
 use picker::{
     sort_items_by_ascii_label, PickerBadge, PickerBadgePlacement, PickerBadgeTone, PickerCursor,
-    PickerItem, PickerKeyHints, PickerLayout, TabKey, UiPicker,
+    PickerItem, PickerKeyHints, PickerLayout, RowDeleteKeys, TabKey, UiPicker,
 };
 use process_panel::ProcessPanel;
 use prompt_turn::FailedTurn;

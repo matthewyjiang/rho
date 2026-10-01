@@ -18,7 +18,7 @@ pub(super) fn session_picker(
     )
     .with_key_hints(super::PickerKeyHints {
         tab: super::TabKey::CompleteFilter,
-        row_delete: true,
+        row_delete: super::RowDeleteKeys::DOrDelete,
         ..Default::default()
     })
     .with_confirm_verb("resume")
