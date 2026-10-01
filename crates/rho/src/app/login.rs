@@ -4,8 +4,8 @@ use {
     rho_providers::auth::{
         browser::BrowserAvailability,
         login_dispatch::{
-            AuthenticationMethod, InteractiveLoginCompletion, InteractiveLoginMode,
-            ProviderAuthentication,
+            AuthenticationError, AuthenticationMethod, InteractiveLoginCompletion,
+            InteractiveLoginMode, ProviderAuthentication,
         },
     },
     rho_providers::model::catalog,
@@ -18,6 +18,11 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
         anyhow::bail!("provider '{provider}' does not require login");
     }
     let Some(target) = catalog::login_target_for_provider(provider) else {
+        if let Err(error @ AuthenticationError::AmbiguousProvider { .. }) =
+            ProviderAuthentication::method(provider)
+        {
+            anyhow::bail!("{error}");
+        }
         let options = catalog::login_targets()
             .into_iter()
             .map(|target| target.auth)
@@ -62,3 +67,7 @@ pub(super) async fn run(provider: &str, device_auth: bool) -> anyhow::Result<()>
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "login_tests.rs"]
+mod tests;

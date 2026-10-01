@@ -880,6 +880,13 @@ impl App {
     ) -> anyhow::Result<()> {
         let provider = provider.trim();
         let Some(target) = catalog::login_target_for_provider(provider) else {
+            if let Some(group) = catalog::login_group(provider) {
+                self.input_ui.set_composer(ComposerMode::Picker(
+                    super::provider_picker::logout_method_picker(group),
+                ));
+                self.set_status(format!("select {provider} logout method"));
+                return Ok(());
+            }
             self.insert_entry(&Entry::Error(format!(
                 "unsupported logout provider '{provider}'. Use /logout {}, /logout {}",
                 catalog::implemented_providers().join(", /logout "),

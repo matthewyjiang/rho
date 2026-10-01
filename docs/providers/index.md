@@ -17,7 +17,7 @@ This index lists every first-party provider Rho ships. Shared concepts such as c
 | `moonshot` | `moonshot-api-key` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 | `kimi-code` | `kimi-oauth` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 | `qwen-token-plan` | `qwen-token-plan-api-key` | [Qwen Token Plan](/providers/qwen-token-plan) |
-| `meta` | `meta-api-key` | [Meta Model API](/providers/meta) |
+| `meta` | `meta-api-key`, `meta-muse` | [Meta Model API](/providers/meta) |
 | `minimax` | `minimax-api-key` | [MiniMax](/providers/minimax) |
 | `opencode-go` | `opencode-go-api-key` | [OpenCode Go](/providers/opencode-go) |
 

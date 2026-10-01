@@ -86,7 +86,7 @@ Supported GPT-5.5, GPT-5.6, and GPT-6 Codex models can use OpenAI's faster prior
 - Switching between Codex models preserves encrypted compaction items without changing stored history.
 - Handoff warnings can still repeat after compaction: raw reasoning and other native items require the exact model, including the reasoning-effort record saved by `gpt-6-astra` compaction.
 - On `gpt-6-astra`, `/reasoning` changes are sent as `configuration_update` items so the prompt cache prefix is preserved.
-- As a subscription auth mode, the statusline estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available) and labels it `(sub)`.
+- As a subscription auth mode, the statusline estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available). `/info` marks that cost as a subscription.
 - [`/limits`](/interactive-tui#commands) reports the usage windows for Codex OAuth when you are logged in.
 - Context windows come from cached model metadata. Set `usable_context_window` in `~/.rho/models.toml` to raise or cap a model. See [local model metadata](/configuration#local-model-metadata).
 

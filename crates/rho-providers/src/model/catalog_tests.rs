@@ -589,8 +589,11 @@ fn login_groups_include_meta_and_merge_openai_codex() {
         .find(|group| group.id == "meta")
         .expect("meta login group");
     assert_eq!(meta.prompt, "Meta Model API");
-    assert_eq!(meta.methods.len(), 1);
+    assert_eq!(meta.methods.len(), 2);
     assert_eq!(meta.methods[0].target.auth, "meta-api-key");
+    assert_eq!(meta.methods[0].prompt, "API Key");
+    assert_eq!(meta.methods[1].target.auth, "meta-muse");
+    assert_eq!(meta.methods[1].prompt, "Subscription");
 
     let opencode_go = groups
         .iter()

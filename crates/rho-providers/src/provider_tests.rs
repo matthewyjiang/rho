@@ -126,10 +126,10 @@ fn qwen_token_plan_is_openai_compatible_with_api_key_auth() {
     );
 }
 
-// Covers: meta must resolve as OpenAI-compatible with api-key auth and default model
+// Covers: meta stays OpenAI-compatible, keeps API-key as the default, and offers Muse subscription
 // Owner: provider registry
 #[test]
-fn meta_is_openai_compatible_with_api_key_auth() {
+fn meta_is_openai_compatible_with_api_key_and_muse_subscription() {
     use super::{
         CatalogConstruction, CatalogReasoningPolicy, ProviderId, ProviderRuntime, META_API_BASE,
     };
@@ -145,7 +145,9 @@ fn meta_is_openai_compatible_with_api_key_auth() {
         descriptor.catalog_reasoning,
         CatalogReasoningPolicy::ExactAdvertised
     );
+    assert_eq!(descriptor.default_auth().id, "meta-api-key");
     assert!(descriptor.auth_mode("meta-api-key").is_some());
+    assert!(descriptor.auth_mode("meta-muse").is_some());
     assert_eq!(
         provider_runtime("meta"),
         Some(ProviderRuntime::OpenAiCompatible {

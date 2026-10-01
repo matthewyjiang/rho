@@ -1,10 +1,13 @@
 #[path = "openai_compatible/reasoning.rs"]
 mod reasoning;
 
+use std::future::Future;
+
 pub(crate) use crate::openai_compatible_dialect::OpenAiCompatibleDialect;
 
 use crate::{
     auth::kimi_token::KimiAuthManager,
+    auth::meta_token::MetaAuthManager,
     auth::ollama_device::OllamaDeviceKey,
     model::{ModelError, ModelEvent, ModelIdentity, ModelRequest, ModelResponse, ModelUsage},
     protocol::openai_chat::{
@@ -20,6 +23,7 @@ pub enum CompatibleAuth {
     None,
     ApiKey(String),
     KimiOAuth(KimiAuthManager),
+    MetaOAuth(MetaAuthManager),
     OllamaDevice(OllamaDeviceKey),
 }
 
@@ -159,35 +163,62 @@ impl OpenAiCompatibleProvider {
             CompatibleAuth::ApiKey(key) => self.send_request(body, RequestAuth::Bearer(key)).await,
             CompatibleAuth::KimiOAuth(auth) => {
                 let token = auth.access_token().await?;
-                let response = self.send_request(body, RequestAuth::Bearer(&token)).await?;
-                post_with_optional_refresh(
-                    response,
-                    || auth.force_refresh(&token),
-                    || {
-                        if let Some(on_request_event) = on_request_event {
-                            on_request_event(
-                                rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
-                                    kind: rho_sdk::ProviderErrorKind::Authentication,
-                                    usage: ModelUsage::default(),
-                                },
-                            )?;
-                        }
-                        Ok(())
-                    },
-                    |refreshed| async move {
-                        self.send_request(body, RequestAuth::Bearer(&refreshed))
-                            .await
-                    },
-                    None,
-                )
+                self.send_refreshing(body, on_request_event, &token, || {
+                    auth.force_refresh(&token)
+                })
                 .await
-                .response
+            }
+            CompatibleAuth::MetaOAuth(auth) => {
+                let token = auth.access_token().await?;
+                self.send_refreshing(body, on_request_event, &token, || {
+                    auth.force_refresh(&token)
+                })
+                .await
             }
             CompatibleAuth::OllamaDevice(key) => {
                 self.send_request(body, RequestAuth::OllamaDevice(key))
                     .await
             }
         }
+    }
+
+    async fn send_refreshing<F, Fut>(
+        &self,
+        body: &ChatRequest,
+        on_request_event: Option<
+            &mut (dyn FnMut(rho_sdk::provider::ProviderRequestEvent) -> Result<(), ModelError>
+                      + Send),
+        >,
+        token: &str,
+        refresh: F,
+    ) -> Result<reqwest::Response, ModelError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<Option<String>, ModelError>> + Send,
+    {
+        let response = self.send_request(body, RequestAuth::Bearer(token)).await?;
+        post_with_optional_refresh(
+            response,
+            refresh,
+            || {
+                if let Some(on_request_event) = on_request_event {
+                    on_request_event(
+                        rho_sdk::provider::ProviderRequestEvent::RequestAttemptFailed {
+                            kind: rho_sdk::ProviderErrorKind::Authentication,
+                            usage: ModelUsage::default(),
+                        },
+                    )?;
+                }
+                Ok(())
+            },
+            |refreshed| async move {
+                self.send_request(body, RequestAuth::Bearer(&refreshed))
+                    .await
+            },
+            None,
+        )
+        .await
+        .response
     }
 
     async fn send_request(

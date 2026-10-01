@@ -25,7 +25,11 @@ enum BillingInfo {
 
 impl BillingInfo {
     fn from_provider_auth(provider: &str, auth: &str) -> Self {
-        if provider == "openai-codex" || auth == "codex" || auth == "xai-oauth" {
+        if provider == "openai-codex"
+            || auth == "codex"
+            || auth == "xai-oauth"
+            || auth == "meta-muse"
+        {
             Self::Subscription
         } else {
             Self::Metered

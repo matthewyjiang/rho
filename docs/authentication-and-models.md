@@ -32,7 +32,7 @@ Rho's implemented providers are:
 | `moonshot` | `moonshot-api-key` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 | `kimi-code` | `kimi-oauth` | [Moonshot and Kimi Code](/providers/moonshot-kimi) |
 | `qwen-token-plan` | `qwen-token-plan-api-key` | [Qwen Token Plan](/providers/qwen-token-plan) |
-| `meta` | `meta-api-key` | [Meta Model API](/providers/meta) |
+| `meta` | `meta-api-key`, `meta-muse` | [Meta Model API](/providers/meta) |
 | `minimax` | `minimax-api-key` | [MiniMax](/providers/minimax) |
 | `opencode-go` | `opencode-go-api-key` | [OpenCode Go](/providers/opencode-go) |
 
@@ -176,6 +176,6 @@ For normal interactive setup, prefer `/login`. Environment variables are CI/deve
 
 Rho uses cached model metadata to choose context windows for status display and [auto compaction](/configuration/compaction). The same metadata supplies each model's available [reasoning effort levels](/configuration#reasoning-options), so the TUI can skip unsupported choices without model-name allowlists. Override a window or reasoning list in `~/.rho/models.toml`. A custom OpenAI-compatible host that is not itself in models.dev can set `catalog` to another provider slug and borrow that catalog. See [local model metadata](/configuration#local-model-metadata) and [Custom OpenAI-compatible hosts](/providers/openai-compatible).
 
-For subscription auth modes such as Codex OAuth and xAI OAuth, the statusline still estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available) and labels it `(sub)`. When a model is seen for the first time, Rho refreshes models.dev so newly added providers are not stuck on a stale local snapshot.
+For subscription auth modes such as Codex OAuth, xAI OAuth, and Muse subscription, the statusline still estimates an equivalent API cost from [models.dev](https://models.dev/) pricing (including long-context rate tiers when available). `/info` marks that cost as a subscription. When a model is seen for the first time, Rho refreshes models.dev so newly added providers are not stuck on a stale local snapshot.
 
 For persistent defaults, see [configuration](/configuration). For one-shot prompts, see [automation and CLI](/automation-cli).

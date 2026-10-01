@@ -4,9 +4,12 @@ use crate::{
     auth::{
         kimi_oauth::{refresh_kimi_tokens, KimiOAuthError},
         kimi_token::token_is_expiring,
+        meta_token::{ensure_fresh, env_api_key},
         ollama_device::OllamaDeviceKey,
     },
-    credentials::{load_kimi_tokens, save_kimi_tokens, CredentialStore, KimiTokens},
+    credentials::{
+        load_kimi_tokens, load_meta_tokens, save_kimi_tokens, CredentialStore, KimiTokens,
+    },
     model::ModelError,
     provider::{self, ProviderAuthKind},
 };
@@ -69,6 +72,25 @@ pub(super) async fn load(
                 save_kimi_tokens(store, &tokens)?;
             }
             Ok(ModelRequestAuth::Bearer(tokens.access_token))
+        }
+        ProviderAuthKind::MetaOAuth { .. } => {
+            let env_var = mode
+                .auth_kind
+                .env_var()
+                .expect("Muse subscription auth must declare an environment variable");
+            if let Some(api_key) = env_api_key(env_var) {
+                return Ok(ModelRequestAuth::Bearer(api_key));
+            }
+            let missing = || crate::model::registry::missing_credentials_error("meta-muse");
+            let mut tokens = load_meta_tokens(store)?.ok_or_else(missing)?;
+            ensure_fresh(
+                client,
+                store,
+                &mut tokens,
+                crate::auth::meta_oauth::API_KEY_MINT_URL,
+            )
+            .await?;
+            Ok(ModelRequestAuth::Bearer(tokens.api_key))
         }
         ProviderAuthKind::OllamaDeviceKey { missing_message } => {
             Ok(ModelRequestAuth::OllamaDevice(

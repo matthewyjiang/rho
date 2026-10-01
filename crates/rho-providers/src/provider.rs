@@ -20,6 +20,7 @@ pub const OPENROUTER_OAUTH_KEY_ACCOUNT: &str = "provider:openrouter:oauth-key";
 pub const KIMI_TOKENS_ACCOUNT: &str = "provider:kimi-code:tokens";
 pub const QWEN_TOKEN_PLAN_API_KEY_ACCOUNT: &str = "provider:qwen-token-plan:api-key";
 pub const META_API_KEY_ACCOUNT: &str = "provider:meta:api-key";
+pub const META_MUSE_TOKENS_ACCOUNT: &str = "provider:meta:muse";
 pub const OPENCODE_GO_API_KEY_ACCOUNT: &str = "provider:opencode-go:api-key";
 pub const MINIMAX_API_KEY_ACCOUNT: &str = "provider:minimax:api-key";
 
@@ -371,45 +372,10 @@ impl std::fmt::Display for OpenAiCompatibleApiParseError {
 
 impl std::error::Error for OpenAiCompatibleApiParseError {}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProviderAuthKind {
-    None,
-    ApiKey {
-        env_var: &'static str,
-        account: &'static str,
-        entry_label: &'static str,
-        missing_message: &'static str,
-    },
-    CodexOAuth {
-        env_var: &'static str,
-        account: &'static str,
-        missing_message: &'static str,
-    },
-    GithubCopilotDevice {
-        env_var: &'static str,
-        account: &'static str,
-        missing_message: &'static str,
-    },
-    XaiOAuth {
-        env_var: &'static str,
-        account: &'static str,
-        missing_message: &'static str,
-    },
-    BearerCredential {
-        env_var: &'static str,
-        account: &'static str,
-        missing_message: &'static str,
-        acquisition: BearerCredentialAcquisition,
-    },
-    KimiOAuth {
-        env_var: &'static str,
-        account: &'static str,
-        missing_message: &'static str,
-    },
-    OllamaDeviceKey {
-        missing_message: &'static str,
-    },
-}
+#[path = "provider_auth_kind.rs"]
+mod provider_auth_kind;
+
+pub use provider_auth_kind::ProviderAuthKind;
 
 impl ProviderDescriptor {
     /// Normalizes a model id for cache, config, and identity storage.
@@ -475,64 +441,6 @@ impl ProviderDescriptor {
         match (self.id, model) {
             (ProviderId::KimiCode, "k3") => Some(262_144),
             _ => None,
-        }
-    }
-}
-
-impl ProviderAuthKind {
-    pub fn env_var(self) -> Option<&'static str> {
-        match self {
-            Self::None | Self::OllamaDeviceKey { .. } => None,
-            Self::ApiKey { env_var, .. }
-            | Self::CodexOAuth { env_var, .. }
-            | Self::GithubCopilotDevice { env_var, .. }
-            | Self::XaiOAuth { env_var, .. }
-            | Self::BearerCredential { env_var, .. }
-            | Self::KimiOAuth { env_var, .. } => Some(env_var),
-        }
-    }
-
-    pub fn account(self) -> Option<&'static str> {
-        match self {
-            Self::None | Self::OllamaDeviceKey { .. } => None,
-            Self::ApiKey { account, .. }
-            | Self::CodexOAuth { account, .. }
-            | Self::GithubCopilotDevice { account, .. }
-            | Self::XaiOAuth { account, .. }
-            | Self::BearerCredential { account, .. }
-            | Self::KimiOAuth { account, .. } => Some(account),
-        }
-    }
-
-    pub(crate) fn has_browser_and_device_grants(self) -> bool {
-        matches!(self, Self::CodexOAuth { .. } | Self::XaiOAuth { .. })
-    }
-
-    /// User-facing guidance when this auth kind has no usable credentials.
-    pub fn missing_message(self) -> Option<&'static str> {
-        match self {
-            Self::None => None,
-            Self::ApiKey {
-                missing_message, ..
-            }
-            | Self::CodexOAuth {
-                missing_message, ..
-            }
-            | Self::GithubCopilotDevice {
-                missing_message, ..
-            }
-            | Self::XaiOAuth {
-                missing_message, ..
-            }
-            | Self::BearerCredential {
-                missing_message, ..
-            }
-            | Self::KimiOAuth {
-                missing_message, ..
-            }
-            | Self::OllamaDeviceKey {
-                missing_message, ..
-            } => Some(missing_message),
         }
     }
 }
