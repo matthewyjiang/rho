@@ -99,6 +99,7 @@ cat >/dev/null
             .unwrap();
         let mut auth = logged_in();
         auth.logged_in = authenticated;
+        let (status_tx, status_rx) = tokio::sync::watch::channel(subagent::RunStatus::default());
         tokio::time::timeout(
             Duration::from_secs(30),
             run_session(ClaudeSessionRequest {
@@ -112,7 +113,7 @@ cat >/dev/null
                 cwd: dir.path().into(),
                 permission_mode: PermissionMode::Bypass,
                 cancellation: RunCancellation::new(),
-                status_tx: None,
+                status_tx: Some(status_tx),
                 started_status: None,
                 parent_messages: Some(inbox),
                 auth_status: Some(Ok(auth)),
@@ -126,6 +127,8 @@ cat >/dev/null
         .await
         .expect("parent follow-up session must finish")
         .unwrap();
+        let status = crate::run_artifacts::test_support::wait_for_writer(status_rx).await;
+        assert_eq!(status.attachment_error, None, "artifact writer: {status:?}");
         if authenticated {
             let received: serde_json::Value = serde_json::from_str(
                 &std::fs::read_to_string(dir.path().join("received.json")).unwrap(),
@@ -177,6 +180,7 @@ async fn run_with_fake(
     // mutating process env (unsafe under concurrent tests).
     let rate_limit_dir = tempfile::tempdir().unwrap();
     let rate_limit_state_path = rate_limit_dir.path().join("rate-limits.json");
+    let (status_tx, status_rx) = tokio::sync::watch::channel(subagent::RunStatus::default());
     run_session(ClaudeSessionRequest {
         system_prompt: system_prompt(),
         identity: claude_identity(),
@@ -188,7 +192,7 @@ async fn run_with_fake(
         cwd: cwd.to_path_buf(),
         permission_mode,
         cancellation,
-        status_tx: None,
+        status_tx: Some(status_tx),
         started_status: None,
         parent_messages: None,
         auth_status: Some(Ok(logged_in())),
@@ -200,7 +204,9 @@ async fn run_with_fake(
     })
     .await
     .unwrap();
-    // Keep the temp root alive through the session await above.
+    let status = crate::run_artifacts::test_support::wait_for_writer(status_rx).await;
+    assert_eq!(status.attachment_error, None, "artifact writer: {status:?}");
+    // Keep the temp root alive through the writer completion above.
     drop(rate_limit_dir);
 }
 
@@ -213,6 +219,7 @@ async fn run_with_fake_prompt(
 ) {
     let rate_limit_dir = tempfile::tempdir().unwrap();
     let rate_limit_state_path = rate_limit_dir.path().join("rate-limits.json");
+    let (status_tx, status_rx) = tokio::sync::watch::channel(subagent::RunStatus::default());
     run_session(ClaudeSessionRequest {
         system_prompt: system_prompt(),
         identity: claude_identity(),
@@ -224,7 +231,7 @@ async fn run_with_fake_prompt(
         cwd: cwd.to_path_buf(),
         permission_mode: PermissionMode::Bypass,
         cancellation,
-        status_tx: None,
+        status_tx: Some(status_tx),
         started_status: None,
         parent_messages: None,
         auth_status: Some(Ok(logged_in())),
@@ -236,6 +243,8 @@ async fn run_with_fake_prompt(
     })
     .await
     .unwrap();
+    let status = crate::run_artifacts::test_support::wait_for_writer(status_rx).await;
+    assert_eq!(status.attachment_error, None, "artifact writer: {status:?}");
     drop(rate_limit_dir);
 }
 
@@ -303,6 +312,7 @@ async fn frozen_bypass_argv_narrows_to_auto_dont_ask() {
     .map(str::to_string)
     .collect();
 
+    let (status_tx, status_rx) = tokio::sync::watch::channel(subagent::RunStatus::default());
     run_session(ClaudeSessionRequest {
         system_prompt: system_prompt(),
         identity: claude_identity(),
@@ -314,7 +324,7 @@ async fn frozen_bypass_argv_narrows_to_auto_dont_ask() {
         cwd: dir.path().to_path_buf(),
         permission_mode: PermissionMode::Auto,
         cancellation: RunCancellation::new(),
-        status_tx: None,
+        status_tx: Some(status_tx),
         started_status: None,
         parent_messages: None,
         auth_status: Some(Ok(logged_in())),
@@ -336,6 +346,8 @@ async fn frozen_bypass_argv_narrows_to_auto_dont_ask() {
     })
     .await
     .unwrap();
+    let status = crate::run_artifacts::test_support::wait_for_writer(status_rx).await;
+    assert_eq!(status.attachment_error, None, "artifact writer: {status:?}");
 
     let args = captured.lock().expect("spawn argv lock").clone();
     assert!(
@@ -396,7 +408,8 @@ async fn success_stream_and_exit_zero_writes_ok() {
     assert_eq!(
         count_terminal_events(&events),
         1,
-        "exactly one terminal attachment"
+        "exactly one terminal attachment; attachment_error: {:?}",
+        status.attachment_error
     );
     assert!(events
         .iter()
@@ -459,7 +472,12 @@ async fn live_tool_roundtrip_stream_writes_session_and_tool_events() {
         assistant_text.contains("rho-tool-fixture-marker-42"),
         "assistant text: {assistant_text:?} events: {events:?}"
     );
-    assert_eq!(count_terminal_events(&events), 1);
+    assert_eq!(
+        count_terminal_events(&events),
+        1,
+        "exactly one terminal attachment; attachment_error: {:?}",
+        status.attachment_error
+    );
     assert!(events
         .iter()
         .any(|event| matches!(event, AttachmentEvent::Completed)));
@@ -491,7 +509,8 @@ async fn failure_terminal_result_is_error_even_on_exit_zero() {
     assert_eq!(
         count_terminal_events(&events),
         1,
-        "exactly one terminal Failed"
+        "exactly one terminal Failed; attachment_error: {:?}",
+        status.attachment_error
     );
     assert!(events.iter().any(|event| {
         matches!(event, AttachmentEvent::Failed(text) if text.contains("hit max turns"))
@@ -528,7 +547,12 @@ async fn safeguard_api_error_with_nonzero_exit_surfaces_stream_text() {
         "stream API error must not be replaced by exit-only text: {error}"
     );
     let events = read_attachment_events(&output);
-    assert_eq!(count_terminal_events(&events), 1);
+    assert_eq!(
+        count_terminal_events(&events),
+        1,
+        "exactly one terminal attachment; attachment_error: {:?}",
+        status.attachment_error
+    );
     assert!(events.iter().any(|event| {
         matches!(event, AttachmentEvent::Failed(text) if text.contains("safeguards flagged"))
     }));
@@ -552,7 +576,12 @@ async fn success_result_with_nonzero_exit_emits_one_failed_not_completed() {
     let status = subagent::read_status(&output).expect("status");
     assert_eq!(status.state, RunState::Error);
     let events = read_attachment_events(&output);
-    assert_eq!(count_terminal_events(&events), 1);
+    assert_eq!(
+        count_terminal_events(&events),
+        1,
+        "exactly one terminal attachment; attachment_error: {:?}",
+        status.attachment_error
+    );
     assert!(events
         .iter()
         .any(|event| matches!(event, AttachmentEvent::Failed(_))));
@@ -588,7 +617,8 @@ async fn protocol_type_error_emits_one_failed_overall() {
     assert_eq!(
         count_terminal_events(&events),
         1,
-        "protocol error must not double-Failed with exit finalize"
+        "protocol error must not double-Failed with exit finalize; attachment_error: {:?}",
+        status.attachment_error
     );
     assert!(events.iter().any(|event| {
         matches!(event, AttachmentEvent::Failed(text) if text.contains("protocol boom"))

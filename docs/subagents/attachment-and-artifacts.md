@@ -40,6 +40,12 @@ Each run directory can contain:
 - `events.jsonl` - display events used by attachment
 - `log.txt` - Claude stderr for `runtime: claude-cli` runs, Cursor stderr for `runtime: cursor` runs
 
+On a slow disk, terminal status can appear before the background writer appends
+its terminal display event. If recording cannot keep up, `attachment_error` in
+`result.json` reports that the journal is incomplete; the writer still appends
+its terminal event when the journal remains writable. Journal errors do not
+change the run's success, failure, or cancellation state.
+
 Run IDs stay globally unique. `rho attach` first checks the global run index, then scans folder-layout sessions, then checks the legacy global path. This lets another process attach from any working directory while keeping unindexed older runs available.
 
 Detaching does not cancel execution. The interactive TUI opens this viewer in place. `rho attach <id>` still works as a separate process for another terminal. Neither path owns the delegated task. Artifacts remain available for post-run inspection and may contain prompts or workspace content.
