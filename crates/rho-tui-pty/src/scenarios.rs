@@ -11,6 +11,7 @@ mod background_agents;
 mod boundary_notifications;
 mod calibrated_context;
 mod changelog;
+mod code_wrap;
 mod command_palette;
 mod compact;
 mod composer_unicode;
@@ -575,6 +576,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     STEER_DELIVERED_MARKER_SCENARIO,
     RETRACT_STEERING_DURING_TOOL_SCENARIO,
     QUEUE_FOLLOW_UP_DURING_TURN_SCENARIO,
+    code_wrap::CODE_WRAP_GRAPHEME_SCENARIO,
     MARKDOWN_HEADINGS_SCENARIO,
     STREAMING_MARKDOWN_STABILITY_SCENARIO,
     SPINNER_ACTIVITY_ANCHOR_SCENARIO,

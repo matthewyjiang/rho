@@ -808,6 +808,13 @@ fn markdown_headings() {
     assert_pass("markdown_headings");
 }
 
+// Covers: exact-width fenced-code rendering must retain the combining accent.
+// Owner: interactive TUI.
+#[test]
+fn code_wrap_grapheme() {
+    assert_pass("code_wrap_grapheme");
+}
+
 #[test]
 fn streaming_markdown_stability() {
     assert_pass("streaming_markdown_stability");
