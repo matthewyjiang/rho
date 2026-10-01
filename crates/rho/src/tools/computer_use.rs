@@ -147,7 +147,7 @@ impl ComputerUseControl {
             .start_update_check()
     }
 
-    pub(crate) fn ensure_managed_driver(&self) -> anyhow::Result<()> {
+    pub(crate) fn ensure_managed_driver(&self) -> anyhow::Result<policy::ManagedLocation> {
         self.session
             .as_ref()
             .ok_or_else(|| anyhow!("computer use is unavailable in this session"))?

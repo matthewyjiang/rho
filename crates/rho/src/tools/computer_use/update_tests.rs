@@ -49,6 +49,22 @@ async fn check_maps_driver_payload_to_outcome() {
                 reason: "the driver reported an update without a version".into(),
             }),
         ),
+        // Unavailable checks print their payload, then exit 1.
+        (
+            "{\"current_version\":\"0.28.2\",\"latest_version\":null,\"update_available\":false,\"error\":\"managed by pacman\"}\nJSON\nexit 1\ncat <<'JSON'\n",
+            Some(UpdateOutcome::Unavailable {
+                current: "0.28.2".into(),
+                reason: "managed by pacman".into(),
+            }),
+        ),
+        // Unavailable checks print their payload, then exit 1.
+        (
+            "{\"current_version\":\"0.28.2\",\"latest_version\":null,\"update_available\":false,\"error\":\"managed by pacman\"}\nJSON\nexit 1\ncat <<'JSON'\n",
+            Some(UpdateOutcome::Unavailable {
+                current: "0.28.2".into(),
+                reason: "managed by pacman".into(),
+            }),
+        ),
         ("not json", None),
         // A crafted version must never reach the installer environment.
         (

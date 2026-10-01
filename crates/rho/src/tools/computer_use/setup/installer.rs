@@ -10,7 +10,7 @@ use anyhow::{bail, Context};
 use rho_sdk::CancellationToken;
 use tokio::process::Command;
 
-use super::InstallKind;
+use super::{InstallKind, ManagedLocation};
 use crate::process_tree::{ProcessTree, SupervisedTree};
 
 // Windows PowerShell uses .NET Framework, whose automatic redirects can downgrade
@@ -63,9 +63,9 @@ const UNIX_PERSIST_TELEMETRY_OPT_OUT: &str = "; \"$HOME/.local/bin/cua-driver\" 
 /// and persists the telemetry opt-out. An update pins the exact release the
 /// driver's own check reported and keeps the saved telemetry preference.
 pub(super) fn command(home: &Path, kind: &InstallKind) -> anyhow::Result<Command> {
-    let (pin, persist_opt_out) = match kind {
-        InstallKind::Install => (None, true),
-        InstallKind::Update { to, .. } => (Some(to.as_str()), false),
+    let (pin, persist_opt_out, location) = match kind {
+        InstallKind::Install => (None, true, ManagedLocation::Rho),
+        InstallKind::Update { to, location, .. } => (Some(to.as_str()), false, *location),
     };
     let mut command = if cfg!(any(target_os = "linux", target_os = "macos")) {
         let mut command = Command::new("/bin/bash");
@@ -92,8 +92,9 @@ pub(super) fn command(home: &Path, kind: &InstallKind) -> anyhow::Result<Command
     if let Some(version) = pin {
         command.env("CUA_DRIVER_RS_VERSION", version);
     }
-    if cfg!(windows) {
-        // The Windows installer owns a directory junction, not a shared bin dir.
+    // The Windows installer owns a directory junction, not a shared bin dir.
+    // Updates of a driver in the installer's default location keep its default.
+    if cfg!(windows) && location == ManagedLocation::Rho {
         command.env(
             "CUA_DRIVER_RS_INSTALL_DIR",
             home.join(".cua-driver").join("bin"),

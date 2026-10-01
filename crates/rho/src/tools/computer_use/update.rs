@@ -6,7 +6,7 @@
 
 use std::{
     path::{Path, PathBuf},
-    process::Stdio,
+    process::{Output, Stdio},
     time::Duration,
 };
 
@@ -182,14 +182,18 @@ fn absolute_home() -> Option<PathBuf> {
 }
 
 async fn check_driver(driver: &Path, home: &Path) -> anyhow::Result<UpdateOutcome> {
-    let output = run_driver(driver, home, &["check-update", "--json"], CHECK_TIMEOUT)
-        .await
-        .map_err(|error| {
-            anyhow!("{error}; older drivers do not support update checks, so update manually")
-        })?;
-    let payload: CheckPayload = serde_json::from_slice(&output)
-        .map_err(|error| anyhow!("cua-driver check-update returned unexpected output: {error}"))?;
-    outcome(payload)
+    let output = run_driver(driver, home, &["check-update", "--json"], CHECK_TIMEOUT).await?;
+    // The driver prints its payload, then exits 1 when the check is
+    // unavailable (offline without cache, package-managed). That payload's
+    // `error` is the useful message, so parse stdout regardless of status.
+    match serde_json::from_slice::<CheckPayload>(&output.stdout) {
+        Ok(payload) => outcome(payload),
+        Err(_) if !output.status.success() => Err(anyhow!(
+            "{}; older drivers do not support update checks, so update manually",
+            failure("cua-driver check-update", &output)
+        )),
+        Err(error) => bail!("cua-driver check-update returned unexpected output: {error}"),
+    }
 }
 
 fn outcome(payload: CheckPayload) -> anyhow::Result<UpdateOutcome> {
@@ -223,7 +227,10 @@ fn outcome(payload: CheckPayload) -> anyhow::Result<UpdateOutcome> {
 pub(super) async fn driver_version(driver: &Path) -> anyhow::Result<String> {
     let home = absolute_home().ok_or_else(|| anyhow!("an absolute home directory is required"))?;
     let output = run_driver(driver, &home, &["--version"], VERSION_TIMEOUT).await?;
-    let output = String::from_utf8_lossy(&output);
+    if !output.status.success() {
+        return Err(failure("cua-driver --version", &output));
+    }
+    let output = String::from_utf8_lossy(&output.stdout);
     let version = output
         .split_whitespace()
         .last()
@@ -234,12 +241,13 @@ pub(super) async fn driver_version(driver: &Path) -> anyhow::Result<String> {
     Ok(version.to_owned())
 }
 
+/// Runs a maintenance command; callers interpret the exit status.
 async fn run_driver(
     driver: &Path,
     home: &Path,
     args: &[&str],
     timeout: Duration,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<Output> {
     let mut command = Command::new(driver);
     command.args(args);
     super::setup::restrict_environment(&mut command, home);
@@ -248,20 +256,20 @@ async fn run_driver(
         .stdin(Stdio::null())
         .kill_on_drop(true);
     let invocation = format!("cua-driver {}", args.join(" "));
-    let output = tokio::time::timeout(timeout, command.output())
+    Ok(tokio::time::timeout(timeout, command.output())
         .await
-        .map_err(|_| anyhow!("{invocation} exceeded the {}s limit", timeout.as_secs()))??;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr = stderr.trim();
-        let start = stderr.floor_char_boundary(stderr.len().saturating_sub(STDERR_EXCERPT_BYTES));
-        bail!(
-            "{invocation} exited with {}: {}",
-            output.status,
-            &stderr[start..]
-        );
-    }
-    Ok(output.stdout)
+        .map_err(|_| anyhow!("{invocation} exceeded the {}s limit", timeout.as_secs()))??)
+}
+
+fn failure(invocation: &str, output: &Output) -> anyhow::Error {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.trim();
+    let start = stderr.floor_char_boundary(stderr.len().saturating_sub(STDERR_EXCERPT_BYTES));
+    anyhow!(
+        "{invocation} exited with {}: {}",
+        output.status,
+        &stderr[start..]
+    )
 }
 
 #[cfg(test)]

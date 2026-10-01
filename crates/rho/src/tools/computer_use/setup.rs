@@ -12,7 +12,7 @@ use anyhow::{anyhow, bail};
 use futures_util::FutureExt;
 use rho_sdk::CancellationToken;
 
-use super::{update, ComputerUseSession, State, Task};
+use super::{policy::ManagedLocation, update, ComputerUseSession, State, Task};
 
 mod installer;
 pub(super) use installer::restrict_environment;
@@ -69,6 +69,7 @@ pub(crate) enum InstallKind {
     Update {
         from: String,
         to: String,
+        location: ManagedLocation,
     },
 }
 
@@ -121,31 +122,37 @@ impl ComputerUseSession {
     pub(crate) fn start_update(&self, from: &str, to: &str) -> anyhow::Result<PathBuf> {
         update::validate_version(from)?;
         update::validate_version(to)?;
-        self.ensure_managed_driver()?;
+        let location = self.ensure_managed_driver()?;
         self.start_installer(InstallKind::Update {
             from: from.to_owned(),
             to: to.to_owned(),
+            location,
         })
     }
 
     /// The installer only replaces Cua's managed installation. Refuse before
     /// downloading anything when Rho would launch a different executable, such
     /// as an earlier PATH entry or a package-managed copy.
-    pub(crate) fn ensure_managed_driver(&self) -> anyhow::Result<()> {
+    pub(crate) fn ensure_managed_driver(&self) -> anyhow::Result<ManagedLocation> {
         let driver = self
             .driver_path()
             .ok_or_else(|| anyhow!("Cua Driver was not detected; /computer setup installs it"))?;
-        let managed = crate::paths::home_dir()
+        let home = crate::paths::home_dir()
             .filter(|home| home.is_absolute())
-            .map(|home| super::policy::managed_driver_link(&home))
-            .and_then(|link| link.canonicalize().ok());
-        if managed.as_deref() != Some(driver.as_path()) {
-            bail!(
-                "{} is not Cua's managed installation, so the installer would not replace it; update it the way it was installed",
-                driver.display()
-            );
-        }
-        Ok(())
+            .ok_or_else(|| {
+                anyhow!("an absolute home directory is required to update Cua Driver")
+            })?;
+        let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+        super::policy::managed_driver_links(&home, local_app_data.as_deref())
+            .into_iter()
+            .find(|(_, link)| link.canonicalize().is_ok_and(|link| link == driver))
+            .map(|(location, _)| location)
+            .ok_or_else(|| {
+                anyhow!(
+                    "{} is not Cua's managed installation, so the installer would not replace it; update it the way it was installed",
+                    driver.display()
+                )
+            })
     }
 
     /// The executable Rho launches must report `expected`; used before an
