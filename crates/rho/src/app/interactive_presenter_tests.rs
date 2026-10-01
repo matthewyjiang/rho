@@ -223,6 +223,36 @@ fn advisor_cards_use_status_first_headers() {
     assert_eq!(failed.header, ToolHeader::status_first("advisor", "failed"));
 }
 
+// Covers: a failed skill load must show its reason on an ordinary card, not a
+// bare header or a collapsed receipt
+// Owner: interactive presenter
+#[test]
+fn failed_skill_load_keeps_reason_visible() {
+    use pretty_assertions::assert_eq;
+    use rho_tools::tool_card::{ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
+
+    let presenter = InteractiveToolPresenter::new(std::path::PathBuf::from("."));
+    let call = ToolCall {
+        id: "call-skill".into(),
+        name: "skill".into(),
+        arguments: serde_json::json!({ "name": "missing" }),
+    };
+    let finished = presenter.historical(&call, /*ok*/ false, "unknown skill: missing");
+    assert_eq!(
+        finished.presentation,
+        crate::presentation::Presentation::Card(
+            ToolCard::new(
+                ToolStatus::Error,
+                ToolFamily::Skill,
+                ToolHeader::call("skill", Some("missing".into())),
+            )
+            .with_facts(vec![ToolFact::Error {
+                text: "unknown skill: missing".into(),
+            }])
+        )
+    );
+}
+
 // Covers: shell start cards must expose the typed timeout budget fact
 // Owner: interactive presenter
 #[test]

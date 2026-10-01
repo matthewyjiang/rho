@@ -136,8 +136,22 @@ async fn openrouter_posts_reasoning_to_chat_completions() {
     server.await.unwrap();
 }
 
+// Pin Unknown capabilities: `request_body` would read the machine's models.dev
+// cache, whose k3 row may narrow these levels.
 #[test]
 fn kimi_code_k3_serializes_each_reasoning_mode_as_a_whole_request() {
+    let mut provider = OpenAiCompatibleProvider::new(
+        crate::reqwest_client(),
+        "kimi-code",
+        "k3".into(),
+        OpenAiCompatibleDialect::KimiCode,
+        CompatibleAuth::ApiKey("secret".into()),
+        "https://example.com".into(),
+    );
+    provider.reasoning = reasoning::DialectReasoning::KimiCode(
+        reasoning::KimiReasoningProfile::new(ReasoningCapabilities::Unknown),
+    );
+    let messages = [Message::user_text("hello")];
     for (reasoning_level, thinking) in [
         (
             crate::reasoning::ReasoningLevel::Off,
@@ -156,8 +170,20 @@ fn kimi_code_k3_serializes_each_reasoning_mode_as_a_whole_request() {
             json!({"type": "enabled", "effort": "max"}),
         ),
     ] {
+        let request = provider
+            .request_body(
+                ModelRequest {
+                    messages: &messages,
+                    tools: &[],
+                    cancellation: Default::default(),
+                    reasoning_level,
+                    prompt_cache_key: None,
+                },
+                /*stream*/ false,
+            )
+            .unwrap();
         assert_eq!(
-            request_body(OpenAiCompatibleDialect::KimiCode, "k3", reasoning_level),
+            serde_json::to_value(request).unwrap(),
             json!({
                 "model": "k3",
                 "messages": [{

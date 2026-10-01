@@ -882,22 +882,29 @@ fn mermaid_flowchart_survives_narrow_and_restored_panes() {
     assert_pass("mermaid_flowchart_resize");
 }
 
+// Covers: a bare /skill command loads the skill before the model responds, and
+// the loaded SKILL.md stays behind a collapsed card until Ctrl+O expands it.
+// Owner: interactive TUI
 #[test]
 fn bare_skill_command_starts_a_model_turn() {
+    // The fixture model echoes only the final instruction line, so this line
+    // can appear on screen only inside the expanded skill card.
+    const EXPANDED_ONLY: &str = "Skill detail shown only in the expanded card.";
     let home = IsolatedHome::new().unwrap();
     let skill_dir = home.workspace.join(".agents/skills/test-skill");
     std::fs::create_dir_all(&skill_dir).unwrap();
     std::fs::write(
         skill_dir.join("SKILL.md"),
-        "---\nname: test-skill\ndescription: Test skill invocation\ndisable-model-invocation: true\n---\nFollow the unique bare skill instruction.\n",
+        format!("---\nname: test-skill\ndescription: Test skill invocation\ndisable-model-invocation: true\n---\n{EXPANDED_ONLY}\n\nFollow the unique bare skill instruction.\n"),
     )
     .unwrap();
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_rho"));
+    // Tall enough that the expanded card and the reply both fit on screen.
     let plan = RhoLaunchPlan::matrix(
         binary,
         &home,
         PtySize {
-            rows: 28,
+            rows: 40,
             cols: 100,
         },
     );
@@ -912,6 +919,20 @@ fn bare_skill_command_starts_a_model_turn() {
             "skill command loaded before model response: Follow the unique bare skill instruction.",
             WaitTimeout::secs(20, "skill response"),
         )
+        .unwrap();
+    let screen = harness.screen().contents();
+    assert!(
+        screen.contains("skill(test-skill)") && !screen.contains(EXPANDED_ONLY),
+        "skill card should be collapsed after loading:\n{screen}"
+    );
+
+    harness.inject_key(&Key::Ctrl('o')).unwrap();
+    harness
+        .wait_for_text(EXPANDED_ONLY, WaitTimeout::secs(10, "expanded skill card"))
+        .unwrap();
+    harness.inject_key(&Key::Ctrl('o')).unwrap();
+    harness
+        .wait_for_text_gone(EXPANDED_ONLY, WaitTimeout::secs(10, "collapsed skill card"))
         .unwrap();
 
     assert_eq!(harness.quit_with_exit_command().unwrap(), 0);

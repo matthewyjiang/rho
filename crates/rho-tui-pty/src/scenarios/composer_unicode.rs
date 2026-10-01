@@ -1,4 +1,4 @@
-use anyhow::{ensure, Result};
+use anyhow::{Context, Result};
 
 use crate::{
     harness::PtyHarness,
@@ -7,7 +7,7 @@ use crate::{
     scenario::{Scenario, Step},
 };
 
-use super::{SETTLE, STARTUP};
+use super::{line_editor::wait_for_tail_caret, SETTLE, STARTUP};
 
 // Covers: sequence-width mismatches must not clip text or add composer rows.
 // Owner: interactive UX (narrow composer wrapping and caret placement).
@@ -16,16 +16,24 @@ fn check_unicode_composer(harness: &mut PtyHarness) -> Result<()> {
     {
         harness.resize(24, 10)?;
         harness.type_text("z")?;
-        harness.wait_for_text("z", SETTLE)?;
-        let content_column = harness.screen().cursor().1 - 1;
+        // Text can paint before its caret flush, so reading the cursor as soon
+        // as "z" appears can see the row-end pending wrap. Wait for the caret.
+        let content_column = wait_for_tail_caret(harness, "z")?.1 - 1;
         harness.inject_key(&Key::Backspace)?;
         harness.type_text(input)?;
         harness.wait_for_text("ab", SETTLE)?;
-        let end = harness.screen().cursor();
-        ensure!(
-            end.1 == content_column + 4,
-            "input {input:?}: caret is not after the four-column trailing row: {end:?}",
-        );
+        let row = harness
+            .screen()
+            .rows_text()
+            .iter()
+            .position(|line| line.contains("ab"))
+            .context("trailing text was not rendered on one row")? as u16;
+        // Emoji widths in the screen model differ from Rho's, so the caret
+        // target comes from the measured content column, not the row text.
+        let end = (row, content_column + 4);
+        harness.wait_for_cursor(end, SETTLE).with_context(|| {
+            format!("input {input:?}: caret is not after the four-column trailing row")
+        })?;
         harness.inject_key(&Key::Home)?;
         // A quiet PTY can mean the input has not been processed yet. Wait for
         // Home's observable caret movement, not an idle interval under CI load.
