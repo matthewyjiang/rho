@@ -9,8 +9,8 @@ use super::sessions_hub_groups::{find_directory, DirectoryGroup, HubGroup};
 use super::sessions_hub_tasks::{plural, DeleteOrigin, SessionsDelete};
 use super::{
     picker::OverlayChrome, session_picker, statusline::path::compact_cwd, App, ComposerMode, Entry,
-    InlineChoice, InlineChoiceModal, InlineChoiceOption, InlineChoicePending, InteractiveRuntime,
-    PickerBadge, PickerBadgeTone, PickerCursor, PickerItem, PickerKeyHints, PickerLayout, UiPicker,
+    InlineChoice, InlineChoiceOption, InlineChoicePending, InteractiveRuntime, PickerBadge,
+    PickerBadgeTone, PickerCursor, PickerItem, PickerKeyHints, PickerLayout, UiPicker,
 };
 use crate::session::{is_cross_project, Session, SessionSummary, SessionTarget};
 
@@ -211,7 +211,7 @@ fn manage_sessions_picker(title: impl Into<String>, items: Vec<PickerItem>) -> U
     UiPicker::manage_sessions(title, items)
         .with_key_hints(PickerKeyHints {
             tab: super::TabKey::None,
-            row_delete: true,
+            row_delete: super::RowDeleteKeys::DOrDelete,
             ..Default::default()
         })
         .with_layout(PickerLayout::Overlay)
@@ -567,7 +567,7 @@ impl App {
                 .with_alternate_shortcut('n'),
             ],
         )?;
-        self.open_session_choice(
+        self.open_choice_over_picker(
             choice,
             InlineChoicePending::DeleteDirectorySessions {
                 cwd: cwd.to_path_buf(),
@@ -614,32 +614,11 @@ impl App {
                 .with_alternate_shortcut('n'),
             ],
         )?;
-        self.open_session_choice(
+        self.open_choice_over_picker(
             choice,
             InlineChoicePending::CleanupMissingSessionDirectories { targets },
             "confirm session cleanup",
         )
-    }
-
-    pub(super) fn open_session_choice(
-        &mut self,
-        choice: InlineChoice,
-        pending: InlineChoicePending,
-        status: &'static str,
-    ) -> anyhow::Result<()> {
-        let previous = self.input_ui.take_composer();
-        let ComposerMode::Picker(parent) = previous else {
-            self.input_ui.set_composer(previous);
-            anyhow::bail!("session confirmation requires an active picker");
-        };
-        self.input_ui
-            .set_composer(ComposerMode::InlineChoice(InlineChoiceModal {
-                choice,
-                pending,
-                parent_picker: Some(Box::new(parent)),
-            }));
-        self.set_status(status);
-        Ok(())
     }
 
     /// Answer a session delete confirmation. On "delete", the picker returns
@@ -667,14 +646,10 @@ impl App {
     }
 
     pub(super) fn restore_session_choice_parent(&mut self, parent: Option<Box<UiPicker>>) {
-        let Some(parent) = parent else {
+        if !self.restore_choice_parent(parent) {
             self.input_ui.set_composer(ComposerMode::Input);
             self.sessions_hub_state.clear();
-            return;
-        };
-        let status = parent.restore_status();
-        self.input_ui.set_composer(ComposerMode::Picker(*parent));
-        self.set_status(status);
+        }
     }
 
     fn selected_sessions_item_value(&self) -> Option<String> {

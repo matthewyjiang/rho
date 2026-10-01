@@ -70,8 +70,41 @@ pub(super) struct PickerKeyHints {
     pub(super) scope_toggle: Option<String>,
     /// What Tab does. Shift+Tab mirrors [`TabKey::CycleItems`].
     pub(super) tab: TabKey,
-    /// `d` / Delete removes the selected row (sessions, workflows).
-    pub(super) row_delete: bool,
+    /// Keys that remove the selected row.
+    pub(super) row_delete: RowDeleteKeys,
+}
+
+/// Keys that remove the selected picker row.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(in crate::tui) enum RowDeleteKeys {
+    #[default]
+    Disabled,
+    /// `d` or Delete (sessions, workflows).
+    DOrDelete,
+    /// Delete only, so `d` still types into the filter (agents, whose ids
+    /// are commonly filtered by name).
+    DeleteOnly,
+}
+
+impl RowDeleteKeys {
+    /// Whether an unmodified `code` removes the selected row.
+    pub(in crate::tui) fn deletes(self, code: crossterm::event::KeyCode) -> bool {
+        use crossterm::event::KeyCode;
+        match self {
+            Self::Disabled => false,
+            Self::DOrDelete => matches!(code, KeyCode::Char('d') | KeyCode::Delete),
+            Self::DeleteOnly => code == KeyCode::Delete,
+        }
+    }
+
+    /// Footer hint for the bound keys.
+    fn hint(self) -> Option<&'static str> {
+        match self {
+            Self::Disabled => None,
+            Self::DOrDelete => Some("d delete"),
+            Self::DeleteOnly => Some("Del delete"),
+        }
+    }
 }
 
 /// Picker behaviour bound to Tab.
@@ -313,6 +346,7 @@ impl UiPicker {
         is_theme => SelectTheme,
         is_mcp_inventory => ViewMcpServers,
         is_edit_agent => EditAgent,
+        is_view_agent => ViewAgent,
         is_attach_subagent => AttachSubagent,
         is_conversation_model => SelectModel,
         is_internal_agent_model => SelectInternalAgentModel,
@@ -576,8 +610,8 @@ impl UiPicker {
             TabKey::CompleteFilter => parts.push("Tab complete".into()),
             TabKey::CycleItems => parts.push("Tab next".into()),
         }
-        if self.key_hints.row_delete {
-            parts.push("d delete".into());
+        if let Some(hint) = self.key_hints.row_delete.hint() {
+            parts.push(hint.into());
         }
         if confirm != escape {
             parts.push(format!("Esc {escape}"));

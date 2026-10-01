@@ -37,10 +37,9 @@ impl App {
                 return Ok(());
             }
         };
-        let editable = matches!(
-            entry.metadata.origin,
-            AgentOrigin::RhoHome | AgentOrigin::Project
-        ) && entry.metadata.path.is_some();
+        let editable = crate::tui::agent_picker::AgentAccess::of(entry.metadata.origin)
+            == crate::tui::agent_picker::AgentAccess::Editable
+            && entry.metadata.path.is_some();
         if !editable {
             // Read-only agents open their full prompt; the fact sheet only
             // shows an excerpt.

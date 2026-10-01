@@ -137,9 +137,9 @@ use no_save::NO_SAVE_SESSION_SCENARIO;
 use paste::PASTE_MULTILINE_SCENARIO;
 use pickers::{
     setup_edit_user_agent, setup_pinned_models, CYCLE_AND_PINNED_MODEL_PICKER_STEPS,
-    EDIT_USER_AGENT_STEPS, EDIT_USER_AGENT_TOOLS_STEPS, OPENAI_AND_XAI_KEY_ENV, OPENAI_KEY_ENV,
-    OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS, OPEN_WORKFLOW_HUB_EMPTY_STEPS,
-    VIEW_READ_ONLY_AGENT_PROMPT_STEPS,
+    DELETE_USER_AGENT_STEPS, EDIT_USER_AGENT_STEPS, EDIT_USER_AGENT_TOOLS_STEPS,
+    OPENAI_AND_XAI_KEY_ENV, OPENAI_KEY_ENV, OPEN_AGENTS_PICKER_STEPS, OPEN_MODEL_PICKER_STEPS,
+    OPEN_WORKFLOW_HUB_EMPTY_STEPS, VIEW_READ_ONLY_AGENT_PROMPT_STEPS,
 };
 use process_rail::{
     PENDING_INPUT_BELOW_ACTIVITY_SCENARIO, PROCESS_RAIL_PEEK_SCENARIO, PROCESS_RAIL_SCENARIO,
@@ -736,6 +736,14 @@ const ALL_SCENARIOS: &[Scenario] = &[
         "Toggle tools in the agent editor multi-select and persist the narrowed list",
         DEFAULT_SIZE,
         EDIT_USER_AGENT_TOOLS_STEPS,
+        false,
+    )
+    .with_setup(setup_edit_user_agent),
+    Scenario::new(
+        "delete_user_agent",
+        "Delete one of your agents from the agents picker after confirmation",
+        DEFAULT_SIZE,
+        DELETE_USER_AGENT_STEPS,
         false,
     )
     .with_setup(setup_edit_user_agent),

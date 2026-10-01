@@ -102,7 +102,7 @@ impl App {
                 .with_alternate_shortcut('n'),
             ],
         )?;
-        self.open_session_choice(
+        self.open_choice_over_picker(
             choice,
             InlineChoicePending::DeleteSession { target },
             "confirm delete",

@@ -194,6 +194,48 @@ pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+/// Delete on one of your agents asks first: cancel keeps it, and confirming
+/// removes it so the filtered list comes back empty.
+pub(super) const DELETE_USER_AGENT_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("/agents"),
+    Step::WaitText {
+        text: "● editable",
+        timeout: SETTLE,
+    },
+    Step::AssertText("Del delete"),
+    Step::TypeText("editable-fixture"),
+    Step::Phase("cancel_delete"),
+    Step::Key(Key::Delete),
+    Step::WaitText {
+        text: "Delete agent editable-fixture?",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Char('n')),
+    Step::WaitText {
+        text: "fixture agent",
+        timeout: SETTLE,
+    },
+    Step::Phase("confirm_delete"),
+    Step::Key(Key::Delete),
+    Step::WaitText {
+        text: "Delete agent editable-fixture?",
+        timeout: SETTLE,
+    },
+    Step::Key(Key::Char('d')),
+    Step::WaitText {
+        text: "deleted agent editable-fixture",
+        timeout: SETTLE,
+    },
+    Step::AssertText("no matches"),
+    Step::Key(Key::Esc),
+    Step::ExitCommand,
+];
+
 /// Enter on a read-only agent opens its full prompt in a panel; Esc returns
 /// to the agents picker. The fact sheet only shows a short excerpt, so this
 /// is the one place a built-in's full prompt is readable.

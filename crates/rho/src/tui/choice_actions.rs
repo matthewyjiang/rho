@@ -59,6 +59,9 @@ impl App {
                     | InlineChoicePending::CleanupMissingSessionDirectories { .. } => {
                         self.restore_session_choice_parent(modal.parent_picker);
                     }
+                    InlineChoicePending::DeleteAgent(_) => {
+                        self.restore_agent_delete_parent(modal.parent_picker);
+                    }
                     InlineChoicePending::DeleteWorkflowPlan { .. }
                     | InlineChoicePending::DeleteWorkflowRun { .. } => {
                         self.open_workflow_hub_or_report();
@@ -177,6 +180,9 @@ impl App {
                     SessionsDelete::CleanupMissing(targets),
                     modal.parent_picker,
                 );
+            }
+            InlineChoicePending::DeleteAgent(target) => {
+                self.submit_delete_agent_choice(&value, target, modal.parent_picker);
             }
             InlineChoicePending::DeleteWorkflowPlan { plan_id } => {
                 self.submit_delete_workflow_plan_choice(&value, &plan_id)?;

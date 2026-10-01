@@ -101,6 +101,7 @@ pub(super) enum InlineChoicePending {
     CleanupMissingSessionDirectories {
         targets: Vec<crate::session::SessionTarget>,
     },
+    DeleteAgent(super::agent_delete::AgentDeleteTarget),
     DeleteWorkflowPlan {
         plan_id: String,
     },

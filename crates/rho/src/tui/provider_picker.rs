@@ -40,7 +40,6 @@ pub(super) fn login_group_picker() -> UiPicker {
     sort_items_by_ascii_label(&mut items);
     UiPicker::login_group("Select provider to login", items).with_key_hints(super::PickerKeyHints {
         tab: super::TabKey::CompleteFilter,
-        row_delete: false,
         ..Default::default()
     })
 }
@@ -64,7 +63,6 @@ pub(super) fn logout_method_picker(group: catalog::LoginGroup) -> UiPicker {
         .collect();
     UiPicker::logout_provider(title, items).with_key_hints(super::PickerKeyHints {
         tab: super::TabKey::CompleteFilter,
-        row_delete: false,
         ..Default::default()
     })
 }
@@ -108,7 +106,6 @@ pub(super) fn login_method_picker(group: catalog::LoginGroup) -> UiPicker {
     );
     UiPicker::login_provider(title, items).with_key_hints(super::PickerKeyHints {
         tab: super::TabKey::CompleteFilter,
-        row_delete: false,
         ..Default::default()
     })
 }
@@ -271,7 +268,6 @@ fn provider_picker_for_targets(verb: &str, targets: Vec<catalog::LoginTarget>) -
     UiPicker::logout_provider(format!("Select provider to {verb}"), items).with_key_hints(
         super::PickerKeyHints {
             tab: super::TabKey::CompleteFilter,
-            row_delete: false,
             ..Default::default()
         },
     )

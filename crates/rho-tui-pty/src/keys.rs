@@ -19,6 +19,7 @@ pub enum Key {
     PageDown,
     Home,
     End,
+    Delete,
     CtrlEnd,
     Ctrl(char),
     Alt(char),
@@ -65,6 +66,7 @@ pub fn encode_key(key: &Key) -> Vec<u8> {
         Key::PageDown => b"\x1b[6~".to_vec(),
         Key::Home => b"\x1b[H".to_vec(),
         Key::End => b"\x1b[F".to_vec(),
+        Key::Delete => b"\x1b[3~".to_vec(),
         Key::CtrlEnd => b"\x1b[1;5F".to_vec(),
         Key::Ctrl(ch) => {
             let lower = ch.to_ascii_lowercase();
