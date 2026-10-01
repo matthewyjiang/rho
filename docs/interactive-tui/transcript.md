@@ -57,6 +57,9 @@ Assistant Markdown renders in the feed as it streams.
 | Tables and ordinary Markdown | Wrapped to the pane width |
 
 Heading-like text inside code fences, or invalid heading lines, stays literal.
+In inline prose, backslash-escaped punctuation stays literal: `\*not emphasis\*`
+displays as `*not emphasis*` without italics. Backslashes inside code spans and
+math contents are preserved for those syntaxes.
 
 ### Write previews
 

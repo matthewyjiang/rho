@@ -4,8 +4,15 @@
 
 use ratatui::style::Style;
 
+#[cfg(test)]
+#[path = "inline_escape_tests.rs"]
+mod escape_tests;
+
 use super::super::{markdown_image, theme::Theme};
-use super::{math, StyledSegment};
+use super::{
+    escapes::{find_unescaped, is_escaped, unescape},
+    math, StyledSegment,
+};
 
 pub(super) fn markdown_inline_segments(line: &str) -> Vec<StyledSegment> {
     let mut segments = Vec::new();
@@ -19,19 +26,23 @@ pub(super) fn markdown_inline_segments(line: &str) -> Vec<StyledSegment> {
                 style,
             }) => {
                 if start > 0 {
-                    segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
+                    segments.push(StyledSegment::new(unescape(&rest[..start]), Theme::text()));
                 }
                 let content_start = start + marker_len;
                 let marked_end = end + marker_len;
                 segments.push(StyledSegment::new(
-                    rest[content_start..end].to_string(),
+                    if rest[start..].starts_with('`') {
+                        rest[content_start..end].to_string()
+                    } else {
+                        unescape(&rest[content_start..end])
+                    },
                     style,
                 ));
                 rest = &rest[marked_end..];
             }
             Some(MarkdownSpan::Image { start, end, alt }) => {
                 if start > 0 {
-                    segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
+                    segments.push(StyledSegment::new(unescape(&rest[..start]), Theme::text()));
                 }
                 // Inline images cannot reserve rows inside wrapped prose, so
                 // they fall back to their alt text.
@@ -47,7 +58,7 @@ pub(super) fn markdown_inline_segments(line: &str) -> Vec<StyledSegment> {
                 target,
             }) => {
                 if start > 0 {
-                    segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
+                    segments.push(StyledSegment::new(unescape(&rest[..start]), Theme::text()));
                 }
                 segments.push(StyledSegment::new(label, Theme::text()));
                 segments.push(StyledSegment::new(": ".to_string(), Theme::text()));
@@ -56,7 +67,7 @@ pub(super) fn markdown_inline_segments(line: &str) -> Vec<StyledSegment> {
             }
             Some(MarkdownSpan::RawUrl { start, end }) => {
                 if start > 0 {
-                    segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
+                    segments.push(StyledSegment::new(unescape(&rest[..start]), Theme::text()));
                 }
                 segments.push(StyledSegment::new(
                     rest[start..end].to_string(),
@@ -66,7 +77,7 @@ pub(super) fn markdown_inline_segments(line: &str) -> Vec<StyledSegment> {
             }
             Some(MarkdownSpan::InlineMath { start, end }) => {
                 if start > 0 {
-                    segments.push(StyledSegment::new(rest[..start].to_string(), Theme::text()));
+                    segments.push(StyledSegment::new(unescape(&rest[..start]), Theme::text()));
                 }
                 let source = &rest[start + "$".len()..end - "$".len()];
                 match math::render_inline_math(source) {
@@ -85,7 +96,7 @@ pub(super) fn markdown_inline_segments(line: &str) -> Vec<StyledSegment> {
                 rest = &rest[end..];
             }
             None => {
-                segments.push(StyledSegment::new(rest.to_string(), Theme::text()));
+                segments.push(StyledSegment::new(unescape(rest), Theme::text()));
                 break;
             }
         }
@@ -158,21 +169,21 @@ fn next_markdown_image_span(line: &str) -> Option<MarkdownSpan> {
 }
 
 fn next_markdown_link(line: &str) -> Option<MarkdownSpan> {
-    let start = line.find('[')?;
+    let start = find_unescaped(line, "[", 0)?;
     let after_label = start + 1;
-    let close_label = line[after_label..].find(']')? + after_label;
+    let close_label = find_unescaped(line, "]", after_label)?;
     let target_start = close_label + 2;
     if !line[close_label + 1..].starts_with('(') || target_start >= line.len() {
         return None;
     }
-    let target_end = line[target_start..].find(')')? + target_start;
+    let target_end = find_unescaped(line, ")", target_start)?;
     let label = &line[after_label..close_label];
     let target = &line[target_start..target_end];
     (!label.is_empty() && !target.is_empty()).then(|| MarkdownSpan::Link {
         start,
         end: target_end + 1,
-        label: label.to_string(),
-        target: target.to_string(),
+        label: unescape(label),
+        target: unescape(target),
     })
 }
 
@@ -238,13 +249,15 @@ fn next_inline_math(line: &str) -> Option<MarkdownSpan> {
 /// non-space character and no digit right after.
 fn is_valid_inline_math_opener(line: &str, marker_start: usize) -> bool {
     let after = line[marker_start + '$'.len_utf8()..].chars().next();
-    after.is_some_and(|ch| !ch.is_whitespace() && !ch.is_ascii_digit() && ch != '$')
+    !is_escaped(line, marker_start)
+        && after.is_some_and(|ch| !ch.is_whitespace() && !ch.is_ascii_digit() && ch != '$')
 }
 
 fn is_valid_inline_math_closer(line: &str, marker_start: usize) -> bool {
     let before = line[..marker_start].chars().next_back();
     let after = line[marker_start + '$'.len_utf8()..].chars().next();
-    before.is_some_and(|ch| !ch.is_whitespace() && ch != '$')
+    !is_escaped(line, marker_start)
+        && before.is_some_and(|ch| !ch.is_whitespace() && ch != '$')
         && !after.is_some_and(|ch| ch.is_ascii_digit())
 }
 
@@ -254,7 +267,12 @@ fn is_valid_inline_math_closer(line: &str, marker_start: usize) -> bool {
 /// opener onward. Text before that opener stays visible so the live line does
 /// not blank while markers complete.
 pub(super) fn inline_markdown_stable_prefix_len(line: &str) -> usize {
-    first_unresolved_inline_markdown_start(line).unwrap_or(line.len())
+    let stable_end = if is_escaped(line, line.len()) {
+        line.len() - 1
+    } else {
+        line.len()
+    };
+    first_unresolved_inline_markdown_start(line).map_or(stable_end, |start| start.min(stable_end))
 }
 
 /// Completed spans of one delimiter kind, plus the first still-open opener.
@@ -334,10 +352,7 @@ fn complete_link_ranges(line: &str, ignored_ranges: &[std::ops::Range<usize>]) -
                 open_at: Some(start),
             };
         }
-        let Some(target_end) = line[target_start..]
-            .find(')')
-            .map(|index| index + target_start)
-        else {
+        let Some(target_end) = find_unescaped(line, ")", target_start) else {
             return InlineDelimScan {
                 ranges,
                 open_at: Some(start),
@@ -380,9 +395,13 @@ fn complete_delimiter_ranges(
         let content_start = start + marker.len();
         let mut end_search_from = content_start;
         let mut matched_end = None;
-        while let Some(end) =
+        while let Some(end) = if marker == "`" {
+            line[end_search_from..]
+                .find(marker)
+                .map(|offset| end_search_from + offset)
+        } else {
             find_marker_outside_ranges(line, marker, end_search_from, ignored_ranges)
-        {
+        } {
             if marker == "*" && line[end..].starts_with("**") {
                 end_search_from = end + "**".len();
                 continue;
@@ -518,7 +537,9 @@ fn find_char_outside_ranges(
     line[search_from..]
         .char_indices()
         .map(|(index, ch)| (search_from + index, ch))
-        .find(|(index, ch)| *ch == needle && !is_inside_ranges(*index, ignored_ranges))
+        .find(|(index, ch)| {
+            *ch == needle && !is_escaped(line, *index) && !is_inside_ranges(*index, ignored_ranges)
+        })
         .map(|(index, _)| index)
 }
 
@@ -529,8 +550,7 @@ fn find_marker_outside_ranges(
     ignored_ranges: &[std::ops::Range<usize>],
 ) -> Option<usize> {
     let mut current = search_from;
-    while let Some(relative_index) = line[current..].find(marker) {
-        let index = current + relative_index;
+    while let Some(index) = find_unescaped(line, marker, current) {
         if !is_inside_ranges(index, ignored_ranges) {
             return Some(index);
         }
@@ -547,8 +567,7 @@ fn is_inside_ranges(index: usize, ranges: &[std::ops::Range<usize>]) -> bool {
 
 fn next_delimited(line: &str, marker: &str, style: Style) -> Option<MarkdownSpan> {
     let mut search_from = 0;
-    while let Some(relative_start) = line[search_from..].find(marker) {
-        let start = search_from + relative_start;
+    while let Some(start) = find_unescaped(line, marker, search_from) {
         if marker == "*" && line[start..].starts_with("**") {
             search_from = start + "**".len();
             continue;
@@ -567,8 +586,13 @@ fn next_delimited(line: &str, marker: &str, style: Style) -> Option<MarkdownSpan
 
         let content_start = start + marker.len();
         let mut end_search_from = content_start;
-        while let Some(relative_end) = line[end_search_from..].find(marker) {
-            let end = end_search_from + relative_end;
+        while let Some(end) = if marker == "`" {
+            line[end_search_from..]
+                .find(marker)
+                .map(|offset| end_search_from + offset)
+        } else {
+            find_unescaped(line, marker, end_search_from)
+        } {
             if marker == "*" && line[end..].starts_with("**") {
                 end_search_from = end + "**".len();
                 continue;

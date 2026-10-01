@@ -71,6 +71,12 @@ const STREAMING_MARKDOWN_STABILITY_STEPS: &[Step] = &[
         timeout: STREAM,
     },
     Step::Custom(assert_streaming_markdown_keeps_stable_prefix),
+    Step::Phase("escaped_delimiters"),
+    Step::SubmitText(r"escaped: \*not emphasis\* \***bold** END"),
+    Step::WaitText {
+        text: "fixture response: escaped: *not emphasis* *bold END",
+        timeout: STREAM,
+    },
     Step::ExitCommand,
 ];
 
