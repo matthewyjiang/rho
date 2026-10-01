@@ -21,6 +21,8 @@ mod computer;
 mod computer_preference;
 #[cfg(unix)]
 mod computer_setup;
+#[cfg(unix)]
+mod computer_update;
 mod config;
 mod conversation_tree;
 mod copy_output;
@@ -648,6 +650,10 @@ const ALL_SCENARIOS: &[Scenario] = &[
     computer_setup::COMPUTER_SETUP_SCENARIO,
     #[cfg(unix)]
     computer_setup::COMPUTER_SETUP_CANCEL_SCENARIO,
+    #[cfg(unix)]
+    computer_update::COMPUTER_UPDATE_SCENARIO,
+    #[cfg(unix)]
+    computer_update::COMPUTER_UPDATE_PLAN_SCENARIO,
     #[cfg(unix)]
     COMPUTER_FAILURE_SCENARIO,
     #[cfg(unix)]

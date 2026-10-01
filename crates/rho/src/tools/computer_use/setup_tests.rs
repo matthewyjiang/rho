@@ -19,13 +19,15 @@ async fn revocation_wins_over_completed_installation() {
     *session.state() = State::Installing(Installation {
         cancellation: Arc::new(CancellationToken::new()),
         task: task.clone(),
+        kind: InstallKind::Install,
+        installed: Arc::default(),
     });
     assert!(session.start_connect().is_err());
     task.await.unwrap();
     session.revoke();
     assert_eq!(
         session.take_installation_result(),
-        Some(ComputerSetupUpdate::Cancelled)
+        Some(ComputerSetupUpdate::Cancelled(InstallKind::Install))
     );
     assert_eq!(session.take_installation_result(), None);
     assert_eq!(session.status(), ComputerUseStatus::Off);
@@ -47,6 +49,8 @@ async fn disconnect_waits_for_installer_cleanup_and_blocks_reactivation() {
     *session.state() = State::Installing(Installation {
         cancellation: cancellation.clone(),
         task,
+        kind: InstallKind::Install,
+        installed: Arc::default(),
     });
     let shutdown = session.disconnect();
     tokio::pin!(shutdown);

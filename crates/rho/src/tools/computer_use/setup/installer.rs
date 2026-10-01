@@ -10,6 +10,7 @@ use anyhow::{bail, Context};
 use rho_sdk::CancellationToken;
 use tokio::process::Command;
 
+use super::InstallKind;
 use crate::process_tree::{ProcessTree, SupervisedTree};
 
 // Windows PowerShell uses .NET Framework, whose automatic redirects can downgrade
@@ -41,6 +42,11 @@ try {
     }
 } finally { $client.Dispose() }
 & ([scriptblock]::Create($script)) -NoPathUpdate -NoAutoStart
+"#;
+
+// Fresh installs persist Rho's telemetry opt-out; updates leave the user's
+// saved preference alone.
+const WINDOWS_PERSIST_TELEMETRY_OPT_OUT: &str = r#"
 # Native stderr must not become a terminating PowerShell error. A missing
 # executable must fail too, without inheriting the installer's last exit code.
 $ErrorActionPreference = 'Continue'
@@ -49,22 +55,58 @@ $LASTEXITCODE = 1
 exit $LASTEXITCODE
 "#;
 
-pub(super) fn command(home: &Path) -> anyhow::Result<Command> {
+// Fetch completely before executing: a failed/partial download never runs.
+const UNIX_INSTALL: &str = "set -euo pipefail; script=$(curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL https://cua.ai/driver/install.sh); /bin/bash --noprofile --norc -c \"$script\" cua-driver-install --no-modify-path --bin-dir \"$HOME/.local/bin\"";
+const UNIX_PERSIST_TELEMETRY_OPT_OUT: &str = "; \"$HOME/.local/bin/cua-driver\" telemetry disable";
+
+/// A fresh install uses the installer's default release for the saved channel
+/// and persists the telemetry opt-out. An update pins the exact release the
+/// driver's own check reported and keeps the saved telemetry preference.
+pub(super) fn command(home: &Path, kind: &InstallKind) -> anyhow::Result<Command> {
+    let (pin, persist_opt_out) = match kind {
+        InstallKind::Install => (None, true),
+        InstallKind::Update { to, .. } => (Some(to.as_str()), false),
+    };
     let mut command = if cfg!(any(target_os = "linux", target_os = "macos")) {
         let mut command = Command::new("/bin/bash");
-        // Fetch completely before executing: a failed/partial download never runs.
-        command.args(["--noprofile", "--norc", "-c", "set -euo pipefail; script=$(curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL https://cua.ai/driver/install.sh); /bin/bash --noprofile --norc -c \"$script\" cua-driver-install --no-modify-path --bin-dir \"$HOME/.local/bin\"; \"$HOME/.local/bin/cua-driver\" telemetry disable"]);
+        let script = if persist_opt_out {
+            format!("{UNIX_INSTALL}{UNIX_PERSIST_TELEMETRY_OPT_OUT}")
+        } else {
+            UNIX_INSTALL.to_owned()
+        };
+        command.args(["--noprofile", "--norc", "-c", &script]);
         command
     } else if cfg!(windows) {
         let mut command = Command::new("powershell.exe");
-        command.args(["-NoProfile", "-NonInteractive", "-Command", WINDOWS_INSTALL]);
+        let script = if persist_opt_out {
+            format!("{WINDOWS_INSTALL}{WINDOWS_PERSIST_TELEMETRY_OPT_OUT}")
+        } else {
+            format!("{WINDOWS_INSTALL}\nexit 0\n")
+        };
+        command.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
         command
     } else {
         bail!("automatic Cua Driver installation supports macOS, Linux and Windows only");
     };
-    // Do not pass model credentials, shell startup hooks, or installer location
-    // overrides into downloaded code. Proxy/certificate settings remain explicit
-    // inputs. HOME is also the working directory, never the repo.
+    restrict_environment(&mut command, home);
+    if let Some(version) = pin {
+        command.env("CUA_DRIVER_RS_VERSION", version);
+    }
+    if cfg!(windows) {
+        // The Windows installer owns a directory junction, not a shared bin dir.
+        command.env(
+            "CUA_DRIVER_RS_INSTALL_DIR",
+            home.join(".cua-driver").join("bin"),
+        );
+    }
+    Ok(command)
+}
+
+/// Do not pass model credentials, shell startup hooks, or installer location
+/// overrides into downloaded code or driver maintenance commands. Proxy and
+/// certificate settings remain explicit inputs. HOME is also the working
+/// directory, never the repo.
+pub(in super::super) fn restrict_environment(command: &mut Command, home: &Path) {
     command
         .env_clear()
         .env("HOME", home)
@@ -93,14 +135,6 @@ pub(super) fn command(home: &Path) -> anyhow::Result<Command> {
             command.env(key, value);
         }
     }
-    if cfg!(windows) {
-        // The Windows installer owns a directory junction, not a shared bin dir.
-        command.env(
-            "CUA_DRIVER_RS_INSTALL_DIR",
-            home.join(".cua-driver").join("bin"),
-        );
-    }
-    Ok(command)
 }
 
 pub(super) fn with_log(mut command: Command) -> anyhow::Result<(Command, PathBuf)> {

@@ -30,6 +30,9 @@ impl App {
                     InlineChoicePending::ComputerInstall => {
                         self.confirm_computer_installation("cancel", agent)
                     }
+                    InlineChoicePending::ComputerUpdate { from, to } => {
+                        self.confirm_computer_update("cancel", &from, &to, agent)
+                    }
                     InlineChoicePending::ComputerAccess => {
                         self.confirm_computer_access("cancel", agent)
                     }
@@ -130,6 +133,9 @@ impl App {
         match modal.pending {
             InlineChoicePending::ComputerInstall => {
                 self.confirm_computer_installation(&value, agent)
+            }
+            InlineChoicePending::ComputerUpdate { from, to } => {
+                self.confirm_computer_update(&value, &from, &to, agent)
             }
             InlineChoicePending::ComputerAccess => self.confirm_computer_access(&value, agent),
             InlineChoicePending::CredentialStore { next } => {

@@ -203,6 +203,11 @@ const COMPUTER_ARGUMENT_CHOICES: &[CommandArgumentChoice] = &[
         description: "install, configure and verify Cua Driver with separate consent",
     },
     CommandArgumentChoice {
+        completion: "/computer update",
+        usage: "/computer update",
+        description: "check for a newer Cua Driver and install it with separate consent",
+    },
+    CommandArgumentChoice {
         completion: "/computer on",
         usage: "/computer on",
         description: "grant this session access to the local desktop through Cua Driver",
@@ -262,7 +267,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec {
         id: CommandId::Computer,
         name: "computer",
-        usage: "/computer [status|setup|on|off]",
+        usage: "/computer [status|setup|update|on|off]",
         description: "computer use powered by Cua Driver, off until explicitly enabled",
         argument_choices: COMPUTER_ARGUMENT_CHOICES,
     },

@@ -12,6 +12,9 @@ use super::{
 
 #[path = "computer_setup.rs"]
 mod setup;
+#[path = "computer_update.rs"]
+mod update;
+use update::UpdateRequest;
 
 impl App {
     pub(super) async fn execute_computer_command(
@@ -25,6 +28,15 @@ impl App {
         ));
         match invocation.args.trim() {
             "setup" => self.setup_computer(agent)?,
+            "update" => match agent.computer_use_eligibility() {
+                Ok(_) => self.update_computer(UpdateRequest::OfferInstall),
+                Err(ComputerUseEligibilityError::Busy | ComputerUseEligibilityError::PlanMode) => {
+                    self.update_computer(UpdateRequest::CheckOnly)
+                }
+                Err(error @ ComputerUseEligibilityError::UnsupportedHost) => {
+                    self.insert_entry(&Entry::Error(error.to_string()))
+                }
+            },
             "on" => {
                 if !self.can_grant_computer_access(agent) {
                     return Ok(());
@@ -90,6 +102,7 @@ impl App {
                 self.show_computer_off();
             }
             "on" | "setup" => self.set_status(ComputerUseEligibilityError::Busy.to_string()),
+            "update" => self.update_computer(UpdateRequest::CheckOnly),
             _ => self.show_computer_command(&invocation),
         }
         Ok(())
@@ -97,9 +110,12 @@ impl App {
 
     fn show_computer_command(&mut self, invocation: &CommandInvocation) {
         match invocation.args.trim() {
-            "" | "status" => self.show_computer_status(),
+            "" | "status" => {
+                self.auto_check_computer_update();
+                self.show_computer_status();
+            }
             _ => self.insert_entry(&Entry::Error(
-                "usage: /computer [status|setup|on|off]".into(),
+                "usage: /computer [status|setup|update|on|off]".into(),
             )),
         }
     }
@@ -202,10 +218,14 @@ impl App {
             agent.session_id().clone(),
         ));
         self.sync_computer_overlay();
+        let check_changed = self
+            .computer_use
+            .as_ref()
+            .is_some_and(ComputerUseControl::poll_update_check);
         if agent.is_session_busy() {
-            return false;
+            return check_changed;
         }
-        let setup_changed = self.poll_computer_installation(agent);
+        let setup_changed = self.poll_computer_installation(agent) | check_changed;
         match agent.reconcile_computer_use().await {
             Ok(ComputerUseUpdate::Unchanged) => return setup_changed,
             // The persistent indicator shows success without transcript chatter.

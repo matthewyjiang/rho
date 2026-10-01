@@ -51,6 +51,15 @@ pub(super) fn detect_driver(
         .and_then(|candidate| candidate.canonicalize().ok())
 }
 
+/// Where Cua's installer, as Rho runs it, places the launched executable.
+pub(super) fn managed_driver_link(home: &Path) -> PathBuf {
+    if cfg!(windows) {
+        home.join(".cua-driver/bin/cua-driver.exe")
+    } else {
+        home.join(".local/bin/cua-driver")
+    }
+}
+
 /// Only explicitly absolute installation locations may receive desktop authority.
 pub(super) fn driver_candidates(
     path: Option<OsString>,
