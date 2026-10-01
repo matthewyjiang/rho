@@ -515,3 +515,37 @@ fn set_model_selection_preserves_compatible_auth_only() {
     assert_eq!(draft.model_text(), "gpt-5.5");
     assert_eq!(draft.auth_text(), "");
 }
+
+// Covers: an unpinned auth offers fast mode only when every provider login
+// serves it, since bind may pick any of them; a pinned auth must serve it.
+// Owner: agent editor
+#[test]
+fn fast_mode_available_requires_every_login_when_auth_is_unset() {
+    for (provider, model, auth, expected) in [
+        ("xai", "grok-4.7", None, false),
+        ("xai", "grok-4.7", Some("xai-oauth"), true),
+        ("xai", "grok-4.7", Some("xai-api-key"), false),
+        ("openai-codex", "gpt-5.5", None, true),
+        ("openai-codex", "gpt-5.3-codex", None, false),
+        ("not-a-provider", "gpt-5.5", None, false),
+    ] {
+        let draft = AgentDefinition {
+            runtime: AgentRuntimeSpec::Rho {
+                tools: ToolPolicy::All,
+                model: ModelPolicy::Select(ModelSelection {
+                    provider: Some(provider.into()),
+                    model: model.into(),
+                    auth: auth.map(Into::into),
+                    fast: false,
+                }),
+                reasoning: None,
+            },
+            ..rho_draft()
+        };
+        assert_eq!(
+            draft.fast_mode_available(),
+            expected,
+            "{provider}/{model} {auth:?}"
+        );
+    }
+}

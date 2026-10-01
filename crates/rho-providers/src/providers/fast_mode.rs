@@ -35,22 +35,6 @@ pub fn supports_fast_mode(provider: &str, model: &str, auth: &str) -> bool {
     fast_serving(provider, model, auth).is_some()
 }
 
-/// Like [`supports_fast_mode`], but `auth` may be unset.
-///
-/// Bind picks the auth for an unpinned selection (a compatible host login,
-/// else catalog preference order), so an unset `auth` only qualifies when
-/// every login the provider registers serves fast mode.
-pub fn supports_fast_mode_with_auth(provider: &str, model: &str, auth: Option<&str>) -> bool {
-    match auth {
-        Some(auth) => supports_fast_mode(provider, model, auth),
-        None => crate::provider::provider_descriptor(provider).is_some_and(|descriptor| {
-            descriptor
-                .auth_modes()
-                .all(|mode| supports_fast_mode(provider, model, mode.id))
-        }),
-    }
-}
-
 /// Model id to put on the request when `fast` is the saved preference.
 ///
 /// Selections that do not implement fast mode as a different model id return

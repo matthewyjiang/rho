@@ -160,11 +160,18 @@ impl AgentDefinition {
         let Some(provider) = selection.provider.as_deref() else {
             return false;
         };
-        rho_providers::providers::fast_mode::supports_fast_mode_with_auth(
-            provider,
-            &selection.model,
-            selection.auth.as_deref(),
-        )
+        let supports = |auth: &str| {
+            rho_providers::providers::fast_mode::supports_fast_mode(
+                provider,
+                &selection.model,
+                auth,
+            )
+        };
+        match selection.auth.as_deref() {
+            Some(auth) => supports(auth),
+            None => rho_providers::provider::provider_descriptor(provider)
+                .is_some_and(|descriptor| descriptor.auth_modes().all(|mode| supports(mode.id))),
+        }
     }
 
     pub(crate) fn set_description_text(&mut self, value: String) {
