@@ -105,7 +105,8 @@ fn finished_result_uses_signal_when_exit_code_is_absent() {
     assert!(result.content.contains("exit code: signal"));
 }
 
-// Covers: retained stream bytes must stop at the configured budget
+// Covers: retained stream bytes must stop at the configured budget, and any
+// dropped byte sets `truncated` (scripts read it as structured content).
 // Owner: pure unit (shell process)
 #[test]
 fn stream_session_caps_retained_stdout_and_stderr() {
@@ -117,12 +118,17 @@ fn stream_session_caps_retained_stdout_and_stderr() {
         stderr: Vec::new(),
         retained_bytes: 0,
         max_output_bytes: 10,
+        truncated: false,
         output_open: true,
         dirty: false,
     };
 
-    assert!(!streams.dirty);
-    streams.apply_chunk(Some((StreamKind::Stdout, b"hello-world".to_vec())));
+    streams.apply_chunk(Some((StreamKind::Stdout, b"hello".to_vec())));
+    assert!(!streams.truncated, "within budget");
+    assert!(streams.dirty);
+    streams.dirty = false;
+    streams.apply_chunk(Some((StreamKind::Stdout, b"-world".to_vec())));
+    assert!(streams.truncated, "dropped byte is reported");
     assert!(streams.dirty);
     streams.dirty = false;
     streams.apply_chunk(Some((StreamKind::Stderr, b"more".to_vec())));

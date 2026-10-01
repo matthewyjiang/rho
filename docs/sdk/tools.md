@@ -115,6 +115,14 @@ public `ToolResult` struct and exhaustive `Message` enum. The next major should
 carry text and images together on the original tool result so provider adapters
 can preserve native tool-result image attribution.
 
+## Structured output
+
+A tool may declare `Tool::output_schema()` (default `None`) and attach a matching value with `ToolOutput::with_structured_content`. The model still reads the text content. The schema is never sent to providers. Structured content is for programmatic callers: `ToolHost::invoke` returns it unchanged, and Rho's `codemode` scripts receive it as the value of `call_tool(...)`.
+
+A tool that ran to completion but reports failure, such as a shell command that exits nonzero, can attach its result to the error with `ToolError::with_structured_content`. Use this only with `ToolErrorKind::Execution`. Denials, cancellations, and invalid arguments do not carry results.
+
+Built-in shell tools return `{ stdout, stderr, exit_code, truncated, wall_time_ms }`, with `exit_code` set to `null` when a signal ended the command. MCP tools pass through the server's `outputSchema` and `structuredContent`. On success the content is validated against the schema. Error results pass through unvalidated.
+
 ## Presentation and progress
 
 `ToolMetadata` carries operation kind, paths, command summary, URLs, and unified diffs. `ToolProgress` adds a message and optional units. These are presentation values, not authorization decisions or safe audit values. Do not infer authority from display strings or log tool arguments and output without host redaction.

@@ -81,7 +81,9 @@ impl Tool for PowerShell {
                 ProcessEnvironment::InheritAll,
                 ProcessOutputLimits::new(ctx.max_output_bytes, timeout),
             );
-            let result = execute_process(execution, id, cancellation, on_update).await?;
+            let result = execute_process(execution, id, cancellation, on_update)
+                .await?
+                .result;
             if self.rtk_enabled {
                 super::rtk::log_execution(&ctx.cwd, &args.command, &result).await;
             }
@@ -95,7 +97,7 @@ pub(super) async fn execute_process(
     id: String,
     cancellation: RunCancellation,
     on_update: &mut (dyn FnMut(Vec<String>) + Send),
-) -> Result<ToolResult, ToolError> {
+) -> Result<shell_process::ShellRun, ToolError> {
     shell_process::run::<ProcessTreeGuard>(execution, id, "PowerShell", cancellation, on_update)
         .await
 }

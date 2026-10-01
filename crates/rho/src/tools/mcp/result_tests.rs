@@ -92,6 +92,7 @@ fn structured_content_is_presented_once_and_required_when_declared() {
             text: "{\n  \"count\": 2\n}".into(),
             assets: Vec::new(),
             images: Vec::new(),
+            structured: Some(structured.clone()),
         }
     );
 
@@ -167,7 +168,8 @@ fn structured_content_must_match_declared_output_schema() {
 }
 
 // Covers: an MCP error result must fail the tool with the server's own rendered
-// text, and an empty result must say so instead of returning nothing.
+// text, and an empty result must say so instead of returning nothing. An error
+// result's structuredContent stays attached to the failure.
 // Owner: MCP result rendering.
 #[test]
 fn error_results_and_empty_results_stay_readable() {
@@ -181,8 +183,24 @@ fn error_results_and_empty_results_stay_readable() {
     )
     .unwrap_err();
     assert_eq!(
-        (error.kind(), error.message()),
-        (ToolErrorKind::Execution, "disk is full")
+        (error.kind(), error.message(), error.structured_content()),
+        (ToolErrorKind::Execution, "disk is full", None)
+    );
+
+    // A structured error result keeps its payload for scripts (Pi resolves
+    // MCP error results to their structured content too).
+    let payload = serde_json::json!({"free_bytes": 0});
+    failed.structured_content = Some(payload.clone());
+    let error = render(
+        &failed,
+        &ResultExpectation::default(),
+        LIMIT,
+        McpImageDelivery::PresentationOnly,
+    )
+    .unwrap_err();
+    assert_eq!(
+        (error.kind(), error.structured_content()),
+        (ToolErrorKind::Execution, Some(&payload))
     );
 
     assert_eq!(

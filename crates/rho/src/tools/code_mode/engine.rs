@@ -193,6 +193,7 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
                     json!({
                         "name": hit.name,
                         "description": hit.description,
+                        "returns": hit.returns,
                     })
                 })
                 .collect(),
@@ -213,6 +214,7 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
                     json!({
                         "name": hit.name,
                         "description": hit.description,
+                        "returns": hit.returns,
                     })
                 })
                 .collect(),
@@ -258,8 +260,13 @@ fn invoke_blocking(name: &str, arguments: JsonValue) -> Result<ToolOutput, Engin
     Ok(output)
 }
 
+/// Script-facing value of a nested call: the tool's structured content when
+/// it declares one (Pi semantics), otherwise `{"content": <text>}`.
 fn tool_output_to_json(output: &ToolOutput) -> JsonValue {
-    json!({ "content": output.content() })
+    match output.structured_content() {
+        Some(structured) => structured.clone(),
+        None => json!({ "content": output.content() }),
+    }
 }
 
 fn starlark_to_json(value: Value<'_>) -> Result<JsonValue, EngineError> {

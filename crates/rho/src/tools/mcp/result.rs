@@ -54,6 +54,9 @@ pub(super) struct RenderedResult {
     pub(super) assets: Vec<ToolAsset>,
     /// Original typed image payloads, unaffected by preview selection/budgets.
     pub(super) images: Vec<ImageContent>,
+    /// `structuredContent` as sent: schema-validated on success, passed through
+    /// unvalidated on an error result. Codemode scripts read it as the result.
+    pub(super) structured: Option<serde_json::Value>,
 }
 
 /// What the tool's own declaration says its result must contain.
@@ -114,8 +117,14 @@ pub(super) fn render(
     }
     rendered.text = rho_tools::tool::truncate(sections.join("\n\n"), max_output_bytes);
 
+    rendered.structured = result.structured_content.clone();
+
     if failed {
-        return Err(ToolError::new(ToolErrorKind::Execution, rendered.text));
+        let error = ToolError::new(ToolErrorKind::Execution, rendered.text);
+        return Err(match rendered.structured {
+            Some(structured) => error.with_structured_content(structured),
+            None => error,
+        });
     }
     Ok(rendered)
 }

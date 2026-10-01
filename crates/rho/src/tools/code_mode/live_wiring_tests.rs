@@ -242,3 +242,129 @@ fn nested_errors_classify_by_kind() {
         );
     }
 }
+
+/// Returns one fixed outcome, so a script can observe what `call_tool` resolves to.
+struct OutcomeTool(Result<ToolOutput, ToolError>);
+
+impl Tool for OutcomeTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "probe".into(),
+            description: "returns a fixed outcome".into(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn call<'a>(&'a self, _invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
+        let outcome = self.0.clone();
+        Box::pin(async move { outcome })
+    }
+}
+
+/// Runs `script` through a codemode host whose only sibling is `probe`.
+async fn run_codemode_with(probe: OutcomeTool, script: &str) -> Result<String, String> {
+    let nesting = Arc::new(CodeModeNesting::default());
+    nesting.set_tools(&[Arc::new(probe) as Arc<dyn Tool>]);
+    let host = ToolHost::builder()
+        .tool(CodeModeTool::new(
+            nesting,
+            Arc::new(ExposureController::with_default_policy()),
+        ))
+        .build()
+        .expect("host");
+    host.invoke(ToolHostCall::new(
+        CODEMODE_TOOL_NAME,
+        json!({ "script": script }),
+    ))
+    .await
+    .map(|output| output.content().to_owned())
+    .map_err(|error| error.to_string())
+}
+
+// Covers: what a script's `call_tool` resolves to (Pi semantics). Structured
+// content wins, on success and on a completed Execution failure (nonzero
+// exit); text-only tools resolve to {"content"}; a text-only failure and a
+// denial still raise, whatever structured data rides along.
+// Owner: codemode bridge + engine result conversion.
+#[tokio::test(flavor = "multi_thread")]
+async fn call_tool_resolves_structured_content_like_pi() {
+    use rho_sdk::tool::ToolErrorKind;
+    let payload = json!({"exit_code": 3});
+    let script = r#"result = call_tool("probe")"#;
+    let cases = [
+        (
+            "structured success",
+            Ok(ToolOutput::text("text").with_structured_content(payload.clone())),
+            Ok(json!({"exit_code": 3})),
+        ),
+        (
+            "text-only success",
+            Ok(ToolOutput::text("text")),
+            Ok(json!({"content": "text"})),
+        ),
+        (
+            "completed failure with structured content",
+            Err(ToolError::new(ToolErrorKind::Execution, "exit 3")
+                .with_structured_content(payload.clone())),
+            Ok(json!({"exit_code": 3})),
+        ),
+        (
+            "text-only failure",
+            Err(ToolError::new(ToolErrorKind::Execution, "boom")),
+            Err(()),
+        ),
+        (
+            "denial never becomes a value",
+            Err(ToolError::new(ToolErrorKind::PolicyDenied, "plan mode")
+                .with_structured_content(payload.clone())),
+            Err(()),
+        ),
+    ];
+    for (case, outcome, expected) in cases {
+        // With no prints, the codemode output is exactly the pretty `result`.
+        let observed = run_codemode_with(OutcomeTool(outcome), script)
+            .await
+            .map(|content| serde_json::from_str::<serde_json::Value>(&content).unwrap())
+            .map_err(|_| ());
+        assert_eq!(observed, expected, "{case}");
+    }
+}
+
+// Covers: script discovery reports each tool's result shape: `bash` lists its
+// output schema, a text-only tool lists null (the {"content"} fallback).
+// Owner: codemode catalog indexing from Tool::output_schema.
+#[cfg(unix)]
+#[test]
+fn catalog_reports_output_schema_as_returns() {
+    let config = Config::default();
+    let tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default(),
+    );
+    let catalog = tools.exposure().list_script_visible(usize::MAX);
+    let required = |name: &str| {
+        catalog
+            .iter()
+            .find(|entry| entry.name == name)
+            .map(|entry| {
+                entry
+                    .returns
+                    .as_ref()
+                    .map(|schema| schema["required"].clone())
+            })
+    };
+    assert_eq!(
+        (required("bash"), required("read_file")),
+        (
+            Some(Some(json!([
+                "stdout",
+                "stderr",
+                "exit_code",
+                "truncated",
+                "wall_time_ms"
+            ]))),
+            Some(None)
+        )
+    );
+}

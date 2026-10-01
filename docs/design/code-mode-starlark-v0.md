@@ -178,7 +178,8 @@ Optional later: **tool search / deferred** feeds which names/schemas the model (
 
 ### v0 guest API
 
-- `call_tool(name, args_dict) -> value` — **required**; ToolHost-generic (native + MCP).
+- `call_tool(name, args_dict) -> value` — **required**; ToolHost-generic (native + MCP). Resolves like Pi: the tool's structured content when it declares `Tool::output_schema` (shell: `{stdout, stderr, exit_code, truncated, wall_time_ms}`; MCP: `structuredContent`), otherwise `{"content": <text>}`. A completed `Execution` failure with structured content (nonzero exit, MCP `isError` + `structuredContent`) resolves to that value so scripts can branch; denials, cancellations, and text-only failures raise.
+- `search_tools` / `list_tools` entries carry `returns` (the output schema, or `null` for the `{"content"}` fallback).
 - `print(...)` / assign `result = ...` — distilled outer tool result.
 - Loud errors for unknown tools, allowlist denials, recursion, policy denials, timeouts.
 - **Sequential only** — no `parallel([...])` in v0.
@@ -228,6 +229,8 @@ Prototype may stub the “block Starlark until…” glue if the current `block_
 - [x] Typed nested-deny classification (`ToolErrorKind::PolicyDenied` / `Error::PolicyDenied`, no string matching)
 - [x] `/codemode on|only` (Pi `codemode.mode`) persisted to `[codemode] mode`; `codemode` always registered; no yolo, no write strip
 - [x] Exposure enforced at the **provider request** boundary via SDK `ToolVisibility` (per request; promotions apply mid-run; unadvertised model calls resolve unavailable)
+- [x] Structured tool output (SDK `Tool::output_schema` + structured content on `ToolOutput`/`ToolError`); shell and MCP produce it; scripts receive it
+- [ ] Pi's per-tool "Codemode: `call_tool(...)` returns …" description line in `on` (now meaningful with output schemas)
 - [ ] Per-server exposure overrides from config (`ExposurePolicy::override_exact/pattern` exists, not yet wired)
 - [ ] Nested pause UX verified end-to-end in a PTY scenario under supervised/auto/bypass
 - [ ] Distinct TUI child cards per nested call (today: status lines inside the parent card)

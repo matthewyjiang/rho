@@ -13,7 +13,7 @@ use serde_json::Value;
 use crate::{
     cancellation::RunCancellation,
     shell_process::ShellArgs,
-    tool::{Tool as AppTool, ToolError as AppToolError, ToolResult as AppToolResult},
+    tool::{Tool as AppTool, ToolError as AppToolError},
     DEFAULT_MAX_OUTPUT_BYTES,
 };
 
@@ -163,12 +163,17 @@ impl ShellPlan {
         workspace
             .revalidate(&self.resolved_cwd)
             .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
-        let result = execute_with_progress(kind, self.execution, invocation_id, context).await?;
-        if !result.ok {
-            return Err(ToolError::new(ToolErrorKind::Execution, result.content));
+        let run = execute_with_progress(kind, self.execution, invocation_id, context).await?;
+        let structured = serde_json::to_value(&run.outcome)
+            .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+        if !run.result.ok {
+            // The command finished; scripts can still branch on `exit_code`.
+            return Err(ToolError::new(ToolErrorKind::Execution, run.result.content)
+                .with_structured_content(structured));
         }
-        Ok(ToolOutput::text(result.content)
-            .metadata(ToolMetadata::new().operation(OperationKind::Execute)))
+        Ok(ToolOutput::text(run.result.content)
+            .metadata(ToolMetadata::new().operation(OperationKind::Execute))
+            .with_structured_content(structured))
     }
 }
 
@@ -205,7 +210,7 @@ impl ShellKind {
         invocation_id: String,
         cancellation: RunCancellation,
         on_update: &mut (dyn FnMut(Vec<String>) + Send),
-    ) -> Result<AppToolResult, AppToolError> {
+    ) -> Result<crate::shell_process::ShellRun, AppToolError> {
         match self {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             Self::Bash => {
@@ -242,6 +247,10 @@ impl Tool for SdkShellTool {
         ToolSecurity::built_in([CapabilityKind::Process])
     }
 
+    fn output_schema(&self) -> Option<Value> {
+        Some(crate::shell_process::shell_output_schema())
+    }
+
     fn start_metadata(&self, _arguments: &Value) -> ToolMetadata {
         ToolMetadata::new().operation(OperationKind::Execute)
     }
@@ -274,7 +283,7 @@ async fn execute_with_progress(
     execution: ProcessExecution,
     invocation_id: String,
     context: &ToolContext,
-) -> Result<AppToolResult, ToolError> {
+) -> Result<crate::shell_process::ShellRun, ToolError> {
     let (update_sender, mut updates) = tokio::sync::mpsc::unbounded_channel::<Vec<String>>();
     let mut on_update = move |lines: Vec<String>| {
         let _ = update_sender.send(lines);

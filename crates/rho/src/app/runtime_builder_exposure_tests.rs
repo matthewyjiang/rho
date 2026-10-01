@@ -289,3 +289,74 @@ async fn only_mode_routes_natives_through_codemode() {
         (false, Some("nested".to_owned()))
     );
 }
+
+// Covers: the real `bash` tool's structured content reaches a codemode script,
+// so it branches on a nonzero `exit_code` and keeps going (Pi semantics), while
+// the same command called directly still fails the tool call.
+// Owner: shell structured outcome + codemode bridge, end to end.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn script_branches_on_bash_exit_code() {
+    let root = tempfile::tempdir().unwrap();
+    let config = Config::default();
+    let tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default(),
+    );
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "test"),
+        [
+            tool_call(
+                "direct",
+                "bash",
+                json!({"command": "printf oops >&2; exit 3"}),
+            ),
+            tool_call(
+                "script",
+                CODEMODE_TOOL_NAME,
+                json!({"script": r#"
+run = call_tool("bash", {"command": "printf oops >&2; exit 3"})
+result = {"code": run["exit_code"], "stderr": run["stderr"], "truncated": run["truncated"]} if run["exit_code"] != 0 else "unreachable"
+"#}),
+            ),
+            text_turn(),
+        ],
+    );
+    let runtime = runtime_for(
+        &config,
+        &tools,
+        &provider,
+        Workspace::new(root.path()).unwrap(),
+    );
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+
+    session.complete("run it").await.unwrap();
+
+    let results = session
+        .history()
+        .iter()
+        .filter_map(|message| match message {
+            rho_sdk::model::Message::ToolResult(result) => Some((result.id.clone(), result.ok)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        results,
+        vec![("direct".to_owned(), false), ("script".to_owned(), true)]
+    );
+    let script_output = session
+        .history()
+        .iter()
+        .find_map(|message| match message {
+            rho_sdk::model::Message::ToolResult(result) if result.id == "script" => {
+                Some(serde_json::from_str::<serde_json::Value>(&result.content).unwrap())
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        script_output,
+        json!({"code": 3, "stderr": "oops", "truncated": false})
+    );
+}

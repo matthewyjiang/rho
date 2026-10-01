@@ -116,6 +116,48 @@ pub(crate) trait ProcessSupervisor: Sized {
     fn kill(&mut self);
 }
 
+/// A finished shell command: the model-facing text result plus the typed
+/// outcome scripts read as structured content.
+pub(crate) struct ShellRun {
+    pub(crate) result: ToolResult,
+    pub(crate) outcome: ShellOutcome,
+}
+
+/// Typed result of a finished shell command (see [`shell_output_schema`]).
+///
+/// `stdout` and `stderr` are the retained capture, bounded together by the
+/// tool's `max_output_bytes`; `truncated` reports any dropped bytes.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct ShellOutcome {
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+    /// Process exit code; `None` when a signal terminated the command.
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) truncated: bool,
+    pub(crate) wall_time_ms: u64,
+}
+
+/// JSON Schema for [`ShellOutcome`], the shell tools' structured content.
+pub(crate) fn shell_output_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "stdout": {"type": "string", "description": "Retained stdout"},
+            "stderr": {"type": "string", "description": "Retained stderr"},
+            "exit_code": {
+                "type": ["integer", "null"],
+                "description": "Exit code; null when a signal ended the command"
+            },
+            "truncated": {
+                "type": "boolean",
+                "description": "Output beyond the tool-output limit was dropped"
+            },
+            "wall_time_ms": {"type": "integer"}
+        },
+        "required": ["stdout", "stderr", "exit_code", "truncated", "wall_time_ms"]
+    })
+}
+
 /// Spawns `execution`, supervises it with `S`, and streams output updates.
 pub(crate) async fn run<S: ProcessSupervisor>(
     execution: ProcessExecution,
@@ -123,7 +165,7 @@ pub(crate) async fn run<S: ProcessSupervisor>(
     tool_name: &str,
     cancellation: RunCancellation,
     on_update: &mut (dyn FnMut(Vec<String>) + Send),
-) -> Result<ToolResult, ToolError> {
+) -> Result<ShellRun, ToolError> {
     let mut command = build_command(&execution, tool_name)?;
     S::prepare(&mut command);
     let mut child = command.spawn()?;
@@ -181,14 +223,25 @@ pub(crate) async fn run<S: ProcessSupervisor>(
 
     supervisor.kill();
     let output = streams.finish().await;
-    Ok(finished_result(
+    let elapsed = start.elapsed();
+    let result = finished_result(
         id,
         status,
         &output.stdout,
         &output.stderr,
-        start.elapsed(),
+        elapsed,
         max_output_bytes,
-    ))
+    );
+    Ok(ShellRun {
+        result,
+        outcome: ShellOutcome {
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            exit_code: status.code(),
+            truncated: output.truncated,
+            wall_time_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+        },
+    })
 }
 
 fn build_command(execution: &ProcessExecution, tool_name: &str) -> Result<Command, ToolError> {
@@ -245,6 +298,8 @@ struct StreamSession {
     stderr: Vec<u8>,
     retained_bytes: usize,
     max_output_bytes: usize,
+    /// Set once any output byte was dropped for the retained budget.
+    truncated: bool,
     output_open: bool,
     dirty: bool,
 }
@@ -252,6 +307,7 @@ struct StreamSession {
 struct CollectedOutput {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
+    truncated: bool,
 }
 
 impl StreamSession {
@@ -279,6 +335,7 @@ impl StreamSession {
             stderr: Vec::new(),
             retained_bytes: 0,
             max_output_bytes: max_output_bytes.max(1),
+            truncated: false,
             output_open: true,
             dirty: false,
         }
@@ -292,10 +349,8 @@ impl StreamSession {
         match chunk {
             Some((kind, bytes)) => {
                 let remaining = self.max_output_bytes.saturating_sub(self.retained_bytes);
-                if remaining == 0 {
-                    return;
-                }
                 let take = bytes.len().min(remaining);
+                self.truncated |= take < bytes.len();
                 if take > 0 {
                     match kind {
                         StreamKind::Stdout => self.stdout.extend_from_slice(&bytes[..take]),
@@ -322,6 +377,7 @@ impl StreamSession {
         CollectedOutput {
             stdout: std::mem::take(&mut self.stdout),
             stderr: std::mem::take(&mut self.stderr),
+            truncated: self.truncated,
         }
     }
 

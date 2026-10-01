@@ -163,6 +163,10 @@ impl Tool for McpTool {
         self.slot.definition().spec
     }
 
+    fn output_schema(&self) -> Option<serde_json::Value> {
+        self.slot.definition().expectation.output_schema
+    }
+
     fn security(&self) -> ToolSecurity {
         // Config is the trust boundary: enabling a server starts it at session
         // load. Tool calls are RPCs on that already-running host-owned session
@@ -279,9 +283,13 @@ impl McpTool {
                         for asset in rendered.assets {
                             metadata = metadata.asset(asset);
                         }
-                        Ok(ToolOutput::text(rendered.text)
+                        let output = ToolOutput::text(rendered.text)
                             .metadata(metadata)
-                            .with_images(rendered.images))
+                            .with_images(rendered.images);
+                        Ok(match rendered.structured {
+                            Some(structured) => output.with_structured_content(structured),
+                            None => output,
+                        })
                     })
                 },
             ))
@@ -303,6 +311,10 @@ impl Tool for ObservedCall<'_> {
 
     fn security(&self) -> ToolSecurity {
         self.tool.security()
+    }
+
+    fn output_schema(&self) -> Option<serde_json::Value> {
+        self.tool.output_schema()
     }
 
     fn prepare<'a>(

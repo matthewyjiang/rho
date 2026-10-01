@@ -513,6 +513,8 @@ pub struct ToolOutput {
     content: String,
     metadata: ToolMetadata,
     images: Vec<crate::model::ImageContent>,
+    /// Boxed: rare, and keeps `ToolCompletion` variants close in size.
+    structured: Option<Box<Value>>,
 }
 
 impl ToolOutput {
@@ -521,7 +523,22 @@ impl ToolOutput {
             content: content.into(),
             metadata: ToolMetadata::default(),
             images: Vec::new(),
+            structured: None,
         }
+    }
+
+    /// Attaches a machine-readable result matching [`Tool::output_schema`].
+    ///
+    /// The model still receives [`Self::content`]; structured content is for
+    /// programmatic callers such as nested script hosts.
+    pub fn with_structured_content(mut self, structured: Value) -> Self {
+        self.structured = Some(Box::new(structured));
+        self
+    }
+
+    /// Machine-readable result, when the tool produced one.
+    pub fn structured_content(&self) -> Option<&Value> {
+        self.structured.as_deref()
     }
 
     pub fn metadata(mut self, metadata: ToolMetadata) -> Self {
@@ -573,6 +590,8 @@ pub enum ToolErrorKind {
 pub struct ToolError {
     kind: ToolErrorKind,
     message: String,
+    /// Boxed: rare, and keeps `ToolCompletion` variants close in size.
+    structured: Option<Box<Value>>,
 }
 
 impl ToolError {
@@ -580,7 +599,24 @@ impl ToolError {
         Self {
             kind,
             message: message.into(),
+            structured: None,
         }
+    }
+
+    /// Attaches the completed result of a tool that ran but reports failure,
+    /// such as a shell command exiting nonzero.
+    ///
+    /// Only meaningful for [`ToolErrorKind::Execution`]: the work finished and
+    /// produced data in the shape of [`Tool::output_schema`]. Denials,
+    /// cancellations, and invalid arguments never carry a result.
+    pub fn with_structured_content(mut self, structured: Value) -> Self {
+        self.structured = Some(Box::new(structured));
+        self
+    }
+
+    /// Completed result attached to this failure, if any.
+    pub fn structured_content(&self) -> Option<&Value> {
+        self.structured.as_deref()
     }
 
     pub fn kind(&self) -> ToolErrorKind {
@@ -666,6 +702,18 @@ pub trait Tool: Send + Sync {
     /// access only; host input is unavailable while detached.
     fn execution_mode(&self) -> ToolExecutionMode {
         ToolExecutionMode::Sync
+    }
+
+    /// JSON Schema for [`ToolOutput::structured_content`] (and structured
+    /// content on [`ToolErrorKind::Execution`] failures), when the tool
+    /// produces one.
+    ///
+    /// Not sent to providers: the model reads text content. Programmatic
+    /// callers, such as script hosts that call tools, use it to document and
+    /// read results. Implementors that declare a schema should attach
+    /// structured content on every completed call.
+    fn output_schema(&self) -> Option<Value> {
+        None
     }
 
     /// Returns presentation metadata available before this tool starts.

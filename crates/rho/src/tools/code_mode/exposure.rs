@@ -192,6 +192,9 @@ pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
 pub struct ToolCatalogEntry {
     pub name: String,
     pub description: String,
+    /// What `call_tool` resolves to: the tool's output schema, or `None` for
+    /// the `{"content": <text>}` fallback.
+    pub returns: Option<serde_json::Value>,
 }
 
 /// Session exposure controller: policy + promotions + catalog index.
@@ -232,11 +235,14 @@ impl ExposureController {
         Self::new(ExposurePolicy::new())
     }
 
+    /// Test helper: index a bare name with no output schema.
+    #[cfg(test)]
     pub fn index_tool(&self, name: impl Into<String>, description: impl Into<String>) {
         let name = name.into();
         let entry = ToolCatalogEntry {
             name: name.clone(),
             description: description.into(),
+            returns: None,
         };
         self.inner
             .lock()
@@ -247,9 +253,17 @@ impl ExposureController {
 
     #[allow(dead_code)]
     pub fn index_tools(&self, tools: &[Arc<dyn Tool>]) {
+        let mut inner = self.inner.lock().expect("exposure");
         for tool in tools {
             let spec = tool.spec();
-            self.index_tool(spec.name, spec.description);
+            inner.catalog.insert(
+                spec.name.clone(),
+                ToolCatalogEntry {
+                    name: spec.name,
+                    description: spec.description,
+                    returns: tool.output_schema(),
+                },
+            );
         }
     }
 
@@ -263,6 +277,7 @@ impl ExposureController {
                 ToolCatalogEntry {
                     name: spec.name,
                     description: spec.description,
+                    returns: tool.output_schema(),
                 },
             );
         }

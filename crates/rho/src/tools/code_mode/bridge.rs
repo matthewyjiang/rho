@@ -223,6 +223,17 @@ impl CodeModeBridge for ToolHostBridge {
             }
             Err(error) => {
                 self.report(index, NestedCallState::Failed).await;
+                // A tool that ran to completion but reports failure (a nonzero
+                // shell exit) still hands the script its typed result, as in
+                // Pi. Denials, cancellations, and bad arguments still raise.
+                if let SdkError::Tool(tool) = &error {
+                    if let (ToolErrorKind::Execution, Some(structured)) =
+                        (tool.kind(), tool.structured_content())
+                    {
+                        return Ok(ToolOutput::text(tool.message())
+                            .with_structured_content(structured.clone()));
+                    }
+                }
                 Err(BridgeError::from_nested(name, error))
             }
         }
