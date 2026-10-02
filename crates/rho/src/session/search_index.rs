@@ -35,9 +35,6 @@ pub(super) struct Refresh {
     pub bytes_read: u64,
     pub skipped_files: usize,
     pub omitted_records: usize,
-    /// Bytes returned to the filesystem by an automatic `VACUUM`, if one ran.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reclaimed_bytes: Option<u64>,
 }
 
 pub(super) fn open(root: &Path) -> anyhow::Result<Connection> {
@@ -158,6 +155,7 @@ fn resolve_workspace(cwd: &Path, indexed: Option<&IndexedFile>) -> Workspace {
 
 /// Reconcile changes in one transaction so a failed/cancelled refresh cannot
 /// expose a half-built session. Missing files are removed, including FTS rows.
+/// After the commit, a best-effort `VACUUM` reclaims space left by deletes.
 pub(super) fn refresh(
     connection: &mut Connection,
     root: &Path,
@@ -305,63 +303,54 @@ pub(super) fn refresh(
         params![changes.identity, changes.through],
     )?;
     transaction.commit()?;
-    report.reclaimed_bytes = match vacuum_if_bloated(connection, VacuumPolicy::DEFAULT) {
-        Ok(reclaimed) => reclaimed,
-        Err(error) => {
-            // Compaction is an optimization; the committed index is still valid.
-            tracing::warn!(%error, "could not vacuum the sessions search index");
-            None
-        }
-    };
+    if let Err(error) = vacuum_if_bloated(connection, VACUUM_MIN_FREE_BYTES) {
+        // Compaction is an optimization; the committed index is still valid.
+        tracing::warn!(%error, "could not vacuum the sessions search index");
+    }
     Ok(report)
 }
 
-/// Freelist thresholds that trigger a full `VACUUM` of the search cache.
-///
-/// SQLite keeps pages freed by session deletes on its freelist instead of
-/// returning them to the OS. Both thresholds must hold, so a large, mostly
-/// live cache is not rewritten to reclaim a small fraction of its size.
-#[derive(Clone, Copy, Debug)]
-struct VacuumPolicy {
-    min_free_bytes: u64,
-    min_free_fraction: f64,
+/// Measured on a 331 MiB cache with 165 MiB free: `VACUUM` took ~0.5 s and
+/// halved the file. 50 MiB keeps rewrites rare relative to that cost.
+const VACUUM_MIN_FREE_BYTES: u64 = 50 * 1024 * 1024;
+
+/// Page accounting for the search cache file.
+#[derive(Debug)]
+struct Pages {
+    size: u64,
+    total: u64,
+    free: u64,
 }
 
-impl VacuumPolicy {
-    /// Measured on a 331 MiB cache with 165 MiB free: `VACUUM` took ~0.5 s
-    /// and halved the file. 50 MiB keeps rewrites rare relative to that cost.
-    const DEFAULT: Self = Self {
-        min_free_bytes: 50 * 1024 * 1024,
-        min_free_fraction: 0.25,
-    };
+impl Pages {
+    fn read(connection: &Connection) -> rusqlite::Result<Self> {
+        let pragma = |name| connection.pragma_query_value(None, name, |row| row.get(0));
+        Ok(Self {
+            size: pragma("page_size")?,
+            total: pragma("page_count")?,
+            free: pragma("freelist_count")?,
+        })
+    }
+
+    /// SQLite keeps pages freed by session deletes on its freelist instead of
+    /// returning them to the OS. Requiring a quarter of the file to be free
+    /// keeps a large, mostly live cache from being rewritten for a sliver.
+    fn worth_vacuuming(&self, min_free_bytes: u64) -> bool {
+        self.free * self.size >= min_free_bytes && self.free * 4 >= self.total
+    }
 }
 
-/// Run `VACUUM` when the freelist crosses `policy`, then truncate the WAL so
-/// the rewritten pages do not linger beside the shrunken database. Returns
-/// the reclaimed bytes, or `None` when the cache was below the thresholds.
-fn vacuum_if_bloated(
-    connection: &Connection,
-    policy: VacuumPolicy,
-) -> rusqlite::Result<Option<u64>> {
-    let pages = |pragma: &str| {
-        connection.query_row(&format!("pragma {pragma}"), [], |row| row.get::<_, u64>(0))
-    };
-    let (page_size, page_count, free_pages) = (
-        pages("page_size")?,
-        pages("page_count")?,
-        pages("freelist_count")?,
-    );
-    let free_bytes = free_pages * page_size;
-    if free_bytes < policy.min_free_bytes
-        || (free_pages as f64) < policy.min_free_fraction * page_count as f64
-    {
-        return Ok(None);
+/// Run `VACUUM` once enough of the cache is free, then truncate the WAL so the
+/// rewritten pages do not linger beside the shrunken database.
+fn vacuum_if_bloated(connection: &Connection, min_free_bytes: u64) -> rusqlite::Result<()> {
+    let pages = Pages::read(connection)?;
+    if !pages.worth_vacuuming(min_free_bytes) {
+        return Ok(());
     }
     connection.execute_batch("vacuum")?;
     connection.query_row("pragma wal_checkpoint(truncate)", [], |_| Ok(()))?;
-    Ok(Some(
-        page_count.saturating_sub(pages("page_count")?) * page_size,
-    ))
+    tracing::debug!(?pages, "vacuumed the sessions search index");
+    Ok(())
 }
 
 fn discover(root: &Path) -> anyhow::Result<BTreeSet<PathBuf>> {

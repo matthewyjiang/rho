@@ -90,11 +90,35 @@ fn concurrent_migration_preserves_rebuilt_cache() {
     });
 }
 
-// Covers: deleted sessions leave freed pages that only VACUUM returns to the
-// OS, and the thresholds must leave a mostly-live cache alone. Owner: search
-// index compaction against a real SQLite file.
+// Covers: the cache is rewritten only when both the absolute and relative
+// free-space thresholds hold. Owner: search index vacuum policy.
 #[test]
-fn vacuum_reclaims_freelist_only_past_thresholds() {
+fn vacuum_requires_both_free_space_thresholds() {
+    const MIB: u64 = 1024 * 1024;
+    let pages = |total_mib: u64, free_mib: u64| Pages {
+        size: 4096,
+        total: total_mib * MIB / 4096,
+        free: free_mib * MIB / 4096,
+    };
+    let cases = [
+        ("small cache, mostly free", pages(60, 40), false),
+        ("large cache, small fraction free", pages(1000, 100), false),
+        ("both thresholds at the boundary", pages(200, 50), true),
+        ("observed bloated cache", pages(331, 165), true),
+    ];
+    let actual: Vec<_> = cases
+        .iter()
+        .map(|(name, pages, _)| (*name, pages.worth_vacuuming(VACUUM_MIN_FREE_BYTES)))
+        .collect();
+    let expected: Vec<_> = cases.iter().map(|(name, _, want)| (*name, *want)).collect();
+    assert_eq!(actual, expected);
+}
+
+// Covers: deleted sessions leave freed pages that only VACUUM returns to the
+// OS, without losing surviving evidence. Owner: search index compaction
+// against a real SQLite file.
+#[test]
+fn vacuum_returns_deleted_session_pages_to_the_filesystem() {
     let root = TempDir::new().unwrap();
     let cwd = TempDir::new().unwrap();
     let cancellation = CancellationToken::new();
@@ -113,33 +137,35 @@ fn vacuum_reclaims_freelist_only_past_thresholds() {
     for session in &sessions[1..] {
         fs::remove_file(session.path()).unwrap();
     }
+    // Real refreshes vacuum past 50 MiB free; this cache stays below that.
     refresh(&mut connection, root.path(), true, &cancellation).unwrap();
     // Flush WAL frames so the file size reflects every allocated page.
     connection
         .query_row("pragma wal_checkpoint(truncate)", [], |_| Ok(()))
         .unwrap();
     let database = root.path().join("search.sqlite3");
-    let bloated = fs::metadata(&database).unwrap().len();
-    let free_pages = |connection: &Connection| {
-        connection
-            .query_row("pragma freelist_count", [], |row| row.get::<_, u64>(0))
-            .unwrap()
-    };
-    assert!(free_pages(&connection) > 0);
+    let bloated = Pages::read(&connection).unwrap();
+    assert_eq!(
+        fs::metadata(&database).unwrap().len(),
+        bloated.total * bloated.size
+    );
+    assert!(bloated.worth_vacuuming(/*min_free_bytes*/ 0));
 
-    let strict = VacuumPolicy {
-        min_free_bytes: u64::MAX,
-        min_free_fraction: 0.0,
-    };
-    assert_eq!(vacuum_if_bloated(&connection, strict).unwrap(), None);
-    let loose = VacuumPolicy {
-        min_free_bytes: 0,
-        min_free_fraction: 0.25,
-    };
-    let reclaimed = vacuum_if_bloated(&connection, loose).unwrap().unwrap();
+    vacuum_if_bloated(&connection, /*min_free_bytes*/ 0).unwrap();
 
-    assert_eq!(free_pages(&connection), 0);
-    assert_eq!(fs::metadata(&database).unwrap().len(), bloated - reclaimed);
+    let vacuumed = Pages::read(&connection).unwrap();
+    assert_eq!(
+        (
+            vacuumed.free,
+            vacuumed.total,
+            fs::metadata(&database).unwrap().len()
+        ),
+        (
+            0,
+            bloated.total - bloated.free,
+            (bloated.total - bloated.free) * bloated.size
+        )
+    );
     assert_eq!(
         connection
             .query_row(
