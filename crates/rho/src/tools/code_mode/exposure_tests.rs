@@ -1,4 +1,50 @@
+use pretty_assertions::assert_eq;
+
 use super::*;
+
+// Covers: only mode must suppress base-direct tools without suppressing promoted
+// deferred tools, and promotion must never expose codemode-only or hidden tools.
+// Owner: exposure advertisement policy.
+#[test]
+fn advertisement_uses_base_exposure_promotion_and_mode() {
+    use crate::config::CodemodeMode::{On, Only};
+    use ToolExposure::{Codemode, Deferred, Direct, Hidden};
+
+    for (base, promoted, on, only) in [
+        (Direct, false, true, false),
+        (Direct, true, true, false),
+        (Codemode, false, false, false),
+        (Codemode, true, false, false),
+        (Deferred, false, false, false),
+        (Deferred, true, true, true),
+        (Hidden, false, false, false),
+        (Hidden, true, false, false),
+    ] {
+        for (mode, expected) in [(On, on), (Only, only)] {
+            for name in [
+                "helper",
+                super::super::CODEMODE_TOOL_NAME,
+                super::super::TOOL_SEARCH_NAME,
+            ] {
+                let ctrl =
+                    ExposureController::new(ExposurePolicy::new().override_exact(name, Deferred));
+                ctrl.set_mode(mode);
+                if promoted {
+                    ctrl.promote(name);
+                }
+                // Include retained promotions after a policy change: only the
+                // current base exposure decides whether promotion matters.
+                ctrl.set_policy(ExposurePolicy::new().override_exact(name, base));
+                let orchestration_direct = name != "helper" && base == Direct;
+                assert_eq!(
+                    ctrl.is_model_facing(name),
+                    expected || orchestration_direct,
+                    "name={name} base={base:?} promoted={promoted} mode={mode:?}"
+                );
+            }
+        }
+    }
+}
 
 #[test]
 fn default_mcp_is_codemode_natives_direct() {

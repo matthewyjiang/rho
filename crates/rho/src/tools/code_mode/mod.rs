@@ -6,7 +6,6 @@ mod bridge;
 mod engine;
 mod exposure;
 mod nesting;
-mod search;
 mod tool;
 mod tool_search;
 
@@ -31,6 +30,6 @@ pub use exposure::{
 };
 pub use nesting::CodeModeNesting;
 #[allow(unused_imports)]
-pub use search::{ToolSearchTool, TOOL_SEARCH_NAME};
-#[allow(unused_imports)]
 pub use tool::CodeModeTool;
+#[allow(unused_imports)]
+pub use tool_search::{ToolSearchTool, TOOL_SEARCH_NAME};

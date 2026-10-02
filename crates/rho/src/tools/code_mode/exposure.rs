@@ -306,14 +306,13 @@ impl ExposureController {
     /// since their exposure is `deferred`, not `direct`.
     pub fn is_model_facing(&self, name: &str) -> bool {
         let inner = self.inner.lock().expect("exposure");
-        if effective_locked(&inner, name) != ToolExposure::Direct {
-            return false;
-        }
-        match inner.mode {
-            crate::config::CodemodeMode::On => true,
-            crate::config::CodemodeMode::Only => {
-                is_orchestration_tool(name) || inner.policy.resolve(name) != ToolExposure::Direct
-            }
+        match inner.policy.resolve(name) {
+            ToolExposure::Direct => match inner.mode {
+                crate::config::CodemodeMode::On => true,
+                crate::config::CodemodeMode::Only => is_orchestration_tool(name),
+            },
+            ToolExposure::Deferred => inner.promoted.contains(name),
+            ToolExposure::Codemode | ToolExposure::Hidden => false,
         }
     }
 
