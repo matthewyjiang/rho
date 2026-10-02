@@ -273,6 +273,8 @@ async fn grep_structured_paths_chain_into_read_file() {
     std::fs::write(outside.path().join("lib.rs"), body).unwrap();
     let outside_root = outside.path().canonicalize().unwrap();
     let outside_file = outside_root.join("lib.rs");
+    // Grep displays paths with forward slashes on every platform.
+    let shown = |path: &std::path::Path| crate::paths::display(path);
     let ws = workspace(&dir).with_granted_root(&outside_root).unwrap();
     let options = CodingToolOptions::new().edit_tool(crate::EditFormat::Hashline);
     let host = ToolHost::builder()
@@ -299,12 +301,12 @@ async fn grep_structured_paths_chain_into_read_file() {
         (
             "granted directory",
             outside_root.to_string_lossy().into_owned(),
-            outside_file.to_string_lossy().into_owned(),
+            shown(&outside_file),
         ),
         (
             "granted file",
             outside_file.to_string_lossy().into_owned(),
-            outside_file.to_string_lossy().into_owned(),
+            shown(&outside_file),
         ),
     ] {
         let output = host
