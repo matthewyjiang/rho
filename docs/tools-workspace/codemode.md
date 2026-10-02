@@ -151,9 +151,13 @@ success.
 ## In the TUI
 
 The `codemode` card streams the script with syntax highlighting as the model
-writes it. During execution, live rows above the script show nested calls, their
-status, and each running call's latest progress line. Updates replace the previous
-snapshot rather than accumulating duplicate output.
+writes it. During execution, the header shows completed/started call counts and
+a compact summary of current work: a running call's latest progress, or its
+arguments until progress arrives. When no calls are running, it shows the latest
+completed call. Updates replace that summary rather than accumulating a call
+history above the source. Even large batches and wrapped status leave the
+collapsed source budget available to the highlighted script. Protocol hosts
+still receive the full nested-call progress snapshot.
 
 When execution finishes, the card returns to the script with the nested-call
 count in its header and any script failure diagnostic. Resumed sessions show the

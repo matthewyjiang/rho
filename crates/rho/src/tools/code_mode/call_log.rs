@@ -6,7 +6,7 @@ use serde_json::Value;
 /// Display width for one call's arguments, matching Pi's collapsed codemode
 /// rows (`COLLAPSED_ARGS_CHARS = 80`). The full arguments stay in the script.
 const ARGS_DISPLAY_CHARS: usize = 80;
-/// Display width for a running call's latest progress line or failure reason.
+/// Display width for a latest progress line, failure reason, or live summary.
 const DETAIL_DISPLAY_CHARS: usize = 80;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,6 +15,17 @@ pub(super) enum NestedCallStatus {
     Ok,
     Error,
     Cancelled,
+}
+
+impl NestedCallStatus {
+    fn marker(self) -> &'static str {
+        match self {
+            Self::Running => "●",
+            Self::Ok => "✓",
+            Self::Error => "✗",
+            Self::Cancelled => "⊘",
+        }
+    }
 }
 
 /// One nested tool call made by a script, in start order.
@@ -69,14 +80,24 @@ impl NestedCallRecord {
             .map(|line| cut(line, DETAIL_DISPLAY_CHARS));
     }
 
+    /// One compact live header summary. Prefer current progress to arguments;
+    /// normalize whitespace so multi-line commands cannot grow the prefix.
+    pub(super) fn summary(&self) -> String {
+        let mut summary = format!("{} {}", self.status.marker(), self.name);
+        let detail = self.detail.as_deref().unwrap_or(&self.args);
+        if !detail.is_empty() {
+            summary.push_str(" · ");
+            summary.push_str(detail);
+        }
+        cut(
+            &summary.split_whitespace().collect::<Vec<_>>().join(" "),
+            DETAIL_DISPLAY_CHARS,
+        )
+    }
+
     /// One display row: `✓ bash ls -la 12ms · detail`.
     pub(super) fn row(&self) -> String {
-        let marker = match self.status {
-            NestedCallStatus::Running => "●",
-            NestedCallStatus::Ok => "✓",
-            NestedCallStatus::Error => "✗",
-            NestedCallStatus::Cancelled => "⊘",
-        };
+        let marker = self.status.marker();
         let mut row = format!("{marker} {}", self.name);
         if !self.args.is_empty() {
             row.push(' ');

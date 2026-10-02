@@ -1,7 +1,8 @@
 //! Codemode cards keep the script as highlighted source. During execution,
-//! nested-call progress appears as plain facts above it, so tool output never
-//! replaces the source or gets highlighted as Starlark.
+//! a compact header shows current work and completed calls without competing
+//! with the source for the collapsed child-row budget.
 
+use rho_sdk::tool::ToolProgress;
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 use serde_json::Value;
 
@@ -17,7 +18,7 @@ pub(super) fn body_syntax() -> ToolBodySyntax {
 }
 
 /// Every codemode card: the script as source, with an optional header detail.
-/// Streaming, started, running, and interrupted cards pass no detail.
+/// Streaming, started, and interrupted cards pass no detail.
 pub(super) fn preview_card(
     arguments: &Value,
     status: ToolStatus,
@@ -34,16 +35,19 @@ pub(super) fn preview_card(
     .with_body(ToolBody::Lines(lines))
 }
 
-/// Bridge updates are complete snapshots, not deltas. Rebuild the facts each
-/// time while leaving the syntax-highlighted source in the body.
-pub(super) fn progress_card(arguments: &Value, text: &str) -> ToolCard {
-    let mut card = preview_card(arguments, ToolStatus::Running, /*primary*/ None);
-    for line in text.lines().filter(|line| !line.trim().is_empty()) {
-        card.push_fact(ToolFact::Meta {
-            text: line.to_owned(),
-        });
+/// The bridge supplies a bounded summary and structured call counts. Keep
+/// progress in the header so even wrapped status cannot hide the source.
+/// Full nested-call snapshots remain available to protocol hosts.
+pub(super) fn progress_card(arguments: &Value, progress: &ToolProgress) -> ToolCard {
+    let mut details = Vec::new();
+    if let (Some(completed), Some(started)) = (progress.completed_units(), progress.total_units()) {
+        details.push(format!("{completed}/{started} completed"));
     }
-    card
+    if let Some(summary) = progress.presentation().command_summary_text() {
+        details.push(summary.to_owned());
+    }
+    let primary = (!details.is_empty()).then(|| details.join(" · "));
+    preview_card(arguments, ToolStatus::Running, primary)
 }
 
 /// Finished card: the call count, the failure reason when the script failed,
