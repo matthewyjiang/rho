@@ -424,7 +424,7 @@ fn render_child_groups(
             let mut syntax = CodeSyntax::new(language);
             for line in &tool_diff::logical_lines(lines) {
                 if paint_remaining == 0 {
-                    total_rows = total_rows.saturating_add(CodeSyntax::estimate_rows(line, width));
+                    total_rows = total_rows.saturating_add(estimate_plain_body_rows(line, width));
                     continue;
                 }
                 let mut painted = Vec::new();
@@ -530,7 +530,7 @@ fn estimate_child_terminal_rows(card: &ToolCard, width: usize) -> usize {
         ToolBody::Code { lines, .. } => {
             total = tool_diff::logical_lines(lines)
                 .iter()
-                .map(|line| CodeSyntax::estimate_rows(line, width))
+                .map(|line| estimate_plain_body_rows(line, width))
                 .fold(total, usize::saturating_add);
         }
         ToolBody::Diff(rows) => {
@@ -547,7 +547,8 @@ fn estimate_fact_rows(fact: &ToolFact, width: usize) -> usize {
         .max(1)
 }
 
-fn estimate_plain_body_rows(line: &str, width: usize) -> usize {
+/// Rows for one word-wrapped body line; code bodies wrap the same way.
+pub(super) fn estimate_plain_body_rows(line: &str, width: usize) -> usize {
     let prefix_width = display_width(CHILD_CONTENT_INDENT);
     let content_width = width.saturating_sub(prefix_width).max(1);
     wrap_line_at_whitespace(line, content_width).len().max(1)

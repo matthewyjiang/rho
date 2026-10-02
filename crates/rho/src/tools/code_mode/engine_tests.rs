@@ -13,19 +13,19 @@ fn engine_output_has_one_total_byte_budget() {
         EngineOutput {
             return_value: json!("é".repeat(limit)),
             prints: Vec::new(),
-            calls: Vec::new(),
+            calls: 0,
             error: None,
         },
         EngineOutput {
             return_value: json!("returned"),
             prints: vec!["é".repeat(limit / 2)],
-            calls: Vec::new(),
+            calls: 0,
             error: None,
         },
         EngineOutput {
             return_value: serde_json::Value::Null,
             prints: vec!["x".repeat(limit)],
-            calls: Vec::new(),
+            calls: 0,
             error: None,
         },
     ] {

@@ -593,7 +593,7 @@ impl Tool for RendezvousTool {
 
 // Covers: call_tools runs independent calls concurrently (a sequential bridge
 // would deadlock on the barrier), keeps input order, turns an unknown tool
-// into an is_error value without losing siblings, and records every call.
+// into an is_error value without losing siblings, and counts every call.
 // Owner: codemode batch bridge.
 #[tokio::test]
 async fn call_tools_runs_batch_concurrently_in_order() {
@@ -607,7 +607,7 @@ async fn call_tools_runs_batch_concurrently_in_order() {
         std::time::Duration::from_secs(30),
         host.invoke(ToolHostCall::new(
             CODEMODE_TOOL_NAME,
-            json!({"script": "result = [r[\"content\"] for r in call_tools([(\"meet\", {\"id\": i}) for i in range(3)] + [\"missing\"])]"}),
+            json!({"script": "result = [[r[\"content\"], r[\"is_error\"]] for r in call_tools([(\"meet\", {\"id\": i}) for i in range(3)] + [\"missing\"])]"}),
         )),
     )
     .await
@@ -615,21 +615,19 @@ async fn call_tools_runs_batch_concurrently_in_order() {
     .unwrap();
     let data = output.structured_content().unwrap();
     let returned = data["return_value"].as_array().unwrap();
-    assert_eq!(returned[..3], [json!("0"), json!("1"), json!("2")]);
-    let statuses: Vec<_> = data["calls"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|call| (call["name"].clone(), call["status"].clone()))
-        .collect();
+    // The unknown tool's content is the host's error text; only its flag matters.
+    let missing_flag = returned[3][1].clone();
     assert_eq!(
-        statuses,
-        vec![
-            (json!("meet"), json!("ok")),
-            (json!("meet"), json!("ok")),
-            (json!("meet"), json!("ok")),
-            (json!("missing"), json!("error")),
-        ]
+        (&returned[..3], missing_flag, data["calls"].clone()),
+        (
+            &[
+                json!(["0", false]),
+                json!(["1", false]),
+                json!(["2", false])
+            ][..],
+            json!(true),
+            json!(4)
+        )
     );
 }
 
@@ -663,7 +661,7 @@ async fn call_tools_budget_rejects_batch_before_starting() {
     assert_eq!(*calls.lock().unwrap(), 0);
 }
 
-// Covers: a failing script keeps its prints and call log and returns a
+// Covers: a failing script keeps its prints and call count and returns a
 // completed failure instead of discarding partial work.
 // Owner: codemode tool output.
 #[tokio::test]
@@ -681,10 +679,10 @@ async fn failed_script_keeps_partial_output() {
         (
             output.is_failure(),
             data["prints"].clone(),
-            data["calls"].as_array().unwrap().len(),
+            data["calls"].clone(),
             data["error"].as_str().unwrap().contains("boom"),
         ),
-        (true, json!(["before"]), 1, true)
+        (true, json!(["before"]), json!(1), true)
     );
 }
 

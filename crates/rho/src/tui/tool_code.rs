@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use super::{
     render::{
         display_width, pad_spaces, slice_spans_by_bytes, soft_wrap_visible_ranges,
-        wrap_line_at_whitespace, wrap_line_at_whitespace_ranges,
+        wrap_line_at_whitespace_ranges,
     },
     syntax::{
         spans_from_segments_with_matches, BlockHighlighter, HighlightSegment,
@@ -46,7 +46,8 @@ impl CodeSyntax {
         let content_width = width
             .saturating_sub(display_width(CHILD_CONTENT_INDENT))
             .max(1);
-        // Word wrap like plain bodies; only unbroken runs split at the width.
+        // Word wrap like plain bodies, so their row estimate holds for code;
+        // only unbroken runs split at the width.
         let ranges: Vec<_> =
             soft_wrap_visible_ranges(line, wrap_line_at_whitespace_ranges(line, content_width))
                 .collect();
@@ -61,14 +62,6 @@ impl CodeSyntax {
                 .map(|range| body_row(slice_spans_by_bytes(&spans, range.start, range.end), width)),
         );
         rows
-    }
-
-    /// Terminal rows for one line without language paint (toggle / hidden tail).
-    pub(super) fn estimate_rows(line: &str, width: usize) -> usize {
-        let content_width = width
-            .saturating_sub(display_width(CHILD_CONTENT_INDENT))
-            .max(1);
-        wrap_line_at_whitespace(line, content_width).len().max(1)
     }
 
     /// Same budgets as grep and diff bodies: overlong lines stay plain and

@@ -1,8 +1,6 @@
 //! Nested-call records rendered as the codemode tool's progress text, which
 //! ACP and the automation protocol forward; the TUI card ignores it.
 
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Display width for one call's arguments, matching Pi's collapsed codemode
@@ -11,8 +9,7 @@ const ARGS_DISPLAY_CHARS: usize = 80;
 /// Display width for a running call's latest progress line or failure reason.
 const DETAIL_DISPLAY_CHARS: usize = 80;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum NestedCallStatus {
     Running,
     Ok,
@@ -21,16 +18,14 @@ pub(super) enum NestedCallStatus {
 }
 
 /// One nested tool call made by a script, in start order.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct NestedCallRecord {
     pub name: String,
     /// Primary argument (or compact JSON), cut for display; empty for `{}`.
     pub args: String,
     pub status: NestedCallStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
     /// Latest progress line while running, or the first line of a failure.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
 

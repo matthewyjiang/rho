@@ -86,7 +86,7 @@ impl Tool for CodeModeTool {
             let output = EngineOutput {
                 return_value,
                 prints: evaluation.prints,
-                calls: bridge.records().await,
+                calls: bridge.started_calls().await,
                 error,
             };
             let failed = output.error.is_some();

@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::{bridge::ToolHostBridge, call_log::NestedCallRecord, script_output};
+use super::{bridge::ToolHostBridge, script_output};
 use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
@@ -38,13 +38,13 @@ impl Default for EngineLimits {
 }
 
 /// Structured result of one script. The model receives only the text from
-/// [`format_engine_output`]; `calls` feeds the interactive card.
+/// [`format_engine_output`]; `calls` feeds the interactive card's header.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub(super) struct EngineOutput {
     pub return_value: JsonValue,
     pub prints: Vec<String>,
-    /// Nested tool calls in start order, including ones a failure cut short.
-    pub calls: Vec<NestedCallRecord>,
+    /// Nested tool calls started, including ones a failure cut short.
+    pub calls: usize,
     /// Why the script failed; prints and calls before the failure remain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -243,7 +243,7 @@ pub(super) fn format_engine_output(output: &EngineOutput) -> String {
         parts.push(format!("script failed: {error}"));
     }
     let text = if parts.is_empty() {
-        format!("(no output; {} nested tool call(s))", output.calls.len())
+        format!("(no output; {} nested tool call(s))", output.calls)
     } else {
         parts.join("\n\n")
     };

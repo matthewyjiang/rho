@@ -75,9 +75,9 @@ impl ToolHostBridge {
         self.calls.load(Ordering::Relaxed)
     }
 
-    /// Final call records in start order, for the tool's structured output.
-    pub(super) async fn records(&self) -> Vec<NestedCallRecord> {
-        self.log.lock().await.clone()
+    /// Nested calls that started; unlike `calls`, excludes budget rejections.
+    pub(super) async fn started_calls(&self) -> usize {
+        self.log.lock().await.len()
     }
 
     pub(super) async fn call_tool(

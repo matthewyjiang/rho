@@ -12,7 +12,13 @@ use super::format::string_arg;
 /// Starlark is Python-shaped, and the bundled syntax set has no Starlark grammar.
 const SCRIPT_LANGUAGE: &str = "python";
 
-fn card(status: ToolStatus, primary: Option<String>, arguments: &Value) -> ToolCard {
+/// Every codemode card: the script as source, with an optional header detail.
+/// Streaming, started, running, and interrupted cards pass no detail.
+pub(super) fn preview_card(
+    arguments: &Value,
+    status: ToolStatus,
+    primary: Option<String>,
+) -> ToolCard {
     let lines = string_arg(arguments, "script")
         .map(|script| script.trim_end().lines().map(str::to_string).collect())
         .unwrap_or_default();
@@ -25,11 +31,6 @@ fn card(status: ToolStatus, primary: Option<String>, arguments: &Value) -> ToolC
         language: SCRIPT_LANGUAGE.into(),
         lines,
     })
-}
-
-/// Streaming, started, running, and interrupted card: the script as source.
-pub(super) fn preview_card(arguments: &Value, status: ToolStatus) -> ToolCard {
-    card(status, None, arguments)
 }
 
 /// Finished card: the call count, the failure reason when the script failed,
@@ -46,7 +47,7 @@ pub(super) fn finished_card(
         Some(1) => Some("1 call".into()),
         Some(count) => Some(format!("{count} calls")),
     };
-    let mut card = card(ToolStatus::from_finished(ok), primary, arguments);
+    let mut card = preview_card(arguments, ToolStatus::from_finished(ok), primary);
     if !ok {
         if let Some(reason) = failure_reason(content) {
             card.push_fact(ToolFact::Error { text: reason });

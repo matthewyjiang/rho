@@ -79,5 +79,8 @@ fn code_lines_wrap_between_tokens() {
             "    len(hits))",
         ]
     );
-    assert_eq!(rows, CodeSyntax::estimate_rows(line, 24));
+    assert_eq!(
+        rows,
+        crate::tui::tool_card_render::estimate_plain_body_rows(line, 24)
+    );
 }

@@ -229,7 +229,9 @@ pub(super) fn preview_card(
             kind_card(status, kind, ToolHeader::call(name, None))
         }
         ToolKind::Sessions => sessions_format::preview_card(arguments, status),
-        ToolKind::Codemode => codemode_format::preview_card(arguments, status),
+        ToolKind::Codemode => {
+            codemode_format::preview_card(arguments, status, /*primary*/ None)
+        }
         ToolKind::WebSearch => {
             let primary = search_terms(arguments).or_else(|| Some(name.to_string()));
             kind_card(status, kind, ToolHeader::call("web_search", primary))
@@ -476,7 +478,11 @@ pub(super) fn progress_card(
             return agent_format::agent_progress_card(view, progress.text());
         }
         if view.kind == ToolKind::Codemode {
-            return codemode_format::preview_card(&view.arguments, ToolStatus::Running);
+            return codemode_format::preview_card(
+                &view.arguments,
+                ToolStatus::Running,
+                /*primary*/ None,
+            );
         }
         if matches!(view.kind, ToolKind::Bash | ToolKind::PowerShell) {
             let prompt = if view.kind == ToolKind::Bash {
