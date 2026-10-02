@@ -16,7 +16,7 @@ fn entry(name: &str, description: &str) -> ToolCatalogEntry {
 // (a `+memorywhale remember` query returned [] and the parent gave up on MCP).
 // Owner: codemode discovery search shared by tool_search and search_tools.
 #[test]
-fn search_matches_any_term_and_ranks_by_matched_terms() {
+fn search_matches_any_term_and_ranks_name_hits_first() {
     let catalog = [
         entry("bash", "Run shell commands."),
         entry("mcp__memorywhale__remember", "Save a lesson to memory."),
@@ -25,7 +25,7 @@ fn search_matches_any_term_and_ranks_by_matched_terms() {
             "Full-text search over memory.",
         ),
     ];
-    let cases = [
+    let cases: [(&str, Vec<&str>); 7] = [
         (
             "+memorywhale remember",
             vec![
@@ -52,14 +52,20 @@ fn search_matches_any_term_and_ranks_by_matched_terms() {
                 "mcp__memorywhale__search_memory",
             ],
         ),
+        // A name hit outranks a description hit.
+        ("shell remember", vec!["mcp__memorywhale__remember", "bash"]),
+        // Filler words must not match every description containing `a`/`to`.
+        ("post a message to slack", vec![]),
         ("github", vec![]),
     ];
     for (query, expected) in cases {
-        let names: Vec<_> = search_entries(catalog.iter(), query, usize::MAX)
+        let names: Vec<String> = search_entries(catalog.iter(), query, usize::MAX)
             .into_iter()
             .map(|hit| hit.name)
-            .collect::<Vec<_>>();
-        let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        assert_eq!((query, names), (query, expected));
+            .collect();
+        assert_eq!(
+            (query, names),
+            (query, expected.into_iter().map(String::from).collect())
+        );
     }
 }
