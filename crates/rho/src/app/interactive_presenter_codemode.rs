@@ -1,8 +1,9 @@
-//! Codemode cards keep the script as highlighted source. During execution,
-//! a compact header shows current work and completed calls without competing
-//! with the source for the collapsed child-row budget.
+//! Codemode cards show the script as highlighted source: what the model ran,
+//! not what it printed. The card keeps one shape from start to finish; nested
+//! calls are usually too fast to watch, and rows that vanish on completion make
+//! the transcript jump, so the TUI ignores the bridge's progress rows (ACP and
+//! the automation protocol still forward them).
 
-use rho_sdk::tool::ToolProgress;
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 use serde_json::Value;
 
@@ -18,7 +19,7 @@ pub(super) fn body_syntax() -> ToolBodySyntax {
 }
 
 /// Every codemode card: the script as source, with an optional header detail.
-/// Streaming, started, and interrupted cards pass no detail.
+/// Streaming, started, running, and interrupted cards pass no detail.
 pub(super) fn preview_card(
     arguments: &Value,
     status: ToolStatus,
@@ -33,21 +34,6 @@ pub(super) fn preview_card(
         ToolHeader::call(crate::tools::code_mode::CODEMODE_TOOL_NAME, primary),
     )
     .with_body(ToolBody::Lines(lines))
-}
-
-/// The bridge supplies a bounded summary and structured call counts. Keep
-/// progress in the header so even wrapped status cannot hide the source.
-/// Full nested-call snapshots remain available to protocol hosts.
-pub(super) fn progress_card(arguments: &Value, progress: &ToolProgress) -> ToolCard {
-    let mut details = Vec::new();
-    if let (Some(completed), Some(started)) = (progress.completed_units(), progress.total_units()) {
-        details.push(format!("{completed}/{started} completed"));
-    }
-    if let Some(summary) = progress.presentation().command_summary_text() {
-        details.push(summary.to_owned());
-    }
-    let primary = (!details.is_empty()).then(|| details.join(" · "));
-    preview_card(arguments, ToolStatus::Running, primary)
 }
 
 /// Finished card: the call count, the failure reason when the script failed,
