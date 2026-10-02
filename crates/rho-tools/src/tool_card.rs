@@ -232,13 +232,19 @@ pub enum ToolBody {
     Lines(Vec<String>),
     /// Compact diff body with per-row line numbers and change kinds.
     Diff(Vec<DiffRow>),
+    /// Source lines highlighted as `language`, a fence token such as `python`
+    /// or `rust`. Unknown languages render as plain lines.
+    Code {
+        language: String,
+        lines: Vec<String>,
+    },
 }
 
 impl ToolBody {
     pub fn is_empty(&self) -> bool {
         match self {
             Self::None => true,
-            Self::Lines(lines) => {
+            Self::Lines(lines) | Self::Code { lines, .. } => {
                 lines.is_empty() || lines.iter().all(|line| line.trim().is_empty())
             }
             Self::Diff(rows) => rows.is_empty(),
@@ -248,7 +254,9 @@ impl ToolBody {
     pub fn line_count(&self) -> usize {
         match self {
             Self::None => 0,
-            Self::Lines(lines) => lines.iter().map(|line| line.lines().count().max(1)).sum(),
+            Self::Lines(lines) | Self::Code { lines, .. } => {
+                lines.iter().map(|line| line.lines().count().max(1)).sum()
+            }
             Self::Diff(rows) => rows.len(),
         }
     }
@@ -261,7 +269,7 @@ impl ToolBody {
     pub fn plain_lines(&self) -> Vec<String> {
         match self {
             Self::None => Vec::new(),
-            Self::Lines(lines) => lines.clone(),
+            Self::Lines(lines) | Self::Code { lines, .. } => lines.clone(),
             Self::Diff(rows) => rows.iter().map(DiffRow::plain_text).collect(),
         }
     }
@@ -283,6 +291,16 @@ pub struct ToolCardDisplayPlan {
 }
 
 /// Structured tool presentation for Call + Children rendering.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-agent-tools): move `match_pattern`, `match_literal`, and
+/// `match_case_sensitive` into a `ToolBody::Search` variant.
+///
+/// They only describe grep `Lines` bodies but sit on the card, so a pattern
+/// can pair with a diff or code body. Removing public fields is breaking, so
+/// they stay here until the next major; set them through
+/// [`Self::with_match_pattern`] and [`Self::with_match_semantics`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCard {
     pub status: ToolStatus,

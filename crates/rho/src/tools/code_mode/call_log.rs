@@ -12,7 +12,7 @@ const DETAIL_DISPLAY_CHARS: usize = 80;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum NestedCallStatus {
+pub(super) enum NestedCallStatus {
     Running,
     Ok,
     Error,
@@ -21,9 +21,9 @@ pub(crate) enum NestedCallStatus {
 
 /// One nested tool call made by a script, in start order.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct NestedCallRecord {
+pub(super) struct NestedCallRecord {
     pub name: String,
-    /// Compact JSON arguments, cut for display; empty for `{}`.
+    /// Primary argument (or compact JSON), cut for display; empty for `{}`.
     pub args: String,
     pub status: NestedCallStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -34,11 +34,17 @@ pub(crate) struct NestedCallRecord {
 }
 
 impl NestedCallRecord {
+    /// Rows lead with the argument that names the work (`command`, `path`,
+    /// `query`, ...) as plain text, the same pick MCP cards promote. Calls
+    /// without one fall back to compact JSON.
     pub(super) fn running(name: &str, arguments: &Value) -> Self {
         let args = match arguments {
             Value::Object(map) if map.is_empty() => String::new(),
             Value::Null => String::new(),
-            other => cut(&other.to_string(), ARGS_DISPLAY_CHARS),
+            other => crate::tools::mcp::display::primary_argument(other).map_or_else(
+                || cut(&other.to_string(), ARGS_DISPLAY_CHARS),
+                |(_, value)| cut(&value, ARGS_DISPLAY_CHARS),
+            ),
         };
         Self {
             name: name.to_owned(),
@@ -67,8 +73,8 @@ impl NestedCallRecord {
             .map(|line| cut(line, DETAIL_DISPLAY_CHARS));
     }
 
-    /// One display row: `✓ bash {"command":"ls"} 12ms · detail`.
-    pub(crate) fn row(&self) -> String {
+    /// One display row: `✓ bash ls -la 12ms · detail`.
+    pub(super) fn row(&self) -> String {
         let marker = match self.status {
             NestedCallStatus::Running => "●",
             NestedCallStatus::Ok => "✓",

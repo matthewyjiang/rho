@@ -440,7 +440,7 @@ pub(super) fn finished_card(
             preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status)
         }
         ToolKind::Codemode => {
-            codemode_format::finished_card(&view.arguments, content, ok, /*data*/ None)
+            codemode_format::finished_card(&view.arguments, content, ok, /*calls*/ None)
         }
         ToolKind::Mcp => mcp_result_card(view, content, status),
         ToolKind::Other => generic_card(view, content, status),

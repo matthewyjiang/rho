@@ -377,8 +377,8 @@ const PROGRESS_TOOL_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
-// The codemode card shows nested call rows and the script as source, not the
-// escaped argument JSON the generic card used to print.
+// The finished codemode card is the script as source (never the escaped
+// argument JSON) with the nested-call count in the header.
 const CODEMODE_CARD_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -391,9 +391,8 @@ const CODEMODE_CARD_STEPS: &[Step] = &[
         timeout: STREAM,
     },
     Step::AssertText("codemode(2 calls)"),
-    Step::AssertText("✓ list_dir"),
-    Step::AssertText("✓ glob"),
-    Step::AssertText("codemode fixture batch 2"),
+    Step::AssertText("hits = call_tools("),
+    Step::AssertText("print(\"codemode fixture batch\", len(hits))"),
     Step::Custom(assert_no_escaped_script_json),
     Step::ExitCommand,
 ];

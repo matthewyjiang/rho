@@ -391,7 +391,11 @@ impl InteractiveToolPresenter {
             };
         }
         if view.kind == ToolKind::Codemode {
-            let card = codemode_format::finished_card(&view.arguments, content, ok, data);
+            let calls = data
+                .and_then(|data| data.get("calls"))
+                .and_then(serde_json::Value::as_array)
+                .map(Vec::len);
+            let card = codemode_format::finished_card(&view.arguments, content, ok, calls);
             return FinishedToolPresentation {
                 presentation: presentation(view, card).card.into(),
                 image_asset: None,

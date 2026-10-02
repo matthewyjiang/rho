@@ -219,6 +219,7 @@ mod theme_terminal;
 mod tool_call_batch;
 mod tool_card_hover;
 mod tool_card_render;
+mod tool_code;
 mod tool_diff;
 mod tool_output_ui;
 mod tool_search;

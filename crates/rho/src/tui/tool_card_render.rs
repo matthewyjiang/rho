@@ -20,9 +20,10 @@ use super::{
     render::{
         display_width, pad_display_line, pad_spaces, padded_content_width, push_wrapped_text,
         slice_spans_by_bytes, soft_wrap_visible_ranges, spans_display_width, styled_blank_line,
-        wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
+        wrap_line_at_whitespace, wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
     },
     theme::Theme,
+    tool_code::CodeSyntax,
     tool_diff::{self, DiffSyntax},
     tool_search::SearchSyntax,
     ToolEntry,
@@ -419,6 +420,23 @@ fn render_child_groups(
                 );
             }
         }
+        ToolBody::Code { language, lines } => {
+            let mut syntax = CodeSyntax::new(language);
+            for line in &tool_diff::logical_lines(lines) {
+                if paint_remaining == 0 {
+                    total_rows = total_rows.saturating_add(CodeSyntax::estimate_rows(line, width));
+                    continue;
+                }
+                let mut painted = Vec::new();
+                syntax.paint_line(line, width, &mut painted);
+                take_group(
+                    &mut body_groups,
+                    &mut total_rows,
+                    &mut paint_remaining,
+                    ChildGroup::Plain(painted),
+                );
+            }
+        }
         ToolBody::Diff(rows) => {
             let gutter = tool_diff::gutter_width(rows);
             let fallback = rows
@@ -509,6 +527,12 @@ fn estimate_child_terminal_rows(card: &ToolCard, width: usize) -> usize {
             let search_mode = card.match_pattern.is_some();
             total = total.saturating_add(estimate_lines_rows(&logical, width, search_mode));
         }
+        ToolBody::Code { lines, .. } => {
+            total = tool_diff::logical_lines(lines)
+                .iter()
+                .map(|line| CodeSyntax::estimate_rows(line, width))
+                .fold(total, usize::saturating_add);
+        }
         ToolBody::Diff(rows) => {
             let gutter = tool_diff::gutter_width(rows);
             total = total.saturating_add(estimate_diff_rows(rows, gutter, width));
@@ -526,7 +550,7 @@ fn estimate_fact_rows(fact: &ToolFact, width: usize) -> usize {
 fn estimate_plain_body_rows(line: &str, width: usize) -> usize {
     let prefix_width = display_width(CHILD_CONTENT_INDENT);
     let content_width = width.saturating_sub(prefix_width).max(1);
-    wrap_line_hard(line, content_width).len().max(1)
+    wrap_line_at_whitespace(line, content_width).len().max(1)
 }
 
 fn estimate_lines_rows(lines: &[String], width: usize, search_mode: bool) -> usize {
@@ -809,7 +833,9 @@ fn push_body_line(lines: &mut Vec<Line<'static>>, line: &str, width: usize, styl
     let prefix = CHILD_CONTENT_INDENT;
     let prefix_width = display_width(prefix);
     let content_width = width.saturating_sub(prefix_width).max(1);
-    let chunks = wrap_line_hard(line, content_width);
+    // Word wrap so prose and JSON break between tokens; unbroken runs (paths,
+    // hashes) still split at the width.
+    let chunks = wrap_line_at_whitespace(line, content_width);
     if chunks.is_empty() {
         lines.push(pad_spans_line(
             vec![

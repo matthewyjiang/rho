@@ -9,7 +9,6 @@ mod tool;
 mod tool_search;
 
 pub(crate) use bridge::CODEMODE_TOOL_NAME;
-pub(crate) use call_log::{NestedCallRecord, NestedCallStatus};
 pub(crate) use exposure::CodeModeSurface;
 #[cfg(test)]
 pub(crate) use tool_search::TOOL_SEARCH_NAME;

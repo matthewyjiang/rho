@@ -86,10 +86,11 @@ and returned model text share the native-tool output byte budget.
 
 Scripts run under `spawn_blocking`; the async parent task stays available to
 poll progress and host-input channels. The bridge **awaits** progress capacity,
-including the final log restatement. Each nested call has a status row
-(running, ok, error, cancelled) with arguments, duration, and latest progress or
-failure line inside the parent codemode card, which also shows the script as
-source. Host questions relay through the parent call, and parent
+including the final log restatement. While the script runs, each nested call
+has a status row (running, ok, error, cancelled) with its main argument,
+duration, and latest progress or failure line inside the parent codemode card.
+The card body is the script as highlighted source; once the script finishes the
+rows give way to a call count, so live and replayed cards match. Host questions relay through the parent call, and parent
 cancellation cancels an in-flight child call.
 
 The system prompt has one replaced MCP context slot, rebuilt from connected
