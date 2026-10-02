@@ -5,9 +5,8 @@ use std::fs;
 use ratatui::DefaultTerminal;
 
 use super::*;
-use crate::agent::{
-    save_definition, AgentCatalog, AgentRuntime, PromptPolicy, SaveDefinitionError,
-};
+use crate::agent::{save_definition, AgentRuntime, PromptPolicy, SaveDefinitionError};
+use crate::app::interactive_runtime::InteractiveRuntime;
 use crate::tui::text_input::{AgentField, TextInput};
 
 impl App {
@@ -19,14 +18,9 @@ impl App {
         if self.open_selected_internal_agent_model_picker(value) {
             return Ok(());
         }
-        let catalog = match AgentCatalog::discover(&self.info.runtime.cwd) {
-            Ok(catalog) => catalog,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not load agents: {error}")));
-                self.input_ui.set_composer(ComposerMode::Input);
-                self.set_status("agent load failed");
-                return Ok(());
-            }
+        let Some(catalog) = self.load_agents_or_report() else {
+            self.input_ui.set_composer(ComposerMode::Input);
+            return Ok(());
         };
         let entry = match catalog.find(value) {
             Ok(entry) => entry,
@@ -107,6 +101,7 @@ impl App {
         &mut self,
         value: &str,
         terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let phase = self
             .agent_editor_session
@@ -117,7 +112,10 @@ impl App {
             return Ok(());
         };
         match phase {
-            AgentEditPhase::Fields => self.submit_agent_field_selection(value, terminal).await,
+            AgentEditPhase::Fields => {
+                self.submit_agent_field_selection(value, terminal, agent)
+                    .await
+            }
             AgentEditPhase::Choosing(field) => {
                 self.submit_agent_field_choice(field, value);
                 Ok(())
@@ -137,6 +135,7 @@ impl App {
         &mut self,
         value: &str,
         terminal: &mut DefaultTerminal,
+        agent: &mut InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let Some(draft) = self
             .agent_editor_session
@@ -177,7 +176,7 @@ impl App {
                 self.open_agent_choice(AgentChoiceField::InheritClaudeConfig, &draft);
             }
             AGENT_FIELD_FAST => self.open_agent_choice(AgentChoiceField::Fast, &draft),
-            AGENT_FIELD_SAVE => self.save_agent_editor()?,
+            AGENT_FIELD_SAVE => self.save_agent_editor(agent)?,
             AGENT_FIELD_CANCEL => self.cancel_agent_editor(),
             _ => {}
         }
@@ -546,7 +545,7 @@ impl App {
         self.set_status(format!("edit agent {}", draft.id));
     }
 
-    fn save_agent_editor(&mut self) -> anyhow::Result<()> {
+    fn save_agent_editor(&mut self, agent: &mut InteractiveRuntime) -> anyhow::Result<()> {
         let Some(session) = &self.agent_editor_session else {
             self.cancel_agent_editor();
             return Ok(());
@@ -573,23 +572,17 @@ impl App {
         }
         match save_definition(&draft, &path, &original_contents) {
             Ok(_contents) => {
-                let id = draft.id.to_string();
                 self.agent_editor_session = None;
-                let catalog = match AgentCatalog::discover(&self.info.runtime.cwd) {
-                    Ok(catalog) => catalog,
-                    Err(error) => {
-                        self.insert_entry(&Entry::Error(format!(
-                            "agent saved, but could not reload agents: {error}"
-                        )));
-                        self.input_ui.set_composer(ComposerMode::Input);
-                        self.set_status("agent reload failed");
-                        return Ok(());
-                    }
+                let id = draft.id.to_string();
+                // Record the save first: a failed reload below must not read
+                // as a failed save, since later launches already use the file.
+                self.insert_entry(&Entry::Notice(format!(
+                    "saved agent {id}: {}",
+                    crate::paths::display(&path)
+                )));
+                let Some(mut picker) = self.agents_picker_after_change(agent) else {
+                    return Ok(());
                 };
-                let mut picker = crate::tui::agent_picker::agent_picker(
-                    catalog,
-                    AgentModelView::from(&self.info.runtime),
-                );
                 Self::restore_picker_position(&mut picker, &id, String::new());
                 self.input_ui.set_composer(ComposerMode::Picker(picker));
                 self.set_status(format!("agent {id} saved"));
@@ -646,9 +639,7 @@ impl App {
 
     pub(in crate::tui) fn cancel_agent_editor(&mut self) {
         self.agent_editor_session = None;
-        self.input_ui.set_composer(ComposerMode::Input);
-        let _ = self.execute_agents_command();
-        if self.status() != "agent reload failed" {
+        if self.open_agents_picker() {
             self.set_status("agent edit cancelled");
         }
     }

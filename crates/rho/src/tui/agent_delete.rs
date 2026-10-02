@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use super::{
     agent_picker::AgentAccess, App, ComposerMode, Entry, InlineChoice, InlineChoiceOption,
-    InlineChoicePending, UiPicker,
+    InlineChoicePending, InteractiveRuntime, UiPicker,
 };
 use crate::agent::{AgentCatalog, AgentOrigin};
 
@@ -39,13 +39,8 @@ impl App {
         let Some(id) = self.selected_view_agent_id() else {
             return Ok(());
         };
-        let catalog = match AgentCatalog::discover(&self.info.runtime.cwd) {
-            Ok(catalog) => catalog,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not load agents: {error}")));
-                self.set_status("agent load failed");
-                return Ok(());
-            }
+        let Some(catalog) = self.load_agents_or_report() else {
+            return Ok(());
         };
         let Some(target) = delete_target(&catalog, &id) else {
             self.set_status("only your agents can be deleted");
@@ -87,6 +82,7 @@ impl App {
         value: &str,
         target: AgentDeleteTarget,
         parent: Option<Box<UiPicker>>,
+        agent: &mut InteractiveRuntime,
     ) {
         if value != "delete" {
             self.restore_agent_delete_parent(parent);
@@ -116,16 +112,16 @@ impl App {
             target.id,
             crate::paths::display(&target.path)
         )));
-        // Rebuild so the row disappears (or a shadowed definition shows). A
-        // failed reload reports itself and leaves the composer on input.
-        let _ = self.execute_agents_command();
-        let ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
+        // Deleting an override may reveal another definition, so the picker
+        // and the catalog correction both come from the effective catalog.
+        let Some(mut picker) = self.agents_picker_after_change(agent) else {
             return;
         };
         if let Some(cursor) = cursor {
             picker.restore_cursor(&cursor);
         }
         let still_listed = picker.items.iter().any(|item| item.value == target.id);
+        self.input_ui.set_composer(ComposerMode::Picker(picker));
         self.set_status(if still_listed {
             format!(
                 "deleted agent {}; another definition now applies",

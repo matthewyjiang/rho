@@ -188,7 +188,7 @@ impl App {
                 );
             }
             InlineChoicePending::DeleteAgent(target) => {
-                self.submit_delete_agent_choice(&value, target, modal.parent_picker);
+                self.submit_delete_agent_choice(&value, target, modal.parent_picker, agent);
             }
             InlineChoicePending::DeleteWorkflowPlan { plan_id } => {
                 self.submit_delete_workflow_plan_choice(&value, &plan_id)?;

@@ -280,7 +280,10 @@ async fn prepare_startup(cli: Cli) -> anyhow::Result<PreparedStartup> {
         _ => (None, OutputFormat::Text, None, None),
     };
     let catalog = Arc::new(crate::agent::AgentCatalog::discover(&cwd)?);
-    let selected_agent = cli.agent.as_deref().unwrap_or("default");
+    let selected_agent = cli
+        .agent
+        .as_deref()
+        .unwrap_or(crate::agent::DEFAULT_AGENT_ID);
     let definition = Arc::new(catalog.find(selected_agent)?.definition.clone());
     // The walk is reused for the delegation tool set so startup discovers once.
     let catalog = crate::agent::DiscoveredAgentCatalog::new(cwd.clone(), catalog);

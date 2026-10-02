@@ -4,6 +4,7 @@ use crate::{
         internal_agent_requires_model, AgentCatalog, AgentCatalogEntry, AgentOrigin,
         AgentRuntimeSpec, ModelPolicy, ModelSelection, PromptPolicy,
     },
+    app::interactive_runtime::InteractiveRuntime,
     config::{InternalAgentModelConfig, InternalAgentTarget},
 };
 
@@ -493,25 +494,68 @@ impl super::App {
     }
 
     pub(super) fn execute_agents_command(&mut self) -> anyhow::Result<()> {
-        let catalog = match AgentCatalog::discover(&self.info.runtime.cwd) {
-            Ok(catalog) => catalog,
+        if self.open_agents_picker() {
+            self.set_status("loaded agents");
+        }
+        Ok(())
+    }
+
+    /// Opens the agents picker on a fresh catalog. On a load failure, reports
+    /// it and leaves the composer on input; returns whether the picker opened.
+    pub(super) fn open_agents_picker(&mut self) -> bool {
+        let Some(catalog) = self.load_agents_or_report() else {
+            self.input_ui.set_composer(ComposerMode::Input);
+            return false;
+        };
+        let picker = self.agents_picker(catalog);
+        self.input_ui.set_composer(ComposerMode::Picker(picker));
+        true
+    }
+
+    /// Discovers agents for the session cwd, reporting a failure in the
+    /// transcript and status. The composer is left for the caller to settle.
+    pub(super) fn load_agents_or_report(&mut self) -> Option<AgentCatalog> {
+        match AgentCatalog::discover(&self.info.runtime.cwd) {
+            Ok(catalog) => Some(catalog),
             Err(error) => {
                 self.insert_entry(&super::Entry::Error(format!(
-                    "could not reload agents: {error}"
+                    "could not load agents: {error}"
                 )));
-                self.input_ui.set_composer(super::ComposerMode::Input);
-                self.set_status("agent reload failed");
-                return Ok(());
+                self.set_status("agent load failed");
+                None
             }
-        };
+        }
+    }
+
+    fn agents_picker(&self, catalog: AgentCatalog) -> UiPicker {
         let mut picker = agent_picker(catalog, AgentModelView::from(&self.info.runtime));
         if let Some(target) = self.internal_agent_model_target.as_ref() {
             Self::restore_picker_position(&mut picker, &target.id, String::new());
         }
-        self.input_ui
-            .set_composer(super::ComposerMode::Picker(picker));
-        self.set_status("loaded agents");
-        Ok(())
+        picker
+    }
+
+    /// After `/agents` wrote or removed a definition: append any advertised
+    /// catalog correction and rebuild the picker for the caller to position
+    /// and open. `None` (composer on input) when the reload failed. A failed
+    /// correction is reported but never undoes the disk change, which
+    /// subsequent launches already use.
+    pub(super) fn agents_picker_after_change(
+        &mut self,
+        agent: &mut InteractiveRuntime,
+    ) -> Option<UiPicker> {
+        let Some(catalog) = self.load_agents_or_report() else {
+            self.input_ui.set_composer(ComposerMode::Input);
+            return None;
+        };
+        match agent.sync_agent_catalog(&catalog) {
+            Ok(Some(display)) => self.insert_entry(&super::Entry::Notice(display.into())),
+            Ok(None) => {}
+            Err(error) => self.insert_entry(&super::Entry::Error(format!(
+                "could not tell the model about the agent change: {error}"
+            ))),
+        }
+        Some(self.agents_picker(catalog))
     }
 }
 

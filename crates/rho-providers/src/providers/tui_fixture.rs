@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 mod advisor;
+mod agent_config;
 mod agent_message;
 mod agent_prompt;
 mod attach;
@@ -125,6 +126,9 @@ async fn fixture_stream(
     events: ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
     let prompt = last_user_text(&request).unwrap_or_default();
+    if let Some(response) = agent_config::intercept(&prompt, &request) {
+        return response;
+    }
     if let Some(response) = sessions::intercept(&prompt, &request) {
         return response;
     }

@@ -13,9 +13,8 @@ use std::{
 use anyhow::anyhow;
 
 use super::{
-    agent_picker::AgentModelView, picker::OverlayChrome, render::truncate_one_line,
-    text_input::AgentField, App, ComposerMode, Entry, PickerBadge, PickerBadgeTone, PickerItem,
-    PickerLayout, RuntimeModelView, UiPicker,
+    picker::OverlayChrome, render::truncate_one_line, text_input::AgentField, App, ComposerMode,
+    Entry, PickerBadge, PickerBadgeTone, PickerItem, PickerLayout, RuntimeModelView, UiPicker,
 };
 
 use crate::agent::{
