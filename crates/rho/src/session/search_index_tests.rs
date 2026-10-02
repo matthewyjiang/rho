@@ -89,3 +89,65 @@ fn concurrent_migration_preserves_rebuilt_cache() {
         );
     });
 }
+
+// Covers: deleted sessions leave freed pages that only VACUUM returns to the
+// OS, and the thresholds must leave a mostly-live cache alone. Owner: search
+// index compaction against a real SQLite file.
+#[test]
+fn vacuum_reclaims_freelist_only_past_thresholds() {
+    let root = TempDir::new().unwrap();
+    let cwd = TempDir::new().unwrap();
+    let cancellation = CancellationToken::new();
+    let filler = "evidence ".repeat(64 * 1024);
+    let sessions: Vec<_> = (0..4)
+        .map(|index| {
+            let session = Session::create_in_root(root.path(), cwd.path()).unwrap();
+            session
+                .append_message(&Message::user_text(format!("vacuumneedle{index} {filler}")))
+                .unwrap();
+            session
+        })
+        .collect();
+    let mut connection = open(root.path()).unwrap();
+    refresh(&mut connection, root.path(), false, &cancellation).unwrap();
+    for session in &sessions[1..] {
+        fs::remove_file(session.path()).unwrap();
+    }
+    refresh(&mut connection, root.path(), true, &cancellation).unwrap();
+    // Flush WAL frames so the file size reflects every allocated page.
+    connection
+        .query_row("pragma wal_checkpoint(truncate)", [], |_| Ok(()))
+        .unwrap();
+    let database = root.path().join("search.sqlite3");
+    let bloated = fs::metadata(&database).unwrap().len();
+    let free_pages = |connection: &Connection| {
+        connection
+            .query_row("pragma freelist_count", [], |row| row.get::<_, u64>(0))
+            .unwrap()
+    };
+    assert!(free_pages(&connection) > 0);
+
+    let strict = VacuumPolicy {
+        min_free_bytes: u64::MAX,
+        min_free_fraction: 0.0,
+    };
+    assert_eq!(vacuum_if_bloated(&connection, strict).unwrap(), None);
+    let loose = VacuumPolicy {
+        min_free_bytes: 0,
+        min_free_fraction: 0.25,
+    };
+    let reclaimed = vacuum_if_bloated(&connection, loose).unwrap().unwrap();
+
+    assert_eq!(free_pages(&connection), 0);
+    assert_eq!(fs::metadata(&database).unwrap().len(), bloated - reclaimed);
+    assert_eq!(
+        connection
+            .query_row(
+                "select count(*) from evidence_fts where evidence_fts match 'vacuumneedle0'",
+                [],
+                |row| row.get::<_, usize>(0)
+            )
+            .unwrap(),
+        1
+    );
+}
