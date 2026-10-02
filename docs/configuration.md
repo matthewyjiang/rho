@@ -38,7 +38,7 @@ In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#command
 | Category | Contains |
 | --- | --- |
 | Models | Conversation model and reasoning level |
-| Appearance | Theme, zen mode, reasoning display, cache miss notices, collapsed tool-output lines, output streaming |
+| Appearance | Theme, zen mode, reasoning display, cache miss notices, header hints, collapsed tool-output lines, output streaming |
 | Agent behavior | Permission mode, Auto classifier, advisor mode, delegation, concurrent agents, questionnaire timeout |
 | Context & limits | Auto compaction, max output bytes, prompt history |
 | Tools | Inline shell, edit tool, web search, and xAI image generation when the conversation provider is xAI |
@@ -47,11 +47,13 @@ In the [interactive TUI](/interactive-tui), [`/config`](/interactive-tui#command
 Apply timing:
 
 - Before the next turn: permission mode, edit tool, advisor mode, web search.
-- Immediately, including mid-turn: reasoning, theme, zen, reasoning display, cache miss notices, output streaming, concurrent agents.
+- Immediately, including mid-turn: reasoning, theme, zen, reasoning display, cache miss notices, header hints, output streaming, concurrent agents.
 - Next session: `enable_subagents`, `max_output_bytes`, xAI image generation.
 - Restart: keybindings, and any direct edit of `config.toml`.
 
 When `cache_miss_notices` is on, a completed turn that re-billed a large uncached prompt, over 20K tokens or $0.10, inserts a transcript notice. `/info` always shows session and latest-request cache hit rates, plus re-billed totals once misses were counted.
+
+`show_header_hints` controls the keyboard hint block under the session header. It defaults to on. Turning it off hides the shortcut list; a signed-out session still shows its `/login` hints.
 
 `/login`, `/logout`, and `/model` remain shortcuts for credentials and the conversation model. The matching `/config` rows open the same pickers. Use `/agents` to inspect reserved internal agents and set their model overrides.
 

@@ -35,6 +35,7 @@ pub(super) const AUTO_COMPACT_VALUE: &str = "auto_compact";
 pub(super) const COMPACT_THRESHOLD_PERCENT_VALUE: &str = "compact_threshold_percent";
 pub(super) const COMPACT_TARGET_PERCENT_VALUE: &str = "compact_target_percent";
 pub(super) const CACHE_MISS_NOTICES_VALUE: &str = "cache_miss_notices";
+pub(super) const SHOW_HEADER_HINTS_VALUE: &str = "show_header_hints";
 pub(super) const MAX_OUTPUT_BYTES_VALUE: &str = "max_output_bytes";
 pub(super) const MAX_TOOL_OUTPUT_LINES_VALUE: &str = "max_tool_output_lines";
 pub(super) const PROMPT_HISTORY_LIMIT_VALUE: &str = "prompt_history_limit";
@@ -87,6 +88,10 @@ fn sectioned_item(
 
 fn on_off(value: bool) -> String {
     if value { "on" } else { "off" }.into()
+}
+
+fn shown_hidden(value: bool) -> String {
+    if value { "shown" } else { "hidden" }.into()
 }
 
 /// Help text for the cache-miss row, built from the tripwires it describes so
@@ -192,7 +197,7 @@ pub(super) fn config_picker(info: &super::RuntimeModelView, config: &Config) -> 
             ),
             item(
                 "Appearance",
-                "Theme, zen mode, output streaming, reasoning output, cache miss notices, and collapsed tool output lines.",
+                "Theme, zen mode, output streaming, reasoning output, cache miss notices, header hints, and collapsed tool output lines.",
                 Some(theme_badge(config)),
                 APPEARANCE_CATEGORY_VALUE,
             ),
@@ -313,12 +318,14 @@ pub(super) fn category_picker(
                 item(
                     "Show reasoning output",
                     "Show model reasoning text in the TUI. Applies to the next turn. Space toggles.",
-                    Some(if info.show_reasoning_output {
-                        "shown".into()
-                    } else {
-                        "hidden".into()
-                    }),
+                    Some(shown_hidden(info.show_reasoning_output)),
                     SHOW_REASONING_OUTPUT_VALUE,
+                ),
+                item(
+                    "Header hints",
+                    "Show the keyboard hint block in the session header. Sign-in hints stay while signed out. Space toggles.",
+                    Some(shown_hidden(info.show_header_hints)),
+                    SHOW_HEADER_HINTS_VALUE,
                 ),
                 item(
                     "Max tool output lines",
@@ -542,6 +549,7 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | OUTPUT_STREAMING_VALUE
         | THEME_VALUE
         | CACHE_MISS_NOTICES_VALUE
+        | SHOW_HEADER_HINTS_VALUE
         | MAX_TOOL_OUTPUT_LINES_VALUE => Some(APPEARANCE_CATEGORY_VALUE),
         PERMISSION_MODE_VALUE
         | PERMISSION_CLASSIFIER_MODEL_VALUE

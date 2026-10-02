@@ -29,17 +29,31 @@ fn login_is_the_next_step_exactly_while_signed_out() {
 
     for (setup, expected) in cases {
         let next_steps = setup
-            .hints()
+            .hints(HeaderHints::Shown)
             .iter()
             .filter(|hint| hint.tone == HintTone::NextStep)
             .count();
         assert_eq!(next_steps, expected, "next-step hints for {setup:?}");
         if expected > 0 {
             assert_eq!(
-                setup.hints().first().map(|hint| hint.tone),
+                setup
+                    .hints(HeaderHints::Shown)
+                    .first()
+                    .map(|hint| hint.tone),
                 Some(HintTone::NextStep),
                 "the next step must lead the hint block for {setup:?}"
             );
         }
     }
+}
+
+/// Hiding header hints drops the reference block, but never the step that
+/// unblocks a signed-out session.
+#[test]
+fn hidden_header_hints_keep_the_signed_out_next_step() {
+    assert_eq!(READY.hints(HeaderHints::Hidden), &[] as &[Hint]);
+    assert_eq!(
+        SIGNED_OUT.hints(HeaderHints::Hidden),
+        SIGNED_OUT.hints(HeaderHints::Shown)
+    );
 }

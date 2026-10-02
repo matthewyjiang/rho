@@ -36,6 +36,7 @@ mod fast_discovery;
 mod file_palette;
 mod first_run;
 mod goal;
+mod header_hints;
 mod hooks;
 mod hover_clicks;
 mod inline_choice_click;
@@ -125,6 +126,7 @@ use goal::{
     GOAL_BLOCKED_AND_RESUMED_STEPS, GOAL_QUESTIONNAIRE_STEPS,
     GOAL_WAITS_FOR_SUBAGENTS_DURING_RETRY_STEPS, GOAL_WAITS_FOR_SUBAGENTS_STEPS,
 };
+use header_hints::HEADER_HINTS_SCENARIO;
 use hooks::HOOKS_CONTRACT_SCENARIO;
 use limits::LIMITS_OVERLAY_SCENARIO;
 use login::{
@@ -414,6 +416,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     STARTUP_PROMPT_STREAM_EXIT_SCENARIO,
     NO_SAVE_SESSION_SCENARIO,
     REASONING_OUTPUT_RETROACTIVE_SCENARIO,
+    HEADER_HINTS_SCENARIO,
     STREAMING_CONTROLS_SCENARIO,
     AGENT_PROMPT_SCENARIO,
     Scenario::new(

@@ -78,7 +78,7 @@ fn editor_cursor_navigation_is_unicode_safe() {
 #[test]
 fn toggles_persist_for_the_next_session() {
     type ReadFlag = fn(&crate::config::Config) -> bool;
-    let cases: [(&str, ConfigToggle, bool, ReadFlag); 4] = [
+    let cases: [(&str, ConfigToggle, bool, ReadFlag); 5] = [
         (
             "subagents",
             ConfigToggle::EnableSubagents,
@@ -90,6 +90,12 @@ fn toggles_persist_for_the_next_session() {
             ConfigToggle::CacheMissNotices,
             true,
             |config| config.cache_miss_notices,
+        ),
+        (
+            "header hints",
+            ConfigToggle::ShowHeaderHints,
+            false,
+            |config| config.show_header_hints,
         ),
         ("zen mode", ConfigToggle::ZenMode, true, |config| {
             config.zen_mode

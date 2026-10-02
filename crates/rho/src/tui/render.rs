@@ -17,7 +17,7 @@ pub(super) use wrapping::{
 use super::{
     changelog_command::changelog_lines,
     feed_image::{reserve_entry_image_rows, reserve_markdown_image_rows},
-    first_run::SetupState,
+    first_run::{HeaderHints, Hint, SetupState},
     message_render::{render_assistant_content, render_reasoning_content},
     rendered_entry::RenderedEntry,
     theme::Theme,
@@ -78,6 +78,7 @@ impl LineFill {
 pub(super) fn session_header_lines(
     update_notice: Option<&str>,
     setup: SetupState,
+    header_hints: HeaderHints,
     width: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = vec![
@@ -104,13 +105,16 @@ pub(super) fn session_header_lines(
         lines.push(Line::from(headline));
     }
     lines.push(Line::raw(""));
-    push_session_header_hints(&mut lines, setup, width);
-    lines.push(Line::raw(""));
+    let hints = setup.hints(header_hints);
+    if !hints.is_empty() {
+        push_session_header_hints(&mut lines, hints, width);
+        lines.push(Line::raw(""));
+    }
     lines
 }
 
-fn push_session_header_hints(lines: &mut Vec<Line<'static>>, setup: SetupState, width: usize) {
-    for hint in setup.hints() {
+fn push_session_header_hints(lines: &mut Vec<Line<'static>>, hints: &[Hint], width: usize) {
+    for hint in hints {
         lines.push(Line::from(Span::styled(
             truncate_one_line(hint.text, width),
             hint.style(),

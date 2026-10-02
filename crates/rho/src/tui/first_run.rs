@@ -78,6 +78,24 @@ const SIGNED_OUT_HINTS: &[Hint] = &[
 /// welcome on the setup screen, so the header never repeats it.
 const SIGNED_OUT_HEADLINE: &str = " Not signed in. Rho needs a provider before it can answer.";
 
+/// Whether the session header shows its keyboard hint block, from
+/// `display.show_header_hints`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum HeaderHints {
+    Shown,
+    Hidden,
+}
+
+impl HeaderHints {
+    pub(super) fn from_enabled(enabled: bool) -> Self {
+        if enabled {
+            Self::Shown
+        } else {
+            Self::Hidden
+        }
+    }
+}
+
 /// Which step a launch opens the first-run setup screen at.
 ///
 /// A real first launch asks for [`SetupEntry::Auto`]. The named steps exist so
@@ -114,11 +132,13 @@ impl SetupState {
         (!self.signed_in).then(|| Span::styled(SIGNED_OUT_HEADLINE, Theme::warning()))
     }
 
-    pub(super) fn hints(self) -> &'static [Hint] {
-        if self.signed_in {
-            READY_HINTS
-        } else {
-            SIGNED_OUT_HINTS
+    /// Header hint lines. Hiding hints only drops the ready-session reference
+    /// block; a signed-out session keeps `/login`, the step that unblocks it.
+    pub(super) fn hints(self, header_hints: HeaderHints) -> &'static [Hint] {
+        match (self.signed_in, header_hints) {
+            (false, _) => SIGNED_OUT_HINTS,
+            (true, HeaderHints::Shown) => READY_HINTS,
+            (true, HeaderHints::Hidden) => &[],
         }
     }
 }

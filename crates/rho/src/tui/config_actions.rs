@@ -171,6 +171,7 @@ impl App {
             }
             (ConfigRow::AutoCompact, _) => self.toggle_auto_compact(),
             (ConfigRow::CacheMissNotices, _) => self.toggle_cache_miss_notices(),
+            (ConfigRow::ShowHeaderHints, _) => self.toggle_header_hints(),
             (ConfigRow::Number(key), _) => self.open_config_number_editor(key),
             (ConfigRow::ClearPromptHistory, _) => self.prompt_clear_prompt_history(),
             (ConfigRow::InlineShell, ctx) => {
@@ -534,6 +535,19 @@ impl App {
                 error_noun: "cache miss notices",
             },
             |app, enabled| app.info.runtime.cache_miss_notices = enabled,
+        )
+    }
+
+    pub(super) fn toggle_header_hints(&mut self) -> anyhow::Result<()> {
+        self.apply_config_toggle(
+            BooleanConfigRow {
+                toggle: ConfigToggle::ShowHeaderHints,
+                picker_value: config_picker::SHOW_HEADER_HINTS_VALUE,
+                on_status: "header hints: shown",
+                off_status: "header hints: hidden",
+                error_noun: "header hints",
+            },
+            |app, enabled| app.info.runtime.show_header_hints = enabled,
         )
     }
 

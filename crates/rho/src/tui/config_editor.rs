@@ -36,6 +36,7 @@ pub(super) enum ConfigToggle {
     EnableSubagents,
     AutoCompact,
     CacheMissNotices,
+    ShowHeaderHints,
     ShowReasoningOutput,
     ZenMode,
     XaiImageGeneration,
@@ -72,6 +73,10 @@ pub(super) fn toggle(
         ConfigToggle::CacheMissNotices => {
             config.cache_miss_notices = !config.cache_miss_notices;
             config.cache_miss_notices
+        }
+        ConfigToggle::ShowHeaderHints => {
+            config.show_header_hints = !config.show_header_hints;
+            config.show_header_hints
         }
         ConfigToggle::ShowReasoningOutput => {
             config.show_reasoning_output = !config.show_reasoning_output;
