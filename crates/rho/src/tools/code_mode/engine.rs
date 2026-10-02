@@ -42,10 +42,11 @@ impl Default for EngineLimits {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub(super) struct EngineOutput {
     pub return_value: JsonValue,
+    /// UTF-8 print prefix and any notice, bounded by the canonical output budget.
     pub prints: Vec<String>,
     /// Nested tool calls started, including ones a failure cut short.
     pub calls: usize,
-    /// Why the script failed; prints and calls before the failure remain.
+    /// Full multiline Starlark diagnostic; bounded prints and calls remain.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -62,11 +63,76 @@ struct GuestState {
     runtime: tokio::runtime::Handle,
 }
 
-struct StatePrint(Mutex<Vec<String>>);
+/// Print strings live outside the Starlark heap. Charge separators too, so even
+/// repeated empty prints have bounded storage, and discard all but a prefix.
+#[derive(Default)]
+struct CapturedPrints {
+    lines: Vec<String>,
+    received_bytes: usize,
+    retained_bytes: usize,
+    truncated: bool,
+}
+
+impl CapturedPrints {
+    fn push(&mut self, text: &str) {
+        let separator = usize::from(self.received_bytes != 0 || !self.lines.is_empty());
+        self.received_bytes = self
+            .received_bytes
+            .saturating_add(separator)
+            .saturating_add(text.len());
+        if self.truncated {
+            return;
+        }
+        let remaining = rho_tools::DEFAULT_MAX_OUTPUT_BYTES - self.retained_bytes;
+        if separator <= remaining {
+            let prefix = utf8_prefix(text, remaining - separator);
+            self.lines.push(prefix.to_owned());
+            self.retained_bytes += separator + prefix.len();
+        }
+        self.truncated = self.received_bytes > rho_tools::DEFAULT_MAX_OUTPUT_BYTES;
+    }
+
+    fn into_lines(mut self) -> Vec<String> {
+        if !self.truncated {
+            return self.lines;
+        }
+        let limit = rho_tools::DEFAULT_MAX_OUTPUT_BYTES;
+        let notice = format!(
+            "[codemode prints truncated: output byte limit {limit}, received {} bytes]",
+            self.received_bytes
+        );
+        let prefix_budget = limit - notice.len() - 1;
+        while self.retained_bytes > prefix_budget {
+            let last = self.lines.last_mut().expect("retained prints");
+            let excess = self.retained_bytes - prefix_budget;
+            if last.len() >= excess {
+                let keep = utf8_prefix(last, last.len() - excess).len();
+                self.retained_bytes -= last.len() - keep;
+                last.truncate(keep);
+            } else {
+                self.retained_bytes -= last.len();
+                self.lines.pop();
+                self.retained_bytes -= usize::from(!self.lines.is_empty());
+            }
+        }
+        self.lines.push(notice);
+        self.lines
+    }
+}
+
+fn utf8_prefix(text: &str, max_bytes: usize) -> &str {
+    let mut end = max_bytes.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+struct StatePrint(Mutex<CapturedPrints>);
 
 impl PrintHandler for StatePrint {
     fn println(&self, text: &str) -> starlark::Result<()> {
-        self.0.lock().expect("prints").push(text.to_owned());
+        self.0.lock().expect("prints").push(text);
         Ok(())
     }
 }
@@ -77,6 +143,7 @@ pub(super) fn evaluate_code_mode(
     bridge: Arc<ToolHostBridge>,
     limits: EngineLimits,
 ) -> Evaluation {
+    let cancellation = bridge.cancellation().clone();
     let state = GuestState {
         bridge,
         runtime: tokio::runtime::Handle::current(),
@@ -97,6 +164,7 @@ pub(super) fn evaluate_code_mode(
                 eval.set_max_callstack_size(limits.max_callstack)
                     .map_err(starlark::Error::new_other)?;
                 eval.set_print_handler(&print_handler);
+                eval.set_check_cancelled(Box::new(|| cancellation.is_cancelled()));
                 eval.eval_module(ast, &globals)?;
                 module
                     .get("result")
@@ -107,7 +175,7 @@ pub(super) fn evaluate_code_mode(
         });
     Evaluation {
         result,
-        prints: print_handler.0.into_inner().expect("prints"),
+        prints: print_handler.0.into_inner().expect("prints").into_lines(),
     }
 }
 
@@ -252,11 +320,33 @@ pub(super) fn format_engine_output(output: &EngineOutput) -> String {
         return text;
     }
     let notice = format!(
-        "[codemode output truncated: output byte limit {limit}, received {} bytes]\n",
+        "[codemode output truncated: output byte limit {limit}, received {} bytes]",
         text.len()
     );
+    if output.error.is_some() {
+        // The diagnostic stays last, separated from the print prefix by a blank
+        // line. Reserve its bytes before trimming output, not afterwards.
+        let failure = parts.pop().expect("script failure");
+        let failure_budget = limit - notice.len() - 2;
+        if failure.len() > failure_budget {
+            // Even the diagnostic alone cannot fit alongside the notice. Keep
+            // its head here; the structured `error` still has the full detail.
+            return rho_tools::tool::truncate(
+                format!("{notice}\n\n{failure}"),
+                limit - rho_tools::tool::TRUNCATION_MARKER.len(),
+            );
+        }
+        let body = parts.join("\n\n");
+        let prefix_budget = failure_budget.saturating_sub(failure.len() + 1);
+        let prefix = utf8_prefix(&body, prefix_budget);
+        return if prefix.is_empty() {
+            format!("{notice}\n\n{failure}")
+        } else {
+            format!("{prefix}\n{notice}\n\n{failure}")
+        };
+    }
     rho_tools::tool::truncate(
-        format!("{notice}{text}"),
+        format!("{notice}\n{text}"),
         limit - rho_tools::tool::TRUNCATION_MARKER.len(),
     )
 }

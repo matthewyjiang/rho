@@ -435,7 +435,7 @@ pub(super) fn tool_started_effects(
     vec![
         StreamEffect::Attachment(AttachmentEvent::ToolStarted {
             key: non_empty_key(tool_use_id),
-            card,
+            card: card.into(),
         }),
         StreamEffect::Status(StatusPatch {
             last_activity: Some(format!("tool: {}", tool.name())),
@@ -452,7 +452,7 @@ pub(super) fn tool_updated_effects(
     let card = started_card(tool, cwd);
     vec![StreamEffect::Attachment(AttachmentEvent::ToolUpdated {
         key: non_empty_key(tool_use_id),
-        card,
+        card: card.into(),
     })]
 }
 

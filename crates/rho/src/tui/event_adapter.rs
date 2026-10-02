@@ -3,7 +3,7 @@ use rho_sdk::{
     HostInputRequest, ModelCallMetrics, ModelCallProfile, RunEvent,
 };
 use {
-    crate::app::interactive_presenter::InteractiveToolPresenter,
+    crate::app::interactive_presenter::{InteractiveToolPresenter, PresentedToolCard},
     rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus},
 };
 
@@ -22,7 +22,7 @@ pub(super) enum ViewModelEvent {
     SteeringDelivered(rho_sdk::SteeringId),
     ToolStarted {
         call_id: rho_sdk::ToolCallId,
-        card: ToolCard,
+        card: PresentedToolCard,
     },
     ProviderStreamReset(ProviderRetryHint),
     ProviderRetry,
@@ -36,7 +36,7 @@ pub(super) enum ViewModelEvent {
     },
     ToolUpdated {
         call_id: rho_sdk::ToolCallId,
-        card: ToolCard,
+        card: PresentedToolCard,
     },
     /// Display-only stream text for live usage estimates (tool-call JSON, etc.).
     ///
@@ -49,7 +49,7 @@ pub(super) enum ViewModelEvent {
         /// Present when the streamed preview card changed. Identity-only binds
         /// may omit a card so the batch can attach a late call id without a
         /// forced re-render.
-        card: Option<ToolCard>,
+        card: Option<PresentedToolCard>,
     },
     /// Final proposal for a tool call, keyed only by call id.
     ///
@@ -57,7 +57,7 @@ pub(super) enum ViewModelEvent {
     /// index in the provider output_index namespace.
     ToolCallProposed {
         call_id: rho_sdk::ToolCallId,
-        card: ToolCard,
+        card: PresentedToolCard,
     },
     ToolFinished {
         call_id: rho_sdk::ToolCallId,
@@ -410,7 +410,7 @@ impl SdkEventAdapter {
 pub(super) fn compact_started_event() -> ViewModelEvent {
     ViewModelEvent::ToolStarted {
         call_id: compaction_call_id(),
-        card: super::compaction_display::running_card(),
+        card: super::compaction_display::running_card().into(),
     }
 }
 

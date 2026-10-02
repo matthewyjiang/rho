@@ -203,16 +203,59 @@ async fn nested_outcomes_preserve_values_and_failure_status() {
     );
 }
 
-// Covers: discovery and execution share one inventory; orchestration is not a
-// sibling and ToolHost rejects recursive calls without a bespoke bridge gate.
+#[derive(Clone)]
+struct DiscoveryDefinition {
+    spec: ToolSpec,
+    output_schema: Option<Value>,
+}
+
+/// Models an MCP handle whose definition changes without an inventory update.
+struct DiscoveryTool {
+    definition: Mutex<DiscoveryDefinition>,
+}
+
+impl Tool for DiscoveryTool {
+    fn spec(&self) -> ToolSpec {
+        self.definition.lock().unwrap().spec.clone()
+    }
+
+    fn output_schema(&self) -> Option<Value> {
+        self.definition.lock().unwrap().output_schema.clone()
+    }
+
+    fn call<'a>(&'a self, invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
+        Box::pin(async move {
+            let title = invocation.arguments()["title"].as_str().ok_or_else(|| {
+                ToolError::new(ToolErrorKind::InvalidArguments, "title must be a string")
+            })?;
+            Ok(ToolOutput::text(title))
+        })
+    }
+}
+
+// Covers: discovery includes complete argument contracts, and execution shares
+// its inventory; orchestration is not a sibling and recursive calls fail.
+// Owner: codemode discovery / ToolHost bridge.
 #[tokio::test]
 async fn discovery_matches_callable_siblings() {
     let surface = Arc::new(CodeModeSurface::default());
     let orchestration = surface.orchestration_tools();
     // Publishing the complete app inventory must not introduce an Arc cycle.
-    let mut tools: Vec<Arc<dyn Tool>> = vec![Arc::new(StubTool {
-        name: "mcp__github__create_issue",
-        ..StubTool::output(ToolOutput::text("created"))
+    let parameters = json!({
+        "type": "object",
+        "properties": {"title": {"type": "string", "minLength": 1}},
+        "required": ["title"],
+        "additionalProperties": false,
+    });
+    let mut tools: Vec<Arc<dyn Tool>> = vec![Arc::new(DiscoveryTool {
+        definition: Mutex::new(DiscoveryDefinition {
+            spec: ToolSpec {
+                name: "mcp__github__create_issue".into(),
+                description: "fixture sibling".into(),
+                input_schema: parameters.clone(),
+            },
+            output_schema: None,
+        }),
     })];
     tools.extend(orchestration.clone());
     surface.sync(&tools);
@@ -242,25 +285,35 @@ async fn discovery_matches_callable_siblings() {
             json!([{"name": "mcp__github__create_issue", "description": "fixture sibling"}]),
         )
     );
-    assert_eq!(
-        discovered.structured_content().cloned(),
-        Some(
-            script(
-                &host,
-                "result = [describe_tool(\"mcp__github__create_issue\")]"
-            )
-            .await
-            .unwrap()
-        )
-    );
+    let expected = json!([{
+        "name": "mcp__github__create_issue",
+        "description": "fixture sibling",
+        "parameters": parameters,
+        "returns": super::script_output::schema(/*data_schema*/ None),
+    }]);
+    assert_eq!(discovered.structured_content(), Some(&expected));
     assert_eq!(
         script(
             &host,
-            "hits = search_tools(\"github\")\nresult = call_tool(hits[0][\"name\"])[\"content\"]"
+            "result = [describe_tool(\"mcp__github__create_issue\")]"
         )
         .await
         .unwrap(),
-        json!("created")
+        expected
+    );
+    let discovery_schema = orchestration[1].output_schema().unwrap();
+    jsonschema::validator_for(&discovery_schema)
+        .unwrap()
+        .validate(discovered.structured_content().unwrap())
+        .unwrap();
+    assert_eq!(
+        script(
+            &host,
+            "hits = search_tools(\"github\")\nresult = call_tool(hits[0][\"name\"], {\"title\": \"codemode issue\"})[\"content\"]"
+        )
+        .await
+        .unwrap(),
+        json!("codemode issue")
     );
     let (progress, _receiver) = rho_sdk::tool::tool_progress_channel(std::num::NonZeroUsize::MIN);
     let context = ToolContext::new(
@@ -275,6 +328,112 @@ async fn discovery_matches_callable_siblings() {
             .await,
         Err(rho_sdk::Error::InvalidConfiguration { .. })
     ));
+}
+
+// Covers: refreshed tool contracts reach new searches and scripts without sync,
+// while an already-running script retains its catalog.
+// Owner: codemode live discovery and bridge snapshots (runtime contract).
+#[tokio::test]
+async fn discovery_refreshes_live_definitions_without_resync() {
+    use super::{bridge::ToolHostBridge, exposure::ToolCatalogEntry};
+
+    let definitions = [
+        DiscoveryDefinition {
+            spec: ToolSpec {
+                name: "mcp__github__create_issue".into(),
+                description: "original definition".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {"title": {"type": "string"}},
+                    "required": ["title"],
+                    "additionalProperties": false,
+                }),
+            },
+            output_schema: Some(json!({"type": "string"})),
+        },
+        DiscoveryDefinition {
+            spec: ToolSpec {
+                name: "mcp__github__create_issue".into(),
+                description: "revised definition".into(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "minLength": 1},
+                        "priority": {"type": "integer"},
+                    },
+                    "required": ["title", "priority"],
+                    "additionalProperties": false,
+                }),
+            },
+            output_schema: Some(json!({
+                "type": "object",
+                "properties": {"issue": {"type": "integer"}},
+                "required": ["issue"],
+            })),
+        },
+    ];
+    let tool = Arc::new(DiscoveryTool {
+        definition: Mutex::new(definitions[0].clone()),
+    });
+    let surface = surface(vec![tool.clone()]);
+    let host = surface
+        .orchestration_tools()
+        .into_iter()
+        .fold(ToolHost::builder(), |builder, tool| {
+            builder.tool_shared(tool)
+        })
+        .build()
+        .unwrap();
+    let (progress, receiver) = rho_sdk::tool::tool_progress_channel(std::num::NonZeroUsize::MIN);
+    drop(receiver);
+    let context = ToolContext::new(
+        /*workspace*/ None,
+        rho_sdk::CancellationToken::new(),
+        progress,
+    );
+    let frozen = ToolHostBridge::new(surface.clone(), context).unwrap();
+    let original = frozen.describe("mcp__github__create_issue").unwrap();
+
+    for definition in definitions {
+        *tool.definition.lock().unwrap() = definition.clone();
+        let expected = ToolCatalogEntry {
+            name: definition.spec.name,
+            description: definition.spec.description,
+            parameters: definition.spec.input_schema,
+            returns: super::script_output::schema(definition.output_schema),
+        };
+        // Search the live description as well as checking the complete contract.
+        assert_eq!(
+            surface.search(&expected.description, 1),
+            vec![expected.clone()]
+        );
+        let expected = serde_json::to_value(vec![expected]).unwrap();
+        let discovered = host
+            .invoke(ToolHostCall::new(
+                TOOL_SEARCH_NAME,
+                json!({"query": "github"}),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(discovered.structured_content(), Some(&expected));
+        assert_eq!(
+            script(
+                &host,
+                "result = [describe_tool(\"mcp__github__create_issue\")]"
+            )
+            .await
+            .unwrap(),
+            expected
+        );
+        assert_eq!(
+            frozen.describe("mcp__github__create_issue"),
+            Some(original.clone())
+        );
+        assert_eq!(
+            frozen.search("original definition", 1),
+            vec![original.clone()]
+        );
+    }
 }
 
 // Covers: publishing siblings mid-script cannot advertise names its child host rejects.
@@ -569,9 +728,12 @@ async fn nested_events_reach_parent_and_finish() {
     );
 }
 
-/// Blocks every caller until `width` calls are in flight at once.
+/// The first call can finish only after a queued call starts. Initial siblings
+/// rendezvous and finish, freeing slots while the first call remains blocked.
 struct RendezvousTool {
-    barrier: Arc<tokio::sync::Barrier>,
+    barrier: tokio::sync::Barrier,
+    release_first: tokio::sync::Notify,
+    width: usize,
 }
 
 impl Tool for RendezvousTool {
@@ -584,21 +746,54 @@ impl Tool for RendezvousTool {
     }
 
     fn call<'a>(&'a self, invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
+        Box::pin(self.meet(invocation))
+    }
+
+    // The default `prepare` is exclusive, and the child host serializes
+    // exclusive calls. Declaring no resources opts into overlap, as MCP tools do.
+    fn prepare<'a>(
+        &'a self,
+        invocation: ToolInvocation,
+        _context: rho_sdk::tool::ToolPreparationContext,
+    ) -> rho_sdk::tool::ToolPrepareFuture<'a> {
         Box::pin(async move {
-            self.barrier.wait().await;
-            Ok(ToolOutput::text(invocation.arguments()["id"].to_string()))
+            Ok(rho_sdk::tool::PreparedToolInvocation::resource_aware(
+                [],
+                [],
+                rho_sdk::tool::ToolMetadata::new(),
+                move |_context| Box::pin(self.meet(invocation)),
+            ))
         })
     }
 }
 
-// Covers: call_tools runs independent calls concurrently (a sequential bridge
-// would deadlock on the barrier), keeps input order, turns an unknown tool
-// into an is_error value without losing siblings, and counts every call.
+impl RendezvousTool {
+    async fn meet(&self, invocation: ToolInvocation) -> Result<ToolOutput, ToolError> {
+        let id = invocation.arguments()["id"].as_u64().unwrap() as usize;
+        if id < self.width {
+            self.barrier.wait().await;
+        }
+        if id == 0 {
+            self.release_first.notified().await;
+        } else if id == self.width {
+            self.release_first.notify_one();
+        }
+        Ok(ToolOutput::text(id.to_string()))
+    }
+}
+
+// Covers: queued calls start while the first call is blocked (ordered buffering
+// deadlocks here), input order survives out-of-order completion, and an unknown
+// tool becomes an is_error value without losing siblings or call counts.
 // Owner: codemode batch bridge.
 #[tokio::test]
 async fn call_tools_runs_batch_concurrently_in_order() {
-    let barrier = Arc::new(tokio::sync::Barrier::new(3));
-    let surface = surface(vec![Arc::new(RendezvousTool { barrier })]);
+    let width = crate::app::sdk_config::parallel_tool_limit().get();
+    let surface = surface(vec![Arc::new(RendezvousTool {
+        barrier: tokio::sync::Barrier::new(width),
+        release_first: tokio::sync::Notify::new(),
+        width,
+    })]);
     let host = ToolHost::builder()
         .tool(CodeModeTool::new(surface))
         .build()
@@ -607,7 +802,7 @@ async fn call_tools_runs_batch_concurrently_in_order() {
         std::time::Duration::from_secs(30),
         host.invoke(ToolHostCall::new(
             CODEMODE_TOOL_NAME,
-            json!({"script": "result = [[r[\"content\"], r[\"is_error\"]] for r in call_tools([(\"meet\", {\"id\": i}) for i in range(3)] + [\"missing\"])]"}),
+            json!({"script": format!("result = [[r[\"content\"], r[\"is_error\"]] for r in call_tools([(\"meet\", {{\"id\": i}}) for i in range({})] + [\"missing\"])]", width + 1)}),
         )),
     )
     .await
@@ -616,18 +811,13 @@ async fn call_tools_runs_batch_concurrently_in_order() {
     let data = output.structured_content().unwrap();
     let returned = data["return_value"].as_array().unwrap();
     // The unknown tool's content is the host's error text; only its flag matters.
-    let missing_flag = returned[3][1].clone();
+    let missing_flag = returned[width + 1][1].clone();
+    let expected: Vec<_> = (0..=width)
+        .map(|id| json!([id.to_string(), false]))
+        .collect();
     assert_eq!(
-        (&returned[..3], missing_flag, data["calls"].clone()),
-        (
-            &[
-                json!(["0", false]),
-                json!(["1", false]),
-                json!(["2", false])
-            ][..],
-            json!(true),
-            json!(4)
-        )
+        (&returned[..=width], missing_flag, data["calls"].clone()),
+        (expected.as_slice(), json!(true), json!(width + 2))
     );
 }
 

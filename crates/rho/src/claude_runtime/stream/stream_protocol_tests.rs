@@ -576,7 +576,7 @@ fn finished_cards(lines: &[&str]) -> Vec<(Option<String>, rho_tools::tool_card::
             StreamEffect::Attachment(AttachmentEvent::ToolFinished {
                 key,
                 presentation: crate::presentation::Presentation::Card(card),
-            }) => Some((key, card)),
+            }) => Some((key, card.card)),
             _ => None,
         })
         .collect()

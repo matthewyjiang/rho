@@ -141,6 +141,7 @@ async fn prepare_call<'a>(
         };
     };
     let (context, progress, host_input) = execution_context(scope, &id);
+    let context = context.with_invocation_source(source);
     let first_capability = Some(context.first_capability());
     let invocation = match source {
         ToolInvocationSource::Model => ToolInvocation::new(id.clone(), call.arguments.clone()),

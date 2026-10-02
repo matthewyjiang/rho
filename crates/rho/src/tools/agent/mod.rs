@@ -39,6 +39,7 @@ pub(crate) use super::agent_output::MODEL_NOTIFICATION_BYTES as NOTIFICATION_CON
 
 pub struct AgentTool {
     manager: SubagentManager,
+    max_output_bytes: usize,
     /// Directory definitions are rediscovered from at each launch.
     cwd: PathBuf,
     /// Fixed at construction so the spec never rewrites what the caller was
@@ -61,7 +62,13 @@ impl AgentTool {
             cwd: cwd.to_path_buf(),
             advertised: AdvertisedAgents::from_catalog(&catalog),
             mutation_observer: Arc::new(()),
+            max_output_bytes: rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
         }
+    }
+
+    fn with_max_output_bytes(mut self, max_output_bytes: usize) -> Self {
+        self.max_output_bytes = max_output_bytes;
+        self
     }
 
     fn with_mutation_observer(
@@ -123,6 +130,7 @@ impl AgentTool {
             format_background_start(&run_id, &definition_id),
             AgentRunView::started(run_id, definition_id),
         )
+        .limit_data(self.max_output_bytes)?
         .into_tool_output(agent_metadata())
     }
 }
@@ -206,11 +214,20 @@ impl Tool for AgentTool {
 
 pub struct AgentsTool {
     manager: SubagentManager,
+    max_output_bytes: usize,
 }
 
 impl AgentsTool {
     pub fn new(manager: SubagentManager) -> Self {
-        Self { manager }
+        Self {
+            manager,
+            max_output_bytes: rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
+        }
+    }
+
+    pub(super) fn with_max_output_bytes(mut self, max_output_bytes: usize) -> Self {
+        self.max_output_bytes = max_output_bytes;
+        self
     }
 
     async fn execute(&self, args: AgentsArgs) -> Result<ToolOutput, ToolError> {
@@ -303,7 +320,9 @@ impl AgentsTool {
                 ))
             }
         };
-        rho_tools::Rendered::new(content, data).into_tool_output(agents_metadata())
+        rho_tools::Rendered::new(content, data)
+            .limit_data(self.max_output_bytes)?
+            .into_tool_output(agents_metadata())
     }
 }
 
@@ -491,12 +510,15 @@ pub(super) fn sdk_bundle(
     let mut advertised = None;
     if options.tools.launches() {
         let tool = AgentTool::new(manager.clone(), &options.cwd, options.catalog)
+            .with_max_output_bytes(config.max_output_bytes)
             .with_mutation_observer(mutation_observer);
         advertised = Some(tool.advertised.clone());
         tools.push(Arc::new(tool));
     }
     if options.tools.manages() {
-        tools.push(Arc::new(AgentsTool::new(manager.clone())));
+        tools.push(Arc::new(
+            AgentsTool::new(manager.clone()).with_max_output_bytes(config.max_output_bytes),
+        ));
     }
     SdkDelegationBundle {
         tools,

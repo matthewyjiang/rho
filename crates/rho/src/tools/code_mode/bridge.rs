@@ -70,6 +70,11 @@ impl ToolHostBridge {
             .cloned()
     }
 
+    /// The evaluator and native tool waits share the parent cancellation token.
+    pub(super) fn cancellation(&self) -> &rho_sdk::CancellationToken {
+        self.parent.cancellation()
+    }
+
     #[cfg(test)]
     pub(super) fn call_count(&self) -> usize {
         self.calls.load(Ordering::Relaxed)
@@ -97,16 +102,20 @@ impl ToolHostBridge {
         calls: Vec<(String, Value)>,
     ) -> Result<Vec<Result<ToolOutput, BridgeError>>, BridgeError> {
         self.reserve(calls.len())?;
-        let results: Vec<_> = stream::iter(calls)
-            .map(|(name, arguments)| self.run_call(name, arguments))
-            // Same width as a model-issued parallel tool batch.
-            .buffered(crate::app::sdk_config::parallel_tool_limit().get())
+        let mut results: Vec<_> = stream::iter(calls.into_iter().enumerate())
+            .map(|(index, (name, arguments))| async move {
+                (index, self.run_call(name, arguments).await)
+            })
+            // Same width as a model-issued parallel tool batch. A blocked call
+            // must not prevent completed siblings from freeing their slots.
+            .buffer_unordered(crate::app::sdk_config::parallel_tool_limit().get())
             .collect()
             .await;
         if self.parent.cancellation().is_cancelled() {
             return Err(BridgeError::Cancelled);
         }
-        Ok(results)
+        results.sort_unstable_by_key(|(index, _)| *index);
+        Ok(results.into_iter().map(|(_, result)| result).collect())
     }
 
     fn reserve(&self, count: usize) -> Result<(), BridgeError> {

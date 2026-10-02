@@ -207,6 +207,7 @@ impl RunControl<'_> {
                 progress,
             )
             .with_call_id(id.clone())
+            .with_invocation_source(crate::tool::ToolInvocationSource::Model)
             .detached();
             let first_capability = context.first_capability();
             let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();

@@ -39,10 +39,16 @@ pub(super) enum ProcessOutput {
 }
 
 pub(super) fn render_snapshot(snapshot: Snapshot) -> rho_tools::Rendered<ProcessOutput> {
+    let failed = match snapshot.state {
+        State::Starting | State::Running => false,
+        State::Exited => snapshot.exit_code != Some(0),
+        State::Terminated | State::TimedOut | State::FailedToStart => true,
+    };
     rho_tools::Rendered::new(
         format_snapshot(&snapshot),
         ProcessOutput::Snapshot(snapshot),
     )
+    .failed_if(failed)
 }
 
 pub(super) fn format_stop(process_id: &str) -> String {
@@ -91,7 +97,7 @@ fn failure_exit_code(snapshot: &Snapshot) -> Option<i32> {
     match snapshot.state {
         State::Starting | State::Running => None,
         State::Exited if code == 0 => None,
-        _ => Some(code),
+        State::Exited | State::Terminated | State::TimedOut | State::FailedToStart => Some(code),
     }
 }
 

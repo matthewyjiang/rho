@@ -20,14 +20,46 @@ pub(in crate::app::interactive_presenter) use results::{push_error_output, split
 mod apply_patch_format;
 use apply_patch_format::apply_patch_card;
 
-use super::{agent_format, codemode_format, sessions_format, ToolKind, ToolPresentation, ToolView};
+use super::{
+    agent_format, codemode_format, sessions_format, PresentedToolCard, ToolBodySyntax, ToolKind,
+    ToolPresentation, ToolView,
+};
+
+pub(super) fn body_syntax(kind: ToolKind) -> ToolBodySyntax {
+    match kind {
+        ToolKind::Codemode => codemode_format::body_syntax(),
+        ToolKind::Advisor
+        | ToolKind::Agent
+        | ToolKind::Agents
+        | ToolKind::Bash
+        | ToolKind::PowerShell
+        | ToolKind::Process
+        | ToolKind::ListDir
+        | ToolKind::Grep
+        | ToolKind::Glob
+        | ToolKind::ReadFile
+        | ToolKind::WriteFile
+        | ToolKind::Edit(_)
+        | ToolKind::Skill
+        | ToolKind::WebSearch
+        | ToolKind::FetchContent
+        | ToolKind::GetSearchContent
+        | ToolKind::Questionnaire
+        | ToolKind::Sessions
+        | ToolKind::Mcp
+        | ToolKind::Other => ToolBodySyntax::Plain,
+    }
+}
 
 pub(super) fn presentation(view: &ToolView, mut card: ToolCard) -> ToolPresentation {
     card.push_notice_facts(view.metadata.presentation_notices());
     // Metadata can refine Process/Other family after start; keep builders honest.
     card.family = family_for_kind(view.kind, Some(&view.metadata));
     ToolPresentation {
-        card,
+        card: PresentedToolCard {
+            card,
+            body_syntax: body_syntax(view.kind),
+        },
         image_asset: view
             .metadata
             .assets()
@@ -383,6 +415,7 @@ pub(super) fn finished_card(
     content: &str,
     ok: bool,
     cwd: &std::path::Path,
+    data: Option<&serde_json::Value>,
 ) -> ToolCard {
     let status = ToolStatus::from_finished(ok);
     match view.kind {
@@ -458,9 +491,7 @@ pub(super) fn finished_card(
         ToolKind::Questionnaire => {
             preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status)
         }
-        ToolKind::Codemode => {
-            codemode_format::finished_card(&view.arguments, content, ok, /*calls*/ None)
-        }
+        ToolKind::Codemode => codemode_format::finished_card(&view.arguments, content, ok, data),
         ToolKind::Mcp => mcp_result_card(view, content, status),
         ToolKind::Other => generic_card(view, content, status),
     }

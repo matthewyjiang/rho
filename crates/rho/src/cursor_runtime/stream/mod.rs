@@ -174,7 +174,7 @@ impl CursorStreamMapper {
                 self.with_step_started(vec![
                     StreamEffect::Attachment(AttachmentEvent::ToolStarted {
                         key: Some(call_id),
-                        card,
+                        card: card.into(),
                     }),
                     StreamEffect::Status(StatusPatch {
                         last_activity: Some(format!("tool: {verb}")),

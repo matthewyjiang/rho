@@ -69,6 +69,31 @@ fn failed_exit_includes_code() {
     );
 }
 
+// Covers: every terminal failure reaches callers as a failed tool output;
+// live snapshots remain successful observations.
+// Owner: process output adapter
+#[test]
+fn rendered_process_outcomes_flag_failures() {
+    for (state, exit_code, failed) in [
+        (State::Starting, None, false),
+        (State::Running, None, false),
+        (State::Exited, Some(0), false),
+        (State::Exited, Some(2), true),
+        (State::Exited, None, true),
+        (State::Terminated, None, true),
+        (State::TimedOut, Some(0), true),
+        (State::FailedToStart, None, true),
+    ] {
+        let mut snapshot = snapshot();
+        snapshot.state = state;
+        snapshot.exit_code = exit_code;
+        let output = render_snapshot(snapshot)
+            .into_tool_output(rho_sdk::tool::ToolMetadata::new())
+            .unwrap();
+        assert_eq!(output.is_failure(), failed, "{state:?}, {exit_code:?}");
+    }
+}
+
 // Covers: stop is a two-line receipt, not JSON
 // Owner: process output
 #[test]

@@ -207,7 +207,13 @@ fn advisor_cards_use_status_first_headers() {
         ToolHeader::status_first("advisor", "interrupted")
     );
 
-    let finished = finished_card(&view, "final guidance", true, dir.path());
+    let finished = finished_card(
+        &view,
+        "final guidance",
+        true,
+        dir.path(),
+        /*data*/ None,
+    );
     assert_eq!(finished.status, ToolStatus::Ok);
     assert_eq!(
         finished.header,
@@ -218,7 +224,13 @@ fn advisor_cards_use_status_first_headers() {
         ToolBody::Lines(vec!["final guidance".into()])
     );
 
-    let failed = finished_card(&view, "advisor blew up", false, dir.path());
+    let failed = finished_card(
+        &view,
+        "advisor blew up",
+        false,
+        dir.path(),
+        /*data*/ None,
+    );
     assert_eq!(failed.status, ToolStatus::Error);
     assert_eq!(failed.header, ToolHeader::status_first("advisor", "failed"));
 }
@@ -252,7 +264,7 @@ fn generic_tool_summary_metadata_fills_the_header() {
     };
 
     assert_eq!(
-        start(&mut presenter, "ok").card,
+        start(&mut presenter, "ok").card.card,
         ToolCard::new(ToolStatus::Running, ToolFamily::Default, header())
     );
     let (_, finished) = presenter.finished(
@@ -273,7 +285,13 @@ fn generic_tool_summary_metadata_fills_the_header() {
         metadata,
     };
     assert_eq!(
-        finished_card(&view, "no target", false, std::path::Path::new(".")),
+        finished_card(
+            &view,
+            "no target",
+            false,
+            std::path::Path::new("."),
+            /*data*/ None
+        ),
         ToolCard::new(ToolStatus::Error, ToolFamily::Default, header()).with_facts(vec![
             ToolFact::Error {
                 text: "no target".into()
@@ -308,6 +326,7 @@ fn failed_skill_load_keeps_reason_visible() {
             .with_facts(vec![ToolFact::Error {
                 text: "unknown skill: missing".into(),
             }])
+            .into()
         )
     );
 }
@@ -375,7 +394,7 @@ fn mcp_proposed_and_started_cards_use_decoded_verb_and_argument_facts() {
     ]);
 
     let proposed = presenter.proposed(call);
-    assert_eq!(proposed.card, expected);
+    assert_eq!(proposed.card.card, expected);
     assert_eq!(
         ToolKind::from_name("mcp__olive_salmon__increase_grep"),
         ToolKind::Mcp
@@ -386,7 +405,7 @@ fn mcp_proposed_and_started_cards_use_decoded_verb_and_argument_facts() {
         "mcp__olive_salmon__increase_grep".into(),
         ToolMetadata::default(),
     );
-    assert_eq!(started.card, expected);
+    assert_eq!(started.card.card, expected);
 }
 
 // Covers: successful MCP results keep provenance/args and add a line count
@@ -408,7 +427,7 @@ fn mcp_finished_ok_card_counts_lines_and_keeps_body() {
         metadata: Default::default(),
     };
     let content = "crates/rho/src/lib.rs\ncrates/rho/src/app.rs\n";
-    let card = finished_card(&view, content, true, dir.path());
+    let card = finished_card(&view, content, true, dir.path(), /*data*/ None);
     assert_eq!(
         card,
         ToolCard::new(
@@ -449,7 +468,13 @@ fn mcp_finished_error_card_keeps_server_fact_and_error_summary() {
         arguments: serde_json::json!({ "path": "crates" }),
         metadata: Default::default(),
     };
-    let card = finished_card(&view, "server unavailable", false, dir.path());
+    let card = finished_card(
+        &view,
+        "server unavailable",
+        false,
+        dir.path(),
+        /*data*/ None,
+    );
     assert_eq!(
         card,
         ToolCard::new(

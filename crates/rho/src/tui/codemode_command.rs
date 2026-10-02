@@ -69,28 +69,40 @@ impl App {
             self.report_codemode(current);
             return Ok(());
         };
+        // The runtime has already recorded the transition in model and durable
+        // display history. Mirror it before saving the preference.
+        self.insert_entry(&Entry::Notice(display));
+        self.info
+            .services
+            .diagnostics
+            .update_tools(&agent.tool_specs());
         if let Err(error) = self
             .info
             .services
             .config_repository
             .update(|config| config.codemode.mode = requested)
         {
-            // Keep runtime and saved preference aligned with the failed save.
+            // Compensation records a reverse transition; it does not erase
+            // the forward notice already visible to the model and the user.
             let detail = match agent.set_codemode_mode(current) {
-                Ok(_) => format!("could not save codemode: {error}"),
-                Err(rollback_error) => format!(
-                    "could not save codemode: {error}; runtime rollback failed: {rollback_error}"
+                Ok(reverse) => {
+                    if let Some(reverse) = reverse {
+                        self.insert_entry(&Entry::Notice(reverse));
+                    }
+                    self.info
+                        .services
+                        .diagnostics
+                        .update_tools(&agent.tool_specs());
+                    format!("could not save codemode setting: {error}")
+                }
+                Err(compensation_error) => format!(
+                    "could not save codemode setting: {error}; could not restore codemode mode: {compensation_error}"
                 ),
             };
             self.insert_entry(&Entry::Error(detail));
             self.set_status("config save failed");
             return Ok(());
         }
-        self.insert_entry(&Entry::Notice(display));
-        self.info
-            .services
-            .diagnostics
-            .update_tools(&agent.tool_specs());
         self.report_codemode(requested);
         Ok(())
     }

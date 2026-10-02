@@ -24,6 +24,8 @@ pub(crate) struct ToolWorkerServices {
     pub workspace: Option<Workspace>,
     pub authorization: Arc<crate::workspace::AuthorizationServices>,
     pub event_capacity: NonZeroUsize,
+    pub invocation_source: super::ToolInvocationSource,
+    pub execution: Arc<super::ExecutionArbiter>,
 }
 
 pub(crate) struct ToolHostWorker {
@@ -50,8 +52,14 @@ impl ToolHostWorker {
             mut host_input,
         } = self;
         let started = Instant::now();
-        let invocation =
-            ToolInvocation::from_host(call.call_id().clone(), call.arguments().clone());
+        let invocation = match context.invocation_source() {
+            super::ToolInvocationSource::Model => {
+                ToolInvocation::new(call.call_id().clone(), call.arguments().clone())
+            }
+            super::ToolInvocationSource::Host => {
+                ToolInvocation::from_host(call.call_id().clone(), call.arguments().clone())
+            }
+        };
         let workspace = core.workspace.clone();
         let first_capability = context.first_capability();
         let authorization = context.authorization().clone();
@@ -75,6 +83,10 @@ impl ToolHostWorker {
                             ToolError::policy_denied(&error)
                         }
                     })?;
+            }
+            let _permit = core.execution.acquire(prepared.execution_policy()).await;
+            if cancellation.is_cancelled() {
+                return Err(ToolError::cancelled());
             }
             *execution_completion
                 .lock()

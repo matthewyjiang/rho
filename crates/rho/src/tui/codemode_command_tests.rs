@@ -3,7 +3,11 @@ use tempfile::tempdir;
 
 use super::*;
 use crate::{
-    app::config_repository::ConfigRepository, commands::parse_command, tui::tests::test_app,
+    app::{config_repository::ConfigRepository, interactive_runtime::test_edit_tool_runtime},
+    commands::parse_command,
+    config::EditTool,
+    session::Session as StoredSession,
+    tui::tests::test_app,
 };
 
 #[derive(Default)]
@@ -112,21 +116,77 @@ fn codemode_command_applies_and_persists_requested_mode() {
     }
 }
 
-// Covers: a failed config save must not leave the runtime in the new mode.
-// Owner: /codemode command
-#[test]
-fn failed_config_save_rolls_back_codemode() {
+// Covers: a failed durable preference write restores tool exposure without
+// hiding either transition from the live, model, or persisted transcript.
+// Owner: /codemode compensation seam; instance-scoped save injection is not
+// available through PTY, and this checks real runtime + session persistence.
+#[tokio::test]
+async fn failed_codemode_save_keeps_compensation_histories_aligned() {
+    use rho_sdk::model::Message;
+
     let directory = tempdir().unwrap();
+    let storage = StoredSession::create_in_root(directory.path(), directory.path()).unwrap();
     let mut app = test_app();
-    app.info.services.config_repository =
-        ConfigRepository::new(Some(directory.path().to_path_buf()));
-    let mut runtime = FakeRuntime::default();
+    let repository = ConfigRepository::temporary_for_tests().unwrap();
+    repository.fail_next_save_for_tests();
+    app.info.services.config_repository = repository;
+    let mut runtime =
+        test_edit_tool_runtime(EditTool::Pinned(rho_tools::EditFormat::Hashline)).await;
+    runtime.resume(storage.clone()).await.unwrap();
+    assert_eq!(runtime.session_id().as_str(), storage.id());
+    let specs_before = runtime.tool_specs();
+    assert!(specs_before.iter().any(|spec| spec.name == "read_file"));
+    let history_before = runtime.history();
 
     app.execute_codemode_command(invocation("/codemode only"), &mut runtime)
         .unwrap();
 
+    assert_eq!(runtime.codemode_mode(), CodemodeMode::On);
+    assert_eq!(runtime.tool_specs(), specs_before);
     assert_eq!(
-        (runtime.mode, runtime.calls),
-        (CodemodeMode::On, vec![CodemodeMode::Only, CodemodeMode::On])
+        app.info
+            .services
+            .config_repository
+            .load()
+            .unwrap()
+            .codemode
+            .mode,
+        CodemodeMode::On
     );
+
+    let transitions =
+        [CodemodeMode::Only, CodemodeMode::On].map(crate::prompt::codemode_mode_context);
+    let mut expected_model = history_before;
+    expected_model.extend(
+        transitions
+            .iter()
+            .map(|(model, _)| Message::user_text(model.clone())),
+    );
+    assert_eq!(runtime.history(), expected_model);
+    let entries = app.history.entries();
+    assert_eq!(entries.len(), transitions.len() + 1);
+    let live_notices: Vec<_> = entries[..transitions.len()]
+        .iter()
+        .map(|entry| match entry {
+            Entry::Notice(text) => Message::user_text(text.clone()),
+            other => panic!("expected transition notice, got {other:?}"),
+        })
+        .collect();
+    let expected_display: Vec<_> = transitions
+        .iter()
+        .map(|(_, display)| Message::user_text(display.clone()))
+        .collect();
+    assert_eq!(live_notices, expected_display);
+    assert!(matches!(entries.last(), Some(Entry::Error(_))));
+    assert_eq!(app.status(), "config save failed");
+
+    let (_, persisted) = StoredSession::open_by_id_with_histories_in_root(
+        directory.path(),
+        directory.path(),
+        storage.id(),
+    )
+    .unwrap();
+    assert_eq!(persisted.model, expected_model);
+    assert_eq!(persisted.display, expected_display);
+    runtime.shutdown().await;
 }

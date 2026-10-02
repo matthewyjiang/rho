@@ -351,6 +351,7 @@ impl ToolHostBuilder {
             self.workspace,
             authorization,
             self.event_capacity,
+            crate::tool::ToolInvocationSource::Host,
         )
     }
 }
@@ -360,6 +361,7 @@ pub struct ChildToolHostBuilder {
     tools: Vec<Arc<dyn Tool>>,
     workspace: Option<Workspace>,
     authorization: Arc<crate::workspace::AuthorizationServices>,
+    invocation_source: crate::tool::ToolInvocationSource,
 }
 
 impl ChildToolHostBuilder {
@@ -378,6 +380,7 @@ impl ChildToolHostBuilder {
             self.workspace,
             self.authorization,
             /*capacity*/ None,
+            self.invocation_source,
         )
     }
 }
@@ -389,7 +392,7 @@ type ToolHostCore = ToolWorkerServices;
 /// A host owns one logical authorization session. Calls share remembered
 /// `AllowForSession` decisions and a bounded approval audit. Capability-bearing
 /// tools always use the SDK order: workspace policy, `before_tool_use`, host
-/// approval when required, then execution.
+/// approval when required, execution-policy admission, then execution.
 #[derive(Clone)]
 pub struct ToolHost {
     core: Arc<ToolHostCore>,
@@ -401,6 +404,7 @@ impl ToolHost {
         workspace: Option<Workspace>,
         authorization: Arc<crate::workspace::AuthorizationServices>,
         capacity: Option<NonZeroUsize>,
+        invocation_source: crate::tool::ToolInvocationSource,
     ) -> Result<Self, Error> {
         let mut tools = ToolRegistry::new();
         for tool in registered {
@@ -415,6 +419,8 @@ impl ToolHost {
                 tools,
                 workspace,
                 authorization,
+                invocation_source,
+                execution: Arc::default(),
                 event_capacity: capacity.unwrap_or_else(|| {
                     NonZeroUsize::new(crate::client::DEFAULT_EVENT_CAPACITY).unwrap()
                 }),
@@ -428,7 +434,10 @@ impl ToolHost {
 
     /// Starts a nested host that inherits the active call's authorization.
     ///
-    /// Inherits policy, approvals, hooks, session identity, and live history.
+    /// Inherits policy, approvals, hooks, session identity, live history, and
+    /// the initiating invocation source. Model-originated calls stay model-originated.
+    /// Calls in the child share their own execution arbiter; the parent may be
+    /// waiting for them while holding its own scheduler permit.
     /// Nested hook envelopes retain the parent's run id. The narrow builder
     /// permits registering tools, not overriding inherited security.
     pub fn child_builder(parent: &ToolContext) -> ChildToolHostBuilder {
@@ -436,6 +445,7 @@ impl ToolHost {
             tools: Vec::new(),
             workspace: parent.workspace().cloned(),
             authorization: Arc::new(parent.authorization().for_call()),
+            invocation_source: parent.invocation_source(),
         }
     }
 
@@ -474,6 +484,7 @@ impl ToolHost {
             progress,
         )
         .with_call_id(call.id.clone())
+        .with_invocation_source(self.core.invocation_source)
         .with_host_input(host_input);
         let worker = tokio::spawn(
             ToolHostWorker {
@@ -518,3 +529,7 @@ impl std::fmt::Debug for ToolHost {
 #[cfg(test)]
 #[path = "tool_host_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tool_host_scheduling_tests.rs"]
+mod scheduling_tests;

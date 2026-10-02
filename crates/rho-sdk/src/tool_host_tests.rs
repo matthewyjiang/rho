@@ -14,9 +14,9 @@ use crate::{
     },
     model::ToolSpec,
     tool::{
-        PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
-        ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
-        ToolProgress,
+        tool_progress_channel, PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind,
+        ToolFuture, ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext,
+        ToolPrepareFuture, ToolProgress,
     },
     ApprovalAuditDecision, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
     ApprovalSession, AuthorizationDenialKind, CapabilityRequest, CapabilitySource, Error,
@@ -691,5 +691,77 @@ async fn child_host_inherits_live_history_and_session_identity() {
                 .collect::<Vec<_>>(),
             vec![(Some(session_id), Some(run_id))]
         );
+    }
+}
+
+struct NestedProvenanceTool {
+    seen: Arc<
+        Mutex<
+            Vec<(
+                crate::tool::ToolInvocationSource,
+                crate::tool::ToolInvocationSource,
+            )>,
+        >,
+    >,
+    depth: usize,
+}
+
+impl Tool for NestedProvenanceTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "nested_provenance".into(),
+            description: "record nested invocation provenance".into(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+        Box::pin(async move {
+            self.seen
+                .lock()
+                .unwrap()
+                .push((invocation.source(), context.invocation_source()));
+            if self.depth == 0 {
+                return Ok(ToolOutput::text("recorded"));
+            }
+            ToolHost::child_builder(&context)
+                .tool(Self {
+                    seen: Arc::clone(&self.seen),
+                    depth: self.depth - 1,
+                })
+                .build()
+                .unwrap()
+                .invoke(ToolHostCall::new("nested_provenance", json!({})))
+                .await
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))
+        })
+    }
+}
+
+// Covers: model-originated nested calls cannot become trusted host invocations.
+// Owner: SDK child-host provenance; standalone hosts must still use Host.
+#[tokio::test]
+async fn child_host_preserves_model_provenance_through_nesting() {
+    use crate::tool::ToolInvocationSource;
+
+    for source in [ToolInvocationSource::Model, ToolInvocationSource::Host] {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let tool = NestedProvenanceTool {
+            seen: Arc::clone(&seen),
+            depth: 1,
+        };
+        let host = match source {
+            ToolInvocationSource::Model => {
+                let (progress, _receiver) = tool_progress_channel(NonZeroUsize::MIN);
+                let parent = ToolContext::new(None, crate::CancellationToken::new(), progress)
+                    .with_invocation_source(source);
+                ToolHost::child_builder(&parent).tool(tool).build().unwrap()
+            }
+            ToolInvocationSource::Host => ToolHost::builder().tool(tool).build().unwrap(),
+        };
+        host.invoke(ToolHostCall::new("nested_provenance", json!({})))
+            .await
+            .unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec![(source, source); 2]);
     }
 }

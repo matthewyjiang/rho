@@ -26,14 +26,30 @@ use super::{
 pub(crate) struct ToolCatalogEntry {
     pub name: String,
     pub description: String,
+    /// The complete schema of arguments accepted by the tool.
+    pub parameters: serde_json::Value,
     /// The script envelope schema, with the tool's nullable data schema.
     pub returns: serde_json::Value,
 }
 
 struct ScriptTool {
     tool: Arc<dyn Tool>,
-    entry: ToolCatalogEntry,
+    name: String,
     mcp: bool,
+}
+
+impl ScriptTool {
+    // Definitions can refresh independently of the app inventory. Only a
+    // script's bridge snapshot freezes descriptions and schemas.
+    fn catalog_entry(&self) -> ToolCatalogEntry {
+        let spec = self.tool.spec();
+        ToolCatalogEntry {
+            name: spec.name,
+            description: spec.description,
+            parameters: spec.input_schema,
+            returns: script_output::schema(self.tool.output_schema()),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -68,16 +84,12 @@ impl CodeModeSurface {
                 let mcp = parse_exported_name(&spec.name, ExportedNameDialect::Rho).is_some();
                 Some(ScriptTool {
                     tool: tool.clone(),
-                    entry: ToolCatalogEntry {
-                        name: spec.name,
-                        description: spec.description,
-                        returns: script_output::schema(tool.output_schema()),
-                    },
+                    name: spec.name,
                     mcp,
                 })
             })
             .collect();
-        siblings.sort_by(|a, b| a.entry.name.cmp(&b.entry.name));
+        siblings.sort_by(|a, b| a.name.cmp(&b.name));
         self.state.write().expect("codemode surface").tools = siblings;
     }
 
@@ -96,21 +108,14 @@ impl CodeModeSurface {
             .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
         Ok((
             host,
-            state
-                .tools
-                .iter()
-                .map(|sibling| sibling.entry.clone())
-                .collect(),
+            state.tools.iter().map(ScriptTool::catalog_entry).collect(),
         ))
     }
 
     pub(crate) fn search(&self, query: &str, limit: usize) -> Vec<ToolCatalogEntry> {
         let state = self.state.read().expect("codemode surface");
-        search_entries(
-            state.tools.iter().map(|sibling| &sibling.entry),
-            query,
-            limit,
-        )
+        let entries: Vec<_> = state.tools.iter().map(ScriptTool::catalog_entry).collect();
+        search_entries(entries.iter(), query, limit)
     }
 
     pub(crate) fn mode(&self) -> CodemodeMode {
@@ -152,7 +157,7 @@ impl ToolVisibility for CodeModeSurface {
             && state
                 .tools
                 .iter()
-                .any(|sibling| sibling.entry.name == name && !sibling.mcp)
+                .any(|sibling| sibling.name == name && !sibling.mcp)
     }
 
     fn describe(&self, spec: &ToolSpec) -> Option<String> {
@@ -163,7 +168,7 @@ impl ToolVisibility for CodeModeSurface {
         state
             .tools
             .iter()
-            .find(|sibling| sibling.entry.name == spec.name)?;
+            .find(|sibling| sibling.name == spec.name)?;
         Some(format!(
             "{}\n\nCodemode: `call_tool(\"{}\", args)` returns `{{ is_error, content, data }}`; batch independent calls with `call_tools`.",
             spec.description.trim_end(), spec.name,

@@ -12,8 +12,8 @@ use rho_sdk::{
         ToolResource, ToolResourceAccess,
     },
     CancellationToken, CapabilityOperation, PathScope, PolicyDecision, Rho, RunEvent,
-    ScopedWorkspacePolicy, SessionOptions, ToolCallId, ToolCompletion, UserInput, Workspace,
-    WorkspacePolicy,
+    ScopedWorkspacePolicy, SessionOptions, ToolCallId, ToolCompletion, ToolHost, ToolHostCall,
+    UserInput, Workspace, WorkspacePolicy,
 };
 use std::sync::Mutex;
 
@@ -259,4 +259,141 @@ async fn allowed_policy_runs_grep_and_glob_with_read_metadata() {
     assert!(outputs[0].contains("note.txt"), "{}", outputs[0]);
     assert!(outputs[0].contains("hello world"), "{}", outputs[0]);
     assert!(outputs[1].contains("lib.rs"), "{}", outputs[1]);
+}
+
+// Covers: structured grep paths must chain into read_file for every search root.
+// Owner: SDK search contract; also verifies text uses the same file identity.
+#[tokio::test]
+async fn grep_structured_paths_chain_into_read_file() {
+    let dir = TempDir::new().unwrap();
+    let outside = TempDir::new().unwrap();
+    let body = "needle\n";
+    std::fs::create_dir(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/lib.rs"), body).unwrap();
+    std::fs::write(outside.path().join("lib.rs"), body).unwrap();
+    let outside_root = outside.path().canonicalize().unwrap();
+    let outside_file = outside_root.join("lib.rs");
+    let ws = workspace(&dir).with_granted_root(&outside_root).unwrap();
+    let options = CodingToolOptions::new().edit_tool(crate::EditFormat::Hashline);
+    let host = ToolHost::builder()
+        .workspace(ws)
+        .workspace_policy(
+            ScopedWorkspacePolicy::new()
+                .allow_read_paths()
+                .allow_outside_workspace_paths(),
+        )
+        .tool_shared(coding_tool(CodingToolKind::Grep, options.clone()))
+        .tool_shared(coding_tool(CodingToolKind::ReadFile, options))
+        .build()
+        .unwrap();
+    let tag = crate::hashline::compute_file_hash(body);
+
+    for (case, root, expected_path) in [
+        ("workspace", ".".to_owned(), "src/lib.rs".to_owned()),
+        ("subdirectory", "src".to_owned(), "src/lib.rs".to_owned()),
+        (
+            "single file",
+            "src/lib.rs".to_owned(),
+            "src/lib.rs".to_owned(),
+        ),
+        (
+            "granted directory",
+            outside_root.to_string_lossy().into_owned(),
+            outside_file.to_string_lossy().into_owned(),
+        ),
+        (
+            "granted file",
+            outside_file.to_string_lossy().into_owned(),
+            outside_file.to_string_lossy().into_owned(),
+        ),
+    ] {
+        let output = host
+            .invoke(ToolHostCall::new(
+                "grep",
+                json!({"pattern": "needle", "path": root}),
+            ))
+            .await
+            .unwrap();
+        let data = output.structured_content().expect("structured grep result");
+        assert_eq!(
+            data,
+            &json!({
+                "files": [{
+                    "path": expected_path,
+                    "count": 1,
+                    "lines": [{"line": 1, "text": "needle"}]
+                }],
+                "total_matches": 1,
+                "stopped": []
+            }),
+            "{case}"
+        );
+        assert_eq!(
+            output.content(),
+            format!("[{expected_path}#{tag}]\n1 | needle\n\n1 matches in 1 files"),
+            "{case}"
+        );
+        let read = host
+            .invoke(ToolHostCall::new(
+                "read_file",
+                json!({"path": data["files"][0]["path"]}),
+            ))
+            .await
+            .unwrap();
+        assert!(!read.is_failure(), "{case}: {}", read.content());
+    }
+}
+
+// Covers: existence-only grep must not invent matching-line totals.
+// Owner: SDK structured output contract, including its generated schema.
+#[tokio::test]
+async fn grep_structured_counts_distinguish_existence_from_counted_matches() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("hits.txt"),
+        "hit one\nmiss\nhit two\nhit three\n",
+    )
+    .unwrap();
+    let tool = coding_tool(CodingToolKind::Grep, CodingToolOptions::default());
+    let schema = tool.output_schema().expect("grep output schema");
+    let validator = jsonschema::validator_for(&schema).unwrap();
+    let host = ToolHost::builder()
+        .workspace(workspace(&dir))
+        .workspace_policy(ScopedWorkspacePolicy::new().allow_read_paths())
+        .tool_shared(tool)
+        .build()
+        .unwrap();
+
+    for (mode, count, lines) in [
+        (
+            "content",
+            json!(3),
+            json!([
+                {"line": 1, "text": "hit one"},
+                {"line": 3, "text": "hit two"},
+                {"line": 4, "text": "hit three"}
+            ]),
+        ),
+        ("files_with_matches", json!(null), json!([])),
+        ("count", json!(3), json!([])),
+    ] {
+        let output = host
+            .invoke(ToolHostCall::new(
+                "grep",
+                json!({"pattern": "hit", "output_mode": mode}),
+            ))
+            .await
+            .unwrap();
+        let data = output.structured_content().expect("structured grep result");
+        assert_eq!(
+            data,
+            &json!({
+                "files": [{"path": "hits.txt", "count": count, "lines": lines}],
+                "total_matches": count,
+                "stopped": []
+            }),
+            "{mode}"
+        );
+        validator.validate(data).unwrap();
+    }
 }

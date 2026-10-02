@@ -67,21 +67,21 @@ impl Tool for CodeModeTool {
                     ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
                 })?;
             let bridge = Arc::new(ToolHostBridge::new(self.surface.clone(), context.clone())?);
-            let cancellation = context.cancellation().clone();
             let script_bridge = bridge.clone();
             let script_thread = tokio::task::spawn_blocking(move || {
                 evaluate_code_mode(&script, script_bridge, EngineLimits::default())
             });
-            let evaluation = tokio::select! {
-                () = cancellation.cancelled() => return Err(ToolError::cancelled()),
-                joined = script_thread => joined.map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?,
-            };
+            // Both evaluator ticks and native waits observe parent cancellation.
+            // Join the blocking worker rather than abandoning a still-running script.
+            let evaluation = script_thread
+                .await
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
             if context.cancellation().is_cancelled() {
                 return Err(ToolError::cancelled());
             }
             let (return_value, error) = match evaluation.result {
                 Ok(value) => (value, None),
-                Err(error) => (serde_json::Value::Null, Some(error.to_string())),
+                Err(error) => (serde_json::Value::Null, Some(format!("{error:#}"))),
             };
             let output = EngineOutput {
                 return_value,

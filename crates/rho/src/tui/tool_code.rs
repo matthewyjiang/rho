@@ -17,7 +17,7 @@ use super::{
 /// Content column indent under the tool tree (matches tool_card_render).
 const CHILD_CONTENT_INDENT: &str = "    ";
 
-/// Stateful highlighter for a `ToolBody::Code` body. Feed lines in order so
+/// Stateful highlighter for a code-syntax body. Feed lines in order so
 /// multi-line tokens (strings, comments) keep their state.
 pub(super) struct CodeSyntax {
     language: String,

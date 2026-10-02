@@ -509,7 +509,10 @@ fn toggle_check_does_not_highlight() {
     let card = large_rust_diff_card(120);
     reset_highlight_line_calls();
     assert!(card_is_toggleable(
-        &card, /*width*/ 100, /*max_tool_output_lines*/ 10, /*expanded*/ false,
+        &card.clone().into(),
+        /*width*/ 100,
+        /*max_tool_output_lines*/ 10,
+        /*expanded*/ false,
     ));
     assert_eq!(
         take_highlight_line_calls(),

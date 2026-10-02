@@ -51,7 +51,7 @@ fn finished_cards(effects: &[StreamEffect]) -> Vec<&rho_tools::tool_card::ToolCa
             StreamEffect::Attachment(AttachmentEvent::ToolFinished {
                 presentation: crate::presentation::Presentation::Card(card),
                 ..
-            }) => Some(card),
+            }) => Some(&card.card),
             _ => None,
         })
         .collect()

@@ -7,17 +7,20 @@ use crate::{
     CapabilityRequest, HostInputRequest, HostInputResponse, ToolCallId, Workspace,
 };
 
+mod arbiter;
 mod first_capability;
 mod output;
 mod preparation;
 mod progress;
 mod registry;
+pub(crate) mod scheduling;
 mod worker;
 
 pub use output::{ToolAsset, ToolError, ToolErrorKind, ToolMetadata, ToolOutput};
 pub use progress::{tool_progress_channel, ToolProgress, ToolProgressReceiver, ToolProgressSender};
 pub use registry::{advertised_specs, DuplicateToolName, ToolRegistry, ToolVisibility};
 
+pub(crate) use arbiter::ExecutionArbiter;
 pub(crate) use first_capability::FirstCapability;
 use preparation::call_prepared_for;
 pub use preparation::{
@@ -171,9 +174,12 @@ pub struct ToolContext {
     progress: ToolProgressSender,
     first_capability: FirstCapability,
     detached: bool,
+    invocation_source: ToolInvocationSource,
 }
 
 impl ToolContext {
+    /// Creates a standalone host-originated context. SDK orchestration supplies
+    /// the actual initiating source when attaching a context to an invocation.
     pub fn new(
         workspace: Option<Workspace>,
         cancellation: CancellationToken,
@@ -188,6 +194,7 @@ impl ToolContext {
             progress,
             first_capability: FirstCapability::default(),
             detached: false,
+            invocation_source: ToolInvocationSource::Host,
         }
     }
 
@@ -206,7 +213,18 @@ impl ToolContext {
             progress,
             first_capability: FirstCapability::default(),
             detached: false,
+            invocation_source: ToolInvocationSource::Host,
         }
+    }
+
+    /// The initiating actor, preserved when this call creates a child tool host.
+    pub fn invocation_source(&self) -> ToolInvocationSource {
+        self.invocation_source
+    }
+
+    pub(crate) fn with_invocation_source(mut self, source: ToolInvocationSource) -> Self {
+        self.invocation_source = source;
+        self
     }
 
     pub(crate) fn with_call_id(mut self, call_id: ToolCallId) -> Self {
@@ -338,13 +356,13 @@ pub trait Tool: Send + Sync {
         ToolExecutionMode::Sync
     }
 
-    /// JSON Schema for [`ToolOutput::structured_content`], including completed
-    /// results marked with [`ToolOutput::failed`], when the tool produces one.
+    /// JSON Schema for retained successful [`ToolOutput::structured_content`].
     ///
     /// Not sent to providers: the model reads text content. Programmatic
     /// callers, such as script hosts that call tools, use it to document and
-    /// read results. Implementors that declare a schema should attach
-    /// structured content on every completed call.
+    /// validate successful structured results. Failed output is not constrained
+    /// by this schema. Structured content may be absent, including when result
+    /// budget limits discard it; callers must handle that separately.
     fn output_schema(&self) -> Option<Value> {
         None
     }

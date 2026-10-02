@@ -14,14 +14,12 @@ impl CompletedToolOutput {
     pub(super) fn new(name: &str, id: &str, completion: &ToolCompletion) -> Self {
         Self {
             result: completion.model_result(name, id),
-            supplement: match completion {
-                ToolCompletion::Success(output) => {
+            supplement: completion
+                .output()
+                .filter(|_| !completion.is_failure())
+                .and_then(|output| {
                     Message::tool_image_supplement(name, id, output.images().to_vec())
-                }
-                ToolCompletion::CompletedFailure(_)
-                | ToolCompletion::Failure(_)
-                | ToolCompletion::Unavailable => None,
-            },
+                }),
         }
     }
 

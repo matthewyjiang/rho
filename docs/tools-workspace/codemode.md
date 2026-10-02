@@ -37,9 +37,10 @@ what scripts can call.
   calls an undeclared tool directly, Rho returns an unavailable-tool error.
 
 Rho never sends MCP tool schemas to the provider. To find a tool, the model
-calls `tool_search`, or a script calls `search_tools`. Both return names,
-descriptions, and result schemas. Finding a tool does not add it to the direct
-list.
+calls `tool_search`, which returns names, descriptions, and parameter and return
+schemas. Scripts use `search_tools` or `list_tools` for compact name-and-description
+summaries, then `describe_tool` for complete schemas. Finding a tool does not add
+it to the direct list.
 
 Set the mode in [configuration](/configuration#codemode) or with
 `/codemode on|only` in the [interactive TUI](/interactive-tui). The command
@@ -69,30 +70,36 @@ There is no `while`, `try`, `import`, or exception handling.
 | `call_tools([(name, args), ...])` | Result envelopes in input order |
 | `search_tools(query, limit=10)` | `[{name, description}]` rows |
 | `list_tools(limit=50)` | `[{name, description}]` rows |
-| `describe_tool(name)` | Full catalog entry, including the `returns` schema |
+| `describe_tool(name)` | Full catalog entry, including the `parameters` and `returns` schemas |
 | `print(...)` | Captures a line of output |
 
 Each result envelope is `{is_error, content, data}`:
 
-- `is_error`: `True` when the tool ran but reported failure, such as a shell
-  command that exited nonzero or an MCP `isError` response.
+- `is_error`: `True` for a completed tool failure, such as a shell command that
+  exited nonzero or an MCP `isError` response, and for invocation errors returned
+  by `call_tools`, such as denial or invalid arguments.
 - `content`: the text the model would have seen from a direct call.
 - `data`: the tool's structured result, or `None` when the tool returns text only
   or the value exceeds the tool output limit. See
   [Structured output](/sdk/tools#structured-output) for built-in result shapes.
 
-A failed result is a value, so the script can branch on it. A denial, bad
-arguments, or an error that stops a tool before it finishes raises a script
-error.
+`call_tool` returns completed failures as values, so the script can branch on
+`is_error`. Invocation errors, including denial, invalid arguments, and errors
+that prevent a completed output, raise a script error instead.
 
 `call_tools` runs independent calls concurrently, up to 4 at once. That is the
 same limit Rho applies to a parallel tool batch from the model. A script must
-make dependent calls in order itself. If one call in a batch cannot finish, its envelope reports an error
-and the other calls still run.
+make dependent calls in order itself. Invocation errors in a batch become
+per-item `{is_error: True, content, data: None}` envelopes; sibling calls keep
+going and results stay in input order. Parent cancellation and rejection of
+the whole batch for exceeding the nested-call budget fail the script instead.
+Check every returned envelope before using its data, including batch results.
+A non-error envelope can still have `data: None` for text-only or oversized
+results.
 
-Assign `result = ...` to return a JSON value. The model receives the printed
-lines followed by `result`. A value that cannot be represented as JSON fails the
-script instead of becoming `null`.
+Assign `result = ...` to return a JSON value. On success, the model receives the
+printed lines followed by `result`. A value that cannot be represented as JSON
+fails the script instead of becoming `null`.
 
 ```python
 hits = call_tool("grep", {"pattern": "TODO", "path": "src"})
@@ -113,7 +120,12 @@ result = files[:20]
 
 A `call_tools` batch counts toward the 64-call limit before any call in it starts.
 There is no separate wall-clock limit for scripts; each nested tool keeps its own
-timeout. A script that fails still returns its printed output and call log.
+timeout. A script that fails retains its captured prints and call log. The
+model-facing text shows prints first, then the failure diagnostic. If that
+output exceeds the limit, prints are truncated with a notice so the failure
+block survives. The structured codemode result includes an `error` string with
+the full multi-line Starlark diagnostic on failure; that field is omitted on
+success.
 
 ## In the TUI
 

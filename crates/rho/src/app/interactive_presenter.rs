@@ -8,6 +8,10 @@ use rho_sdk::{
 
 use rho_tools::tool_card::ToolCard;
 
+#[path = "interactive_presenter_tool_card.rs"]
+mod tool_card;
+pub(crate) use tool_card::{PresentedToolCard, ToolBodySyntax};
+
 #[path = "interactive_presenter_agent.rs"]
 mod agent_format;
 #[path = "interactive_presenter_codemode.rs"]
@@ -22,7 +26,7 @@ use format::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ToolPresentation {
-    pub(crate) card: ToolCard,
+    pub(crate) card: PresentedToolCard,
     pub(crate) image_asset: Option<ToolAsset>,
 }
 
@@ -248,7 +252,10 @@ impl InteractiveToolPresenter {
         // Streaming previews carry no notices or image assets; skip a second
         // argument parse just to assemble ToolPresentation.
         Some(ToolPresentation {
-            card,
+            card: PresentedToolCard {
+                card,
+                body_syntax: body_syntax(kind),
+            },
             image_asset: None,
         })
     }
@@ -355,25 +362,22 @@ impl InteractiveToolPresenter {
                 arguments: serde_json::Value::Object(Default::default()),
                 metadata: ToolMetadata::default(),
             });
-        let mut data = None;
-        let mut completed_content = |output: rho_sdk::tool::ToolOutput| {
-            if output.presentation() != &ToolMetadata::default() {
-                view.metadata = output.presentation().clone();
+        let (ok, content, data) = match &result {
+            ToolCompletion::Success(output) | ToolCompletion::CompletedFailure(output) => {
+                if output.presentation() != &ToolMetadata::default() {
+                    view.metadata = output.presentation().clone();
+                }
+                (
+                    !result.is_failure(),
+                    output.content(),
+                    output.structured_content(),
+                )
             }
-            data = output.structured_content().cloned();
-            output.content().to_string()
+            ToolCompletion::Failure(error) => (false, error.message(), None),
+            ToolCompletion::Unavailable => (false, "tool is unavailable", None),
+            _ => (false, "unknown tool result", None),
         };
-        let (ok, content) = match result {
-            ToolCompletion::Success(output) => (true, completed_content(output)),
-            ToolCompletion::CompletedFailure(output) => (false, completed_content(output)),
-            ToolCompletion::Failure(error) => (false, error.message().to_string()),
-            ToolCompletion::Unavailable => (false, "tool is unavailable".into()),
-            _ => (false, "unknown tool result".into()),
-        };
-        (
-            ok,
-            self.finished_presentation(&view, &content, ok, data.as_ref()),
-        )
+        (ok, self.finished_presentation(&view, content, ok, data))
     }
 
     /// `data` is the live structured output; replayed history has none.
@@ -390,27 +394,16 @@ impl InteractiveToolPresenter {
                 image_asset: None,
             };
         }
-        if view.kind == ToolKind::Codemode {
-            let calls = data
-                .and_then(|data| data.get("calls"))
-                .and_then(serde_json::Value::as_u64)
-                .and_then(|calls| usize::try_from(calls).ok());
-            let card = codemode_format::finished_card(&view.arguments, content, ok, calls);
-            return FinishedToolPresentation {
-                presentation: presentation(view, card).card.into(),
-                image_asset: None,
-            };
-        }
         if view.kind == ToolKind::Sessions {
             if let Some(mut card) = sessions_format::finished_card(&view.arguments, content, ok) {
                 card.push_notice_facts(view.metadata.presentation_notices());
                 return FinishedToolPresentation {
-                    presentation: crate::presentation::Presentation::SummaryCard(card),
+                    presentation: crate::presentation::Presentation::SummaryCard(card.into()),
                     image_asset: None,
                 };
             }
         }
-        let presented = presentation(view, finished_card(view, content, ok, &self.cwd));
+        let presented = presentation(view, finished_card(view, content, ok, &self.cwd, data));
         FinishedToolPresentation {
             // A loaded skill collapses to a receipt; expanding shows the text
             // the model received. A failed load stays an ordinary card so its

@@ -142,7 +142,13 @@ impl<'a> From<&'a crate::ToolCompletion> for ToolOutcomeRef<'a> {
     fn from(completion: &'a crate::ToolCompletion) -> Self {
         match completion {
             crate::ToolCompletion::Success(output)
-            | crate::ToolCompletion::CompletedFailure(output) => Self::Completed(output),
+            | crate::ToolCompletion::CompletedFailure(output) => {
+                if completion.is_failure() {
+                    Self::Failed(crate::tool::ToolErrorKind::Execution, output.content())
+                } else {
+                    Self::Completed(output)
+                }
+            }
             crate::ToolCompletion::Failure(failure) => {
                 Self::Failed(failure.kind(), failure.message())
             }

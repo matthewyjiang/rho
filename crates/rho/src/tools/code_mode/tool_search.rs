@@ -36,7 +36,7 @@ impl Tool for ToolSearchTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: TOOL_SEARCH_NAME.into(),
-            description: "Discover script-callable tools by name or description, including MCP tools and native tools in codemode only mode. Returns names, descriptions, and output schemas; call discovered tools through codemode.".into(),
+            description: "Discover script-callable tools by name or description, including MCP tools and native tools in codemode only mode. Returns names, descriptions, and parameter and return schemas; call discovered tools through codemode.".into(),
             input_schema: json!({"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "default": 10}}, "required": ["query"], "additionalProperties": false}),
         }
     }

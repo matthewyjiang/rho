@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Presentation {
-    Card(rho_tools::tool_card::ToolCard),
+    Card(crate::app::interactive_presenter::PresentedToolCard),
     /// Facts-only receipt when collapsed; expansion reveals the full body.
-    SummaryCard(rho_tools::tool_card::ToolCard),
+    SummaryCard(crate::app::interactive_presenter::PresentedToolCard),
     /// Saved as `message`; the name predates non-agent notifications.
     #[serde(rename = "message")]
     Notification(Box<NotificationCard>),
@@ -16,6 +16,12 @@ pub(crate) enum Presentation {
 
 impl From<rho_tools::tool_card::ToolCard> for Presentation {
     fn from(card: rho_tools::tool_card::ToolCard) -> Self {
+        Self::Card(card.into())
+    }
+}
+
+impl From<crate::app::interactive_presenter::PresentedToolCard> for Presentation {
+    fn from(card: crate::app::interactive_presenter::PresentedToolCard) -> Self {
         Self::Card(card)
     }
 }

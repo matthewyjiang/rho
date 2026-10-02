@@ -224,6 +224,13 @@ pub fn format_diff_stat_plain(added: u64, removed: u64, path: Option<&str>) -> S
 }
 
 /// Optional expandable body content.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-agent-tools): add a code body variant to ToolBody (or make tool_card crate-internal).
+///
+/// Source code uses `Lines` until the next major to preserve exhaustive matches
+/// in minor releases; hosts carry syntax metadata alongside the card.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "kind", content = "lines", rename_all = "snake_case")]
 pub enum ToolBody {
@@ -232,19 +239,13 @@ pub enum ToolBody {
     Lines(Vec<String>),
     /// Compact diff body with per-row line numbers and change kinds.
     Diff(Vec<DiffRow>),
-    /// Source lines highlighted as `language`, a fence token such as `python`
-    /// or `rust`. Unknown languages render as plain lines.
-    Code {
-        language: String,
-        lines: Vec<String>,
-    },
 }
 
 impl ToolBody {
     pub fn is_empty(&self) -> bool {
         match self {
             Self::None => true,
-            Self::Lines(lines) | Self::Code { lines, .. } => {
+            Self::Lines(lines) => {
                 lines.is_empty() || lines.iter().all(|line| line.trim().is_empty())
             }
             Self::Diff(rows) => rows.is_empty(),
@@ -254,9 +255,7 @@ impl ToolBody {
     pub fn line_count(&self) -> usize {
         match self {
             Self::None => 0,
-            Self::Lines(lines) | Self::Code { lines, .. } => {
-                lines.iter().map(|line| line.lines().count().max(1)).sum()
-            }
+            Self::Lines(lines) => lines.iter().map(|line| line.lines().count().max(1)).sum(),
             Self::Diff(rows) => rows.len(),
         }
     }
@@ -269,7 +268,7 @@ impl ToolBody {
     pub fn plain_lines(&self) -> Vec<String> {
         match self {
             Self::None => Vec::new(),
-            Self::Lines(lines) | Self::Code { lines, .. } => lines.clone(),
+            Self::Lines(lines) => lines.clone(),
             Self::Diff(rows) => rows.iter().map(DiffRow::plain_text).collect(),
         }
     }

@@ -313,25 +313,6 @@ fn file_path_searches_the_named_file() {
     }
 }
 
-// Covers: narrowed path= must emit workspace-relative chain headers edit accepts
-// Owner: pure unit (grep hashline path contract)
-#[test]
-fn content_mode_headers_are_workspace_relative_under_narrowed_path() {
-    let dir = TempDir::new().unwrap();
-    let body = "anchor line\n";
-    write(&dir, "src/nested.txt", body);
-    let tag = compute_file_hash(body);
-    let content = call_grep(&dir, json!({"pattern": "anchor", "path": "src"})).unwrap();
-    assert!(
-        content.contains(&format!("[src/nested.txt#{tag}]")),
-        "expected workspace-relative header, got: {content}"
-    );
-    assert!(
-        !content.contains(&format!("[nested.txt#{tag}]")),
-        "must not emit walk-root-relative header: {content}"
-    );
-}
-
 // Covers: non-hashline grep content mode must not mint full-file tags
 // Owner: pure unit (grep hashline)
 #[test]

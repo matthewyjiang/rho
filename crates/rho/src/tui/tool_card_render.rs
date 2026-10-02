@@ -11,6 +11,8 @@ use rho_tools::tool_card::{
 };
 use unicode_width::UnicodeWidthStr;
 
+use crate::app::interactive_presenter::{PresentedToolCard, ToolBodySyntax};
+
 #[path = "tool_card_header.rs"]
 mod header;
 use header::push_header_line;
@@ -186,7 +188,7 @@ pub(super) fn push_tool_card(
     live_elapsed: Option<Duration>,
 ) {
     let sections = paint_card_sections(
-        card,
+        &card.clone().into(),
         width,
         max_tool_output_lines.max(1),
         expanded,
@@ -209,7 +211,7 @@ pub(super) struct CardSections {
 }
 
 pub(super) fn paint_card_sections(
-    card: &ToolCard,
+    card: &PresentedToolCard,
     width: usize,
     collapsed_rows: usize,
     expanded: bool,
@@ -342,7 +344,7 @@ pub(super) fn paint_live_prefix(
 
 /// Whether ctrl+o / click should toggle this tool at the given terminal width.
 pub(super) fn card_is_toggleable(
-    card: &ToolCard,
+    card: &PresentedToolCard,
     width: usize,
     max_tool_output_lines: usize,
     _expanded: bool,
@@ -363,7 +365,7 @@ struct ChildRender {
 /// `n` terminal rows are language-painted; the remainder is wrap-estimated so
 /// collapse stays cheap and expand still shows an accurate "... N more" count.
 fn render_child_groups(
-    card: &ToolCard,
+    card: &PresentedToolCard,
     width: usize,
     paint_budget: Option<usize>,
     live_elapsed: Option<Duration>,
@@ -384,9 +386,9 @@ fn render_child_groups(
         );
     }
 
-    match &card.body {
-        ToolBody::None => {}
-        ToolBody::Lines(body) => {
+    match (&card.body, &card.body_syntax) {
+        (ToolBody::None, _) => {}
+        (ToolBody::Lines(body), ToolBodySyntax::Plain) => {
             let logical = tool_diff::logical_lines(body);
             let search_mode = card.match_pattern.is_some();
             let mut search = card.match_pattern.as_ref().map(|pattern| {
@@ -420,7 +422,7 @@ fn render_child_groups(
                 );
             }
         }
-        ToolBody::Code { language, lines } => {
+        (ToolBody::Lines(lines), ToolBodySyntax::Code { language }) => {
             let mut syntax = CodeSyntax::new(language);
             for line in &tool_diff::logical_lines(lines) {
                 if paint_remaining == 0 {
@@ -437,7 +439,7 @@ fn render_child_groups(
                 );
             }
         }
-        ToolBody::Diff(rows) => {
+        (ToolBody::Diff(rows), _) => {
             let gutter = tool_diff::gutter_width(rows);
             let fallback = rows
                 .iter()
@@ -515,25 +517,25 @@ fn take_group(
 }
 
 /// Full child terminal-row estimate without language highlighting.
-fn estimate_child_terminal_rows(card: &ToolCard, width: usize) -> usize {
+fn estimate_child_terminal_rows(card: &PresentedToolCard, width: usize) -> usize {
     let mut total = 0usize;
     for fact in &card.facts {
         total = total.saturating_add(estimate_fact_rows(fact, width));
     }
-    match &card.body {
-        ToolBody::None => {}
-        ToolBody::Lines(body) => {
+    match (&card.body, &card.body_syntax) {
+        (ToolBody::None, _) => {}
+        (ToolBody::Lines(body), ToolBodySyntax::Plain) => {
             let logical = tool_diff::logical_lines(body);
             let search_mode = card.match_pattern.is_some();
             total = total.saturating_add(estimate_lines_rows(&logical, width, search_mode));
         }
-        ToolBody::Code { lines, .. } => {
+        (ToolBody::Lines(lines), ToolBodySyntax::Code { .. }) => {
             total = tool_diff::logical_lines(lines)
                 .iter()
                 .map(|line| estimate_plain_body_rows(line, width))
                 .fold(total, usize::saturating_add);
         }
-        ToolBody::Diff(rows) => {
+        (ToolBody::Diff(rows), _) => {
             let gutter = tool_diff::gutter_width(rows);
             total = total.saturating_add(estimate_diff_rows(rows, gutter, width));
         }

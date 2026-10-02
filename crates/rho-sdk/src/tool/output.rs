@@ -155,10 +155,12 @@ impl ToolOutput {
         self.failure
     }
 
-    /// Attaches a machine-readable result matching [`Tool::output_schema`].
+    /// Attaches a machine-readable result for programmatic callers.
     ///
-    /// The model still receives [`Self::content`]; structured content is for
-    /// programmatic callers such as nested script hosts.
+    /// Retained successful content should match [`Tool::output_schema`], when
+    /// declared; failed content is not constrained by that schema. Result budget
+    /// limits may discard structured content, so callers must handle its absence.
+    /// The model still receives [`Self::content`].
     pub fn with_structured_content(mut self, structured: Value) -> Self {
         self.structured = Some(Box::new(structured));
         self

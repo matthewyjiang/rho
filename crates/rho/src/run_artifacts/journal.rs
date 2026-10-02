@@ -7,7 +7,7 @@ use std::{
 use rho_sdk::model::{ContextUsage, ModelUsage};
 use serde::{Deserialize, Serialize};
 
-use {crate::subagent, rho_tools::tool_card::ToolCard};
+use crate::{app::interactive_presenter::PresentedToolCard, subagent};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
@@ -20,12 +20,12 @@ pub(crate) enum AttachmentEvent {
         /// Stable tool identity for concurrent live cards. Absent on legacy journals.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
-        card: ToolCard,
+        card: PresentedToolCard,
     },
     ToolUpdated {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
-        card: ToolCard,
+        card: PresentedToolCard,
     },
     ToolFinished {
         #[serde(default, skip_serializing_if = "Option::is_none")]

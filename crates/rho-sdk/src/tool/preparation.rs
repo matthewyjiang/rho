@@ -210,6 +210,7 @@ where
     T: Tool + ?Sized,
 {
     Box::pin(async move {
+        let execution = execution.with_invocation_source(invocation.source());
         let preparation = ToolPreparationContext::from_execution(&execution);
         let prepared = tool.prepare(invocation, preparation).await?;
         // Reaching here means `call` routed to `prepare`. A plan that routes
