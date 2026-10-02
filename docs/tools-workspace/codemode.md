@@ -33,12 +33,13 @@ what scripts can call.
 | MCP tools | script-only | script-only |
 
 - `on`: the model can call native tools directly or through a script.
-- `only`: the model reaches every other tool through `codemode`. A direct call to
-  a tool that is not declared resolves as unavailable.
+- `only`: the model reaches every other tool through `codemode`. If the model
+  calls an undeclared tool directly, Rho returns an unavailable-tool error.
 
-MCP tool schemas are never declared to the provider. Use `tool_search`, or
-`search_tools` inside a script, to find tools by name and description and see
-their result schemas. Discovery does not add a tool to the direct list.
+Rho never sends MCP tool schemas to the provider. To find a tool, the model
+calls `tool_search`, or a script calls `search_tools`. Both return names,
+descriptions, and result schemas. Finding a tool does not add it to the direct
+list.
 
 Set the mode in [configuration](/configuration#codemode) or with
 `/codemode on|only` in the [interactive TUI](/interactive-tui). The command
@@ -54,8 +55,8 @@ it, and approvals you already gave apply to nested calls too. Questions from a
 nested tool reach you through the parent `codemode` call. Cancelling the parent
 call cancels the nested call that is running.
 
-`codemode` and `tool_search` are not callable from inside a script; calling them
-fails as an unknown tool.
+A script cannot call `codemode` or `tool_search`. Rho rejects either name as an
+unknown tool.
 
 ## Script API
 
@@ -80,12 +81,13 @@ Each result envelope is `{is_error, content, data}`:
   or the value exceeds the tool output limit. See
   [Structured output](/sdk/tools#structured-output) for built-in result shapes.
 
-A failed result is a value, so the script can branch on it. Denials, bad
-arguments, and errors that stop a tool before it finishes raise a script error.
+A failed result is a value, so the script can branch on it. A denial, bad
+arguments, or an error that stops a tool before it finishes raises a script
+error.
 
-`call_tools` runs independent calls concurrently, up to 4 at once (the same width
-as a parallel tool batch from the model). Scripts order dependent calls
-themselves. If one call in a batch cannot finish, its envelope reports an error
+`call_tools` runs independent calls concurrently, up to 4 at once. That is the
+same limit Rho applies to a parallel tool batch from the model. A script must
+make dependent calls in order itself. If one call in a batch cannot finish, its envelope reports an error
 and the other calls still run.
 
 Assign `result = ...` to return a JSON value. The model receives the printed
