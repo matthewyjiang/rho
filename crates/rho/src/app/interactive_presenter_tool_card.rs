@@ -5,6 +5,22 @@ use std::ops::Deref;
 use rho_tools::tool_card::ToolCard;
 use serde::{Deserialize, Serialize};
 
+/// Which end of a source body stays visible when its card is collapsed.
+/// The full body remains available on expansion; this never discards history.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ToolBodyWindow {
+    #[default]
+    Head,
+    Tail,
+}
+
+impl ToolBodyWindow {
+    fn is_head(&self) -> bool {
+        matches!(self, Self::Head)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum ToolBodySyntax {
@@ -12,6 +28,8 @@ pub(crate) enum ToolBodySyntax {
     Plain,
     Code {
         language: String,
+        #[serde(default, skip_serializing_if = "ToolBodyWindow::is_head")]
+        window: ToolBodyWindow,
     },
 }
 

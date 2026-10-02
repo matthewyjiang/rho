@@ -10,7 +10,10 @@ use rho_tools::tool_card::ToolCard;
 
 #[path = "interactive_presenter_tool_card.rs"]
 mod tool_card;
-pub(crate) use tool_card::{PresentedToolCard, ToolBodySyntax};
+pub(crate) use tool_card::{PresentedToolCard, ToolBodySyntax, ToolBodyWindow};
+
+#[path = "interactive_presenter_script_stream.rs"]
+mod script_stream;
 
 #[path = "interactive_presenter_agent.rs"]
 mod agent_format;
@@ -114,6 +117,7 @@ impl ToolKind {
     /// writes; identical renders are still suppressed by `last_card`, so the
     /// stride bounds parse cost rather than update rate. Ordinary tool calls
     /// stay under [`PREVIEW_FULL_PARSE_LIMIT`] and re-render delta for delta.
+    /// Codemode source uses its incremental decoder instead of this path.
     /// Oversized buffers, including long agent prompts, fall back to a coarse
     /// stride so parse cost stays linear in argument size.
     fn preview_parse_stride(self, arguments_len: usize) -> usize {
@@ -180,6 +184,7 @@ struct StreamedPreview {
     next_parse_length: usize,
     last_args: Option<serde_json::Value>,
     last_card: Option<ToolCard>,
+    script: script_stream::ScriptStream,
 }
 
 pub(crate) struct InteractiveToolPresenter {
@@ -219,6 +224,7 @@ impl InteractiveToolPresenter {
             preview.next_parse_length = 0;
             preview.last_args = None;
             preview.last_card = None;
+            preview.script = script_stream::ScriptStream::default();
         }
         if let Some(name) = name {
             preview.name = Some(name);
@@ -231,6 +237,24 @@ impl InteractiveToolPresenter {
             return None;
         }
         let name = preview.name.as_deref()?;
+        if ToolKind::from_name(name) == ToolKind::Codemode {
+            let changed = preview.script.update(&preview.arguments);
+            if !changed && preview.last_card.is_some() {
+                return None;
+            }
+            let card = codemode_format::streaming_card(preview.script.lines());
+            if preview.last_card.as_ref() == Some(&card) {
+                return None;
+            }
+            preview.last_card = Some(card.clone());
+            return Some(ToolPresentation {
+                card: PresentedToolCard {
+                    card,
+                    body_syntax: codemode_format::body_syntax(ToolBodyWindow::Tail),
+                },
+                image_asset: None,
+            });
+        }
         if !name_changed && preview.arguments.len() < preview.next_parse_length {
             return None;
         }
@@ -266,8 +290,14 @@ impl InteractiveToolPresenter {
         partial_arguments: &str,
     ) -> ToolPresentation {
         let name = name.unwrap_or("tool call");
-        let arguments = parse_incomplete_json(partial_arguments)
-            .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+        let arguments = if ToolKind::from_name(name) == ToolKind::Codemode {
+            let mut script = script_stream::ScriptStream::default();
+            script.update(partial_arguments);
+            serde_json::json!({"script": script.lines().join("\n")})
+        } else {
+            parse_incomplete_json(partial_arguments)
+                .unwrap_or_else(|| serde_json::Value::Object(Default::default()))
+        };
         let view = ToolView {
             kind: ToolKind::from_name_and_args(name, Some(&arguments)),
             name: name.into(),

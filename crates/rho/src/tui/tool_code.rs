@@ -98,6 +98,18 @@ impl CodeSyntax {
         out.len() - start
     }
 
+    /// Feed hidden source without wrapping or allocating terminal rows.
+    pub(super) fn advance_line(&mut self, line: &str) {
+        if line.len() > Self::line_byte_limit(&self.language) {
+            self.highlighter = BlockHighlighter::for_language(&self.language);
+        } else if self.highlighted_lines < MAX_TOOL_SYNTAX_LINES {
+            if let Some(highlighter) = self.highlighter.as_mut() {
+                self.highlighted_lines += 1;
+                highlighter.advance_line(line);
+            }
+        }
+    }
+
     /// Overlong lines stay plain with a visible budget notice and
     /// restart the stream so the next line does not inherit a desynced stack.
     fn highlight(&mut self, line: &str) -> Vec<HighlightSegment> {

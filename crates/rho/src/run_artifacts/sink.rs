@@ -93,7 +93,7 @@ enum WriterCommand {
     /// Final ordered write, then stop the worker.
     Finish {
         status: RunStatus,
-        terminal_attachment: Option<AttachmentEvent>,
+        terminal_attachment: Option<Box<AttachmentEvent>>,
     },
 }
 
@@ -389,7 +389,7 @@ impl RunArtifactSink {
         if let Some(tx) = self.tx.take() {
             let _ = tx.send(WriterCommand::Finish {
                 status: self.status.clone(),
-                terminal_attachment,
+                terminal_attachment: terminal_attachment.map(Box::new),
             });
             // Dropping the sender closes the queue after Finish.
             drop(tx);

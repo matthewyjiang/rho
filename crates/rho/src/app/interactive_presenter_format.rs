@@ -27,7 +27,7 @@ use super::{
 
 pub(super) fn body_syntax(kind: ToolKind) -> ToolBodySyntax {
     match kind {
-        ToolKind::Codemode => codemode_format::body_syntax(),
+        ToolKind::Codemode => codemode_format::body_syntax(super::ToolBodyWindow::Head),
         ToolKind::Advisor
         | ToolKind::Agent
         | ToolKind::Agents
@@ -599,6 +599,9 @@ pub(super) fn interrupted_card(
         ToolKind::Advisor => advisor_card(ToolStatus::Interrupted, "interrupted"),
         ToolKind::Agent => agent_format::agent_interrupted_card(&view.arguments),
         ToolKind::Agents => agent_format::agents_interrupted_card(&view.arguments),
+        ToolKind::Codemode => {
+            codemode_format::preview_card(&view.arguments, ToolStatus::Interrupted, None)
+        }
         ToolKind::Edit(format) => {
             edit_preview_card(format, &view.arguments, cwd, ToolStatus::Interrupted)
         }
