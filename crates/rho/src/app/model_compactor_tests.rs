@@ -60,7 +60,7 @@ fn compactor(
 ) -> ModelCompactor {
     build_compaction(CompactionSetup {
         provider: Arc::new(provider) as Arc<dyn ModelProvider>,
-        tools: &[],
+        tool_specs: Vec::new(),
         reasoning: rho_sdk::ReasoningLevel::Off,
         compaction: CompactionConfig {
             auto_compact: false,
@@ -389,7 +389,7 @@ fn tiered_compactor(
     let diagnostics = seeded_diagnostics();
     let compactor = build_compaction(CompactionSetup {
         provider: Arc::new(provider) as Arc<dyn ModelProvider>,
-        tools: &[],
+        tool_specs: Vec::new(),
         reasoning: rho_sdk::ReasoningLevel::Off,
         compaction: CompactionConfig::default(),
         context_window: Some(1_000_000),
@@ -415,6 +415,107 @@ fn summary_provider() -> ScriptedProvider {
             ContentBlock::Text("summary text".into()),
         ]))],
     )
+}
+
+// Covers: hidden schemas must not shrink the retained tail or force extra
+// elision, including when the live projection advertises no tools.
+// Owner: ModelCompactor context accounting and tier escalation.
+#[tokio::test]
+async fn compaction_sizes_partition_and_elision_against_advertised_tools() {
+    use rho_sdk::model::context::estimate_context_tokens;
+
+    let (old, mut history) = elision_history();
+    history.insert(
+        4,
+        Message::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall {
+            id: "recent-tool".into(),
+            name: "read_file".into(),
+            arguments: serde_json::json!({"path": "recent.rs"}),
+        })]),
+    );
+    history.insert(
+        5,
+        Message::ToolResult(rho_sdk::model::ToolResult {
+            id: "recent-tool".into(),
+            ok: true,
+            content: old.content[..old.content.len() / 10].to_owned(),
+        }),
+    );
+    let hidden = rho_sdk::model::ToolSpec {
+        name: "hidden".into(),
+        description: "not advertised".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "description": "h".repeat(old.content.len()),
+        }),
+    };
+    let registry = vec![read_spec(), hidden];
+    for (case, advertised, can_recall) in [
+        ("subset summary", vec![read_spec()], false),
+        ("subset elision", vec![read_spec()], true),
+        ("empty summary", Vec::new(), false),
+        ("empty elision", Vec::new(), true),
+    ] {
+        // Twice the retained tail leaves room for the summary reserve, but
+        // not the old result. A hidden schema alone exceeds this budget.
+        let target = estimate_context_tokens(&history[..2], &advertised)
+            + 2 * estimate_context_tokens(&history[4..], &advertised);
+        assert!(estimate_context_tokens(&history, &advertised) > target);
+        assert!(estimate_context_tokens(&[], &registry) > target);
+        let dir = tempfile::tempdir().unwrap();
+        let recall = crate::session::recall::RecallStore::default();
+        recall.bind(Some(dir.path().join("recall")));
+        let provider = summary_provider();
+        let (mut compactor, diagnostics) = tiered_compactor(
+            provider.clone(),
+            RecordingUsage::default(),
+            can_recall.then_some(recall),
+        );
+        compactor.context_window = Some(2 * target);
+        compactor.tool_specs = registry.clone();
+        let trigger = rho_sdk::CompactionTrigger::Automatic;
+        let output = compactor
+            .compact(
+                CompactionRequest::new(history.clone(), Default::default())
+                    .with_trigger(trigger)
+                    .with_tool_specs(advertised.clone()),
+            )
+            .await
+            .unwrap();
+
+        let expected_tier = if can_recall {
+            // Only the old result changes; the recent tool group stays verbatim.
+            let mut restored = output.messages().to_vec();
+            restored[3] = Message::ToolResult(old.clone());
+            assert_eq!(restored, history, "{case}");
+            assert_eq!(provider.recorded_requests(), Vec::new(), "{case}");
+            CompactionTier::Elision
+        } else {
+            let mut expected = history[..2].to_vec();
+            expected.push(Message::compaction_summary(trigger, "summary text"));
+            expected.extend_from_slice(&history[4..]);
+            assert_eq!(output.messages(), expected, "{case}");
+            assert_eq!(provider.recorded_requests().len(), 1, "{case}");
+            CompactionTier::TextSummary
+        };
+        let record = diagnostics
+            .compaction()
+            .and_then(|compaction| compaction.last_compaction)
+            .unwrap();
+        assert_eq!(
+            (
+                record.tier,
+                record.elided_tool_results,
+                record.context_tokens
+            ),
+            (
+                Some(expected_tier),
+                usize::from(can_recall),
+                estimate_context_tokens(&history, &advertised),
+            ),
+            "{case}"
+        );
+    }
 }
 
 // Covers: elision that reaches the target commits without a model request,

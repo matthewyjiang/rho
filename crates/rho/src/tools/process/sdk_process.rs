@@ -138,9 +138,12 @@ impl SdkProcess {
                 break;
             }
         }
-        super::output::render_snapshot(snapshot)
-            .limit_data(self.max_output_bytes)?
-            .into_tool_output(process_metadata())
+        super::output::limit_process_data(
+            super::output::render_snapshot(snapshot),
+            self.max_output_bytes,
+        )?
+        .limit_data(self.max_output_bytes)?
+        .into_tool_output(process_metadata())
     }
 }
 
@@ -259,7 +262,8 @@ async fn execute_prepared(
             break;
         }
     }
-    run.limit_data(max_output_bytes)?
+    super::output::limit_process_data(run, max_output_bytes)?
+        .limit_data(max_output_bytes)?
         .into_tool_output(process_metadata())
 }
 

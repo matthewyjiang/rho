@@ -134,7 +134,7 @@ pub(super) fn apply_thought_level(
         &built.session,
         CompactionSetup {
             provider: Arc::clone(&built.provider),
-            tools: built.tools.tools(),
+            tool_specs: built.tools.specs(),
             reasoning: level,
             compaction: CompactionConfig::from(config),
             context_window: configured_context_window(config),

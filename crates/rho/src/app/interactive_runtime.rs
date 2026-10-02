@@ -643,7 +643,7 @@ impl InteractiveRuntime {
             self.sessions.session(),
             CompactionSetup {
                 provider: Arc::clone(self.provider.provider()),
-                tools: self.tools.tools(),
+                tool_specs: self.tools.specs(),
                 reasoning: self.provider.reasoning(),
                 compaction: self.compaction.clone(),
                 context_window: self.context_window,

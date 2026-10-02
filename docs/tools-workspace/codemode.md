@@ -108,6 +108,27 @@ print(f"{len(files)} files with TODOs")
 result = files[:20]
 ```
 
+## Waiting for a process
+
+Scripts do not receive process-exit notifications. To wait within a script,
+check each `process` result envelope, then poll with `data.process_id` and
+`cursor: data.next_cursor` while `data.state` is `"starting"` or `"running"`.
+Use `wait_seconds` to wait for output or completion rather than busy-polling.
+If you also need all output, continue polling while `data.output_pending` is
+true, even after the state becomes terminal.
+
+Oversized structured snapshots return a smaller page of `data.chunks` while
+keeping their control fields. `data.next_cursor` points to the first deferred
+chunk; the next poll retrieves it while it remains retained. An optional
+`data.output_budget` notice reports `max_output_bytes`, the original
+`received_bytes`, and counts of `deferred_chunks` and `omitted_chunks`. A chunk
+that cannot fit by itself is omitted and its cursor consumed, matching the
+process poll budget policy; model-facing text is unchanged by this JSON paging
+step. Ordinary retention loss still appears as `data.truncated`. If even the
+control fields exceed the limit, the existing truncation notice appears in
+`content` and `data` is `None`; stop and report that result rather than polling
+without a cursor.
+
 ## Limits
 
 | Limit | Value |

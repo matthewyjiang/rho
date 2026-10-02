@@ -77,7 +77,7 @@ where
     } = options;
     let (compactor, policy) = build_compaction(CompactionSetup {
         provider: Arc::clone(&provider),
-        tools: tools.tools(),
+        tool_specs: tools.specs(),
         reasoning,
         compaction,
         context_window,
@@ -128,9 +128,10 @@ where
 
 /// Inputs for the host compactor and its automatic policy. Every runtime build
 /// and live refresh constructs the compactor from this one shape.
-pub(crate) struct CompactionSetup<'a> {
+pub(crate) struct CompactionSetup {
     pub(crate) provider: Arc<dyn ModelProvider>,
-    pub(crate) tools: &'a [Arc<dyn rho_sdk::tool::Tool>],
+    /// Advertised schemas used only when a compaction request supplies none.
+    pub(crate) tool_specs: Vec<rho_sdk::model::ToolSpec>,
     pub(crate) reasoning: rho_sdk::ReasoningLevel,
     pub(crate) compaction: CompactionConfig,
     pub(crate) context_window: Option<u64>,
@@ -143,11 +144,11 @@ pub(crate) struct CompactionSetup<'a> {
 }
 
 pub(crate) fn build_compaction(
-    setup: CompactionSetup<'_>,
+    setup: CompactionSetup,
 ) -> (ModelCompactor, Option<CompactionPolicy>) {
     let CompactionSetup {
         provider,
-        tools,
+        tool_specs,
         reasoning,
         compaction,
         context_window,
@@ -159,7 +160,7 @@ pub(crate) fn build_compaction(
     let compactor = ModelCompactor {
         provider,
         usage_recording,
-        tool_specs: tools.iter().map(|tool| tool.spec()).collect(),
+        tool_specs,
         reasoning,
         summarizer: compaction.summarizer.clone().map(Summarizer::new),
         config: compaction,
@@ -174,7 +175,7 @@ pub(crate) fn build_compaction(
 /// inputs `build_compaction` uses at runtime construction.
 pub(crate) fn refresh_session_compaction(
     session: &rho_sdk::Session,
-    setup: CompactionSetup<'_>,
+    setup: CompactionSetup,
 ) -> Result<(), Error> {
     let (compactor, policy) = build_compaction(setup);
     session.set_compaction(Some(Arc::new(compactor)), policy)
