@@ -157,7 +157,7 @@ pub(super) fn search_entries<'a>(
         })
         .collect();
     // Stable sort keeps name order within equal scores.
-    hits.sort_by(|a, b| b.0.cmp(&a.0));
+    hits.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
     hits.into_iter()
         .take(limit)
         .map(|(_, entry)| entry.clone())
