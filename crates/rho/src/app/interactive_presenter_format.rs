@@ -509,11 +509,7 @@ pub(super) fn progress_card(
             return agent_format::agent_progress_card(view, progress.text());
         }
         if view.kind == ToolKind::Codemode {
-            return codemode_format::preview_card(
-                &view.arguments,
-                ToolStatus::Running,
-                /*primary*/ None,
-            );
+            return codemode_format::progress_card(&view.arguments, progress);
         }
         if matches!(view.kind, ToolKind::Bash | ToolKind::PowerShell) {
             let prompt = if view.kind == ToolKind::Bash {

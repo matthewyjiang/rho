@@ -9,7 +9,7 @@ use std::{
 };
 
 use futures_util::{stream, StreamExt};
-use rho_sdk::tool::{ToolContext, ToolOutput, ToolProgress};
+use rho_sdk::tool::{ToolContext, ToolMetadata, ToolOutput, ToolProgress};
 use rho_sdk::{Error as SdkError, ToolHost, ToolHostCall, ToolHostEvent, ToolHostRun};
 use serde_json::Value;
 use thiserror::Error;
@@ -177,7 +177,9 @@ impl ToolHostBridge {
         result
     }
 
-    /// Updates one record, then relays every row as the parent's progress text.
+    /// Preserve every row for protocol hosts, with a compact live summary and
+    /// completed/started counts for the TUI. Policy comes from typed records,
+    /// never from parsing the rendered snapshot.
     async fn report(&self, index: usize, update: impl FnOnce(&mut NestedCallRecord)) {
         let mut log = self.log.lock().await;
         update(&mut log[index]);
@@ -186,11 +188,27 @@ impl ToolHostBridge {
             .map(NestedCallRecord::row)
             .collect::<Vec<_>>()
             .join("\n");
-        let _ = self
-            .parent
-            .progress()
-            .send(ToolProgress::message(rendered))
-            .await;
+        let completed = log
+            .iter()
+            .filter(|record| match record.status {
+                NestedCallStatus::Running => false,
+                NestedCallStatus::Ok | NestedCallStatus::Error | NestedCallStatus::Cancelled => {
+                    true
+                }
+            })
+            .count();
+        // A finishing sibling must not displace the status of work still running.
+        let current = if log[index].status == NestedCallStatus::Running {
+            &log[index]
+        } else {
+            log.iter()
+                .rfind(|record| record.status == NestedCallStatus::Running)
+                .unwrap_or(&log[index])
+        };
+        let progress = ToolProgress::message(rendered)
+            .units(completed as u64, log.len() as u64)
+            .metadata(ToolMetadata::new().command_summary(current.summary()));
+        let _ = self.parent.progress().send(progress).await;
     }
 
     async fn run_nested(&self, mut run: ToolHostRun, index: usize) -> Result<ToolOutput, SdkError> {
