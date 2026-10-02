@@ -29,7 +29,9 @@ flowchart TD
     id --> done[Completion at next safe runtime boundary]
 ```
 
-Saving or deleting an agent through `/agents` appends a correction only when the parent-facing catalog changes: an agent becomes available or unavailable, its ID changes, or its description changes. The notice contains only those changes, not the child’s prompt or full definition. The catalog deliberately omits models, reasoning, runtimes, and tool policies, so changing those fields—or saving without a catalog change—adds no parent context. Prior messages, the system prompt, and the original tool schema remain unchanged. Each subsequent `agent` call reloads definitions from disk and uses the latest child configuration. Already-running delegated agents and the root session retain their existing configuration. External file edits also apply to subsequent delegated launches, but do not append a conversation notice.
+Edits take effect without rewriting the conversation. Each `agent` call reloads definitions from disk, so the next launch uses the latest prompt, model, reasoning, runtime, and tools. Already-running delegated agents and the root session keep their configuration. Prior messages, the system prompt, and the original tool schema never change.
+
+The `agent` tool advertises only agent IDs and descriptions. After saving or deleting an agent in `/agents`, Rho compares that advertised list, plus any earlier corrections, with the current definitions. If any agent became available or unavailable, or changed its description, Rho appends one correction listing those changes. The correction includes changes made by editing files outside `/agents` since the last correction. External edits never append a correction on their own, and edits to fields that are not advertised append nothing.
 
 ## Definition files
 

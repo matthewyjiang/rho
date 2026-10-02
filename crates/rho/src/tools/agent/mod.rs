@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use {
-    crate::agent::AgentCatalog,
+    crate::agent::{AdvertisedAgents, AgentCatalog},
     crate::app::subagent_manager::ValidatedMessage,
     rho_sdk::tool::{
         OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation,
@@ -41,7 +41,9 @@ pub struct AgentTool {
     manager: SubagentManager,
     /// Directory definitions are rediscovered from at each launch.
     cwd: PathBuf,
-    agent_summaries: Vec<(String, String)>,
+    /// Fixed at construction so the spec never rewrites what the caller was
+    /// told; later corrections are appended to the conversation instead.
+    advertised: AdvertisedAgents,
     mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver>,
 }
 
@@ -54,13 +56,10 @@ impl AgentTool {
         let catalog = catalog.unwrap_or_else(|| {
             Arc::new(AgentCatalog::discover(cwd).expect("agent catalog was validated at startup"))
         });
-        let agent_summaries = crate::agent::advertised_agents(&catalog)
-            .into_iter()
-            .collect();
         Self {
             manager,
             cwd: cwd.to_path_buf(),
-            agent_summaries,
+            advertised: AdvertisedAgents::from_catalog(&catalog),
             mutation_observer: Arc::new(()),
         }
     }
@@ -135,17 +134,13 @@ struct AgentArgs {
 
 impl Tool for AgentTool {
     fn spec(&self) -> rho_sdk::model::ToolSpec {
-        let names: Vec<&str> = self
-            .agent_summaries
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .collect();
+        let names: Vec<&str> = self.advertised.iter().map(|(name, _)| name).collect();
         // Deliberately model-free. Which model an agent runs on can change after
         // this list is written - the conversation model switches, a catalog name
         // arrives - and rewriting the list would change what the caller was
         // already told. Each run reports its own model when it starts instead.
         let summaries = self
-            .agent_summaries
+            .advertised
             .iter()
             .map(|(name, description)| format!("{name}: {description}"))
             .collect::<Vec<_>>()
@@ -427,11 +422,17 @@ pub(super) struct DelegationBundleOptions {
 pub(super) struct SdkDelegationBundle {
     tools: Vec<Arc<dyn rho_sdk::tool::Tool>>,
     manager: SubagentManager,
+    advertised: Option<AdvertisedAgents>,
 }
 
 impl SdkDelegationBundle {
     pub(super) fn manager_handle(&self) -> SubagentManager {
         self.manager.clone()
+    }
+
+    /// The catalog the `agent` tool spec advertises; `None` without that tool.
+    pub(super) fn take_advertised_agents(&mut self) -> Option<AdvertisedAgents> {
+        self.advertised.take()
     }
 }
 
@@ -452,16 +453,21 @@ pub(super) fn sdk_bundle(
 ) -> SdkDelegationBundle {
     let manager = SubagentManager::new(config.clone(), options.config_path, options.cwd.clone());
     let mut tools = Vec::<Arc<dyn rho_sdk::tool::Tool>>::new();
+    let mut advertised = None;
     if options.tools.launches() {
-        tools.push(Arc::new(
-            AgentTool::new(manager.clone(), &options.cwd, options.catalog)
-                .with_mutation_observer(mutation_observer),
-        ));
+        let tool = AgentTool::new(manager.clone(), &options.cwd, options.catalog)
+            .with_mutation_observer(mutation_observer);
+        advertised = Some(tool.advertised.clone());
+        tools.push(Arc::new(tool));
     }
     if options.tools.manages() {
         tools.push(Arc::new(AgentsTool::new(manager.clone())));
     }
-    SdkDelegationBundle { tools, manager }
+    SdkDelegationBundle {
+        tools,
+        manager,
+        advertised,
+    }
 }
 
 #[cfg(test)]

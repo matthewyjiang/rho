@@ -140,6 +140,15 @@ pub(super) fn setup_edit_user_agent(home: &IsolatedHome) -> Result<()> {
     Ok(())
 }
 
+/// Records the provider request (tool schemas plus prior tool history) that
+/// later `fixture agent config ...` prompts compare against.
+fn capture_agent_config_baseline(harness: &mut PtyHarness) -> Result<()> {
+    harness.submit_text("fixture tool")?;
+    harness.wait_for_text("tool lifecycle complete with one result:", STREAM)?;
+    harness.submit_text("fixture agent config baseline")?;
+    harness.wait_for_text("agent config baseline captured", STREAM)
+}
+
 // Covers: saving a description appends only its catalog correction without
 // rewriting original schemas or prior conversation/tool history.
 // Owner: interactive TUI; editor chrome cannot verify provider request payloads.
@@ -150,16 +159,7 @@ pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
         timeout: STARTUP,
     },
     Step::Phase("capture_original_request"),
-    Step::SubmitText("fixture tool"),
-    Step::WaitText {
-        text: "tool lifecycle complete with one result:",
-        timeout: STREAM,
-    },
-    Step::SubmitText("fixture agent config baseline"),
-    Step::WaitText {
-        text: "agent config baseline captured",
-        timeout: STREAM,
-    },
+    Step::Custom(capture_agent_config_baseline),
     Step::Phase("edit_saved_definition"),
     Step::SubmitText("/agents"),
     Step::WaitText {
@@ -226,16 +226,7 @@ pub(super) const DELETE_USER_AGENT_STEPS: &[Step] = &[
         timeout: STARTUP,
     },
     Step::Phase("capture_original_request"),
-    Step::SubmitText("fixture tool"),
-    Step::WaitText {
-        text: "tool lifecycle complete with one result:",
-        timeout: STREAM,
-    },
-    Step::SubmitText("fixture agent config baseline"),
-    Step::WaitText {
-        text: "agent config baseline captured",
-        timeout: STREAM,
-    },
+    Step::Custom(capture_agent_config_baseline),
     Step::SubmitText("/agents"),
     Step::WaitText {
         text: "● editable",
@@ -326,16 +317,7 @@ pub(super) const EDIT_USER_AGENT_TOOLS_STEPS: &[Step] = &[
         timeout: STARTUP,
     },
     Step::Phase("capture_original_request"),
-    Step::SubmitText("fixture tool"),
-    Step::WaitText {
-        text: "tool lifecycle complete with one result:",
-        timeout: STREAM,
-    },
-    Step::SubmitText("fixture agent config baseline"),
-    Step::WaitText {
-        text: "agent config baseline captured",
-        timeout: STREAM,
-    },
+    Step::Custom(capture_agent_config_baseline),
     Step::SubmitText("/agents"),
     Step::WaitText {
         text: "● editable",

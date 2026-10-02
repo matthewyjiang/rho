@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use super::{
     agent_picker::AgentAccess, App, ComposerMode, Entry, InlineChoice, InlineChoiceOption,
-    InlineChoicePending, UiPicker,
+    InlineChoicePending, InteractiveRuntime, UiPicker,
 };
 use crate::agent::{AgentCatalog, AgentOrigin};
 
@@ -39,13 +39,8 @@ impl App {
         let Some(id) = self.selected_view_agent_id() else {
             return Ok(());
         };
-        let catalog = match AgentCatalog::discover(&self.info.runtime.cwd) {
-            Ok(catalog) => catalog,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not load agents: {error}")));
-                self.set_status("agent load failed");
-                return Ok(());
-            }
+        let Some(catalog) = self.load_agents_or_report() else {
+            return Ok(());
         };
         let Some(target) = delete_target(&catalog, &id) else {
             self.set_status("only your agents can be deleted");
@@ -87,20 +82,12 @@ impl App {
         value: &str,
         target: AgentDeleteTarget,
         parent: Option<Box<UiPicker>>,
-    ) -> Option<(AgentCatalog, AgentCatalog)> {
+        agent: &mut InteractiveRuntime,
+    ) {
         if value != "delete" {
             self.restore_agent_delete_parent(parent);
-            return None;
+            return;
         }
-        let before = match AgentCatalog::discover(&self.info.runtime.cwd) {
-            Ok(catalog) => catalog,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not load agents: {error}")));
-                self.restore_agent_delete_parent(parent);
-                self.set_status("agent delete failed");
-                return None;
-            }
-        };
         let cursor = parent.as_deref().map(UiPicker::cursor);
         // Re-authorize: the directory may have changed behind the prompt.
         let removed = crate::agent::authorize_existing_agent_file(
@@ -118,28 +105,18 @@ impl App {
             )));
             self.restore_agent_delete_parent(parent);
             self.set_status("agent delete failed");
-            return None;
+            return;
         }
         self.insert_entry(&Entry::Notice(format!(
             "deleted agent {}: {}",
             target.id,
             crate::paths::display(&target.path)
         )));
-        // Diff the effective catalog: deleting an override may reveal another
-        // definition instead of making the agent unavailable.
-        let after = match AgentCatalog::discover(&self.info.runtime.cwd) {
-            Ok(catalog) => catalog,
-            Err(error) => {
-                self.insert_entry(&Entry::Error(format!("could not reload agents: {error}")));
-                self.input_ui.set_composer(ComposerMode::Input);
-                self.set_status("agent reload failed");
-                return None;
-            }
+        // Deleting an override may reveal another definition, so the picker
+        // and the catalog correction both come from the effective catalog.
+        let Some(mut picker) = self.agents_picker_after_change(agent) else {
+            return;
         };
-        let mut picker = super::agent_picker::agent_picker(
-            after.clone(),
-            super::agent_picker::AgentModelView::from(&self.info.runtime),
-        );
         if let Some(cursor) = cursor {
             picker.restore_cursor(&cursor);
         }
@@ -153,7 +130,6 @@ impl App {
         } else {
             format!("deleted agent {}", target.id)
         });
-        Some((before, after))
     }
 
     /// Returns to the agents picker after a cancelled or failed delete.

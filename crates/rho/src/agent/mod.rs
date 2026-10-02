@@ -15,7 +15,7 @@ mod parser;
 mod persist;
 mod serializer;
 
-pub(crate) use advertisement::advertised_agents;
+pub(crate) use advertisement::{AdvertisedAgents, AdvertisedChange};
 pub(crate) use authorize::authorize_existing_agent_file;
 pub(crate) use catalog::*;
 pub(crate) use cursor_tools::*;
