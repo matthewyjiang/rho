@@ -342,14 +342,23 @@ impl Pages {
 
 /// Run `VACUUM` once enough of the cache is free, then truncate the WAL so the
 /// rewritten pages do not linger beside the shrunken database.
+///
+/// A concurrent reader can block the truncate. The vacuum is not retried
+/// because the freelist is already empty; SQLite finishes shrinking the file
+/// when the last connection closes, and search opens one connection per call.
 fn vacuum_if_bloated(connection: &Connection, min_free_bytes: u64) -> rusqlite::Result<()> {
     let pages = Pages::read(connection)?;
     if !pages.worth_vacuuming(min_free_bytes) {
         return Ok(());
     }
     connection.execute_batch("vacuum")?;
-    connection.query_row("pragma wal_checkpoint(truncate)", [], |_| Ok(()))?;
-    tracing::debug!(?pages, "vacuumed the sessions search index");
+    let checkpoint_blocked: bool =
+        connection.query_row("pragma wal_checkpoint(truncate)", [], |row| row.get(0))?;
+    tracing::debug!(
+        ?pages,
+        checkpoint_blocked,
+        "vacuumed the sessions search index"
+    );
     Ok(())
 }
 
