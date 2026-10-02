@@ -29,6 +29,10 @@ flowchart TD
     id --> done[Completion at next safe runtime boundary]
 ```
 
+Edits take effect without rewriting the conversation. Each `agent` call reloads definitions from disk, so the next launch uses the latest prompt, model, reasoning, runtime, and tools. Already-running delegated agents and the root session keep their configuration. Prior messages, the system prompt, and the original tool schema never change.
+
+The `agent` tool advertises only agent IDs and descriptions. After saving or deleting an agent in `/agents`, Rho compares that advertised list, plus any earlier corrections, with the current definitions. If any agent became available or unavailable, or changed its description, Rho appends one correction listing those changes. The correction includes changes made by editing files outside `/agents` since the last correction. External edits never append a correction on their own, and edits to fields that are not advertised append nothing.
+
 ## Definition files
 
 Agent definitions are Markdown with strict frontmatter. The Markdown body extends the base coding prompt by default:

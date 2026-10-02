@@ -46,7 +46,7 @@ exit {disable_exit}
         )
         .unwrap();
         fs::set_permissions(driver, fs::Permissions::from_mode(0o700)).unwrap();
-        let mut command = command(home.path()).unwrap();
+        let mut command = command(home.path(), &InstallKind::Install).unwrap();
         command
             .env("PATH", home.path())
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "true")
@@ -75,7 +75,7 @@ async fn incomplete_download_is_not_executed() {
     )
     .unwrap();
     fs::set_permissions(curl, fs::Permissions::from_mode(0o700)).unwrap();
-    let mut command = command(home.path()).unwrap();
+    let mut command = command(home.path(), &InstallKind::Install).unwrap();
     command
         .env("PATH", home.path())
         .stdout(Stdio::null())
@@ -117,7 +117,7 @@ else:
         let curl = home.path().join("curl");
         fs::write(&curl, "#!/bin/sh\nprintf 'true\\n'\n").unwrap();
         fs::set_permissions(curl, fs::Permissions::from_mode(0o700)).unwrap();
-        let mut command = command(home.path()).unwrap();
+        let mut command = command(home.path(), &InstallKind::Install).unwrap();
         command
             .env("PATH", home.path())
             .stdout(Stdio::null())

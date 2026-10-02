@@ -175,6 +175,24 @@ pub(super) const COMPUTER_USE_SCENARIO: Scenario = Scenario::new(
             timeout: STREAM,
         },
         Step::Custom(wait_for_context_turn_completion),
+        // The card names the desktop request, not the driver transport.
+        Step::SubmitText("fixture computer observe"),
+        Step::WaitText {
+            text: "computer(get_window_state · pid 7)",
+            timeout: STREAM,
+        },
+        Step::WaitText {
+            text: "computer observation complete",
+            timeout: STREAM,
+        },
+        Step::Custom(|harness| {
+            let screen = harness.screen().contents();
+            ensure!(
+                !screen.contains("cua-driver ("),
+                "computer card still shows driver transport:\n{screen}"
+            );
+            wait_for_turn_completion_after(harness, "computer observation complete")
+        }),
         Step::SubmitText("/new"),
         Step::WaitTextGone {
             text: "computer context: enabled",
@@ -399,6 +417,9 @@ for line in sys.stdin:
         result = {'tools': [{'name': 'get_window_state', 'description': 'fixture observation', 'inputSchema': {'type': 'object'}}]}
     elif method == 'ping':
         result = {}
+    elif method == 'tools/call' and request['params']['name'] == 'get_window_state':
+        # Observation only: no desktop is read or changed.
+        result = {'content': [{'type': 'text', 'text': 'fixture window'}], 'isError': False}
     else:
         print(json.dumps({'jsonrpc': '2.0', 'id': request['id'], 'error': {'code': -32601, 'message': 'fixture has no desktop'}}), flush=True)
         continue

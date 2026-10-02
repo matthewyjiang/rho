@@ -35,8 +35,9 @@ This is a Rho tool-registration boundary, not an OS sandbox. An independently co
 
 | Command | Effect |
 | --- | --- |
-| `/computer` or `/computer status` | Open the dashboard with session state, a direct revoke action, driver detection, and access details |
+| `/computer` or `/computer status` | Open the dashboard with session state, a direct revoke action, driver detection and version, and access details |
 | `/computer setup` | Install a missing driver after confirmation, then configure session access and verify the connection |
+| `/computer update` | Check for a newer driver, then install it after confirmation; installing requires an idle session outside plan mode with access off |
 | `/computer on` | Review and confirm desktop access, save this session and the new-session default as on, then connect |
 | `/computer off` or `/computer stop` | Cancel installation, revoke access, disconnect, and save this session and the new-session default as off |
 | `rho computer status [--json]` | Detect the executable without starting it or inspecting the desktop |
@@ -50,7 +51,7 @@ The interactive dashboard uses the same overlay as `/limits` and `/doctor`, with
 
 ## Driver setup
 
-Installation and desktop access are separate authorizations, both defaulting to Cancel. `/computer setup` never upgrades a detected driver. For a missing driver it offers to download and execute Cua's official installer. The confirmation and CLI setup guidance describe only your current platform:
+Installation and desktop access are separate authorizations, both defaulting to Cancel. `/computer setup` never upgrades a detected driver; use `/computer update` (see [Driver updates](#driver-updates)). For a missing driver it offers to download and execute Cua's official installer. The confirmation and CLI setup guidance describe only your current platform:
 
 | Platform | Installer | Managed installation locations |
 | --- | --- | --- |
@@ -87,6 +88,14 @@ CUA_DRIVER_RS_ENABLE_WAYLAND=0 rho
 This default applies only after you grant desktop access. It does not change global settings, the installer environment, or unrestricted mode. The Hyprland instance signature lets Cua find the correct compositor IPC socket. Forwarding it does not install a compositor plugin or guarantee capture and input support. If using a terminal server such as Herdr, start that server from the desktop session too; attaching a desktop client does not necessarily update the server's environment.
 
 When Linux `DISPLAY` is unset or empty, `/computer on`, `/computer status`, and `rho computer status` warn that the X11 overlay cannot connect. CLI JSON includes a nullable `desktop_warning` field. This check does not rule out a Wayland session or verify desktop permissions. Launch Rho from the intended desktop session with its environment rather than guessing a display value.
+
+## Driver updates
+
+The dashboard shows the detected driver's version and whether a newer release is available. Rho asks the driver itself with `cua-driver check-update --json`, so the driver's own release-channel selection, update cache, and package-manager detection apply. Rho passes the driver its usual restricted environment (home, PATH, proxy, and certificate variables). Checking runs the driver executable (not a desktop connection), so the dashboard checks automatically only when desktop access is on or this session's saved choice is on. Otherwise it shows `Updates: not checked`; press `u` in the dashboard or run `/computer update` to check. Checks are allowed during a turn and in plan mode, but not while an installation is running; starting an installation cancels any check in progress.
+
+`/computer update` checks if needed, then, when an update is available, asks for confirmation, defaulting to Cancel. The dashboard `u` key only checks. Installing requires an idle session outside plan mode with access off; run `/computer off` first, which also saves this session and the new-session default as off. Rho refuses before downloading anything when the detected driver is not Cua's managed installation (for example an earlier PATH entry or a package-managed copy), because the installer would not replace it. On Windows, a driver in the official installer's default `%LOCALAPPDATA%\Programs\Cua\cua-driver\bin` is updated in place.
+
+Rho runs the same supervised, logged, cancellable installer as setup, pinned with `CUA_DRIVER_RS_VERSION` to the exact release the check reported, so the saved channel is kept. Before installing, Rho confirms the driver still reports the version the check saw, so a stale check cannot downgrade a driver updated elsewhere. Telemetry is forced off for the installer; unlike setup, an update does not run `telemetry disable`, so your saved telemetry preference is unchanged. After the installer exits, Rho runs the executable it would launch with `--version` and reports a failure if it does not report the new release. Cancelling during that verification reports that the files were replaced but unverified. Updating never reconnects; `/computer on` reconnects and saves access on again.
 
 Driver stderr is discarded so startup notices and warnings cannot overwrite the TUI. MCP protocol logging and connection errors still use Rho's reporting path.
 

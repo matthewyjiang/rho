@@ -29,9 +29,11 @@ mod policy;
 mod preference;
 mod recovery;
 mod setup;
+mod update;
 pub(crate) use preference::ComputerUsePreference;
 use recovery::{Revocation, RevokeOnDrop};
-pub(crate) use setup::{setup_platform, ComputerSetupUpdate, INSTALLATION_RECOVERY};
+pub(crate) use setup::{setup_platform, ComputerSetupUpdate, InstallKind, INSTALLATION_RECOVERY};
+pub(crate) use update::{UpdateCheckStatus, UpdateOutcome};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ComputerUseStatus {
@@ -111,6 +113,46 @@ impl ComputerUseControl {
             .as_ref()
             .and_then(ComputerUseSession::revocation_reason)
     }
+
+    /// This session's saved access choice; `None` when unreadable.
+    pub(crate) fn saved_session_preference(&self) -> Option<ComputerUsePreference> {
+        ComputerUsePreference::load_session(&self.session_id).ok()
+    }
+
+    /// Settle a finished update check. Returns whether its status changed.
+    pub(crate) fn poll_update_check(&self) -> bool {
+        self.session
+            .as_ref()
+            .is_some_and(ComputerUseSession::poll_update_check)
+    }
+
+    pub(crate) fn pending_install(&self) -> Option<InstallKind> {
+        self.session
+            .as_ref()
+            .and_then(ComputerUseSession::pending_install)
+    }
+
+    pub(crate) fn update_check_status(&self) -> UpdateCheckStatus {
+        self.session.as_ref().map_or(
+            UpdateCheckStatus::NotChecked,
+            ComputerUseSession::update_check_status,
+        )
+    }
+
+    /// See [`ComputerUseSession::start_update_check`] for the consent rule.
+    pub(crate) fn start_update_check(&self) -> anyhow::Result<()> {
+        self.session
+            .as_ref()
+            .ok_or_else(|| anyhow!("computer use is unavailable in this session"))?
+            .start_update_check()
+    }
+
+    pub(crate) fn ensure_managed_driver(&self) -> anyhow::Result<policy::ManagedLocation> {
+        self.session
+            .as_ref()
+            .ok_or_else(|| anyhow!("computer use is unavailable in this session"))?
+            .ensure_managed_driver()
+    }
 }
 
 struct Inner {
@@ -118,6 +160,7 @@ struct Inner {
     max_output_bytes: usize,
     cwd: PathBuf,
     state: Mutex<State>,
+    update_check: Mutex<update::UpdateCheck>,
     // One desktop action at a time, including across cloned runtime handles.
     operation: tokio::sync::Mutex<()>,
 }
@@ -162,6 +205,7 @@ impl ComputerUseSession {
                     error: None,
                     revocation: None,
                 }),
+                update_check: Mutex::default(),
                 operation: tokio::sync::Mutex::new(()),
             }),
         }

@@ -83,6 +83,10 @@ pub(super) struct InlineChoiceModal {
 pub(super) enum InlineChoicePending {
     ComputerAccess,
     ComputerInstall,
+    ComputerUpdate {
+        from: String,
+        to: String,
+    },
     CredentialStore {
         next: super::login::StoreChoiceNext,
     },
@@ -123,6 +127,7 @@ impl InlineChoiceModal {
                 | InlineChoicePending::ConfirmSend(_)
                 | InlineChoicePending::ComputerAccess
                 | InlineChoicePending::ComputerInstall
+                | InlineChoicePending::ComputerUpdate { .. }
         )
     }
 }

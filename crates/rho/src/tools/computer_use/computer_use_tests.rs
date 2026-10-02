@@ -135,17 +135,31 @@ async fn explicit_grant_filters_remote_tools_and_revokes_retained_handles() {
             ToolErrorKind::InvalidArguments
         );
     }
+    let arguments = json!({"action":"call","tool":"get_window_state","arguments":{"pid":7}});
     let output = tool
-        .call(
-            invocation(json!({"action":"call","tool":"get_window_state","arguments":{}})),
-            context(),
-        )
+        .call(invocation(arguments.clone()), context())
         .await
         .unwrap();
     assert_eq!(output.images(), &[rho_sdk::model::ImageContent {
         data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=".into(),
         mime_type: "image/png".into(),
     }]);
+    // The card describes the desktop request, not the driver transport, and
+    // keeps the screenshot asset the MCP result retained.
+    let presentation = output.presentation();
+    assert_eq!(
+        presentation.command_summary_text(),
+        Some("get_window_state · pid 7")
+    );
+    assert_eq!(
+        presentation.operation_kind(),
+        Some(&rho_sdk::tool::OperationKind::Read)
+    );
+    assert_eq!(presentation.assets().len(), 1);
+    assert_eq!(
+        tool.start_metadata(&arguments).command_summary_text(),
+        presentation.command_summary_text()
+    );
     session.disconnect().await;
     assert_eq!(session.status(), ComputerUseStatus::Off);
     assert_eq!(

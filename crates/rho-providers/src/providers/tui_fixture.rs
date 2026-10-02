@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 mod advisor;
+mod agent_config;
 mod agent_message;
 mod agent_prompt;
 mod attach;
@@ -47,6 +48,7 @@ const CONCURRENT_FAST_CALL_ID: &str = "tui-fixture-concurrent-fast";
 const BACKGROUND_AGENT_CALL_ID: &str = "tui-fixture-background-agent";
 const SUBAGENT_RAIL_AGENT_CALL_ID: &str = "tui-fixture-subagent-rail-agent";
 const PROCESS_RAIL_CALL_ID: &str = "tui-fixture-process-rail";
+const COMPUTER_CALL_ID: &str = "tui-fixture-computer";
 const BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID: &str = "tui-fixture-background-questionnaire-agent";
 const CLAUDE_AGENT_CALL_ID: &str = "tui-fixture-claude-agent";
 const CLAUDE_AGENT_ERROR_CALL_ID: &str = "tui-fixture-claude-agent-error";
@@ -125,6 +127,9 @@ async fn fixture_stream(
     events: ProviderEventSender,
 ) -> Result<ModelResponse, ProviderError> {
     let prompt = last_user_text(&request).unwrap_or_default();
+    if let Some(response) = agent_config::intercept(&prompt, &request) {
+        return response;
+    }
     if let Some(response) = sessions::intercept(&prompt, &request) {
         return response;
     }

@@ -161,6 +161,8 @@ impl NoticePermits {
         if count == 0 {
             return;
         }
+        // Newer stable renames this to `try_update`, unstable at our 1.92 MSRV.
+        #[allow(deprecated)]
         self.outstanding
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 current.checked_sub(count)

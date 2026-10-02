@@ -5,7 +5,7 @@ use super::{
     InlineChoicePending, InteractiveRuntime,
 };
 use crate::tools::computer_use::{
-    setup_platform, ComputerSetupUpdate, ComputerUseControl, ComputerUseStatus,
+    setup_platform, ComputerSetupUpdate, ComputerUseControl, ComputerUseStatus, InstallKind,
     INSTALLATION_RECOVERY,
 };
 
@@ -94,9 +94,21 @@ impl App {
                     }
                 }
             }
-            ComputerSetupUpdate::Cancelled => self.insert_entry(&Entry::Notice(format!("Cua Driver installation cancelled; desktop access was not granted. {INSTALLATION_RECOVERY}"))),
-            ComputerSetupUpdate::Failed(error) => self.insert_entry(&Entry::Error(format!(
+            ComputerSetupUpdate::Updated { version } => {
+                self.insert_entry(&Entry::Notice(format!(
+                    "Cua Driver updated to {version}; desktop access is still off. /computer on reconnects"
+                )));
+            }
+            ComputerSetupUpdate::Cancelled(InstallKind::Install) => self.insert_entry(&Entry::Notice(format!("Cua Driver installation cancelled; desktop access was not granted. {INSTALLATION_RECOVERY}"))),
+            ComputerSetupUpdate::Cancelled(kind @ InstallKind::Update { .. }) => self.insert_entry(&Entry::Notice(format!(
+                "Cua Driver update cancelled; desktop access is still off. {}",
+                kind.recovery()
+            ))),
+            ComputerSetupUpdate::Failed(InstallKind::Install, error) => self.insert_entry(&Entry::Error(format!(
                 "could not complete Cua Driver setup: {error}"
+            ))),
+            ComputerSetupUpdate::Failed(InstallKind::Update { to, .. }, error) => self.insert_entry(&Entry::Error(format!(
+                "could not update Cua Driver to {to}: {error}"
             ))),
         }
         true

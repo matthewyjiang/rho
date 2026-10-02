@@ -180,6 +180,8 @@ pub struct AppToolSet {
     advisor: Option<AdvisorTools>,
     computer_use: Option<ComputerTools>,
     subagents: Option<SubagentManager>,
+    /// The agent catalog the `agent` tool spec advertises, when registered.
+    advertised_agents: Option<crate::agent::AdvertisedAgents>,
     processes: Option<super::process::ProcessManager>,
     workflow_tracker: super::workflow_tracker::WorkflowRunTracker,
     checkpoint_tracker: Arc<crate::session::workspace_checkpoint::WorkspaceCheckpointTracker>,
@@ -201,6 +203,7 @@ impl AppToolSet {
             bundles: Vec::new(),
             advisor: None,
             subagents: None,
+            advertised_agents: None,
             computer_use: None,
             processes: None,
             workflow_tracker: super::workflow_tracker::WorkflowRunTracker::new(),
@@ -313,7 +316,7 @@ impl AppToolSet {
 
         let delegation_tools = DelegationToolSelection::from_capabilities(&capabilities);
         if let (Some(selection), Some(delegation)) = (delegation_tools, delegation) {
-            let bundle = super::agent::sdk_bundle(
+            let mut bundle = super::agent::sdk_bundle(
                 config,
                 DelegationBundleOptions {
                     cwd: delegation.cwd,
@@ -324,6 +327,7 @@ impl AppToolSet {
                 tool_set.checkpoint_tracker.clone(),
             );
             tool_set.subagents = Some(bundle.manager_handle());
+            tool_set.advertised_agents = bundle.take_advertised_agents();
             tool_set.add_bundle(bundle);
         }
 
@@ -514,6 +518,18 @@ impl AppToolSet {
 
     pub fn subagents(&self) -> Option<&SubagentManager> {
         self.subagents.as_ref()
+    }
+
+    pub(crate) fn advertised_agents(&self) -> Option<&crate::agent::AdvertisedAgents> {
+        self.advertised_agents.as_ref()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_advertised_agents_for_tests(
+        &mut self,
+        advertised: crate::agent::AdvertisedAgents,
+    ) {
+        self.advertised_agents = Some(advertised);
     }
 
     pub fn processes(&self) -> Option<&super::process::ProcessManager> {

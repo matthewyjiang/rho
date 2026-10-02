@@ -51,6 +51,38 @@ pub(super) fn detect_driver(
         .and_then(|candidate| candidate.canonicalize().ok())
 }
 
+/// Where Cua's installer places the launched executable. Rho's own install
+/// location comes first; on Windows the official installer's default visible
+/// directory (no `CUA_DRIVER_RS_INSTALL_DIR`) is also managed.
+pub(super) fn managed_driver_links(
+    home: &Path,
+    local_app_data: Option<&Path>,
+) -> Vec<(ManagedLocation, PathBuf)> {
+    if !cfg!(windows) {
+        return vec![(ManagedLocation::Rho, home.join(".local/bin/cua-driver"))];
+    }
+    let mut links = vec![(
+        ManagedLocation::Rho,
+        home.join(".cua-driver/bin/cua-driver.exe"),
+    )];
+    if let Some(local_app_data) = local_app_data.filter(|path| path.is_absolute()) {
+        links.push((
+            ManagedLocation::InstallerDefault,
+            local_app_data.join("Programs/Cua/cua-driver/bin/cua-driver.exe"),
+        ));
+    }
+    links
+}
+
+/// Which installer layout owns the launched driver, so updates replace it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ManagedLocation {
+    /// Where `/computer setup` installs (`--bin-dir` / `CUA_DRIVER_RS_INSTALL_DIR`).
+    Rho,
+    /// The official Windows installer's default visible directory.
+    InstallerDefault,
+}
+
 /// Only explicitly absolute installation locations may receive desktop authority.
 pub(super) fn driver_candidates(
     path: Option<OsString>,

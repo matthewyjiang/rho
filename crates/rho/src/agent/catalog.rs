@@ -13,8 +13,14 @@ use super::{
 };
 use crate::workspace::ProjectTrust;
 
+/// The built-in root agent. It is never offered for delegation.
+pub(crate) const DEFAULT_AGENT_ID: &str = "default";
+
 const BUILTINS: &[(&str, &str)] = &[
-    ("default", include_str!("../builtin_agents/default.md")),
+    (
+        DEFAULT_AGENT_ID,
+        include_str!("../builtin_agents/default.md"),
+    ),
     ("explorer", include_str!("../builtin_agents/explorer.md")),
     ("reviewer", include_str!("../builtin_agents/reviewer.md")),
     ("worker", include_str!("../builtin_agents/worker.md")),

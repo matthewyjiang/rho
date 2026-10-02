@@ -17,6 +17,8 @@ use {
 
 #[path = "interactive_runtime_advisor.rs"]
 mod advisor;
+#[path = "interactive_runtime_agent_catalog.rs"]
+mod agent_catalog;
 #[path = "interactive_runtime_cache.rs"]
 mod cache;
 #[path = "interactive_runtime_codemode.rs"]

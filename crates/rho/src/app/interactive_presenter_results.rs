@@ -751,16 +751,15 @@ pub(super) fn mcp_result_card(view: &ToolView, content: &str, status: ToolStatus
 }
 
 pub(super) fn generic_card(view: &ToolView, content: &str, status: ToolStatus) -> ToolCard {
+    let summary = view
+        .metadata
+        .command_summary_text()
+        .filter(|summary| !summary.is_empty());
     let mut card = draft_card(
         status,
         ToolFamily::Default,
-        ToolHeader::call(view.name.as_str(), None),
+        ToolHeader::call(view.name.as_str(), summary.map(str::to_string)),
     );
-    if let Some(command) = view.metadata.command_summary_text() {
-        card.push_fact(ToolFact::Text {
-            text: command.to_string(),
-        });
-    }
     for path in view.metadata.affected_paths() {
         card.push_fact(ToolFact::Meta {
             text: path.display().to_string(),
@@ -775,7 +774,8 @@ pub(super) fn generic_card(view: &ToolView, content: &str, status: ToolStatus) -
             card.body = ToolBody::Diff(rows);
         }
     }
-    if card.facts.is_empty()
+    if summary.is_none()
+        && card.facts.is_empty()
         && card.body.is_empty()
         && view.arguments != serde_json::Value::Object(Default::default())
     {

@@ -30,6 +30,9 @@ impl App {
                     InlineChoicePending::ComputerInstall => {
                         self.confirm_computer_installation("cancel", agent)
                     }
+                    InlineChoicePending::ComputerUpdate { from, to } => {
+                        self.confirm_computer_update("cancel", &from, &to, agent)
+                    }
                     InlineChoicePending::ComputerAccess => {
                         self.confirm_computer_access("cancel", agent)
                     }
@@ -131,6 +134,9 @@ impl App {
             InlineChoicePending::ComputerInstall => {
                 self.confirm_computer_installation(&value, agent)
             }
+            InlineChoicePending::ComputerUpdate { from, to } => {
+                self.confirm_computer_update(&value, &from, &to, agent)
+            }
             InlineChoicePending::ComputerAccess => self.confirm_computer_access(&value, agent),
             InlineChoicePending::CredentialStore { next } => {
                 // Resume login with its navigation context, so a subsequent
@@ -182,7 +188,7 @@ impl App {
                 );
             }
             InlineChoicePending::DeleteAgent(target) => {
-                self.submit_delete_agent_choice(&value, target, modal.parent_picker);
+                self.submit_delete_agent_choice(&value, target, modal.parent_picker, agent);
             }
             InlineChoicePending::DeleteWorkflowPlan { plan_id } => {
                 self.submit_delete_workflow_plan_choice(&value, &plan_id)?;

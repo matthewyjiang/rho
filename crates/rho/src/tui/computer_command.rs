@@ -2,7 +2,7 @@
 
 use crate::app::interactive_runtime::{ComputerUseEligibilityError, ComputerUseUpdate};
 use crate::tools::computer_use::{
-    desktop_warning, ComputerUseControl, ComputerUsePreference, ComputerUseStatus,
+    desktop_warning, ComputerUseControl, ComputerUsePreference, ComputerUseStatus, InstallKind,
 };
 
 use super::{
@@ -12,6 +12,9 @@ use super::{
 
 #[path = "computer_setup.rs"]
 mod setup;
+#[path = "computer_update.rs"]
+mod update;
+use update::UpdateRequest;
 
 impl App {
     pub(super) async fn execute_computer_command(
@@ -25,6 +28,15 @@ impl App {
         ));
         match invocation.args.trim() {
             "setup" => self.setup_computer(agent)?,
+            "update" => match agent.computer_use_eligibility() {
+                Ok(_) => self.update_computer(UpdateRequest::OfferInstall),
+                Err(ComputerUseEligibilityError::Busy | ComputerUseEligibilityError::PlanMode) => {
+                    self.update_computer(UpdateRequest::CheckOnly)
+                }
+                Err(error @ ComputerUseEligibilityError::UnsupportedHost) => {
+                    self.insert_entry(&Entry::Error(error.to_string()))
+                }
+            },
             "on" => {
                 if !self.can_grant_computer_access(agent) {
                     return Ok(());
@@ -90,6 +102,7 @@ impl App {
                 self.show_computer_off();
             }
             "on" | "setup" => self.set_status(ComputerUseEligibilityError::Busy.to_string()),
+            "update" => self.update_computer(UpdateRequest::CheckOnly),
             _ => self.show_computer_command(&invocation),
         }
         Ok(())
@@ -97,21 +110,39 @@ impl App {
 
     fn show_computer_command(&mut self, invocation: &CommandInvocation) {
         match invocation.args.trim() {
-            "" | "status" => self.show_computer_status(),
+            "" | "status" => {
+                self.auto_check_computer_update();
+                self.show_computer_status();
+            }
             _ => self.insert_entry(&Entry::Error(
-                "usage: /computer [status|setup|on|off]".into(),
+                "usage: /computer [status|setup|update|on|off]".into(),
             )),
         }
     }
 
     pub(super) fn show_computer_off(&mut self) {
-        if self.computer_installation_pending() {
-            self.insert_entry(&Entry::Notice(format!(
-                "Cua Driver installation cancellation requested; desktop access not granted. {}",
-                crate::tools::computer_use::INSTALLATION_RECOVERY
-            )));
-            self.set_status("computer setup cancellation requested; desktop access off");
-            return;
+        let pending = self
+            .computer_use
+            .as_ref()
+            .and_then(ComputerUseControl::pending_install);
+        match pending {
+            Some(kind @ InstallKind::Install) => {
+                self.insert_entry(&Entry::Notice(format!(
+                    "Cua Driver installation cancellation requested; desktop access not granted. {}",
+                    kind.recovery()
+                )));
+                self.set_status("computer setup cancellation requested; desktop access off");
+                return;
+            }
+            Some(kind @ InstallKind::Update { .. }) => {
+                self.insert_entry(&Entry::Notice(format!(
+                    "Cua Driver update cancellation requested; desktop access stays off. {}",
+                    kind.recovery()
+                )));
+                self.set_status("computer update cancellation requested; desktop access off");
+                return;
+            }
+            None => {}
         }
         self.insert_entry(&Entry::Notice("computer use off; access revoked while the transport closes. Completed desktop actions cannot be undone by disconnecting".into()));
         self.set_status("computer use off");
@@ -202,10 +233,14 @@ impl App {
             agent.session_id().clone(),
         ));
         self.sync_computer_overlay();
+        let check_changed = self
+            .computer_use
+            .as_ref()
+            .is_some_and(ComputerUseControl::poll_update_check);
         if agent.is_session_busy() {
-            return false;
+            return check_changed;
         }
-        let setup_changed = self.poll_computer_installation(agent);
+        let setup_changed = self.poll_computer_installation(agent) | check_changed;
         match agent.reconcile_computer_use().await {
             Ok(ComputerUseUpdate::Unchanged) => return setup_changed,
             // The persistent indicator shows success without transcript chatter.

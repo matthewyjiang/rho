@@ -47,13 +47,30 @@ fn kind_card(status: ToolStatus, kind: ToolKind, header: ToolHeader) -> ToolCard
 }
 
 pub(super) fn start_card(view: &ToolView, cwd: &std::path::Path) -> ToolCard {
-    preview_card(
+    let card = preview_card(
         view.kind,
         &view.name,
         Some(&view.arguments),
         cwd,
         ToolStatus::Running,
-    )
+    );
+    with_summary_primary(view, card)
+}
+
+/// Generic tools describe a call through metadata; a `command_summary` fills
+/// the bare `name` header so a running card says what it is doing.
+fn with_summary_primary(view: &ToolView, mut card: ToolCard) -> ToolCard {
+    if view.kind != ToolKind::Other {
+        return card;
+    }
+    if let (ToolHeader::Call { primary, .. }, Some(summary)) =
+        (&mut card.header, view.metadata.command_summary_text())
+    {
+        if primary.is_none() && !summary.is_empty() {
+            *primary = Some(summary.to_string());
+        }
+    }
+    card
 }
 
 /// Live tool-call argument preview while the provider is still streaming JSON.
