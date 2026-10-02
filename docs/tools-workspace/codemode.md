@@ -150,9 +150,17 @@ success.
 
 ## In the TUI
 
-The `codemode` card shows the script with syntax highlighting. It keeps the same
-shape while the script runs and after it finishes, when the header gains the
-nested-call count. Resumed sessions show the same card without the count.
+The `codemode` card streams the literal script with syntax highlighting **while
+the model generates the script argument**, before the argument JSON closes or
+the script executes. This is decoded source, not escaped JSON or nested-call
+execution progress. A collapsed generating card follows the newest source rows
+within the tool-card display budget; expand it with Ctrl+O to inspect all source
+received so far. Earlier rows remain available rather than being discarded.
+
+The card keeps its source shape during execution and after it finishes, when
+the header gains the nested-call count. Completed and resumed cards use the
+normal collapsed view from the beginning of the script; resumed sessions omit
+the count.
 
 Scripts use Python-style highlighting. Source lines up to 4 KiB keep their colors
 when wrapped across terminal rows. Longer lines remain readable as plain text,

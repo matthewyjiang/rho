@@ -1,4 +1,4 @@
-//! Codemode cards show the script as highlighted source: what the model ran,
+//! Codemode cards show highlighted source as the model generates it, then what it ran,
 //! not what it printed. The card keeps one shape from start to finish; nested
 //! calls are usually too fast to watch, and rows that vanish on completion make
 //! the transcript jump, so the TUI ignores the bridge's progress rows (ACP and
@@ -7,14 +7,15 @@
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 use serde_json::Value;
 
-use super::{format::string_arg, ToolBodySyntax};
+use super::{format::string_arg, ToolBodySyntax, ToolBodyWindow};
 
 /// Starlark is Python-shaped, and the bundled syntax set has no Starlark grammar.
 const SCRIPT_LANGUAGE: &str = "python";
 
-pub(super) fn body_syntax() -> ToolBodySyntax {
+pub(super) fn body_syntax(window: ToolBodyWindow) -> ToolBodySyntax {
     ToolBodySyntax::Code {
         language: SCRIPT_LANGUAGE.into(),
+        window,
     }
 }
 
@@ -28,6 +29,15 @@ pub(super) fn preview_card(
     let lines = string_arg(arguments, "script")
         .map(|script| script.trim_end().lines().map(str::to_string).collect())
         .unwrap_or_default();
+    script_card(lines, status, primary)
+}
+
+/// The source decoder already assembled these rows; retain the full history.
+pub(super) fn streaming_card(lines: Vec<String>) -> ToolCard {
+    script_card(lines, ToolStatus::Running, None)
+}
+
+fn script_card(lines: Vec<String>, status: ToolStatus, primary: Option<String>) -> ToolCard {
     ToolCard::new(
         status,
         ToolFamily::Default,

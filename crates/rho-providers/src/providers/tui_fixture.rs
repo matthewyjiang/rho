@@ -7,6 +7,7 @@ mod agent_prompt;
 mod attach;
 mod boundary_notifications;
 mod calibrated_context;
+mod codemode_stream;
 mod compact;
 mod docs_demo;
 mod edit;
@@ -161,6 +162,9 @@ async fn fixture_stream(
         return streaming_controls::stream(&request, &events).await;
     }
     if let Some(response) = calibrated_context::intercept(&prompt, &events).await {
+        return response;
+    }
+    if let Some(response) = codemode_stream::intercept(&prompt, &request, &events).await {
         return response;
     }
     if let Some(response) = stream_scenarios::intercept(&prompt, &request, &events).await {

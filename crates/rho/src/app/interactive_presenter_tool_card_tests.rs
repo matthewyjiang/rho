@@ -22,6 +22,11 @@ fn body_syntax_round_trips_without_changing_plain_card_wire_shape() {
         ToolBodySyntax::Plain,
         ToolBodySyntax::Code {
             language: "python".into(),
+            window: ToolBodyWindow::Head,
+        },
+        ToolBodySyntax::Code {
+            language: "python".into(),
+            window: ToolBodyWindow::Tail,
         },
     ] {
         let presented = PresentedToolCard {

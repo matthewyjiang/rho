@@ -11,7 +11,10 @@ use rho_tools::tool_card::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::interactive_presenter::{PresentedToolCard, ToolBodySyntax};
+use crate::app::interactive_presenter::{PresentedToolCard, ToolBodySyntax, ToolBodyWindow};
+
+#[path = "tool_card_code.rs"]
+mod code;
 
 #[path = "tool_card_header.rs"]
 mod header;
@@ -25,7 +28,6 @@ use super::{
         wrap_line_at_whitespace, wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
     },
     theme::Theme,
-    tool_code::CodeSyntax,
     tool_diff::{self, DiffSyntax},
     tool_search::SearchSyntax,
     ToolEntry,
@@ -299,9 +301,24 @@ pub(super) fn paint_card_sections(
     let last_fact_is_end = prefix_groups > 0 && !later_has_tree[prefix_groups - 1] && !has_prompt;
 
     if has_prompt {
+        let hidden = match &card.body_syntax {
+            ToolBodySyntax::Code {
+                window: ToolBodyWindow::Tail,
+                ..
+            } => {
+                format!("... {hidden_rows} earlier lines")
+            }
+            ToolBodySyntax::Plain
+            | ToolBodySyntax::Code {
+                window: ToolBodyWindow::Head,
+                ..
+            } => {
+                format!("... {hidden_rows} more lines")
+            }
+        };
         push_wrapped_text(
             &mut body,
-            &format!("... {hidden_rows} more lines"),
+            &hidden,
             width,
             Theme::dim(),
             LineFill::PadToWidth,
@@ -422,23 +439,11 @@ fn render_child_groups(
                 );
             }
         }
-        (ToolBody::Lines(lines), ToolBodySyntax::Code { language }) => {
-            let mut syntax = CodeSyntax::new(language);
-            for line in &tool_diff::logical_lines(lines) {
-                if paint_remaining == 0 {
-                    total_rows =
-                        total_rows.saturating_add(CodeSyntax::estimate_rows(language, line, width));
-                    continue;
-                }
-                let mut painted = Vec::new();
-                syntax.paint_line(line, width, &mut painted);
-                take_group(
-                    &mut body_groups,
-                    &mut total_rows,
-                    &mut paint_remaining,
-                    ChildGroup::Plain(painted),
-                );
-            }
+        (ToolBody::Lines(lines), ToolBodySyntax::Code { language, window }) => {
+            let rendered =
+                code::render_code_body(lines, language, *window, width, &mut paint_remaining);
+            total_rows = total_rows.saturating_add(rendered.total_rows);
+            body_groups.extend(rendered.groups);
         }
         (ToolBody::Diff(rows), _) => {
             let gutter = tool_diff::gutter_width(rows);
@@ -530,7 +535,7 @@ fn estimate_child_terminal_rows(card: &PresentedToolCard, width: usize) -> usize
             let search_mode = card.match_pattern.is_some();
             total = total.saturating_add(estimate_lines_rows(&logical, width, search_mode));
         }
-        (ToolBody::Lines(lines), ToolBodySyntax::Code { language }) => {
+        (ToolBody::Lines(lines), ToolBodySyntax::Code { language, .. }) => {
             total = tool_diff::logical_lines(lines)
                 .iter()
                 .map(|line| CodeSyntax::estimate_rows(language, line, width))

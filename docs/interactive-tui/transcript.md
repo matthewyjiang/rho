@@ -69,6 +69,14 @@ not a diff against the existing file. When the tool completes, the card shows th
 actual file diff. Interrupting generation retains the received content without
 executing the unfinished write.
 
+### Codemode script generation
+
+A `codemode` card shows decoded, syntax-highlighted script source as the model
+generates its argument, before execution starts. The collapsed preview follows
+the newest source rows as they arrive, including partial lines; Ctrl+O expands
+the card to inspect the full received source. This preview is not a stream of
+nested-tool execution progress. See [Codemode](/tools-workspace/codemode#in-the-tui).
+
 ## Copy
 
 - `/copy` opens a tree-style picker of assistant outputs in the current

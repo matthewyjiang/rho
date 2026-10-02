@@ -59,14 +59,14 @@ fn finished_card_is_the_script() {
     assert!(ok);
     let want = PresentedToolCard {
         card: expected(ToolStatus::Ok, Some("3 calls"), &script),
-        body_syntax: super::body_syntax(),
+        body_syntax: super::body_syntax(super::ToolBodyWindow::Head),
     };
     assert_eq!(live.presentation, want.into());
 
     let replayed = presenter.historical(&call, /*ok*/ true, "printed line");
     let want = PresentedToolCard {
         card: expected(ToolStatus::Ok, None, &script),
-        body_syntax: super::body_syntax(),
+        body_syntax: super::body_syntax(super::ToolBodyWindow::Head),
     };
     assert_eq!(replayed.presentation, want.into());
 
@@ -85,7 +85,7 @@ fn finished_card_is_the_script() {
     });
     let want = PresentedToolCard {
         card,
-        body_syntax: super::body_syntax(),
+        body_syntax: super::body_syntax(super::ToolBodyWindow::Head),
     };
     assert_eq!(failed.presentation, want.into());
 }
