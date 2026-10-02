@@ -35,6 +35,7 @@ pub(super) const MAX_HONORED_RETRY_AFTER: std::time::Duration = std::time::Durat
 
 mod async_jobs;
 mod boundary_input;
+mod checkpoint;
 mod compaction;
 mod compaction_limit;
 mod model_call_timer;
@@ -117,7 +118,9 @@ async fn execute_turn_loop(
     hooks: &RunHooks,
 ) -> Result<RunOutcome, Error> {
     let (mut history, revision) = core.snapshot();
-    history.push(Message::User(start.input.into_blocks()));
+    if let RunStart::User(input) | RunStart::WithToolCall { input, .. } = &start {
+        history.push(Message::User(input.blocks().to_vec()));
+    }
     match emit(
         &events,
         &cancellation,
@@ -139,11 +142,17 @@ async fn execute_turn_loop(
     let mut steering = SteeringQueue::new();
     let mut async_jobs = AsyncJobSet::new(runtime.max_parallel_tools);
     let mut pending_outputs = pending_tool_outputs::PendingToolOutputs::default();
-    if let Some(call) = start.initial_tool_call {
-        history.push(Message::Assistant(vec![ContentBlock::ToolCall(
-            call.clone(),
-        )]));
-        let mut tool_turn = StagedToolTurn::host_requested(call, &runtime);
+    let initial_turn = match start {
+        RunStart::User(_) => None,
+        RunStart::WithToolCall { call, .. } => {
+            history.push(Message::Assistant(vec![ContentBlock::ToolCall(
+                call.clone(),
+            )]));
+            Some(StagedToolTurn::host_requested(call, &runtime))
+        }
+        RunStart::Continue => checkpoint::settle_unanswered_calls(&mut history, &runtime),
+    };
+    if let Some(mut tool_turn) = initial_turn {
         let mut control = RunControl {
             hooks,
             cancellation: &cancellation,
@@ -153,10 +162,10 @@ async fn execute_turn_loop(
             async_jobs: &mut async_jobs,
             pending_outputs: &mut pending_outputs,
         };
-        let host_tool_result =
+        let initial_result =
             run_staged_tool_turn(&core, &runtime, &mut tool_turn, &mut history, &mut control).await;
         history =
-            match resolve_tool_turn_result(Arc::clone(&core), history, host_tool_result, &events)
+            match resolve_tool_turn_result(Arc::clone(&core), history, initial_result, &events)
                 .await
             {
                 Ok(history) => history,
@@ -290,6 +299,9 @@ async fn execute_turn_loop(
             }
         }
 
+        if let Err(error) = checkpoint::save(&core, &runtime, &history).await {
+            return control.terminate(core, history, error).await;
+        }
         let mut overflow_recovered = false;
         let (response, mut capture) = loop {
             let error = match request_valid_response(
@@ -384,6 +396,14 @@ async fn execute_turn_loop(
         };
         history.push(Message::assistant(assistant));
         core.append_context_estimate(history.last().expect("assistant was appended"));
+        if let Err(error) = checkpoint::save(&core, &runtime, &history).await {
+            history.extend(
+                tool_calls
+                    .iter()
+                    .map(|call| Message::ToolResult(tool_settlement::interrupted_result(call))),
+            );
+            return control.terminate(core, history, error).await;
+        }
         drain_commands(control.commands, control.steering);
         let was_steered = control.steering.has_staged();
         let (async_calls, sync_calls) =

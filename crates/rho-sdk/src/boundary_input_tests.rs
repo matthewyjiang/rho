@@ -218,7 +218,7 @@ async fn accepted_input_survives_event_consumer_loss() {
         Arc::clone(&core),
         runtime,
         RunId::new(),
-        RunStart::user(UserInput::text("work")),
+        RunStart::User(UserInput::text("work")),
         CancellationToken::new(),
         events,
         command_receiver,

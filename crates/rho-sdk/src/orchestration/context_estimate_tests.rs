@@ -74,7 +74,7 @@ async fn step_context_estimate_tracks_compaction_and_staged_steering() {
             Arc::clone(&core),
             runtime,
             RunId::new(),
-            RunStart::user(UserInput::text("current")),
+            RunStart::User(UserInput::text("current")),
             CancellationToken::new(),
             events,
             command_receiver,

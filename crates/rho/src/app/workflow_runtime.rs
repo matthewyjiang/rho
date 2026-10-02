@@ -38,6 +38,7 @@ pub(crate) use cancellation::{
 pub(crate) use checkout_gate::CheckoutGate;
 pub(crate) use command::{CommandHostFactory, WorkflowCommandExecutor};
 pub(crate) use prepared::{AgentInvocation, CommandInvocation};
+pub(crate) use recovery::{preview_recovery, AttemptRecovery, ResetReason};
 pub(crate) use runner::{RecoveryDecision, WorkflowRunner};
 pub(crate) use types::{
     CleanupCause, NodeExecutionRequest, NodeExecutionResult, NodeProgressReporter,

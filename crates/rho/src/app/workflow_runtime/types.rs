@@ -79,6 +79,8 @@ pub(crate) struct NodeExecutionRequest<I> {
     pub(crate) attempt_directory: PathBuf,
     pub(crate) cancellation: rho_sdk::CancellationToken,
     pub(crate) progress: Option<NodeProgressReporter>,
+    /// Saved agent session when this attempt continues after an unclean exit.
+    pub(crate) resume: Option<rho_sdk::SessionSnapshot>,
 }
 
 impl<I> NodeExecutionRequest<I> {
@@ -94,6 +96,7 @@ impl<I> NodeExecutionRequest<I> {
             attempt_directory: self.attempt_directory,
             cancellation: self.cancellation,
             progress: self.progress,
+            resume: self.resume,
         }
     }
 
@@ -122,6 +125,7 @@ impl<I> NodeExecutionRequest<I> {
                 attempt_directory: self.attempt_directory,
                 cancellation: self.cancellation,
                 progress: self.progress,
+                resume: self.resume,
             },
         )
     }

@@ -153,6 +153,24 @@ pub(super) struct Startup<'a> {
     pub approval_session: Option<rho_sdk::ApprovalSession>,
     pub approval_classifier: Option<Arc<ClassifierApprovalHandler>>,
     pub hook_host_labels: rho_sdk::hooks::HookHostLabels,
+    pub checkpoint: Option<SessionCheckpoint>,
+}
+
+/// Step checkpoints for one headless run.
+///
+/// The session saves to `store` at every step boundary. With `resume`, the run
+/// restores that snapshot and continues it instead of sending the prompt.
+#[derive(Clone)]
+pub(crate) struct SessionCheckpoint {
+    pub(crate) store: Arc<dyn rho_sdk::SessionStore>,
+    pub(crate) resume: Option<rho_sdk::SessionSnapshot>,
+}
+
+/// What a headless run sends before its first model request.
+pub(super) enum RunEntry {
+    Prompt(String),
+    /// Continue restored history; see [`rho_sdk::Session::continue_history`].
+    Resume,
 }
 
 pub(super) fn prompt_for_command(command: &Option<Command>) -> anyhow::Result<Option<String>> {
@@ -461,6 +479,14 @@ async fn run_session_with_output(
     mut jsonl: Option<&mut JsonlAdapter>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
     ensure_headless_auto_classifier_model(startup.config)?;
+    let resume = startup
+        .checkpoint
+        .as_ref()
+        .and_then(|checkpoint| checkpoint.resume.as_ref());
+    let entry = match resume {
+        Some(_) => RunEntry::Resume,
+        None => RunEntry::Prompt(prompt_text),
+    };
     let SessionAssembly {
         built,
         workspace_root,
@@ -510,10 +536,18 @@ async fn run_session_with_output(
                 receiver: None,
             })
         },
-        session_options: |_| Ok(crate::app::interactive_runtime::startup::fresh_session_options()),
+        session_options: |_| {
+            Ok(resume.cloned().map_or_else(
+                crate::app::interactive_runtime::startup::fresh_session_options,
+                rho_sdk::SessionOptions::from_snapshot,
+            ))
+        },
     })
     .await?;
     let session = &built.session;
+    if let Some(checkpoint) = &startup.checkpoint {
+        session.set_checkpoint_store(Some(Arc::clone(&checkpoint.store)))?;
+    }
     let mut delegation = super::headless_delegation::HeadlessDelegation::attach(
         session,
         built.tools.subagents(),
@@ -530,7 +564,7 @@ async fn run_session_with_output(
         &mut delegation,
         complete_run(
             session,
-            prompt_text,
+            entry,
             HeadlessRunDeps {
                 reporter,
                 external_cancellation: cancellation,
@@ -627,7 +661,7 @@ fn headless_auto_classifier(
 
 async fn complete_run(
     session: &rho_sdk::Session,
-    prompt_text: String,
+    entry: RunEntry,
     dependencies: HeadlessRunDeps<'_>,
     steering_slot: Option<super::subagent_messaging::SteeringSlot>,
 ) -> anyhow::Result<rho_sdk::RunOutcome> {
@@ -637,7 +671,10 @@ async fn complete_run(
         jsonl,
         host_input,
     } = dependencies;
-    let mut run = session.start(UserInput::text(prompt_text)).await?;
+    let mut run = match entry {
+        RunEntry::Prompt(text) => session.start(UserInput::text(text)).await?,
+        RunEntry::Resume => session.continue_history().await?,
+    };
     if let Some(slot) = steering_slot {
         slot.publish(run.steering_handle());
     }

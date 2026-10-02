@@ -546,3 +546,195 @@ async fn uncertain_attempt_requires_explicit_recovery() {
         }
     );
 }
+
+fn seed_running_attempt(
+    home: &std::path::Path,
+    workspace: &std::path::Path,
+) -> (StoredRun, std::path::PathBuf) {
+    let mut run = create_run(home, workspace);
+    let node = task_id("inspect");
+    let attempt = AttemptNumber::new(1).unwrap();
+    let store = WorkflowStore::new(home).unwrap();
+    let directory = WorkflowLayout::new(home).run(run.manifest.run_id);
+    let mut guard = store.lock_run(run.manifest.run_id).unwrap();
+    for event in [
+        WorkflowEvent::RunLifecycle {
+            lifecycle: RunLifecycle::Running,
+        },
+        WorkflowEvent::NodeReady { node: node.clone() },
+        WorkflowEvent::LaunchIntended {
+            node: node.clone(),
+            attempt,
+        },
+        WorkflowEvent::AttemptStarted {
+            node: node.clone(),
+            attempt,
+            owner: ExternalOwner::Process { pid: 4242 },
+        },
+    ] {
+        append_fixture_event(&store, &mut guard, &directory, &mut run, event);
+    }
+    drop(guard);
+    let attempt_directory = attempt_directory(&directory, &node, attempt);
+    ensure_directory_beneath(
+        &directory,
+        attempt_directory.strip_prefix(&directory).unwrap(),
+    )
+    .unwrap();
+    artifacts::write_json(
+        &directory,
+        &attempt_directory.join("status.json"),
+        &AttemptRecord {
+            schema_version: ATTEMPT_VERSION,
+            attempt,
+            state: AttemptState::Started {
+                owner: ExternalOwner::Process { pid: 4242 },
+            },
+        },
+    )
+    .unwrap();
+    (run, directory)
+}
+
+/// Records which attempt each dispatch runs and whether it resumes a checkpoint.
+#[derive(Default)]
+struct ResumeProbe {
+    seen: std::sync::Mutex<Vec<(u32, Option<rho_sdk::SessionSnapshot>)>>,
+}
+
+impl<I: Send + 'static> WorkflowNodeExecutor<I> for ResumeProbe {
+    fn execute<'a>(&'a self, request: NodeExecutionRequest<I>) -> WorkflowExecutionFuture<'a> {
+        self.seen
+            .lock()
+            .unwrap()
+            .push((request.attempt.get(), request.resume.clone()));
+        Box::pin(async { Ok(NodeExecutionResult::terminal(NodeTerminalState::Success)) })
+    }
+}
+
+fn saved_session() -> rho_sdk::SessionSnapshot {
+    rho_sdk::SessionSnapshot::new(
+        rho_sdk::SessionId::new(),
+        rho_sdk::Revision::from_u64(2),
+        vec![rho_sdk::model::Message::user_text("review the crate")],
+        rho_sdk::model::ModelIdentity::new("scripted", "test", "model"),
+        Default::default(),
+    )
+}
+
+async fn save_checkpoint(directory: &std::path::Path, snapshot: &rho_sdk::SessionSnapshot) {
+    rho_sdk::SessionStore::save(
+        &AttemptCheckpoint::new(
+            directory,
+            &task_id("inspect"),
+            AttemptNumber::new(1).unwrap(),
+        ),
+        snapshot.clone(),
+    )
+    .await
+    .unwrap();
+}
+
+fn preview_json(home: &std::path::Path, run: &StoredRun) -> serde_json::Value {
+    serde_json::to_value(preview_recovery(home, run.manifest.run_id).unwrap()).unwrap()
+}
+
+// Covers: a checkpointed Rho attempt continues as the same attempt with its
+// saved session, the dry run predicts that without writing, and the checkpoint
+// is removed once the node finishes. Owner: workflow crash recovery.
+#[tokio::test]
+async fn checkpointed_agent_attempt_continues() {
+    let home = tempfile::tempdir().unwrap();
+    let workspace = tempfile::tempdir().unwrap();
+    let (run, directory) = seed_running_attempt(home.path(), workspace.path());
+    let snapshot = saved_session();
+    save_checkpoint(&directory, &snapshot).await;
+    let events = WorkflowLayout::new(home.path()).run_events(run.manifest.run_id);
+    let events_before = std::fs::read(&events).unwrap();
+
+    assert_eq!(
+        preview_json(home.path(), &run),
+        serde_json::json!({
+            "run_id": run.manifest.run_id,
+            "needs_confirmation": true,
+            "attempts": [{"node": "inspect", "attempt": 1, "action": "continue"}],
+        })
+    );
+    assert_eq!(std::fs::read(&events).unwrap(), events_before);
+
+    let probe = Arc::new(ResumeProbe::default());
+    let completed = runner(home.path(), workspace.path(), probe.clone())
+        .drive(
+            run.manifest.run_id,
+            RecoveryDecision::ConfirmNoProcess,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(*probe.seen.lock().unwrap(), [(1, Some(snapshot))]);
+    assert_eq!(
+        terminal(&completed, "inspect"),
+        Some(NodeTerminalState::Success)
+    );
+    let checkpoint = AttemptCheckpoint::new(
+        &directory,
+        &task_id("inspect"),
+        AttemptNumber::new(1).unwrap(),
+    );
+    assert_eq!(checkpoint.read().unwrap(), None);
+}
+
+// Covers: uncertain Rho attempts that cannot continue restart as a new attempt,
+// and the dry run reports the same reason resume acts on. Owner: workflow
+// crash recovery.
+#[tokio::test]
+async fn uncertain_agent_attempt_resets_when_it_cannot_continue() {
+    for (checkpoint, cancel, reason) in [
+        (false, false, "no_checkpoint"),
+        (true, true, "cancellation_requested"),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let (mut run, directory) = seed_running_attempt(home.path(), workspace.path());
+        if checkpoint {
+            save_checkpoint(&directory, &saved_session()).await;
+        }
+        if cancel {
+            let store = WorkflowStore::new(home.path()).unwrap();
+            let mut guard = store.lock_run(run.manifest.run_id).unwrap();
+            append_fixture_event(
+                &store,
+                &mut guard,
+                &directory,
+                &mut run,
+                WorkflowEvent::CancellationRequested {
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                },
+            );
+        }
+
+        assert_eq!(
+            preview_json(home.path(), &run)["attempts"],
+            serde_json::json!([
+                {"node": "inspect", "attempt": 1, "action": "reset", "reason": reason},
+            ]),
+            "{reason}"
+        );
+        let probe = Arc::new(ResumeProbe::default());
+        runner(home.path(), workspace.path(), probe.clone())
+            .drive(
+                run.manifest.run_id,
+                RecoveryDecision::ConfirmNoProcess,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(*probe.seen.lock().unwrap(), [(2, None)], "{reason}");
+        let checkpoint = AttemptCheckpoint::new(
+            &directory,
+            &task_id("inspect"),
+            AttemptNumber::new(1).unwrap(),
+        );
+        assert_eq!(checkpoint.read().unwrap(), None, "{reason}");
+    }
+}

@@ -985,7 +985,7 @@ async fn event_delivery_failure_does_not_commit_interrupted_tool_results() {
         Arc::clone(&core),
         runtime,
         RunId::new(),
-        RunStart::user(UserInput::text("start")),
+        RunStart::User(UserInput::text("start")),
         cancellation,
         events,
         command_receiver,

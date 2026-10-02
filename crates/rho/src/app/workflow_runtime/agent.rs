@@ -1,9 +1,15 @@
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use crate::{
-    app::agent_executor::{AgentExecutor, FrozenAgentLaunchRequest},
+    app::{
+        agent_executor::{AgentExecutor, FrozenAgentLaunchRequest},
+        automation::SessionCheckpoint,
+    },
     subagent::RunState,
-    workflow::{ArtifactObservation, NodeTerminalState, ValidatedOutputRef, WorkflowValue},
+    workflow::{
+        AgentRuntime, ArtifactObservation, AttemptCheckpoint, NodeTerminalState,
+        ValidatedOutputRef, WorkflowValue,
+    },
 };
 
 use super::{
@@ -49,6 +55,17 @@ impl WorkflowAgentExecutor {
                 .map_err(|_| RuntimeError::UnsafeArtifact(agent_directory.clone()))?,
         )?;
         let output_file = agent_directory.join(crate::subagent::RESULT_FILE_NAME);
+        let checkpoint = match agent.runtime {
+            AgentRuntime::Rho => Some(SessionCheckpoint {
+                store: Arc::new(AttemptCheckpoint::new(
+                    run_directory,
+                    &request.node,
+                    request.attempt,
+                )),
+                resume: request.resume.clone(),
+            }),
+            AgentRuntime::ClaudeCli | AgentRuntime::Cursor => None,
+        };
         let mut handle = self
             .executor
             .spawn_frozen(FrozenAgentLaunchRequest {
@@ -64,6 +81,7 @@ impl WorkflowAgentExecutor {
                     .label("plan_digest", request.plan_digest.0.clone())
                     .label("node_id", request.node.to_string())
                     .label("attempt", request.attempt.to_string()),
+                checkpoint,
             })
             .map_err(|error| RuntimeError::Executor(error.to_string()))?;
         if let Some(progress) = &request.progress {

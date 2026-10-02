@@ -40,7 +40,11 @@ pub(super) struct AsyncToolCall {
 }
 
 impl StagedCall {
-    fn new(call: ToolCall, source: ToolInvocationSource, tool: Option<Arc<dyn Tool>>) -> Self {
+    pub(super) fn new(
+        call: ToolCall,
+        source: ToolInvocationSource,
+        tool: Option<Arc<dyn Tool>>,
+    ) -> Self {
         let id = ToolCallId::from_string(call.id.clone())
             .expect("validated provider tool call ID is nonempty");
         Self {

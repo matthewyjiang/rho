@@ -92,6 +92,25 @@ pub(super) fn completed_attempt(
     })
 }
 
+/// Replaces the attempt's `status.json`, the authority on who owns the attempt.
+pub(super) fn write_attempt(
+    run_directory: &std::path::Path,
+    node: &TaskInstanceId,
+    attempt: AttemptNumber,
+    state: AttemptState,
+) -> Result<(), RuntimeError> {
+    super::artifacts::write_json(
+        run_directory,
+        &attempt_directory(run_directory, node, attempt).join("status.json"),
+        &AttemptRecord {
+            schema_version: ATTEMPT_VERSION,
+            attempt,
+            state,
+        },
+    )
+    .map(|_| ())
+}
+
 pub(super) fn read_attempt_record(
     run_directory: &std::path::Path,
     node: &TaskInstanceId,

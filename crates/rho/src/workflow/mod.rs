@@ -1,5 +1,6 @@
 //! Deterministic workflow planning, graph policy, and durable data primitives.
 
+mod agent_checkpoint;
 mod canonical;
 mod condition;
 mod durable;
@@ -38,6 +39,7 @@ mod validation;
 mod value;
 mod wire;
 
+pub(crate) use agent_checkpoint::AttemptCheckpoint;
 pub(crate) use canonical::program_digest;
 pub(crate) use condition::{evaluate_condition, ConditionContext};
 pub(crate) use durable::{apply_durable_event, derive_snapshot, DurableReplayState};
