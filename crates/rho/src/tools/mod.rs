@@ -7,6 +7,7 @@ pub(crate) use crate::app::subagent_manager::RAIL_TERMINAL_RETENTION;
 pub mod advisor;
 pub mod agent;
 mod agent_output;
+pub(crate) mod code_mode;
 mod coding;
 pub(crate) mod computer_use;
 pub(crate) mod mcp;
@@ -14,6 +15,9 @@ mod notification_format;
 #[cfg(test)]
 #[path = "notification_format_tests.rs"]
 mod notification_format_tests;
+#[cfg(test)]
+#[path = "output_contract_tests.rs"]
+mod output_contract_tests;
 pub(crate) mod process;
 pub mod rho;
 mod save_agent;
@@ -41,6 +45,7 @@ pub(crate) fn canonical_tool_names() -> &'static [&'static str] {
             "agents",
             "bash",
             "computer",
+            "codemode",
             "fetch_content",
             "get_search_content",
             "glob",
@@ -55,6 +60,7 @@ pub(crate) fn canonical_tool_names() -> &'static [&'static str] {
             "rho",
             "save_agent",
             "sessions",
+            "tool_search",
             "skill",
             "web_search",
             "workflow",
@@ -77,8 +83,8 @@ pub(crate) fn canonical_tool_names() -> &'static [&'static str] {
 /// Returns whether a canonical built-in tool can mutate workspace or run state.
 pub(crate) fn canonical_tool_is_mutating(name: &str) -> Option<bool> {
     match name {
-        "agent" | "agents" | "bash" | "computer" | "powershell" | "process" | "save_agent"
-        | "workflow" | "workflow_command" | "write" => Some(true),
+        "agent" | "agents" | "bash" | "codemode" | "computer" | "powershell" | "process"
+        | "save_agent" | "workflow" | "workflow_command" | "write" => Some(true),
         name if rho_tools::EditFormat::is_edit_tool_name(name) => Some(true),
         "advisor"
         | "fetch_content"

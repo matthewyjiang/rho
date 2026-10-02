@@ -8,11 +8,9 @@ use std::{
 use tokio::sync::mpsc;
 
 use crate::{
-    hooks::{BoundedFailure, HookToolIdentity, HookToolStatus, HookWiring},
     host_input::HostInputEnvelope,
     tool_host::{PendingToolHostInput, ToolHostCall, ToolHostEvent},
-    workspace::CapabilityRequest,
-    ApprovalHandler, CancellationToken, Error, RunId, SessionId, Workspace, WorkspacePolicy,
+    CancellationToken, Error, Workspace,
 };
 
 use super::{
@@ -20,27 +18,20 @@ use super::{
     ToolPreparationContext, ToolRegistry,
 };
 
-/// Shared authorization, hook, and workspace services for a spawned tool worker.
-///
-/// [`crate::ToolHost`] builds this from its core. Orchestration builds it from
-/// [`crate::Rho`] and session identity.
+/// Tool registry, workspace, and inherited authorization for a provider-free host.
 pub(crate) struct ToolWorkerServices {
     pub tools: ToolRegistry,
     pub workspace: Option<Workspace>,
-    pub workspace_policy: Arc<dyn WorkspacePolicy>,
-    pub approval_handler: Arc<dyn ApprovalHandler>,
-    pub approvals: Arc<crate::workspace::SessionApprovals>,
-    pub approval_audit: Arc<crate::workspace::ApprovalAuditLog>,
-    pub hooks: HookWiring,
+    pub authorization: Arc<crate::workspace::AuthorizationServices>,
     pub event_capacity: NonZeroUsize,
-    pub session_id: SessionId,
+    pub invocation_source: super::ToolInvocationSource,
+    pub execution: Arc<super::ExecutionArbiter>,
 }
 
 pub(crate) struct ToolHostWorker {
     pub core: Arc<ToolWorkerServices>,
     pub tool: Arc<dyn Tool>,
     pub call: ToolHostCall,
-    pub run_id: RunId,
     pub context: ToolContext,
     pub cancellation: CancellationToken,
     pub events: mpsc::Sender<ToolHostEvent>,
@@ -54,7 +45,6 @@ impl ToolHostWorker {
             core,
             tool,
             call,
-            run_id,
             context,
             cancellation,
             events,
@@ -62,10 +52,17 @@ impl ToolHostWorker {
             mut host_input,
         } = self;
         let started = Instant::now();
-        let invocation =
-            ToolInvocation::from_host(call.call_id().clone(), call.arguments().clone());
+        let invocation = match context.invocation_source() {
+            super::ToolInvocationSource::Model => {
+                ToolInvocation::new(call.call_id().clone(), call.arguments().clone())
+            }
+            super::ToolInvocationSource::Host => {
+                ToolInvocation::from_host(call.call_id().clone(), call.arguments().clone())
+            }
+        };
         let workspace = core.workspace.clone();
         let first_capability = context.first_capability();
+        let authorization = context.authorization().clone();
         let cancellation_cleanup_timeout = Arc::new(Mutex::new(None));
         let execution_completion = Arc::clone(&cancellation_cleanup_timeout);
         let execution = async {
@@ -86,6 +83,10 @@ impl ToolHostWorker {
                             ToolError::policy_denied(&error)
                         }
                     })?;
+            }
+            let _permit = core.execution.acquire(prepared.execution_policy()).await;
+            if cancellation.is_cancelled() {
+                return Err(ToolError::cancelled());
             }
             *execution_completion
                 .lock()
@@ -181,12 +182,11 @@ impl ToolHostWorker {
                 break;
             }
         }
-        observe_after_tool_use(
-            &core,
-            &call,
-            &run_id,
+        authorization.after_tool_use(
+            call.name(),
+            call.call_id(),
             &result,
-            started,
+            started.elapsed(),
             first_capability.get(),
         );
         result.map_err(Error::Tool)
@@ -214,48 +214,5 @@ async fn send_event(
     tokio::select! {
         result = sender.send(event) => result.is_ok(),
         () = cancellation.cancelled() => false,
-    }
-}
-
-fn observe_after_tool_use(
-    core: &ToolWorkerServices,
-    call: &ToolHostCall,
-    run_id: &RunId,
-    result: &Result<ToolOutput, ToolError>,
-    started: Instant,
-    capability: Option<&CapabilityRequest>,
-) {
-    let (status, failure) = match result {
-        Ok(_) => (HookToolStatus::Succeeded, None),
-        Err(error) => (
-            HookToolStatus::Failed,
-            Some(BoundedFailure {
-                kind: tool_error_label(error.kind()),
-                message: error.message(),
-                field: "payload.failure",
-            }),
-        ),
-    };
-    core.hooks.observe_after_tool_use(
-        HookToolIdentity {
-            session_id: Some(&core.session_id),
-            run_id: Some(run_id),
-            workspace_root: core.workspace.as_ref().map(Workspace::root),
-            tool_name: call.name(),
-            call_id: call.call_id(),
-        },
-        status,
-        failure,
-        Some(started.elapsed().as_millis() as u64),
-        capability,
-    );
-}
-
-const fn tool_error_label(kind: ToolErrorKind) -> &'static str {
-    match kind {
-        ToolErrorKind::InvalidArguments => "invalid_arguments",
-        ToolErrorKind::Execution => "execution",
-        ToolErrorKind::PolicyDenied => "policy_denied",
-        ToolErrorKind::Cancelled => "cancelled",
     }
 }

@@ -793,7 +793,7 @@ pub(super) fn generic_card(view: &ToolView, content: &str, status: ToolStatus) -
     card
 }
 
-pub(super) fn push_error_output(card: &mut ToolCard, content: &str) {
+pub(in crate::app::interactive_presenter) fn push_error_output(card: &mut ToolCard, content: &str) {
     let lines = split_body_lines(content.trim());
     let Some(first) = lines.first() else {
         return;
@@ -812,7 +812,7 @@ pub(super) fn push_error_output(card: &mut ToolCard, content: &str) {
     }
 }
 
-pub(super) fn split_body_lines(content: &str) -> Vec<String> {
+pub(in crate::app::interactive_presenter) fn split_body_lines(content: &str) -> Vec<String> {
     content.lines().map(str::to_string).collect()
 }
 

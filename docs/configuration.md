@@ -233,6 +233,22 @@ Pinned values stay fixed across provider changes. From `/config`, the change app
 
 `advisor_mode` controls whether the advisor tool is available. It defaults to `false`. See [Advisor mode](/configuration/advisor-mode).
 
+## Codemode
+
+The `codemode` tool composes native and MCP sibling tools in a Starlark script. It is available whenever tools are enabled. `[codemode] mode` matches Pi's `codemode.mode` and controls how the other tools are presented:
+
+```toml
+[codemode]
+mode = "on" # or "only"
+```
+
+- `on` (default): native sibling tools such as `read_file`, `write`, and `bash` stay declared next to `codemode`; the model may use either.
+- `only`: only `codemode` and `tool_search` are declared. Native siblings remain executable through script `call_tool`; `tool_search` discovers their names and result schemas without advertising them directly.
+
+`/codemode on|only` changes the next model request without rebuilding the runtime and saves the preference. Neither mode is a permission level: nested calls inherit `permission_mode`. MCP tools are script-only in both modes and discoverable with `tool_search` or script `search_tools`/`list_tools`. Discovery does not promote tools into the direct model list.
+
+Scripts call one tool with `call_tool(name, args)` or run independent calls concurrently with `call_tools([(name, args), ...])`, which returns results in order. A batch runs up to 4 calls at once, the same width as a model-issued parallel tool batch, and the whole batch counts toward the 64-call limit per script before any call starts. Script `list_tools()` and `search_tools(query)` return `{name, description}` rows; `describe_tool(name)` adds the result schema. A script that fails keeps its printed output and call log. See [Codemode](/tools-workspace/codemode) for the full guide.
+
 ## RTK
 
 `rtk` enables built-in [RTK](/integrations/rtk) command rewriting when the `rtk` binary is available. It defaults to `true`. Set `rtk = false` to leave shell commands unchanged.

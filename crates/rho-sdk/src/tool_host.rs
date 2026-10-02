@@ -11,8 +11,8 @@ use crate::{
         ToolRegistry, ToolWorkerServices,
     },
     ApprovalAuditRecord, ApprovalHandler, ApprovalSession, CancellationToken, DenyAllPolicy,
-    DenyApprovals, Error, HostInputRequest, HostInputResponse, RunId, SessionId, ToolCallId,
-    Workspace, WorkspacePolicy,
+    DenyApprovals, Error, HostInputRequest, HostInputResponse, SessionId, ToolCallId, Workspace,
+    WorkspacePolicy,
 };
 
 /// Future returned by [`ToolHost::invoke`].
@@ -318,43 +318,70 @@ impl ToolHostBuilder {
     }
 
     pub fn build(self) -> Result<ToolHost, Error> {
-        let mut tools = ToolRegistry::new();
-        for tool in self.tools {
-            tools
-                .register_shared(tool)
-                .map_err(|error| Error::InvalidConfiguration {
-                    message: error.to_string(),
-                })?;
-        }
         let approval_session = self.approval_session.unwrap_or_else(|| {
             ApprovalSession::from_shared(
                 self.approval_handler
                     .unwrap_or_else(|| Arc::new(DenyApprovals)),
             )
         });
-        Ok(ToolHost {
-            core: Arc::new(ToolWorkerServices {
-                tools,
-                workspace: self.workspace,
-                workspace_policy: self
-                    .workspace_policy
-                    .unwrap_or_else(|| Arc::new(DenyAllPolicy)),
-                approval_handler: approval_session.handler(),
-                approvals: approval_session.remembered(),
-                approval_audit: approval_session.audit_log(),
-                hooks: HookWiring::new(
-                    self.hook_observer,
-                    self.pre_tool_gate,
-                    self.hook_payload_bounds,
-                    self.hook_delegation,
-                )
-                .with_host_labels(self.hook_host_labels),
-                event_capacity: self.event_capacity.unwrap_or_else(|| {
-                    NonZeroUsize::new(crate::client::DEFAULT_EVENT_CAPACITY).unwrap()
-                }),
+        let authorization = Arc::new(crate::workspace::AuthorizationServices::new(
+            self.workspace_policy
+                .unwrap_or_else(|| Arc::new(DenyAllPolicy)),
+            approval_session.handler(),
+            approval_session.remembered(),
+            approval_session.audit_log(),
+            HookWiring::new(
+                self.hook_observer,
+                self.pre_tool_gate,
+                self.hook_payload_bounds,
+                self.hook_delegation,
+            )
+            .with_host_labels(self.hook_host_labels),
+            crate::workspace::AuthorizationScope {
                 session_id: self.session_id.unwrap_or_default(),
-            }),
-        })
+                workspace_root: self
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.root().to_path_buf()),
+                ..Default::default()
+            },
+        ));
+        ToolHost::assemble(
+            self.tools,
+            self.workspace,
+            authorization,
+            self.event_capacity,
+            crate::tool::ToolInvocationSource::Host,
+        )
+    }
+}
+
+/// Builder for nested hosts; inherited authorization cannot be overridden.
+pub struct ChildToolHostBuilder {
+    tools: Vec<Arc<dyn Tool>>,
+    workspace: Option<Workspace>,
+    authorization: Arc<crate::workspace::AuthorizationServices>,
+    invocation_source: crate::tool::ToolInvocationSource,
+}
+
+impl ChildToolHostBuilder {
+    pub fn tool<T: Tool + 'static>(self, tool: T) -> Self {
+        self.tool_shared(Arc::new(tool))
+    }
+
+    pub fn tool_shared(mut self, tool: Arc<dyn Tool>) -> Self {
+        self.tools.push(tool);
+        self
+    }
+
+    pub fn build(self) -> Result<ToolHost, Error> {
+        ToolHost::assemble(
+            self.tools,
+            self.workspace,
+            self.authorization,
+            /*capacity*/ None,
+            self.invocation_source,
+        )
     }
 }
 
@@ -365,19 +392,65 @@ type ToolHostCore = ToolWorkerServices;
 /// A host owns one logical authorization session. Calls share remembered
 /// `AllowForSession` decisions and a bounded approval audit. Capability-bearing
 /// tools always use the SDK order: workspace policy, `before_tool_use`, host
-/// approval when required, then execution.
+/// approval when required, execution-policy admission, then execution.
 #[derive(Clone)]
 pub struct ToolHost {
     core: Arc<ToolHostCore>,
 }
 
 impl ToolHost {
+    fn assemble(
+        registered: Vec<Arc<dyn Tool>>,
+        workspace: Option<Workspace>,
+        authorization: Arc<crate::workspace::AuthorizationServices>,
+        capacity: Option<NonZeroUsize>,
+        invocation_source: crate::tool::ToolInvocationSource,
+    ) -> Result<Self, Error> {
+        let mut tools = ToolRegistry::new();
+        for tool in registered {
+            tools
+                .register_shared(tool)
+                .map_err(|error| Error::InvalidConfiguration {
+                    message: error.to_string(),
+                })?;
+        }
+        Ok(Self {
+            core: Arc::new(ToolWorkerServices {
+                tools,
+                workspace,
+                authorization,
+                invocation_source,
+                execution: Arc::default(),
+                event_capacity: capacity.unwrap_or_else(|| {
+                    NonZeroUsize::new(crate::client::DEFAULT_EVENT_CAPACITY).unwrap()
+                }),
+            }),
+        })
+    }
+
     pub fn builder() -> ToolHostBuilder {
         ToolHostBuilder::default()
     }
 
+    /// Starts a nested host that inherits the active call's authorization.
+    ///
+    /// Inherits policy, approvals, hooks, session identity, live history, and
+    /// the initiating invocation source. Model-originated calls stay model-originated.
+    /// Calls in the child share their own execution arbiter; the parent may be
+    /// waiting for them while holding its own scheduler permit.
+    /// Nested hook envelopes retain the parent's run id. The narrow builder
+    /// permits registering tools, not overriding inherited security.
+    pub fn child_builder(parent: &ToolContext) -> ChildToolHostBuilder {
+        ChildToolHostBuilder {
+            tools: Vec::new(),
+            workspace: parent.workspace().cloned(),
+            authorization: Arc::new(parent.authorization().for_call()),
+            invocation_source: parent.invocation_source(),
+        }
+    }
+
     pub fn session_id(&self) -> &SessionId {
-        &self.core.session_id
+        self.core.authorization.session_id()
     }
 
     pub fn tool_specs(&self) -> Vec<crate::model::ToolSpec> {
@@ -385,7 +458,7 @@ impl ToolHost {
     }
 
     pub fn approval_audit(&self) -> Vec<ApprovalAuditRecord> {
-        self.core.approval_audit.snapshot()
+        self.core.authorization.audit().snapshot()
     }
 
     /// Starts one tool call without a model provider.
@@ -398,29 +471,12 @@ impl ToolHost {
             .ok_or_else(|| Error::InvalidConfiguration {
                 message: format!("tool '{}' is not registered", call.name()),
             })?;
-        let run_id = RunId::new();
         let cancellation = CancellationToken::new();
         let (events_sender, events) = mpsc::channel(self.core.event_capacity.get());
         let (progress, progress_receiver) = tool_progress_channel(self.core.event_capacity);
         let (host_input, host_input_receiver) =
             crate::host_input::channel(self.core.event_capacity.get(), cancellation.clone());
-        let authorization = Arc::new(crate::workspace::AuthorizationServices::new(
-            Arc::clone(&self.core.workspace_policy),
-            Arc::clone(&self.core.approval_handler),
-            Arc::clone(&self.core.approvals),
-            Arc::clone(&self.core.approval_audit),
-            self.core.hooks.clone(),
-            crate::workspace::AuthorizationScope {
-                session_id: Some(self.core.session_id.clone()),
-                run_id: Some(run_id.clone()),
-                workspace_root: self
-                    .core
-                    .workspace
-                    .as_ref()
-                    .map(|workspace| workspace.root().to_path_buf()),
-                live_history: None,
-            },
-        ));
+        let authorization = Arc::new(self.core.authorization.for_call());
         let context = ToolContext::with_security(
             self.core.workspace.clone(),
             authorization,
@@ -428,13 +484,13 @@ impl ToolHost {
             progress,
         )
         .with_call_id(call.id.clone())
+        .with_invocation_source(self.core.invocation_source)
         .with_host_input(host_input);
         let worker = tokio::spawn(
             ToolHostWorker {
                 core: Arc::clone(&self.core),
                 tool,
                 call: call.clone(),
-                run_id,
                 context,
                 cancellation: cancellation.clone(),
                 events: events_sender,
@@ -460,7 +516,7 @@ impl std::fmt::Debug for ToolHost {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ToolHost")
-            .field("session_id", &self.core.session_id)
+            .field("session_id", &self.session_id())
             .field("tools", &self.core.tools)
             .field(
                 "workspace_root",

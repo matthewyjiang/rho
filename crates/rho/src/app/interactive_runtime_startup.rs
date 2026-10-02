@@ -130,7 +130,7 @@ pub(super) async fn initialize(
     let startup_result: anyhow::Result<_> = async {
         let runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(&provider),
-            tools: tools.tools(),
+            tools: &tools,
             workspace: workspace.clone(),
             workspace_policy: AppPolicy::for_mode(permission_mode, session_writes.clone()),
             approval_session: approval_channel

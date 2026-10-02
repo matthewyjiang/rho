@@ -6,14 +6,6 @@ use std::time::Duration;
 
 const STOP_GRACE: Duration = Duration::from_secs(2);
 
-fn result(id: String, content: String) -> Result<ToolResult, ToolError> {
-    Ok(ToolResult {
-        id,
-        ok: true,
-        content,
-    })
-}
-
 #[derive(Clone)]
 pub struct Process(ProcessManager);
 
@@ -103,8 +95,9 @@ impl Tool for Process {
         on_update: &'a mut (dyn FnMut(Vec<String>) + Send),
     ) -> AppToolFuture<'a> {
         Box::pin(async move {
-            self.execute(ProcessArgs::parse(args)?, context, id, on_update)
+            self.execute(ProcessArgs::parse(args)?, context, on_update)
                 .await
+                .map(|run| run.into_result(id))
         })
     }
 }
@@ -114,9 +107,8 @@ impl Process {
         &self,
         args: ProcessArgs,
         context: ToolContext,
-        id: String,
         on_update: &mut (dyn FnMut(Vec<String>) + Send),
-    ) -> Result<ToolResult, ToolError> {
+    ) -> Result<rho_tools::Rendered<output::ProcessOutput>, ToolError> {
         match args {
             ProcessArgs::Start {
                 command,
@@ -132,7 +124,7 @@ impl Process {
                     .await
                     .map_err(ToolError::Message)?;
                 on_update(display::snapshot_progress_lines(&snapshot));
-                result(id, output::format_snapshot(&snapshot))
+                Ok(output::render_snapshot(snapshot))
             }
             ProcessArgs::Poll {
                 process_id,
@@ -150,7 +142,7 @@ impl Process {
                     .await
                     .map_err(ToolError::Message)?;
                 on_update(display::snapshot_progress_lines(&snapshot));
-                result(id, output::format_snapshot(&snapshot))
+                Ok(output::render_snapshot(snapshot))
             }
             ProcessArgs::Stop { process_id } => {
                 self.0
@@ -158,7 +150,10 @@ impl Process {
                     .await
                     .map_err(ToolError::Message)?;
                 on_update(vec![format!("stop requested: {process_id}")]);
-                result(id, output::format_stop(&process_id))
+                Ok(rho_tools::Rendered::new(
+                    output::format_stop(&process_id),
+                    output::ProcessOutput::StopRequested { process_id },
+                ))
             }
         }
     }

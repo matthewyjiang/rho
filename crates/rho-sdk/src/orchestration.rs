@@ -46,11 +46,11 @@ mod steering_control;
 mod stream_capture;
 mod terminal;
 mod tool_batch;
+mod tool_settlement;
 mod tool_turn;
 
 use async_jobs::{
-    await_all_jobs, await_first_job, forward_job_notice, harvest_ready_jobs, split_tool_calls,
-    AsyncJobSet, AwaitJobs,
+    await_all_jobs, await_first_job, forward_job_notice, harvest_ready_jobs, AsyncJobSet, AwaitJobs,
 };
 use compaction::{maybe_compact, recover_context_overflow, OverflowRecovery};
 use compaction_limit::CompactionLimit;
@@ -67,7 +67,8 @@ pub(in crate::orchestration) use steering_control::{
 use stream_capture::{capture_provider_event, StreamCapture};
 use terminal::{commit_terminal, commit_terminal_history, send_terminal, TerminalKind};
 use tool_turn::{
-    final_assistant_content, resolve_tool_turn_result, run_staged_tool_turn, StagedToolTurn,
+    final_assistant_content, resolve_tool_turn_result, run_staged_tool_turn, split_tool_calls,
+    StagedToolTurn,
 };
 
 /// Runs one turn loop and reports its terminal outcome to lifecycle hooks.
@@ -142,7 +143,7 @@ async fn execute_turn_loop(
         history.push(Message::Assistant(vec![ContentBlock::ToolCall(
             call.clone(),
         )]));
-        let mut tool_turn = StagedToolTurn::host_requested(call);
+        let mut tool_turn = StagedToolTurn::host_requested(call, &runtime);
         let mut control = RunControl {
             hooks,
             cancellation: &cancellation,
@@ -162,9 +163,10 @@ async fn execute_turn_loop(
                 Err(terminal) => return *terminal,
             };
     }
-    // The tool set is immutable for the duration of a run, so build the specs
-    // (which deep-clone every tool's JSON schema) once instead of per step.
-    let tool_specs = runtime.tools.specs();
+    // The registry is immutable for the duration of a run, so build the specs
+    // (which deep-clone every tool's JSON schema) once. The advertised subset
+    // is chosen per step below, so visibility changes reach the next request.
+    let registered_specs = runtime.tools.specs();
     let mut preserve_from = None;
     // End of the prefix a pending-call compaction already rewrote while the
     // same async jobs kept running. Cleared once no job runs.
@@ -183,6 +185,7 @@ async fn execute_turn_loop(
         if let Err(error) = harvest_ready_jobs(&mut control).await {
             return control.terminate(core, history, error).await;
         }
+        let tool_specs = runtime.advertised_specs(&registered_specs);
         control.pending_outputs.drain_finished(&mut history);
         let request_scope = ProviderRequestScope {
             runtime: &runtime,
@@ -383,7 +386,8 @@ async fn execute_turn_loop(
         core.append_context_estimate(history.last().expect("assistant was appended"));
         drain_commands(control.commands, control.steering);
         let was_steered = control.steering.has_staged();
-        let (async_calls, sync_calls) = split_tool_calls(tool_calls, &async_ids, &runtime.tools);
+        let (async_calls, sync_calls) =
+            split_tool_calls(tool_calls, &async_ids, &runtime, &tool_specs);
         let spawned_async = !async_calls.is_empty();
         core.publish_in_flight_history(&history);
         if let Err(error) = async {

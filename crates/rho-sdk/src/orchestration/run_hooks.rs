@@ -7,21 +7,11 @@ use crate::{
     event::{RunOutcome, ToolCompletion},
     hooks::{
         bounded_failure, error_label, BoundedFailure, HookPayload, HookStopReason,
-        HookToolIdentity, HookToolStatus, HookWiring, RunCompletedPayload, RunFailedPayload,
+        HookToolIdentity, HookWiring, RunCompletedPayload, RunFailedPayload,
     },
-    tool::ToolErrorKind,
     workspace::CapabilityRequest,
     Error, RunId, SessionId, ToolCallId,
 };
-
-const fn tool_error_label(kind: ToolErrorKind) -> &'static str {
-    match kind {
-        ToolErrorKind::InvalidArguments => "invalid_arguments",
-        ToolErrorKind::Execution => "execution",
-        ToolErrorKind::PolicyDenied => "policy_denied",
-        ToolErrorKind::Cancelled => "cancelled",
-    }
-}
 
 /// Run-scoped hook identity and dispatch.
 ///
@@ -68,18 +58,7 @@ impl RunHooks {
         duration: Option<Duration>,
         capability: Option<&CapabilityRequest>,
     ) {
-        let (status, failure) = match completion {
-            ToolCompletion::Success(_) => (HookToolStatus::Succeeded, None),
-            ToolCompletion::Failure(failure) => (
-                HookToolStatus::Failed,
-                Some(BoundedFailure {
-                    kind: tool_error_label(failure.kind()),
-                    message: failure.message(),
-                    field: "payload.failure",
-                }),
-            ),
-            ToolCompletion::Unavailable => (HookToolStatus::Unavailable, None),
-        };
+        let (status, failure) = crate::hooks::tool_status(completion.into());
         self.hooks.observe_after_tool_use(
             HookToolIdentity {
                 session_id: Some(&self.session_id),

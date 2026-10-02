@@ -132,6 +132,61 @@ pub struct HookFailure {
     pub message: String,
 }
 
+pub(crate) enum ToolOutcomeRef<'a> {
+    Completed(&'a crate::tool::ToolOutput),
+    Failed(crate::tool::ToolErrorKind, &'a str),
+    Unavailable,
+}
+
+impl<'a> From<&'a crate::ToolCompletion> for ToolOutcomeRef<'a> {
+    fn from(completion: &'a crate::ToolCompletion) -> Self {
+        match completion {
+            crate::ToolCompletion::Success(output)
+            | crate::ToolCompletion::CompletedFailure(output) => {
+                if completion.is_failure() {
+                    Self::Failed(crate::tool::ToolErrorKind::Execution, output.content())
+                } else {
+                    Self::Completed(output)
+                }
+            }
+            crate::ToolCompletion::Failure(failure) => {
+                Self::Failed(failure.kind(), failure.message())
+            }
+            crate::ToolCompletion::Unavailable => Self::Unavailable,
+        }
+    }
+}
+
+pub(crate) const fn tool_error_label(kind: crate::tool::ToolErrorKind) -> &'static str {
+    match kind {
+        crate::tool::ToolErrorKind::InvalidArguments => "invalid_arguments",
+        crate::tool::ToolErrorKind::Execution => "execution",
+        crate::tool::ToolErrorKind::PolicyDenied => "policy_denied",
+        crate::tool::ToolErrorKind::Cancelled => "cancelled",
+    }
+}
+
+pub(crate) fn tool_status(
+    outcome: ToolOutcomeRef<'_>,
+) -> (HookToolStatus, Option<BoundedFailure<'_>>) {
+    let (kind, message) = match outcome {
+        ToolOutcomeRef::Completed(output) if output.is_failure() => {
+            (crate::tool::ToolErrorKind::Execution, output.content())
+        }
+        ToolOutcomeRef::Completed(_) => return (HookToolStatus::Succeeded, None),
+        ToolOutcomeRef::Failed(kind, message) => (kind, message),
+        ToolOutcomeRef::Unavailable => return (HookToolStatus::Unavailable, None),
+    };
+    (
+        HookToolStatus::Failed,
+        Some(BoundedFailure {
+            kind: tool_error_label(kind),
+            message,
+            field: "payload.failure",
+        }),
+    )
+}
+
 pub(crate) struct BoundedFailure<'a> {
     pub(crate) kind: &'a str,
     pub(crate) message: &'a str,

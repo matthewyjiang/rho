@@ -8,7 +8,7 @@ use super::*;
 #[test]
 fn finished_presentations_preserve_journal_shape() {
     use crate::presentation::{NotificationCard, NotificationDelivery, Presentation};
-    use rho_tools::tool_card::{ToolFamily, ToolHeader, ToolStatus};
+    use rho_tools::tool_card::{ToolCard, ToolFamily, ToolHeader, ToolStatus};
 
     let card = ToolCard::new(
         ToolStatus::Ok,
@@ -30,7 +30,7 @@ fn finished_presentations_preserve_journal_shape() {
     });
     for (presentation, data) in [
         (
-            Presentation::Card(card.clone()),
+            Presentation::Card(card.clone().into()),
             serde_json::json!({"card": card}),
         ),
         (

@@ -47,7 +47,9 @@ pub mod list_dir;
 #[cfg(windows)]
 pub mod powershell;
 pub mod read_file;
+mod rendered;
 pub mod rtk;
+pub use rendered::{output_schema, Rendered};
 pub mod sdk_adapter;
 mod sdk_search;
 pub mod sdk_security;

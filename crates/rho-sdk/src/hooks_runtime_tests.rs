@@ -424,12 +424,12 @@ impl Tool for SilentTool {
     }
 
     fn call<'a>(&'a self, _invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
-        Box::pin(async move { Ok(ToolOutput::text("ok")) })
+        Box::pin(async move { Ok(ToolOutput::text("failed result").failed()) })
     }
 }
 
 #[tokio::test]
-async fn a_tool_without_capabilities_reports_a_null_capability() {
+async fn completed_failure_reports_failed_hook_without_capability() {
     let observer = Arc::new(RecordingObserver::default());
     let runtime = Rho::builder()
         .provider(ScriptedProvider::new(
@@ -461,6 +461,7 @@ async fn a_tool_without_capabilities_reports_a_null_capability() {
         .find(|envelope| envelope.event() == HookEventKind::AfterToolUse)
         .expect("the call resolved");
     let payload = serde_json::to_value(after).unwrap()["payload"].clone();
+    assert_eq!(payload["status"], json!("failed"));
     assert!(payload["capability"].is_null());
     assert_eq!(after.after_tool_use_capability(), None);
 }

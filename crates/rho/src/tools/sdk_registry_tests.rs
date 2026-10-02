@@ -586,8 +586,9 @@ fn security_declarations_distinguish_network_builtins_from_host_tools() {
     assert!(rho.capabilities().is_empty());
 }
 
-// Covers: /advisor must add and remove the advisor tool mid-session without
-// disturbing the rest of the tool set or dropping the configured model.
+// Covers: /advisor must immediately add/remove the tool in execution, nesting,
+// and discovery without a getter refresh, disturbing other tools, or dropping
+// the configured model.
 // Owner: application tool registry.
 #[test]
 fn advisor_registration_toggles_without_rebuilding_the_tool_set() {
@@ -643,7 +644,7 @@ fn computer_registration_preserves_other_handles_with_the_same_name() {
     );
     let other = session.tool();
     let mut tools = AppToolSet::disabled();
-    tools.tools.push(Arc::clone(&other));
+    tools.add_bundle(StaticToolBundle::new(vec![Arc::clone(&other)]));
     let mut tools = tools.with_computer_use(session);
     for (registered, changed, count) in [
         (true, true, 2),
@@ -657,8 +658,9 @@ fn computer_registration_preserves_other_handles_with_the_same_name() {
     }
 }
 
-// Covers: /config edit-tool selection must swap the single advertised edit
-// surface without rebuilding the rest of the tool set.
+// Covers: /config edit-tool selection must swap the single edit surface in
+// execution, nesting, and discovery without a getter refresh or rebuilding
+// the rest of the tool set.
 // Owner: application tool registry.
 #[test]
 fn edit_tool_selection_swaps_the_advertised_edit_surface() {

@@ -210,18 +210,17 @@ async fn observation_failure_and_cancellation_retain_the_grant() {
     let (_root, session) = fixture();
     session.connect().await.unwrap();
     let tool = session.tool();
-    assert_eq!(
-        tool.call(
+    // An answered MCP `isError` is a completed call flagged as failed.
+    assert!(tool
+        .call(
             invocation(
                 json!({"action":"call","tool":"get_window_state","arguments":{"fail":true}})
             ),
             context()
         )
         .await
-        .unwrap_err()
-        .kind(),
-        ToolErrorKind::Execution
-    );
+        .unwrap()
+        .is_failure());
     assert_eq!(session.status(), ComputerUseStatus::Connected);
     assert_eq!(session.revocation_reason(), None);
 
@@ -261,7 +260,7 @@ async fn observation_failure_and_cancellation_retain_the_grant() {
 }
 
 // Covers: answered input failures retain the grant, but a lost response has
-// uncertain effects and must revoke it, even though both errors are Execution.
+// uncertain effects and must revoke it. Only the answered one completes.
 // Owner: Cua session lifecycle over a real stdio MCP fixture.
 #[tokio::test]
 async fn action_failures_retain_grant_only_when_answered() {
@@ -281,16 +280,20 @@ async fn action_failures_retain_grant_only_when_answered() {
         let (_root, session) = fixture();
         session.connect().await.unwrap();
         let tool = session.tool();
-        assert_eq!(
-            tool.call(
+        let result = tool
+            .call(
                 invocation(json!({"action":"call","tool":name,"arguments":arguments})),
-                context()
+                context(),
             )
-            .await
-            .unwrap_err()
-            .kind(),
-            ToolErrorKind::Execution
-        );
+            .await;
+        // An answered failure completes with a failure flag; a lost response
+        // never completed and stays an Execution error.
+        match expected {
+            ComputerUseStatus::Closing => {
+                assert_eq!(result.unwrap_err().kind(), ToolErrorKind::Execution);
+            }
+            _ => assert!(result.unwrap().is_failure()),
+        }
         assert_eq!(session.status(), expected);
         assert_eq!(
             session.revocation_reason().is_some(),

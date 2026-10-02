@@ -26,11 +26,8 @@ use rmcp::{
 };
 
 use super::{
-    config::McpTransport,
-    definition::McpToolDefinition,
-    inflight::McpInFlightCalls,
-    progress::McpProgressRouter,
-    result::{self, RenderedResult},
+    config::McpTransport, definition::McpToolDefinition, inflight::McpInFlightCalls,
+    progress::McpProgressRouter, result,
 };
 
 // Bound in-flight tool calls so an unresponsive server cannot hang a turn.
@@ -163,6 +160,10 @@ impl Tool for McpTool {
         self.slot.definition().spec
     }
 
+    fn output_schema(&self) -> Option<serde_json::Value> {
+        self.slot.definition().expectation.output_schema
+    }
+
     fn security(&self) -> ToolSecurity {
         // Config is the trust boundary: enabling a server starts it at session
         // load. Tool calls are RPCs on that already-running host-owned session
@@ -273,15 +274,7 @@ impl McpTool {
                             result = &mut call => result?,
                             never = &mut service => match never {},
                         };
-                        // Semantic model images and card assets were selected
-                        // independently while interpreting the MCP result.
-                        let mut metadata = metadata;
-                        for asset in rendered.assets {
-                            metadata = metadata.asset(asset);
-                        }
-                        Ok(ToolOutput::text(rendered.text)
-                            .metadata(metadata)
-                            .with_images(rendered.images))
+                        rendered.into_tool_output(metadata)
                     })
                 },
             ))
@@ -303,6 +296,10 @@ impl Tool for ObservedCall<'_> {
 
     fn security(&self) -> ToolSecurity {
         self.tool.security()
+    }
+
+    fn output_schema(&self) -> Option<serde_json::Value> {
+        self.tool.output_schema()
     }
 
     fn prepare<'a>(
@@ -353,7 +350,7 @@ pub(super) struct McpCall<'a> {
     pub(super) image_delivery: super::McpImageDelivery,
 }
 
-/// Issue one `tools/call` and return the serialized MCP result.
+/// Issue one `tools/call` and return its model and script views.
 ///
 /// The request goes out as a cancellable handle rather than a plain await so
 /// two things hold: the server's progress token is known before the response
@@ -365,7 +362,7 @@ pub(super) async fn call_remote_tool(
     progress_sender: Option<ToolProgressSender>,
     max_output_bytes: usize,
     completion: Option<&Mutex<McpCallCompletion>>,
-) -> Result<RenderedResult, ToolError> {
+) -> Result<rho_tools::Rendered<serde_json::Value>, ToolError> {
     let McpCall {
         peer,
         progress,

@@ -12,22 +12,54 @@ mod results;
 use results::{
     count_nonempty_lines, diff_card, fetch_content_card, file_diff_card, generic_card,
     get_search_content_card, mcp_preview_card, mcp_result_card, process_result_card,
-    push_error_output, search_result_card, shell_card, shell_result_card, split_body_lines,
-    web_search_card, EmptyDiffState,
+    search_result_card, shell_card, shell_result_card, web_search_card, EmptyDiffState,
 };
+pub(in crate::app::interactive_presenter) use results::{push_error_output, split_body_lines};
 
 #[path = "interactive_presenter_apply_patch.rs"]
 mod apply_patch_format;
 use apply_patch_format::apply_patch_card;
 
-use super::{agent_format, sessions_format, ToolKind, ToolPresentation, ToolView};
+use super::{
+    agent_format, codemode_format, sessions_format, PresentedToolCard, ToolBodySyntax, ToolKind,
+    ToolPresentation, ToolView,
+};
+
+pub(super) fn body_syntax(kind: ToolKind) -> ToolBodySyntax {
+    match kind {
+        ToolKind::Codemode => codemode_format::body_syntax(),
+        ToolKind::Advisor
+        | ToolKind::Agent
+        | ToolKind::Agents
+        | ToolKind::Bash
+        | ToolKind::PowerShell
+        | ToolKind::Process
+        | ToolKind::ListDir
+        | ToolKind::Grep
+        | ToolKind::Glob
+        | ToolKind::ReadFile
+        | ToolKind::WriteFile
+        | ToolKind::Edit(_)
+        | ToolKind::Skill
+        | ToolKind::WebSearch
+        | ToolKind::FetchContent
+        | ToolKind::GetSearchContent
+        | ToolKind::Questionnaire
+        | ToolKind::Sessions
+        | ToolKind::Mcp
+        | ToolKind::Other => ToolBodySyntax::Plain,
+    }
+}
 
 pub(super) fn presentation(view: &ToolView, mut card: ToolCard) -> ToolPresentation {
     card.push_notice_facts(view.metadata.presentation_notices());
     // Metadata can refine Process/Other family after start; keep builders honest.
     card.family = family_for_kind(view.kind, Some(&view.metadata));
     ToolPresentation {
-        card,
+        card: PresentedToolCard {
+            card,
+            body_syntax: body_syntax(view.kind),
+        },
         image_asset: view
             .metadata
             .assets()
@@ -229,6 +261,9 @@ pub(super) fn preview_card(
             kind_card(status, kind, ToolHeader::call(name, None))
         }
         ToolKind::Sessions => sessions_format::preview_card(arguments, status),
+        ToolKind::Codemode => {
+            codemode_format::preview_card(arguments, status, /*primary*/ None)
+        }
         ToolKind::WebSearch => {
             let primary = search_terms(arguments).or_else(|| Some(name.to_string()));
             kind_card(status, kind, ToolHeader::call("web_search", primary))
@@ -380,6 +415,7 @@ pub(super) fn finished_card(
     content: &str,
     ok: bool,
     cwd: &std::path::Path,
+    data: Option<&serde_json::Value>,
 ) -> ToolCard {
     let status = ToolStatus::from_finished(ok);
     match view.kind {
@@ -455,6 +491,7 @@ pub(super) fn finished_card(
         ToolKind::Questionnaire => {
             preview_card(view.kind, &view.name, Some(&view.arguments), cwd, status)
         }
+        ToolKind::Codemode => codemode_format::finished_card(&view.arguments, content, ok, data),
         ToolKind::Mcp => mcp_result_card(view, content, status),
         ToolKind::Other => generic_card(view, content, status),
     }
@@ -470,6 +507,13 @@ pub(super) fn progress_card(
         }
         if view.kind == ToolKind::Agent {
             return agent_format::agent_progress_card(view, progress.text());
+        }
+        if view.kind == ToolKind::Codemode {
+            return codemode_format::preview_card(
+                &view.arguments,
+                ToolStatus::Running,
+                /*primary*/ None,
+            );
         }
         if matches!(view.kind, ToolKind::Bash | ToolKind::PowerShell) {
             let prompt = if view.kind == ToolKind::Bash {
@@ -590,7 +634,7 @@ pub(super) fn family_for_kind(kind: ToolKind, metadata: Option<&ToolMetadata>) -
             ToolFamily::Web
         }
         ToolKind::Questionnaire => ToolFamily::Form,
-        ToolKind::Mcp | ToolKind::Sessions => ToolFamily::Default,
+        ToolKind::Mcp | ToolKind::Sessions | ToolKind::Codemode => ToolFamily::Default,
         ToolKind::Process | ToolKind::Other => metadata
             .map(family_from_metadata)
             .unwrap_or(ToolFamily::Default),

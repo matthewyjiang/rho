@@ -299,18 +299,13 @@ impl EvalSetup {
         let recall_dir = tempfile::tempdir()?;
         let recall = crate::session::recall::RecallStore::default();
         recall.bind(Some(recall_dir.path().to_path_buf()));
-        let spec_tools = tools
-            .iter()
-            .cloned()
-            .map(|spec| Arc::new(SpecOnlyTool(spec)) as Arc<dyn rho_sdk::tool::Tool>)
-            .collect::<Vec<_>>();
         let provider = match self.tiers {
             CompactionEvalTiers::Text => Arc::new(NoNativeCompaction(self.session.clone())),
             CompactionEvalTiers::All | CompactionEvalTiers::None => self.session.clone(),
         };
         let (compactor, _) = build_compaction(CompactionSetup {
             provider,
-            tools: &spec_tools,
+            tool_specs: tools.to_vec(),
             reasoning: self.config.reasoning,
             compaction: self.compaction.clone(),
             context_window: Some(context_window),
@@ -531,15 +526,6 @@ fn default_auth(config: &Config, provider: &str) -> String {
 
 fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
-}
-
-/// A tool the compactor sees by spec only. Compaction never runs tools.
-struct SpecOnlyTool(ToolSpec);
-
-impl rho_sdk::tool::Tool for SpecOnlyTool {
-    fn spec(&self) -> ToolSpec {
-        self.0.clone()
-    }
 }
 
 /// Hides a provider's native compaction so the text tiers are measured.

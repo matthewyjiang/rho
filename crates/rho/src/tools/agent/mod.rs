@@ -23,7 +23,7 @@ use {
 };
 
 use super::agent_output::{
-    format_background_start, format_list_entry, format_snapshot, SnapshotFormat,
+    format_background_start, format_list_entry, format_snapshot, AgentRunView, SnapshotFormat,
 };
 
 const SUBAGENT_MANAGER: &str = "subagents";
@@ -39,6 +39,7 @@ pub(crate) use super::agent_output::MODEL_NOTIFICATION_BYTES as NOTIFICATION_CON
 
 pub struct AgentTool {
     manager: SubagentManager,
+    max_output_bytes: usize,
     /// Directory definitions are rediscovered from at each launch.
     cwd: PathBuf,
     /// Fixed at construction so the spec never rewrites what the caller was
@@ -61,7 +62,13 @@ impl AgentTool {
             cwd: cwd.to_path_buf(),
             advertised: AdvertisedAgents::from_catalog(&catalog),
             mutation_observer: Arc::new(()),
+            max_output_bytes: rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
         }
+    }
+
+    fn with_max_output_bytes(mut self, max_output_bytes: usize) -> Self {
+        self.max_output_bytes = max_output_bytes;
+        self
     }
 
     fn with_mutation_observer(
@@ -119,10 +126,12 @@ impl AgentTool {
 
         // Registration is the start receipt; instant failures still reach
         // the parent through automatic completion delivery.
-        Ok(
-            ToolOutput::text(format_background_start(&run_id, &definition_id))
-                .metadata(agent_metadata()),
+        rho_tools::Rendered::new(
+            format_background_start(&run_id, &definition_id),
+            AgentRunView::started(run_id, definition_id),
         )
+        .limit_data(self.max_output_bytes)?
+        .into_tool_output(agent_metadata())
     }
 }
 
@@ -173,6 +182,10 @@ impl Tool for AgentTool {
         }
     }
 
+    fn output_schema(&self) -> Option<serde_json::Value> {
+        Some(rho_tools::output_schema::<AgentRunView>())
+    }
+
     fn security(&self) -> ToolSecurity {
         ToolSecurity::built_in([])
     }
@@ -201,18 +214,27 @@ impl Tool for AgentTool {
 
 pub struct AgentsTool {
     manager: SubagentManager,
+    max_output_bytes: usize,
 }
 
 impl AgentsTool {
     pub fn new(manager: SubagentManager) -> Self {
-        Self { manager }
+        Self {
+            manager,
+            max_output_bytes: rho_tools::DEFAULT_MAX_OUTPUT_BYTES,
+        }
+    }
+
+    pub(super) fn with_max_output_bytes(mut self, max_output_bytes: usize) -> Self {
+        self.max_output_bytes = max_output_bytes;
+        self
     }
 
     async fn execute(&self, args: AgentsArgs) -> Result<ToolOutput, ToolError> {
-        let content = match args.action.as_str() {
+        let (content, data) = match args.action.as_str() {
             "list" => {
                 let agents = self.manager.list();
-                if agents.is_empty() {
+                let content = if agents.is_empty() {
                     "no delegated agents".to_string()
                 } else {
                     agents
@@ -220,7 +242,13 @@ impl AgentsTool {
                         .map(format_list_entry)
                         .collect::<Vec<_>>()
                         .join("\n")
-                }
+                };
+                (
+                    content,
+                    AgentsOutput::List {
+                        runs: agents.iter().map(AgentRunView::from).collect(),
+                    },
+                )
             }
             "status" => {
                 let id = required_id(&args)?;
@@ -237,7 +265,12 @@ impl AgentsTool {
                 } else {
                     SnapshotFormat::Status
                 };
-                format_snapshot(&snapshot, format)
+                (
+                    format_snapshot(&snapshot, format),
+                    AgentsOutput::Status {
+                        run: AgentRunView::from(&snapshot),
+                    },
+                )
             }
             "stop" => {
                 let id = required_id(&args)?;
@@ -245,7 +278,12 @@ impl AgentsTool {
                     self.manager.stop(id).await.map_err(|error| {
                         ToolError::new(ToolErrorKind::Execution, error.to_string())
                     })?;
-                format_snapshot(&snapshot, SnapshotFormat::Completion)
+                (
+                    format_snapshot(&snapshot, SnapshotFormat::Completion),
+                    AgentsOutput::Stop {
+                        run: AgentRunView::from(&snapshot),
+                    },
+                )
             }
             "message" => {
                 let id = required_id(&args)?;
@@ -264,7 +302,7 @@ impl AgentsTool {
                     .message(id, &message)
                     .await
                     .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-                match self.manager.task_identity(id) {
+                let content = match self.manager.task_identity(id) {
                     Some(identity) => message_receipt::MessageReceipt {
                         run_id: identity.run_id,
                         agent_id: identity.agent_id,
@@ -272,7 +310,8 @@ impl AgentsTool {
                     }
                     .content(),
                     None => format!("queued parent message for delegated run '{id}'"),
-                }
+                };
+                (content, AgentsOutput::Message { id: id.to_owned() })
             }
             other => {
                 return Err(ToolError::new(
@@ -281,8 +320,19 @@ impl AgentsTool {
                 ))
             }
         };
-        Ok(ToolOutput::text(content).metadata(agents_metadata()))
+        rho_tools::Rendered::new(content, data)
+            .limit_data(self.max_output_bytes)?
+            .into_tool_output(agents_metadata())
     }
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+#[serde(tag = "action", rename_all = "snake_case")]
+enum AgentsOutput {
+    List { runs: Vec<AgentRunView> },
+    Status { run: AgentRunView },
+    Stop { run: AgentRunView },
+    Message { id: String },
 }
 
 #[derive(Deserialize)]
@@ -320,6 +370,10 @@ impl Tool for AgentsTool {
                 "additionalProperties": false
             }),
         }
+    }
+
+    fn output_schema(&self) -> Option<serde_json::Value> {
+        Some(rho_tools::output_schema::<AgentsOutput>())
     }
 
     fn security(&self) -> ToolSecurity {
@@ -456,12 +510,15 @@ pub(super) fn sdk_bundle(
     let mut advertised = None;
     if options.tools.launches() {
         let tool = AgentTool::new(manager.clone(), &options.cwd, options.catalog)
+            .with_max_output_bytes(config.max_output_bytes)
             .with_mutation_observer(mutation_observer);
         advertised = Some(tool.advertised.clone());
         tools.push(Arc::new(tool));
     }
     if options.tools.manages() {
-        tools.push(Arc::new(AgentsTool::new(manager.clone())));
+        tools.push(Arc::new(
+            AgentsTool::new(manager.clone()).with_max_output_bytes(config.max_output_bytes),
+        ));
     }
     SdkDelegationBundle {
         tools,

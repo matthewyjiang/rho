@@ -103,6 +103,7 @@ pub(crate) trait WorkspaceSearch: Clone + Send + Sync + 'static {
     /// Validated arguments, built before any capability is requested so an
     /// invalid pattern cannot cost an authorization round trip.
     type Request: Send + 'static;
+    type Output: serde::Serialize + schemars::JsonSchema + Send + 'static;
 
     /// Tool name, used for the capability source and error messages.
     const NAME: &'static str;
@@ -122,5 +123,28 @@ pub(crate) trait WorkspaceSearch: Clone + Send + Sync + 'static {
         display_root: &str,
         request: &Self::Request,
         cancelled: &dyn Fn() -> bool,
-    ) -> Result<String, ToolError>;
+    ) -> Result<crate::Rendered<Self::Output>, ToolError>;
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Stopped {
+    ResultLimit,
+    PerFileLimit,
+    ScanLimit,
+    Deadline,
+    Cancelled,
+}
+
+pub(crate) fn stopped(reasons: &[StopReason]) -> Vec<Stopped> {
+    reasons
+        .iter()
+        .map(|reason| match reason {
+            StopReason::ResultLimit => Stopped::ResultLimit,
+            StopReason::PerFileLimit { .. } => Stopped::PerFileLimit,
+            StopReason::ScanLimit => Stopped::ScanLimit,
+            StopReason::Deadline => Stopped::Deadline,
+            StopReason::Cancelled => Stopped::Cancelled,
+        })
+        .collect()
 }

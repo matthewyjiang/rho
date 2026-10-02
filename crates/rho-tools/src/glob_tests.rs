@@ -2,7 +2,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
 
-use super::{glob_workspace, GlobRequest};
+use super::{glob_search, GlobRequest};
 use crate::tool::{compact_display_path, resolve_path, ToolError};
 
 /// Runs glob the way the SDK adapter does: parse, resolve the root against the
@@ -11,7 +11,7 @@ fn call_glob(dir: &TempDir, args: serde_json::Value) -> Result<String, ToolError
     let request = GlobRequest::from_arguments(args)?;
     let root = resolve_path(dir.path(), &request.path);
     let display = compact_display_path(dir.path(), &request.path);
-    glob_workspace(&root, &display, &request, &|| false)
+    glob_search(&root, &display, &request, &|| false).map(|output| output.text().to_owned())
 }
 
 fn write(dir: &TempDir, relative: &str, content: &str) {

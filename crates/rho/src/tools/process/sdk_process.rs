@@ -138,10 +138,12 @@ impl SdkProcess {
                 break;
             }
         }
-        Ok(
-            ToolOutput::text(super::output::format_snapshot(&snapshot))
-                .metadata(process_metadata()),
-        )
+        super::output::limit_process_data(
+            super::output::render_snapshot(snapshot),
+            self.max_output_bytes,
+        )?
+        .limit_data(self.max_output_bytes)?
+        .into_tool_output(process_metadata())
     }
 }
 
@@ -152,6 +154,10 @@ impl Tool for SdkProcess {
 
     fn security(&self) -> ToolSecurity {
         ToolSecurity::built_in([CapabilityKind::Process])
+    }
+
+    fn output_schema(&self) -> Option<serde_json::Value> {
+        Some(rho_tools::output_schema::<super::output::ProcessOutput>())
     }
 
     fn prepare<'a>(
@@ -244,10 +250,9 @@ async fn execute_prepared(
             cwd: cwd.to_path_buf(),
             max_output_bytes,
         },
-        String::new(),
         &mut collect_update,
     );
-    let result = tokio::select! {
+    let run = tokio::select! {
         result = execution => result,
         () = cancellation.cancelled() => return Err(ToolError::cancelled()),
     }
@@ -257,10 +262,9 @@ async fn execute_prepared(
             break;
         }
     }
-    if !result.ok {
-        return Err(ToolError::new(ToolErrorKind::Execution, result.content));
-    }
-    Ok(ToolOutput::text(result.content).metadata(process_metadata()))
+    super::output::limit_process_data(run, max_output_bytes)?
+        .limit_data(max_output_bytes)?
+        .into_tool_output(process_metadata())
 }
 
 fn process_metadata() -> ToolMetadata {

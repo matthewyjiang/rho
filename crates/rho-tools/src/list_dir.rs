@@ -1,7 +1,12 @@
+#[cfg(all(test, unix))]
+#[path = "list_dir_tests.rs"]
+mod tests;
+
 use std::path::Path;
 
 use crate::tool::*;
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 pub struct ListDir;
@@ -28,24 +33,74 @@ impl Tool for ListDir {
         Box::pin(async move {
             let args: Args = serde_json::from_value(args)?;
             let path = resolve_path(&ctx.cwd, &args.path);
-            let content = list_directory(&path).await?;
-            Ok(ToolResult {
-                id,
-                ok: true,
-                content: truncate(content, ctx.max_output_bytes),
-            })
+            let entries = list_directory(&path).await?;
+            Ok(render_listing(entries, ctx.max_output_bytes).into_result(id))
         })
     }
 }
 
-pub(super) async fn list_directory(path: &Path) -> Result<String, ToolError> {
-    let mut lines = Vec::new();
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EntryKind {
+    File,
+    Dir,
+}
+
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct Entry {
+    name: String,
+    kind: EntryKind,
+}
+
+impl Entry {
+    fn display(&self) -> String {
+        match self.kind {
+            EntryKind::File => self.name.clone(),
+            EntryKind::Dir => format!("{}/", self.name),
+        }
+    }
+}
+
+#[derive(Serialize, JsonSchema)]
+pub(crate) struct Listing {
+    entries: Vec<Entry>,
+    truncated: bool,
+}
+
+fn render_entries(entries: &[Entry]) -> String {
+    entries
+        .iter()
+        .map(Entry::display)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Keep complete entries in the script view, even when names contain newlines.
+pub(crate) fn render_listing(
+    entries: Vec<Entry>,
+    max_output_bytes: usize,
+) -> crate::Rendered<Listing> {
+    let text = render_entries(&entries);
+    let truncated = text.len() > max_output_bytes;
+    crate::Rendered::new(
+        truncate(text, max_output_bytes),
+        Listing { entries, truncated },
+    )
+}
+
+pub(super) async fn list_directory(path: &Path) -> Result<Vec<Entry>, ToolError> {
+    let mut listing = Vec::new();
     let mut entries = tokio::fs::read_dir(path).await?;
     while let Some(entry) = entries.next_entry().await? {
-        let ty = entry.file_type().await?;
-        let suffix = if ty.is_dir() { "/" } else { "" };
-        lines.push(format!("{}{}", entry.file_name().to_string_lossy(), suffix));
+        listing.push(Entry {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            kind: if entry.file_type().await?.is_dir() {
+                EntryKind::Dir
+            } else {
+                EntryKind::File
+            },
+        });
     }
-    lines.sort();
-    Ok(lines.join("\n"))
+    listing.sort_by_cached_key(Entry::display);
+    Ok(listing)
 }

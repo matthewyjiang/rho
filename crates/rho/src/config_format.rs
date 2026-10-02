@@ -39,6 +39,8 @@ pub enum EffectiveModelSource {
 struct GroupedConfig<'a> {
     #[serde(skip_serializing_if = "super::QuestionnaireConfig::is_disabled")]
     questionnaire: &'a super::QuestionnaireConfig,
+    #[serde(skip_serializing_if = "super::CodemodeConfig::is_default")]
+    codemode: &'a super::CodemodeConfig,
     model: ModelConfig<'a>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     internal_agents: BTreeMap<&'a str, PersistedInternalAgentModelConfig<'a>>,
@@ -230,6 +232,7 @@ impl<'a> From<&'a Config> for GroupedConfig<'a> {
     fn from(config: &'a Config) -> Self {
         Self {
             questionnaire: &config.questionnaire,
+            codemode: &config.codemode,
             model: ModelConfig {
                 provider: &config.provider,
                 model: persisted_model_reference(config.current_model_alias(), &config.model),

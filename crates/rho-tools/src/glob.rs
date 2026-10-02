@@ -54,6 +54,7 @@ impl GlobRequest {
 
 impl WorkspaceSearch for GlobSearch {
     type Request = GlobRequest;
+    type Output = GlobOutput;
 
     const NAME: &'static str = "glob";
 
@@ -88,17 +89,24 @@ impl WorkspaceSearch for GlobSearch {
         display_root: &str,
         request: &GlobRequest,
         cancelled: &dyn Fn() -> bool,
-    ) -> Result<String, ToolError> {
-        glob_workspace(root, display_root, request, cancelled)
+    ) -> Result<crate::Rendered<GlobOutput>, ToolError> {
+        glob_search(root, display_root, request, cancelled)
     }
 }
 
-pub(crate) fn glob_workspace(
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct GlobOutput {
+    /// Paths relative to the searched directory.
+    paths: Vec<String>,
+    stopped: Vec<crate::search::Stopped>,
+}
+
+pub(crate) fn glob_search(
     root: &Path,
     display_root: &str,
     request: &GlobRequest,
     cancelled: &dyn Fn() -> bool,
-) -> Result<String, ToolError> {
+) -> Result<crate::Rendered<GlobOutput>, ToolError> {
     let options = WalkOptions {
         hidden: request.hidden,
         limits: WalkLimits::within(SEARCH_DEADLINE),
@@ -121,6 +129,11 @@ pub(crate) fn glob_workspace(
     });
 
     let reasons = stop_reasons(walk_stop, /*per_file_truncated*/ 0);
+    let data = GlobOutput {
+        paths: matches,
+        stopped: crate::search::stopped(&reasons),
+    };
+    let matches = &data.paths;
     if matches.is_empty() {
         // Still report why, so a walk cut short by a limit or a cancellation is
         // never mistaken for a directory with no matching files.
@@ -128,14 +141,20 @@ pub(crate) fn glob_workspace(
             "no files matching '{}' under {display_root}",
             request.pattern_display
         );
-        return Ok(with_reasons(counts, &reasons, NARROW));
+        return Ok(crate::Rendered::new(
+            with_reasons(counts, &reasons, NARROW),
+            data,
+        ));
     }
 
     let counts = format!("{} files", matches.len());
-    Ok(format!(
-        "{}\n\n{}",
-        matches.join("\n"),
-        with_reasons(counts, &reasons, NARROW)
+    Ok(crate::Rendered::new(
+        format!(
+            "{}\n\n{}",
+            matches.join("\n"),
+            with_reasons(counts, &reasons, NARROW)
+        ),
+        data,
     ))
 }
 

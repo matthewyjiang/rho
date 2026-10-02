@@ -10,9 +10,9 @@ use super::{
     tool_result_for_name, AGENTS_LIST_CALL_ID, BACKGROUND_AGENT_CALL_ID,
     BACKGROUND_CLAUDE_AGENT_CALL_ID, BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID,
     BACKGROUND_QUESTIONNAIRE_COMPLETION, CLAUDE_AGENT_CALL_ID, CLAUDE_AGENT_ERROR_CALL_ID,
-    COMPUTER_CALL_ID, CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID, HOVER_TOOL_CALL_ID,
-    PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID, QUESTIONNAIRE_CALL_ID, SUBAGENT_RAIL_AGENT_CALL_ID,
-    TOOL_CALL_ID,
+    CODEMODE_CALL_ID, COMPUTER_CALL_ID, CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID,
+    HOVER_TOOL_CALL_ID, PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID, QUESTIONNAIRE_CALL_ID,
+    SUBAGENT_RAIL_AGENT_CALL_ID, TOOL_CALL_ID,
 };
 
 pub(super) fn compaction(
@@ -62,6 +62,9 @@ pub(super) fn intercept(
             "concurrent progress complete in model order: {}; {}",
             slow.content, fast.content
         )));
+    }
+    if tool_result(request, CODEMODE_CALL_ID).is_some() {
+        return Some(completed("codemode fixture complete"));
     }
     if let Some(result) = tool_result(request, PROGRESS_CALL_ID) {
         return Some(completed(format!(

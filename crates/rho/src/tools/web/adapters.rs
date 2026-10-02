@@ -93,89 +93,141 @@ impl Tool for WebSearch {
 
     fn call<'a>(&'a self, args: Value, ctx: ToolContext, id: String) -> AppToolFuture<'a> {
         Box::pin(async move {
-            let args: WebSearchArgs = serde_json::from_value(args)?;
-            if !self.client_available() {
-                return Err(ToolError::Message(
-                    "web search is disabled or the selected backend is unavailable".into(),
-                ));
-            }
-            let queries = collect_values(args.query, args.queries, "query", "queries")?;
-            let num_results = args.num_results.unwrap_or(5).clamp(1, 20);
-            let backend = self.config.backend();
-            let workflow = args.workflow.unwrap_or_else(|| "summary-review".into());
-            let include_content = args.include_content.unwrap_or(false);
-            let response_id = storage::new_response_id();
-            let mut items = Vec::new();
-            let mut summaries = Vec::new();
+            Ok(self
+                .search(args, ctx.max_output_bytes)
+                .await?
+                .into_result(id))
+        })
+    }
+}
 
-            for query in queries {
-                let result = search::run_search_query(
-                    &self.client,
-                    &query,
-                    num_results,
-                    args.recency_filter.as_deref(),
-                    args.domain_filter.as_deref(),
-                    &self.config,
-                )
-                .await;
-                match result {
-                    Ok(search_items) if !search_items.is_empty() => {
-                        for (index, item) in search_items.into_iter().enumerate() {
-                            let (content, content_kind) =
-                                search::item_content(&item, include_content).await;
-                            summaries.push(format!(
-                                "{}. [{}] {}{}",
-                                index + 1,
-                                item.title.as_deref().unwrap_or("result"),
-                                item.url.as_deref().unwrap_or("no url"),
-                                item.snippet
-                                    .is_empty()
-                                    .then(String::new)
-                                    .unwrap_or_else(|| format!(" - {}", item.snippet))
-                            ));
-                            items.push(StoredItem {
-                                url: item.url,
-                                query: Some(query.clone()),
-                                title: item.title,
-                                content,
-                                metadata: json!({"backend": backend, "workflow": workflow, "contentKind": content_kind}),
-                            });
-                        }
-                    }
-                    Err(error) => return Err(error),
-                    Ok(_) => {
-                        let message = format!(
-                            "The selected search backend returned no results for '{query}'."
-                        );
-                        summaries.push(message.clone());
+/// Per-result snippet cap in structured content, matching the Exa backend's
+/// existing 500-char snippet bound so every backend returns the same size.
+const STRUCTURED_SNIPPET_CHARS: usize = 500;
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(super) struct WebSearchOutput {
+    /// Pass to get_search_content for stored snippets or pages.
+    response_id: String,
+    results: Vec<SearchResultView>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+struct SearchResultView {
+    query: String,
+    title: Option<String>,
+    url: Option<String>,
+    snippet: String,
+}
+
+impl WebSearch {
+    /// Runs the search and stores items; returns the model text (bounded by
+    /// `max_output_bytes`) and the script-facing results. Results are bounded
+    /// by `numResults` (max 20) per query; snippets come from the backend.
+    pub(super) async fn search(
+        &self,
+        args: Value,
+        max_output_bytes: usize,
+    ) -> Result<rho_tools::Rendered<WebSearchOutput>, ToolError> {
+        let args: WebSearchArgs = serde_json::from_value(args)?;
+        if !self.client_available() {
+            return Err(ToolError::Message(
+                "web search is disabled or the selected backend is unavailable".into(),
+            ));
+        }
+        let queries = collect_values(args.query, args.queries, "query", "queries")?;
+        let num_results = args.num_results.unwrap_or(5).clamp(1, 20);
+        let backend = self.config.backend();
+        let workflow = args.workflow.unwrap_or_else(|| "summary-review".into());
+        let include_content = args.include_content.unwrap_or(false);
+        let response_id = storage::new_response_id();
+        let mut items = Vec::new();
+        let mut summaries = Vec::new();
+        let mut results = Vec::new();
+
+        for query in queries {
+            let result = search::run_search_query(
+                &self.client,
+                &query,
+                num_results,
+                args.recency_filter.as_deref(),
+                args.domain_filter.as_deref(),
+                &self.config,
+            )
+            .await;
+            match result {
+                Ok(search_items) if !search_items.is_empty() => {
+                    for (index, item) in search_items.into_iter().enumerate() {
+                        results.push(SearchResultView {
+                            query: query.clone(),
+                            title: item.title.clone(),
+                            url: item.url.clone(),
+                            snippet: item
+                                .snippet
+                                .chars()
+                                .take(STRUCTURED_SNIPPET_CHARS)
+                                .collect(),
+                        });
+                        let (content, content_kind) =
+                            search::item_content(&item, include_content).await;
+                        summaries.push(format!(
+                            "{}. [{}] {}{}",
+                            index + 1,
+                            item.title.as_deref().unwrap_or("result"),
+                            item.url.as_deref().unwrap_or("no url"),
+                            item.snippet
+                                .is_empty()
+                                .then(String::new)
+                                .unwrap_or_else(|| format!(" - {}", item.snippet))
+                        ));
+                        let metadata = json!({"backend": backend, "workflow": workflow, "contentKind": content_kind});
                         items.push(StoredItem {
-                            url: None,
-                            query: Some(query),
-                            title: Some("no search results".into()),
-                            content: message,
-                            metadata: json!({"backend": backend, "workflow": workflow, "status": "empty", "contentKind": "snippet"}),
+                            url: item.url,
+                            query: Some(query.clone()),
+                            title: item.title,
+                            content,
+                            metadata,
                         });
                     }
                 }
+                Err(error) => return Err(error),
+                Ok(_) => {
+                    let message =
+                        format!("The selected search backend returned no results for '{query}'.");
+                    summaries.push(message.clone());
+                    let metadata = json!({"backend": backend, "workflow": workflow, "status": "empty", "contentKind": "snippet"});
+                    items.push(StoredItem {
+                        url: None,
+                        query: Some(query),
+                        title: Some("no search results".into()),
+                        content: message,
+                        metadata,
+                    });
+                }
             }
+        }
 
-            self.store.store(
-                response_id.clone(),
-                StoredContent {
-                    kind: "web_search".into(),
-                    items,
-                },
-            )?;
+        self.store.store(
+            response_id.clone(),
+            StoredContent {
+                kind: "web_search".into(),
+                items,
+            },
+        )?;
 
-            Ok(ToolResult {
-                id,
-                ok: true,
-                content: truncate(
-                    format_web_search(&response_id, &summaries),
-                    ctx.max_output_bytes,
-                ),
-            })
-        })
+        let content = truncate(
+            format_web_search(&response_id, &summaries),
+            max_output_bytes,
+        );
+        rho_tools::Rendered::new(
+            content,
+            WebSearchOutput {
+                response_id,
+                results,
+            },
+        )
+        .limit_data(max_output_bytes)
+        .map_err(|error| ToolError::Message(error.to_string()))
     }
 }
 

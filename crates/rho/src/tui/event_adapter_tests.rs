@@ -194,7 +194,7 @@ fn hosted_tool_activity_maps_to_tool_finished_view() {
             panic!("{case}: expected hosted tool activity finished");
         };
         assert_eq!(
-            (card.status, card.family, card.header, card.facts),
+            (card.status, card.family, card.card.header, card.card.facts),
             (ToolStatus::Ok, family, ToolHeader::call(name, None), facts),
             "{case}"
         );
@@ -244,7 +244,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
         DiffRow::new(DiffRowKind::Meta, None, "PUT 1"),
         DiffRow::new(DiffRowKind::Added, None, "new"),
     ]));
-    assert_eq!(card, Some(stream_card.clone()));
+    assert_eq!(card, Some(stream_card.clone().into()));
     assert!(matches!(
         only_event(adapter.translate(RunEvent::ToolCallUpdated {
             index: 0,
@@ -289,7 +289,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
         )
         .interrupted(Some("edit"), partial_arguments)
         .card,
-        interrupted_card
+        interrupted_card.into()
     );
 
     let call = ToolCall {
@@ -300,7 +300,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
     assert!(matches!(
         only_event(adapter.translate(RunEvent::ToolProposed { call })),
         ViewEvent::Update(ViewModelEvent::ToolCallProposed { card, .. })
-            if card == planned_card
+            if card.card == planned_card
     ));
     assert!(matches!(
         only_event(adapter.translate(RunEvent::ToolStarted {
@@ -309,7 +309,7 @@ fn edit_keeps_one_diff_card_from_stream_through_completion() {
             metadata: ToolMetadata::new().operation(OperationKind::Write),
         })),
         ViewEvent::Update(ViewModelEvent::ToolStarted { card, .. })
-            if card == planned_card
+            if card.card == planned_card
     ));
     let progress = ToolProgress::message("applying").units(1, 2);
     let ViewEvent::Update(ViewModelEvent::ToolUpdated { card, .. }) =
@@ -466,7 +466,7 @@ fn edit_preview_preserves_multi_file_identity() {
     }) else {
         panic!("expected streamed edit card");
     };
-    assert_eq!(card, expected);
+    assert_eq!(card.card, expected);
 }
 
 #[test]
@@ -567,7 +567,7 @@ fn compaction_failure_closes_open_tool_block_before_run_failed() {
         })),
         ViewEvent::Update(ViewModelEvent::ToolStarted { call_id, card, .. })
             if call_id == crate::tui::compaction_display::compaction_call_id()
-                && card == crate::tui::compaction_display::running_card()
+                && card.card == crate::tui::compaction_display::running_card()
     ));
 
     let events = adapter.translate(RunEvent::Failed {

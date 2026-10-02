@@ -1,5 +1,6 @@
 //! Renders grep results. Every output mode reads the same [`FileHit`] list, so
-//! the modes differ only in layout, never in what was collected.
+//! paths are identical in text and structured output. Existence-only mode does
+//! not claim counts; other modes render the counted matching lines.
 
 use std::fmt::Write;
 
@@ -28,34 +29,36 @@ pub(crate) fn format_results(
     }
 
     let (body, counts) = match request.output_mode {
-        GrepOutputMode::Content => (
-            content_body(display_root, hits),
-            content_counts(hits.len(), &stats),
-        ),
-        GrepOutputMode::FilesWithMatches => (
-            path_body(display_root, hits),
-            format!("{} files", hits.len()),
-        ),
+        GrepOutputMode::Content => (content_body(hits), content_counts(hits.len(), &stats)),
+        GrepOutputMode::FilesWithMatches => (path_body(hits), format!("{} files", hits.len())),
         GrepOutputMode::Count => (
-            count_body(display_root, hits),
-            format!("{} matches in {} files", stats.total_matches, hits.len()),
+            count_body(hits),
+            format!(
+                "{} matches in {} files",
+                stats.total_matches.expect_counted(),
+                hits.len()
+            ),
         ),
     };
     format!("{body}\n{}", with_reasons(counts, &stats.reasons, NARROW))
 }
 
-fn content_body(display_root: &str, hits: &[FileHit]) -> String {
+fn content_body(hits: &[FileHit]) -> String {
     let mut body = String::new();
     for hit in hits {
-        let path = workspace_relative_path(display_root, &hit.relative);
+        let path = &hit.path;
         if let Some(tag) = &hit.file_tag {
             // Sole hashline wire emitter owns header shape. Path must be the
             // workspace-relative form edit resolves, not walk-root-relative.
-            let _ = writeln!(body, "{}", crate::hashline::format_header(&path, tag));
+            let _ = writeln!(body, "{}", crate::hashline::format_header(path, tag));
         } else {
             let _ = writeln!(body, "{path}");
         }
-        for (line_no, text) in &hit.lines {
+        for crate::grep::MatchLine {
+            line: line_no,
+            text,
+        } in &hit.lines
+        {
             // Preview shape uses `N | text`, not hashline `N:text`, so truncated
             // match bodies are not copy-pasteable into edit PUT rows.
             let _ = writeln!(body, "{line_no} | {text}");
@@ -67,54 +70,32 @@ fn content_body(display_root: &str, hits: &[FileHit]) -> String {
     body
 }
 
-fn path_body(display_root: &str, hits: &[FileHit]) -> String {
+fn path_body(hits: &[FileHit]) -> String {
     let mut body = String::new();
     for hit in hits {
-        let _ = writeln!(
-            body,
-            "{}",
-            workspace_relative_path(display_root, &hit.relative)
-        );
+        let _ = writeln!(body, "{}", hit.path);
     }
     body
 }
 
-fn count_body(display_root: &str, hits: &[FileHit]) -> String {
+fn count_body(hits: &[FileHit]) -> String {
     let mut body = String::new();
     for hit in hits {
-        let _ = writeln!(
-            body,
-            "{}:{}",
-            workspace_relative_path(display_root, &hit.relative),
-            hit.total
-        );
+        let _ = writeln!(body, "{}:{}", hit.path, hit.count.expect_counted());
     }
     body
-}
-
-/// Join the search display root with a walk-root-relative hit path so chain
-/// headers and path lists stay workspace-relative for `edit` / `read_file`.
-fn workspace_relative_path(display_root: &str, relative: &str) -> String {
-    let root = display_root.trim();
-    let rel = relative.trim();
-    if root.is_empty() || root == "." {
-        return rel.to_string();
-    }
-    if rel.is_empty() || rel == "." {
-        return root.to_string();
-    }
-    format!("{root}/{rel}")
 }
 
 /// `content` mode is the only mode where the number shown can fall short of
 /// the number found, so it is the only one that reports both.
 fn content_counts(file_count: usize, stats: &GrepStats) -> String {
-    if stats.shown == stats.total_matches {
+    let total_matches = stats.total_matches.expect_counted();
+    if stats.shown == total_matches {
         format!("{} matches in {file_count} files", stats.shown)
     } else {
         format!(
-            "{} matches shown ({} total) in {file_count} files",
-            stats.shown, stats.total_matches
+            "{} matches shown ({total_matches} total) in {file_count} files",
+            stats.shown
         )
     }
 }

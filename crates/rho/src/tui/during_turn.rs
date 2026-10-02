@@ -405,6 +405,7 @@ impl App {
                 Ok(())
             }
             CommandId::Advisor
+            | CommandId::Codemode
             | CommandId::Permissions
             | CommandId::Hooks
             | CommandId::New

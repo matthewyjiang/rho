@@ -20,7 +20,7 @@ impl Default for ProcessLimits {
         }
     }
 }
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum State {
     Starting,
@@ -47,19 +47,19 @@ impl State {
         }
     }
 }
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Stream {
     Stdout,
     Stderr,
 }
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema, PartialEq)]
 pub struct Chunk {
     pub cursor: u64,
     pub stream: Stream,
     pub text: String,
 }
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct Snapshot {
     pub process_id: String,
     pub command: String,

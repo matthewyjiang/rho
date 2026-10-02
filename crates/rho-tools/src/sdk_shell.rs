@@ -13,7 +13,7 @@ use serde_json::Value;
 use crate::{
     cancellation::RunCancellation,
     shell_process::ShellArgs,
-    tool::{Tool as AppTool, ToolError as AppToolError, ToolResult as AppToolResult},
+    tool::{Tool as AppTool, ToolError as AppToolError},
     DEFAULT_MAX_OUTPUT_BYTES,
 };
 
@@ -151,7 +151,6 @@ impl ShellPlan {
     async fn execute(
         self,
         kind: ShellKind,
-        invocation_id: String,
         context: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
         let workspace = context.workspace().ok_or_else(|| {
@@ -163,12 +162,10 @@ impl ShellPlan {
         workspace
             .revalidate(&self.resolved_cwd)
             .map_err(|error| ToolError::new(ToolErrorKind::PolicyDenied, error.to_string()))?;
-        let result = execute_with_progress(kind, self.execution, invocation_id, context).await?;
-        if !result.ok {
-            return Err(ToolError::new(ToolErrorKind::Execution, result.content));
-        }
-        Ok(ToolOutput::text(result.content)
-            .metadata(ToolMetadata::new().operation(OperationKind::Execute)))
+        let max_output_bytes = self.execution.output_limits().max_output_bytes();
+        let run = execute_with_progress(kind, self.execution, context).await?;
+        run.limit_data(max_output_bytes)?
+            .into_tool_output(ToolMetadata::new().operation(OperationKind::Execute))
     }
 }
 
@@ -202,25 +199,15 @@ impl ShellKind {
     async fn execute(
         self,
         execution: ProcessExecution,
-        invocation_id: String,
         cancellation: RunCancellation,
         on_update: &mut (dyn FnMut(Vec<String>) + Send),
-    ) -> Result<AppToolResult, AppToolError> {
+    ) -> Result<crate::Rendered<crate::shell_process::ShellOutcome>, AppToolError> {
         match self {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
-            Self::Bash => {
-                super::bash::execute_process(execution, invocation_id, cancellation, on_update)
-                    .await
-            }
+            Self::Bash => super::bash::execute_process(execution, cancellation, on_update).await,
             #[cfg(windows)]
             Self::PowerShell => {
-                super::powershell::execute_process(
-                    execution,
-                    invocation_id,
-                    cancellation,
-                    on_update,
-                )
-                .await
+                super::powershell::execute_process(execution, cancellation, on_update).await
             }
         }
     }
@@ -242,6 +229,10 @@ impl Tool for SdkShellTool {
         ToolSecurity::built_in([CapabilityKind::Process])
     }
 
+    fn output_schema(&self) -> Option<Value> {
+        Some(crate::output_schema::<crate::shell_process::ShellOutcome>())
+    }
+
     fn start_metadata(&self, _arguments: &Value) -> ToolMetadata {
         ToolMetadata::new().operation(OperationKind::Execute)
     }
@@ -249,7 +240,6 @@ impl Tool for SdkShellTool {
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
             check_cancelled(&context)?;
-            let invocation_id = invocation.id().to_string();
             let plan = ShellPlan::parse(
                 self.kind,
                 invocation.into_arguments(),
@@ -264,7 +254,7 @@ impl Tool for SdkShellTool {
                     self.kind.name(),
                 );
             }
-            plan.execute(self.kind, invocation_id, &context).await
+            plan.execute(self.kind, &context).await
         })
     }
 }
@@ -272,19 +262,13 @@ impl Tool for SdkShellTool {
 async fn execute_with_progress(
     kind: ShellKind,
     execution: ProcessExecution,
-    invocation_id: String,
     context: &ToolContext,
-) -> Result<AppToolResult, ToolError> {
+) -> Result<crate::Rendered<crate::shell_process::ShellOutcome>, ToolError> {
     let (update_sender, mut updates) = tokio::sync::mpsc::unbounded_channel::<Vec<String>>();
     let mut on_update = move |lines: Vec<String>| {
         let _ = update_sender.send(lines);
     };
-    let call = kind.execute(
-        execution,
-        invocation_id,
-        context.cancellation().clone(),
-        &mut on_update,
-    );
+    let call = kind.execute(execution, context.cancellation().clone(), &mut on_update);
     tokio::pin!(call);
     let mut updates_open = true;
     let result = loop {

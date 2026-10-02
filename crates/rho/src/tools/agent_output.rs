@@ -27,6 +27,49 @@ pub(super) fn format_background_start(id: &str, agent_id: &str) -> String {
     format!("agent {id} ({agent_id}) started in background\nattach: rho attach {id}")
 }
 
+/// Script view of a run. Running output stays private; final answers share
+/// the model text's excerpt budget.
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(super) struct AgentRunView {
+    id: String,
+    agent_id: String,
+    state: RunState,
+    done: bool,
+    result: Option<String>,
+    error: Option<String>,
+}
+
+impl From<&SubagentSnapshot> for AgentRunView {
+    fn from(snapshot: &SubagentSnapshot) -> Self {
+        Self {
+            id: snapshot.id.clone(),
+            agent_id: snapshot.agent_id.clone(),
+            state: snapshot.status.state,
+            done: snapshot.done,
+            result: snapshot
+                .status
+                .result
+                .as_deref()
+                .filter(|result| snapshot.done && !result.is_empty())
+                .map(|result| truncate(result.to_string(), RESULT_EXCERPT_BYTES)),
+            error: snapshot.status.error.clone(),
+        }
+    }
+}
+
+impl AgentRunView {
+    pub(super) fn started(id: String, agent_id: String) -> Self {
+        Self {
+            id,
+            agent_id,
+            state: RunState::Starting,
+            done: false,
+            result: None,
+            error: None,
+        }
+    }
+}
+
 pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotFormat) -> String {
     let mut lines = vec![format!(
         "agent {} ({}): {}",

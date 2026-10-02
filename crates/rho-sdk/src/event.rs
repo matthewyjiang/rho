@@ -109,12 +109,78 @@ impl ToolFailure {
 }
 
 /// Result included in [`RunEvent::ToolFinished`].
+///
+/// Prefer [`Self::from_output`], [`Self::output`], and [`Self::is_failure`] over
+/// matching the legacy output-bearing variants. For completed calls, the
+/// output failure flag is authoritative even if a manually constructed variant
+/// disagrees with it.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-sdk): collapse Success and CompletedFailure into Completed(ToolOutput).
+/// The split preserves minor compatibility with hosts matching `Success`;
+/// until the next major, use the helpers to construct and interpret completions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ToolCompletion {
+    /// A completed call, normally with successful output.
+    /// Use [`Self::is_failure`] for status rather than the variant name.
     Success(ToolOutput),
+    /// A completed call, normally with failed output, retaining its metadata.
+    /// Use [`Self::from_output`] to keep this variant aligned with the output flag.
+    CompletedFailure(ToolOutput),
+    /// The call could not complete.
     Failure(ToolFailure),
     Unavailable,
+}
+
+impl ToolCompletion {
+    /// Preferred construction surface for completed calls until the next major.
+    pub fn from_output(output: ToolOutput) -> Self {
+        if output.is_failure() {
+            Self::CompletedFailure(output)
+        } else {
+            Self::Success(output)
+        }
+    }
+
+    /// Retained output from either completed variant; execution errors and
+    /// unavailable calls have no completed output. Prefer this over matching.
+    pub fn output(&self) -> Option<&ToolOutput> {
+        match self {
+            Self::Success(output) | Self::CompletedFailure(output) => Some(output),
+            Self::Failure(_) | Self::Unavailable => None,
+        }
+    }
+
+    /// Canonical result status. Completed calls use only the output failure
+    /// flag, not the legacy variant name. Errors and unavailable calls fail.
+    pub fn is_failure(&self) -> bool {
+        match self {
+            Self::Success(output) | Self::CompletedFailure(output) => output.is_failure(),
+            Self::Failure(_) | Self::Unavailable => true,
+        }
+    }
+
+    pub(crate) fn model_result(&self, name: &str, id: &str) -> crate::model::ToolResult {
+        let content = match self {
+            Self::Success(output) | Self::CompletedFailure(output) => output.content().to_owned(),
+            Self::Failure(failure) => failure.message().to_owned(),
+            Self::Unavailable => format!("tool '{name}' is unavailable"),
+        };
+        crate::model::ToolResult {
+            id: id.to_owned(),
+            ok: !self.is_failure(),
+            content,
+        }
+    }
+
+    pub(crate) fn from_result(result: Result<ToolOutput, crate::tool::ToolError>) -> Self {
+        match result {
+            Ok(output) => Self::from_output(output),
+            Err(error) => Self::Failure(ToolFailure::new(error.kind(), error.message().to_owned())),
+        }
+    }
 }
 
 /// Provider and request settings that affect model-call performance.

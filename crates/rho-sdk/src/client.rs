@@ -183,6 +183,7 @@ pub struct RhoBuilder {
     hook_delegation: crate::hooks::HookDelegation,
     hook_host_labels: crate::hooks::HookHostLabels,
     force_publish_live_history: bool,
+    tool_visibility: Option<Arc<dyn crate::tool::ToolVisibility>>,
 }
 
 impl RhoBuilder {
@@ -361,13 +362,21 @@ impl RhoBuilder {
         self
     }
 
-    /// Publishes the turn in flight for [`crate::Session::live_history`] even
-    /// when no registered tool declares [`crate::Tool::reads_live_history`] and
-    /// the approval handler does not declare
-    /// [`crate::ApprovalHandler::reads_live_history`].
+    /// Chooses the advertised tool subset per model request.
     ///
-    /// Prefer [`crate::ApprovalHandler::reads_live_history`] when the consumer is
-    /// an approval handler. Keep this escape hatch for non-handler host logic.
+    /// Without one, every registered tool is advertised on every request.
+    pub fn tool_visibility_shared(
+        mut self,
+        visibility: Arc<dyn crate::tool::ToolVisibility>,
+    ) -> Self {
+        self.tool_visibility = Some(visibility);
+        self
+    }
+
+    /// Publishes the turn in flight for [`crate::Session::live_history`] even
+    /// when no registered tool or approval handler declares it reads live history.
+    /// Prefer [`crate::ApprovalHandler::reads_live_history`] for approval handlers.
+    /// Keep this escape hatch for non-handler host logic.
     pub fn force_publish_live_history(mut self, force: bool) -> Self {
         self.force_publish_live_history = force;
         self
@@ -450,6 +459,7 @@ impl RhoBuilder {
             publish_live_history,
             lifecycle: Arc::new(RuntimeLifecycle::default()),
             boundary_inputs: None,
+            tool_visibility: self.tool_visibility,
         })
     }
 }
@@ -482,11 +492,32 @@ pub struct Rho {
     /// for [`crate::Session::live_history`].
     pub(crate) publish_live_history: bool,
     pub(crate) lifecycle: Arc<RuntimeLifecycle>,
+    /// Advertised subset per model request; `None` advertises every tool.
+    pub(crate) tool_visibility: Option<Arc<dyn crate::tool::ToolVisibility>>,
 }
 
 impl Rho {
     pub fn builder() -> RhoBuilder {
         RhoBuilder::default()
+    }
+
+    /// Filters registry specs to the subset advertised right now.
+    ///
+    /// Borrows `all` unchanged when no visibility is installed, so the common
+    /// case keeps the once-per-run schema snapshot without per-step clones.
+    pub(crate) fn advertised_specs<'a>(
+        &self,
+        all: &'a [crate::model::ToolSpec],
+    ) -> std::borrow::Cow<'a, [crate::model::ToolSpec]> {
+        let Some(visibility) = self.tool_visibility.as_ref() else {
+            return std::borrow::Cow::Borrowed(all);
+        };
+        std::borrow::Cow::Owned(crate::tool::advertised_specs(all, visibility.as_ref()))
+    }
+
+    /// Owned advertised specs for estimates and compaction outside a run loop.
+    pub(crate) fn advertised_tool_specs(&self) -> Vec<crate::model::ToolSpec> {
+        self.advertised_specs(&self.tools.specs()).into_owned()
     }
 
     pub fn shutdown(&self) -> ShutdownOutcome {

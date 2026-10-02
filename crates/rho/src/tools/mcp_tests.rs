@@ -478,7 +478,11 @@ for line in sys.stdin:
             "inputSchema": {"type": "object", "properties": {}}
         }]}
     elif method == "tools/call":
-        result = {"content": [{"type": "text", "text": "ok"}], "isError": False}
+        if message["params"].get("arguments", {}).get("fail"):
+            result = {"content": [{"type": "text", "text": "disk is full"}],
+                      "structuredContent": {"free_bytes": 0}, "isError": True}
+        else:
+            result = {"content": [{"type": "text", "text": "ok"}], "isError": False}
     else:
         result = {}
     print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": result}), flush=True)
@@ -576,7 +580,22 @@ open(sys.argv[1], "w").close()
     let rendered = call_remote_tool(echo_call(), &cancellation, None, 12_000, None)
         .await
         .unwrap();
-    assert_eq!(rendered.text, "ok");
+    assert_eq!(rendered.text(), "ok");
+
+    // A real MCP isError answer keeps its failure status and structured data.
+    // Starlark's mapping of that SDK result belongs to codemode's own tests.
+    use rho_sdk::{ToolHost, ToolHostCall};
+    let remote = std::sync::Arc::clone(&bundle.tools()[0]);
+    let name = remote.spec().name;
+    let host = ToolHost::builder().tool_shared(remote).build().unwrap();
+    let failed = host
+        .invoke(ToolHostCall::new(&name, serde_json::json!({"fail": true})))
+        .await
+        .unwrap();
+    assert_eq!(
+        (failed.is_failure(), failed.structured_content()),
+        (true, Some(&serde_json::json!({"free_bytes": 0})))
+    );
 
     cancellation.cancel();
     let error = call_remote_tool(echo_call(), &cancellation, None, 12_000, None)

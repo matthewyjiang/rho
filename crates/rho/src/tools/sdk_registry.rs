@@ -2,6 +2,10 @@
 
 use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
 
+#[path = "sdk_registry_inventory.rs"]
+mod inventory;
+use inventory::ToolInventory;
+
 use rho_sdk::tool::Tool;
 
 use crate::{
@@ -160,18 +164,18 @@ impl HostToolRegistration {
         if self.registered == registered {
             return false;
         }
+        self.registered = registered;
         if registered {
-            tools.push(Arc::clone(&self.tool));
+            tools.push(self.tool.clone());
         } else {
             tools.retain(|tool| !Arc::ptr_eq(tool, &self.tool));
         }
-        self.registered = registered;
         true
     }
 }
 
 pub struct AppToolSet {
-    tools: Vec<Arc<dyn Tool>>,
+    inventory: ToolInventory,
     bundles: Vec<Box<dyn ToolBundle>>,
     advisor: Option<AdvisorTools>,
     computer_use: Option<ComputerTools>,
@@ -195,7 +199,7 @@ pub struct AppToolSet {
 impl AppToolSet {
     pub fn disabled() -> Self {
         Self {
-            tools: Vec::new(),
+            inventory: ToolInventory::default(),
             bundles: Vec::new(),
             advisor: None,
             subagents: None,
@@ -327,6 +331,12 @@ impl AppToolSet {
             tool_set.add_bundle(bundle);
         }
 
+        tool_set.code_mode().set_mode(config.codemode.mode);
+        let orchestration = tool_set.code_mode().orchestration_tools();
+        tool_set
+            .inventory
+            .mutate(|tools| tools.extend(orchestration));
+
         tool_set
     }
 
@@ -345,8 +355,10 @@ impl AppToolSet {
         }
     }
 
+    /// Registers a bundle so nested calls and discovery see its tools immediately.
     pub(crate) fn add_bundle(&mut self, bundle: impl ToolBundle + 'static) {
-        self.tools.extend(bundle.tools().iter().cloned());
+        self.inventory
+            .mutate(|tools| tools.extend(bundle.tools().iter().cloned()));
         self.bundles.push(Box::new(bundle));
     }
 
@@ -393,9 +405,8 @@ impl AppToolSet {
         let Some(computer) = self.computer_use.as_mut() else {
             return false;
         };
-        computer
-            .registration
-            .set_registered(&mut self.tools, registered)
+        self.inventory
+            .mutate(|tools| computer.registration.set_registered(tools, registered))
     }
 
     /// Prompts and resources connected servers offer the user.
@@ -407,17 +418,32 @@ impl AppToolSet {
         &self.mcp_report
     }
 
+    /// Full executable tool list for a runtime build.
     pub fn tools(&self) -> &[Arc<dyn Tool>] {
-        &self.tools
+        self.inventory.tools()
+    }
+
+    pub(crate) fn code_mode(&self) -> &Arc<super::code_mode::CodeModeSurface> {
+        self.inventory.surface()
+    }
+
+    /// Live per-request model advertisement, installed by the runtime builder.
+    pub fn tool_visibility(&self) -> Arc<dyn rho_sdk::tool::ToolVisibility> {
+        self.code_mode().clone()
     }
 
     pub fn specs(&self) -> Vec<rho_sdk::model::ToolSpec> {
-        self.tools.iter().map(|tool| tool.spec()).collect()
+        let specs = self
+            .tools()
+            .iter()
+            .map(|tool| tool.spec())
+            .collect::<Vec<_>>();
+        rho_sdk::tool::advertised_specs(&specs, self.tool_visibility().as_ref())
     }
 
     /// Returns registry names without applying any additional capability filter.
     pub fn unfiltered_names(&self) -> impl Iterator<Item = String> + '_ {
-        self.tools.iter().map(|tool| tool.spec().name)
+        self.tools().iter().map(|tool| tool.spec().name)
     }
 
     pub fn contains(&self, name: &str) -> bool {
@@ -446,9 +472,8 @@ impl AppToolSet {
         let Some(advisor) = self.advisor.as_mut() else {
             return false;
         };
-        advisor
-            .registration
-            .set_registered(&mut self.tools, registered)
+        self.inventory
+            .mutate(|tools| advisor.registration.set_registered(tools, registered))
     }
 
     /// Replaces the advertised built-in file edit tool.
@@ -468,13 +493,13 @@ impl AppToolSet {
             return None;
         }
         let position = self
-            .tools
+            .tools()
             .iter()
             .position(|tool| rho_tools::EditFormat::is_edit_tool_name(tool.spec().name.as_str()))?;
         let mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver> =
             self.checkpoint_tracker.clone();
-        self.tools[position] =
-            super::coding::edit_tool(edit_tool, max_output_bytes, mutation_observer);
+        let replacement = super::coding::edit_tool(edit_tool, max_output_bytes, mutation_observer);
+        self.inventory.mutate(|tools| tools[position] = replacement);
         self.file_view.set(edit_tool);
         Some(previous)
     }
@@ -486,7 +511,7 @@ impl AppToolSet {
 
     /// The currently advertised built-in edit format, when this run exposes one.
     pub fn edit_tool(&self) -> Option<rho_tools::EditFormat> {
-        self.tools
+        self.tools()
             .iter()
             .find_map(|tool| rho_tools::EditFormat::from_tool_name(tool.spec().name.as_str()))
     }
@@ -523,25 +548,28 @@ impl AppToolSet {
 
     /// Replace only search, retaining content storage and all other live tools.
     pub(crate) fn replace_web_search(&mut self, config: &Config) -> Option<Arc<dyn Tool>> {
-        let previous = self
-            .tools
-            .iter()
-            .position(|tool| tool.spec().name == super::web::WEB_SEARCH_TOOL_NAME)
-            .map(|index| self.tools.remove(index));
-        if self.web_search_capable {
-            if let Some(tool) =
-                super::web::sdk_web_search(config, self.web_access.clone(), config.max_output_bytes)
-            {
-                self.tools.push(Arc::new(tool));
+        let replacement = if self.web_search_capable {
+            super::web::sdk_web_search(config, self.web_access.clone(), config.max_output_bytes)
+        } else {
+            None
+        };
+        self.inventory.mutate(|tools| {
+            let previous = tools
+                .iter()
+                .position(|tool| tool.spec().name == super::web::WEB_SEARCH_TOOL_NAME)
+                .map(|index| tools.remove(index));
+            if let Some(tool) = replacement {
+                tools.push(Arc::new(tool));
             }
-        }
-        previous
+            previous
+        })
     }
 
     pub(crate) fn restore_web_search(&mut self, previous: Option<Arc<dyn Tool>>) {
-        self.tools
-            .retain(|tool| tool.spec().name != super::web::WEB_SEARCH_TOOL_NAME);
-        self.tools.extend(previous);
+        self.inventory.mutate(|tools| {
+            tools.retain(|tool| tool.spec().name != super::web::WEB_SEARCH_TOOL_NAME);
+            tools.extend(previous);
+        });
     }
 
     pub fn web_access(&self) -> &super::web::WebAccessStore {

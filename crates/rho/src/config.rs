@@ -115,6 +115,7 @@ pub const MAX_AGENT_CONCURRENCY: usize = 64;
 #[derive(Clone, Debug)]
 pub struct Config {
     pub questionnaire: QuestionnaireConfig,
+    pub codemode: CodemodeConfig,
     pub provider: String,
     pub model: String,
     /// User-defined short names for concrete models; see `ModelAliases`.
@@ -201,6 +202,7 @@ impl Default for Config {
         let compaction = CompactionConfig::default();
         Self {
             questionnaire: QuestionnaireConfig::default(),
+            codemode: CodemodeConfig::default(),
             provider: "openai".into(),
             model: "gpt-5.5".into(),
             model_aliases: ModelAliases::default(),
@@ -238,6 +240,50 @@ impl Default for Config {
             prompt_templates: Default::default(),
             providers: ProviderConfigs::default(),
             mcp: McpConfig::default(),
+        }
+    }
+}
+
+/// `[codemode]` settings, mirroring Pi's `codemode.mode`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodemodeConfig {
+    #[serde(default)]
+    pub mode: CodemodeMode,
+}
+
+impl CodemodeConfig {
+    pub(crate) fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// How the always-registered `codemode` tool presents other tools (Pi's
+/// `codemode.mode`). Neither mode changes authorization: nested calls follow
+/// `permission_mode`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodemodeMode {
+    /// Direct tools stay declared next to `codemode`; the model may use either.
+    #[default]
+    On,
+    /// Direct tools are hidden from the model and reached through `codemode`.
+    Only,
+}
+
+impl CodemodeMode {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "on" => Some(Self::On),
+            "only" => Some(Self::Only),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::On => "on",
+            Self::Only => "only",
         }
     }
 }

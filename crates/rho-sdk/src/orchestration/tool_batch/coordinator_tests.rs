@@ -1,4 +1,4 @@
-use crate::tool::tool_progress_channel;
+use crate::{model::ToolResult, tool::tool_progress_channel};
 
 use super::*;
 
@@ -20,7 +20,7 @@ async fn cancellation_cleanup_keeps_result_completed_during_trailing_progress() 
     let (completed, completion_observed) = tokio::sync::oneshot::channel();
     let execution: ToolFuture<'static> = Box::pin(async move {
         let _ = completed.send(());
-        Ok(ToolOutput::text("completed side effect"))
+        Ok(ToolOutput::text("completed side effect").failed())
     });
     let mut forwarded = forward_execution(
         0,
@@ -58,5 +58,15 @@ async fn cancellation_cleanup_keeps_result_completed_during_trailing_progress() 
     let CallState::Finishing(Some(Ok(result))) = &batch[0].state else {
         panic!("completed execution was not preserved");
     };
-    assert_eq!(result.content(), "completed side effect");
+    assert_eq!(result, &ToolOutput::text("completed side effect").failed());
+    let mut history = Vec::new();
+    interrupt_batch(&cancellation, &mut batch, &mut history);
+    pretty_assertions::assert_eq!(
+        history,
+        vec![Message::ToolResult(ToolResult {
+            id: "completed".into(),
+            ok: false,
+            content: "completed side effect".into(),
+        })]
+    );
 }

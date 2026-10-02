@@ -177,7 +177,7 @@ impl InteractiveRuntime {
         let snapshot = self.sessions.session().snapshot();
         let replacement_runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(self.provider.provider()),
-            tools: self.tools.tools(),
+            tools: &self.tools,
             workspace: self.workspace.clone(),
             workspace_policy: self.workspace_policy(),
             approval_session: self

@@ -199,6 +199,12 @@ struct SummaryPlan<'a> {
 }
 
 impl ModelCompactor {
+    /// Prefer the live advertised schemas; the snapshot is only for callers
+    /// that did not supply a session tool projection.
+    fn tool_specs<'a>(&'a self, request: &'a CompactionRequest) -> &'a [ToolSpec] {
+        request.tool_specs().unwrap_or(&self.tool_specs)
+    }
+
     /// Tier 1 elides old tool results and commits without a model request
     /// when that alone reaches the target; later tiers see the elided history.
     async fn compact_tiers(
@@ -208,10 +214,11 @@ impl ModelCompactor {
     ) -> Result<CompactionOutput, Error> {
         let cancellation = request.cancellation().clone();
         let mut next_attempt_index = 1usize;
+        let tools = self.tool_specs(request);
         let context = request.context_estimate().unwrap_or_else(|| {
             ContextEstimate::from_estimated_tokens(estimate_context_tokens(
                 request.messages(),
-                &self.tool_specs,
+                tools,
             ))
         });
         trace.context_tokens = context.tokens();
@@ -224,7 +231,7 @@ impl ModelCompactor {
         };
         trace.elided_tool_results = elided_tool_results;
         if let Some(elided) = &elided {
-            let tokens = estimate_context_tokens(elided, &self.tool_specs);
+            let tokens = estimate_context_tokens(elided, tools);
             if tokens <= target_tokens {
                 trace.tier = Some(CompactionTier::Elision);
                 return CompactionOutput::new(elided.clone());
@@ -255,8 +262,7 @@ impl ModelCompactor {
             NativeCompactionResult::Unavailable | NativeCompactionResult::Failed => {}
         }
 
-        let Some(partition) =
-            partition_messages_for_compaction(messages, &self.tool_specs, target_tokens)
+        let Some(partition) = partition_messages_for_compaction(messages, tools, target_tokens)
         else {
             trace.tier = Some(match elided {
                 Some(_) => CompactionTier::Elision,
@@ -291,7 +297,8 @@ impl ModelCompactor {
         target_tokens: u64,
     ) -> Option<crate::compaction::Elision> {
         let dir = self.recall.as_ref()?.dir()?;
-        let elision = elide_tool_results(request.messages(), &self.tool_specs, target_tokens)?;
+        let elision =
+            elide_tool_results(request.messages(), self.tool_specs(request), target_tokens)?;
         match crate::session::recall::save(&dir, &elision.originals) {
             Ok(()) => Some(elision),
             Err(error) => {
@@ -446,7 +453,7 @@ impl ModelCompactor {
         if request.trigger() == rho_sdk::CompactionTrigger::ContextOverflow {
             return None;
         }
-        let tools = request.tool_specs().unwrap_or(&self.tool_specs);
+        let tools = self.tool_specs(request);
         let partition =
             partition_messages_for_compaction(request.messages(), tools, budget.target_tokens)?;
         let messages = build_session_summary_request(request.messages(), &partition);
@@ -591,3 +598,7 @@ fn calibrated_tokens(local: u64, context: ContextEstimate) -> u64 {
 #[cfg(test)]
 #[path = "model_compactor_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "model_compactor_session_tests.rs"]
+mod session_tests;

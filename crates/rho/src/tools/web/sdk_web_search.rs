@@ -5,7 +5,8 @@ use rho_sdk::{
     },
     CapabilityKind, CapabilityRequest, CapabilitySource, NetworkTarget,
 };
-use rho_tools::tool::{Tool as LegacyTool, ToolContext as LegacyToolContext};
+
+use rho_tools::tool::Tool as LegacyTool;
 
 use super::WebSearch;
 
@@ -29,27 +30,13 @@ impl SdkWebSearch {
         arguments: serde_json::Value,
         context: &rho_sdk::tool::AuthorizedToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let cwd = context
-            .workspace_root()
-            .map(std::path::Path::to_path_buf)
-            .unwrap_or_default();
-        let execution = self.inner.call(
-            arguments,
-            LegacyToolContext {
-                cwd,
-                max_output_bytes: self.max_output_bytes,
-            },
-            String::new(),
-        );
-        let result = tokio::select! {
+        let execution = self.inner.search(arguments, self.max_output_bytes);
+        let output = tokio::select! {
             result = execution => result,
             () = context.cancellation().cancelled() => return Err(ToolError::cancelled()),
         }
         .map_err(map_legacy_error)?;
-        if !result.ok {
-            return Err(ToolError::new(ToolErrorKind::Execution, result.content));
-        }
-        Ok(ToolOutput::text(result.content).metadata(metadata()))
+        output.into_tool_output(metadata())
     }
 }
 
@@ -60,6 +47,10 @@ impl Tool for SdkWebSearch {
 
     fn security(&self) -> ToolSecurity {
         ToolSecurity::built_in([CapabilityKind::Network])
+    }
+
+    fn output_schema(&self) -> Option<serde_json::Value> {
+        Some(rho_tools::output_schema::<super::adapters::WebSearchOutput>())
     }
 
     fn prepare<'a>(

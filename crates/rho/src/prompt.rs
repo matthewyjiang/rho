@@ -181,6 +181,16 @@ Prefer the `grep` tool over shell `rg` or `grep` for workspace content search. U
             "\nUse the live file-edit tool from the tool list for existing UTF-8 files. Prefer `write` only to create or fully rewrite a file.\n",
         );
     }
+    if tools
+        .iter()
+        .any(|tool| tool.name == crate::tools::code_mode::CODEMODE_TOOL_NAME)
+    {
+        text.push_str(
+            r#"
+Use `codemode` to batch independent tool calls with `call_tools`, chain dependent calls, or filter large output, instead of issuing many separate calls.
+"#,
+        );
+    }
     if tools.iter().any(|tool| tool.name == "agent") {
         text.push_str(
             r#"
@@ -259,6 +269,34 @@ Do not delegate simple questions, routine codebase inspection, or small/local ch
 
 pub fn append_subagents_disabled_instruction(text: &mut String) {
     text.push_str("\n\nAgent delegation is disabled. Do not attempt to delegate work.\n");
+}
+
+/// Stable MCP prompt context, shared by startup assembly and deferred notices.
+/// Transient connect/failure statuses belong to `/mcp`, never the cached prompt.
+pub(crate) fn mcp_context(report: &crate::tools::mcp::McpSessionReport) -> String {
+    use crate::tools::mcp::McpServerStatus;
+    let mut servers: Vec<_> = report
+        .servers
+        .iter()
+        .filter(|server| server.status() == McpServerStatus::Connected)
+        .collect();
+    servers.sort_by(|a, b| a.identity.cmp(&b.identity));
+    let mut text = String::new();
+    if !servers.is_empty() {
+        text.push_str(
+            "\n\n# MCP servers\n\nDiscover connected tools with tool_search or codemode:\n",
+        );
+        for server in &servers {
+            text.push_str(&format!("- {}\n", server.identity));
+        }
+    }
+    append_mcp_instructions(
+        &mut text,
+        servers
+            .iter()
+            .filter_map(|server| Some((server.identity.as_str(), server.instructions()?))),
+    );
+    text
 }
 
 /// Appends the guidance connected MCP servers returned from `initialize`.
@@ -354,6 +392,28 @@ Follow the live tool list.\n"
         .into();
     let display = "advisor mode off".into();
     (model, display)
+}
+
+/// Model and display text for a `/codemode on|only` change.
+pub(crate) fn codemode_mode_context(mode: crate::config::CodemodeMode) -> (String, String) {
+    use crate::config::CodemodeMode;
+    let body = match mode {
+        CodemodeMode::On => {
+            "Direct tools are declared again next to `codemode`. Call them directly for \
+single steps; prefer `codemode` for multi-step work, MCP tools, or filtering large output."
+        }
+        CodemodeMode::Only => {
+            "Direct tools are no longer declared. Reach them with `call_tool` or \
+`call_tools` inside a `codemode` script; use `list_tools()` or `search_tools()` in the script \
+to find them."
+        }
+    };
+    let label = mode.as_str();
+    let model = format!(
+        "[codemode {label}]\n\n{body} Nested calls follow the current permission mode \
+exactly like direct tool calls. Follow the live tool list.\n"
+    );
+    (model, format!("codemode {label}"))
 }
 
 /// Model and display text for a mid-session edit-tool switch.

@@ -70,7 +70,9 @@ impl Tool for Bash {
                 ProcessEnvironment::InheritAll,
                 ProcessOutputLimits::new(ctx.max_output_bytes, timeout),
             );
-            let result = execute_process(execution, id, cancellation, on_update).await?;
+            let result = execute_process(execution, cancellation, on_update)
+                .await?
+                .into_result(id);
             if self.rtk_enabled {
                 super::rtk::log_execution(&ctx.cwd, &args.command, &result).await;
             }
@@ -81,11 +83,10 @@ impl Tool for Bash {
 
 pub(super) async fn execute_process(
     execution: ProcessExecution,
-    id: String,
     cancellation: RunCancellation,
     on_update: &mut (dyn FnMut(Vec<String>) + Send),
-) -> Result<ToolResult, ToolError> {
-    shell_process::run::<ProcessGroupGuard>(execution, id, "bash", cancellation, on_update).await
+) -> Result<crate::Rendered<shell_process::ShellOutcome>, ToolError> {
+    shell_process::run::<ProcessGroupGuard>(execution, "bash", cancellation, on_update).await
 }
 
 struct ProcessGroupGuard {

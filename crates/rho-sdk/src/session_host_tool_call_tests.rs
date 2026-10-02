@@ -14,8 +14,11 @@ fn identity() -> ModelIdentity {
     ModelIdentity::new("scripted", "test", "model")
 }
 
+// Covers: a host-requested completed failure still reaches the first model
+// request as an error result rather than silently becoming success.
+// Owner: SDK model-history completion contract.
 #[tokio::test]
-async fn host_requested_tool_call_runs_before_the_first_model_request() {
+async fn host_requested_completed_failure_reaches_the_first_model_request() {
     let provider = ScriptedProvider::new(
         identity(),
         [ScriptedTurn::completed(ModelResponse::Assistant(vec![
@@ -28,7 +31,7 @@ async fn host_requested_tool_call_runs_before_the_first_model_request() {
             description: "lookup".into(),
             input_schema: json!({"type": "object"}),
         },
-        ScriptedToolOutcome::Success(ToolOutput::text("tool output")),
+        ScriptedToolOutcome::Success(ToolOutput::text("tool output").failed()),
     ));
     let runtime = Rho::builder()
         .provider(provider.clone())
@@ -59,7 +62,7 @@ async fn host_requested_tool_call_runs_before_the_first_model_request() {
             Message::Assistant(vec![ContentBlock::ToolCall(call)]),
             Message::ToolResult(crate::model::ToolResult {
                 id: "host-call-1".into(),
-                ok: true,
+                ok: false,
                 content: "tool output".into(),
             }),
         ]

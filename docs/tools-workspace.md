@@ -108,3 +108,9 @@ Details: [Web access and related tools](/tools-workspace/web-access).
 The `process` tool starts, polls, and stops managed background shell commands owned by the current Rho instance only.
 
 Details: [Background processes](/tools-workspace/background-processes).
+
+## Codemode
+
+`codemode` composes native and MCP tools in a Starlark script under the same permissions and approvals as direct calls. `[codemode] mode` chooses whether native tools stay declared alongside it.
+
+Details: [Codemode](/tools-workspace/codemode).

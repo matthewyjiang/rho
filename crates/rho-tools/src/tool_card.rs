@@ -224,6 +224,13 @@ pub fn format_diff_stat_plain(added: u64, removed: u64, path: Option<&str>) -> S
 }
 
 /// Optional expandable body content.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-agent-tools): add a code body variant to ToolBody (or make tool_card crate-internal).
+///
+/// Source code uses `Lines` until the next major to preserve exhaustive matches
+/// in minor releases; hosts carry syntax metadata alongside the card.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(tag = "kind", content = "lines", rename_all = "snake_case")]
 pub enum ToolBody {
@@ -283,6 +290,16 @@ pub struct ToolCardDisplayPlan {
 }
 
 /// Structured tool presentation for Call + Children rendering.
+///
+/// # Next major
+///
+/// NEXT_MAJOR(rho-agent-tools): move `match_pattern`, `match_literal`, and
+/// `match_case_sensitive` into a `ToolBody::Search` variant.
+///
+/// They only describe grep `Lines` bodies but sit on the card, so a pattern
+/// can pair with a diff or code body. Removing public fields is breaking, so
+/// they stay here until the next major; set them through
+/// [`Self::with_match_pattern`] and [`Self::with_match_semantics`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolCard {
     pub status: ToolStatus,

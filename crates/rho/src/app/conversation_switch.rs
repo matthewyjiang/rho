@@ -198,7 +198,7 @@ fn record_switch_notice(
 fn refresh_session_compaction(switch: &ConversationSwitch<'_>) -> Result<(), Error> {
     let (compactor, policy) = build_compaction(CompactionSetup {
         provider: Arc::clone(&switch.new_provider),
-        tools: switch.tools.tools(),
+        tool_specs: switch.tools.specs(),
         reasoning: switch.new_reasoning,
         compaction: switch.compaction.clone(),
         context_window: switch.context_window,
@@ -237,7 +237,7 @@ fn restore_after_failed_step(
     if matches!(compaction, RestoreCompaction::Required) {
         let (compactor, policy) = build_compaction(CompactionSetup {
             provider: previous_provider,
-            tools: switch.tools.tools(),
+            tool_specs: switch.tools.specs(),
             reasoning: previous_reasoning,
             compaction: switch.compaction.clone(),
             context_window: switch.previous_context_window,

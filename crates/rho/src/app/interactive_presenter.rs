@@ -8,8 +8,14 @@ use rho_sdk::{
 
 use rho_tools::tool_card::ToolCard;
 
+#[path = "interactive_presenter_tool_card.rs"]
+mod tool_card;
+pub(crate) use tool_card::{PresentedToolCard, ToolBodySyntax};
+
 #[path = "interactive_presenter_agent.rs"]
 mod agent_format;
+#[path = "interactive_presenter_codemode.rs"]
+mod codemode_format;
 #[path = "interactive_presenter_format.rs"]
 mod format;
 #[path = "interactive_presenter_message.rs"]
@@ -20,7 +26,7 @@ use format::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ToolPresentation {
-    pub(crate) card: ToolCard,
+    pub(crate) card: PresentedToolCard,
     pub(crate) image_asset: Option<ToolAsset>,
 }
 
@@ -57,6 +63,7 @@ enum ToolKind {
     GetSearchContent,
     Questionnaire,
     Sessions,
+    Codemode,
     Mcp,
     Other,
 }
@@ -96,6 +103,7 @@ impl ToolKind {
             "get_search_content" => Self::GetSearchContent,
             "questionnaire" => Self::Questionnaire,
             "sessions" => Self::Sessions,
+            crate::tools::code_mode::CODEMODE_TOOL_NAME => Self::Codemode,
             _ => Self::Other,
         }
     }
@@ -133,6 +141,7 @@ impl ToolKind {
             | Self::GetSearchContent
             | Self::Questionnaire
             | Self::Sessions
+            | Self::Codemode
             | Self::Mcp
             | Self::Other => {
                 if arguments_len < PREVIEW_FULL_PARSE_LIMIT {
@@ -243,7 +252,10 @@ impl InteractiveToolPresenter {
         // Streaming previews carry no notices or image assets; skip a second
         // argument parse just to assemble ToolPresentation.
         Some(ToolPresentation {
-            card,
+            card: PresentedToolCard {
+                card,
+                body_syntax: body_syntax(kind),
+            },
             image_asset: None,
         })
     }
@@ -277,7 +289,7 @@ impl InteractiveToolPresenter {
             arguments: call.arguments.clone(),
             metadata: ToolMetadata::default(),
         };
-        self.finished_presentation(&view, content, ok)
+        self.finished_presentation(&view, content, ok, /*data*/ None)
     }
 
     pub(crate) fn proposed(&mut self, call: ToolCall) -> ToolPresentation {
@@ -350,25 +362,31 @@ impl InteractiveToolPresenter {
                 arguments: serde_json::Value::Object(Default::default()),
                 metadata: ToolMetadata::default(),
             });
-        let (ok, content) = match result {
-            ToolCompletion::Success(output) => {
+        let (ok, content, data) = match &result {
+            ToolCompletion::Success(output) | ToolCompletion::CompletedFailure(output) => {
                 if output.presentation() != &ToolMetadata::default() {
                     view.metadata = output.presentation().clone();
                 }
-                (true, output.content().to_string())
+                (
+                    !result.is_failure(),
+                    output.content(),
+                    output.structured_content(),
+                )
             }
-            ToolCompletion::Failure(error) => (false, error.message().to_string()),
-            ToolCompletion::Unavailable => (false, "tool is unavailable".into()),
-            _ => (false, "unknown tool result".into()),
+            ToolCompletion::Failure(error) => (false, error.message(), None),
+            ToolCompletion::Unavailable => (false, "tool is unavailable", None),
+            _ => (false, "unknown tool result", None),
         };
-        (ok, self.finished_presentation(&view, &content, ok))
+        (ok, self.finished_presentation(&view, content, ok, data))
     }
 
+    /// `data` is the live structured output; replayed history has none.
     fn finished_presentation(
         &self,
         view: &ToolView,
         content: &str,
         ok: bool,
+        data: Option<&serde_json::Value>,
     ) -> FinishedToolPresentation {
         if let Some(message) = message_format::finished_message(view, content, ok) {
             return FinishedToolPresentation {
@@ -380,12 +398,12 @@ impl InteractiveToolPresenter {
             if let Some(mut card) = sessions_format::finished_card(&view.arguments, content, ok) {
                 card.push_notice_facts(view.metadata.presentation_notices());
                 return FinishedToolPresentation {
-                    presentation: crate::presentation::Presentation::SummaryCard(card),
+                    presentation: crate::presentation::Presentation::SummaryCard(card.into()),
                     image_asset: None,
                 };
             }
         }
-        let presented = presentation(view, finished_card(view, content, ok, &self.cwd));
+        let presented = presentation(view, finished_card(view, content, ok, &self.cwd, data));
         FinishedToolPresentation {
             // A loaded skill collapses to a receipt; expanding shows the text
             // the model received. A failed load stays an ordinary card so its

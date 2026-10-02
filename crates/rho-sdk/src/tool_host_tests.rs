@@ -14,9 +14,9 @@ use crate::{
     },
     model::ToolSpec,
     tool::{
-        PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture,
-        ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture,
-        ToolProgress,
+        tool_progress_channel, PreparedToolInvocation, Tool, ToolContext, ToolError, ToolErrorKind,
+        ToolFuture, ToolInvocation, ToolMetadata, ToolOutput, ToolPreparationContext,
+        ToolPrepareFuture, ToolProgress,
     },
     ApprovalAuditDecision, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
     ApprovalSession, AuthorizationDenialKind, CapabilityRequest, CapabilitySource, Error,
@@ -589,4 +589,245 @@ async fn call_emits_progress_and_accepts_host_input() {
         .unwrap();
 
     assert_eq!(run.outcome().await.unwrap().content(), "yes");
+}
+
+// Covers: children retain the parent's gate, audit, hook identity, and approval conversation.
+// Owner: SDK child-host authorization.
+#[tokio::test]
+async fn child_host_inherits_live_history_and_session_identity() {
+    struct ContextApproval(Mutex<Vec<(crate::SessionId, Vec<crate::model::Message>)>>);
+    impl ApprovalHandler for ContextApproval {
+        fn reads_live_history(&self) -> bool {
+            true
+        }
+        fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a> {
+            self.0.lock().unwrap().push((
+                request.context().session_id().clone(),
+                request.context().history().to_vec(),
+            ));
+            Box::pin(std::future::ready(ApprovalDecision::AllowOnce))
+        }
+    }
+    for decision in [HookDecision::Continue, HookDecision::deny("parent gate")] {
+        let allowed = decision == HookDecision::Continue;
+        let approval = Arc::new(ContextApproval(Mutex::default()));
+        let session_id = crate::SessionId::new();
+        let history = vec![crate::model::Message::user_text("parent conversation")];
+        let order = Arc::default();
+        let observer = Arc::new(RecordingObserver::default());
+        let run_id = crate::RunId::new();
+        let authorization = crate::workspace::AuthorizationServices::new(
+            Arc::new(OrderedPolicy {
+                order: Arc::clone(&order),
+            }),
+            approval.clone(),
+            Arc::default(),
+            Arc::default(),
+            crate::hooks::HookWiring::new(
+                Some(observer.clone()),
+                Some(Arc::new(OrderedGate {
+                    order: Arc::clone(&order),
+                    decision,
+                    requests: Arc::default(),
+                })),
+                Default::default(),
+                Default::default(),
+            ),
+            crate::workspace::AuthorizationScope {
+                session_id: session_id.clone(),
+                run_id: Some(run_id.clone()),
+                live_history: Some(Arc::new({
+                    let history = history.clone();
+                    move || history.clone()
+                })),
+                ..Default::default()
+            },
+        );
+        let (progress, _receiver) = crate::tool::tool_progress_channel(NonZeroUsize::MIN);
+        let context = ToolContext::with_security(
+            None,
+            Arc::new(authorization),
+            crate::CancellationToken::new(),
+            progress,
+        );
+        let child = ToolHost::child_builder(&context)
+            .tool(AuthorizingTool { order })
+            .build()
+            .unwrap();
+        assert_eq!(child.session_id(), &session_id);
+        assert_eq!(child.invoke(call()).await.is_ok(), allowed);
+        assert_eq!(
+            context
+                .authorization()
+                .audit()
+                .snapshot()
+                .iter()
+                .map(|entry| entry.decision())
+                .collect::<Vec<_>>(),
+            vec![if allowed {
+                ApprovalAuditDecision::AllowedOnce
+            } else {
+                ApprovalAuditDecision::DeniedByHook
+            }]
+        );
+        assert_eq!(
+            *approval.0.lock().unwrap(),
+            if allowed {
+                vec![(session_id.clone(), history)]
+            } else {
+                vec![]
+            }
+        );
+        assert_eq!(
+            observer
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|event| (
+                    event.identity().session_id.clone(),
+                    event.identity().run_id.clone(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![(Some(session_id), Some(run_id))]
+        );
+    }
+}
+
+struct NestedProvenanceTool {
+    seen: Arc<
+        Mutex<
+            Vec<(
+                crate::tool::ToolInvocationSource,
+                crate::tool::ToolInvocationSource,
+            )>,
+        >,
+    >,
+    depth: usize,
+}
+
+impl Tool for NestedProvenanceTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "nested_provenance".into(),
+            description: "record nested invocation provenance".into(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+        Box::pin(async move {
+            self.seen
+                .lock()
+                .unwrap()
+                .push((invocation.source(), context.invocation_source()));
+            if self.depth == 0 {
+                return Ok(ToolOutput::text("recorded"));
+            }
+            ToolHost::child_builder(&context)
+                .tool(Self {
+                    seen: Arc::clone(&self.seen),
+                    depth: self.depth - 1,
+                })
+                .build()
+                .unwrap()
+                .invoke(ToolHostCall::new("nested_provenance", json!({})))
+                .await
+                .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))
+        })
+    }
+}
+
+// Covers: model-originated nested calls cannot become trusted host invocations.
+// Owner: SDK child-host provenance; standalone hosts must still use Host.
+#[tokio::test]
+async fn child_host_preserves_model_provenance_through_nesting() {
+    use crate::tool::ToolInvocationSource;
+
+    for source in [ToolInvocationSource::Model, ToolInvocationSource::Host] {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let tool = NestedProvenanceTool {
+            seen: Arc::clone(&seen),
+            depth: 1,
+        };
+        let host = match source {
+            ToolInvocationSource::Model => {
+                let (progress, _receiver) = tool_progress_channel(NonZeroUsize::MIN);
+                let parent = ToolContext::new(None, crate::CancellationToken::new(), progress)
+                    .with_invocation_source(source);
+                ToolHost::child_builder(&parent).tool(tool).build().unwrap()
+            }
+            ToolInvocationSource::Host => ToolHost::builder().tool(tool).build().unwrap(),
+        };
+        host.invoke(ToolHostCall::new("nested_provenance", json!({})))
+            .await
+            .unwrap();
+        assert_eq!(*seen.lock().unwrap(), vec![(source, source); 2]);
+    }
+}
+
+// Drive the real host worker by explicit polling, without task-scheduling races.
+fn scheduled_worker(
+    host: &ToolHost,
+) -> (
+    crate::tool_host::ToolHostFuture<'static>,
+    tokio::sync::mpsc::Receiver<ToolHostEvent>,
+) {
+    let call = ToolHostCall::new("interactive", json!({}));
+    let cancellation = crate::CancellationToken::new();
+    let (events, receiver) = tokio::sync::mpsc::channel(host.core.event_capacity.get());
+    let (progress, progress_receiver) = tool_progress_channel(host.core.event_capacity);
+    let (host_input, host_input_receiver) =
+        crate::host_input::channel(host.core.event_capacity.get(), cancellation.clone());
+    let context =
+        ToolContext::new(None, cancellation.clone(), progress).with_host_input(host_input);
+    let worker = Box::pin(
+        crate::tool::ToolHostWorker {
+            core: Arc::clone(&host.core),
+            tool: host.core.tools.get("interactive").unwrap(),
+            call,
+            context,
+            cancellation,
+            events,
+            progress: progress_receiver,
+            host_input: host_input_receiver,
+        }
+        .run(),
+    );
+    (worker, receiver)
+}
+
+// Covers: two exclusive child-host calls cannot overlap; the worker holds its permit.
+// Owner: SDK ToolHost worker admission wiring.
+#[tokio::test]
+async fn child_host_serializes_exclusive_calls() {
+    use std::task::{Context, Poll, Waker};
+    use tokio::sync::mpsc::error::TryRecvError;
+
+    let (progress, _receiver) = tool_progress_channel(NonZeroUsize::MIN);
+    let parent = ToolContext::new(None, crate::CancellationToken::new(), progress);
+    let host = ToolHost::child_builder(&parent)
+        .tool(InteractiveTool)
+        .build()
+        .unwrap();
+    let mut cx = Context::from_waker(Waker::noop());
+    let (mut first, mut first_events) = scheduled_worker(&host);
+    let (mut second, mut second_events) = scheduled_worker(&host);
+    // One poll enters execution; the next forwards its progress event.
+    assert!(first.as_mut().poll(&mut cx).is_pending());
+    assert!(first.as_mut().poll(&mut cx).is_pending());
+    assert!(first_events.try_recv().is_ok());
+    assert!(second.as_mut().poll(&mut cx).is_pending());
+    assert!(second.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(second_events.try_recv().unwrap_err(), TryRecvError::Empty);
+    let ToolHostEvent::HostInputRequested(mut pending) = first_events.try_recv().unwrap() else {
+        panic!("first call must be waiting for host input");
+    };
+    pending
+        .respond(HostInputResponse::new().answer("choice", ["yes"]))
+        .unwrap();
+    assert!(matches!(first.as_mut().poll(&mut cx), Poll::Ready(Ok(_))));
+    assert!(second.as_mut().poll(&mut cx).is_pending());
+    assert!(second.as_mut().poll(&mut cx).is_pending());
+    assert!(second_events.try_recv().is_ok());
 }

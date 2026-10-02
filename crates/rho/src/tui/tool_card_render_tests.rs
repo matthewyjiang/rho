@@ -175,6 +175,33 @@ fn fact_wrap_breaks_on_whitespace() {
     );
 }
 
+// Covers: plain body lines wrap at whitespace like facts, so prose and JSON
+// do not split mid-word; an unbroken run longer than the width still splits.
+// Owner: pure TUI layout
+#[test]
+fn body_wrap_breaks_on_whitespace() {
+    let card = ToolCard::new(
+        ToolStatus::Ok,
+        ToolFamily::Default,
+        ToolHeader::call("tool", None),
+    )
+    .with_body(ToolBody::Lines(vec![
+        "alpha beta gamma".into(),
+        "abcdefghijklmn".into(),
+    ]));
+
+    // Body indent "    " is 4 cols; content width 10.
+    let body: Vec<String> = render(&card, 14)
+        .into_iter()
+        .skip(1)
+        .map(|line| line.trim_end().to_string())
+        .collect();
+    assert_eq!(
+        body,
+        ["    alpha beta", "    gamma", "    abcdefghij", "    klmn"]
+    );
+}
+
 // Covers: write/edit diff bodies syntax-highlight from the header path;
 // unhighlighted tokens keep the add/remove tint
 // Owner: pure TUI (tool card diff highlighting)
@@ -482,7 +509,10 @@ fn toggle_check_does_not_highlight() {
     let card = large_rust_diff_card(120);
     reset_highlight_line_calls();
     assert!(card_is_toggleable(
-        &card, /*width*/ 100, /*max_tool_output_lines*/ 10, /*expanded*/ false,
+        &card.clone().into(),
+        /*width*/ 100,
+        /*max_tool_output_lines*/ 10,
+        /*expanded*/ false,
     ));
     assert_eq!(
         take_highlight_line_calls(),

@@ -12,9 +12,9 @@ use super::{
     completed, completed_tool_call, fixture_sleep, tool_result, AGENTS_LIST_CALL_ID,
     BACKGROUND_AGENT_CALL_ID, BACKGROUND_CLAUDE_AGENT_CALL_ID,
     BACKGROUND_QUESTIONNAIRE_AGENT_CALL_ID, CLAUDE_AGENT_CALL_ID, CLAUDE_AGENT_ERROR_CALL_ID,
-    COMPUTER_CALL_ID, CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID, HOVER_TOOL_CALL_ID,
-    LONG_APPROVAL_CALL_ID, PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID, QUESTIONNAIRE_CALL_ID,
-    SUBAGENT_RAIL_AGENT_CALL_ID, TOOL_CALL_ID,
+    CODEMODE_CALL_ID, COMPUTER_CALL_ID, CONCURRENT_FAST_CALL_ID, CONCURRENT_SLOW_CALL_ID,
+    HOVER_TOOL_CALL_ID, LONG_APPROVAL_CALL_ID, PROCESS_RAIL_CALL_ID, PROGRESS_CALL_ID,
+    QUESTIONNAIRE_CALL_ID, SUBAGENT_RAIL_AGENT_CALL_ID, TOOL_CALL_ID,
 };
 
 pub(super) async fn intercept(
@@ -67,6 +67,16 @@ pub(super) async fn intercept(
                 && tool_result(request, CONCURRENT_FAST_CALL_ID).is_none() =>
         {
             Some(concurrent_progress())
+        }
+        // A batched read-only script: the card must show call rows and source.
+        "fixture codemode" if tool_result(request, CODEMODE_CALL_ID).is_none() => {
+            Some(completed_tool_call(
+                CODEMODE_CALL_ID,
+                "codemode",
+                serde_json::json!({
+                    "script": "hits = call_tools([(\"list_dir\", {\"path\": \".\"}), (\"glob\", {\"pattern\": \"*.md\"})])\nprint(\"codemode fixture batch\", len(hits))\nresult = [h[\"is_error\"] for h in hits]",
+                }),
+            ))
         }
         "fixture progress tool" if tool_result(request, PROGRESS_CALL_ID).is_none() => {
             Some(stream_progress_tool(request, events).await)

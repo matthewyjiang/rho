@@ -11,20 +11,18 @@ use rho_sdk::{
 
 use super::{
     super::runtime_builder::{build_compaction, CompactionSetup},
+    session_tests::read_spec,
     ModelCompactor,
 };
-use crate::{
-    compaction::CompactionConfig,
-    compaction_metrics::{CompactionRunOutcome, CompactionTier, SummaryRequestPath},
-};
+use crate::{compaction::CompactionConfig, compaction_metrics::CompactionTier};
 
 #[derive(Clone, Default)]
-struct RecordingUsage {
+pub(super) struct RecordingUsage {
     events: Arc<Mutex<Vec<ProviderRequestUsageEvent>>>,
 }
 
 impl RecordingUsage {
-    fn events(&self) -> Vec<ProviderRequestUsageEvent> {
+    pub(super) fn events(&self) -> Vec<ProviderRequestUsageEvent> {
         self.events
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -53,14 +51,14 @@ fn messages() -> Vec<Message> {
     ]
 }
 
-fn compactor(
+pub(super) fn compactor(
     provider: ScriptedProvider,
     usage: RecordingUsage,
     context_window: Option<u64>,
 ) -> ModelCompactor {
     build_compaction(CompactionSetup {
         provider: Arc::new(provider) as Arc<dyn ModelProvider>,
-        tools: &[],
+        tool_specs: Vec::new(),
         reasoning: rho_sdk::ReasoningLevel::Off,
         compaction: CompactionConfig {
             auto_compact: false,
@@ -92,6 +90,8 @@ fn seeded_diagnostics() -> crate::diagnostics::RuntimeDiagnostics {
     diagnostics
 }
 
+// Covers: native compaction returns the replacement and records successful usage
+// Owner: ModelCompactor runtime.
 #[tokio::test]
 async fn native_compaction_success_records_usage_and_returns_replacement() {
     let usage = RecordingUsage::default();
@@ -163,6 +163,8 @@ async fn native_compaction_forwards_the_service_tier() {
     );
 }
 
+// Covers: native failure falls back to summary with monotonic usage attempts
+// Owner: ModelCompactor runtime.
 #[tokio::test]
 async fn native_compaction_failure_falls_back_to_summary_path() {
     let usage = RecordingUsage::default();
@@ -219,6 +221,8 @@ async fn native_compaction_failure_falls_back_to_summary_path() {
     assert!(provider.recorded_requests()[0].prompt_cache_key.is_none());
 }
 
+// Covers: auth refresh attempts retain their outcomes and monotonic indexes
+// Owner: ModelCompactor runtime.
 #[tokio::test]
 async fn native_compaction_auth_retry_keeps_monotonic_attempt_indexes() {
     use rho_sdk::{
@@ -288,6 +292,8 @@ async fn native_compaction_auth_retry_keeps_monotonic_attempt_indexes() {
 
 /// A 1M-window model with a 175k-token session: automatic compaction has
 /// nothing to do, but an explicit `/compact` must still remove history.
+// Covers: manual compaction removes history even below the automatic target
+// Owner: ModelCompactor runtime.
 #[tokio::test]
 async fn manual_trigger_summarizes_below_automatic_target() {
     let history = vec![
@@ -334,6 +340,8 @@ async fn manual_trigger_summarizes_below_automatic_target() {
     assert!(tokens(manual.messages()) < tokens(&history));
 }
 
+// Covers: native cancellation returns Cancelled and records a cancelled outcome
+// Owner: ModelCompactor runtime.
 #[tokio::test]
 async fn native_compaction_cancellation_is_explicit() {
     let usage = RecordingUsage::default();
@@ -389,7 +397,7 @@ fn tiered_compactor(
     let diagnostics = seeded_diagnostics();
     let compactor = build_compaction(CompactionSetup {
         provider: Arc::new(provider) as Arc<dyn ModelProvider>,
-        tools: &[],
+        tool_specs: Vec::new(),
         reasoning: rho_sdk::ReasoningLevel::Off,
         compaction: CompactionConfig::default(),
         context_window: Some(1_000_000),
@@ -415,6 +423,87 @@ fn summary_provider() -> ScriptedProvider {
             ContentBlock::Text("summary text".into()),
         ]))],
     )
+}
+
+// Covers: hidden schemas must not shrink the retained tail or force extra
+// elision, including when the live projection advertises no tools.
+// Owner: ModelCompactor context accounting and tier escalation.
+#[tokio::test]
+async fn compaction_sizes_partition_and_elision_against_advertised_tools() {
+    use rho_sdk::model::context::estimate_context_tokens;
+
+    let (old, mut history) = elision_history();
+    // A distinct recent tool group: a reused id would pair it with the old one.
+    history.splice(
+        4..4,
+        [
+            Message::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall {
+                id: "recent-tool".into(),
+                name: "read_file".into(),
+                arguments: serde_json::json!({"path": "recent.rs"}),
+            })]),
+            Message::ToolResult(rho_sdk::model::ToolResult {
+                id: "recent-tool".into(),
+                ok: true,
+                content: old.content[..old.content.len() / 10].to_owned(),
+            }),
+        ],
+    );
+    let mut registry = vec![read_spec(), read_spec()];
+    registry[1].name = "hidden".into();
+    registry[1].input_schema = serde_json::json!({"description": "h".repeat(old.content.len())});
+    for (case, advertised, can_recall) in [
+        ("subset summary", vec![read_spec()], false),
+        ("subset elision", vec![read_spec()], true),
+        ("empty summary", Vec::new(), false),
+        ("empty elision", Vec::new(), true),
+    ] {
+        // Twice the tail leaves room for the summary reserve, but not the old result or schema.
+        let target = estimate_context_tokens(&history[..2], &advertised)
+            + 2 * estimate_context_tokens(&history[4..], &advertised);
+        let context_tokens = estimate_context_tokens(&history, &advertised);
+        assert!(context_tokens > target);
+        assert!(estimate_context_tokens(&[], &registry) > target);
+        let dir = tempfile::tempdir().unwrap();
+        let recall = crate::session::recall::RecallStore::default();
+        recall.bind(Some(dir.path().join("recall")));
+        let (mut compactor, diagnostics) = tiered_compactor(
+            summary_provider(),
+            RecordingUsage::default(),
+            can_recall.then_some(recall),
+        );
+        compactor.context_window = Some(2 * target);
+        compactor.tool_specs = registry.clone();
+        let trigger = rho_sdk::CompactionTrigger::Automatic;
+        let output = compactor
+            .compact(
+                CompactionRequest::new(history.clone(), Default::default())
+                    .with_trigger(trigger)
+                    .with_tool_specs(advertised.clone()),
+            )
+            .await
+            .unwrap();
+        let mut actual = output.messages().to_vec();
+        let mut expected = history.clone();
+        let tier = if can_recall {
+            actual[3] = Message::ToolResult(old.clone());
+            CompactionTier::Elision
+        } else {
+            expected.splice(2..4, [Message::compaction_summary(trigger, "summary text")]);
+            CompactionTier::TextSummary
+        };
+        assert_eq!(actual, expected, "{case}");
+        let record = diagnostics.compaction().unwrap().last_compaction.unwrap();
+        assert_eq!(
+            (
+                record.tier,
+                record.elided_tool_results,
+                record.context_tokens
+            ),
+            (Some(tier), usize::from(can_recall), context_tokens),
+            "{case}"
+        );
+    }
 }
 
 // Covers: elision that reaches the target commits without a model request,
@@ -549,444 +638,4 @@ async fn escalation_elides_only_the_transcript_summary() {
             "{case}"
         );
     }
-}
-
-fn read_spec() -> rho_sdk::model::ToolSpec {
-    rho_sdk::model::ToolSpec {
-        name: "read".into(),
-        description: "read".into(),
-        input_schema: serde_json::json!({"type": "object"}),
-    }
-}
-
-/// History whose older half needs a text summary under a 1k-token window.
-fn summarized_history() -> Vec<Message> {
-    vec![
-        Message::System("system".into()),
-        Message::user_text("do the task"),
-        Message::assistant_text("y".repeat(8_000)),
-        Message::user_text("recent"),
-    ]
-}
-
-fn cached_session_request(history: Vec<Message>) -> CompactionRequest {
-    CompactionRequest::new(history, Default::default())
-        .with_prompt_cache_key("rho:session")
-        .with_tool_specs(vec![read_spec()])
-        .with_service_tier(ServiceTier::Priority)
-}
-
-fn usage_with_cache_reads(cache_read_tokens: u64) -> ModelUsage {
-    ModelUsage {
-        cache_read_tokens: Some(cache_read_tokens),
-        ..ModelUsage::default()
-    }
-}
-
-fn completed(blocks: Vec<ContentBlock>) -> ScriptedTurn {
-    ScriptedTurn::completed(ModelResponse::Assistant(blocks))
-}
-
-fn summary_text() -> ScriptedTurn {
-    completed(vec![ContentBlock::Text("summary text".into())])
-}
-
-fn session_compactor(
-    provider: ScriptedProvider,
-    usage: RecordingUsage,
-    context_window: Option<u64>,
-    summarizer: Option<super::Summarizer>,
-) -> ModelCompactor {
-    let mut compactor = compactor(provider, usage, context_window);
-    compactor.reasoning = rho_sdk::ReasoningLevel::High;
-    compactor.summarizer = summarizer;
-    compactor
-}
-
-/// Shape of one recorded summary request, as the cache sees it.
-#[derive(Debug, PartialEq)]
-struct SentSummary {
-    session_history: bool,
-    tools: Vec<rho_sdk::model::ToolSpec>,
-    reasoning: rho_sdk::ReasoningLevel,
-    service_tier: Option<ServiceTier>,
-    prompt_cache_key: Option<String>,
-}
-
-fn sent(request: &rho_sdk::provider::RecordedModelRequest, history: &[Message]) -> SentSummary {
-    let session_history = request.messages.len() == history.len() + 1
-        && request.messages[..history.len()] == *history;
-    SentSummary {
-        session_history,
-        tools: request.tools.clone(),
-        reasoning: request.reasoning_level,
-        service_tier: request.service_tier,
-        prompt_cache_key: request.prompt_cache_key.clone(),
-    }
-}
-
-// Covers: the session-model summary request misses the provider cache because
-// its history, tool specs, reasoning, service tier, or cache key differ from
-// the session's main requests; every fallback (tool call, provider rejection,
-// too large for the window, overflow recovery) still commits a transcript
-// summary without executing a tool; output usage sums every request.
-// Owner: ModelCompactor text-summary transport.
-#[tokio::test]
-async fn session_summary_reuses_the_cached_history_and_falls_back_to_the_transcript() {
-    let cached = || SentSummary {
-        session_history: true,
-        tools: vec![read_spec()],
-        reasoning: rho_sdk::ReasoningLevel::High,
-        service_tier: Some(ServiceTier::Priority),
-        prompt_cache_key: Some("rho:session".into()),
-    };
-    let transcript = || SentSummary {
-        session_history: false,
-        tools: Vec::new(),
-        reasoning: rho_sdk::ReasoningLevel::High,
-        service_tier: None,
-        prompt_cache_key: None,
-    };
-    let tool_call = || {
-        ScriptedTurn::streaming(
-            vec![rho_sdk::model::ModelEvent::Usage(usage_with_cache_reads(
-                900,
-            ))],
-            ModelResponse::Assistant(vec![ContentBlock::ToolCall(rho_sdk::model::ToolCall {
-                id: "call".into(),
-                name: "read".into(),
-                arguments: serde_json::json!({}),
-            })]),
-        )
-    };
-    let summary = || {
-        ScriptedTurn::streaming(
-            vec![rho_sdk::model::ModelEvent::Usage(usage_with_cache_reads(
-                100,
-            ))],
-            ModelResponse::Assistant(vec![ContentBlock::Text("summary text".into())]),
-        )
-    };
-    let failed = |kind| {
-        ScriptedTurn::failed(ProviderError::new(
-            kind,
-            "rejected",
-            Retryability::Permanent,
-        ))
-    };
-    struct Case {
-        name: &'static str,
-        turns: Vec<ScriptedTurn>,
-        window: u64,
-        trigger: rho_sdk::CompactionTrigger,
-        sent: Vec<SentSummary>,
-        cache_read_tokens: u64,
-        /// The request that wrote the committed summary.
-        path: SummaryRequestPath,
-    }
-    let manual = rho_sdk::CompactionTrigger::Manual;
-    let cases = [
-        Case {
-            name: "session history summary",
-            turns: vec![summary()],
-            window: 100_000,
-            trigger: manual,
-            sent: vec![cached()],
-            path: SummaryRequestPath::SessionHistory,
-            cache_read_tokens: 100,
-        },
-        Case {
-            name: "tool call falls back",
-            turns: vec![tool_call(), summary()],
-            window: 100_000,
-            trigger: manual,
-            sent: vec![cached(), transcript()],
-            path: SummaryRequestPath::Transcript,
-            cache_read_tokens: 1_000,
-        },
-        Case {
-            name: "provider overflow falls back",
-            turns: vec![failed(ProviderErrorKind::ContextOverflow), summary()],
-            window: 100_000,
-            trigger: manual,
-            sent: vec![cached(), transcript()],
-            path: SummaryRequestPath::Transcript,
-            cache_read_tokens: 100,
-        },
-        Case {
-            name: "other provider rejection falls back",
-            turns: vec![failed(ProviderErrorKind::InvalidResponse), summary()],
-            window: 100_000,
-            trigger: manual,
-            sent: vec![cached(), transcript()],
-            path: SummaryRequestPath::Transcript,
-            cache_read_tokens: 100,
-        },
-        Case {
-            name: "history larger than the window",
-            turns: vec![summary()],
-            window: 2_000,
-            trigger: manual,
-            sent: vec![transcript()],
-            path: SummaryRequestPath::Transcript,
-            cache_read_tokens: 100,
-        },
-        Case {
-            name: "overflow recovery",
-            turns: vec![summary()],
-            window: 100_000,
-            trigger: rho_sdk::CompactionTrigger::ContextOverflow,
-            sent: vec![transcript()],
-            path: SummaryRequestPath::Transcript,
-            cache_read_tokens: 100,
-        },
-    ];
-
-    for case in cases {
-        let history = summarized_history();
-        let provider = ScriptedProvider::new(
-            ModelIdentity::new("anthropic", "anthropic-messages", "claude-test"),
-            case.turns,
-        );
-        let usage = RecordingUsage::default();
-        let compactor = session_compactor(provider.clone(), usage.clone(), Some(case.window), None);
-        let output = compactor
-            .compact(cached_session_request(history.clone()).with_trigger(case.trigger))
-            .await
-            .unwrap();
-
-        let requests = provider.recorded_requests();
-        assert_eq!(
-            requests
-                .iter()
-                .map(|request| sent(request, &history))
-                .collect::<Vec<_>>(),
-            case.sent,
-            "{}",
-            case.name
-        );
-        assert_eq!(
-            output.messages(),
-            [
-                history[0].clone(),
-                history[1].clone(),
-                Message::compaction_summary(case.trigger, "summary text"),
-                history[3].clone(),
-            ],
-            "{}",
-            case.name
-        );
-        assert_eq!(
-            output.usage().cache_read_tokens,
-            Some(case.cache_read_tokens),
-            "{}",
-            case.name
-        );
-        let events = usage.events();
-        assert_eq!(
-            events
-                .iter()
-                .map(|event| (event.context().purpose(), event.context().attempt_index()))
-                .collect::<Vec<_>>(),
-            (1..=requests.len())
-                .map(|index| ("compaction", Some(index)))
-                .collect::<Vec<_>>(),
-            "{}",
-            case.name
-        );
-        let record = compactor
-            .diagnostics
-            .compaction()
-            .and_then(|compaction| compaction.last_compaction)
-            .unwrap();
-        assert_eq!(
-            (
-                record.outcome,
-                record.tier,
-                record.request_path,
-                record.model.as_deref(),
-                record.cache_read_tokens,
-            ),
-            (
-                CompactionRunOutcome::Completed,
-                Some(CompactionTier::TextSummary),
-                Some(case.path),
-                Some("anthropic/claude-test"),
-                Some(case.cache_read_tokens),
-            ),
-            "{}",
-            case.name
-        );
-    }
-}
-
-// Covers: a configured summarizer receives the rendered transcript on its own
-// provider and reasoning, with no session service tier. A failure falls back
-// to the cached session-history request. Overflow recovery skips that request
-// and uses the transcript, still without the session service tier.
-// Owner: ModelCompactor summarizer routing.
-#[tokio::test]
-async fn configured_summarizer_gets_the_transcript_and_falls_back_on_failure() {
-    let session_identity = ModelIdentity::new("anthropic", "anthropic-messages", "claude-test");
-    let summarizer_identity = ModelIdentity::new("openai", "openai-responses", "gpt-mini");
-    let transcript = |reasoning| SentSummary {
-        session_history: false,
-        tools: Vec::new(),
-        reasoning,
-        service_tier: None,
-        prompt_cache_key: None,
-    };
-    let cached = || SentSummary {
-        session_history: true,
-        tools: vec![read_spec()],
-        reasoning: rho_sdk::ReasoningLevel::High,
-        service_tier: Some(ServiceTier::Priority),
-        prompt_cache_key: Some("rho:session".into()),
-    };
-    let rejected = || {
-        ScriptedTurn::failed(ProviderError::new(
-            ProviderErrorKind::Authentication,
-            "bad key",
-            Retryability::Permanent,
-        ))
-    };
-    for (case, trigger, summarizer_turns, session_turns, expected) in [
-        (
-            "summarizer answers",
-            rho_sdk::CompactionTrigger::Manual,
-            vec![summary_text()],
-            vec![],
-            vec![(
-                summarizer_identity.clone(),
-                transcript(rho_sdk::ReasoningLevel::Low),
-            )],
-        ),
-        (
-            "summarizer fails",
-            rho_sdk::CompactionTrigger::Manual,
-            vec![rejected()],
-            vec![summary_text()],
-            vec![
-                (
-                    summarizer_identity.clone(),
-                    transcript(rho_sdk::ReasoningLevel::Low),
-                ),
-                (session_identity.clone(), cached()),
-            ],
-        ),
-        (
-            "summarizer fails during overflow recovery",
-            rho_sdk::CompactionTrigger::ContextOverflow,
-            vec![rejected()],
-            vec![summary_text()],
-            vec![
-                (
-                    summarizer_identity.clone(),
-                    transcript(rho_sdk::ReasoningLevel::Low),
-                ),
-                (
-                    session_identity.clone(),
-                    transcript(rho_sdk::ReasoningLevel::High),
-                ),
-            ],
-        ),
-    ] {
-        let history = summarized_history();
-        let session = ScriptedProvider::new(session_identity.clone(), session_turns);
-        let summarizer = ScriptedProvider::new(summarizer_identity.clone(), summarizer_turns);
-        let usage = RecordingUsage::default();
-        let compactor = session_compactor(
-            session.clone(),
-            usage.clone(),
-            Some(100_000),
-            Some(super::Summarizer::with_provider(
-                crate::compaction::SummarizerModel {
-                    provider: "openai".into(),
-                    model: "gpt-mini".into(),
-                    auth: "api-key".into(),
-                    reasoning: rho_sdk::ReasoningLevel::Low,
-                },
-                Arc::new(summarizer.clone()),
-            )),
-        );
-
-        compactor
-            .compact(cached_session_request(history.clone()).with_trigger(trigger))
-            .await
-            .unwrap();
-
-        let requests = [summarizer.recorded_requests(), session.recorded_requests()];
-        let identities = [summarizer_identity.clone(), session_identity.clone()];
-        let recorded = requests
-            .iter()
-            .zip(&identities)
-            .flat_map(|(requests, identity)| {
-                requests
-                    .iter()
-                    .map(|request| (identity.clone(), sent(request, &history)))
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(recorded, expected, "{case}");
-        assert_eq!(
-            usage
-                .events()
-                .iter()
-                .map(|event| (
-                    event.context().identity().clone(),
-                    event.context().attempt_index()
-                ))
-                .collect::<Vec<_>>(),
-            expected
-                .iter()
-                .enumerate()
-                .map(|(index, (identity, _))| (identity.clone(), Some(index + 1)))
-                .collect::<Vec<_>>(),
-            "{case}"
-        );
-    }
-}
-
-// Covers: a summary request that fails after streaming usage still charges the
-// compaction record, even though the committed output only carries the usage
-// of the plan that succeeded.
-// Owner: ModelCompactor compaction metrics.
-#[tokio::test]
-async fn failed_summary_request_usage_is_charged_to_the_compaction_record() {
-    let history = summarized_history();
-    let provider = ScriptedProvider::new(
-        ModelIdentity::new("anthropic", "anthropic-messages", "claude-test"),
-        [
-            ScriptedTurn::streaming_failed(
-                vec![rho_sdk::model::ModelEvent::Usage(usage_with_cache_reads(
-                    900,
-                ))],
-                ProviderError::new(
-                    ProviderErrorKind::InvalidResponse,
-                    "rejected",
-                    Retryability::Permanent,
-                ),
-            ),
-            ScriptedTurn::streaming(
-                vec![rho_sdk::model::ModelEvent::Usage(usage_with_cache_reads(
-                    100,
-                ))],
-                ModelResponse::Assistant(vec![ContentBlock::Text("summary text".into())]),
-            ),
-        ],
-    );
-    let usage = RecordingUsage::default();
-    let compactor = session_compactor(provider, usage.clone(), Some(100_000), None);
-    let output = compactor
-        .compact(cached_session_request(history))
-        .await
-        .unwrap();
-
-    assert_eq!(output.usage().cache_read_tokens, Some(100));
-    let record = compactor
-        .diagnostics
-        .compaction()
-        .and_then(|compaction| compaction.last_compaction)
-        .unwrap();
-    assert_eq!(record.request_path, Some(SummaryRequestPath::Transcript));
-    assert_eq!(record.cache_read_tokens, Some(1_000));
 }

@@ -45,16 +45,7 @@ const MAX_OUTPUT_SCHEMA_NODES: usize = 2_048;
 /// Maximum JSON nodes in structured content accepted for schema validation.
 const MAX_STRUCTURED_CONTENT_NODES: usize = 8_192;
 
-/// What one MCP result becomes inside Rho.
-#[derive(Debug, Default, PartialEq)]
-pub(super) struct RenderedResult {
-    /// The text handed to the model.
-    pub(super) text: String,
-    /// Binary content the tool card can render, in the order it arrived.
-    pub(super) assets: Vec<ToolAsset>,
-    /// Original typed image payloads, unaffected by preview selection/budgets.
-    pub(super) images: Vec<ImageContent>,
-}
+use rho_tools::Rendered;
 
 /// What the tool's own declaration says its result must contain.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -69,35 +60,36 @@ pub(super) struct ResultExpectation {
 struct AssetBudget {
     retained_bytes: usize,
     retained_images: usize,
+    assets: Vec<ToolAsset>,
+    images: Vec<ImageContent>,
 }
 
-/// Render a successful or failed call. An MCP error result becomes a tool
-/// failure carrying the same rendered text, so the model sees what went wrong
-/// rather than a JSON envelope.
+/// Render a completed successful or failed call. The failure flag keeps the
+/// server's result available to scripts while the model receives an error
+/// result with readable text rather than a JSON envelope.
 pub(super) fn render(
     result: &CallToolResult,
     expectation: &ResultExpectation,
     max_output_bytes: usize,
     image_delivery: McpImageDelivery,
-) -> Result<RenderedResult, ToolError> {
+) -> Result<Rendered<serde_json::Value>, ToolError> {
     let failed = result.is_error.unwrap_or(false);
-    let mut rendered = RenderedResult::default();
     let mut budget = AssetBudget::default();
     let mut sections = Vec::new();
     for block in &result.content {
-        if let Some(section) = render_block(block, &mut rendered, &mut budget, image_delivery) {
+        if let Some(section) = render_block(block, &mut budget, image_delivery) {
             sections.push(section);
         }
     }
 
     if let Some(structured) = &result.structured_content {
-        if !failed {
-            if let Some(schema) = &expectation.output_schema {
-                validate_structured_content(schema, structured)?;
-            }
+        // The declaration constrains the server result even if the script copy
+        // is omitted. Validation has its own bounded-work budget.
+        if let (false, Some(schema)) = (failed, &expectation.output_schema) {
+            validate_structured_content(schema, structured)?;
         }
-        // Servers are asked to mirror structured content as text for clients
-        // that predate it. Keeping both would spend the context twice.
+        // Preserve the model view regardless of script retention: remove the
+        // server's JSON mirror only when replacing it with the same JSON.
         sections.retain(|section| !mirrors(section, structured));
         sections.push(
             serde_json::to_string_pretty(structured).unwrap_or_else(|_| structured.to_string()),
@@ -112,12 +104,16 @@ pub(super) fn render(
     if sections.is_empty() {
         sections.push("The MCP server returned no content.".into());
     }
-    rendered.text = rho_tools::tool::truncate(sections.join("\n\n"), max_output_bytes);
-
-    if failed {
-        return Err(ToolError::new(ToolErrorKind::Execution, rendered.text));
-    }
-    Ok(rendered)
+    let text = rho_tools::tool::truncate(sections.join("\n\n"), max_output_bytes);
+    let rendered = match &result.structured_content {
+        Some(data) => Rendered::new(text, data.clone()),
+        None => Rendered::text_only(text),
+    };
+    rendered
+        .failed_if(failed)
+        .with_assets(budget.assets)
+        .with_images(budget.images)
+        .limit_data(max_output_bytes)
 }
 
 /// Render the messages one `prompts/get` returned into composer text.
@@ -130,14 +126,12 @@ pub(super) fn render_prompt_messages(
     messages: &[rmcp::model::PromptMessage],
     max_output_bytes: usize,
 ) -> String {
-    let mut rendered = RenderedResult::default();
     let mut budget = AssetBudget::default();
     let sections = messages
         .iter()
         .filter_map(|message| {
             let body = render_block(
                 &message.content,
-                &mut rendered,
                 &mut budget,
                 McpImageDelivery::PresentationOnly,
             )?;
@@ -251,7 +245,6 @@ fn mirrors(section: &str, structured: &serde_json::Value) -> bool {
 /// text this block contributes, if any.
 fn render_block(
     block: &ContentBlock,
-    rendered: &mut RenderedResult,
     budget: &mut AssetBudget,
     image_delivery: McpImageDelivery,
 ) -> Option<String> {
@@ -261,7 +254,6 @@ fn render_block(
             "image",
             &image.mime_type,
             &image.data,
-            rendered,
             budget,
             image_delivery,
         )),
@@ -269,7 +261,6 @@ fn render_block(
             "audio",
             &audio.mime_type,
             &audio.data,
-            rendered,
             budget,
             image_delivery,
         )),
@@ -284,14 +275,8 @@ fn render_block(
                 ..
             } => {
                 let media_type = mime_type.as_deref().unwrap_or("application/octet-stream");
-                let descriptor = binary_section(
-                    "resource",
-                    media_type,
-                    blob,
-                    rendered,
-                    budget,
-                    image_delivery,
-                );
+                let descriptor =
+                    binary_section("resource", media_type, blob, budget, image_delivery);
                 format!("[resource {uri}] {descriptor}")
             }
             // `ResourceContents` is non-exhaustive: a kind from a newer spec
@@ -320,7 +305,6 @@ fn binary_section(
     label: &str,
     media_type: &str,
     encoded: &str,
-    rendered: &mut RenderedResult,
     budget: &mut AssetBudget,
     image_delivery: McpImageDelivery,
 ) -> String {
@@ -336,7 +320,7 @@ fn binary_section(
         McpImageDelivery::PresentationOnly => {}
         McpImageDelivery::ModelAndPresentation => {
             if let Some(mime_type) = ImageContent::mime_type_from_bytes(&bytes) {
-                rendered.images.push(ImageContent {
+                budget.images.push(ImageContent {
                     data: encoded.into(),
                     mime_type: mime_type.into(),
                 });
@@ -356,7 +340,7 @@ fn binary_section(
     }
     budget.retained_images += 1;
     budget.retained_bytes = budget.retained_bytes.saturating_add(size);
-    rendered
+    budget
         .assets
         .push(ToolAsset::new(media_type.to_string(), bytes));
     descriptor

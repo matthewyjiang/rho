@@ -82,7 +82,7 @@ sequenceDiagram
 
 ## Tool host
 
-`ToolHost` runs the same tool registry, workspace policy, approvals, and hooks **without** a model provider. Build it with `ToolHost::builder()` (or the shared builder pattern on `ToolHostBuilder`). Use `ToolHost::invoke` for a single non-interactive call, or `ToolHost::start` when the tool may emit progress or request host input. Dropping a `ToolHostRun` cancels that work. Clones of a tool host share one approval-memory session.
+`ToolHost` runs the same tool registry, workspace policy, approvals, and hooks **without** a model provider. Build it with `ToolHost::builder()` (or the shared builder pattern on `ToolHostBuilder`). Use `ToolHost::invoke` for a single non-interactive call, or `ToolHost::start` when the tool may emit progress or request host input. Dropping a `ToolHostRun` cancels that work. Clones of a tool host share one approval-memory session. A tool that runs other tools (for example a scripting tool) should build its nested host with `ToolHost::child_builder(&context)`; the child inherits the active call's workspace, policy, hooks, and approval session, so nested calls are judged exactly like direct ones.
 
 ## Hooks
 

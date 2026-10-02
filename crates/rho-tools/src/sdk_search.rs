@@ -12,8 +12,8 @@ use serde_json::Value;
 use rho_sdk::{
     tool::{
         OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation,
-        ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolResource,
-        ToolResourceAccess, ToolSecurity,
+        ToolMetadata, ToolPreparationContext, ToolPrepareFuture, ToolResource, ToolResourceAccess,
+        ToolSecurity,
     },
     CapabilityKind,
 };
@@ -75,6 +75,10 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
         ToolSecurity::built_in([CapabilityKind::Read])
     }
 
+    fn output_schema(&self) -> Option<Value> {
+        Some(crate::output_schema::<S::Output>())
+    }
+
     fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
         start_metadata(arguments)
     }
@@ -112,7 +116,7 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
                         let display = compact_display_path(workspace.root(), &requested_root);
                         let root = resolved.path().to_path_buf();
                         let cancellation = context.cancellation().clone();
-                        let content = tokio::task::spawn_blocking({
+                        let output = tokio::task::spawn_blocking({
                             let display = display.clone();
                             move || {
                                 search
@@ -127,13 +131,14 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
                             )
                         })?
                         .map_err(map_app_error)?;
-                        Ok(
-                            ToolOutput::text(truncate(content, max_output_bytes)).metadata(
+                        output
+                            .map_text(|text| truncate(text, max_output_bytes))
+                            .limit_data(max_output_bytes)?
+                            .into_tool_output(
                                 ToolMetadata::new()
                                     .operation(OperationKind::Read)
                                     .affected_path(display),
-                            ),
-                        )
+                            )
                     })
                 },
             ))

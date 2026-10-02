@@ -153,6 +153,7 @@ impl GrepRequest {
 
 impl WorkspaceSearch for GrepSearch {
     type Request = GrepRequest;
+    type Output = GrepOutput;
 
     const NAME: &'static str = "grep";
 
@@ -195,8 +196,8 @@ impl WorkspaceSearch for GrepSearch {
         display_root: &str,
         request: &GrepRequest,
         cancelled: &dyn Fn() -> bool,
-    ) -> Result<String, ToolError> {
-        grep_workspace(
+    ) -> Result<crate::Rendered<GrepOutput>, ToolError> {
+        grep_search(
             root,
             display_root,
             request,
@@ -206,22 +207,46 @@ impl WorkspaceSearch for GrepSearch {
     }
 }
 
+/// Exact matching-line count, or an existence check serialized as null.
+#[derive(Clone, Copy, serde::Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub(crate) enum MatchCount {
+    Counted(usize),
+    ExistenceOnly,
+}
+
+impl MatchCount {
+    /// Rendering a numeric count is valid only in modes that scan the full file.
+    pub(crate) fn expect_counted(self) -> usize {
+        match self {
+            Self::Counted(total) => total,
+            Self::ExistenceOnly => unreachable!("existence-only grep does not render counts"),
+        }
+    }
+}
+
 /// One file that matched, in the shape every output mode renders from.
+#[derive(serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct FileHit {
-    pub(crate) relative: String,
+    /// Workspace-relative file identity, or an absolute path outside the workspace.
+    pub(crate) path: String,
     /// Full-file snapshot tag when content mode computed one for edit anchors.
+    #[serde(skip)]
     pub(crate) file_tag: Option<String>,
-    /// Matching lines in the file, including any not retained below.
-    pub(crate) total: usize,
-    /// Retained match lines as `(line number, display text)`. Empty unless the
-    /// output mode renders line text. Preview only - not hashline body text.
-    pub(crate) lines: Vec<(usize, String)>,
+    /// Matching lines, including unretained previews; null in files_with_matches
+    /// mode because that mode only checks existence and stops at the first hit.
+    pub(crate) count: MatchCount,
+    /// Retained previews, not hashline body text; empty outside content mode.
+    pub(crate) lines: Vec<MatchLine>,
 }
 
 impl FileHit {
     /// Match lines found but not shown, for the `... +N more` note.
     pub(crate) fn suppressed(&self) -> usize {
-        self.total.saturating_sub(self.lines.len())
+        match self.count {
+            MatchCount::Counted(total) => total.saturating_sub(self.lines.len()),
+            MatchCount::ExistenceOnly => 0,
+        }
     }
 }
 
@@ -229,19 +254,34 @@ pub(crate) struct GrepStats {
     /// Results counted against `max_results`: match lines in `content` mode,
     /// files otherwise.
     pub(crate) shown: usize,
-    /// Matching lines across every file the walk visited. Exceeds `shown` when
-    /// a limit cut the output short.
-    pub(crate) total_matches: usize,
+    /// Matching lines across collected files, or existence-only when not counted.
+    /// Counted totals can exceed `shown` when a limit cuts previews short.
+    pub(crate) total_matches: MatchCount,
     pub(crate) reasons: Vec<StopReason>,
 }
 
-pub(crate) fn grep_workspace(
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct GrepOutput {
+    files: Vec<FileHit>,
+    /// Matching lines across returned files; null in files_with_matches mode.
+    /// Check stopped for limits that prevented searching the entire root.
+    total_matches: MatchCount,
+    stopped: Vec<crate::search::Stopped>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct MatchLine {
+    pub(crate) line: usize,
+    pub(crate) text: String,
+}
+
+pub(crate) fn grep_search(
     root: &Path,
     display_root: &str,
     request: &GrepRequest,
     cancelled: &dyn Fn() -> bool,
     style: FileViewStyle,
-) -> Result<String, ToolError> {
+) -> Result<crate::Rendered<GrepOutput>, ToolError> {
     let options = WalkOptions {
         hidden: request.hidden,
         limits: WalkLimits::within(SEARCH_DEADLINE),
@@ -266,7 +306,8 @@ pub(crate) fn grep_workspace(
                 return ControlFlow::Continue(());
             }
         }
-        let Some(mut hit) = scan_file(request, &file, retained_per_file, style) else {
+        let Some(mut hit) = scan_file(request, &file, display_root, retained_per_file, style)
+        else {
             return ControlFlow::Continue(());
         };
         // Count max_per_file cuts before the result-budget trim, so a file
@@ -285,9 +326,14 @@ pub(crate) fn grep_workspace(
         }
     });
 
-    let total_matches: usize = hits
-        .iter()
-        .fold(0, |acc, hit| acc.saturating_add(hit.total));
+    let total_matches = match request.output_mode {
+        GrepOutputMode::FilesWithMatches => MatchCount::ExistenceOnly,
+        GrepOutputMode::Content | GrepOutputMode::Count => {
+            MatchCount::Counted(hits.iter().fold(0usize, |acc, hit| {
+                acc.saturating_add(hit.count.expect_counted())
+            }))
+        }
+    };
     // Cancel can land during the last file scan, after the visitor already
     // returned Continue. ResultLimit is reported by the visitor Break.
     let walk_stop = if cancelled() {
@@ -296,14 +342,24 @@ pub(crate) fn grep_workspace(
         walk_stop
     };
 
-    Ok(format_results(
+    let reasons = stop_reasons(walk_stop, per_file_truncated);
+    let stopped = crate::search::stopped(&reasons);
+    let text = format_results(
         request,
         display_root,
         &hits,
         GrepStats {
             shown,
             total_matches,
-            reasons: stop_reasons(walk_stop, per_file_truncated),
+            reasons,
+        },
+    );
+    Ok(crate::Rendered::new(
+        text,
+        GrepOutput {
+            files: hits,
+            total_matches,
+            stopped,
         },
     ))
 }
@@ -319,6 +375,7 @@ pub(crate) fn grep_workspace(
 fn scan_file(
     request: &GrepRequest,
     file: &WalkedFile,
+    display_root: &str,
     retain: usize,
     style: FileViewStyle,
 ) -> Option<FileHit> {
@@ -341,7 +398,10 @@ fn scan_file(
                 total = total.saturating_add(1);
                 if lines.len() < retain {
                     // Search preview only - may truncate. Not hashline `N:text`.
-                    lines.push((line_no, truncate_chars(line, MAX_LINE_CHARS)));
+                    lines.push(MatchLine {
+                        line: line_no,
+                        text: truncate_chars(line, MAX_LINE_CHARS),
+                    });
                 }
                 if stop_early {
                     return ControlFlow::Break(());
@@ -353,10 +413,25 @@ fn scan_file(
     if total == 0 {
         return None;
     }
+    // Normalize once so text and structured results identify the same file.
+    // Single-file walks have an empty relative path and use the named root.
+    let root = display_root.trim();
+    let relative = file.relative.trim();
+    let path = if root.is_empty() || root == "." {
+        relative.to_owned()
+    } else if relative.is_empty() || relative == "." {
+        root.to_owned()
+    } else {
+        format!("{root}/{relative}")
+    };
+    let count = match request.output_mode {
+        GrepOutputMode::FilesWithMatches => MatchCount::ExistenceOnly,
+        GrepOutputMode::Content | GrepOutputMode::Count => MatchCount::Counted(total),
+    };
     Some(FileHit {
-        relative: file.relative.clone(),
+        path,
         file_tag,
-        total,
+        count,
         lines,
     })
 }

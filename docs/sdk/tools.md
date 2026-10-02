@@ -115,6 +115,22 @@ public `ToolResult` struct and exhaustive `Message` enum. The next major should
 carry text and images together on the original tool result so provider adapters
 can preserve native tool-result image attribution.
 
+## Structured output
+
+A tool may declare `Tool::output_schema()` (default `None`) and attach a matching value with `ToolOutput::with_structured_content`. The model still reads the text content. The schema is never sent to providers. Structured content is for programmatic callers: `ToolHost::invoke` returns it unchanged, and Rho's `codemode` scripts receive it in the `data` field of `call_tool(...)`.
+
+A tool that ran to completion but reports failure, such as a shell command that exits nonzero or an MCP `isError` response, returns `Ok(ToolOutput::text(...).failed())`. Attach structured content normally; use `ToolOutput::is_failure()` to inspect the result status. The runtime sends the model an error tool result (`ToolResult::ok == false`), preserves the text, and reports failure to lifecycle hooks. Denials, cancellation, bad arguments, and execution errors that did not produce a completed result remain `Err(ToolError)`. In codemode, `call_tool` raises on these invocation errors, while `call_tools` converts per-item invocation errors to `{ is_error: true, content, data: null }` envelopes and continues sibling calls. Parent cancellation and rejection of a batch for exceeding the nested-call budget fail the whole script.
+
+`ToolFinished` reports a completed call as `ToolCompletion::Success(output)` or `ToolCompletion::CompletedFailure(output)`. Both retain the full completed output, including structured content and metadata. `ToolCompletion::Failure` instead reports an execution error without a completed output. Use `ToolCompletion::from_output`, `output()`, and `is_failure()` instead of matching variant names: the output's failure flag decides the status of a completed call. Failed outputs do not deliver image supplements to the model.
+
+NEXT_MAJOR(rho-sdk): collapse `Success` and `CompletedFailure` into `Completed(ToolOutput)`.
+
+Rho's `call_tool(...)` and each item of `call_tools([...])` return `{ is_error, content, data }`: host-owned status, model-facing text, and unchanged structured data (or `None` when absent or oversized). `is_error` includes completed tool failures and invocation errors represented as batch results. Discovery advertises this envelope schema with the tool's nullable schema for successful `data`; failed server data is unconstrained. Script authors must check every returned envelope's `is_error` before using its data, including every item of a batch, and handle `data: None` even for non-error results.
+
+`rho-agent-tools` 1.7 exposes `Rendered<T>` with private fields and constructors/builders, plus `output_schema<T: schemars::JsonSchema>()` (schemars 1). No struct literals are required. SDK adapters use `limit_data(max_output_bytes)` to bound serialized JSON independently of text and assets.
+
+Built-in shell tools return `{ stdout, stderr, exit_code, truncated, wall_time_ms }`, with `exit_code` set to `null` when a signal ended the command. `grep` returns `{ files: [{ path, count, lines: [{ line, text }] }], total_matches, stopped }`. Each grep `path` is workspace-relative (or absolute for an authorized search outside the workspace), including subdirectory and single-file searches, so it can be passed directly to `read_file`. In `files_with_matches` mode, `count` and `total_matches` are `null`: the search stops at the first match in each file and does not count matching lines. In `content` and `count` modes they count matching lines across the returned files, including lines omitted from content previews; check `stopped` for search limits. `glob` returns `{ paths, stopped }`, and `list_dir` returns `{ entries: [{ name, kind }], truncated }`. Rho's `process`, `web_search`, `agent`, and `agents` tools also return structured content. File read and edit tools return text only, because the text is already the result. MCP tools pass through the server's `outputSchema` and bounded `structuredContent`. Retained successful content is validated against the schema; completed error results retain bounded content without schema validation. Structured values whose serialized size exceeds the configured tool output-byte limit are omitted, with a notice naming the limit and received size in the text. This applies to successful and failed results, so scripts cannot bypass the MCP text cap. The outer `codemode` result shares the native-tool 64,000-byte output budget across captured prints and the pretty-printed return value, including its truncation notice and marker.
+
 ## Presentation and progress
 
 `ToolMetadata` carries operation kind, paths, command summary, URLs, and unified diffs. `ToolProgress` adds a message and optional units. These are presentation values, not authorization decisions or safe audit values. Do not infer authority from display strings or log tool arguments and output without host redaction.
@@ -209,6 +225,19 @@ flowchart TD
 
 `DiagnosticsSnapshot::approval_audit` records bounded, ordered, secret-free decision facts: sequence, capability class, and sanitized result. It intentionally excludes reasons, paths, commands, arguments, environment values, URLs, skill names, and request bodies. Full approval requests remain available only to the approval handler and exact remembered rules remain in session memory.
 
+## Per-request tool advertisement
+
+Registering a tool and advertising it to the model are separate. By default every registered tool is advertised on every request. Install a `ToolVisibility` with `RhoBuilder::tool_visibility_shared` to choose the advertised subset:
+
+- The runtime asks before **every** model request, so a change made by a tool call (for example a search tool promoting a deferred tool) reaches the next request of the same run.
+- Context estimates and compaction count only the advertised schemas.
+- Calls resolve against the producing request's advertised snapshot. Visibility changes during or after the request affect the next request, not already-advertised calls. A call absent from that snapshot resolves as unavailable.
+- Host-sourced calls and nested `ToolHost::child_builder` hosts may still run any registered tool.
+
+Keep `is_advertised` cheap and non-blocking. It runs once per registered tool per request.
+
+`ToolVisibility::describe(&ToolSpec) -> Option<String>` optionally replaces the description. Tool names and input schemas remain immutable. Keep descriptions stable across requests for provider prompt caches.
+
 ## Provider-free tool host
 
 `ToolHost` executes registered tools without a model loop. It shares the SDK authorization path, approval session, progress channels, host-input path, and hook wiring.
@@ -218,7 +247,7 @@ flowchart TD
 - Builders accept the same workspace, policy, approval, and hook options as `RhoBuilder` where applicable.
 - Dropping an unfinished `ToolHostRun` cancels its work.
 
-Use a tool host for host-driven automation (for example a workflow command step) that must still pass policy and hooks.
+Use a tool host for host-driven automation (for example a workflow command step) that must still pass policy and hooks. `ToolHost::child_builder(&context)` returns a `ChildToolHostBuilder` with only tool registration, event capacity, and build methods. It inherits the parent's authorization, session identity, live history, and hook run id; nested calls cannot override security settings.
 
 ## Questionnaire fallback provenance
 

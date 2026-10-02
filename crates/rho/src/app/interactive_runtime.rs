@@ -21,6 +21,8 @@ mod advisor;
 mod agent_catalog;
 #[path = "interactive_runtime_cache.rs"]
 mod cache;
+#[path = "interactive_runtime_codemode.rs"]
+mod codemode;
 #[path = "interactive_runtime_compact.rs"]
 mod compact;
 #[path = "interactive_runtime_computer.rs"]
@@ -242,7 +244,7 @@ impl InteractiveRuntime {
         );
         let replacement_runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(self.provider.provider()),
-            tools: self.tools.tools(),
+            tools: &self.tools,
             workspace: self.workspace.clone(),
             workspace_policy: AppPolicy::for_mode(mode, session_writes.clone()),
             approval_session: approval_channel
@@ -641,7 +643,7 @@ impl InteractiveRuntime {
             self.sessions.session(),
             CompactionSetup {
                 provider: Arc::clone(self.provider.provider()),
-                tools: self.tools.tools(),
+                tool_specs: self.tools.specs(),
                 reasoning: self.provider.reasoning(),
                 compaction: self.compaction.clone(),
                 context_window: self.context_window,
@@ -848,7 +850,7 @@ impl InteractiveRuntime {
         let permission = self.permission_for_rebuild(writes);
         let replacement_runtime = build_runtime(RuntimeBuildOptions {
             provider: Arc::clone(self.provider.provider()),
-            tools: self.tools.tools(),
+            tools: &self.tools,
             workspace: self.workspace.clone(),
             workspace_policy: permission.workspace_policy,
             approval_session: permission.approval_session,

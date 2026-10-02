@@ -190,6 +190,9 @@ fn tool_locations(paths: &[std::path::PathBuf]) -> Vec<ToolCallLocation> {
 
 fn finished_content(result: &ToolCompletion) -> (ToolCallStatus, Vec<ToolCallContent>) {
     match result {
+        ToolCompletion::CompletedFailure(output) => {
+            (ToolCallStatus::Failed, success_content(output))
+        }
         ToolCompletion::Success(output) => (ToolCallStatus::Completed, success_content(output)),
         ToolCompletion::Failure(failure) => (
             ToolCallStatus::Failed,

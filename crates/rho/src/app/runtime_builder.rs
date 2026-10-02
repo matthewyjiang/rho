@@ -14,7 +14,7 @@ use {
 
 pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) provider: Arc<dyn ModelProvider>,
-    pub(crate) tools: &'a [Arc<dyn rho_sdk::tool::Tool>],
+    pub(crate) tools: &'a crate::tools::sdk_registry::AppToolSet,
     pub(crate) workspace: Workspace,
     pub(crate) workspace_policy: P,
     pub(crate) approval_session: Option<rho_sdk::ApprovalSession>,
@@ -34,7 +34,7 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) hooks: Option<&'a crate::hooks::HookPipeline>,
     /// Receives compaction tier reports for `/info` and `rho(action="compaction")`.
     pub(crate) diagnostics: RuntimeDiagnostics,
-    /// From [`crate::tools::AppToolSet::recall_store`]; `None` disables elision.
+    /// From [`crate::tools::sdk_registry::AppToolSet::recall_store`]; `None` disables elision.
     pub(crate) recall: Option<RecallStore>,
 }
 
@@ -77,7 +77,7 @@ where
     } = options;
     let (compactor, policy) = build_compaction(CompactionSetup {
         provider: Arc::clone(&provider),
-        tools,
+        tool_specs: tools.specs(),
         reasoning,
         compaction,
         context_window,
@@ -110,13 +110,14 @@ where
             ))
             .usage_parent_session_id(parent_session_id);
     }
+    builder = builder.tool_visibility_shared(tools.tool_visibility());
     if let Some(session) = approval_session {
         builder = builder.approval_session(session);
     }
     if let Some(policy) = policy {
         builder = builder.compaction_policy(policy);
     }
-    for tool in tools {
+    for tool in tools.tools() {
         builder = builder.tool_shared(tool.clone());
     }
     if let Some(hooks) = hooks {
@@ -127,9 +128,10 @@ where
 
 /// Inputs for the host compactor and its automatic policy. Every runtime build
 /// and live refresh constructs the compactor from this one shape.
-pub(crate) struct CompactionSetup<'a> {
+pub(crate) struct CompactionSetup {
     pub(crate) provider: Arc<dyn ModelProvider>,
-    pub(crate) tools: &'a [Arc<dyn rho_sdk::tool::Tool>],
+    /// Advertised schemas used only when a compaction request supplies none.
+    pub(crate) tool_specs: Vec<rho_sdk::model::ToolSpec>,
     pub(crate) reasoning: rho_sdk::ReasoningLevel,
     pub(crate) compaction: CompactionConfig,
     pub(crate) context_window: Option<u64>,
@@ -142,11 +144,11 @@ pub(crate) struct CompactionSetup<'a> {
 }
 
 pub(crate) fn build_compaction(
-    setup: CompactionSetup<'_>,
+    setup: CompactionSetup,
 ) -> (ModelCompactor, Option<CompactionPolicy>) {
     let CompactionSetup {
         provider,
-        tools,
+        tool_specs,
         reasoning,
         compaction,
         context_window,
@@ -158,7 +160,7 @@ pub(crate) fn build_compaction(
     let compactor = ModelCompactor {
         provider,
         usage_recording,
-        tool_specs: tools.iter().map(|tool| tool.spec()).collect(),
+        tool_specs,
         reasoning,
         summarizer: compaction.summarizer.clone().map(Summarizer::new),
         config: compaction,
@@ -173,7 +175,7 @@ pub(crate) fn build_compaction(
 /// inputs `build_compaction` uses at runtime construction.
 pub(crate) fn refresh_session_compaction(
     session: &rho_sdk::Session,
-    setup: CompactionSetup<'_>,
+    setup: CompactionSetup,
 ) -> Result<(), Error> {
     let (compactor, policy) = build_compaction(setup);
     session.set_compaction(Some(Arc::new(compactor)), policy)
@@ -193,3 +195,7 @@ pub(crate) fn configured_context_window(config: &Config) -> Option<u64> {
     cached_model_metadata(&config.provider, &config.model)
         .and_then(|metadata| metadata.display_context_window())
 }
+
+#[cfg(test)]
+#[path = "runtime_builder_exposure_tests.rs"]
+mod exposure_tests;

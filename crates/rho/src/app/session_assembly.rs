@@ -232,7 +232,7 @@ where
         let runtime = build_runtime_with_max_steps(
             RuntimeBuildOptions {
                 provider: Arc::clone(&provider),
-                tools: tool_set.tools(),
+                tools: &tool_set,
                 workspace,
                 workspace_policy: AppPolicy::for_mode(config.permission_mode, session_writes),
                 approval_session,

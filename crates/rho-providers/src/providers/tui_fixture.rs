@@ -42,6 +42,7 @@ const HOVER_TOOL_CALL_ID: &str = "tui-fixture-hover-tool";
 const LONG_APPROVAL_CALL_ID: &str = "tui-fixture-long-approval";
 const QUESTIONNAIRE_CALL_ID: &str = "tui-fixture-questionnaire";
 const PROGRESS_CALL_ID: &str = "tui-fixture-progress";
+const CODEMODE_CALL_ID: &str = "tui-fixture-codemode";
 const CONCURRENT_SLOW_CALL_ID: &str = "tui-fixture-concurrent-slow";
 const CONCURRENT_FAST_CALL_ID: &str = "tui-fixture-concurrent-fast";
 const BACKGROUND_AGENT_CALL_ID: &str = "tui-fixture-background-agent";
