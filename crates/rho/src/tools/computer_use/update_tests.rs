@@ -1,15 +1,22 @@
 #![cfg(unix)]
 
-use std::{fs, os::unix::fs::PermissionsExt};
+use std::{fs, os::unix::fs::symlink};
 
 use pretty_assertions::assert_eq;
 
 use super::*;
 
+/// Driver whose behavior is the shell `body`. The executable is a symlink to the
+/// checked-in `update_fixture.sh`, which sources `body`: executing a freshly
+/// written script races concurrent forks that inherit its write fd (ETXTBSY).
 fn fixture_driver(dir: &Path, body: &str) -> PathBuf {
+    fs::write(dir.join("driver-body.sh"), body).unwrap();
     let path = dir.join("cua-driver");
-    fs::write(&path, format!("#!/bin/sh\nset -eu\n{body}")).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+    symlink(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/tools/computer_use/update_fixture.sh"),
+        &path,
+    )
+    .unwrap();
     path
 }
 

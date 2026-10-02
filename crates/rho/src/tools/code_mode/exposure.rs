@@ -127,20 +127,61 @@ impl CodeModeSurface {
     }
 }
 
+/// Keyword search shared by `tool_search` and script `search_tools`.
+///
+/// Models write queries like `memorywhale remember` or `+github issue`, so the
+/// query is split into distinct terms on anything but alphanumerics and `_`.
+/// Terms shorter than [`MIN_TERM_LEN`] are dropped when longer ones exist, so
+/// filler like `a` or `to` cannot match every description. An entry matches
+/// when any term is a substring of its name or description; a name hit scores
+/// above a description hit, higher scores rank first, and ties keep catalog
+/// (name) order. A query without terms lists every entry.
 pub(super) fn search_entries<'a>(
     entries: impl Iterator<Item = &'a ToolCatalogEntry>,
     query: &str,
     limit: usize,
 ) -> Vec<ToolCatalogEntry> {
-    let query = query.trim().to_ascii_lowercase();
-    entries
-        .filter(|entry| {
-            entry.name.to_ascii_lowercase().contains(&query)
-                || entry.description.to_ascii_lowercase().contains(&query)
+    let terms = search_terms(query);
+    let mut hits: Vec<_> = entries
+        .filter_map(|entry| {
+            let name = entry.name.to_ascii_lowercase();
+            let description = entry.description.to_ascii_lowercase();
+            let score: usize = terms
+                .iter()
+                .map(|term| {
+                    2 * usize::from(name.contains(term.as_str()))
+                        + usize::from(description.contains(term.as_str()))
+                })
+                .sum();
+            (terms.is_empty() || score > 0).then_some((score, entry))
         })
+        .collect();
+    // Stable sort keeps name order within equal scores.
+    hits.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+    hits.into_iter()
         .take(limit)
-        .cloned()
+        .map(|(_, entry)| entry.clone())
         .collect()
+}
+
+/// Shortest term that counts when the query also has longer terms. Two-letter
+/// words (`a`, `to`, `in`) are substrings of most descriptions; a query made
+/// only of short terms (`gh`) still searches with them.
+const MIN_TERM_LEN: usize = 3;
+
+fn search_terms(query: &str) -> Vec<String> {
+    let mut terms: Vec<String> = query
+        .to_ascii_lowercase()
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|term| !term.is_empty())
+        .map(str::to_owned)
+        .collect();
+    terms.sort();
+    terms.dedup();
+    if terms.iter().any(|term| term.len() >= MIN_TERM_LEN) {
+        terms.retain(|term| term.len() >= MIN_TERM_LEN);
+    }
+    terms
 }
 
 fn is_orchestration_tool(name: &str) -> bool {
@@ -175,3 +216,7 @@ impl ToolVisibility for CodeModeSurface {
         ))
     }
 }
+
+#[cfg(test)]
+#[path = "exposure_tests.rs"]
+mod tests;

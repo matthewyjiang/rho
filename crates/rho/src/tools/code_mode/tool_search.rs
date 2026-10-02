@@ -36,7 +36,7 @@ impl Tool for ToolSearchTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: TOOL_SEARCH_NAME.into(),
-            description: "Discover script-callable tools by name or description, including MCP tools and native tools in codemode only mode. Returns names, descriptions, and parameter and return schemas; call discovered tools through codemode.".into(),
+            description: "Discover script-callable tools by keyword search over names and descriptions (multi-word queries match any word; a name match ranks above a description match), including MCP tools and native tools in codemode only mode. Returns names, descriptions, and parameter and return schemas; call discovered tools through codemode.".into(),
             input_schema: json!({"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "default": 10}}, "required": ["query"], "additionalProperties": false}),
         }
     }
@@ -55,7 +55,16 @@ impl Tool for ToolSearchTool {
                     ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
                 })?;
             let hits = self.surface.search(&args.query, args.limit);
-            let text = serde_json::to_string_pretty(&hits).expect("serializable catalog");
+            // A bare `[]` reads as "this server is not connected", so a miss
+            // says how to browse the catalog instead. `data` stays `[]`.
+            let text = if hits.is_empty() {
+                format!(
+                    "no tools matched {:?}; call `list_tools()` in a codemode script to browse every script-callable tool.",
+                    args.query,
+                )
+            } else {
+                serde_json::to_string_pretty(&hits).expect("serializable catalog")
+            };
             rho_tools::Rendered::new(text, hits).into_tool_output(Default::default())
         })
     }
