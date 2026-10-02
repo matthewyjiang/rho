@@ -190,12 +190,14 @@ async fn provider_tool_list_follows_exposure_and_promotion() {
 #[tokio::test]
 async fn codemode_mode_selects_provider_tool_list() {
     use crate::config::CodemodeMode::{On, Only};
+    // The workspace shell tool is `powershell` on Windows.
+    let shell = crate::config::default_inline_shell();
     let watched = [
         CODEMODE_TOOL_NAME,
         TOOL_SEARCH_NAME,
         "read_file",
         "write",
-        "bash",
+        shell.as_str(),
         "mcp__docs__lookup",
         "rare_report",
     ];
