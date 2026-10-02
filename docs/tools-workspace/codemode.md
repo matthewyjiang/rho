@@ -153,3 +153,9 @@ success.
 The `codemode` card shows the script with syntax highlighting. It keeps the same
 shape while the script runs and after it finishes, when the header gains the
 nested-call count. Resumed sessions show the same card without the count.
+
+Scripts use Python-style highlighting. Source lines up to 4 KiB keep their colors
+when wrapped across terminal rows. Longer lines remain readable as plain text,
+with a notice showing the line size and highlighting budget. Splitting a long
+batch across source lines avoids this limit; it does not affect whether the
+script can run.

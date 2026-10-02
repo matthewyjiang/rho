@@ -79,8 +79,20 @@ fn code_lines_wrap_between_tokens() {
             "    len(hits))",
         ]
     );
-    assert_eq!(
-        rows,
-        crate::tui::tool_card_render::estimate_plain_body_rows(line, 24)
-    );
+    assert_eq!(rows, CodeSyntax::estimate_rows("python", line, 24));
+
+    // Budget notices wrap too; hidden-row estimates must include them.
+    let oversized = format!("print({:?})", "payload".repeat(1024));
+    for language in ["python", "markdown"] {
+        for width in [24, 80] {
+            let mut syntax = CodeSyntax::new(language);
+            let mut lines = Vec::new();
+            let painted = syntax.paint_line(&oversized, width, &mut lines);
+            assert_eq!(painted, lines.len());
+            assert_eq!(
+                CodeSyntax::estimate_rows(language, &oversized, width),
+                painted
+            );
+        }
+    }
 }

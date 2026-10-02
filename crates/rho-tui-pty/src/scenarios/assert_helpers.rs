@@ -16,12 +16,32 @@ pub(super) fn assert_idle_shell_still_streaming(harness: &mut PtyHarness) -> Res
     Ok(())
 }
 
-/// The codemode card must not fall back to printing its raw argument JSON.
+/// Codemode keeps source (not argument JSON) and highlights long batch lines.
 pub(super) fn assert_no_escaped_script_json(harness: &mut PtyHarness) -> Result<()> {
     let screen = harness.screen().contents();
     if screen.contains("{\"script\"") {
         anyhow::bail!("codemode card printed raw argument JSON:\n{screen}");
     }
+    // A long logical source line must keep its token colors after wrapping.
+    let (row, column) = harness
+        .screen()
+        .rows_text()
+        .iter()
+        .enumerate()
+        .find_map(|(row, text)| text.find("hits = call_tools(").map(|column| (row, column)))
+        .ok_or_else(|| anyhow::anyhow!("codemode source line is not visible"))?;
+    let plain = harness.screen().cell(row as u16, column as u16).unwrap();
+    let string_column = harness.screen().rows_text()[row]
+        .find("list_dir")
+        .ok_or_else(|| anyhow::anyhow!("codemode string token is not visible"))?;
+    let string = harness
+        .screen()
+        .cell(row as u16, string_column as u16)
+        .unwrap();
+    anyhow::ensure!(
+        string.fg != plain.fg,
+        "long codemode source line lost syntax highlighting: {screen}"
+    );
     Ok(())
 }
 
