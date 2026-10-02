@@ -68,14 +68,13 @@ pub(super) async fn intercept(
         {
             Some(concurrent_progress())
         }
-        // Twelve completed calls exceed the collapsed card's ten-row budget.
-        // The final nested tool holds each update until the PTY releases it.
+        // A batched read-only script: the card must show call rows and source.
         "fixture codemode" if tool_result(request, CODEMODE_CALL_ID).is_none() => {
             Some(completed_tool_call(
                 CODEMODE_CALL_ID,
                 "codemode",
                 serde_json::json!({
-                    "script": "hits = call_tools([\n    (\"list_dir\", {\"path\": \".\"}) for _ in range(12)\n])\nhits.append(call_tool(\"tui_fixture_progress\", {\"label\": \"nested wrapping detail\", \"release_prefix\": \".rho-fixture-codemode\"}))\nprint(\"codemode fixture batch\", len(hits))\nresult = [h[\"is_error\"] for h in hits]",
+                    "script": "hits = call_tools([(\"list_dir\", {\"path\": \".\"}), (\"glob\", {\"pattern\": \"*.md\"})])\nprint(\"codemode fixture batch\", len(hits))\nresult = [h[\"is_error\"] for h in hits]",
                 }),
             ))
         }
