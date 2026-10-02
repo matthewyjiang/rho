@@ -28,6 +28,7 @@ use super::{
         wrap_line_at_whitespace, wrap_line_at_whitespace_ranges, wrap_line_hard, LineFill,
     },
     theme::Theme,
+    tool_code::CodeSyntax,
     tool_diff::{self, DiffSyntax},
     tool_search::SearchSyntax,
     ToolEntry,
@@ -301,28 +302,33 @@ pub(super) fn paint_card_sections(
     let last_fact_is_end = prefix_groups > 0 && !later_has_tree[prefix_groups - 1] && !has_prompt;
 
     if has_prompt {
-        let hidden = match &card.body_syntax {
+        // Tail windows show the newest rows, so the notice goes above them and
+        // the card ends on generated source. Head windows append it below.
+        let (hidden, above) = match &card.body_syntax {
             ToolBodySyntax::Code {
                 window: ToolBodyWindow::Tail,
                 ..
-            } => {
-                format!("... {hidden_rows} earlier lines")
-            }
+            } => (format!("... {hidden_rows} earlier lines"), true),
             ToolBodySyntax::Plain
             | ToolBodySyntax::Code {
                 window: ToolBodyWindow::Head,
                 ..
-            } => {
-                format!("... {hidden_rows} more lines")
-            }
+            } => (format!("... {hidden_rows} more lines"), false),
         };
+        let mut notice = Vec::new();
         push_wrapped_text(
-            &mut body,
+            &mut notice,
             &hidden,
             width,
             Theme::dim(),
             LineFill::PadToWidth,
         );
+        if above {
+            notice.append(&mut body);
+            body = notice;
+        } else {
+            body.append(&mut notice);
+        }
     }
     CardSections {
         header,

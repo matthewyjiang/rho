@@ -71,6 +71,7 @@ fn exercise_collapsed_stream(harness: &mut PtyHarness) -> Result<()> {
     harness.wait_for_text(SECOND, STREAM)?;
     assert_generating_source(harness, SECOND)?;
     assert_one_card(harness)?;
+    assert_tail_notice_above(harness, SECOND)?;
 
     // The rolling live view must not discard the source prefix. Expansion
     // retrieves it while JSON is still open, not just after execution.
@@ -165,6 +166,40 @@ fn finish(harness: &mut PtyHarness) -> Result<()> {
         "script did not execute after completion"
     );
     assert_long_line_highlighted(harness)
+}
+
+/// The long batch line wraps but keeps syntax colors (Python line budget).
+fn assert_long_line_highlighted(harness: &PtyHarness) -> Result<()> {
+    let rows = harness.screen().rows_text();
+    let (row, text) = rows
+        .iter()
+        .enumerate()
+        .find(|(_, text)| text.contains("hits = call_tools("))
+        .context("batch source line missing")?;
+    // Screen cells are columns; box-drawing prefixes make byte offsets wrong.
+    let column = |byte: usize| text[..byte].chars().count();
+    let plain = column(text.find("hits").expect("matched batch line"));
+    let string = column(text.find("list_dir").context("string token missing")?);
+    let cell = |column: usize| harness.screen().cell(row as u16, column as u16);
+    ensure!(
+        cell(plain).context("missing code cell")?.fg
+            != cell(string).context("missing string cell")?.fg,
+        "long codemode source line lost syntax highlighting"
+    );
+    Ok(())
+}
+
+/// A collapsed tail card must put its hidden-row notice above the newest source.
+fn assert_tail_notice_above(harness: &PtyHarness, newest: &str) -> Result<()> {
+    let screen = harness.screen().contents();
+    let row_of = |needle: &str| screen.lines().position(|line| line.contains(needle));
+    let notice = row_of("earlier lines").context("tail notice missing")?;
+    let source = row_of(newest).context("newest source row missing")?;
+    ensure!(
+        notice < source,
+        "tail notice rendered below the newest source:\n{screen}"
+    );
+    Ok(())
 }
 
 fn assert_one_card(harness: &PtyHarness) -> Result<()> {
