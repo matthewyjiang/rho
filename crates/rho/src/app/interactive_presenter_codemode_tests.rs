@@ -2,7 +2,7 @@ use pretty_assertions::assert_eq;
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 use serde_json::json;
 
-use super::{finished_card, progress_card};
+use super::finished_card;
 
 fn expected(status: ToolStatus, primary: Option<&str>, script: &[&str]) -> ToolCard {
     ToolCard::new(
@@ -16,28 +16,24 @@ fn expected(status: ToolStatus, primary: Option<&str>, script: &[&str]) -> ToolC
     })
 }
 
-// Covers: running cards keep only the latest call rows (failed ones as errors)
-// above the script; earlier rows collapse to a count.
-// Owner: codemode presenter.
+// Covers: bridge progress rows never reach the running card, so it keeps the
+// started card's shape and nothing collapses when the script finishes.
+// Owner: codemode presenter (through the shared progress dispatch).
 #[test]
-fn progress_card_shows_latest_rows_above_script() {
-    let mut rows: Vec<String> = (0..9).map(|_| "✓ read_file a.rs 1ms".to_string()).collect();
-    rows.push("✗ bash false 2ms · exit 1".into());
-    let card = progress_card(&json!({"script": "result = 1\n"}), &rows.join("\n"));
-
-    let mut want = expected(ToolStatus::Running, None, &["result = 1"]);
-    want.push_fact(ToolFact::Meta {
-        text: "… 2 earlier calls".into(),
-    });
-    for _ in 0..7 {
-        want.push_fact(ToolFact::Text {
-            text: "✓ read_file a.rs 1ms".into(),
-        });
-    }
-    want.push_fact(ToolFact::Error {
-        text: "✗ bash false 2ms · exit 1".into(),
-    });
-    assert_eq!(card, want);
+fn running_card_ignores_call_rows() {
+    let arguments = json!({"script": "result = 1\n"});
+    let view = crate::app::interactive_presenter::ToolView {
+        kind: crate::app::interactive_presenter::ToolKind::Codemode,
+        name: "codemode".into(),
+        arguments: arguments.clone(),
+        metadata: Default::default(),
+    };
+    let rows = rho_sdk::tool::ToolProgress::message("✓ read_file a.rs 1ms\n● bash sleep 5");
+    let card = crate::app::interactive_presenter::format::progress_card(
+        Some((&view, std::path::Path::new("."))),
+        &rows,
+    );
+    assert_eq!(card, expected(ToolStatus::Running, None, &["result = 1"]));
 }
 
 // Covers: finished cards are the script with the call count, live and replayed

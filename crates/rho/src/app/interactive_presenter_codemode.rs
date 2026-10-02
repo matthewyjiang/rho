@@ -1,16 +1,13 @@
 //! Codemode cards show the script as highlighted source: what the model ran,
-//! not what it printed. While the script runs, the latest nested-call rows sit
-//! above it as live progress; nested calls never reach the model as tool calls,
-//! so those rows exist only on this card.
+//! not what it printed. The card keeps one shape from start to finish; nested
+//! calls are usually too fast to watch, and rows that vanish on completion make
+//! the transcript jump, so the TUI ignores the bridge's progress rows (ACP and
+//! the automation protocol still forward them).
 
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 use serde_json::Value;
 
 use super::format::string_arg;
-
-/// Latest call rows shown while running, matching Pi's collapsed codemode card
-/// (`CALL_PREVIEW_COUNT = 8`).
-const CALL_ROWS: usize = 8;
 
 /// Starlark is Python-shaped, and the bundled syntax set has no Starlark grammar.
 const SCRIPT_LANGUAGE: &str = "python";
@@ -30,34 +27,9 @@ fn card(status: ToolStatus, primary: Option<String>, arguments: &Value) -> ToolC
     })
 }
 
-/// Streaming, started, and interrupted card: the script as source.
+/// Streaming, started, running, and interrupted card: the script as source.
 pub(super) fn preview_card(arguments: &Value, status: ToolStatus) -> ToolCard {
     card(status, None, arguments)
-}
-
-/// Live card: the latest call rows above the script. `rows` is the bridge's
-/// progress text, one rendered row per nested call in start order.
-pub(super) fn progress_card(arguments: &Value, rows: &str) -> ToolCard {
-    let rows: Vec<&str> = rows.lines().filter(|row| !row.trim().is_empty()).collect();
-    let mut card = card(ToolStatus::Running, None, arguments);
-    let earlier = rows.len().saturating_sub(CALL_ROWS);
-    if earlier > 0 {
-        card.push_fact(ToolFact::Meta {
-            text: format!("… {earlier} earlier calls"),
-        });
-    }
-    for row in &rows[earlier..] {
-        card.push_fact(if row.starts_with('✗') {
-            ToolFact::Error {
-                text: (*row).into(),
-            }
-        } else {
-            ToolFact::Text {
-                text: (*row).into(),
-            }
-        });
-    }
-    card
 }
 
 /// Finished card: the call count, the failure reason when the script failed,

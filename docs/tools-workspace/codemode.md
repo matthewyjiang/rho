@@ -117,7 +117,6 @@ timeout. A script that fails still returns its printed output and call log.
 
 ## In the TUI
 
-The `codemode` card shows the script with syntax highlighting. While the script
-runs, each nested call has a row with its status, main argument, duration, and
-latest progress line. When the script finishes, the rows collapse into a call
-count, so live and resumed sessions show the same card.
+The `codemode` card shows the script with syntax highlighting. It keeps the same
+shape while the script runs and after it finishes, when the header gains the
+nested-call count. Resumed sessions show the same card without the count.

@@ -1,4 +1,5 @@
-//! Nested-call records shared by the live progress text and the final card.
+//! Nested-call records rendered as the codemode tool's progress text, which
+//! ACP and the automation protocol forward; the TUI card ignores it.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

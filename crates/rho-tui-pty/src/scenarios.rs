@@ -581,7 +581,7 @@ const ALL_SCENARIOS: &[Scenario] = &[
     ),
     Scenario::new(
         "codemode_card",
-        "Render a batched codemode script as call rows and source",
+        "Render a batched codemode script as source with its call count",
         DEFAULT_SIZE,
         CODEMODE_CARD_STEPS,
         false,
