@@ -16,6 +16,8 @@ use super::{DEFAULT_SIZE, SETTLE, STARTUP};
 
 /// A ready-session hint line; present only while header hints are shown.
 const HINT_TEXT: &str = "Show available commands";
+/// The header's brand line, rendered regardless of hint visibility.
+const BRAND_TEXT: &str = "rho  v";
 
 // Covers: config-disabled header hints stay off at startup, and the /config
 // Appearance toggle restores them without a restart.
@@ -48,6 +50,8 @@ fn setup_hidden_hints(home: &IsolatedHome) -> Result<()> {
 }
 
 fn assert_hints_hidden(harness: &mut PtyHarness) -> Result<()> {
+    // The brand line proves the header rendered, so absence means hidden.
+    harness.wait_for_text(BRAND_TEXT, SETTLE)?;
     harness.wait_for_text_gone(HINT_TEXT, SETTLE)
 }
 

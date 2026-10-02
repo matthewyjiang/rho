@@ -152,10 +152,6 @@ impl super::App {
         }
     }
 
-    pub(super) fn header_hints(&self) -> HeaderHints {
-        HeaderHints::from_enabled(self.info.runtime.show_header_hints)
-    }
-
     /// A prompt submitted with no credentials opens the login picker instead of
     /// failing a turn, and the composer holds the prompt so one enter sends it
     /// once a provider is live.

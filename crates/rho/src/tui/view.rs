@@ -15,6 +15,7 @@ use super::tool_output_ui::tool_output_toggleable;
 use super::{
     composer_chrome::ComposerDividerSlot,
     composer_pointer::lift_hovered_hit,
+    first_run::HeaderHints,
     highlight_selection,
     palette::PaletteFrame,
     picker::picker_overlay_frame,
@@ -610,7 +611,7 @@ impl App {
     pub(super) fn session_header_lines(&mut self, width: usize) -> &[Line<'static>] {
         let update_notice = self.info.services.update_notice.clone();
         let setup = self.setup_state();
-        let header_hints = self.header_hints();
+        let header_hints = HeaderHints::from_enabled(self.info.runtime.show_header_hints);
         let theme_generation = Theme::generation();
         let stale = self.history.session_header_cache().is_none_or(|cache| {
             cache.width != width

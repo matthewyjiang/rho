@@ -341,16 +341,7 @@ impl PartialConfig {
             || max_tool_output_lines.is_some()
             || self.display.is_some()
         {
-            let group = self.display.take().unwrap_or(PartialDisplayConfig {
-                show_reasoning_output: None,
-                zen_mode: None,
-                output_streaming: None,
-                theme: None,
-                max_tool_output_lines: None,
-                prompt_history_limit: None,
-                cache_miss_notices: None,
-                show_header_hints: None,
-            });
+            let group = self.display.take().unwrap_or_default();
             self.display = Some(PartialDisplayConfig {
                 show_reasoning_output: group.show_reasoning_output.or(show_reasoning_output),
                 zen_mode: group.zen_mode.or(zen_mode),
@@ -527,7 +518,7 @@ struct PartialModelConfig {
     aliases: Option<ModelAliases>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PartialDisplayConfig {
     show_reasoning_output: Option<bool>,

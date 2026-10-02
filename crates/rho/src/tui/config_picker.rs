@@ -90,6 +90,10 @@ fn on_off(value: bool) -> String {
     if value { "on" } else { "off" }.into()
 }
 
+fn shown_hidden(value: bool) -> String {
+    if value { "shown" } else { "hidden" }.into()
+}
+
 /// Help text for the cache-miss row, built from the tripwires it describes so
 /// the numbers cannot drift from the thresholds that actually fire.
 fn cache_miss_notices_help() -> String {
@@ -314,21 +318,13 @@ pub(super) fn category_picker(
                 item(
                     "Show reasoning output",
                     "Show model reasoning text in the TUI. Applies to the next turn. Space toggles.",
-                    Some(if info.show_reasoning_output {
-                        "shown".into()
-                    } else {
-                        "hidden".into()
-                    }),
+                    Some(shown_hidden(info.show_reasoning_output)),
                     SHOW_REASONING_OUTPUT_VALUE,
                 ),
                 item(
                     "Header hints",
                     "Show the keyboard hint block in the session header. Sign-in hints stay while signed out. Space toggles.",
-                    Some(if info.show_header_hints {
-                        "shown".into()
-                    } else {
-                        "hidden".into()
-                    }),
+                    Some(shown_hidden(info.show_header_hints)),
                     SHOW_HEADER_HINTS_VALUE,
                 ),
                 item(
