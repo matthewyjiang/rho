@@ -67,3 +67,7 @@ impl Drop for ExecutionPermit {
         self.arbiter.changed.notify_waiters();
     }
 }
+
+#[cfg(test)]
+#[path = "arbiter_tests.rs"]
+mod tests;

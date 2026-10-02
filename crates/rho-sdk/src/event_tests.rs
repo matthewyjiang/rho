@@ -127,79 +127,60 @@ fn generation_rate_divides_tokens_by_generation_time() {
     }
 }
 
-// Covers: manually constructed legacy variants cannot disagree with hook or model status.
-// Owner: SDK completion projections; includes both variants and non-output completions.
+// Covers: inconsistent legacy variants cannot disagree with hook or model status.
+// Owner: SDK completion projections, including non-output completions.
 #[test]
 fn completion_status_uses_output_flag_for_model_and_hooks() {
     use crate::{
-        hooks::{tool_status, HookToolStatus, ToolOutcomeRef},
-        model::ToolResult,
+        hooks::{
+            tool_status,
+            HookToolStatus::{Failed, Succeeded, Unavailable as UnavailableStatus},
+            ToolOutcomeRef,
+        },
         tool::{ToolError, ToolErrorKind, ToolOutput},
-        ToolCompletion,
+        ToolCompletion::{self, CompletedFailure, Success},
     };
 
     let successful = ToolOutput::text("result");
     let failed = successful.clone().failed();
-    for (completion, output, failure, hook_status, content) in [
+    let error = ToolCompletion::from_result(Err(ToolError::new(ToolErrorKind::Execution, "error")));
+    for (completion, expected) in [
+        (Success(successful.clone()), (false, true, Succeeded)),
+        (Success(failed.clone()), (true, false, Failed)),
         (
-            ToolCompletion::Success(successful.clone()),
-            Some(successful.clone()),
-            false,
-            HookToolStatus::Succeeded,
-            "result",
+            CompletedFailure(successful.clone()),
+            (false, true, Succeeded),
         ),
+        (CompletedFailure(failed.clone()), (true, false, Failed)),
         (
-            ToolCompletion::Success(failed.clone()),
-            Some(failed.clone()),
-            true,
-            HookToolStatus::Failed,
-            "result",
+            ToolCompletion::from_output(successful),
+            (false, true, Succeeded),
         ),
-        (
-            ToolCompletion::CompletedFailure(successful.clone()),
-            Some(successful.clone()),
-            false,
-            HookToolStatus::Succeeded,
-            "result",
-        ),
-        (
-            ToolCompletion::CompletedFailure(failed.clone()),
-            Some(failed.clone()),
-            true,
-            HookToolStatus::Failed,
-            "result",
-        ),
-        (
-            ToolCompletion::from_result(Err(ToolError::new(ToolErrorKind::Execution, "error"))),
-            None,
-            true,
-            HookToolStatus::Failed,
-            "error",
-        ),
+        (ToolCompletion::from_output(failed), (true, false, Failed)),
+        (error, (true, false, Failed)),
         (
             ToolCompletion::Unavailable,
-            None,
-            true,
-            HookToolStatus::Unavailable,
-            "tool 'test' is unavailable",
+            (true, false, UnavailableStatus),
         ),
     ] {
-        assert_eq!(completion.output(), output.as_ref());
-        assert_eq!(completion.is_failure(), failure);
+        let result = completion.model_result("test", "call");
         assert_eq!(
-            tool_status(ToolOutcomeRef::from(&completion)).0,
-            hook_status
+            (
+                completion.is_failure(),
+                result.ok,
+                tool_status(ToolOutcomeRef::from(&completion)).0,
+            ),
+            expected
         );
+        let (output, content) = match &completion {
+            Success(output) | CompletedFailure(output) => (Some(output), "result"),
+            ToolCompletion::Failure(_) => (None, "error"),
+            ToolCompletion::Unavailable => (None, "tool 'test' is unavailable"),
+        };
+        assert_eq!(completion.output(), output);
         assert_eq!(
-            completion.model_result("test", "call"),
-            ToolResult {
-                id: "call".into(),
-                ok: !failure,
-                content: content.into(),
-            }
+            (result.id.as_str(), result.content.as_str()),
+            ("call", content)
         );
-        if let Some(output) = output {
-            assert_eq!(ToolCompletion::from_output(output).is_failure(), failure);
-        }
     }
 }

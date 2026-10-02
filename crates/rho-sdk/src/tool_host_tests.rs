@@ -765,3 +765,69 @@ async fn child_host_preserves_model_provenance_through_nesting() {
         assert_eq!(*seen.lock().unwrap(), vec![(source, source); 2]);
     }
 }
+
+// Drive the real host worker by explicit polling, without task-scheduling races.
+fn scheduled_worker(
+    host: &ToolHost,
+) -> (
+    crate::tool_host::ToolHostFuture<'static>,
+    tokio::sync::mpsc::Receiver<ToolHostEvent>,
+) {
+    let call = ToolHostCall::new("interactive", json!({}));
+    let cancellation = crate::CancellationToken::new();
+    let (events, receiver) = tokio::sync::mpsc::channel(host.core.event_capacity.get());
+    let (progress, progress_receiver) = tool_progress_channel(host.core.event_capacity);
+    let (host_input, host_input_receiver) =
+        crate::host_input::channel(host.core.event_capacity.get(), cancellation.clone());
+    let context =
+        ToolContext::new(None, cancellation.clone(), progress).with_host_input(host_input);
+    let worker = Box::pin(
+        crate::tool::ToolHostWorker {
+            core: Arc::clone(&host.core),
+            tool: host.core.tools.get("interactive").unwrap(),
+            call,
+            context,
+            cancellation,
+            events,
+            progress: progress_receiver,
+            host_input: host_input_receiver,
+        }
+        .run(),
+    );
+    (worker, receiver)
+}
+
+// Covers: two exclusive child-host calls cannot overlap; the worker holds its permit.
+// Owner: SDK ToolHost worker admission wiring.
+#[tokio::test]
+async fn child_host_serializes_exclusive_calls() {
+    use std::task::{Context, Poll, Waker};
+    use tokio::sync::mpsc::error::TryRecvError;
+
+    let (progress, _receiver) = tool_progress_channel(NonZeroUsize::MIN);
+    let parent = ToolContext::new(None, crate::CancellationToken::new(), progress);
+    let host = ToolHost::child_builder(&parent)
+        .tool(InteractiveTool)
+        .build()
+        .unwrap();
+    let mut cx = Context::from_waker(Waker::noop());
+    let (mut first, mut first_events) = scheduled_worker(&host);
+    let (mut second, mut second_events) = scheduled_worker(&host);
+    // One poll enters execution; the next forwards its progress event.
+    assert!(first.as_mut().poll(&mut cx).is_pending());
+    assert!(first.as_mut().poll(&mut cx).is_pending());
+    assert!(first_events.try_recv().is_ok());
+    assert!(second.as_mut().poll(&mut cx).is_pending());
+    assert!(second.as_mut().poll(&mut cx).is_pending());
+    assert_eq!(second_events.try_recv().unwrap_err(), TryRecvError::Empty);
+    let ToolHostEvent::HostInputRequested(mut pending) = first_events.try_recv().unwrap() else {
+        panic!("first call must be waiting for host input");
+    };
+    pending
+        .respond(HostInputResponse::new().answer("choice", ["yes"]))
+        .unwrap();
+    assert!(matches!(first.as_mut().poll(&mut cx), Poll::Ready(Ok(_))));
+    assert!(second.as_mut().poll(&mut cx).is_pending());
+    assert!(second.as_mut().poll(&mut cx).is_pending());
+    assert!(second_events.try_recv().is_ok());
+}

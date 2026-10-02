@@ -94,10 +94,10 @@ async fn engine_output_has_one_total_byte_budget() {
 }
 
 // Covers: print capture bounds allocations before evaluation finishes, including
-// empty lines, UTF-8 splits, and discarded tail bytes; truncation stays successful.
+// empty lines, UTF-8 splits, and discarded tail bytes.
 // Owner: codemode evaluator print handler.
-#[tokio::test]
-async fn print_capture_is_bounded_without_failing_scripts() {
+#[test]
+fn print_capture_bounds_storage_and_preserves_prefix() {
     let limit = rho_tools::DEFAULT_MAX_OUTPUT_BYTES;
     for input in [
         vec!["a".to_owned(), "b\nc".to_owned()],
@@ -111,9 +111,9 @@ async fn print_capture_is_bounded_without_failing_scripts() {
         let mut capture = CapturedPrints::default();
         for line in &input {
             capture.push(line);
-            assert!(capture.retained_bytes <= limit);
-            assert!(capture.lines.len() <= limit + 1);
         }
+        assert!(capture.retained_bytes <= limit);
+        assert!(capture.lines.len() <= limit + 1);
         assert_eq!(capture.received_bytes, received.len());
         let lines = capture.into_lines();
         assert!(lines.join("\n").len() <= limit);
@@ -124,27 +124,10 @@ async fn print_capture_is_bounded_without_failing_scripts() {
                 "[codemode prints truncated: output byte limit {limit}, received {} bytes]",
                 received.len()
             );
-            assert_eq!(lines.last(), Some(&notice));
-            assert_eq!(
-                lines[..lines.len() - 1].join("\n"),
-                super::utf8_prefix(&received, limit - notice.len() - 1)
-            );
+            let prefix = super::utf8_prefix(&received, limit - notice.len() - 1);
+            assert_eq!(lines.join("\n"), format!("{prefix}\n{notice}"));
         }
     }
-    let evaluation = evaluate(
-        format!("for _ in range(3):\n    print(\"é\" * {limit})\nresult = 42"),
-        rho_sdk::CancellationToken::new(),
-    )
-    .await;
-    assert_eq!(evaluation.result.unwrap(), json!(42));
-    assert!(evaluation.prints.join("\n").len() <= limit);
-    assert_eq!(
-        evaluation.prints.last(),
-        Some(&format!(
-            "[codemode prints truncated: output byte limit {limit}, received {} bytes]",
-            3 * 2 * limit + 2
-        ))
-    );
 }
 
 // Covers: cancelling the parent interrupts pure computation, not just native

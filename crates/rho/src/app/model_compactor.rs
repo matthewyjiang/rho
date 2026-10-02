@@ -598,3 +598,7 @@ fn calibrated_tokens(local: u64, context: ContextEstimate) -> u64 {
 #[cfg(test)]
 #[path = "model_compactor_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "model_compactor_session_tests.rs"]
+mod session_tests;

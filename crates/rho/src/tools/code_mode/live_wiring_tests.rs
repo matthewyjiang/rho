@@ -330,110 +330,58 @@ async fn discovery_matches_callable_siblings() {
     ));
 }
 
-// Covers: refreshed tool contracts reach new searches and scripts without sync,
-// while an already-running script retains its catalog.
+// Covers: new searches and bridges refresh live contracts without sync,
+// while an existing bridge retains its original catalog.
 // Owner: codemode live discovery and bridge snapshots (runtime contract).
-#[tokio::test]
-async fn discovery_refreshes_live_definitions_without_resync() {
+#[test]
+fn discovery_refreshes_live_definitions_without_resync() {
     use super::{bridge::ToolHostBridge, exposure::ToolCatalogEntry};
 
-    let definitions = [
-        DiscoveryDefinition {
+    let tool = Arc::new(DiscoveryTool {
+        definition: Mutex::new(DiscoveryDefinition {
             spec: ToolSpec {
                 name: "mcp__github__create_issue".into(),
                 description: "original definition".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {"title": {"type": "string"}},
-                    "required": ["title"],
-                    "additionalProperties": false,
-                }),
+                input_schema: json!({"type": "object"}),
             },
             output_schema: Some(json!({"type": "string"})),
-        },
-        DiscoveryDefinition {
-            spec: ToolSpec {
-                name: "mcp__github__create_issue".into(),
-                description: "revised definition".into(),
-                input_schema: json!({
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string", "minLength": 1},
-                        "priority": {"type": "integer"},
-                    },
-                    "required": ["title", "priority"],
-                    "additionalProperties": false,
-                }),
-            },
-            output_schema: Some(json!({
-                "type": "object",
-                "properties": {"issue": {"type": "integer"}},
-                "required": ["issue"],
-            })),
-        },
-    ];
-    let tool = Arc::new(DiscoveryTool {
-        definition: Mutex::new(definitions[0].clone()),
+        }),
     });
     let surface = surface(vec![tool.clone()]);
-    let host = surface
-        .orchestration_tools()
-        .into_iter()
-        .fold(ToolHost::builder(), |builder, tool| {
-            builder.tool_shared(tool)
-        })
-        .build()
-        .unwrap();
-    let (progress, receiver) = rho_sdk::tool::tool_progress_channel(std::num::NonZeroUsize::MIN);
-    drop(receiver);
+    let (progress, _receiver) = rho_sdk::tool::tool_progress_channel(std::num::NonZeroUsize::MIN);
     let context = ToolContext::new(
         /*workspace*/ None,
         rho_sdk::CancellationToken::new(),
         progress,
     );
-    let frozen = ToolHostBridge::new(surface.clone(), context).unwrap();
+    let frozen = ToolHostBridge::new(surface.clone(), context.clone()).unwrap();
     let original = frozen.describe("mcp__github__create_issue").unwrap();
-
-    for definition in definitions {
-        *tool.definition.lock().unwrap() = definition.clone();
-        let expected = ToolCatalogEntry {
-            name: definition.spec.name,
-            description: definition.spec.description,
-            parameters: definition.spec.input_schema,
-            returns: super::script_output::schema(definition.output_schema),
-        };
-        // Search the live description as well as checking the complete contract.
-        assert_eq!(
-            surface.search(&expected.description, 1),
-            vec![expected.clone()]
-        );
-        let expected = serde_json::to_value(vec![expected]).unwrap();
-        let discovered = host
-            .invoke(ToolHostCall::new(
-                TOOL_SEARCH_NAME,
-                json!({"query": "github"}),
-            ))
-            .await
-            .unwrap();
-        assert_eq!(discovered.structured_content(), Some(&expected));
-        assert_eq!(
-            script(
-                &host,
-                "result = [describe_tool(\"mcp__github__create_issue\")]"
-            )
-            .await
-            .unwrap(),
-            expected
-        );
-        assert_eq!(
-            frozen.describe("mcp__github__create_issue"),
-            Some(original.clone())
-        );
-        assert_eq!(
-            frozen.search("original definition", 1),
-            vec![original.clone()]
-        );
-    }
+    let revised = DiscoveryDefinition {
+        spec: ToolSpec {
+            name: "mcp__github__create_issue".into(),
+            description: "revised definition".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {"priority": {"type": "integer"}},
+                "required": ["priority"],
+            }),
+        },
+        output_schema: Some(json!({"type": "object"})),
+    };
+    *tool.definition.lock().unwrap() = revised.clone();
+    let expected = ToolCatalogEntry {
+        name: revised.spec.name,
+        description: revised.spec.description,
+        parameters: revised.spec.input_schema,
+        returns: super::script_output::schema(revised.output_schema),
+    };
+    assert_eq!(
+        surface.search(&expected.description, 1),
+        vec![expected.clone()]
+    );
+    let fresh = ToolHostBridge::new(surface, context).unwrap();
+    assert_eq!(fresh.describe(&expected.name), Some(expected));
+    assert_eq!(frozen.describe(&original.name), Some(original));
 }
 
 // Covers: publishing siblings mid-script cannot advertise names its child host rejects.

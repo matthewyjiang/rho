@@ -529,7 +529,3 @@ impl std::fmt::Debug for ToolHost {
 #[cfg(test)]
 #[path = "tool_host_tests.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "tool_host_scheduling_tests.rs"]
-mod scheduling_tests;
