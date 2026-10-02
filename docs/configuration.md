@@ -247,7 +247,7 @@ mode = "on" # or "only"
 
 `/codemode on|only` changes the next model request without rebuilding the runtime and saves the preference. Neither mode is a permission level: nested calls inherit `permission_mode`. MCP tools are script-only in both modes and discoverable with `tool_search` or script `search_tools`/`list_tools`. Discovery does not promote tools into the direct model list.
 
-Scripts call one tool with `call_tool(name, args)` or run independent calls concurrently with `call_tools([(name, args), ...])`, which returns results in order. A batch runs up to 4 calls at once, the same width as a model-issued parallel tool batch, and the whole batch counts toward the 64-call limit per script before any call starts. Script `list_tools()` and `search_tools(query)` return `{name, description}` rows; `describe_tool(name)` adds the result schema. A script that fails keeps its printed output and call log.
+Scripts call one tool with `call_tool(name, args)` or run independent calls concurrently with `call_tools([(name, args), ...])`, which returns results in order. A batch runs up to 4 calls at once, the same width as a model-issued parallel tool batch, and the whole batch counts toward the 64-call limit per script before any call starts. Script `list_tools()` and `search_tools(query)` return `{name, description}` rows; `describe_tool(name)` adds the result schema. A script that fails keeps its printed output and call log. Full guide: [Codemode](/tools-workspace/codemode).
 
 ## RTK
 

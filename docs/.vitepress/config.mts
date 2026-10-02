@@ -156,6 +156,7 @@ const appSidebar: DefaultTheme.SidebarItem[] = [
           { text: 'Documents and images', link: '/tools-workspace/documents-and-images' },
           { text: 'Web access', link: '/tools-workspace/web-access' },
           { text: 'Background processes', link: '/tools-workspace/background-processes' },
+          { text: 'Codemode', link: '/tools-workspace/codemode' },
         ],
       },
       { text: 'Skills', link: '/skills' },
