@@ -426,7 +426,8 @@ fn render_child_groups(
             let mut syntax = CodeSyntax::new(language);
             for line in &tool_diff::logical_lines(lines) {
                 if paint_remaining == 0 {
-                    total_rows = total_rows.saturating_add(estimate_plain_body_rows(line, width));
+                    total_rows =
+                        total_rows.saturating_add(CodeSyntax::estimate_rows(language, line, width));
                     continue;
                 }
                 let mut painted = Vec::new();
@@ -529,10 +530,10 @@ fn estimate_child_terminal_rows(card: &PresentedToolCard, width: usize) -> usize
             let search_mode = card.match_pattern.is_some();
             total = total.saturating_add(estimate_lines_rows(&logical, width, search_mode));
         }
-        (ToolBody::Lines(lines), ToolBodySyntax::Code { .. }) => {
+        (ToolBody::Lines(lines), ToolBodySyntax::Code { language }) => {
             total = tool_diff::logical_lines(lines)
                 .iter()
-                .map(|line| estimate_plain_body_rows(line, width))
+                .map(|line| CodeSyntax::estimate_rows(language, line, width))
                 .fold(total, usize::saturating_add);
         }
         (ToolBody::Diff(rows), _) => {

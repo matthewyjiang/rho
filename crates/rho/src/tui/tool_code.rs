@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use super::{
     render::{
         display_width, pad_spaces, slice_spans_by_bytes, soft_wrap_visible_ranges,
-        wrap_line_at_whitespace_ranges,
+        wrap_line_at_whitespace, wrap_line_at_whitespace_ranges,
     },
     syntax::{
         spans_from_segments_with_matches, BlockHighlighter, HighlightSegment,
@@ -34,6 +34,32 @@ impl CodeSyntax {
         }
     }
 
+    /// Python tool-call batches parse linearly in the measured workload: about
+    /// 2.5 ms at 1 KiB, 10 ms at 4 KiB, and 40 ms at 16 KiB (optimized syntect,
+    /// repeated read_file calls). Keep the Markdown-derived guard for other
+    /// grammars; 4 KiB leaves normal batches room without a large frame stall.
+    fn line_byte_limit(language: &str) -> usize {
+        match language {
+            "python" | "py" => 4 * 1024,
+            _ => MAX_TOOL_SYNTAX_LINE_BYTES,
+        }
+    }
+
+    fn line_warning(language: &str, line: &str) -> Option<String> {
+        let limit = Self::line_byte_limit(language);
+        (line.len() > limit).then(|| {
+            format!(
+                "syntax highlighting skipped: line has {} bytes; {language} line budget is {limit} bytes",
+                line.len()
+            )
+        })
+    }
+
+    pub(super) fn estimate_rows(language: &str, line: &str, width: usize) -> usize {
+        let estimate = |text: &str| super::tool_card_render::estimate_plain_body_rows(text, width);
+        estimate(line) + Self::line_warning(language, line).map_or(0, |warning| estimate(&warning))
+    }
+
     /// Paint one logical source line, wrapped under the tree. Returns rows.
     pub(super) fn paint_line(
         &mut self,
@@ -46,6 +72,15 @@ impl CodeSyntax {
         let content_width = width
             .saturating_sub(display_width(CHILD_CONTENT_INDENT))
             .max(1);
+        let start = out.len();
+        if let Some(warning) = Self::line_warning(&self.language, line) {
+            for text in wrap_line_at_whitespace(&warning, content_width) {
+                out.push(body_row(
+                    vec![Span::styled(text.to_owned(), Theme::warning())],
+                    width,
+                ));
+            }
+        }
         // Word wrap like plain bodies, so their row estimate holds for code;
         // only unbroken runs split at the width.
         let ranges: Vec<_> =
@@ -53,18 +88,17 @@ impl CodeSyntax {
                 .collect();
         if ranges.is_empty() {
             out.push(body_row(Vec::new(), width));
-            return 1;
+            return out.len() - start;
         }
-        let rows = ranges.len();
         out.extend(
             ranges
                 .into_iter()
                 .map(|range| body_row(slice_spans_by_bytes(&spans, range.start, range.end), width)),
         );
-        rows
+        out.len() - start
     }
 
-    /// Same budgets as grep and diff bodies: overlong lines stay plain and
+    /// Overlong lines stay plain with a visible budget notice and
     /// restart the stream so the next line does not inherit a desynced stack.
     fn highlight(&mut self, line: &str) -> Vec<HighlightSegment> {
         let plain = || {
@@ -73,7 +107,7 @@ impl CodeSyntax {
                 role: None,
             }]
         };
-        if line.len() > MAX_TOOL_SYNTAX_LINE_BYTES {
+        if line.len() > Self::line_byte_limit(&self.language) {
             self.highlighter = BlockHighlighter::for_language(&self.language);
             return plain();
         }

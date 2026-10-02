@@ -74,7 +74,7 @@ pub(super) async fn intercept(
                 CODEMODE_CALL_ID,
                 "codemode",
                 serde_json::json!({
-                    "script": "hits = call_tools([(\"list_dir\", {\"path\": \".\"}), (\"glob\", {\"pattern\": \"*.md\"})])\nprint(\"codemode fixture batch\", len(hits))\nresult = [h[\"is_error\"] for h in hits]",
+                    "script": "hits = call_tools([(\"list_dir\", {\"path\": \".\"}), (\"glob\", {\"pattern\": \"**/{AGENTS,CONTRIBUTING,README,SECURITY,CODE_OF_CONDUCT,SUPPORT,ARCHITECTURE,DEVELOPMENT,TESTING,RELEASING,MIGRATIONS,TROUBLESHOOTING,INSTALLATION,CONFIGURATION}.md\", \"include_hidden\": False, \"max_results\": 100})])\nprint(\"codemode fixture batch\", len(hits))\nresult = [h[\"is_error\"] for h in hits]",
                 }),
             ))
         }
