@@ -70,6 +70,7 @@ pub(super) struct SessionHeaderCache {
     pub(in crate::tui) width: usize,
     pub(in crate::tui) update_notice: Option<String>,
     pub(in crate::tui) setup: super::first_run::SetupState,
+    pub(in crate::tui) header_hints: super::first_run::HeaderHints,
     /// Rebuild styled header lines when the active theme changes.
     pub(in crate::tui) theme_generation: u64,
     pub(in crate::tui) lines: Vec<Line<'static>>,

@@ -338,6 +338,8 @@ pub struct RuntimeModelView {
     pub advisor_mode: bool,
     /// Show a transcript notice after a turn that re-billed a large uncached prompt.
     pub cache_miss_notices: bool,
+    /// Show the keyboard hint block in the session header.
+    pub show_header_hints: bool,
     pub auth: String,
     pub internal_agents:
         std::collections::BTreeMap<String, crate::config::InternalAgentModelConfig>,

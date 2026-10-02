@@ -23,6 +23,7 @@ theme = "terminal" # terminal, a built-in id from /theme, or a custom ~/.rho/the
 max_tool_output_lines = 10
 prompt_history_limit = 1000
 cache_miss_notices = false
+show_header_hints = true # keyboard hints under the session header; sign-in hints stay while signed out
 
 [output]
 max_output_bytes = 64000

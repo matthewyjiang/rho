@@ -148,6 +148,9 @@ pub struct Config {
     pub compact_target_percent: u8,
     /// Show a transcript notice after a turn that re-billed a large uncached prompt.
     pub cache_miss_notices: bool,
+    /// Show the keyboard hint block in the session header. Signed-out sessions
+    /// keep their `/login` hints regardless.
+    pub show_header_hints: bool,
     /// Optional model selections for reserved internal agents, keyed by stable agent ID.
     pub internal_agents: BTreeMap<String, InternalAgentModelConfig>,
     pub favorite_models: Vec<String>,
@@ -221,6 +224,7 @@ impl Default for Config {
             compact_threshold_percent: compaction.threshold_percent,
             compact_target_percent: compaction.target_percent,
             cache_miss_notices: false,
+            show_header_hints: true,
             internal_agents: BTreeMap::new(),
             favorite_models: Vec::new(),
             web_search: WebSearchSettings::default(),

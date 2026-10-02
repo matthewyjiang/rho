@@ -610,11 +610,13 @@ impl App {
     pub(super) fn session_header_lines(&mut self, width: usize) -> &[Line<'static>] {
         let update_notice = self.info.services.update_notice.clone();
         let setup = self.setup_state();
+        let header_hints = self.header_hints();
         let theme_generation = Theme::generation();
         let stale = self.history.session_header_cache().is_none_or(|cache| {
             cache.width != width
                 || cache.update_notice != update_notice
                 || cache.setup != setup
+                || cache.header_hints != header_hints
                 || cache.theme_generation != theme_generation
         });
         if stale {
@@ -623,10 +625,12 @@ impl App {
                     width,
                     update_notice,
                     setup,
+                    header_hints,
                     theme_generation,
                     lines: session_header_lines(
                         self.info.services.update_notice.as_deref(),
                         setup,
+                        header_hints,
                         width,
                     ),
                 }));

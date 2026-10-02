@@ -139,6 +139,7 @@ async fn run_inner(startup: Startup<'_>) -> anyhow::Result<()> {
                 zen_mode: config.zen_mode,
                 advisor_mode: config.advisor_mode,
                 cache_miss_notices: config.cache_miss_notices,
+                show_header_hints: config.show_header_hints,
                 auth: config.auth,
                 internal_agents: config.internal_agents,
                 favorite_models: config.favorite_models,
