@@ -228,10 +228,11 @@ impl App {
             PickerAction::SelectTheme => self.submit_theme_selection(value),
             PickerAction::ViewAgent => self.submit_view_agent_selection(value),
             PickerAction::EditAgent => {
-                let PickerCommit::Idle { terminal, .. } = commit else {
+                let PickerCommit::Idle { terminal, agent } = commit else {
                     unreachable!("agent editor commit is idle-only");
                 };
-                self.submit_edit_agent_selection(value, terminal).await
+                self.submit_edit_agent_selection(value, terminal, agent)
+                    .await
             }
             PickerAction::Workflow => {
                 let PickerCommit::Idle { terminal, agent } = commit else {

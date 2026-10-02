@@ -107,6 +107,7 @@ impl App {
         &mut self,
         value: &str,
         terminal: &mut DefaultTerminal,
+        agent: &mut crate::app::interactive_runtime::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let phase = self
             .agent_editor_session
@@ -117,7 +118,10 @@ impl App {
             return Ok(());
         };
         match phase {
-            AgentEditPhase::Fields => self.submit_agent_field_selection(value, terminal).await,
+            AgentEditPhase::Fields => {
+                self.submit_agent_field_selection(value, terminal, agent)
+                    .await
+            }
             AgentEditPhase::Choosing(field) => {
                 self.submit_agent_field_choice(field, value);
                 Ok(())
@@ -137,6 +141,7 @@ impl App {
         &mut self,
         value: &str,
         terminal: &mut DefaultTerminal,
+        agent: &mut crate::app::interactive_runtime::InteractiveRuntime,
     ) -> anyhow::Result<()> {
         let Some(draft) = self
             .agent_editor_session
@@ -177,7 +182,7 @@ impl App {
                 self.open_agent_choice(AgentChoiceField::InheritClaudeConfig, &draft);
             }
             AGENT_FIELD_FAST => self.open_agent_choice(AgentChoiceField::Fast, &draft),
-            AGENT_FIELD_SAVE => self.save_agent_editor()?,
+            AGENT_FIELD_SAVE => self.save_agent_editor(agent)?,
             AGENT_FIELD_CANCEL => self.cancel_agent_editor(),
             _ => {}
         }
@@ -546,7 +551,10 @@ impl App {
         self.set_status(format!("edit agent {}", draft.id));
     }
 
-    fn save_agent_editor(&mut self) -> anyhow::Result<()> {
+    fn save_agent_editor(
+        &mut self,
+        agent: &mut crate::app::interactive_runtime::InteractiveRuntime,
+    ) -> anyhow::Result<()> {
         let Some(session) = &self.agent_editor_session else {
             self.cancel_agent_editor();
             return Ok(());
@@ -572,9 +580,30 @@ impl App {
             return Ok(());
         }
         match save_definition(&draft, &path, &original_contents) {
-            Ok(_contents) => {
+            Ok(contents) => {
                 let id = draft.id.to_string();
                 self.agent_editor_session = None;
+                // Keep the startup schema and all previous context intact. Literal
+                // system messages are hoisted into the prefix by some providers,
+                // so use the same appended host context as other runtime notices.
+                let display =
+                    format!("agent {id} updated; future delegated runs use the saved definition");
+                let model = format!(
+                    "[agent definition updated]\nAgent ID: {id}\n\
+                     The following saved definition applies to future `agent` calls for this ID. \
+                     It supersedes earlier configuration for this agent, including its description, \
+                     prompt, runtime, model, reasoning, and tools. Already-running agents are unchanged. \
+                     The original tool schema is unchanged.\n\n{contents}"
+                );
+                if let Err(error) = agent.append_user_context_with_display(model, display.clone()) {
+                    self.insert_entry(&Entry::Error(format!(
+                        "agent saved, but could not append agent update: {error}"
+                    )));
+                    self.input_ui.set_composer(ComposerMode::Input);
+                    self.set_status("agent update failed");
+                    return Ok(());
+                }
+                self.insert_entry(&Entry::Notice(display));
                 let catalog = match AgentCatalog::discover(&self.info.runtime.cwd) {
                     Ok(catalog) => catalog,
                     Err(error) => {

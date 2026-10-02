@@ -4,7 +4,7 @@ use anyhow::Result;
 
 use crate::{env::IsolatedHome, keys::Key, scenario::Step, PtyHarness};
 
-use super::{SETTLE, STARTUP};
+use super::{SETTLE, STARTUP, STREAM};
 
 /// Model pickers list models only for authenticated providers, so inject a
 /// fixture key the way the advisor scenarios do.
@@ -140,12 +140,27 @@ pub(super) fn setup_edit_user_agent(home: &IsolatedHome) -> Result<()> {
     Ok(())
 }
 
+// Covers: saving an agent updates the next model request without rewriting
+// original schemas or prior conversation/tool history.
+// Owner: interactive TUI; the existing tools-editor case only checks disk reload.
 pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",
         timeout: STARTUP,
     },
+    Step::Phase("capture_original_request"),
+    Step::SubmitText("fixture tool"),
+    Step::WaitText {
+        text: "tool lifecycle complete with one result:",
+        timeout: STREAM,
+    },
+    Step::SubmitText("fixture agent config baseline"),
+    Step::WaitText {
+        text: "agent config baseline captured",
+        timeout: STREAM,
+    },
+    Step::Phase("edit_saved_definition"),
     Step::SubmitText("/agents"),
     Step::WaitText {
         text: "● editable",
@@ -191,6 +206,12 @@ pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),
+    Step::Phase("next_request_sees_append_only_update"),
+    Step::SubmitText("fixture agent config updated"),
+    Step::WaitText {
+        text: "agent config updated: saved definition visible; schemas and history unchanged",
+        timeout: STREAM,
+    },
     Step::ExitCommand,
 ];
 

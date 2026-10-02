@@ -29,6 +29,8 @@ flowchart TD
     id --> done[Completion at next safe runtime boundary]
 ```
 
+Saving an edit through `/agents` appends an agent-update notice to the conversation with the saved definition. The next model turn sees the updated configuration without rewriting prior messages, the system prompt, or the original tool schema. Each subsequent `agent` call reloads definitions from disk, so it uses the latest prompt, runtime, model, reasoning, and tool policy. Already-running delegated agents and the root session retain their existing configuration. External file edits also apply to subsequent delegated launches, but do not append a conversation notice.
+
 ## Definition files
 
 Agent definitions are Markdown with strict frontmatter. The Markdown body extends the base coding prompt by default:
