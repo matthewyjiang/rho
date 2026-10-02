@@ -155,6 +155,7 @@ fn resolve_workspace(cwd: &Path, indexed: Option<&IndexedFile>) -> Workspace {
 
 /// Reconcile changes in one transaction so a failed/cancelled refresh cannot
 /// expose a half-built session. Missing files are removed, including FTS rows.
+/// After the commit, a best-effort `VACUUM` reclaims space left by deletes.
 pub(super) fn refresh(
     connection: &mut Connection,
     root: &Path,
@@ -302,7 +303,63 @@ pub(super) fn refresh(
         params![changes.identity, changes.through],
     )?;
     transaction.commit()?;
+    if let Err(error) = vacuum_if_bloated(connection, VACUUM_MIN_FREE_BYTES) {
+        // Compaction is an optimization; the committed index is still valid.
+        tracing::warn!(%error, "could not vacuum the sessions search index");
+    }
     Ok(report)
+}
+
+/// Measured on a 331 MiB cache with 165 MiB free: `VACUUM` took ~0.5 s and
+/// halved the file. 50 MiB keeps rewrites rare relative to that cost.
+const VACUUM_MIN_FREE_BYTES: u64 = 50 * 1024 * 1024;
+
+/// Page accounting for the search cache file.
+#[derive(Debug)]
+struct Pages {
+    size: u64,
+    total: u64,
+    free: u64,
+}
+
+impl Pages {
+    fn read(connection: &Connection) -> rusqlite::Result<Self> {
+        let pragma = |name| connection.pragma_query_value(None, name, |row| row.get(0));
+        Ok(Self {
+            size: pragma("page_size")?,
+            total: pragma("page_count")?,
+            free: pragma("freelist_count")?,
+        })
+    }
+
+    /// SQLite keeps pages freed by session deletes on its freelist instead of
+    /// returning them to the OS. Requiring a quarter of the file to be free
+    /// keeps a large, mostly live cache from being rewritten for a sliver.
+    fn worth_vacuuming(&self, min_free_bytes: u64) -> bool {
+        self.free * self.size >= min_free_bytes && self.free * 4 >= self.total
+    }
+}
+
+/// Run `VACUUM` once enough of the cache is free, then truncate the WAL so the
+/// rewritten pages do not linger beside the shrunken database.
+///
+/// A concurrent reader can block the truncate. The vacuum is not retried
+/// because the freelist is already empty; SQLite finishes shrinking the file
+/// when the last connection closes, and search opens one connection per call.
+fn vacuum_if_bloated(connection: &Connection, min_free_bytes: u64) -> rusqlite::Result<()> {
+    let pages = Pages::read(connection)?;
+    if !pages.worth_vacuuming(min_free_bytes) {
+        return Ok(());
+    }
+    connection.execute_batch("vacuum")?;
+    let checkpoint_blocked: bool =
+        connection.query_row("pragma wal_checkpoint(truncate)", [], |row| row.get(0))?;
+    tracing::debug!(
+        ?pages,
+        checkpoint_blocked,
+        "vacuumed the sessions search index"
+    );
+    Ok(())
 }
 
 fn discover(root: &Path) -> anyhow::Result<BTreeSet<PathBuf>> {

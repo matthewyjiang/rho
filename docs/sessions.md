@@ -158,7 +158,9 @@ bytes read, skipped files and incomplete/malformed records.
 Older caches with position-only anchors rebuild automatically on first use.
 
 The cache contains conversation text and has owner-only permissions. It is
-derived data; deleting `search.sqlite3` causes a rebuild on next use. Search does
+derived data; deleting `search.sqlite3` causes a rebuild on next use. When
+deleted sessions leave at least 50 MiB and a quarter of the cache as free pages,
+the next search runs `VACUUM` to return that space to the filesystem. Search does
 not index web sidecars or nested subagent run traces. Symlinked session paths are
 not read. A deleted Git worktree first encountered after deletion cannot be
 reliably assigned to its former repository; use `scope: all` in that case.
