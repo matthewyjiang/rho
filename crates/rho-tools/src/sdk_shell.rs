@@ -166,14 +166,14 @@ impl ShellPlan {
         let run = execute_with_progress(kind, self.execution, invocation_id, context).await?;
         let structured = serde_json::to_value(&run.outcome)
             .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-        if !run.result.ok {
-            // The command finished; scripts can still branch on `exit_code`.
-            return Err(ToolError::new(ToolErrorKind::Execution, run.result.content)
-                .with_structured_content(structured));
-        }
-        Ok(ToolOutput::text(run.result.content)
+        let output = ToolOutput::text(run.result.content)
             .metadata(ToolMetadata::new().operation(OperationKind::Execute))
-            .with_structured_content(structured))
+            .with_structured_content(structured);
+        Ok(if run.result.ok {
+            output
+        } else {
+            output.failed()
+        })
     }
 }
 

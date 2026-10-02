@@ -589,7 +589,7 @@ async fn settle_job(mut job: AsyncJob) -> (ToolResult, ToolCompletion) {
         Ok(Ok(output)) => (
             ToolResult {
                 id: job.call.id,
-                ok: true,
+                ok: !output.is_failure(),
                 content: output.content().to_owned(),
             },
             ToolCompletion::Success(output),

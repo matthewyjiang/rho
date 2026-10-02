@@ -93,6 +93,7 @@ fn structured_content_is_presented_once_and_required_when_declared() {
             assets: Vec::new(),
             images: Vec::new(),
             structured: Some(structured.clone()),
+            failed: false,
         }
     );
 
@@ -167,9 +168,8 @@ fn structured_content_must_match_declared_output_schema() {
         .contains("failed the declared output schema"));
 }
 
-// Covers: an MCP error result must fail the tool with the server's own rendered
-// text, and an empty result must say so instead of returning nothing. An error
-// result's structuredContent stays attached to the failure.
+// Covers: a completed MCP error keeps its readable text, result data, and
+// failure status; an empty result still describes the absence of content.
 // Owner: MCP result rendering.
 #[test]
 fn error_results_and_empty_results_stay_readable() {
@@ -181,10 +181,10 @@ fn error_results_and_empty_results_stay_readable() {
         LIMIT,
         McpImageDelivery::PresentationOnly,
     )
-    .unwrap_err();
+    .unwrap();
     assert_eq!(
-        (error.kind(), error.message(), error.structured_content()),
-        (ToolErrorKind::Execution, "disk is full", None)
+        (error.failed, error.text.as_str(), error.structured),
+        (true, "disk is full", None)
     );
 
     // A structured error result keeps its payload for scripts (Pi resolves
@@ -197,11 +197,8 @@ fn error_results_and_empty_results_stay_readable() {
         LIMIT,
         McpImageDelivery::PresentationOnly,
     )
-    .unwrap_err();
-    assert_eq!(
-        (error.kind(), error.structured_content()),
-        (ToolErrorKind::Execution, Some(&payload))
-    );
+    .unwrap();
+    assert_eq!((error.failed, error.structured), (true, Some(payload)));
 
     assert_eq!(
         render(
@@ -292,6 +289,46 @@ fn model_images_are_independent_of_presentation_retention() {
         let rendered = render(&content, &ResultExpectation::default(), LIMIT, delivery).unwrap();
         assert_eq!(rendered.images, images);
         assert_eq!(rendered.assets.len(), 1);
+    }
+}
+
+// Covers: raw structured results cannot bypass the MCP output cap, including
+// error results and mirrored text; retained payloads at the limit remain usable.
+// Owner: MCP result output budget.
+#[test]
+fn structured_content_obeys_output_budget() {
+    for failed in [false, true] {
+        for size in [LIMIT, LIMIT + 1] {
+            // JSON quotes contribute two bytes; construct an exact serialized size.
+            let payload = serde_json::json!("x".repeat(size - 2));
+            let mut call = result(vec![ContentBlock::text(payload.to_string())]);
+            call.structured_content = Some(payload.clone());
+            call.is_error = Some(failed);
+            let rendered = render(
+                &call,
+                &ResultExpectation::default(),
+                LIMIT,
+                McpImageDelivery::PresentationOnly,
+            )
+            .unwrap();
+            let expected = if size <= LIMIT {
+                RenderedResult {
+                    text: payload.to_string(),
+                    structured: Some(payload),
+                    failed,
+                    ..RenderedResult::default()
+                }
+            } else {
+                RenderedResult {
+                    text: format!(
+                        "[MCP structured content omitted: output byte limit {LIMIT}, received {size} bytes]"
+                    ),
+                    failed,
+                    ..RenderedResult::default()
+                }
+            };
+            assert_eq!(rendered, expected);
+        }
     }
 }
 

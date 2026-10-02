@@ -50,12 +50,14 @@ const MAX_STRUCTURED_CONTENT_NODES: usize = 8_192;
 pub(super) struct RenderedResult {
     /// The text handed to the model.
     pub(super) text: String,
+    /// The server completed the call but marked its result as an error.
+    pub(super) failed: bool,
     /// Binary content the tool card can render, in the order it arrived.
     pub(super) assets: Vec<ToolAsset>,
     /// Original typed image payloads, unaffected by preview selection/budgets.
     pub(super) images: Vec<ImageContent>,
-    /// `structuredContent` as sent: schema-validated on success, passed through
-    /// unvalidated on an error result. Codemode scripts read it as the result.
+    /// Bounded `structuredContent`: schema-validated on success, unvalidated
+    /// on an error result. Oversized values are dropped with a text notice.
     pub(super) structured: Option<serde_json::Value>,
 }
 
@@ -74,9 +76,9 @@ struct AssetBudget {
     retained_images: usize,
 }
 
-/// Render a successful or failed call. An MCP error result becomes a tool
-/// failure carrying the same rendered text, so the model sees what went wrong
-/// rather than a JSON envelope.
+/// Render a completed successful or failed call. The failure flag keeps the
+/// server's result available to scripts while the model receives an error
+/// result with readable text rather than a JSON envelope.
 pub(super) fn render(
     result: &CallToolResult,
     expectation: &ResultExpectation,
@@ -94,17 +96,27 @@ pub(super) fn render(
     }
 
     if let Some(structured) = &result.structured_content {
-        if !failed {
-            if let Some(schema) = &expectation.output_schema {
+        // The script reads the retained value directly, bypassing text
+        // truncation. Apply the same output budget before retaining or validating it.
+        let encoded_bytes = serde_json::to_vec(structured)
+            .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?
+            .len();
+        // Servers mirror structured content as text for older clients; present
+        // it once, or replace it entirely with a bounded omission notice.
+        sections.retain(|section| !mirrors(section, structured));
+        if encoded_bytes > max_output_bytes {
+            sections.insert(0, format!(
+                "[MCP structured content omitted: output byte limit {max_output_bytes}, received {encoded_bytes} bytes]"
+            ));
+        } else {
+            if let (false, Some(schema)) = (failed, &expectation.output_schema) {
                 validate_structured_content(schema, structured)?;
             }
+            sections.push(
+                serde_json::to_string_pretty(structured).unwrap_or_else(|_| structured.to_string()),
+            );
+            rendered.structured = Some(structured.clone());
         }
-        // Servers are asked to mirror structured content as text for clients
-        // that predate it. Keeping both would spend the context twice.
-        sections.retain(|section| !mirrors(section, structured));
-        sections.push(
-            serde_json::to_string_pretty(structured).unwrap_or_else(|_| structured.to_string()),
-        );
     } else if expectation.output_schema.is_some() && !failed {
         return Err(ToolError::new(
             ToolErrorKind::Execution,
@@ -117,15 +129,7 @@ pub(super) fn render(
     }
     rendered.text = rho_tools::tool::truncate(sections.join("\n\n"), max_output_bytes);
 
-    rendered.structured = result.structured_content.clone();
-
-    if failed {
-        let error = ToolError::new(ToolErrorKind::Execution, rendered.text);
-        return Err(match rendered.structured {
-            Some(structured) => error.with_structured_content(structured),
-            None => error,
-        });
-    }
+    rendered.failed = failed;
     Ok(rendered)
 }
 

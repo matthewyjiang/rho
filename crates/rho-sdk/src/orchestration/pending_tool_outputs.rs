@@ -15,7 +15,10 @@ impl CompletedToolOutput {
         Self {
             result: ToolResult {
                 id: id.to_owned(),
-                ok: matches!(completion, ToolCompletion::Success(_)),
+                ok: match completion {
+                    ToolCompletion::Success(output) => !output.is_failure(),
+                    ToolCompletion::Failure(_) | ToolCompletion::Unavailable => false,
+                },
                 content: match completion {
                     ToolCompletion::Success(output) => output.content().to_owned(),
                     ToolCompletion::Failure(failure) => failure.message().to_owned(),
@@ -23,10 +26,12 @@ impl CompletedToolOutput {
                 },
             },
             supplement: match completion {
-                ToolCompletion::Success(output) => {
+                ToolCompletion::Success(output) if !output.is_failure() => {
                     Message::tool_image_supplement(name, id, output.images().to_vec())
                 }
-                ToolCompletion::Failure(_) | ToolCompletion::Unavailable => None,
+                ToolCompletion::Success(_)
+                | ToolCompletion::Failure(_)
+                | ToolCompletion::Unavailable => None,
             },
         }
     }

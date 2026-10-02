@@ -281,10 +281,8 @@ async fn run_codemode_with(probe: OutcomeTool, script: &str) -> Result<String, S
     .map_err(|error| error.to_string())
 }
 
-// Covers: what a script's `call_tool` resolves to (Pi semantics). Structured
-// content wins, on success and on a completed Execution failure (nonzero
-// exit); text-only tools resolve to {"content"}; a text-only failure and a
-// denial still raise, whatever structured data rides along.
+// Covers: completed failures remain script values with a host-owned failure
+// flag, while execution errors and denials raise instead of implying completion.
 // Owner: codemode bridge + engine result conversion.
 #[tokio::test(flavor = "multi_thread")]
 async fn call_tool_resolves_structured_content_like_pi() {
@@ -295,28 +293,47 @@ async fn call_tool_resolves_structured_content_like_pi() {
         (
             "structured success",
             Ok(ToolOutput::text("text").with_structured_content(payload.clone())),
-            Ok(json!({"exit_code": 3})),
+            Ok(json!({"exit_code": 3, "is_error": false})),
         ),
         (
             "text-only success",
             Ok(ToolOutput::text("text")),
-            Ok(json!({"content": "text"})),
+            Ok(json!({"content": "text", "is_error": false})),
         ),
         (
             "completed failure with structured content",
-            Err(ToolError::new(ToolErrorKind::Execution, "exit 3")
-                .with_structured_content(payload.clone())),
-            Ok(json!({"exit_code": 3})),
+            Ok(ToolOutput::text("exit 3")
+                .with_structured_content(payload.clone())
+                .failed()),
+            Ok(json!({"exit_code": 3, "is_error": true})),
         ),
         (
-            "text-only failure",
+            "completed text-only failure",
+            Ok(ToolOutput::text("failed").failed()),
+            Ok(json!({"content": "failed", "is_error": true})),
+        ),
+        (
+            "scalar structured failure",
+            Ok(ToolOutput::text("failed")
+                .with_structured_content(json!([3]))
+                .failed()),
+            Ok(json!({"content": [3], "is_error": true})),
+        ),
+        (
+            "tool data cannot override failure status",
+            Ok(ToolOutput::text("failed")
+                .with_structured_content(json!({"is_error": false}))
+                .failed()),
+            Ok(json!({"is_error": true})),
+        ),
+        (
+            "execution failure without a completed result",
             Err(ToolError::new(ToolErrorKind::Execution, "boom")),
             Err(()),
         ),
         (
             "denial never becomes a value",
-            Err(ToolError::new(ToolErrorKind::PolicyDenied, "plan mode")
-                .with_structured_content(payload.clone())),
+            Err(ToolError::new(ToolErrorKind::PolicyDenied, "plan mode")),
             Err(()),
         ),
     ];
@@ -328,6 +345,44 @@ async fn call_tool_resolves_structured_content_like_pi() {
             .map_err(|_| ());
         assert_eq!(observed, expected, "{case}");
     }
+}
+
+// Covers: an actual nonzero shell exit remains available to scripts with its
+// output and failure flag, not an execution exception.
+// Owner: shell producer through the codemode ToolHost bridge.
+#[cfg(unix)]
+#[tokio::test]
+async fn failed_shell_call_remains_a_script_value() {
+    use rho_sdk::{ScopedWorkspacePolicy, Workspace};
+    let root = tempfile::tempdir().unwrap();
+    let shell = rho_tools::shell_tool(rho_tools::ShellToolOptions::new());
+    let nesting = Arc::new(CodeModeNesting::default());
+    nesting.set_tools(&[shell]);
+    let host = ToolHost::builder()
+        .workspace(Workspace::new(root.path()).unwrap())
+        .workspace_policy(ScopedWorkspacePolicy::new().allow_processes())
+        .tool(CodeModeTool::new(
+            nesting,
+            Arc::new(ExposureController::with_default_policy()),
+        ))
+        .build()
+        .unwrap();
+    let output = host
+        .invoke(ToolHostCall::new(
+            CODEMODE_TOOL_NAME,
+            json!({
+                "script": r#"
+r = call_tool("bash", {"command": "printf data; exit 3"})
+result = {"stdout": r["stdout"], "exit_code": r["exit_code"], "is_error": r["is_error"]}
+"#
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(output.content()).unwrap(),
+        json!({"stdout": "data", "exit_code": 3, "is_error": true})
+    );
 }
 
 // Covers: script discovery reports each tool's result shape: `bash` lists its

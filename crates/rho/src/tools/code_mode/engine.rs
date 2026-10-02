@@ -102,7 +102,9 @@ pub fn evaluate_code_mode(
     evaluate_code_mode_with_exposure(source, bridge, limits, None)
 }
 
-/// Like [`evaluate_code_mode`], with script-side discovery via `search_tools` / `list_tools`.
+/// Evaluate on a Tokio blocking-pool thread, with script-side discovery via
+/// `search_tools` / `list_tools`. The owning async task must keep draining events
+/// while nested calls use its runtime for I/O.
 pub fn evaluate_code_mode_with_exposure(
     source: &str,
     bridge: Arc<GuardedBridge>,
@@ -263,21 +265,25 @@ fn invoke_blocking(name: &str, arguments: JsonValue) -> Result<ToolOutput, Engin
         .ok_or_else(|| EngineError::Message("internal: missing codemode guest state".into()))?;
     let bridge = Arc::clone(&state.bridge);
     let name = name.to_owned();
-    let output = tokio::task::block_in_place(|| {
-        state
-            .runtime
-            .block_on(async move { bridge.call_tool(&name, arguments).await })
-    })?;
+    // The evaluator runs on a blocking-pool thread; nested async I/O stays
+    // on the owning runtime while its worker continues draining host events.
+    let output = state
+        .runtime
+        .block_on(async move { bridge.call_tool(&name, arguments).await })?;
     Ok(output)
 }
 
-/// Script-facing value of a nested call: the tool's structured content when
-/// it declares one (Pi semantics), otherwise `{"content": <text>}`.
+/// Script-facing result plus the host-owned `is_error` completion flag.
+/// Object results retain their fields; scalar/array results and text-only
+/// output use `content`. Server data cannot override the completion flag.
 fn tool_output_to_json(output: &ToolOutput) -> JsonValue {
-    match output.structured_content() {
-        Some(structured) => structured.clone(),
-        None => json!({ "content": output.content() }),
-    }
+    let mut payload = match output.structured_content() {
+        Some(JsonValue::Object(fields)) => fields.clone(),
+        Some(structured) => serde_json::Map::from_iter([("content".into(), structured.clone())]),
+        None => serde_json::Map::from_iter([("content".into(), json!(output.content()))]),
+    };
+    payload.insert("is_error".into(), json!(output.is_failure()));
+    JsonValue::Object(payload)
 }
 
 fn starlark_to_json(value: Value<'_>) -> Result<JsonValue, EngineError> {
@@ -322,9 +328,27 @@ pub fn format_engine_output(output: &EngineOutput) -> String {
                 .unwrap_or_else(|_| output.return_value.to_string()),
         );
     }
-    if parts.is_empty() {
+    let text = if parts.is_empty() {
         format!("(no output; {} nested tool call(s))", output.nested_calls)
     } else {
         parts.join("\n\n")
+    };
+    // Reuse the native-tool output budget; prints and the serialized return
+    // value share it, including the notice and truncation marker.
+    let limit = rho_tools::DEFAULT_MAX_OUTPUT_BYTES;
+    if text.len() <= limit {
+        return text;
     }
+    let notice = format!(
+        "[codemode output truncated: output byte limit {limit}, received {} bytes]\n",
+        text.len()
+    );
+    rho_tools::tool::truncate(
+        format!("{notice}{text}"),
+        limit - rho_tools::tool::TRUNCATION_MARKER.len(),
+    )
 }
+
+#[cfg(test)]
+#[path = "engine_tests.rs"]
+mod tests;

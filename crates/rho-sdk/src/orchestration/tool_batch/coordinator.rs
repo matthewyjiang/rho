@@ -837,7 +837,7 @@ fn interrupt_batch(
             let completed = result.take().and_then(|result| match result {
                 Ok(output) => Some(ToolResult {
                     id: entry.call.id.clone(),
-                    ok: true,
+                    ok: !output.is_failure(),
                     content: output.content().to_owned(),
                 }),
                 Err(error) if error.kind() == ToolErrorKind::Cancelled => None,

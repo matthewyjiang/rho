@@ -286,9 +286,14 @@ impl McpTool {
                         let output = ToolOutput::text(rendered.text)
                             .metadata(metadata)
                             .with_images(rendered.images);
-                        Ok(match rendered.structured {
+                        let output = match rendered.structured {
                             Some(structured) => output.with_structured_content(structured),
                             None => output,
+                        };
+                        Ok(if rendered.failed {
+                            output.failed()
+                        } else {
+                            output
                         })
                     })
                 },

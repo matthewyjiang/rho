@@ -63,7 +63,8 @@ async fn settled_jobs_preserve_completion_metadata() {
         mime_type: "image/png".into(),
     }]);
     for outcome in [
-        Ok(output),
+        Ok(output.clone()),
+        Ok(output.failed()),
         Err(ToolError::new(ToolErrorKind::Execution, "failed")),
     ] {
         let expected = match &outcome {
@@ -72,9 +73,17 @@ async fn settled_jobs_preserve_completion_metadata() {
                 ToolCompletion::Failure(ToolFailure::new(error.kind(), error.message().to_owned()))
             }
         };
+        let expected_result = ToolResult {
+            id: "capture-1".into(),
+            ok: outcome.as_ref().is_ok_and(|output| !output.is_failure()),
+            content: match &outcome {
+                Ok(output) => output.content().to_owned(),
+                Err(error) => error.message().to_owned(),
+            },
+        };
         let worker = tokio::spawn(async move { outcome });
         let (_progress, progress) = tool_progress_channel(NonZeroUsize::MIN);
-        let (_, completion) = settle_job(AsyncJob {
+        let (result, completion) = settle_job(AsyncJob {
             call: ToolCall {
                 id: "capture-1".into(),
                 name: "capture".into(),
@@ -91,7 +100,7 @@ async fn settled_jobs_preserve_completion_metadata() {
             first_capability: FirstCapability::default(),
         })
         .await;
-        assert_eq!(completion, expected);
+        assert_eq!((result, completion), (expected_result, expected));
     }
 }
 

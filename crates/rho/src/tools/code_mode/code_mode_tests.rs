@@ -7,7 +7,7 @@ use rho_sdk::tool::ToolOutput;
 use serde_json::{json, Value};
 
 use super::bridge::{BridgeError, CodeModeBridge, GuardedBridge, CODEMODE_TOOL_NAME};
-use super::engine::{evaluate_code_mode, format_engine_output, EngineLimits, EngineOutput};
+use super::engine::{evaluate_code_mode, EngineLimits};
 
 struct StubBridge {
     calls: Mutex<Vec<(String, Value)>>,
@@ -104,17 +104,21 @@ async fn refuse_recursive_codemode() {
 // Owner: codemode Starlark dialect + engine limits.
 #[tokio::test(flavor = "multi_thread")]
 async fn top_level_control_flow_runs_within_limits() {
-    let output = evaluate_code_mode(
-        r#"
+    let output = tokio::task::spawn_blocking(|| {
+        evaluate_code_mode(
+            r#"
 seen = []
 for name in ["a", "b", "c"]:
     if name != "b":
         seen.append(call_tool("read_file", {"path": name})["content"])
 result = seen
 "#,
-        guarded(BTreeMap::new(), None),
-        EngineLimits::default(),
-    )
+            guarded(BTreeMap::new(), None),
+            EngineLimits::default(),
+        )
+    })
+    .await
+    .unwrap()
     .unwrap();
     assert_eq!(
         (output.return_value, output.nested_calls),
@@ -127,16 +131,6 @@ result = seen
         EngineLimits::default(),
     );
     assert!(runaway.is_err(), "tick limit must stop a top-level loop");
-}
-
-#[test]
-fn format_engine_output_includes_return_value() {
-    let formatted = format_engine_output(&EngineOutput {
-        return_value: json!("pong"),
-        prints: vec![],
-        nested_calls: 1,
-    });
-    assert!(formatted.contains("pong"), "{formatted}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

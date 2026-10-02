@@ -112,6 +112,13 @@ impl ToolFailure {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ToolCompletion {
+    /// A completed call; inspect [`ToolOutput::is_failure`] for result status.
+    ///
+    /// # Next major
+    ///
+    /// NEXT_MAJOR(rho-sdk): rename ToolCompletion::Success to Completed to distinguish completion from result status.
+    /// The variant name stays for minor compatibility; a completed failed result
+    /// retains its output here rather than becoming an execution error.
     Success(ToolOutput),
     Failure(ToolFailure),
     Unavailable,

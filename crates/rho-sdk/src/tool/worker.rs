@@ -228,6 +228,14 @@ fn observe_after_tool_use(
     capability: Option<&CapabilityRequest>,
 ) {
     let (status, failure) = match result {
+        Ok(output) if output.is_failure() => (
+            HookToolStatus::Failed,
+            Some(BoundedFailure {
+                kind: tool_error_label(ToolErrorKind::Execution),
+                message: output.content(),
+                field: "payload.failure",
+            }),
+        ),
         Ok(_) => (HookToolStatus::Succeeded, None),
         Err(error) => (
             HookToolStatus::Failed,

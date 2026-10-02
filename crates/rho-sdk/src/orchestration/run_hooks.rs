@@ -69,6 +69,14 @@ impl RunHooks {
         capability: Option<&CapabilityRequest>,
     ) {
         let (status, failure) = match completion {
+            ToolCompletion::Success(output) if output.is_failure() => (
+                HookToolStatus::Failed,
+                Some(BoundedFailure {
+                    kind: tool_error_label(ToolErrorKind::Execution),
+                    message: output.content(),
+                    field: "payload.failure",
+                }),
+            ),
             ToolCompletion::Success(_) => (HookToolStatus::Succeeded, None),
             ToolCompletion::Failure(failure) => (
                 HookToolStatus::Failed,

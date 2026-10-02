@@ -355,7 +355,7 @@ impl InteractiveToolPresenter {
                 if output.presentation() != &ToolMetadata::default() {
                     view.metadata = output.presentation().clone();
                 }
-                (true, output.content().to_string())
+                (!output.is_failure(), output.content().to_string())
             }
             ToolCompletion::Failure(error) => (false, error.message().to_string()),
             ToolCompletion::Unavailable => (false, "tool is unavailable".into()),

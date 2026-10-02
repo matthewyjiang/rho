@@ -260,13 +260,14 @@ async fn execute_prepared(
             break;
         }
     }
-    if !run.result.ok {
-        return Err(ToolError::new(ToolErrorKind::Execution, run.result.content)
-            .with_structured_content(run.structured));
-    }
-    Ok(ToolOutput::text(run.result.content)
+    let output = ToolOutput::text(run.result.content)
         .metadata(process_metadata())
-        .with_structured_content(run.structured))
+        .with_structured_content(run.structured);
+    Ok(if run.result.ok {
+        output
+    } else {
+        output.failed()
+    })
 }
 
 fn process_metadata() -> ToolMetadata {

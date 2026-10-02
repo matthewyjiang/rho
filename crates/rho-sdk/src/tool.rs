@@ -516,12 +516,16 @@ impl ToolContext {
     }
 }
 
-/// Successful structured tool output.
+/// Output of a completed tool call, including calls whose result reports failure.
+///
+/// Return `Ok(ToolOutput::text(...).failed())` for a completed failed result;
+/// reserve [`ToolError`] for calls that could not produce a completed result.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ToolOutput {
     content: String,
     metadata: ToolMetadata,
     images: Vec<crate::model::ImageContent>,
+    failure: bool,
     /// Boxed: rare, and keeps `ToolCompletion` variants close in size.
     structured: Option<Box<Value>>,
 }
@@ -532,8 +536,24 @@ impl ToolOutput {
             content: content.into(),
             metadata: ToolMetadata::default(),
             images: Vec::new(),
+            failure: false,
             structured: None,
         }
+    }
+
+    /// Marks a completed result as a failure for the model and lifecycle hooks.
+    ///
+    /// The call still returns `Ok` and retains its output for programmatic callers.
+    /// Denials, cancellation, invalid arguments, and execution errors without a
+    /// completed result must return [`ToolError`] instead.
+    pub fn failed(mut self) -> Self {
+        self.failure = true;
+        self
+    }
+
+    /// Whether this completed result should be presented to the model as an error.
+    pub fn is_failure(&self) -> bool {
+        self.failure
     }
 
     /// Attaches a machine-readable result matching [`Tool::output_schema`].
@@ -599,8 +619,6 @@ pub enum ToolErrorKind {
 pub struct ToolError {
     kind: ToolErrorKind,
     message: String,
-    /// Boxed: rare, and keeps `ToolCompletion` variants close in size.
-    structured: Option<Box<Value>>,
 }
 
 impl ToolError {
@@ -608,24 +626,7 @@ impl ToolError {
         Self {
             kind,
             message: message.into(),
-            structured: None,
         }
-    }
-
-    /// Attaches the completed result of a tool that ran but reports failure,
-    /// such as a shell command exiting nonzero.
-    ///
-    /// Only meaningful for [`ToolErrorKind::Execution`]: the work finished and
-    /// produced data in the shape of [`Tool::output_schema`]. Denials,
-    /// cancellations, and invalid arguments never carry a result.
-    pub fn with_structured_content(mut self, structured: Value) -> Self {
-        self.structured = Some(Box::new(structured));
-        self
-    }
-
-    /// Completed result attached to this failure, if any.
-    pub fn structured_content(&self) -> Option<&Value> {
-        self.structured.as_deref()
     }
 
     pub fn kind(&self) -> ToolErrorKind {
@@ -720,9 +721,8 @@ pub trait Tool: Send + Sync {
         ToolExecutionMode::Sync
     }
 
-    /// JSON Schema for [`ToolOutput::structured_content`] (and structured
-    /// content on [`ToolErrorKind::Execution`] failures), when the tool
-    /// produces one.
+    /// JSON Schema for [`ToolOutput::structured_content`], including completed
+    /// results marked with [`ToolOutput::failed`], when the tool produces one.
     ///
     /// Not sent to providers: the model reads text content. Programmatic
     /// callers, such as script hosts that call tools, use it to document and

@@ -92,12 +92,27 @@ new output arrives)."
                 Some(Arc::clone(&exposure)),
             ));
 
-            // Starlark is sync; nested ToolHost::invoke (incl. approval waits)
-            // runs under block_in_place on this async tool call — outer codemode
-            // stays the in-flight agent turn until the script finishes or errors.
-            let output = tokio::task::block_in_place(|| {
+            // Starlark is sync, so the script runs on a blocking-pool thread
+            // while this future stays pending. The coordinator polls this
+            // future on the same task that drains this call's progress and
+            // host-input channels, so the future must keep yielding: running
+            // the script under `block_in_place` here would starve those
+            // channels and hang every nested question until cancellation.
+            let cancellation = context.cancellation().clone();
+            let script_thread = tokio::task::spawn_blocking(move || {
                 evaluate_code_mode_with_exposure(&script, bridge, limits, Some(exposure))
-            })
+            });
+            let output = tokio::select! {
+                // Nested calls observe the same token and fail fast, so the
+                // detached script thread unwinds on its own.
+                () = cancellation.cancelled() => return Err(ToolError::cancelled()),
+                joined = script_thread => joined.map_err(|error| {
+                    ToolError::new(
+                        ToolErrorKind::Execution,
+                        format!("codemode script thread failed: {error}"),
+                    )
+                })?,
+            }
             .map_err(|error| {
                 if context.cancellation().is_cancelled() {
                     ToolError::cancelled()

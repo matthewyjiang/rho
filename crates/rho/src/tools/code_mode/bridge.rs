@@ -168,25 +168,29 @@ impl ToolHostBridge {
     /// Progress replaces a card's body, so each update carries every nested
     /// call so far. The log is bounded by the nested call budget.
     ///
-    /// Never waits for channel capacity: the script runs under
-    /// `block_in_place` on the parent call's task, and the runtime drains the
-    /// parent's bounded progress channel from that same task, so an awaited
-    /// send deadlocks once the channel fills. Because each update carries the
-    /// whole log, dropping one when the channel is full loses nothing a later
-    /// update (or the final result) does not restate.
+    /// Awaits channel capacity. The script runs on its own blocking thread
+    /// (see [`super::tool`]), so the parent call's task keeps draining this
+    /// channel and every update, including the final restatement, arrives.
     async fn report(&self, index: usize, state: NestedCallState) {
         let mut log = self.log.lock().await;
         log.set(index, state);
+        let rendered = log.render();
+        drop(log);
+        // `false` means the host stopped listening; nothing left to inform.
         let _ = self
             .parent
             .progress()
-            .try_send(ToolProgress::message(log.render()));
+            .send(ToolProgress::message(rendered))
+            .await;
     }
 
     async fn run_nested(&self, mut run: ToolHostRun, index: usize) -> Result<ToolOutput, SdkError> {
         let parent_cancellation = self.parent.cancellation().clone();
         loop {
             tokio::select! {
+                // Cancellation wins over a ready event so a cancelled parent
+                // never starts answering nested questions.
+                biased;
                 () = parent_cancellation.cancelled() => {
                     run.cancel();
                     return run.outcome().await;
@@ -225,22 +229,18 @@ impl CodeModeBridge for ToolHostBridge {
         let outcome = self.run_nested(run, index).await;
         match outcome {
             Ok(output) => {
-                self.report(index, NestedCallState::Succeeded).await;
+                // A completed call flagged as failed (nonzero shell exit)
+                // still hands the script its value, but the card says failed.
+                let state = if output.is_failure() {
+                    NestedCallState::Failed
+                } else {
+                    NestedCallState::Succeeded
+                };
+                self.report(index, state).await;
                 Ok(output)
             }
             Err(error) => {
                 self.report(index, NestedCallState::Failed).await;
-                // A tool that ran to completion but reports failure (a nonzero
-                // shell exit) still hands the script its typed result, as in
-                // Pi. Denials, cancellations, and bad arguments still raise.
-                if let SdkError::Tool(tool) = &error {
-                    if let (ToolErrorKind::Execution, Some(structured)) =
-                        (tool.kind(), tool.structured_content())
-                    {
-                        return Ok(ToolOutput::text(tool.message())
-                            .with_structured_content(structured.clone()));
-                    }
-                }
                 Err(BridgeError::from_nested(name, error))
             }
         }

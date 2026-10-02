@@ -508,15 +508,124 @@ result = {
     );
 }
 
-// Covers: nested-call status updates outnumber the parent call's progress
-// channel while the script blocks the task that drains it; the script must
-// still finish rather than deadlock. The coordinator sizes that channel at the
-// parallel-tool limit (4, `sdk_config::parallel_tool_limit`); 12 nested calls
-// emit at least 24 updates (running + done each), well past it. Before the fix
-// this hung in the second `process` call of a start/poll script.
-// Owner: codemode ToolHostBridge progress reporting under block_in_place.
+/// Nested tool that asks the host one question and returns the answer.
+struct AskTool;
+
+impl Tool for AskTool {
+    fn spec(&self) -> ToolSpec {
+        ToolSpec {
+            name: "ask".into(),
+            description: "ask the user one question".into(),
+            input_schema: json!({"type": "object"}),
+        }
+    }
+
+    fn call<'a>(
+        &'a self,
+        _invocation: rho_sdk::tool::ToolInvocation,
+        context: rho_sdk::tool::ToolContext,
+    ) -> rho_sdk::tool::ToolFuture<'a> {
+        Box::pin(async move {
+            let question = rho_sdk::HostQuestion::new(
+                "answer",
+                "choose",
+                vec![rho_sdk::HostChoice::new("yes", "yes")],
+                rho_sdk::SelectionMode::One,
+            )
+            .unwrap();
+            let request =
+                rho_sdk::HostInputRequest::questionnaire("nested", vec![question]).unwrap();
+            let response = context.request_host_input(request).await.map_err(|error| {
+                rho_sdk::tool::ToolError::new(
+                    rho_sdk::tool::ToolErrorKind::Execution,
+                    error.to_string(),
+                )
+            })?;
+            Ok(ToolOutput::text(response.answers()["answer"][0].clone()))
+        })
+    }
+}
+
+// Covers: a nested tool's host question surfaces on the session run and its
+// answer reaches the script. The script must not block the task that relays
+// the parent call's host-input channel, or the question never arrives. The
+// live-wiring tests drive ToolHost directly and cannot see this.
+// Owner: codemode CodeModeTool script thread + ToolHostBridge host-input relay.
 #[tokio::test(flavor = "multi_thread")]
-async fn many_nested_calls_do_not_block_on_parent_progress() {
+async fn nested_host_question_reaches_the_session_and_answers_the_script() {
+    let config = Config::default();
+    let mut tools = AppToolSet::new(
+        &config,
+        RuntimeDiagnostics::new(&config),
+        ToolSetOptions::default(),
+    );
+    tools.add_bundle(FixtureBundle(vec![Arc::new(AskTool)]));
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "test"),
+        [
+            tool_call(
+                "script",
+                CODEMODE_TOOL_NAME,
+                json!({"script": r#"result = call_tool("ask", {})"#}),
+            ),
+            text_turn(),
+        ],
+    );
+    let runtime = runtime_for(
+        &config,
+        &tools,
+        &provider,
+        Workspace::new(std::env::current_dir().unwrap()).unwrap(),
+    );
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session
+        .start(rho_sdk::UserInput::text("ask"))
+        .await
+        .unwrap();
+
+    let request = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        loop {
+            if let rho_sdk::RunEvent::ToolHostInputRequested { call_id, request } =
+                run.next_event().await.expect("run ended before asking")
+            {
+                assert_eq!(call_id.to_string(), "script");
+                break request;
+            }
+        }
+    })
+    .await
+    .expect("nested question never reached the session");
+    run.respond(
+        request.id().clone(),
+        rho_sdk::HostInputResponse::new().answer("answer", ["yes"]),
+    )
+    .await
+    .unwrap();
+    while run.next_event().await.is_some() {}
+    assert_eq!(run.outcome().await.unwrap().text(), "done");
+
+    let requests = provider.recorded_requests();
+    let result = requests[1]
+        .messages
+        .iter()
+        .find_map(|message| match message {
+            rho_sdk::model::Message::ToolResult(result) if result.id == "script" => Some(result),
+            _ => None,
+        })
+        .expect("codemode result reached the model");
+    assert!(result.ok);
+    assert!(format!("{:?}", result.content).contains("yes"));
+}
+
+// Covers: nested status lines stay live while the script runs and never
+// deadlock. Twelve calls emit 24+ updates, far past the parent progress
+// channel's capacity (4, `sdk_config::parallel_tool_limit`); the script must
+// finish, and the last update before the codemode call finishes must show
+// every call done rather than an early `running` line kept when later updates
+// were dropped.
+// Owner: codemode ToolHostBridge progress reporting.
+#[tokio::test(flavor = "multi_thread")]
+async fn nested_status_reaches_the_final_state_before_the_call_finishes() {
     let root = tempfile::tempdir().unwrap();
     let config = Config::default();
     let tools = AppToolSet::new(
@@ -546,14 +655,32 @@ result = "done"
         Workspace::new(root.path()).unwrap(),
     );
     let session = runtime.session(SessionOptions::default()).await.unwrap();
-
-    tokio::time::timeout(std::time::Duration::from_secs(30), session.complete("loop"))
+    let mut run = session
+        .start(rho_sdk::UserInput::text("loop"))
         .await
-        .expect("codemode deadlocked on parent progress")
         .unwrap();
 
-    assert!(session.history().iter().any(|message| matches!(
-        message,
-        rho_sdk::model::Message::ToolResult(result) if result.id == "script" && result.ok
-    )));
+    let mut last_status = None;
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while let Some(event) = run.next_event().await {
+            match event {
+                rho_sdk::RunEvent::ToolUpdated { call_id, progress }
+                    if call_id.to_string() == "script" =>
+                {
+                    last_status = Some(progress.text().to_owned());
+                }
+                rho_sdk::RunEvent::ToolFinished { call_id, .. }
+                    if call_id.to_string() == "script" =>
+                {
+                    break
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("codemode call never finished");
+
+    let last_status = last_status.expect("no nested status reached the session");
+    assert_eq!(last_status, ["list_dir: done"; 12].join("\n"));
 }
