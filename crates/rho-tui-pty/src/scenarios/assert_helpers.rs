@@ -16,6 +16,15 @@ pub(super) fn assert_idle_shell_still_streaming(harness: &mut PtyHarness) -> Res
     Ok(())
 }
 
+/// The codemode card must not fall back to printing its raw argument JSON.
+pub(super) fn assert_no_escaped_script_json(harness: &mut PtyHarness) -> Result<()> {
+    let screen = harness.screen().contents();
+    if screen.contains("{\"script\"") {
+        anyhow::bail!("codemode card printed raw argument JSON:\n{screen}");
+    }
+    Ok(())
+}
+
 pub(super) fn assert_terminal_restored(harness: &mut PtyHarness) -> Result<()> {
     // After a clean exit, ratatui/crossterm must leave the alternate screen.
     // Mouse disable alone is not enough: a regression that skips ESC[?1049l

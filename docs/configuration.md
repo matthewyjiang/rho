@@ -235,17 +235,19 @@ Pinned values stay fixed across provider changes. From `/config`, the change app
 
 ## Codemode
 
-The `codemode` tool composes other tools, including MCP tools, in a Starlark script. It is always available. `[codemode] mode` matches Pi's `codemode.mode` and controls how the other tools are presented:
+The `codemode` tool composes native and MCP sibling tools in a Starlark script. It is available whenever tools are enabled. `[codemode] mode` matches Pi's `codemode.mode` and controls how the other tools are presented:
 
 ```toml
 [codemode]
 mode = "on" # or "only"
 ```
 
-- `on` (default): direct tools such as `read_file`, `write`, and `bash` stay declared next to `codemode`, and the model may use either. The `codemode` description suggests it for multi-step work, MCP tools, and filtering large output.
-- `only`: direct tools are not declared to the model. Scripts reach them with `call_tool`, so all work goes through `codemode`. `codemode` and `tool_search` stay declared.
+- `on` (default): native sibling tools such as `read_file`, `write`, and `bash` stay declared next to `codemode`; the model may use either.
+- `only`: only `codemode` and `tool_search` are declared. Native siblings remain executable through script `call_tool`; `tool_search` discovers their names and result schemas without advertising them directly.
 
-`/codemode on|only` changes the mode for the next model request and saves it. Neither mode is a permission level: nested calls follow `permission_mode` exactly like direct calls. MCP exposure (codemode-only by default, found with `tool_search`) is separate from this mode.
+`/codemode on|only` changes the next model request without rebuilding the runtime and saves the preference. Neither mode is a permission level: nested calls inherit `permission_mode`. MCP tools are script-only in both modes and discoverable with `tool_search` or script `search_tools`/`list_tools`. Discovery does not promote tools into the direct model list.
+
+Scripts call one tool with `call_tool(name, args)` or run independent calls concurrently with `call_tools([(name, args), ...])`, which returns results in order. A batch runs up to 4 calls at once, the same width as a model-issued parallel tool batch, and the whole batch counts toward the 64-call limit per script before any call starts. Script `list_tools()` and `search_tools(query)` return `{name, description}` rows; `describe_tool(name)` adds the result schema. A script that fails keeps its printed output and call log.
 
 ## RTK
 

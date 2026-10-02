@@ -119,8 +119,7 @@ async fn switchable_session(
     let workspace = Workspace::new(std::env::current_dir().unwrap()).unwrap();
     let runtime = build_runtime(RuntimeBuildOptions {
         provider: Arc::clone(&provider),
-        tools: tools.tools(),
-        tool_visibility: tools.tool_visibility(),
+        tools: &tools,
         workspace,
         workspace_policy: AppPolicy::for_mode(PermissionMode::Auto, Default::default()),
         approval_session: None,

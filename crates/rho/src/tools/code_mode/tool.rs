@@ -1,40 +1,46 @@
-//! `codemode` Tool: model writes Starlark; nested calls go through ToolHost (native + MCP).
-//!
-//! Nested approvals pause the script via shared ToolHost session approvals — see
-//! [`super::bridge`] and `docs/design/code-mode-starlark-v0.md`.
+//! The model-facing Starlark tool. Scripts run off the async event-draining task.
 
 use std::sync::Arc;
 
 use rho_sdk::model::ToolSpec;
-use rho_sdk::tool::{
-    Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolOutput,
-};
+use rho_sdk::tool::{Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation};
+use serde::Deserialize;
 use serde_json::json;
 
-use super::bridge::{GuardedBridge, ToolHostBridge, CODEMODE_TOOL_NAME};
-use super::engine::{evaluate_code_mode_with_exposure, format_engine_output, EngineLimits};
-use super::exposure::ExposureController;
-use super::nesting::{CodeModeNesting, DEFAULT_MAX_NESTED_CALLS};
+use super::bridge::{ToolHostBridge, CODEMODE_TOOL_NAME};
+use super::engine::{evaluate_code_mode, format_engine_output, EngineLimits, EngineOutput};
+use super::exposure::CodeModeSurface;
 
-/// Starlark code-mode tool (`codemode`).
-///
-/// Nested calls stream status lines onto this call's progress (see
-/// [`ToolHostBridge`]). Planner-aware parallel `call_tool` is deferred.
-pub struct CodeModeTool {
-    nesting: Arc<CodeModeNesting>,
-    exposure: Arc<ExposureController>,
-    limits: EngineLimits,
+/// Model-facing contract. Batching guidance lives here and in the system
+/// prompt so models fan out independent calls instead of issuing them in turn.
+const DESCRIPTION: &str = "\
+Run a Starlark (Python-like) script that calls other tools. Only the script's output reaches you, \
+so use it to batch independent calls, chain dependent ones, and filter large results.
+- `call_tools([(name, args), ...])` runs independent calls concurrently and returns their results \
+in order. Prefer it whenever calls do not depend on each other.
+- `call_tool(name, args)` runs one call and returns its result.
+- Each result is `{is_error, content, data}`: `content` is the text you would see, `data` the \
+tool's structured value or None. Failed calls are values; check `is_error`.
+- `list_tools()` and `search_tools(query)` return `[{name, description}]`; `describe_tool(name)` \
+adds the parameter and return schemas.
+- Output: `print()` lines, then the global `result` as JSON.
+- Starlark has `def`, `for`, `if`, comprehensions, and f-strings, but no `while`, `try`, imports, \
+or exceptions. At most 64 nested calls per script.
+- Nested calls follow the session's permissions and pause for approvals. Scripts get no process \
+exit notifications: poll using data.next_cursor until data.state is no longer running or starting.";
+
+#[derive(Deserialize)]
+struct Args {
+    script: String,
+}
+
+pub(super) struct CodeModeTool {
+    surface: Arc<CodeModeSurface>,
 }
 
 impl CodeModeTool {
-    /// Live constructor: `nesting` supplies sibling tools; each call builds a
-    /// child ToolHost that inherits the parent call's authorization.
-    pub fn new(nesting: Arc<CodeModeNesting>, exposure: Arc<ExposureController>) -> Self {
-        Self {
-            nesting,
-            exposure,
-            limits: EngineLimits::default(),
-        }
+    pub(super) fn new(surface: Arc<CodeModeSurface>) -> Self {
+        Self { surface }
     }
 }
 
@@ -42,85 +48,51 @@ impl Tool for CodeModeTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: CODEMODE_TOOL_NAME.into(),
-            description: "Run a Starlark script that composes ToolHost tools (native and MCP) \
-via sequential call_tool(name, args). Prefer it over many separate calls for multi-step work, \
-MCP tools, or filtering large output; call a declared tool directly for a single step. \
-Use search_tools/list_tools inside the script to discover \
-MCP tools (default exposure: codemode). Only the script's distilled result returns to the model; \
-nested tool payloads stay on the host/TUI path. Nested calls follow the session permission mode \
-exactly like direct calls; a gated call pauses this script until approved (deny → error). \
-Scripts get no exit notifications: to wait for a started process, loop process poll, passing \
-next_cursor back as cursor, until state is not running or starting (a poll returns as soon as \
-new output arrives)."
-                .into(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "script": {
-                        "type": "string",
-                        "description": "Starlark body. Use call_tool(name, args) for nested tools \
-            (including MCP), sequentially. Assign `result = ...` for the distilled return. print() is captured."
-                    }
-                },
-                "required": ["script"]
-            }),
+            description: DESCRIPTION.into(),
+            input_schema: json!({"type": "object", "properties": {"script": {"type": "string", "description": "Starlark source."}}, "required": ["script"], "additionalProperties": false}),
         }
     }
 
+    fn output_schema(&self) -> Option<serde_json::Value> {
+        Some(rho_tools::output_schema::<EngineOutput>())
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        let script = invocation
-            .arguments()
-            .get("script")
-            .and_then(|value| value.as_str())
-            .map(str::to_owned);
-        let nesting = Arc::clone(&self.nesting);
-        let exposure = Arc::clone(&self.exposure);
-        let limits = self.limits.clone();
         Box::pin(async move {
             if context.cancellation().is_cancelled() {
                 return Err(ToolError::cancelled());
             }
-            let script = script.ok_or_else(|| {
-                ToolError::new(ToolErrorKind::InvalidArguments, "missing script argument")
-            })?;
-
-            let host = nesting.build_host(&context)?;
-            let bridge = Arc::new(GuardedBridge::with_exposure(
-                Arc::new(ToolHostBridge::new(Arc::new(host), context.clone())),
-                None,
-                DEFAULT_MAX_NESTED_CALLS,
-                Some(Arc::clone(&exposure)),
-            ));
-
-            // Starlark is sync, so the script runs on a blocking-pool thread
-            // while this future stays pending. The coordinator polls this
-            // future on the same task that drains this call's progress and
-            // host-input channels, so the future must keep yielding: running
-            // the script under `block_in_place` here would starve those
-            // channels and hang every nested question until cancellation.
+            let Args { script } =
+                serde_json::from_value(invocation.arguments().clone()).map_err(|error| {
+                    ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
+                })?;
+            let bridge = Arc::new(ToolHostBridge::new(self.surface.clone(), context.clone())?);
             let cancellation = context.cancellation().clone();
+            let script_bridge = bridge.clone();
             let script_thread = tokio::task::spawn_blocking(move || {
-                evaluate_code_mode_with_exposure(&script, bridge, limits, Some(exposure))
+                evaluate_code_mode(&script, script_bridge, EngineLimits::default())
             });
-            let output = tokio::select! {
-                // Nested calls observe the same token and fail fast, so the
-                // detached script thread unwinds on its own.
+            let evaluation = tokio::select! {
                 () = cancellation.cancelled() => return Err(ToolError::cancelled()),
-                joined = script_thread => joined.map_err(|error| {
-                    ToolError::new(
-                        ToolErrorKind::Execution,
-                        format!("codemode script thread failed: {error}"),
-                    )
-                })?,
+                joined = script_thread => joined.map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?,
+            };
+            if context.cancellation().is_cancelled() {
+                return Err(ToolError::cancelled());
             }
-            .map_err(|error| {
-                if context.cancellation().is_cancelled() {
-                    ToolError::cancelled()
-                } else {
-                    ToolError::new(ToolErrorKind::Execution, error.to_string())
-                }
-            })?;
-            Ok(ToolOutput::text(format_engine_output(&output)))
+            let (return_value, error) = match evaluation.result {
+                Ok(value) => (value, None),
+                Err(error) => (serde_json::Value::Null, Some(error.to_string())),
+            };
+            let output = EngineOutput {
+                return_value,
+                prints: evaluation.prints,
+                calls: bridge.records().await,
+                error,
+            };
+            let failed = output.error.is_some();
+            rho_tools::Rendered::new(format_engine_output(&output), output)
+                .failed_if(failed)
+                .into_tool_output(Default::default())
         })
     }
 }

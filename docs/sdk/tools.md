@@ -117,15 +117,17 @@ can preserve native tool-result image attribution.
 
 ## Structured output
 
-A tool may declare `Tool::output_schema()` (default `None`) and attach a matching value with `ToolOutput::with_structured_content`. The model still reads the text content. The schema is never sent to providers. Structured content is for programmatic callers: `ToolHost::invoke` returns it unchanged, and Rho's `codemode` scripts receive it as the value of `call_tool(...)`.
+A tool may declare `Tool::output_schema()` (default `None`) and attach a matching value with `ToolOutput::with_structured_content`. The model still reads the text content. The schema is never sent to providers. Structured content is for programmatic callers: `ToolHost::invoke` returns it unchanged, and Rho's `codemode` scripts receive it in the `data` field of `call_tool(...)`.
 
 A tool that ran to completion but reports failure, such as a shell command that exits nonzero or an MCP `isError` response, returns `Ok(ToolOutput::text(...).failed())`. Attach structured content normally; use `ToolOutput::is_failure()` to inspect the result status. The runtime sends the model an error tool result (`ToolResult::ok == false`), preserves the text, and reports failure to lifecycle hooks. Denials, cancellation, bad arguments, and execution errors that did not produce a completed result remain `Err(ToolError)`; scripts raise on every such error.
 
-For minor compatibility, `ToolFinished` represents every completed output as `ToolCompletion::Success(output)`, even when `output.is_failure()` is true. Hosts must inspect the flag rather than infer result status from the variant name. NEXT_MAJOR(rho-sdk): rename ToolCompletion::Success to Completed to distinguish completion from result status.
+`ToolFinished` distinguishes `ToolCompletion::Success(output)` from `ToolCompletion::CompletedFailure(output)`. Both retain the full completed output, including structured content and metadata. `ToolCompletion::Failure` instead reports an execution error without a completed output. Failed outputs do not deliver image supplements to the model.
 
-Rho's `call_tool(...)` returns object fields plus a host-owned `is_error` boolean, which cannot be overridden by tool data. Text-only results use `{ content, is_error }`; scalar or array structured results are also wrapped under `content`. A script can branch on `result["is_error"]` and still inspect failed shell or MCP output.
+Rho's `call_tool(...)` and each item of `call_tools([...])` return `{ is_error, content, data }`: host-owned status, model-facing text, and unchanged structured data (or `None` when absent or oversized). Discovery advertises this envelope schema with the tool's nullable schema for successful `data`; failed server data is unconstrained. A script can branch on `result["is_error"]` and inspect `result["data"]` without colliding with server fields.
 
-Built-in shell tools return `{ stdout, stderr, exit_code, truncated, wall_time_ms }`, with `exit_code` set to `null` when a signal ended the command. `grep` returns `{ files: [{ path, count, lines: [{ line, text }] }], total_matches, stopped }`, `glob` returns `{ paths, stopped }`, and `list_dir` returns `{ entries: [{ name, kind }], truncated }`. Rho's `process`, `web_search`, `agent`, and `agents` tools also return structured content. File read and edit tools return text only, because the text is already the result. MCP tools pass through the server's `outputSchema` and bounded `structuredContent`. Retained successful content is validated against the schema; completed error results retain bounded content without schema validation. Structured values whose serialized size exceeds the configured MCP output-byte limit are omitted, with a notice naming the limit and received size in the text. This applies to successful and failed results, so scripts cannot bypass the MCP text cap. The outer `codemode` result shares the native-tool 64,000-byte output budget across captured prints and the pretty-printed return value, including its truncation notice and marker.
+`rho-agent-tools` 1.7 exposes `Rendered<T>` with private fields and constructors/builders, plus `output_schema<T: schemars::JsonSchema>()` (schemars 1). No struct literals are required. SDK adapters use `limit_data(max_output_bytes)` to bound serialized JSON independently of text and assets.
+
+Built-in shell tools return `{ stdout, stderr, exit_code, truncated, wall_time_ms }`, with `exit_code` set to `null` when a signal ended the command. `grep` returns `{ files: [{ path, count, lines: [{ line, text }] }], total_matches, stopped }`, `glob` returns `{ paths, stopped }`, and `list_dir` returns `{ entries: [{ name, kind }], truncated }`. Rho's `process`, `web_search`, `agent`, and `agents` tools also return structured content. File read and edit tools return text only, because the text is already the result. MCP tools pass through the server's `outputSchema` and bounded `structuredContent`. Retained successful content is validated against the schema; completed error results retain bounded content without schema validation. Structured values whose serialized size exceeds the configured tool output-byte limit are omitted, with a notice naming the limit and received size in the text. This applies to successful and failed results, so scripts cannot bypass the MCP text cap. The outer `codemode` result shares the native-tool 64,000-byte output budget across captured prints and the pretty-printed return value, including its truncation notice and marker.
 
 ## Presentation and progress
 
@@ -227,12 +229,12 @@ Registering a tool and advertising it to the model are separate. By default ever
 
 - The runtime asks before **every** model request, so a change made by a tool call (for example a search tool promoting a deferred tool) reaches the next request of the same run.
 - Context estimates and compaction count only the advertised schemas.
-- A model call to a registered but unadvertised tool resolves as unavailable and does not execute.
+- Calls resolve against the producing request's advertised snapshot. Visibility changes during or after the request affect the next request, not already-advertised calls. A call absent from that snapshot resolves as unavailable.
 - Host-sourced calls and nested `ToolHost::child_builder` hosts may still run any registered tool.
 
 Keep `is_advertised` cheap and non-blocking. It runs once per registered tool per request.
 
-`ToolVisibility::describe` (default: no change) can adjust an advertised spec before it is sent. For example, Rho appends how a script calls the tool. Keep the result stable across requests so provider prompt caches stay warm. Do not change `name` or `input_schema`.
+`ToolVisibility::describe(&ToolSpec) -> Option<String>` optionally replaces the description. Tool names and input schemas remain immutable. Keep descriptions stable across requests for provider prompt caches.
 
 ## Provider-free tool host
 
@@ -243,7 +245,7 @@ Keep `is_advertised` cheap and non-blocking. It runs once per registered tool pe
 - Builders accept the same workspace, policy, approval, and hook options as `RhoBuilder` where applicable.
 - Dropping an unfinished `ToolHostRun` cancels its work.
 
-Use a tool host for host-driven automation (for example a workflow command step) that must still pass policy and hooks.
+Use a tool host for host-driven automation (for example a workflow command step) that must still pass policy and hooks. `ToolHost::child_builder(&context)` returns a `ChildToolHostBuilder` with only tool registration, event capacity, and build methods. It inherits the parent's authorization, session identity, live history, and hook run id; nested calls cannot override security settings.
 
 ## Questionnaire fallback provenance
 

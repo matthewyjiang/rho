@@ -103,6 +103,7 @@ pub(crate) trait WorkspaceSearch: Clone + Send + Sync + 'static {
     /// Validated arguments, built before any capability is requested so an
     /// invalid pattern cannot cost an authorization round trip.
     type Request: Send + 'static;
+    type Output: serde::Serialize + schemars::JsonSchema + Send + 'static;
 
     /// Tool name, used for the capability source and error messages.
     const NAME: &'static str;
@@ -122,44 +123,28 @@ pub(crate) trait WorkspaceSearch: Clone + Send + Sync + 'static {
         display_root: &str,
         request: &Self::Request,
         cancelled: &dyn Fn() -> bool,
-    ) -> Result<SearchOutput, ToolError>;
-
-    /// JSON Schema for [`SearchOutput::structured`].
-    fn output_schema() -> Value;
+    ) -> Result<crate::Rendered<Self::Output>, ToolError>;
 }
 
-/// One search result: the model-facing text and the script-facing value.
-pub(crate) struct SearchOutput {
-    pub(crate) text: String,
-    pub(crate) structured: Value,
+#[derive(serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Stopped {
+    ResultLimit,
+    PerFileLimit,
+    ScanLimit,
+    Deadline,
+    Cancelled,
 }
 
-impl StopReason {
-    /// Stable wire name for structured output.
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::ResultLimit => "result_limit",
-            Self::PerFileLimit { .. } => "per_file_limit",
-            Self::ScanLimit => "scan_limit",
-            Self::Deadline => "deadline",
-            Self::Cancelled => "cancelled",
-        }
-    }
-}
-
-/// Schema for the `stopped` field: why a search returned a partial answer.
-pub(crate) fn stopped_schema() -> Value {
-    serde_json::json!({
-        "type": "array",
-        "items": {
-            "type": "string",
-            "enum": ["result_limit", "per_file_limit", "scan_limit", "deadline", "cancelled"]
-        },
-        "description": "Why the result is partial; empty when the search completed"
-    })
-}
-
-/// Wire names for `reasons`.
-pub(crate) fn stopped(reasons: &[StopReason]) -> Vec<&'static str> {
-    reasons.iter().map(|reason| reason.as_str()).collect()
+pub(crate) fn stopped(reasons: &[StopReason]) -> Vec<Stopped> {
+    reasons
+        .iter()
+        .map(|reason| match reason {
+            StopReason::ResultLimit => Stopped::ResultLimit,
+            StopReason::PerFileLimit { .. } => Stopped::PerFileLimit,
+            StopReason::ScanLimit => Stopped::ScanLimit,
+            StopReason::Deadline => Stopped::Deadline,
+            StopReason::Cancelled => Stopped::Cancelled,
+        })
+        .collect()
 }

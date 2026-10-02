@@ -57,7 +57,9 @@ mod payload;
 pub mod testing;
 
 pub(crate) use dispatch::{HookToolIdentity, HookWiring};
-pub(crate) use payload::{bounded_failure, error_label, summarize_capability, BoundedFailure};
+pub(crate) use payload::{
+    bounded_failure, error_label, summarize_capability, tool_status, BoundedFailure, ToolOutcomeRef,
+};
 
 pub use bounds::{
     HookPayloadBounds, HookTruncation, DEFAULT_MAX_ENVELOPE_BYTES, DEFAULT_MAX_FIELD_BYTES,

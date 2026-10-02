@@ -56,8 +56,12 @@ fn structured_run_exposes_result_only_when_done() {
     };
     assert_eq!(
         [
-            super::structured_run(&snapshot(RunState::Running, false)),
-            super::structured_run(&snapshot(RunState::Ok, true)),
+            serde_json::to_value(super::AgentRunView::from(&snapshot(
+                RunState::Running,
+                false
+            )))
+            .unwrap(),
+            serde_json::to_value(super::AgentRunView::from(&snapshot(RunState::Ok, true))).unwrap(),
         ],
         [
             serde_json::json!({"id": "run1", "agent_id": "explorer", "state": "running",

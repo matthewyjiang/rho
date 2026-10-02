@@ -45,23 +45,15 @@ impl App {
         agent: &mut impl CodemodeRuntime,
     ) -> anyhow::Result<()> {
         let current = agent.codemode_mode();
-        let requested = match invocation.args.trim().to_ascii_lowercase().as_str() {
-            "" => {
-                self.report_codemode(current);
-                return Ok(());
-            }
-            "on" => CodemodeMode::On,
-            "only" => CodemodeMode::Only,
-            _ => {
-                self.insert_entry(&Entry::Error(CODEMODE_USAGE.into()));
-                self.set_status("invalid codemode mode");
-                return Ok(());
-            }
-        };
-        if requested == current {
+        if invocation.args.trim().is_empty() {
             self.report_codemode(current);
             return Ok(());
         }
+        let Some(requested) = CodemodeMode::parse(&invocation.args) else {
+            self.insert_entry(&Entry::Error(CODEMODE_USAGE.into()));
+            self.set_status("invalid codemode mode");
+            return Ok(());
+        };
 
         let notice = match agent.set_codemode_mode(requested) {
             Ok(notice) => notice,
@@ -72,6 +64,10 @@ impl App {
                 self.set_status("codemode change failed");
                 return Ok(());
             }
+        };
+        let Some(display) = notice else {
+            self.report_codemode(current);
+            return Ok(());
         };
         if let Err(error) = self
             .info
@@ -90,13 +86,11 @@ impl App {
             self.set_status("config save failed");
             return Ok(());
         }
-        if let Some(display) = notice {
-            self.insert_entry(&Entry::Notice(display));
-            self.info
-                .services
-                .diagnostics
-                .update_tools(&agent.tool_specs());
-        }
+        self.insert_entry(&Entry::Notice(display));
+        self.info
+            .services
+            .diagnostics
+            .update_tools(&agent.tool_specs());
         self.report_codemode(requested);
         Ok(())
     }

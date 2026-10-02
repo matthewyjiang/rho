@@ -10,7 +10,7 @@ use crate::{
     hashline::FileHash,
     path_glob::PathGlob,
     search::{
-        clamp_limit, stop_reasons, SearchOutput, StopReason, WorkspaceSearch, DEFAULT_MAX_RESULTS,
+        clamp_limit, stop_reasons, StopReason, WorkspaceSearch, DEFAULT_MAX_RESULTS,
         MAX_RESULTS_CEILING, SEARCH_DEADLINE,
     },
     text_view::read_searchable_lines,
@@ -153,6 +153,7 @@ impl GrepRequest {
 
 impl WorkspaceSearch for GrepSearch {
     type Request = GrepRequest;
+    type Output = GrepOutput;
 
     const NAME: &'static str = "grep";
 
@@ -195,7 +196,7 @@ impl WorkspaceSearch for GrepSearch {
         display_root: &str,
         request: &GrepRequest,
         cancelled: &dyn Fn() -> bool,
-    ) -> Result<SearchOutput, ToolError> {
+    ) -> Result<crate::Rendered<GrepOutput>, ToolError> {
         grep_search(
             root,
             display_root,
@@ -204,52 +205,21 @@ impl WorkspaceSearch for GrepSearch {
             self.file_view.style(),
         )
     }
-
-    fn output_schema() -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "files": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string", "description": "Relative to the searched path"},
-                            "count": {"type": "integer", "description": "Matching lines in the file"},
-                            "lines": {
-                                "type": "array",
-                                "description": "Retained matches (content mode only); text is a preview",
-                                "items": {
-                                    "type": "object",
-                                    "properties": {
-                                        "line": {"type": "integer"},
-                                        "text": {"type": "string"}
-                                    },
-                                    "required": ["line", "text"]
-                                }
-                            }
-                        },
-                        "required": ["path", "count", "lines"]
-                    }
-                },
-                "total_matches": {"type": "integer"},
-                "stopped": crate::search::stopped_schema()
-            },
-            "required": ["files", "total_matches", "stopped"]
-        })
-    }
 }
 
 /// One file that matched, in the shape every output mode renders from.
+#[derive(serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct FileHit {
+    #[serde(rename = "path")]
     pub(crate) relative: String,
     /// Full-file snapshot tag when content mode computed one for edit anchors.
+    #[serde(skip)]
     pub(crate) file_tag: Option<String>,
     /// Matching lines in the file, including any not retained below.
+    #[serde(rename = "count")]
     pub(crate) total: usize,
-    /// Retained match lines as `(line number, display text)`. Empty unless the
-    /// output mode renders line text. Preview only - not hashline body text.
-    pub(crate) lines: Vec<(usize, String)>,
+    /// Retained previews, not hashline body text; empty outside content mode.
+    pub(crate) lines: Vec<MatchLine>,
 }
 
 impl FileHit {
@@ -269,16 +239,17 @@ pub(crate) struct GrepStats {
     pub(crate) reasons: Vec<StopReason>,
 }
 
-/// Text rendering of [`grep_search`].
-#[cfg(test)]
-pub(crate) fn grep_workspace(
-    root: &Path,
-    display_root: &str,
-    request: &GrepRequest,
-    cancelled: &dyn Fn() -> bool,
-    style: FileViewStyle,
-) -> Result<String, ToolError> {
-    grep_search(root, display_root, request, cancelled, style).map(|output| output.text)
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct GrepOutput {
+    files: Vec<FileHit>,
+    total_matches: usize,
+    stopped: Vec<crate::search::Stopped>,
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct MatchLine {
+    pub(crate) line: usize,
+    pub(crate) text: String,
 }
 
 pub(crate) fn grep_search(
@@ -287,7 +258,7 @@ pub(crate) fn grep_search(
     request: &GrepRequest,
     cancelled: &dyn Fn() -> bool,
     style: FileViewStyle,
-) -> Result<SearchOutput, ToolError> {
+) -> Result<crate::Rendered<GrepOutput>, ToolError> {
     let options = WalkOptions {
         hidden: request.hidden,
         limits: WalkLimits::within(SEARCH_DEADLINE),
@@ -343,22 +314,7 @@ pub(crate) fn grep_search(
     };
 
     let reasons = stop_reasons(walk_stop, per_file_truncated);
-    let structured = json!({
-        "files": hits
-            .iter()
-            .map(|hit| json!({
-                "path": hit.relative,
-                "count": hit.total,
-                "lines": hit
-                    .lines
-                    .iter()
-                    .map(|(line, text)| json!({"line": line, "text": text}))
-                    .collect::<Vec<_>>(),
-            }))
-            .collect::<Vec<_>>(),
-        "total_matches": total_matches,
-        "stopped": crate::search::stopped(&reasons),
-    });
+    let stopped = crate::search::stopped(&reasons);
     let text = format_results(
         request,
         display_root,
@@ -369,7 +325,14 @@ pub(crate) fn grep_search(
             reasons,
         },
     );
-    Ok(SearchOutput { text, structured })
+    Ok(crate::Rendered::new(
+        text,
+        GrepOutput {
+            files: hits,
+            total_matches,
+            stopped,
+        },
+    ))
 }
 
 /// Scans one file, keeping at most `retain` match lines for display.
@@ -405,7 +368,10 @@ fn scan_file(
                 total = total.saturating_add(1);
                 if lines.len() < retain {
                     // Search preview only - may truncate. Not hashline `N:text`.
-                    lines.push((line_no, truncate_chars(line, MAX_LINE_CHARS)));
+                    lines.push(MatchLine {
+                        line: line_no,
+                        text: truncate_chars(line, MAX_LINE_CHARS),
+                    });
                 }
                 if stop_early {
                     return ControlFlow::Break(());

@@ -31,7 +31,7 @@ pub(crate) type LiveHistorySource = Arc<dyn Fn() -> Vec<crate::model::Message> +
 /// Where one authorization happened, for hook envelope identity.
 #[derive(Clone, Default)]
 pub(crate) struct AuthorizationScope {
-    pub(crate) session_id: Option<crate::SessionId>,
+    pub(crate) session_id: crate::SessionId,
     pub(crate) run_id: Option<crate::RunId>,
     pub(crate) workspace_root: Option<PathBuf>,
     pub(crate) live_history: Option<LiveHistorySource>,
@@ -59,6 +59,7 @@ impl AuthorizationScope {
 ///
 /// Bundled so the authorization call site names one collaborator instead of six
 /// positional handles, and so adding the hook gate did not widen every caller.
+#[derive(Clone)]
 pub(crate) struct AuthorizationServices {
     policy: Arc<dyn WorkspacePolicy>,
     approvals: Arc<dyn ApprovalHandler>,
@@ -104,28 +105,50 @@ impl AuthorizationServices {
         &self.audit
     }
 
-    pub(crate) fn policy(&self) -> Arc<dyn WorkspacePolicy> {
-        Arc::clone(&self.policy)
-    }
-
-    pub(crate) fn hooks(&self) -> &HookWiring {
-        &self.hooks
-    }
-
-    pub(crate) fn live_history(&self) -> Option<LiveHistorySource> {
-        self.scope.live_history.clone()
-    }
-
-    pub(crate) fn session_id(&self) -> Option<&crate::SessionId> {
-        self.scope.session_id.as_ref()
-    }
-
     pub(crate) fn approval_session(&self) -> super::ApprovalSession {
         super::ApprovalSession::from_parts(
             Arc::clone(&self.approvals),
             Arc::clone(&self.remembered),
             Arc::clone(&self.audit),
         )
+    }
+
+    pub(crate) fn session_id(&self) -> &crate::SessionId {
+        &self.scope.session_id
+    }
+
+    /// Root host calls get an identity; nested calls retain the active run.
+    pub(crate) fn for_call(&self) -> Self {
+        let mut services = self.clone();
+        services.scope.run_id.get_or_insert_with(crate::RunId::new);
+        services
+    }
+
+    pub(crate) fn after_tool_use(
+        &self,
+        tool_name: &str,
+        call_id: &crate::ToolCallId,
+        result: &Result<crate::tool::ToolOutput, crate::tool::ToolError>,
+        elapsed: std::time::Duration,
+        capability: Option<&CapabilityRequest>,
+    ) {
+        let (status, failure) = crate::hooks::tool_status(match result {
+            Ok(output) => crate::hooks::ToolOutcomeRef::Completed(output),
+            Err(error) => crate::hooks::ToolOutcomeRef::Failed(error.kind(), error.message()),
+        });
+        self.hooks.observe_after_tool_use(
+            crate::hooks::HookToolIdentity {
+                session_id: Some(self.session_id()),
+                run_id: self.scope.run_id.as_ref(),
+                workspace_root: self.scope.workspace_root(),
+                tool_name,
+                call_id,
+            },
+            status,
+            failure,
+            Some(elapsed.as_millis() as u64),
+            capability,
+        );
     }
 
     fn approval_context(&self, cancellation: crate::CancellationToken) -> ApprovalContext {
@@ -139,10 +162,7 @@ impl AuthorizationServices {
         } else {
             Vec::new()
         };
-        match self.scope.session_id.clone() {
-            Some(session_id) => ApprovalContext::new(session_id, cancellation, history),
-            None => ApprovalContext::anonymous(cancellation, history),
-        }
+        ApprovalContext::new(self.session_id().clone(), cancellation, history)
     }
 }
 
@@ -310,7 +330,7 @@ async fn consult_pre_tool_gate(
 
     let scope = &services.scope;
     let mut builder = hooks.builder(
-        scope.session_id.as_ref(),
+        Some(services.session_id()),
         scope.run_id.as_ref(),
         scope.workspace_root(),
     );

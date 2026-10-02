@@ -175,9 +175,10 @@ impl JsonlAdapter {
             RunEvent::ToolFinished { call_id, result } => WireEventKind::ToolFinished {
                 call_id: call_id.to_string(),
                 status: match result {
-                    ToolCompletion::Success(output) if output.is_failure() => ToolStatus::Failure,
                     ToolCompletion::Success(_) => ToolStatus::Success,
-                    ToolCompletion::Failure(_) => ToolStatus::Failure,
+                    ToolCompletion::CompletedFailure(_) | ToolCompletion::Failure(_) => {
+                        ToolStatus::Failure
+                    }
                     ToolCompletion::Unavailable => ToolStatus::Unavailable,
                     _ => ToolStatus::Failure,
                 },

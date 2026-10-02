@@ -16,6 +16,7 @@ pub(crate) struct ModelPromptTemplate {
     home: Option<PathBuf>,
     before_model: String,
     retained: String,
+    mcp: String,
     sources: Vec<PromptSource>,
 }
 
@@ -34,6 +35,7 @@ impl ModelPromptTemplate {
             home: home.map(Path::to_path_buf),
             before_model,
             retained,
+            mcp: String::new(),
             sources,
         }
     }
@@ -42,6 +44,11 @@ impl ModelPromptTemplate {
     pub(crate) fn append_retained(&mut self, text: &str) {
         self.retained.push_str(text);
         self.sources[0].bytes += text.len();
+    }
+
+    /// Replace startup MCP context rather than retaining stale connect status.
+    pub(crate) fn replace_mcp(&mut self, report: &crate::tools::mcp::McpSessionReport) {
+        self.mcp = super::mcp_context(report);
     }
 
     /// Read current model prompt files only at explicit lifecycle boundaries.
@@ -91,7 +98,9 @@ impl ModelPromptTemplate {
             running.describe(),
         ));
         sources[0].bytes += text.len() - start;
+        text.push_str(&self.mcp);
         text.push_str(&self.retained);
+        sources[0].bytes += self.mcp.len();
         SystemPrompt {
             text,
             sources,

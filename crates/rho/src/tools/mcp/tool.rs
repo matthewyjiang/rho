@@ -26,11 +26,8 @@ use rmcp::{
 };
 
 use super::{
-    config::McpTransport,
-    definition::McpToolDefinition,
-    inflight::McpInFlightCalls,
-    progress::McpProgressRouter,
-    result::{self, RenderedResult},
+    config::McpTransport, definition::McpToolDefinition, inflight::McpInFlightCalls,
+    progress::McpProgressRouter, result,
 };
 
 // Bound in-flight tool calls so an unresponsive server cannot hang a turn.
@@ -277,24 +274,7 @@ impl McpTool {
                             result = &mut call => result?,
                             never = &mut service => match never {},
                         };
-                        // Semantic model images and card assets were selected
-                        // independently while interpreting the MCP result.
-                        let mut metadata = metadata;
-                        for asset in rendered.assets {
-                            metadata = metadata.asset(asset);
-                        }
-                        let output = ToolOutput::text(rendered.text)
-                            .metadata(metadata)
-                            .with_images(rendered.images);
-                        let output = match rendered.structured {
-                            Some(structured) => output.with_structured_content(structured),
-                            None => output,
-                        };
-                        Ok(if rendered.failed {
-                            output.failed()
-                        } else {
-                            output
-                        })
+                        rendered.into_tool_output(metadata)
                     })
                 },
             ))
@@ -370,7 +350,7 @@ pub(super) struct McpCall<'a> {
     pub(super) image_delivery: super::McpImageDelivery,
 }
 
-/// Issue one `tools/call` and return the serialized MCP result.
+/// Issue one `tools/call` and return its model and script views.
 ///
 /// The request goes out as a cancellable handle rather than a plain await so
 /// two things hold: the server's progress token is known before the response
@@ -382,7 +362,7 @@ pub(super) async fn call_remote_tool(
     progress_sender: Option<ToolProgressSender>,
     max_output_bytes: usize,
     completion: Option<&Mutex<McpCallCompletion>>,
-) -> Result<RenderedResult, ToolError> {
+) -> Result<rho_tools::Rendered<serde_json::Value>, ToolError> {
     let McpCall {
         peer,
         progress,

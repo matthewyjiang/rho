@@ -190,8 +190,7 @@ fn tool_locations(paths: &[std::path::PathBuf]) -> Vec<ToolCallLocation> {
 
 fn finished_content(result: &ToolCompletion) -> (ToolCallStatus, Vec<ToolCallContent>) {
     match result {
-        // A completed call flagged as failed keeps its content but reads as failed.
-        ToolCompletion::Success(output) if output.is_failure() => {
+        ToolCompletion::CompletedFailure(output) => {
             (ToolCallStatus::Failed, success_content(output))
         }
         ToolCompletion::Success(output) => (ToolCallStatus::Completed, success_content(output)),

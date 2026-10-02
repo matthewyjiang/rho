@@ -1,51 +1,27 @@
-//! Starlark evaluator for code-mode scripts.
-//!
-//! Guest globals: `call_tool(name, args=None)` plus captured `print(...)`.
-//! Assign `result = ...` for the distilled return value.
-//! Nested tool I/O stays on ToolHost; only distillate returns to the model.
+//! Bounded Starlark evaluation. Tool I/O stays on the owning Tokio runtime.
 
-use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 
-use rho_sdk::tool::ToolOutput;
+use super::{bridge::ToolHostBridge, call_log::NestedCallRecord, script_output};
+use schemars::JsonSchema;
+use serde::Serialize;
 use serde_json::{json, Value as JsonValue};
 use starlark::environment::{GlobalsBuilder, LibraryExtension, Module};
 use starlark::eval::Evaluator;
 use starlark::starlark_module;
 use starlark::syntax::{AstModule, Dialect};
-use starlark::values::dict::AllocDict;
-use starlark::values::list::AllocList;
 use starlark::values::none::NoneType;
-use starlark::values::{Heap, Value};
-use starlark::PrintHandler;
-use thiserror::Error;
+use starlark::values::Value;
+use starlark::{any::ProvidesStaticType, PrintHandler};
 
-use super::bridge::{BridgeError, GuardedBridge};
-use super::exposure::ExposureController;
-
-/// Standard Starlark plus top-level `for`/`if`.
-///
-/// The spec keeps control flow inside `def` so Bazel files stay declarative.
-/// A codemode script is one-off glue, which models write top-level. Allowing
-/// it adds no power: `for` still walks finite values only (there is no
-/// `while`), and [`EngineLimits`] bounds every script either way.
 const CODEMODE_DIALECT: Dialect = Dialect {
     enable_top_level_stmt: true,
+    enable_f_strings: true,
     ..Dialect::Standard
 };
 
-#[derive(Debug, Error)]
-pub enum EngineError {
-    #[error("codemode starlark: {0}")]
-    Starlark(String),
-    #[error(transparent)]
-    Bridge(#[from] BridgeError),
-    #[error("codemode: {0}")]
-    Message(String),
-}
-
 #[derive(Debug, Clone)]
-pub struct EngineLimits {
+pub(super) struct EngineLimits {
     pub max_ticks: u64,
     pub max_heap_bytes: usize,
     pub max_callstack: usize,
@@ -61,120 +37,126 @@ impl Default for EngineLimits {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct EngineOutput {
+/// Structured result of one script. The model receives only the text from
+/// [`format_engine_output`]; `calls` feeds the interactive card.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub(super) struct EngineOutput {
     pub return_value: JsonValue,
     pub prints: Vec<String>,
-    pub nested_calls: usize,
+    /// Nested tool calls in start order, including ones a failure cut short.
+    pub calls: Vec<NestedCallRecord>,
+    /// Why the script failed; prints and calls before the failure remain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
-struct GuestShared {
-    bridge: Arc<GuardedBridge>,
-    exposure: Option<Arc<ExposureController>>,
-    #[allow(dead_code)]
-    prints: Arc<Mutex<Vec<String>>>,
+/// One evaluation. Prints survive a failed script so partial work stays visible.
+pub(super) struct Evaluation {
+    pub result: starlark::Result<JsonValue>,
+    pub prints: Vec<String>,
+}
+
+#[derive(ProvidesStaticType)]
+struct GuestState {
+    bridge: Arc<ToolHostBridge>,
     runtime: tokio::runtime::Handle,
 }
 
-thread_local! {
-    static GUEST: RefCell<Option<Arc<GuestShared>>> = const { RefCell::new(None) };
-}
-
-struct StatePrint {
-    #[allow(dead_code)]
-    prints: Arc<Mutex<Vec<String>>>,
-}
+struct StatePrint(Mutex<Vec<String>>);
 
 impl PrintHandler for StatePrint {
     fn println(&self, text: &str) -> starlark::Result<()> {
-        self.prints.lock().expect("prints").push(text.to_owned());
+        self.0.lock().expect("prints").push(text.to_owned());
         Ok(())
     }
 }
 
-/// Evaluate a Starlark code-mode body on the current Tokio runtime.
-#[cfg(test)]
-pub fn evaluate_code_mode(
+/// Called on a blocking-pool thread while the parent task drains host events.
+pub(super) fn evaluate_code_mode(
     source: &str,
-    bridge: Arc<GuardedBridge>,
+    bridge: Arc<ToolHostBridge>,
     limits: EngineLimits,
-) -> Result<EngineOutput, EngineError> {
-    evaluate_code_mode_with_exposure(source, bridge, limits, None)
+) -> Evaluation {
+    let state = GuestState {
+        bridge,
+        runtime: tokio::runtime::Handle::current(),
+    };
+    let print_handler = StatePrint(Mutex::default());
+    let mut builder = GlobalsBuilder::extended_by(&[LibraryExtension::Print]);
+    code_mode_api(&mut builder);
+    let globals = builder.build();
+    let result =
+        AstModule::parse("codemode.star", source.to_owned(), &CODEMODE_DIALECT).and_then(|ast| {
+            Module::with_temp_heap(|module| {
+                let mut eval = Evaluator::new(&module);
+                eval.extra = Some(&state);
+                eval.set_max_tick_count(limits.max_ticks)
+                    .map_err(starlark::Error::new_other)?;
+                eval.set_max_heap_size(limits.max_heap_bytes)
+                    .map_err(starlark::Error::new_other)?;
+                eval.set_max_callstack_size(limits.max_callstack)
+                    .map_err(starlark::Error::new_other)?;
+                eval.set_print_handler(&print_handler);
+                eval.eval_module(ast, &globals)?;
+                module
+                    .get("result")
+                    .map(starlark_to_json)
+                    .transpose()
+                    .map(|value| value.unwrap_or(JsonValue::Null))
+            })
+        });
+    Evaluation {
+        result,
+        prints: print_handler.0.into_inner().expect("prints"),
+    }
 }
 
-/// Evaluate on a Tokio blocking-pool thread, with script-side discovery via
-/// `search_tools` / `list_tools`. The owning async task must keep draining events
-/// while nested calls use its runtime for I/O.
-pub fn evaluate_code_mode_with_exposure(
-    source: &str,
-    bridge: Arc<GuardedBridge>,
-    limits: EngineLimits,
-    exposure: Option<Arc<ExposureController>>,
-) -> Result<EngineOutput, EngineError> {
-    let runtime = tokio::runtime::Handle::try_current().map_err(|_| {
-        EngineError::Message(
-            "codemode requires a Tokio runtime (run inside an async tool call)".into(),
-        )
-    })?;
+fn guest<'a>(eval: &'a Evaluator<'_, '_, '_>) -> anyhow::Result<&'a GuestState> {
+    eval.extra
+        .and_then(|extra| extra.downcast_ref::<GuestState>())
+        .ok_or_else(|| anyhow::anyhow!("missing codemode guest state"))
+}
 
-    let prints = Arc::new(Mutex::new(Vec::new()));
-    let state = Arc::new(GuestShared {
-        bridge: bridge.clone(),
-        exposure,
-        prints: Arc::clone(&prints),
-        runtime,
-    });
-    let print_handler = StatePrint {
-        prints: Arc::clone(&prints),
-    };
+/// `{name, description}` rows: discovery stays small; `describe_tool` has schemas.
+fn summaries<'v>(
+    query: &str,
+    limit: i32,
+    eval: &mut Evaluator<'v, '_, '_>,
+) -> anyhow::Result<Value<'v>> {
+    let hits: Vec<_> = guest(eval)?
+        .bridge
+        .search(query, limit.max(1) as usize)
+        .into_iter()
+        .map(|entry| json!({"name": entry.name, "description": entry.description}))
+        .collect();
+    Ok(eval.heap().alloc(JsonValue::Array(hits)))
+}
 
-    let globals = {
-        let mut builder = GlobalsBuilder::extended_by(&[LibraryExtension::Print]);
-        code_mode_api(&mut builder);
-        builder.build()
-    };
-
-    let ast = AstModule::parse("codemode.star", source.to_owned(), &CODEMODE_DIALECT)
-        .map_err(|error| EngineError::Starlark(error.to_string()))?;
-
-    GUEST.with(|slot| {
-        *slot.borrow_mut() = Some(Arc::clone(&state));
-    });
-
-    let return_value = Module::with_temp_heap(|module| {
-        let mut eval = Evaluator::new(&module);
-        eval.set_max_tick_count(limits.max_ticks)
-            .map_err(|error| EngineError::Starlark(error.to_string()))?;
-        eval.set_max_heap_size(limits.max_heap_bytes)
-            .map_err(|error| EngineError::Starlark(error.to_string()))?;
-        eval.set_max_callstack_size(limits.max_callstack)
-            .map_err(|error| EngineError::Starlark(error.to_string()))?;
-        eval.set_print_handler(&print_handler);
-        eval.eval_module(ast, &globals)
-            .map_err(|error| EngineError::Starlark(error.to_string()))?;
-        let value = match module.get("result") {
-            Some(value) => starlark_to_json(value).unwrap_or(JsonValue::Null),
-            None => JsonValue::Null,
-        };
-        Ok::<JsonValue, EngineError>(value)
-    });
-
-    GUEST.with(|slot| {
-        *slot.borrow_mut() = None;
-    });
-
-    let return_value = return_value?;
-    let prints = prints.lock().expect("prints").clone();
-    Ok(EngineOutput {
-        return_value,
-        prints,
-        nested_calls: bridge.call_count(),
-    })
+/// Accepts `name`, `(name,)`, or `(name, args)` per batch item.
+fn batch_item(item: JsonValue) -> anyhow::Result<(String, JsonValue)> {
+    let invalid = || anyhow::anyhow!("call_tools items must be a name or a (name, args) pair");
+    match item {
+        JsonValue::String(name) => Ok((name, json!({}))),
+        JsonValue::Array(mut parts) if (1..=2).contains(&parts.len()) => {
+            let args = if parts.len() == 2 {
+                parts
+                    .pop()
+                    .filter(|args| !args.is_null())
+                    .unwrap_or(json!({}))
+            } else {
+                json!({})
+            };
+            match parts.pop() {
+                Some(JsonValue::String(name)) => Ok((name, args)),
+                _ => Err(invalid()),
+            }
+        }
+        _ => Err(invalid()),
+    }
 }
 
 #[starlark_module]
 fn code_mode_api(builder: &mut GlobalsBuilder) {
-    /// Invoke any ToolHost-registered tool (native or MCP) by name.
     fn call_tool<'v>(
         name: &str,
         #[starlark(default = NoneType)] args: Value<'v>,
@@ -183,158 +165,88 @@ fn code_mode_api(builder: &mut GlobalsBuilder) {
         let arguments = if args.is_none() {
             json!({})
         } else {
-            starlark_to_json(args).map_err(|error| anyhow::Error::msg(error.to_string()))?
+            starlark_to_json(args).map_err(starlark::Error::into_anyhow)?
         };
-        let output = invoke_blocking(name, arguments)
-            .map_err(|error| anyhow::Error::msg(error.to_string()))?;
-        let payload = tool_output_to_json(&output);
-        let heap = eval.heap();
-        Ok(json_to_starlark(heap, &payload))
+        let state = guest(eval)?;
+        let output = state
+            .runtime
+            .block_on(state.bridge.call_tool(name, arguments))?;
+        Ok(eval.heap().alloc(script_output::value(&output)))
     }
 
-    /// Keyword/substring search over indexed tools (incl. MCP defaults that are not LLM-declared).
+    /// Runs independent calls concurrently. A call that cannot complete
+    /// becomes an `is_error` envelope so its siblings' results survive.
+    fn call_tools<'v>(
+        calls: Value<'v>,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<Value<'v>> {
+        let items = match starlark_to_json(calls).map_err(starlark::Error::into_anyhow)? {
+            JsonValue::Array(items) => items,
+            _ => anyhow::bail!("call_tools expects a list of (name, args) pairs"),
+        };
+        let calls = items
+            .into_iter()
+            .map(batch_item)
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        let state = guest(eval)?;
+        let results = state.runtime.block_on(state.bridge.call_tools(calls))?;
+        let values = results
+            .into_iter()
+            .map(|result| match result {
+                Ok(output) => script_output::value(&output),
+                Err(error) => script_output::error_value(&error.to_string()),
+            })
+            .collect();
+        Ok(eval.heap().alloc(JsonValue::Array(values)))
+    }
+
     fn search_tools<'v>(
         query: &str,
         #[starlark(default = 10)] limit: i32,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<Value<'v>> {
-        let hits = discovery_search(query, limit.max(1) as usize)
-            .map_err(|error| anyhow::Error::msg(error.to_string()))?;
-        let payload = JsonValue::Array(
-            hits.into_iter()
-                .map(|hit| {
-                    json!({
-                        "name": hit.name,
-                        "description": hit.description,
-                        "returns": hit.returns,
-                    })
-                })
-                .collect(),
-        );
-        Ok(json_to_starlark(eval.heap(), &payload))
+        summaries(query, limit, eval)
     }
 
-    /// List tools visible to scripts (excludes hidden). Prefer search_tools for large catalogs.
     fn list_tools<'v>(
         #[starlark(default = 50)] limit: i32,
         eval: &mut Evaluator<'v, '_, '_>,
     ) -> anyhow::Result<Value<'v>> {
-        let hits = discovery_list(limit.max(1) as usize)
-            .map_err(|error| anyhow::Error::msg(error.to_string()))?;
-        let payload = JsonValue::Array(
-            hits.into_iter()
-                .map(|hit| {
-                    json!({
-                        "name": hit.name,
-                        "description": hit.description,
-                        "returns": hit.returns,
-                    })
-                })
-                .collect(),
-        );
-        Ok(json_to_starlark(eval.heap(), &payload))
+        summaries("", limit, eval)
+    }
+
+    /// The full catalog entry, with parameter and return schemas, or None.
+    fn describe_tool<'v>(
+        name: &str,
+        eval: &mut Evaluator<'v, '_, '_>,
+    ) -> anyhow::Result<Value<'v>> {
+        Ok(match guest(eval)?.bridge.describe(name) {
+            Some(entry) => eval.heap().alloc(serde_json::to_value(entry)?),
+            None => Value::new_none(),
+        })
     }
 }
 
-fn discovery_search(
-    query: &str,
-    limit: usize,
-) -> Result<Vec<super::exposure::ToolCatalogEntry>, EngineError> {
-    let state = GUEST
-        .with(|slot| slot.borrow().clone())
-        .ok_or_else(|| EngineError::Message("internal: missing codemode guest state".into()))?;
-    let Some(exposure) = state.exposure.as_ref() else {
-        return Ok(Vec::new());
-    };
-    Ok(exposure.search(query, limit))
+fn starlark_to_json(value: Value<'_>) -> starlark::Result<JsonValue> {
+    value.to_json_value().map_err(starlark::Error::new_value)
 }
 
-fn discovery_list(limit: usize) -> Result<Vec<super::exposure::ToolCatalogEntry>, EngineError> {
-    let state = GUEST
-        .with(|slot| slot.borrow().clone())
-        .ok_or_else(|| EngineError::Message("internal: missing codemode guest state".into()))?;
-    let Some(exposure) = state.exposure.as_ref() else {
-        return Ok(Vec::new());
-    };
-    Ok(exposure.list_script_visible(limit))
-}
-
-fn invoke_blocking(name: &str, arguments: JsonValue) -> Result<ToolOutput, EngineError> {
-    let state = GUEST
-        .with(|slot| slot.borrow().clone())
-        .ok_or_else(|| EngineError::Message("internal: missing codemode guest state".into()))?;
-    let bridge = Arc::clone(&state.bridge);
-    let name = name.to_owned();
-    // The evaluator runs on a blocking-pool thread; nested async I/O stays
-    // on the owning runtime while its worker continues draining host events.
-    let output = state
-        .runtime
-        .block_on(async move { bridge.call_tool(&name, arguments).await })?;
-    Ok(output)
-}
-
-/// Script-facing result plus the host-owned `is_error` completion flag.
-/// Object results retain their fields; scalar/array results and text-only
-/// output use `content`. Server data cannot override the completion flag.
-fn tool_output_to_json(output: &ToolOutput) -> JsonValue {
-    let mut payload = match output.structured_content() {
-        Some(JsonValue::Object(fields)) => fields.clone(),
-        Some(structured) => serde_json::Map::from_iter([("content".into(), structured.clone())]),
-        None => serde_json::Map::from_iter([("content".into(), json!(output.content()))]),
-    };
-    payload.insert("is_error".into(), json!(output.is_failure()));
-    JsonValue::Object(payload)
-}
-
-fn starlark_to_json(value: Value<'_>) -> Result<JsonValue, EngineError> {
-    value
-        .to_json_value()
-        .map_err(|error| EngineError::Starlark(error.to_string()))
-}
-
-fn json_to_starlark<'v>(heap: Heap<'v>, value: &JsonValue) -> Value<'v> {
-    match value {
-        JsonValue::Null => Value::new_none(),
-        JsonValue::Bool(flag) => heap.alloc(*flag),
-        JsonValue::Number(number) => {
-            if let Some(integer) = number.as_i64() {
-                heap.alloc(integer)
-            } else if let Some(float) = number.as_f64() {
-                heap.alloc(float.to_string())
-            } else {
-                heap.alloc(number.to_string())
-            }
-        }
-        JsonValue::String(text) => heap.alloc(text.as_str()),
-        JsonValue::Array(items) => heap.alloc(AllocList(
-            items.iter().map(|item| json_to_starlark(heap, item)),
-        )),
-        JsonValue::Object(map) => heap
-            .alloc(AllocDict(map.iter().map(|(key, item)| {
-                (heap.alloc(key.as_str()), json_to_starlark(heap, item))
-            }))),
-    }
-}
-
-/// Format engine output for the outer tool result (distilled).
-pub fn format_engine_output(output: &EngineOutput) -> String {
+pub(super) fn format_engine_output(output: &EngineOutput) -> String {
     let mut parts = Vec::new();
     if !output.prints.is_empty() {
         parts.push(output.prints.join("\n"));
     }
     if !output.return_value.is_null() {
-        parts.push(
-            serde_json::to_string_pretty(&output.return_value)
-                .unwrap_or_else(|_| output.return_value.to_string()),
-        );
+        parts.push(serde_json::to_string_pretty(&output.return_value).expect("JSON value"));
+    }
+    if let Some(error) = &output.error {
+        parts.push(format!("script failed: {error}"));
     }
     let text = if parts.is_empty() {
-        format!("(no output; {} nested tool call(s))", output.nested_calls)
+        format!("(no output; {} nested tool call(s))", output.calls.len())
     } else {
         parts.join("\n\n")
     };
-    // Reuse the native-tool output budget; prints and the serialized return
-    // value share it, including the notice and truncation marker.
     let limit = rho_tools::DEFAULT_MAX_OUTPUT_BYTES;
     if text.len() <= limit {
         return text;

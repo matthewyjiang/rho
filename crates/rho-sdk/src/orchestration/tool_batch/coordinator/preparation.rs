@@ -30,14 +30,13 @@ pub(super) async fn prepare_batch<'a>(
     core: &Arc<SessionCore>,
     runtime: &Rho,
     run_id: &crate::RunId,
-    tools: &'a [Option<Arc<dyn Tool>>],
-    calls: Vec<(ToolCall, ToolCallId, ToolInvocationSource)>,
+    calls: &'a [crate::orchestration::tool_turn::StagedCall],
     cancellation: &CancellationToken,
     limit: NonZeroUsize,
 ) -> (Vec<BatchCall<'a>>, bool) {
     let interrupted = calls
         .iter()
-        .map(|(call, id, _)| (call.clone(), id.clone()))
+        .map(|entry| (entry.call.clone(), entry.id.clone()))
         .collect::<Vec<_>>();
     let scope = PreparationScope {
         runtime,
@@ -50,7 +49,7 @@ pub(super) async fn prepare_batch<'a>(
             Arc::clone(&runtime.approval_audit),
             runtime.hooks.clone(),
             crate::workspace::AuthorizationScope {
-                session_id: Some(core.id().clone()),
+                session_id: core.id().clone(),
                 run_id: Some(run_id.clone()),
                 workspace_root: runtime
                     .workspace
@@ -66,15 +65,14 @@ pub(super) async fn prepare_batch<'a>(
         limit,
     };
     let mut preparations = calls
-        .into_iter()
-        .enumerate()
-        .map(|(index, (call, id, source))| {
+        .iter()
+        .map(|entry| {
             Box::pin(prepare_call(
                 &scope,
-                tools[index].as_ref(),
-                call,
-                id,
-                source,
+                entry.tool.as_ref(),
+                entry.call.clone(),
+                entry.id.clone(),
+                entry.source,
             )) as PreparationFuture<'a, '_>
         })
         .map(Some)

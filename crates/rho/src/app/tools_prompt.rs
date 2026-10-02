@@ -239,19 +239,11 @@ pub(crate) async fn assemble_tools_and_prompt(
                     advisor.as_ref(),
                     plugin_skills,
                 );
+                template.replace_mcp(&mcp_report);
                 let mut retained = String::new();
                 if !launch_delegation_enabled {
                     prompt::append_subagents_disabled_instruction(&mut retained);
                 }
-                // Server guidance describes the MCP tools this run actually has.
-                let mcp_instructions = mcp_report
-                    .servers
-                    .iter()
-                    .filter_map(|server| Some((server.identity.as_str(), server.instructions()?)))
-                    .collect::<Vec<_>>();
-                prompt::append_mcp_instructions(&mut retained, mcp_instructions.iter().copied());
-                // Short server catalog (not full schemas); MCP tools default to codemode.
-                retained.push_str(&tools.mcp_servers_catalog_section());
                 if !extra.is_empty() {
                     retained.push_str(&format!("\n\n# Agent instructions\n\n{extra}"));
                 }

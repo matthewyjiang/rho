@@ -377,6 +377,27 @@ const PROGRESS_TOOL_STEPS: &[Step] = &[
     Step::ExitCommand,
 ];
 
+// The codemode card shows nested call rows and the script as source, not the
+// escaped argument JSON the generic card used to print.
+const CODEMODE_CARD_STEPS: &[Step] = &[
+    Step::Phase("startup"),
+    Step::WaitText {
+        text: "gpt-5.5",
+        timeout: STARTUP,
+    },
+    Step::SubmitText("fixture codemode"),
+    Step::WaitText {
+        text: "codemode fixture complete",
+        timeout: STREAM,
+    },
+    Step::AssertText("codemode(2 calls)"),
+    Step::AssertText("✓ list_dir"),
+    Step::AssertText("✓ glob"),
+    Step::AssertText("codemode fixture batch 2"),
+    Step::Custom(assert_no_escaped_script_json),
+    Step::ExitCommand,
+];
+
 const CONCURRENT_PROGRESS_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -556,6 +577,13 @@ const ALL_SCENARIOS: &[Scenario] = &[
         },
         &[],
         /*smoke*/ false,
+    ),
+    Scenario::new(
+        "codemode_card",
+        "Render a batched codemode script as call rows and source",
+        DEFAULT_SIZE,
+        CODEMODE_CARD_STEPS,
+        false,
     ),
     Scenario::new(
         "progress_tool",
@@ -950,5 +978,6 @@ use fixture_release::release_fixture;
 pub use dispatch::run_named;
 
 use assert_helpers::{
-    assert_idle_shell_still_streaming, assert_inline_shell_cancelled, assert_terminal_restored,
+    assert_idle_shell_still_streaming, assert_inline_shell_cancelled,
+    assert_no_escaped_script_json, assert_terminal_restored,
 };

@@ -55,7 +55,11 @@ fn content_body(display_root: &str, hits: &[FileHit]) -> String {
         } else {
             let _ = writeln!(body, "{path}");
         }
-        for (line_no, text) in &hit.lines {
+        for crate::grep::MatchLine {
+            line: line_no,
+            text,
+        } in &hit.lines
+        {
             // Preview shape uses `N | text`, not hashline `N:text`, so truncated
             // match bodies are not copy-pasteable into edit PUT rows.
             let _ = writeln!(body, "{line_no} | {text}");

@@ -1,5 +1,3 @@
-//! Per-request tool advertisement through [`crate::tool::ToolVisibility`].
-
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -9,137 +7,115 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 
 use crate::{
-    model::{ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall, ToolSpec},
-    provider::{ScriptedProvider, ScriptedTurn},
+    model::{
+        ContentBlock, Message, ModelIdentity, ModelRequest, ModelResponse, ToolCall, ToolSpec,
+    },
+    provider::{ModelProvider, ProviderFuture, ScriptedProvider, ScriptedTurn},
     tool::{ScriptedTool, ScriptedToolOutcome, ToolOutput, ToolVisibility},
     Rho, SessionOptions,
 };
 
-/// Advertises `always` and, once `revealed` is set, `revealed_tool`.
-struct Gate {
-    revealed: AtomicBool,
-}
-
-impl ToolVisibility for Gate {
+struct Visibility(AtomicBool);
+impl ToolVisibility for Visibility {
     fn is_advertised(&self, name: &str) -> bool {
-        match name {
-            "always" => true,
-            "revealed_tool" => self.revealed.load(Ordering::SeqCst),
-            _ => false,
-        }
+        name == "visible" && self.0.load(Ordering::SeqCst)
+    }
+
+    fn describe(&self, _spec: &ToolSpec) -> Option<String> {
+        Some("advertised description".into())
     }
 }
 
-/// Flips `revealed` when called, like a search tool promoting a deferred tool.
-struct RevealTool {
-    gate: Arc<Gate>,
+struct HideDuringRequest {
+    provider: ScriptedProvider,
+    visibility: Arc<Visibility>,
 }
-
-impl crate::tool::Tool for RevealTool {
-    fn spec(&self) -> ToolSpec {
-        spec("always")
+impl ModelProvider for HideDuringRequest {
+    fn identity(&self) -> ModelIdentity {
+        self.provider.identity()
     }
-
-    fn call<'a>(
-        &'a self,
-        _invocation: crate::tool::ToolInvocation,
-        _context: crate::tool::ToolContext,
-    ) -> crate::tool::ToolFuture<'a> {
-        self.gate.revealed.store(true, Ordering::SeqCst);
-        Box::pin(async { Ok(ToolOutput::text("revealed")) })
+    fn send_turn<'a>(&'a self, request: ModelRequest<'a>) -> ProviderFuture<'a> {
+        self.visibility.0.store(false, Ordering::SeqCst);
+        self.provider.send_turn(request)
     }
 }
 
-fn spec(name: &str) -> ToolSpec {
-    ToolSpec {
-        name: name.into(),
-        description: name.into(),
-        input_schema: json!({"type": "object"}),
-    }
-}
-
-fn call(id: &str, name: &str) -> ScriptedTurn {
-    ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
-        ToolCall {
-            id: id.into(),
-            name: name.into(),
-            arguments: json!({}),
-        },
-    )]))
-}
-
-fn names(tools: &[ToolSpec]) -> Vec<String> {
-    tools.iter().map(|tool| tool.name.clone()).collect()
-}
-
-// Covers: advertisement is chosen per model request (a change mid-run reaches
-// the next request), unadvertised tools stay out of the provider tool list,
-// and a model call to an unadvertised tool resolves unavailable, not executed.
-// Owner: SDK orchestration tool visibility.
+// Covers: visibility changes during a request must not revoke an advertised call;
+// hidden calls remain unavailable and the next request sees the new subset.
+// Owner: SDK orchestration.
 #[tokio::test]
-async fn visibility_is_resolved_per_request_and_gates_model_calls() {
-    let gate = Arc::new(Gate {
-        revealed: AtomicBool::new(false),
-    });
+async fn calls_use_the_advertised_request_snapshot() {
+    let visibility = Arc::new(Visibility(AtomicBool::new(true)));
     let provider = ScriptedProvider::new(
         ModelIdentity::new("scripted", "test", "model"),
         [
-            // Calls a hidden tool before it is advertised: must not run.
-            call("call-1", "revealed_tool"),
-            call("call-2", "always"),
-            call("call-3", "revealed_tool"),
+            ScriptedTurn::completed(ModelResponse::Assistant(
+                ["visible", "hidden"]
+                    .into_iter()
+                    .map(|name| {
+                        ContentBlock::ToolCall(ToolCall {
+                            id: name.into(),
+                            name: name.into(),
+                            arguments: json!({}),
+                        })
+                    })
+                    .collect(),
+            )),
             ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
                 "done".into(),
             )])),
         ],
     );
-    let runtime = Rho::builder()
-        .provider(provider.clone())
-        .tool(RevealTool {
-            gate: Arc::clone(&gate),
+    let mut builder = Rho::builder()
+        .provider(HideDuringRequest {
+            provider: provider.clone(),
+            visibility: Arc::clone(&visibility),
         })
-        .tool(ScriptedTool::new(
-            spec("revealed_tool"),
+        .tool_visibility_shared(visibility);
+    for name in ["visible", "hidden"] {
+        builder = builder.tool(ScriptedTool::new(
+            ToolSpec {
+                name: name.into(),
+                description: name.into(),
+                input_schema: json!({"type": "object"}),
+            },
             ScriptedToolOutcome::Success(ToolOutput::text("ran")),
-        ))
-        .tool(ScriptedTool::new(
-            spec("never"),
-            ScriptedToolOutcome::Success(ToolOutput::text("never")),
-        ))
-        .tool_visibility_shared(Arc::clone(&gate) as Arc<dyn ToolVisibility>)
-        .build()
-        .unwrap();
-    let session = runtime.session(SessionOptions::default()).await.unwrap();
-
-    session.complete("go").await.unwrap();
-
-    let requests = provider.recorded_requests();
+        ));
+    }
+    let runtime = builder.build().unwrap();
+    let expected_specs = vec![ToolSpec {
+        name: "visible".into(),
+        description: "advertised description".into(),
+        input_schema: json!({"type": "object"}),
+    }];
+    // Provider requests, context estimates, and external host projections agree.
+    assert_eq!(runtime.advertised_tool_specs(), expected_specs);
     assert_eq!(
-        requests
-            .iter()
-            .map(|request| names(&request.tools))
-            .collect::<Vec<_>>(),
-        vec![
-            vec!["always".to_owned()],
-            vec!["always".to_owned()],
-            vec!["always".to_owned(), "revealed_tool".to_owned()],
-            vec!["always".to_owned(), "revealed_tool".to_owned()],
-        ]
+        crate::tool::advertised_specs(
+            &runtime.tools.specs(),
+            runtime.tool_visibility.as_ref().unwrap().as_ref(),
+        ),
+        expected_specs,
     );
-    let results = session
-        .history()
-        .into_iter()
-        .filter_map(|message| match message {
-            Message::ToolResult(result) => Some((result.ok, result.content)),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    session.complete("go").await.unwrap();
     assert_eq!(
-        results,
-        vec![
-            (false, "tool 'revealed_tool' is unavailable".to_owned()),
-            (true, "revealed".to_owned()),
-            (true, "ran".to_owned()),
-        ]
+        provider
+            .recorded_requests()
+            .iter()
+            .map(|request| request.tools.clone())
+            .collect::<Vec<_>>(),
+        vec![expected_specs, vec![]]
+    );
+    assert_eq!(
+        session
+            .history()
+            .into_iter()
+            .filter_map(|message| match message {
+                Message::ToolResult(result) => Some((result.id, result.ok)),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        vec![("visible".into(), true), ("hidden".into(), false)]
     );
 }

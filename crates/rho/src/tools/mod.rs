@@ -15,6 +15,9 @@ mod notification_format;
 #[cfg(test)]
 #[path = "notification_format_tests.rs"]
 mod notification_format_tests;
+#[cfg(test)]
+#[path = "output_contract_tests.rs"]
+mod output_contract_tests;
 pub(crate) mod process;
 pub mod rho;
 mod save_agent;

@@ -14,9 +14,7 @@ pub use approval::{
 pub(crate) use approval::{ApprovalAuditLog, SessionApprovals};
 #[cfg(test)]
 pub(crate) use authorization::authorize;
-pub(crate) use authorization::{
-    authorize_for_call, AuthorizationScope, AuthorizationServices, LiveHistorySource,
-};
+pub(crate) use authorization::{authorize_for_call, AuthorizationScope, AuthorizationServices};
 pub use capability::{
     CapabilityKind, CapabilityOperation, CapabilityRequest, CapabilitySource, ExecutableSelection,
     NetworkTarget, PathScope, ProcessEnvironment, ProcessExecution, ProcessInvocation,

@@ -2,6 +2,10 @@
 
 use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
 
+#[path = "sdk_registry_inventory.rs"]
+mod inventory;
+use inventory::ToolInventory;
+
 use rho_sdk::tool::Tool;
 
 use crate::{
@@ -156,17 +160,22 @@ impl HostToolRegistration {
         }
     }
 
-    fn set_registered(&mut self, registered: bool) -> Option<Arc<dyn Tool>> {
+    fn set_registered(&mut self, tools: &mut Vec<Arc<dyn Tool>>, registered: bool) -> bool {
         if self.registered == registered {
-            return None;
+            return false;
         }
         self.registered = registered;
-        Some(Arc::clone(&self.tool))
+        if registered {
+            tools.push(self.tool.clone());
+        } else {
+            tools.retain(|tool| !Arc::ptr_eq(tool, &self.tool));
+        }
+        true
     }
 }
 
 pub struct AppToolSet {
-    tools: Vec<Arc<dyn Tool>>,
+    inventory: ToolInventory,
     bundles: Vec<Box<dyn ToolBundle>>,
     advisor: Option<AdvisorTools>,
     computer_use: Option<ComputerTools>,
@@ -183,16 +192,12 @@ pub struct AppToolSet {
     /// Present only when the `sessions` tool is installed, since recall is
     /// the only way to read an elided result back.
     recall: Option<crate::session::recall::RecallStore>,
-    /// Pi-style exposure + deferred promotions for model-facing specs.
-    exposure: std::sync::Arc<super::code_mode::ExposureController>,
-    /// Sibling tools for live `codemode`; synced by every tool-list mutation.
-    code_mode_nesting: Arc<super::code_mode::CodeModeNesting>,
 }
 
 impl AppToolSet {
     pub fn disabled() -> Self {
         Self {
-            tools: Vec::new(),
+            inventory: ToolInventory::default(),
             bundles: Vec::new(),
             advisor: None,
             subagents: None,
@@ -209,10 +214,6 @@ impl AppToolSet {
             file_view: rho_tools::FileViewPolicy::default(),
             session_search: super::sessions::SessionBinding::default(),
             recall: None,
-            exposure: std::sync::Arc::new(
-                super::code_mode::ExposureController::with_default_policy(),
-            ),
-            code_mode_nesting: Arc::default(),
         }
     }
 
@@ -326,23 +327,11 @@ impl AppToolSet {
             tool_set.add_bundle(bundle);
         }
 
-        // Composition + discovery. Nested codemode calls inherit the parent
-        // call's authorization (policy, hooks, approvals) via
-        // ToolHost::child_builder, so they follow the session permission mode.
-        // `codemode` is always registered (Pi has no mode that removes it);
-        // `codemode.mode` only changes how other tools are presented.
-        let codemode = Arc::new(super::code_mode::CodeModeTool::new(
-            Arc::clone(&tool_set.code_mode_nesting),
-            Arc::clone(&tool_set.exposure),
-        ));
-        let tool_search = Arc::new(super::code_mode::ToolSearchTool::new(Arc::clone(
-            &tool_set.exposure,
-        )));
-        tool_set.exposure.set_mode(config.codemode.mode);
-        tool_set.mutate_tools(|tools| {
-            tools.push(codemode);
-            tools.push(tool_search);
-        });
+        tool_set.code_mode().set_mode(config.codemode.mode);
+        let orchestration = tool_set.code_mode().orchestration_tools();
+        tool_set
+            .inventory
+            .mutate(|tools| tools.extend(orchestration));
 
         tool_set
     }
@@ -362,17 +351,10 @@ impl AppToolSet {
         }
     }
 
-    /// All tool-list changes publish the same inventory to execution and discovery.
-    fn mutate_tools<T>(&mut self, mutation: impl FnOnce(&mut Vec<Arc<dyn Tool>>) -> T) -> T {
-        let result = mutation(&mut self.tools);
-        self.code_mode_nesting.set_tools(&self.tools);
-        self.exposure.reindex_all(&self.tools);
-        result
-    }
-
     /// Registers a bundle so nested calls and discovery see its tools immediately.
     pub(crate) fn add_bundle(&mut self, bundle: impl ToolBundle + 'static) {
-        self.mutate_tools(|tools| tools.extend(bundle.tools().iter().cloned()));
+        self.inventory
+            .mutate(|tools| tools.extend(bundle.tools().iter().cloned()));
         self.bundles.push(Box::new(bundle));
     }
 
@@ -419,17 +401,8 @@ impl AppToolSet {
         let Some(computer) = self.computer_use.as_mut() else {
             return false;
         };
-        let Some(tool) = computer.registration.set_registered(registered) else {
-            return false;
-        };
-        self.mutate_tools(|tools| {
-            if registered {
-                tools.push(tool);
-            } else {
-                tools.retain(|candidate| !Arc::ptr_eq(candidate, &tool));
-            }
-        });
-        true
+        self.inventory
+            .mutate(|tools| computer.registration.set_registered(tools, registered))
     }
 
     /// Prompts and resources connected servers offer the user.
@@ -443,52 +416,30 @@ impl AppToolSet {
 
     /// Full executable tool list for a runtime build.
     pub fn tools(&self) -> &[Arc<dyn Tool>] {
-        &self.tools
+        self.inventory.tools()
     }
 
-    /// Per-request advertisement for runtimes built from [`Self::tools`].
-    ///
-    /// Shares the live exposure controller, so a `tool_search` promotion is
-    /// advertised on the next model request of the same run.
-    pub fn tool_visibility(&self) -> Option<Arc<dyn rho_sdk::tool::ToolVisibility>> {
-        Some(Arc::clone(&self.exposure) as Arc<dyn rho_sdk::tool::ToolVisibility>)
+    pub(crate) fn code_mode(&self) -> &Arc<super::code_mode::CodeModeSurface> {
+        self.inventory.surface()
+    }
+
+    /// Live per-request model advertisement, installed by the runtime builder.
+    pub fn tool_visibility(&self) -> Arc<dyn rho_sdk::tool::ToolVisibility> {
+        self.code_mode().clone()
     }
 
     pub fn specs(&self) -> Vec<rho_sdk::model::ToolSpec> {
-        // Keep tools() full for ToolHost execution; filter only model-facing schemas.
-        self.exposure.filter_model_specs(&self.tools)
-    }
-
-    #[allow(dead_code)]
-    pub fn exposure(&self) -> std::sync::Arc<super::code_mode::ExposureController> {
-        std::sync::Arc::clone(&self.exposure)
-    }
-
-    /// Short one-line-per-server MCP catalog for the system prompt (not full schemas).
-    pub fn mcp_servers_catalog_section(&self) -> String {
-        super::code_mode::format_mcp_servers_catalog(
-            self.mcp_report
-                .servers
-                .iter()
-                .map(|server| (server.identity.as_str(), server.status().as_str())),
-        )
-    }
-
-    /// Apply Pi-style exposure overrides (exact > pattern). Reindexes immediately.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "exposure overrides are not yet read from config; tests drive them"
-        )
-    )]
-    pub fn set_exposure_policy(&self, policy: super::code_mode::ExposurePolicy) {
-        self.exposure.set_policy(policy);
+        let specs = self
+            .tools()
+            .iter()
+            .map(|tool| tool.spec())
+            .collect::<Vec<_>>();
+        rho_sdk::tool::advertised_specs(&specs, self.tool_visibility().as_ref())
     }
 
     /// Returns registry names without applying any additional capability filter.
     pub fn unfiltered_names(&self) -> impl Iterator<Item = String> + '_ {
-        self.tools.iter().map(|tool| tool.spec().name)
+        self.tools().iter().map(|tool| tool.spec().name)
     }
 
     pub fn contains(&self, name: &str) -> bool {
@@ -502,21 +453,6 @@ impl AppToolSet {
     }
 
     /// Whether the `advisor` tool is currently advertised to the model.
-    pub fn codemode_mode(&self) -> crate::config::CodemodeMode {
-        self.exposure.mode()
-    }
-
-    /// Sets Pi's `codemode.mode` for the next model request.
-    ///
-    /// Registration never changes: `only` hides direct tools from the model,
-    /// and nested calls reach them under the session permission mode. Returns
-    /// whether the mode changed.
-    pub fn set_codemode_mode(&self, mode: crate::config::CodemodeMode) -> bool {
-        let changed = self.exposure.mode() != mode;
-        self.exposure.set_mode(mode);
-        changed
-    }
-
     pub fn advisor_registered(&self) -> bool {
         self.advisor
             .as_ref()
@@ -532,17 +468,8 @@ impl AppToolSet {
         let Some(advisor) = self.advisor.as_mut() else {
             return false;
         };
-        let Some(tool) = advisor.registration.set_registered(registered) else {
-            return false;
-        };
-        self.mutate_tools(|tools| {
-            if registered {
-                tools.push(tool);
-            } else {
-                tools.retain(|candidate| !Arc::ptr_eq(candidate, &tool));
-            }
-        });
-        true
+        self.inventory
+            .mutate(|tools| advisor.registration.set_registered(tools, registered))
     }
 
     /// Replaces the advertised built-in file edit tool.
@@ -562,13 +489,13 @@ impl AppToolSet {
             return None;
         }
         let position = self
-            .tools
+            .tools()
             .iter()
             .position(|tool| rho_tools::EditFormat::is_edit_tool_name(tool.spec().name.as_str()))?;
         let mutation_observer: Arc<dyn rho_tools::WorkspaceMutationObserver> =
             self.checkpoint_tracker.clone();
         let replacement = super::coding::edit_tool(edit_tool, max_output_bytes, mutation_observer);
-        self.mutate_tools(|tools| tools[position] = replacement);
+        self.inventory.mutate(|tools| tools[position] = replacement);
         self.file_view.set(edit_tool);
         Some(previous)
     }
@@ -580,7 +507,7 @@ impl AppToolSet {
 
     /// The currently advertised built-in edit format, when this run exposes one.
     pub fn edit_tool(&self) -> Option<rho_tools::EditFormat> {
-        self.tools
+        self.tools()
             .iter()
             .find_map(|tool| rho_tools::EditFormat::from_tool_name(tool.spec().name.as_str()))
     }
@@ -610,7 +537,7 @@ impl AppToolSet {
         } else {
             None
         };
-        self.mutate_tools(|tools| {
+        self.inventory.mutate(|tools| {
             let previous = tools
                 .iter()
                 .position(|tool| tool.spec().name == super::web::WEB_SEARCH_TOOL_NAME)
@@ -623,7 +550,7 @@ impl AppToolSet {
     }
 
     pub(crate) fn restore_web_search(&mut self, previous: Option<Arc<dyn Tool>>) {
-        self.mutate_tools(|tools| {
+        self.inventory.mutate(|tools| {
             tools.retain(|tool| tool.spec().name != super::web::WEB_SEARCH_TOOL_NAME);
             tools.extend(previous);
         });

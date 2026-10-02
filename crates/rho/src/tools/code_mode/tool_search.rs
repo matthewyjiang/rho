@@ -1,20 +1,18 @@
-//! `tool_search` — promote `deferred` tools into the active direct set.
+//! Model-side discovery, including native tools omitted in `only` mode.
 
 use std::sync::Arc;
 
 use rho_sdk::model::ToolSpec;
-use rho_sdk::tool::{
-    Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolOutput,
-};
+use rho_sdk::tool::{Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation};
 use serde::Deserialize;
 use serde_json::json;
 
-use super::exposure::ExposureController;
+use super::exposure::{CodeModeSurface, ToolCatalogEntry};
 
-pub const TOOL_SEARCH_NAME: &str = "tool_search";
+pub(crate) const TOOL_SEARCH_NAME: &str = "tool_search";
 
-#[derive(Debug, Deserialize)]
-struct ToolSearchArgs {
+#[derive(Deserialize)]
+struct Args {
     query: String,
     #[serde(default = "default_limit")]
     limit: usize,
@@ -24,78 +22,41 @@ fn default_limit() -> usize {
     10
 }
 
-/// Keyword/substring search over indexed tools; promotes deferred hits.
-pub struct ToolSearchTool {
-    exposure: Arc<ExposureController>,
+pub(super) struct ToolSearchTool {
+    surface: Arc<CodeModeSurface>,
 }
 
 impl ToolSearchTool {
-    pub fn new(exposure: Arc<ExposureController>) -> Self {
-        Self { exposure }
+    pub(super) fn new(surface: Arc<CodeModeSurface>) -> Self {
+        Self { surface }
     }
 }
 
 impl Tool for ToolSearchTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
-            name: TOOL_SEARCH_NAME.to_owned(),
-            description: "Search indexed tools by keyword/substring over name and description. \
-Matching deferred tools are promoted into the active tool list for subsequent turns. \
-Does not dump full server or tool catalogs."
-                .to_owned(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Keyword or substring to match against tool name and description."
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Max hits to return (default 10).",
-                        "minimum": 1
-                    }
-                },
-                "required": ["query"],
-                "additionalProperties": false
-            }),
+            name: TOOL_SEARCH_NAME.into(),
+            description: "Discover script-callable tools by name or description, including MCP tools and native tools in codemode only mode. Returns names, descriptions, and output schemas; call discovered tools through codemode.".into(),
+            input_schema: json!({"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "default": 10}}, "required": ["query"], "additionalProperties": false}),
         }
     }
 
+    fn output_schema(&self) -> Option<serde_json::Value> {
+        Some(rho_tools::output_schema::<Vec<ToolCatalogEntry>>())
+    }
+
     fn call<'a>(&'a self, invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
-        let args = invocation.arguments().clone();
-        let exposure = Arc::clone(&self.exposure);
         Box::pin(async move {
             if context.cancellation().is_cancelled() {
                 return Err(ToolError::cancelled());
             }
-            let parsed: ToolSearchArgs = serde_json::from_value(args)
-                .map_err(|err| ToolError::new(ToolErrorKind::InvalidArguments, err.to_string()))?;
-            let hits = exposure.search(&parsed.query, parsed.limit);
-            let mut promoted = Vec::new();
-            for hit in &hits {
-                if exposure.promote(&hit.name) {
-                    promoted.push(hit.name.clone());
-                }
-            }
-            let matches: Vec<_> = hits
-                .iter()
-                .map(|h| {
-                    json!({
-                        "name": h.name,
-                        "description": h.description,
-                        "exposure": exposure.effective(&h.name).as_str(),
-                    })
-                })
-                .collect();
-            Ok(ToolOutput::text(
-                serde_json::to_string_pretty(&json!({
-                    "query": parsed.query,
-                    "matches": matches,
-                    "promoted": promoted,
-                }))
-                .unwrap_or_else(|_| "{}".into()),
-            ))
+            let args: Args =
+                serde_json::from_value(invocation.arguments().clone()).map_err(|error| {
+                    ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
+                })?;
+            let hits = self.surface.search(&args.query, args.limit);
+            let text = serde_json::to_string_pretty(&hits).expect("serializable catalog");
+            rho_tools::Rendered::new(text, hits).into_tool_output(Default::default())
         })
     }
 }

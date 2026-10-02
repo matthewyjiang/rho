@@ -14,10 +14,7 @@ use {
 
 pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) provider: Arc<dyn ModelProvider>,
-    pub(crate) tools: &'a [Arc<dyn rho_sdk::tool::Tool>],
-    /// Chooses the advertised subset of `tools` per model request, from
-    /// [`crate::tools::AppToolSet::tool_visibility`]. `None` advertises all.
-    pub(crate) tool_visibility: Option<Arc<dyn rho_sdk::tool::ToolVisibility>>,
+    pub(crate) tools: &'a crate::tools::sdk_registry::AppToolSet,
     pub(crate) workspace: Workspace,
     pub(crate) workspace_policy: P,
     pub(crate) approval_session: Option<rho_sdk::ApprovalSession>,
@@ -37,7 +34,7 @@ pub(crate) struct RuntimeBuildOptions<'a, P> {
     pub(crate) hooks: Option<&'a crate::hooks::HookPipeline>,
     /// Receives compaction tier reports for `/info` and `rho(action="compaction")`.
     pub(crate) diagnostics: RuntimeDiagnostics,
-    /// From [`crate::tools::AppToolSet::recall_store`]; `None` disables elision.
+    /// From [`crate::tools::sdk_registry::AppToolSet::recall_store`]; `None` disables elision.
     pub(crate) recall: Option<RecallStore>,
 }
 
@@ -62,7 +59,6 @@ where
     let RuntimeBuildOptions {
         provider,
         tools,
-        tool_visibility,
         workspace,
         workspace_policy,
         approval_session,
@@ -81,7 +77,7 @@ where
     } = options;
     let (compactor, policy) = build_compaction(CompactionSetup {
         provider: Arc::clone(&provider),
-        tools,
+        tools: tools.tools(),
         reasoning,
         compaction,
         context_window,
@@ -114,16 +110,14 @@ where
             ))
             .usage_parent_session_id(parent_session_id);
     }
-    if let Some(visibility) = tool_visibility {
-        builder = builder.tool_visibility_shared(visibility);
-    }
+    builder = builder.tool_visibility_shared(tools.tool_visibility());
     if let Some(session) = approval_session {
         builder = builder.approval_session(session);
     }
     if let Some(policy) = policy {
         builder = builder.compaction_policy(policy);
     }
-    for tool in tools {
+    for tool in tools.tools() {
         builder = builder.tool_shared(tool.clone());
     }
     if let Some(hooks) = hooks {

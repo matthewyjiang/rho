@@ -362,13 +362,6 @@ impl RhoBuilder {
         self
     }
 
-    /// Publishes the turn in flight for [`crate::Session::live_history`] even
-    /// when no registered tool declares [`crate::Tool::reads_live_history`] and
-    /// the approval handler does not declare
-    /// [`crate::ApprovalHandler::reads_live_history`].
-    ///
-    /// Prefer [`crate::ApprovalHandler::reads_live_history`] when the consumer is
-    /// an approval handler. Keep this escape hatch for non-handler host logic.
     /// Chooses the advertised tool subset per model request.
     ///
     /// Without one, every registered tool is advertised on every request.
@@ -380,6 +373,10 @@ impl RhoBuilder {
         self
     }
 
+    /// Publishes the turn in flight for [`crate::Session::live_history`] even
+    /// when no registered tool or approval handler declares it reads live history.
+    /// Prefer [`crate::ApprovalHandler::reads_live_history`] for approval handlers.
+    /// Keep this escape hatch for non-handler host logic.
     pub fn force_publish_live_history(mut self, force: bool) -> Self {
         self.force_publish_live_history = force;
         self
@@ -504,13 +501,6 @@ impl Rho {
         RhoBuilder::default()
     }
 
-    /// Whether the next model request advertises `name`.
-    pub(crate) fn is_advertised(&self, name: &str) -> bool {
-        self.tool_visibility
-            .as_ref()
-            .is_none_or(|visibility| visibility.is_advertised(name))
-    }
-
     /// Filters registry specs to the subset advertised right now.
     ///
     /// Borrows `all` unchanged when no visibility is installed, so the common
@@ -522,26 +512,12 @@ impl Rho {
         let Some(visibility) = self.tool_visibility.as_ref() else {
             return std::borrow::Cow::Borrowed(all);
         };
-        std::borrow::Cow::Owned(
-            all.iter()
-                .filter(|spec| visibility.is_advertised(&spec.name))
-                .map(|spec| {
-                    let mut spec = spec.clone();
-                    visibility.describe(&mut spec);
-                    spec
-                })
-                .collect(),
-        )
+        std::borrow::Cow::Owned(crate::tool::advertised_specs(all, visibility.as_ref()))
     }
 
     /// Owned advertised specs for estimates and compaction outside a run loop.
     pub(crate) fn advertised_tool_specs(&self) -> Vec<crate::model::ToolSpec> {
         self.advertised_specs(&self.tools.specs()).into_owned()
-    }
-
-    /// Tool a model-sourced call may execute: registered and advertised now.
-    pub(crate) fn model_callable_tool(&self, name: &str) -> Option<Arc<dyn crate::tool::Tool>> {
-        self.tools.get(name).filter(|_| self.is_advertised(name))
     }
 
     pub fn shutdown(&self) -> ShutdownOutcome {

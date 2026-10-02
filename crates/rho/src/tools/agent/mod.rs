@@ -23,8 +23,7 @@ use {
 };
 
 use super::agent_output::{
-    agent_run_schema, format_background_start, format_list_entry, format_snapshot, structured_run,
-    structured_start, SnapshotFormat,
+    format_background_start, format_list_entry, format_snapshot, AgentRunView, SnapshotFormat,
 };
 
 const SUBAGENT_MANAGER: &str = "subagents";
@@ -128,11 +127,11 @@ impl AgentTool {
 
         // Registration is the start receipt; instant failures still reach
         // the parent through automatic completion delivery.
-        Ok(
-            ToolOutput::text(format_background_start(&run_id, &definition_id))
-                .metadata(agent_metadata())
-                .with_structured_content(structured_start(&run_id, &definition_id)),
+        rho_tools::Rendered::new(
+            format_background_start(&run_id, &definition_id),
+            AgentRunView::started(run_id, definition_id),
         )
+        .into_tool_output(agent_metadata())
     }
 }
 
@@ -188,7 +187,7 @@ impl Tool for AgentTool {
     }
 
     fn output_schema(&self) -> Option<serde_json::Value> {
-        Some(agent_run_schema())
+        Some(rho_tools::output_schema::<AgentRunView>())
     }
 
     fn security(&self) -> ToolSecurity {
@@ -227,14 +226,10 @@ impl AgentsTool {
     }
 
     async fn execute(&self, args: AgentsArgs) -> Result<ToolOutput, ToolError> {
-        let mut structured = None;
-        let content = match args.action.as_str() {
+        let (content, data) = match args.action.as_str() {
             "list" => {
                 let agents = self.manager.list();
-                structured = Some(serde_json::json!({
-                    "runs": agents.iter().map(structured_run).collect::<Vec<_>>(),
-                }));
-                if agents.is_empty() {
+                let content = if agents.is_empty() {
                     "no delegated agents".to_string()
                 } else {
                     agents
@@ -242,7 +237,13 @@ impl AgentsTool {
                         .map(format_list_entry)
                         .collect::<Vec<_>>()
                         .join("\n")
-                }
+                };
+                (
+                    content,
+                    AgentsOutput::List {
+                        runs: agents.iter().map(AgentRunView::from).collect(),
+                    },
+                )
             }
             "status" => {
                 let id = required_id(&args)?;
@@ -259,8 +260,12 @@ impl AgentsTool {
                 } else {
                     SnapshotFormat::Status
                 };
-                structured = Some(serde_json::json!({ "run": structured_run(&snapshot) }));
-                format_snapshot(&snapshot, format)
+                (
+                    format_snapshot(&snapshot, format),
+                    AgentsOutput::Status {
+                        run: AgentRunView::from(&snapshot),
+                    },
+                )
             }
             "stop" => {
                 let id = required_id(&args)?;
@@ -268,8 +273,12 @@ impl AgentsTool {
                     self.manager.stop(id).await.map_err(|error| {
                         ToolError::new(ToolErrorKind::Execution, error.to_string())
                     })?;
-                structured = Some(serde_json::json!({ "run": structured_run(&snapshot) }));
-                format_snapshot(&snapshot, SnapshotFormat::Completion)
+                (
+                    format_snapshot(&snapshot, SnapshotFormat::Completion),
+                    AgentsOutput::Stop {
+                        run: AgentRunView::from(&snapshot),
+                    },
+                )
             }
             "message" => {
                 let id = required_id(&args)?;
@@ -288,7 +297,7 @@ impl AgentsTool {
                     .message(id, &message)
                     .await
                     .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
-                match self.manager.task_identity(id) {
+                let content = match self.manager.task_identity(id) {
                     Some(identity) => message_receipt::MessageReceipt {
                         run_id: identity.run_id,
                         agent_id: identity.agent_id,
@@ -296,7 +305,8 @@ impl AgentsTool {
                     }
                     .content(),
                     None => format!("queued parent message for delegated run '{id}'"),
-                }
+                };
+                (content, AgentsOutput::Message { id: id.to_owned() })
             }
             other => {
                 return Err(ToolError::new(
@@ -305,11 +315,17 @@ impl AgentsTool {
                 ))
             }
         };
-        // `message` has no run state to report: it resolves to `{}`.
-        Ok(ToolOutput::text(content)
-            .metadata(agents_metadata())
-            .with_structured_content(structured.unwrap_or_else(|| serde_json::json!({}))))
+        rho_tools::Rendered::new(content, data).into_tool_output(agents_metadata())
     }
+}
+
+#[derive(serde::Serialize, schemars::JsonSchema)]
+#[serde(tag = "action", rename_all = "snake_case")]
+enum AgentsOutput {
+    List { runs: Vec<AgentRunView> },
+    Status { run: AgentRunView },
+    Stop { run: AgentRunView },
+    Message { id: String },
 }
 
 #[derive(Deserialize)]
@@ -350,14 +366,7 @@ impl Tool for AgentsTool {
     }
 
     fn output_schema(&self) -> Option<serde_json::Value> {
-        // `list` fills `runs`; `status` and `stop` fill `run`; `message` neither.
-        Some(serde_json::json!({
-            "type": "object",
-            "properties": {
-                "runs": {"type": "array", "items": agent_run_schema()},
-                "run": agent_run_schema()
-            }
-        }))
+        Some(rho_tools::output_schema::<AgentsOutput>())
     }
 
     fn security(&self) -> ToolSecurity {

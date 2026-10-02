@@ -12,8 +12,8 @@ use serde_json::Value;
 use rho_sdk::{
     tool::{
         OperationKind, PreparedToolInvocation, Tool, ToolError, ToolErrorKind, ToolInvocation,
-        ToolMetadata, ToolOutput, ToolPreparationContext, ToolPrepareFuture, ToolResource,
-        ToolResourceAccess, ToolSecurity,
+        ToolMetadata, ToolPreparationContext, ToolPrepareFuture, ToolResource, ToolResourceAccess,
+        ToolSecurity,
     },
     CapabilityKind,
 };
@@ -76,7 +76,7 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
     }
 
     fn output_schema(&self) -> Option<Value> {
-        Some(S::output_schema())
+        Some(crate::output_schema::<S::Output>())
     }
 
     fn start_metadata(&self, arguments: &Value) -> ToolMetadata {
@@ -131,15 +131,14 @@ impl<S: WorkspaceSearch> Tool for SearchTool<S> {
                             )
                         })?
                         .map_err(map_app_error)?;
-                        // Structured content is already bounded by
-                        // max_results / max_per_file, like the text.
-                        Ok(ToolOutput::text(truncate(output.text, max_output_bytes))
-                            .metadata(
+                        output
+                            .map_text(|text| truncate(text, max_output_bytes))
+                            .limit_data(max_output_bytes)?
+                            .into_tool_output(
                                 ToolMetadata::new()
                                     .operation(OperationKind::Read)
                                     .affected_path(display),
                             )
-                            .with_structured_content(output.structured))
                     })
                 },
             ))

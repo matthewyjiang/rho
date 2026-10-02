@@ -68,6 +68,7 @@ async fn settled_jobs_preserve_completion_metadata() {
         Err(ToolError::new(ToolErrorKind::Execution, "failed")),
     ] {
         let expected = match &outcome {
+            Ok(output) if output.is_failure() => ToolCompletion::CompletedFailure(output.clone()),
             Ok(output) => ToolCompletion::Success(output.clone()),
             Err(error) => {
                 ToolCompletion::Failure(ToolFailure::new(error.kind(), error.message().to_owned()))

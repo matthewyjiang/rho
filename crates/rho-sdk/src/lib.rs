@@ -197,8 +197,8 @@ pub use text::{
     ELLIPSIS, TRUNCATION_MARKER,
 };
 pub use tool_host::{
-    PendingToolHostInput, ToolHost, ToolHostBuilder, ToolHostCall, ToolHostEvent, ToolHostFuture,
-    ToolHostRun,
+    ChildToolHostBuilder, PendingToolHostInput, ToolHost, ToolHostBuilder, ToolHostCall,
+    ToolHostEvent, ToolHostFuture, ToolHostRun,
 };
 pub use usage::{
     ProviderRequestOutcome, ProviderRequestUsageContext, ProviderRequestUsageEvent,

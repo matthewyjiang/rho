@@ -272,6 +272,14 @@ pub enum CodemodeMode {
 }
 
 impl CodemodeMode {
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "on" => Some(Self::On),
+            "only" => Some(Self::Only),
+            _ => None,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::On => "on",

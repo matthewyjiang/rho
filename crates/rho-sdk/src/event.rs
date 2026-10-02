@@ -112,16 +112,37 @@ impl ToolFailure {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ToolCompletion {
-    /// A completed call; inspect [`ToolOutput::is_failure`] for result status.
-    ///
-    /// # Next major
-    ///
-    /// NEXT_MAJOR(rho-sdk): rename ToolCompletion::Success to Completed to distinguish completion from result status.
-    /// The variant name stays for minor compatibility; a completed failed result
-    /// retains its output here rather than becoming an execution error.
+    /// A successfully completed call.
     Success(ToolOutput),
+    /// A completed call reporting failure, retaining its output and metadata.
+    CompletedFailure(ToolOutput),
+    /// The call could not complete.
     Failure(ToolFailure),
     Unavailable,
+}
+
+impl ToolCompletion {
+    pub(crate) fn model_result(&self, name: &str, id: &str) -> crate::model::ToolResult {
+        let (ok, content) = match self {
+            Self::Success(output) => (true, output.content().to_owned()),
+            Self::CompletedFailure(output) => (false, output.content().to_owned()),
+            Self::Failure(failure) => (false, failure.message().to_owned()),
+            Self::Unavailable => (false, format!("tool '{name}' is unavailable")),
+        };
+        crate::model::ToolResult {
+            id: id.to_owned(),
+            ok,
+            content,
+        }
+    }
+
+    pub(crate) fn from_result(result: Result<ToolOutput, crate::tool::ToolError>) -> Self {
+        match result {
+            Ok(output) if output.is_failure() => Self::CompletedFailure(output),
+            Ok(output) => Self::Success(output),
+            Err(error) => Self::Failure(ToolFailure::new(error.kind(), error.message().to_owned())),
+        }
+    }
 }
 
 /// Provider and request settings that affect model-call performance.

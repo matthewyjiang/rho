@@ -55,6 +55,58 @@ fn model_selection_rebuilds_behavior_without_losing_retained_instructions() {
     }
 }
 
+// Covers: session suffix attachment must not reorder MCP context on hydration.
+// Owner: retained prompt template assembly.
+#[test]
+fn retained_suffix_and_mcp_rerender_match_the_built_prompt() {
+    let running = PromptModel::Rho {
+        provider: "test".into(),
+        model: "model".into(),
+    };
+    let mut template = ModelPromptTemplate::new(
+        None,
+        String::new(),
+        "retained".into(),
+        vec![PromptSource {
+            kind: PromptSourceKind::Base,
+            path: None,
+            bytes: "retained".len(),
+        }],
+    );
+    use crate::tools::mcp::report::{
+        ConnectedServerReport, McpServerReport, McpSessionReport, McpTransportSummary,
+    };
+    template.replace_mcp(&McpSessionReport {
+        servers: vec![McpServerReport::connected(ConnectedServerReport {
+            identity: "docs".into(),
+            transport: McpTransportSummary::Stdio {
+                command: "fixture".into(),
+                args: Vec::new(),
+            },
+            tools: Vec::new(),
+            instructions: Some("mcp context".into()),
+            live: Default::default(),
+            filtered_out_count: 0,
+            collision_skipped_count: 0,
+        })],
+        ..Default::default()
+    });
+    let mut built = template.build(&running).unwrap();
+    let suffix = "\n\n# Agent instructions\n\nsession suffix";
+    built.text.push_str(suffix);
+    template.append_retained(suffix);
+    let rerendered = template.render(&running, built.model_prompt.as_ref());
+    assert_eq!(rerendered.text, built.text);
+    assert_eq!(
+        rerendered
+            .sources
+            .iter()
+            .map(|source| source.bytes)
+            .sum::<usize>(),
+        built.text.len()
+    );
+}
+
 // Covers: incidental startup hydration keeps the loaded file, but an explicit
 // lifecycle build reads current contents and rejects new validation failures.
 // Owner: prompt assembly.

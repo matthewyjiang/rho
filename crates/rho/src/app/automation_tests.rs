@@ -406,11 +406,12 @@ async fn headless_run_compacts_at_configured_threshold_and_completes() {
         },
         ScriptedToolOutcome::Success(ToolOutput::text("tool context ".repeat(500))),
     ))];
+    let mut inventory = crate::tools::sdk_registry::AppToolSet::disabled();
+    inventory.add_bundle(crate::tools::sdk_registry::StaticToolBundle::new(tools));
     let root = tempfile::tempdir().unwrap();
     let runtime = build_runtime(RuntimeBuildOptions {
         provider: shared_provider,
-        tools: &tools,
-        tool_visibility: None,
+        tools: &inventory,
         workspace: Workspace::new(root.path()).unwrap(),
         workspace_policy: AppPolicy::for_mode(PermissionMode::Auto, Default::default()),
         approval_session: None,

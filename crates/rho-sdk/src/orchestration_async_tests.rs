@@ -25,7 +25,7 @@ use crate::{
     Error, Rho, Run, RunEvent, SessionOptions, StopReason, UserInput,
 };
 
-use super::tool_batch::INTERRUPTED_TOOL_RESULT_CONTENT;
+use super::tool_settlement::INTERRUPTED_TOOL_RESULT_CONTENT;
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 

@@ -75,15 +75,13 @@ fn finished_result_respects_output_budget() {
 
     let status = std::process::ExitStatus::from_raw(0);
     let result = finished_result(
-        "call_1".into(),
         status,
         &[b'y'; 200],
         b"",
         Duration::from_secs(0),
         /*max_output_bytes*/ 40,
     );
-    assert!(result.ok);
-    assert!(result.content.contains("[truncated]"));
+    assert!(result.contains("[truncated]"));
 }
 
 #[cfg(unix)]
@@ -94,15 +92,13 @@ fn finished_result_uses_signal_when_exit_code_is_absent() {
     // Wait status for termination by signal 9 (SIGKILL).
     let status = std::process::ExitStatus::from_raw(9);
     let result = finished_result(
-        "call_1".into(),
         status,
         b"out",
         b"err",
         Duration::from_secs(0),
         /*max_output_bytes*/ 12_000,
     );
-    assert!(!result.ok);
-    assert!(result.content.contains("exit code: signal"));
+    assert!(result.contains("exit code: signal"));
 }
 
 // Covers: retained stream bytes must stop at the configured budget, and any
@@ -244,15 +240,13 @@ fn finished_success_keeps_time_and_stdout_label() {
     use std::os::unix::process::ExitStatusExt;
 
     let result = finished_result(
-        "call_1".into(),
         std::process::ExitStatus::from_raw(0),
         b"hello",
         b"",
         Duration::from_millis(200),
         /*max_output_bytes*/ 12_000,
     );
-    assert!(result.ok);
-    assert_eq!(result.content, "stdout:\nhello\n\ntime: 0.2s");
+    assert_eq!(result, "stdout:\nhello\n\ntime: 0.2s");
 }
 
 // Covers: labeled stdout containing footer sentinels is not split when time is present

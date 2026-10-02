@@ -31,50 +31,6 @@ fn capabilities(names: &[&str]) -> AgentCapabilities {
     )
 }
 
-/// Inspect both consumers directly: tools()/specs() must not repair stale inventory.
-fn assert_live_inventory(tools: &AppToolSet) {
-    use super::super::code_mode::{ToolCatalogEntry, CODEMODE_TOOL_NAME};
-
-    let (progress, _receiver) = rho_sdk::tool::tool_progress_channel(std::num::NonZeroUsize::MIN);
-    let context = rho_sdk::tool::ToolContext::new(
-        /*workspace*/ None,
-        rho_sdk::CancellationToken::new(),
-        progress,
-    );
-    let mut nested_specs = tools
-        .code_mode_nesting
-        .build_host(&context)
-        .unwrap()
-        .tool_specs();
-    nested_specs.sort_by(|a, b| a.name.cmp(&b.name));
-    let mut expected_specs = tools
-        .tools
-        .iter()
-        .map(|tool| tool.spec())
-        .filter(|spec| spec.name != CODEMODE_TOOL_NAME)
-        .collect::<Vec<_>>();
-    expected_specs.sort_by(|a, b| a.name.cmp(&b.name));
-    assert_eq!(nested_specs, expected_specs);
-
-    let mut expected_catalog = tools
-        .tools
-        .iter()
-        .map(|tool| {
-            let spec = tool.spec();
-            ToolCatalogEntry {
-                name: spec.name,
-                description: spec.description,
-                returns: tool.output_schema(),
-            }
-        })
-        .collect::<Vec<_>>();
-    expected_catalog.sort_by(|a, b| a.name.cmp(&b.name));
-    assert_eq!(
-        tools.exposure.list_script_visible(usize::MAX),
-        expected_catalog
-    );
-}
-
 struct RegistryWorkflowService;
 
 impl super::super::workflow::WorkflowToolService for RegistryWorkflowService {
@@ -643,7 +599,6 @@ fn advisor_registration_toggles_without_rebuilding_the_tool_set() {
         RuntimeDiagnostics::new(&config),
         ToolSetOptions::new(capabilities(&["advisor", "read_file"])).advisor(store),
     );
-    assert_live_inventory(&tools);
     let without_advisor = tools.unfiltered_names().collect::<Vec<_>>();
 
     assert!(!tools.advisor_registered());
@@ -660,7 +615,6 @@ fn advisor_registration_toggles_without_rebuilding_the_tool_set() {
             changed,
             "requested={requested}"
         );
-        assert_live_inventory(&tools);
         assert_eq!(
             tools.advisor_registered(),
             expected,
@@ -719,7 +673,6 @@ fn edit_tool_selection_swaps_the_advertised_edit_surface() {
         RuntimeDiagnostics::new(&config),
         ToolSetOptions::new(capabilities(&["edit", "read_file"])),
     );
-    assert_live_inventory(&tools);
     let before = tools.unfiltered_names().collect::<Vec<_>>();
     assert_eq!(tools.edit_tool(), Some(rho_tools::EditFormat::Hashline));
     assert!(tools.contains("edit"));
@@ -733,7 +686,6 @@ fn edit_tool_selection_swaps_the_advertised_edit_surface() {
         tools.set_edit_tool(rho_tools::EditFormat::StrReplace, config.max_output_bytes),
         Some(rho_tools::EditFormat::Hashline)
     );
-    assert_live_inventory(&tools);
     assert_eq!(tools.edit_tool(), Some(rho_tools::EditFormat::StrReplace));
     assert!(!tools.contains("edit"));
     assert!(tools.contains("str_replace"));

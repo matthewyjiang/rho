@@ -1,35 +1,19 @@
-//! Starlark `codemode` prototype: compose ToolHost tools (native + MCP) from a script.
-//!
-//! See `docs/design/code-mode-starlark-v0.md`.
+//! Starlark composition through the SDK ToolHost, with live tool discovery.
 
 mod bridge;
+mod call_log;
 mod engine;
 mod exposure;
-mod nesting;
+pub(crate) mod script_output;
 mod tool;
 mod tool_search;
 
+pub(crate) use bridge::CODEMODE_TOOL_NAME;
+pub(crate) use call_log::{NestedCallRecord, NestedCallStatus};
+pub(crate) use exposure::CodeModeSurface;
 #[cfg(test)]
-#[path = "code_mode_tests.rs"]
-mod tests;
+pub(crate) use tool_search::TOOL_SEARCH_NAME;
 
 #[cfg(test)]
 #[path = "live_wiring_tests.rs"]
 mod live_wiring_tests;
-
-#[allow(unused_imports)]
-pub use bridge::{BridgeError, CodeModeBridge, GuardedBridge, ToolHostBridge, CODEMODE_TOOL_NAME};
-#[allow(unused_imports)]
-pub use engine::{
-    evaluate_code_mode_with_exposure, format_engine_output, EngineError, EngineLimits, EngineOutput,
-};
-#[allow(unused_imports)]
-pub use exposure::{
-    format_mcp_servers_catalog, is_mcp_tool_name, ExposureController, ExposureOverride,
-    ExposurePolicy, ToolCatalogEntry, ToolExposure,
-};
-pub use nesting::CodeModeNesting;
-#[allow(unused_imports)]
-pub use tool::CodeModeTool;
-#[allow(unused_imports)]
-pub use tool_search::{ToolSearchTool, TOOL_SEARCH_NAME};

@@ -13,23 +13,12 @@ pub(super) struct CompletedToolOutput {
 impl CompletedToolOutput {
     pub(super) fn new(name: &str, id: &str, completion: &ToolCompletion) -> Self {
         Self {
-            result: ToolResult {
-                id: id.to_owned(),
-                ok: match completion {
-                    ToolCompletion::Success(output) => !output.is_failure(),
-                    ToolCompletion::Failure(_) | ToolCompletion::Unavailable => false,
-                },
-                content: match completion {
-                    ToolCompletion::Success(output) => output.content().to_owned(),
-                    ToolCompletion::Failure(failure) => failure.message().to_owned(),
-                    ToolCompletion::Unavailable => format!("tool '{name}' is unavailable"),
-                },
-            },
+            result: completion.model_result(name, id),
             supplement: match completion {
-                ToolCompletion::Success(output) if !output.is_failure() => {
+                ToolCompletion::Success(output) => {
                     Message::tool_image_supplement(name, id, output.images().to_vec())
                 }
-                ToolCompletion::Success(_)
+                ToolCompletion::CompletedFailure(_)
                 | ToolCompletion::Failure(_)
                 | ToolCompletion::Unavailable => None,
             },
@@ -62,6 +51,10 @@ impl From<ToolResult> for CompletedToolOutput {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "pending_tool_outputs_tests.rs"]
+mod tests;
 
 /// Detached completions are owned here before cancellable event publication.
 #[derive(Default)]

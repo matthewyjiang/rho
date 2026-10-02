@@ -580,43 +580,21 @@ open(sys.argv[1], "w").close()
     let rendered = call_remote_tool(echo_call(), &cancellation, None, 12_000, None)
         .await
         .unwrap();
-    assert_eq!(rendered.text, "ok");
+    assert_eq!(rendered.text(), "ok");
 
-    // A real MCP isError answer completes normally through ToolHost and lets
-    // the script branch on its failure flag instead of raising.
-    use crate::tools::code_mode::{CodeModeNesting, CodeModeTool, ExposureController};
+    // A real MCP isError answer keeps its failure status and structured data.
+    // Starlark's mapping of that SDK result belongs to codemode's own tests.
     use rho_sdk::{ToolHost, ToolHostCall};
-    use std::sync::Arc;
-    let tools = bundle.tools();
-    let remote = Arc::clone(&tools[0]);
+    let remote = std::sync::Arc::clone(&bundle.tools()[0]);
     let name = remote.spec().name;
-    let nesting = Arc::new(CodeModeNesting::default());
-    nesting.set_tools(&[Arc::clone(&remote)]);
-    let host = ToolHost::builder()
-        .tool_shared(remote)
-        .tool(CodeModeTool::new(
-            nesting,
-            Arc::new(ExposureController::with_default_policy()),
-        ))
-        .build()
-        .unwrap();
+    let host = ToolHost::builder().tool_shared(remote).build().unwrap();
     let failed = host
         .invoke(ToolHostCall::new(&name, serde_json::json!({"fail": true})))
         .await
         .unwrap();
-    assert!(failed.is_failure());
-    let output = host
-        .invoke(ToolHostCall::new(
-            "codemode",
-            serde_json::json!({
-                "script": format!("result = call_tool({name:?}, {{\"fail\": True}})")
-            }),
-        ))
-        .await
-        .unwrap();
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(output.content()).unwrap(),
-        serde_json::json!({"free_bytes": 0, "is_error": true})
+        (failed.is_failure(), failed.structured_content()),
+        (true, Some(&serde_json::json!({"free_bytes": 0})))
     );
 
     cancellation.cancel();

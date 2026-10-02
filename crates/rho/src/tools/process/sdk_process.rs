@@ -138,9 +138,9 @@ impl SdkProcess {
                 break;
             }
         }
-        Ok(ToolOutput::text(super::output::format_snapshot(&snapshot))
-            .metadata(process_metadata())
-            .with_structured_content(super::output::structured_snapshot(&snapshot)))
+        super::output::render_snapshot(snapshot)
+            .limit_data(self.max_output_bytes)?
+            .into_tool_output(process_metadata())
     }
 }
 
@@ -154,7 +154,7 @@ impl Tool for SdkProcess {
     }
 
     fn output_schema(&self) -> Option<serde_json::Value> {
-        Some(super::output::process_output_schema())
+        Some(rho_tools::output_schema::<super::output::ProcessOutput>())
     }
 
     fn prepare<'a>(
@@ -247,7 +247,6 @@ async fn execute_prepared(
             cwd: cwd.to_path_buf(),
             max_output_bytes,
         },
-        String::new(),
         &mut collect_update,
     );
     let run = tokio::select! {
@@ -260,14 +259,8 @@ async fn execute_prepared(
             break;
         }
     }
-    let output = ToolOutput::text(run.result.content)
-        .metadata(process_metadata())
-        .with_structured_content(run.structured);
-    Ok(if run.result.ok {
-        output
-    } else {
-        output.failed()
-    })
+    run.limit_data(max_output_bytes)?
+        .into_tool_output(process_metadata())
 }
 
 fn process_metadata() -> ToolMetadata {

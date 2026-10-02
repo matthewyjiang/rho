@@ -1,425 +1,693 @@
-//! Registry inclusion + nested authorization sharing for live `codemode`.
+//! Contract coverage through real ToolHosts, not a test-only bridge.
 
 use std::sync::{Arc, Mutex};
 
 use pretty_assertions::assert_eq;
-use rho_sdk::model::ToolSpec;
-use rho_sdk::tool::{Tool, ToolContext, ToolError, ToolFuture, ToolInvocation, ToolOutput};
 use rho_sdk::{
+    model::ToolSpec,
+    tool::{
+        Tool, ToolContext, ToolError, ToolErrorKind, ToolFuture, ToolInvocation, ToolOutput,
+        ToolProgress,
+    },
     ApprovalAuditDecision, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
     CapabilityRequest, CapabilitySource, PathScope, PolicyDecision, ToolHost, ToolHostCall,
     WorkspacePolicy,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 
-use super::bridge::CODEMODE_TOOL_NAME;
-use super::exposure::ExposureController;
-use super::nesting::CodeModeNesting;
-use super::tool::CodeModeTool;
-use super::tool_search::TOOL_SEARCH_NAME;
-use crate::config::Config;
-use crate::diagnostics::RuntimeDiagnostics;
-use crate::tools::sdk_registry::{AppToolSet, ToolSetOptions};
+use super::{exposure::CodeModeSurface, tool::CodeModeTool, CODEMODE_TOOL_NAME, TOOL_SEARCH_NAME};
 
-struct AllowForSessionCounter {
-    count: Arc<Mutex<usize>>,
+/// One configurable sibling for value conversion, authorization, and relay tests.
+struct StubTool {
+    name: &'static str,
+    outcome: Result<ToolOutput, ToolError>,
+    authorize: bool,
+    progress: bool,
+    ask: bool,
+    calls: Option<Arc<Mutex<usize>>>,
 }
 
-impl ApprovalHandler for AllowForSessionCounter {
-    fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
-        *self.count.lock().expect("count") += 1;
-        Box::pin(std::future::ready(ApprovalDecision::AllowForSession))
-    }
-}
-
-struct RequireApprovalPolicy;
-
-impl WorkspacePolicy for RequireApprovalPolicy {
-    fn evaluate(&self, _request: &CapabilityRequest) -> PolicyDecision {
-        PolicyDecision::RequireApproval {
-            reason: "nested test approval".into(),
+impl StubTool {
+    fn output(output: ToolOutput) -> Self {
+        Self {
+            name: "probe",
+            outcome: Ok(output),
+            authorize: false,
+            progress: false,
+            ask: false,
+            calls: None,
         }
     }
 }
 
-struct GatedTool;
-
-impl Tool for GatedTool {
+impl Tool for StubTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
-            name: "host_exec".into(),
-            description: "authorize one host operation".into(),
+            name: self.name.into(),
+            description: "fixture sibling".into(),
             input_schema: json!({"type": "object"}),
         }
     }
 
+    fn output_schema(&self) -> Option<Value> {
+        self.outcome
+            .as_ref()
+            .ok()?
+            .structured_content()
+            .map(|_| json!({"$defs": {"Payload": {"type": "object"}}, "$ref": "#/$defs/Payload"}))
+    }
+
     fn call<'a>(&'a self, _invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
-            context
-                .authorize(CapabilityRequest::read_path(
-                    "/work/input",
-                    PathScope::PrimaryWorkspace,
-                    CapabilitySource::host_tool("host_exec"),
-                ))
-                .await
-                .map_err(|error| ToolError::policy_denied(&error))?;
-            Ok(ToolOutput::text("gated-ok"))
+            if let Some(calls) = &self.calls {
+                *calls.lock().unwrap() += 1;
+            }
+            if self.authorize {
+                context
+                    .authorize(CapabilityRequest::read_path(
+                        "/work/input",
+                        PathScope::PrimaryWorkspace,
+                        CapabilitySource::host_tool(self.name),
+                    ))
+                    .await
+                    .map_err(|error| ToolError::policy_denied(&error))?;
+            }
+            if self.progress {
+                context
+                    .progress()
+                    .send(ToolProgress::message("halfway"))
+                    .await;
+            }
+            if self.ask {
+                let question = rho_sdk::HostQuestion::new(
+                    "answer",
+                    "choose",
+                    vec![rho_sdk::HostChoice::new("yes", "yes")],
+                    rho_sdk::SelectionMode::One,
+                )
+                .unwrap();
+                let request =
+                    rho_sdk::HostInputRequest::questionnaire("nested", vec![question]).unwrap();
+                let response = context
+                    .request_host_input(request)
+                    .await
+                    .map_err(|error| ToolError::new(ToolErrorKind::Execution, error.to_string()))?;
+                return Ok(ToolOutput::text(response.answers()["answer"][0].clone()));
+            }
+            self.outcome.clone()
         })
     }
 }
 
-// Covers: default app registry must ship codemode + tool_search as model-facing.
-// Owner: app tool registry wiring.
-#[test]
-fn app_tool_set_registers_codemode_and_tool_search() {
-    let config = Config::default();
-    let tool_set = AppToolSet::new(
-        &config,
-        RuntimeDiagnostics::new(&config),
-        ToolSetOptions::default(),
-    );
-    let model_facing: Vec<_> = tool_set
-        .specs()
-        .into_iter()
-        .map(|spec| spec.name)
-        .filter(|name| name == CODEMODE_TOOL_NAME || name == TOOL_SEARCH_NAME)
-        .collect();
+fn surface(tools: Vec<Arc<dyn Tool>>) -> Arc<CodeModeSurface> {
+    let surface = Arc::new(CodeModeSurface::default());
+    surface.sync(&tools);
+    surface
+}
+
+fn host(probe: StubTool) -> ToolHost {
+    ToolHost::builder()
+        .event_capacity(crate::app::sdk_config::parallel_tool_limit())
+        .tool(CodeModeTool::new(surface(vec![Arc::new(probe)])))
+        .build()
+        .unwrap()
+}
+
+/// The script's `result`, or its failure text. A raising script is a
+/// completed failure that keeps partial output, not a host error.
+async fn script(host: &ToolHost, source: &str) -> Result<Value, String> {
+    let output = host
+        .invoke(ToolHostCall::new(
+            CODEMODE_TOOL_NAME,
+            json!({"script": source}),
+        ))
+        .await
+        .map_err(|error| error.to_string())?;
+    if output.is_failure() {
+        return Err(output.content().to_owned());
+    }
+    Ok(output.structured_content().unwrap()["return_value"].clone())
+}
+
+// Covers: completed failures stay values, host status wins over payload status,
+// and floats remain numeric through JSON -> Starlark -> JSON.
+// Owner: codemode engine / ToolHost bridge.
+#[tokio::test]
+async fn nested_outcomes_preserve_values_and_failure_status() {
+    let cases = [
+        (
+            Ok(ToolOutput::text("text")),
+            Ok(json!({"content": "text", "data": null, "is_error": false})),
+        ),
+        (
+            Ok(ToolOutput::text("text").with_structured_content(json!({"value": 1.5}))),
+            Ok(json!({"content": "text", "data": {"value": 1.5}, "is_error": false})),
+        ),
+        (
+            Ok(ToolOutput::text("failed")
+                .with_structured_content(json!({"is_error": false, "exit_code": 3}))
+                .failed()),
+            Ok(
+                json!({"content": "failed", "data": {"is_error": false, "exit_code": 3}, "is_error": true}),
+            ),
+        ),
+        (
+            Ok(ToolOutput::text("failed").failed()),
+            Ok(json!({"content": "failed", "data": null, "is_error": true})),
+        ),
+        (
+            Ok(ToolOutput::text("failed")
+                .with_structured_content(json!([3]))
+                .failed()),
+            Ok(json!({"content": "failed", "data": [3], "is_error": true})),
+        ),
+        (
+            Err(ToolError::new(ToolErrorKind::Execution, "boom")),
+            Err(()),
+        ),
+        (
+            Err(ToolError::new(ToolErrorKind::PolicyDenied, "plan mode")),
+            Err(()),
+        ),
+    ];
+    for (outcome, expected) in cases {
+        let mut probe = StubTool::output(ToolOutput::text(""));
+        probe.outcome = outcome;
+        let surface = surface(vec![Arc::new(probe)]);
+        let schema = surface.search("probe", 1).remove(0).returns;
+        let host = ToolHost::builder()
+            .tool(CodeModeTool::new(surface))
+            .build()
+            .unwrap();
+        let actual = script(&host, "result = call_tool(\"probe\")")
+            .await
+            .map_err(|_| ());
+        if let Ok(value) = &actual {
+            jsonschema::validator_for(&schema)
+                .unwrap()
+                .validate(value)
+                .unwrap();
+        }
+        assert_eq!(actual, expected);
+    }
     assert_eq!(
-        model_facing,
-        vec![CODEMODE_TOOL_NAME.to_owned(), TOOL_SEARCH_NAME.to_owned()]
+        script(
+            &host(StubTool::output(
+                ToolOutput::text("").with_structured_content(json!({"value": 1.5}))
+            )),
+            "result = call_tool(\"probe\")[\"data\"][\"value\"] * 2"
+        )
+        .await
+        .unwrap(),
+        json!(3.0)
     );
 }
 
-// Covers: a nested gated call must reuse the parent run's exact-request approval
-// memory (no second prompt) and land in the parent's audit log.
-// Owner: codemode nesting (ToolHost::child_builder wiring).
-#[tokio::test(flavor = "multi_thread")]
-async fn nested_call_reuses_parent_session_approval() {
-    let nesting = Arc::new(CodeModeNesting::default());
-    let gated: Arc<dyn Tool> = Arc::new(GatedTool);
-    nesting.set_tools(std::slice::from_ref(&gated));
-    let count = Arc::new(Mutex::new(0));
-    let parent = ToolHost::builder()
-        .tool_shared(gated)
-        .tool(CodeModeTool::new(
-            nesting,
-            Arc::new(ExposureController::with_default_policy()),
-        ))
-        .workspace_policy(RequireApprovalPolicy)
-        .approval_handler(AllowForSessionCounter {
-            count: Arc::clone(&count),
+// Covers: discovery and execution share one inventory; orchestration is not a
+// sibling and ToolHost rejects recursive calls without a bespoke bridge gate.
+#[tokio::test]
+async fn discovery_matches_callable_siblings() {
+    let surface = Arc::new(CodeModeSurface::default());
+    let orchestration = surface.orchestration_tools();
+    // Publishing the complete app inventory must not introduce an Arc cycle.
+    let mut tools: Vec<Arc<dyn Tool>> = vec![Arc::new(StubTool {
+        name: "mcp__github__create_issue",
+        ..StubTool::output(ToolOutput::text("created"))
+    })];
+    tools.extend(orchestration.clone());
+    surface.sync(&tools);
+    let host = tools
+        .into_iter()
+        .fold(ToolHost::builder(), |builder, tool| {
+            builder.tool_shared(tool)
         })
         .build()
-        .expect("parent host");
-
-    parent
-        .invoke(ToolHostCall::new("host_exec", json!({})))
+        .unwrap();
+    let listed = script(&host, "result = list_tools()").await.unwrap();
+    let searched = script(&host, "result = search_tools(\"github\")")
         .await
-        .expect("direct call");
-    let nested = parent
+        .unwrap();
+    let discovered = host
         .invoke(ToolHostCall::new(
-            CODEMODE_TOOL_NAME,
-            json!({ "script": r#"result = call_tool("host_exec", {})["content"]"# }),
+            TOOL_SEARCH_NAME,
+            json!({"query": "github"}),
         ))
         .await
-        .expect("codemode call");
-
-    assert!(
-        nested.content().contains("gated-ok"),
-        "{}",
-        nested.content()
-    );
-    assert_eq!(*count.lock().expect("count"), 1);
+        .unwrap();
+    // Script discovery returns compact rows; tool_search keeps full entries.
     assert_eq!(
-        parent
-            .approval_audit()
+        (listed, searched.clone()),
+        (
+            json!([{"name": "mcp__github__create_issue", "description": "fixture sibling"}]),
+            json!([{"name": "mcp__github__create_issue", "description": "fixture sibling"}]),
+        )
+    );
+    assert_eq!(
+        discovered.structured_content().cloned(),
+        Some(
+            script(
+                &host,
+                "result = [describe_tool(\"mcp__github__create_issue\")]"
+            )
+            .await
+            .unwrap()
+        )
+    );
+    assert_eq!(
+        script(
+            &host,
+            "hits = search_tools(\"github\")\nresult = call_tool(hits[0][\"name\"])[\"content\"]"
+        )
+        .await
+        .unwrap(),
+        json!("created")
+    );
+    let (progress, _receiver) = rho_sdk::tool::tool_progress_channel(std::num::NonZeroUsize::MIN);
+    let context = ToolContext::new(
+        /*workspace*/ None,
+        rho_sdk::CancellationToken::new(),
+        progress,
+    );
+    let (nested, _) = surface.snapshot(&context).unwrap();
+    assert!(matches!(
+        nested
+            .invoke(ToolHostCall::new(CODEMODE_TOOL_NAME, json!({})))
+            .await,
+        Err(rho_sdk::Error::InvalidConfiguration { .. })
+    ));
+}
+
+// Covers: publishing siblings mid-script cannot advertise names its child host rejects.
+// Owner: codemode bridge snapshot (runtime contract).
+#[tokio::test]
+async fn bridge_discovery_and_execution_keep_one_snapshot() {
+    let surface = surface(vec![Arc::new(StubTool::output(ToolOutput::text(
+        "original",
+    )))]);
+    let (progress, receiver) = rho_sdk::tool::tool_progress_channel(std::num::NonZeroUsize::MIN);
+    drop(receiver);
+    let context = ToolContext::new(
+        /*workspace*/ None,
+        rho_sdk::CancellationToken::new(),
+        progress,
+    );
+    let bridge = super::bridge::ToolHostBridge::new(surface.clone(), context).unwrap();
+    surface.sync(&[Arc::new(StubTool {
+        name: "late",
+        ..StubTool::output(ToolOutput::text("late"))
+    })]);
+    assert_eq!(
+        bridge
+            .search("", usize::MAX)
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["probe"]
+    );
+    assert_eq!(
+        bridge
+            .call_tool("probe", json!({}))
+            .await
+            .unwrap()
+            .content(),
+        "original"
+    );
+    assert!(matches!(
+        bridge.call_tool("late", json!({})).await,
+        Err(super::bridge::BridgeError::Host(
+            rho_sdk::Error::InvalidConfiguration { .. }
+        ))
+    ));
+}
+
+// Covers: a cancelled script cannot start another nested tool run.
+// Owner: codemode ToolHost bridge.
+#[tokio::test]
+async fn cancelled_parent_does_not_start_subsequent_nested_calls() {
+    use super::bridge::{BridgeError, ToolHostBridge};
+
+    let calls = Arc::new(Mutex::new(0));
+    let surface = surface(vec![Arc::new(StubTool {
+        calls: Some(calls.clone()),
+        ..StubTool::output(ToolOutput::text("ok"))
+    })]);
+    let (progress, receiver) = rho_sdk::tool::tool_progress_channel(std::num::NonZeroUsize::MIN);
+    drop(receiver);
+    let cancellation = rho_sdk::CancellationToken::new();
+    let context = ToolContext::new(/*workspace*/ None, cancellation.clone(), progress);
+    let bridge = ToolHostBridge::new(surface, context).unwrap();
+    bridge.call_tool("probe", json!({})).await.unwrap();
+
+    cancellation.cancel();
+    assert!(matches!(
+        bridge.call_tool("probe", json!({})).await,
+        Err(BridgeError::Cancelled)
+    ));
+    assert_eq!((*calls.lock().unwrap(), bridge.call_count()), (1, 1));
+}
+
+// Covers: scripts branch and loop over actual nested outputs.
+// Owner: Starlark evaluator / ToolHost integration.
+#[tokio::test]
+async fn control_flow_composes_nested_results() {
+    let host = host(StubTool::output(ToolOutput::text("ok")));
+    assert_eq!(script(&host, "seen = []\nfor name in [\"a\", \"b\", \"c\"]:\n    if name != \"b\":\n        seen.append(call_tool(\"probe\")[\"content\"])\nresult = seen").await.unwrap(), json!(["ok", "ok"]));
+}
+
+// Covers: evaluation budget, non-JSON result, and nested-call budget fail at
+// their owning seam, without collapsing all causes into a copy assertion.
+// Owner: Starlark evaluator and its typed native bridge errors.
+#[tokio::test]
+async fn invalid_scripts_keep_distinct_failure_causes() {
+    use super::bridge::{BridgeError, ToolHostBridge};
+    use super::engine::{evaluate_code_mode, EngineLimits};
+    use starlark::ErrorKind;
+    #[derive(Debug)]
+    enum Cause {
+        EvaluationBudget,
+        NonJsonResult,
+        NestedBudget,
+    }
+    for (source, cause, calls) in [
+        (
+            "total = 0\nfor i in range(10000000):\n    total += i\n",
+            Cause::EvaluationBudget,
+            0,
+        ),
+        ("def f():\n    pass\nresult = f", Cause::NonJsonResult, 0),
+        (
+            "for _ in range(65):\n    call_tool(\"probe\")",
+            Cause::NestedBudget,
+            65,
+        ),
+    ] {
+        let surface = surface(vec![Arc::new(StubTool::output(ToolOutput::text("ok")))]);
+        let (progress, receiver) =
+            rho_sdk::tool::tool_progress_channel(std::num::NonZeroUsize::MIN);
+        drop(receiver);
+        let bridge = Arc::new(
+            ToolHostBridge::new(
+                surface,
+                ToolContext::new(
+                    /*workspace*/ None,
+                    rho_sdk::CancellationToken::new(),
+                    progress,
+                ),
+            )
+            .unwrap(),
+        );
+        let evaluator_bridge = bridge.clone();
+        let error = tokio::task::spawn_blocking(move || {
+            evaluate_code_mode(source, evaluator_bridge, EngineLimits::default())
+        })
+        .await
+        .unwrap()
+        .result
+        .unwrap_err();
+        match (cause, error.kind()) {
+            (Cause::EvaluationBudget, ErrorKind::Other(_))
+            | (Cause::NonJsonResult, ErrorKind::Value(_)) => {}
+            (Cause::NestedBudget, ErrorKind::Native(error)) => assert!(matches!(
+                error.downcast_ref::<BridgeError>(),
+                Some(BridgeError::CallLimit {
+                    max: 64,
+                    requested: 65
+                })
+            )),
+            other => panic!("unexpected cause: {other:?}"),
+        }
+        assert_eq!(bridge.call_count(), calls);
+    }
+}
+
+struct ApprovalCounter(Arc<Mutex<usize>>);
+impl ApprovalHandler for ApprovalCounter {
+    fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
+        *self.0.lock().unwrap() += 1;
+        Box::pin(std::future::ready(ApprovalDecision::AllowForSession))
+    }
+}
+struct RequireApproval;
+impl WorkspacePolicy for RequireApproval {
+    fn evaluate(&self, _request: &CapabilityRequest) -> PolicyDecision {
+        PolicyDecision::RequireApproval {
+            reason: "fixture approval".into(),
+        }
+    }
+}
+
+// Covers: child host reuses exact-request approval memory and parent audit.
+#[tokio::test]
+async fn nested_call_reuses_parent_session_approval() {
+    let count = Arc::new(Mutex::new(0));
+    let probe: Arc<dyn Tool> = Arc::new(StubTool {
+        authorize: true,
+        ..StubTool::output(ToolOutput::text("gated-ok"))
+    });
+    let host = ToolHost::builder()
+        .tool_shared(probe.clone())
+        .tool(CodeModeTool::new(surface(vec![probe])))
+        .workspace_policy(RequireApproval)
+        .approval_handler(ApprovalCounter(count.clone()))
+        .build()
+        .unwrap();
+    host.invoke(ToolHostCall::new("probe", json!({})))
+        .await
+        .unwrap();
+    assert_eq!(
+        script(&host, "result = call_tool(\"probe\")[\"content\"]")
+            .await
+            .unwrap(),
+        json!("gated-ok")
+    );
+    assert_eq!(*count.lock().unwrap(), 1);
+    assert_eq!(
+        host.approval_audit()
             .iter()
             .map(|record| record.decision())
             .collect::<Vec<_>>(),
         vec![
             ApprovalAuditDecision::AllowedForSession,
-            ApprovalAuditDecision::AllowedByRememberedApproval,
+            ApprovalAuditDecision::AllowedByRememberedApproval
         ]
     );
 }
 
-struct ProgressTool;
+// Covers: a real session drains more progress than its bounded channel holds,
+// relays nested questions, and delivers the final restatement before ToolFinished.
+// Owner: codemode script thread + bridge through SDK orchestration.
+#[tokio::test]
+async fn nested_events_reach_parent_and_finish() {
+    use rho_sdk::{
+        model::{ContentBlock, Message, ModelIdentity, ModelResponse, ToolCall},
+        provider::{ScriptedProvider, ScriptedTurn},
+        Rho, RunEvent, SessionOptions, UserInput,
+    };
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("test", "test", "test"),
+        [
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::ToolCall(
+                ToolCall {
+                    id: "script".into(),
+                    name: CODEMODE_TOOL_NAME.into(),
+                    arguments: json!({"script": "for _ in range(12):\n    answer = call_tool(\"probe\")\nresult = answer"}),
+                },
+            )])),
+            ScriptedTurn::completed(ModelResponse::Assistant(vec![ContentBlock::Text(
+                "done".into(),
+            )])),
+        ],
+    );
+    let runtime = Rho::builder()
+        .provider(provider.clone())
+        .max_parallel_tools(crate::app::sdk_config::parallel_tool_limit())
+        .tool(CodeModeTool::new(surface(vec![Arc::new(StubTool {
+            progress: true,
+            ask: true,
+            ..StubTool::output(ToolOutput::text(""))
+        })])))
+        .build()
+        .unwrap();
+    let session = runtime.session(SessionOptions::default()).await.unwrap();
+    let mut run = session.start(UserInput::text("ask")).await.unwrap();
+    let mut questions = 0;
+    let mut last = None;
+    let mut finished = false;
+    // Preserve the former session-relay test's 30-second deadlock bound; all
+    // synchronization is on actual events, never a timer or sleep.
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while let Some(event) = run.next_event().await {
+            match event {
+                RunEvent::ToolUpdated { progress, .. } => last = Some(progress.text().to_owned()),
+                RunEvent::ToolHostInputRequested { call_id, request } => {
+                    assert_eq!(call_id.to_string(), "script");
+                    questions += 1;
+                    run.respond(
+                        request.id().clone(),
+                        rho_sdk::HostInputResponse::new().answer("answer", ["yes"]),
+                    )
+                    .await
+                    .unwrap();
+                }
+                RunEvent::ToolFinished { .. } => {
+                    // Rows carry durations; compare the marker and name only.
+                    let rows: Vec<String> = last
+                        .as_deref()
+                        .unwrap_or_default()
+                        .lines()
+                        .map(|row| row.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
+                        .collect();
+                    assert_eq!(rows, vec!["✓ probe"; 12]);
+                    finished = true;
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("nested event relay did not finish");
+    assert_eq!((questions, finished), (12, true));
+    assert_eq!(run.outcome().await.unwrap().text(), "done");
+    let requests = provider.recorded_requests();
+    let result = requests[1]
+        .messages
+        .iter()
+        .find_map(|message| match message {
+            Message::ToolResult(result) if result.id == "script" => Some(result),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(
+        (
+            result.ok,
+            serde_json::from_str::<Value>(&result.content).unwrap()
+        ),
+        (
+            true,
+            json!({"content": "yes", "data": null, "is_error": false})
+        )
+    );
+}
 
-impl Tool for ProgressTool {
+/// Blocks every caller until `width` calls are in flight at once.
+struct RendezvousTool {
+    barrier: Arc<tokio::sync::Barrier>,
+}
+
+impl Tool for RendezvousTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
-            name: "slow_read".into(),
-            description: "report progress then finish".into(),
+            name: "meet".into(),
+            description: "fixture sibling".into(),
             input_schema: json!({"type": "object"}),
         }
     }
 
-    fn call<'a>(&'a self, _invocation: ToolInvocation, context: ToolContext) -> ToolFuture<'a> {
+    fn call<'a>(&'a self, invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
         Box::pin(async move {
-            context
-                .progress()
-                .send(rho_sdk::tool::ToolProgress::message("halfway"))
-                .await;
-            Ok(ToolOutput::text("read-ok"))
+            self.barrier.wait().await;
+            Ok(ToolOutput::text(invocation.arguments()["id"].to_string()))
         })
     }
 }
 
-// Covers: nested calls must be visible on the parent `codemode` call's progress
-// stream (the TUI card), not silent until the script returns.
-// Owner: codemode ToolHostBridge event forwarding.
-#[tokio::test(flavor = "multi_thread")]
-async fn nested_progress_reaches_parent_call() {
-    let nesting = Arc::new(CodeModeNesting::default());
-    nesting.set_tools(&[Arc::new(ProgressTool) as Arc<dyn Tool>]);
-    let parent = ToolHost::builder()
-        .tool(CodeModeTool::new(
-            nesting,
-            Arc::new(ExposureController::with_default_policy()),
-        ))
-        .build()
-        .expect("parent host");
-    let mut run = parent
-        .start(ToolHostCall::new(
-            CODEMODE_TOOL_NAME,
-            json!({ "script": r#"result = call_tool("slow_read")["content"]"# }),
-        ))
-        .expect("start codemode");
-
-    let mut updates = Vec::new();
-    while let Some(event) = run.next_event().await {
-        if let rho_sdk::ToolHostEvent::Progress(progress) = event {
-            updates.push(progress.text().to_owned());
-        }
-    }
-
-    assert_eq!(
-        updates,
-        vec![
-            "slow_read: running".to_owned(),
-            "slow_read: halfway".to_owned(),
-            "slow_read: done".to_owned(),
-        ]
-    );
-    assert!(run
-        .outcome()
-        .await
-        .expect("codemode")
-        .content()
-        .contains("read-ok"));
-}
-
-// Covers: nested failures are classified by typed SDK kind, so a policy
-// denial reaches the script as `NestedDenied` and other failures stay `Host`.
-// Owner: codemode bridge error classification.
-#[test]
-fn nested_errors_classify_by_kind() {
-    use super::bridge::BridgeError;
-    use rho_sdk::tool::ToolErrorKind;
-    let cases = [
-        (
-            rho_sdk::Error::Tool(ToolError::new(ToolErrorKind::PolicyDenied, "plan mode")),
-            true,
-        ),
-        (
-            rho_sdk::Error::PolicyDenied {
-                message: "no".into(),
-            },
-            true,
-        ),
-        (
-            // Text mentioning "denied" must not be mistaken for a policy denial.
-            rho_sdk::Error::Tool(ToolError::new(ToolErrorKind::Execution, "access denied")),
-            false,
-        ),
-    ];
-    for (error, denied) in cases {
-        let classified = BridgeError::from_nested("host_exec", error);
-        assert_eq!(
-            matches!(classified, BridgeError::NestedDenied { .. }),
-            denied,
-            "{classified}"
-        );
-    }
-}
-
-/// Returns one fixed outcome, so a script can observe what `call_tool` resolves to.
-struct OutcomeTool(Result<ToolOutput, ToolError>);
-
-impl Tool for OutcomeTool {
-    fn spec(&self) -> ToolSpec {
-        ToolSpec {
-            name: "probe".into(),
-            description: "returns a fixed outcome".into(),
-            input_schema: json!({"type": "object"}),
-        }
-    }
-
-    fn call<'a>(&'a self, _invocation: ToolInvocation, _context: ToolContext) -> ToolFuture<'a> {
-        let outcome = self.0.clone();
-        Box::pin(async move { outcome })
-    }
-}
-
-/// Runs `script` through a codemode host whose only sibling is `probe`.
-async fn run_codemode_with(probe: OutcomeTool, script: &str) -> Result<String, String> {
-    let nesting = Arc::new(CodeModeNesting::default());
-    nesting.set_tools(&[Arc::new(probe) as Arc<dyn Tool>]);
-    let host = ToolHost::builder()
-        .tool(CodeModeTool::new(
-            nesting,
-            Arc::new(ExposureController::with_default_policy()),
-        ))
-        .build()
-        .expect("host");
-    host.invoke(ToolHostCall::new(
-        CODEMODE_TOOL_NAME,
-        json!({ "script": script }),
-    ))
-    .await
-    .map(|output| output.content().to_owned())
-    .map_err(|error| error.to_string())
-}
-
-// Covers: completed failures remain script values with a host-owned failure
-// flag, while execution errors and denials raise instead of implying completion.
-// Owner: codemode bridge + engine result conversion.
-#[tokio::test(flavor = "multi_thread")]
-async fn call_tool_resolves_structured_content_like_pi() {
-    use rho_sdk::tool::ToolErrorKind;
-    let payload = json!({"exit_code": 3});
-    let script = r#"result = call_tool("probe")"#;
-    let cases = [
-        (
-            "structured success",
-            Ok(ToolOutput::text("text").with_structured_content(payload.clone())),
-            Ok(json!({"exit_code": 3, "is_error": false})),
-        ),
-        (
-            "text-only success",
-            Ok(ToolOutput::text("text")),
-            Ok(json!({"content": "text", "is_error": false})),
-        ),
-        (
-            "completed failure with structured content",
-            Ok(ToolOutput::text("exit 3")
-                .with_structured_content(payload.clone())
-                .failed()),
-            Ok(json!({"exit_code": 3, "is_error": true})),
-        ),
-        (
-            "completed text-only failure",
-            Ok(ToolOutput::text("failed").failed()),
-            Ok(json!({"content": "failed", "is_error": true})),
-        ),
-        (
-            "scalar structured failure",
-            Ok(ToolOutput::text("failed")
-                .with_structured_content(json!([3]))
-                .failed()),
-            Ok(json!({"content": [3], "is_error": true})),
-        ),
-        (
-            "tool data cannot override failure status",
-            Ok(ToolOutput::text("failed")
-                .with_structured_content(json!({"is_error": false}))
-                .failed()),
-            Ok(json!({"is_error": true})),
-        ),
-        (
-            "execution failure without a completed result",
-            Err(ToolError::new(ToolErrorKind::Execution, "boom")),
-            Err(()),
-        ),
-        (
-            "denial never becomes a value",
-            Err(ToolError::new(ToolErrorKind::PolicyDenied, "plan mode")),
-            Err(()),
-        ),
-    ];
-    for (case, outcome, expected) in cases {
-        // With no prints, the codemode output is exactly the pretty `result`.
-        let observed = run_codemode_with(OutcomeTool(outcome), script)
-            .await
-            .map(|content| serde_json::from_str::<serde_json::Value>(&content).unwrap())
-            .map_err(|_| ());
-        assert_eq!(observed, expected, "{case}");
-    }
-}
-
-// Covers: an actual nonzero shell exit remains available to scripts with its
-// output and failure flag, not an execution exception.
-// Owner: shell producer through the codemode ToolHost bridge.
-#[cfg(unix)]
+// Covers: call_tools runs independent calls concurrently (a sequential bridge
+// would deadlock on the barrier), keeps input order, turns an unknown tool
+// into an is_error value without losing siblings, and records every call.
+// Owner: codemode batch bridge.
 #[tokio::test]
-async fn failed_shell_call_remains_a_script_value() {
-    use rho_sdk::{ScopedWorkspacePolicy, Workspace};
-    let root = tempfile::tempdir().unwrap();
-    let shell = rho_tools::shell_tool(rho_tools::ShellToolOptions::new());
-    let nesting = Arc::new(CodeModeNesting::default());
-    nesting.set_tools(&[shell]);
+async fn call_tools_runs_batch_concurrently_in_order() {
+    let barrier = Arc::new(tokio::sync::Barrier::new(3));
+    let surface = surface(vec![Arc::new(RendezvousTool { barrier })]);
     let host = ToolHost::builder()
-        .workspace(Workspace::new(root.path()).unwrap())
-        .workspace_policy(ScopedWorkspacePolicy::new().allow_processes())
-        .tool(CodeModeTool::new(
-            nesting,
-            Arc::new(ExposureController::with_default_policy()),
-        ))
+        .tool(CodeModeTool::new(surface))
         .build()
         .unwrap();
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        host.invoke(ToolHostCall::new(
+            CODEMODE_TOOL_NAME,
+            json!({"script": "result = [r[\"content\"] for r in call_tools([(\"meet\", {\"id\": i}) for i in range(3)] + [\"missing\"])]"}),
+        )),
+    )
+    .await
+    .expect("batched calls did not run concurrently")
+    .unwrap();
+    let data = output.structured_content().unwrap();
+    let returned = data["return_value"].as_array().unwrap();
+    assert_eq!(returned[..3], [json!("0"), json!("1"), json!("2")]);
+    let statuses: Vec<_> = data["calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|call| (call["name"].clone(), call["status"].clone()))
+        .collect();
+    assert_eq!(
+        statuses,
+        vec![
+            (json!("meet"), json!("ok")),
+            (json!("meet"), json!("ok")),
+            (json!("meet"), json!("ok")),
+            (json!("missing"), json!("error")),
+        ]
+    );
+}
+
+// Covers: the whole batch is checked against the nested-call budget before
+// any call starts.
+// Owner: codemode batch bridge.
+#[tokio::test]
+async fn call_tools_budget_rejects_batch_before_starting() {
+    use super::bridge::{BridgeError, ToolHostBridge};
+
+    let calls = Arc::new(Mutex::new(0));
+    let surface = surface(vec![Arc::new(StubTool {
+        calls: Some(calls.clone()),
+        ..StubTool::output(ToolOutput::text("ok"))
+    })]);
+    let (progress, _receiver) = rho_sdk::tool::tool_progress_channel(std::num::NonZeroUsize::MIN);
+    let context = ToolContext::new(
+        /*workspace*/ None,
+        rho_sdk::CancellationToken::new(),
+        progress,
+    );
+    let bridge = ToolHostBridge::new(surface, context).unwrap();
+    let batch = vec![("probe".to_owned(), json!({})); 65];
+    assert!(matches!(
+        bridge.call_tools(batch).await,
+        Err(BridgeError::CallLimit {
+            max: 64,
+            requested: 65
+        })
+    ));
+    assert_eq!(*calls.lock().unwrap(), 0);
+}
+
+// Covers: a failing script keeps its prints and call log and returns a
+// completed failure instead of discarding partial work.
+// Owner: codemode tool output.
+#[tokio::test]
+async fn failed_script_keeps_partial_output() {
+    let host = host(StubTool::output(ToolOutput::text("ok")));
     let output = host
         .invoke(ToolHostCall::new(
             CODEMODE_TOOL_NAME,
-            json!({
-                "script": r#"
-r = call_tool("bash", {"command": "printf data; exit 3"})
-result = {"stdout": r["stdout"], "exit_code": r["exit_code"], "is_error": r["is_error"]}
-"#
-            }),
+            json!({"script": "call_tool(\"probe\")\nprint(\"before\")\nfail(\"boom\")"}),
         ))
         .await
         .unwrap();
+    let data = output.structured_content().unwrap();
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(output.content()).unwrap(),
-        json!({"stdout": "data", "exit_code": 3, "is_error": true})
+        (
+            output.is_failure(),
+            data["prints"].clone(),
+            data["calls"].as_array().unwrap().len(),
+            data["error"].as_str().unwrap().contains("boom"),
+        ),
+        (true, json!(["before"]), 1, true)
     );
 }
 
-// Covers: script discovery reports each tool's result shape: `bash` lists its
-// output schema, a text-only tool lists null (the {"content"} fallback).
-// Owner: codemode catalog indexing from Tool::output_schema.
 #[cfg(unix)]
-#[test]
-fn catalog_reports_output_schema_as_returns() {
-    let config = Config::default();
-    let tools = AppToolSet::new(
-        &config,
-        RuntimeDiagnostics::new(&config),
-        ToolSetOptions::default(),
-    );
-    let catalog = tools.exposure().list_script_visible(usize::MAX);
-    let required = |name: &str| {
-        catalog
-            .iter()
-            .find(|entry| entry.name == name)
-            .map(|entry| {
-                entry
-                    .returns
-                    .as_ref()
-                    .map(|schema| schema["required"].clone())
-            })
-    };
-    assert_eq!(
-        (required("bash"), required("read_file")),
-        (
-            Some(Some(json!([
-                "stdout",
-                "stderr",
-                "exit_code",
-                "truncated",
-                "wall_time_ms"
-            ]))),
-            Some(None)
-        )
-    );
-}
+#[path = "workspace_tests.rs"]
+mod workspace_tests;

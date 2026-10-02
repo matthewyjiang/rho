@@ -8,12 +8,12 @@ use tokio::sync::mpsc;
 use crate::{
     event::{ToolCompletion, ToolFailure},
     host_input::HostInputEnvelope,
-    model::{Message, ToolCall, ToolResult},
+    model::{Message, ToolCall},
     run::RunCommand,
     session::{SessionCore, SessionState},
     tool::{
         FirstCapability, PreparedToolInvocation, ToolContext, ToolError, ToolErrorKind,
-        ToolExecutionPolicy, ToolFuture, ToolInvocationSource, ToolOutput, ToolProgress,
+        ToolExecutionPolicy, ToolFuture, ToolOutput, ToolProgress,
     },
     CancellationToken, CapabilityRequest, Error, HostInputId, RunEvent, ToolCallId,
 };
@@ -21,19 +21,13 @@ use crate::{
 mod preparation;
 
 use super::planner::{plan, Dependency};
-use crate::orchestration::{emit, pending_tool_outputs::CompletedToolOutput, Rho, RunControl};
+use crate::orchestration::{
+    emit,
+    pending_tool_outputs::CompletedToolOutput,
+    tool_settlement::{interrupted, interrupted_result, settled},
+    Rho, RunControl,
+};
 use preparation::prepare_batch;
-
-pub(in crate::orchestration) const INTERRUPTED_TOOL_RESULT_CONTENT: &str =
-    "tool call interrupted before completion";
-
-pub(in crate::orchestration) fn interrupted_result(call: &ToolCall) -> ToolResult {
-    ToolResult {
-        id: call.id.clone(),
-        ok: false,
-        content: INTERRUPTED_TOOL_RESULT_CONTENT.into(),
-    }
-}
 
 type AuthorizationFuture<'a> = Pin<Box<dyn Future<Output = Result<(), ToolError>> + Send + 'a>>;
 type ExecutionFuture<'a> = Pin<Box<dyn Future<Output = Result<ToolOutput, ToolError>> + Send + 'a>>;
@@ -108,7 +102,7 @@ enum NextEvent {
 pub(in crate::orchestration) async fn execute(
     core: &Arc<SessionCore>,
     runtime: &Rho,
-    calls: Vec<(ToolCall, ToolCallId, ToolInvocationSource)>,
+    calls: Vec<crate::orchestration::tool_turn::StagedCall>,
     history: &mut Vec<Message>,
     control: &mut RunControl<'_>,
 ) -> Result<bool, Error> {
@@ -132,22 +126,12 @@ pub(in crate::orchestration) async fn execute(
             Err(error)
         };
     }
-    // Model calls must target a tool advertised now; host calls may use any
-    // registered tool (the host chose it, not the model).
-    let tools = calls
-        .iter()
-        .map(|(call, _, source)| match source {
-            ToolInvocationSource::Host => runtime.tools.get(&call.name),
-            ToolInvocationSource::Model => runtime.model_callable_tool(&call.name),
-        })
-        .collect::<Vec<_>>();
     let (worker_tx, mut worker_rx) = mpsc::channel(limit.get());
     let (mut batch, preparation_cancelled) = prepare_batch(
         core,
         runtime,
         control.hooks.run_id(),
-        &tools,
-        calls,
+        &calls,
         &batch_cancellation,
         limit,
     )
@@ -314,9 +298,10 @@ pub(in crate::orchestration) async fn execute(
 
 async fn propose_calls(
     control: &mut RunControl<'_>,
-    calls: &[(ToolCall, ToolCallId, ToolInvocationSource)],
+    calls: &[crate::orchestration::tool_turn::StagedCall],
 ) -> Result<(), Error> {
-    for (call, _, _) in calls {
+    for entry in calls {
+        let call = &entry.call;
         emit(
             control.events,
             control.cancellation,
@@ -328,13 +313,13 @@ async fn propose_calls(
 }
 
 fn append_interrupted_calls(
-    calls: &[(ToolCall, ToolCallId, ToolInvocationSource)],
+    calls: &[crate::orchestration::tool_turn::StagedCall],
     history: &mut Vec<Message>,
 ) {
     history.extend(
         calls
             .iter()
-            .map(|(call, _, _)| Message::ToolResult(interrupted_result(call))),
+            .map(|entry| Message::ToolResult(interrupted_result(&entry.call))),
     );
 }
 
@@ -736,12 +721,7 @@ async fn finish_call(
             "tool call execution completed"
         );
     }
-    let completion = match result {
-        Ok(output) => ToolCompletion::Success(output),
-        Err(error) => {
-            ToolCompletion::Failure(ToolFailure::new(error.kind(), error.message().to_owned()))
-        }
-    };
+    let completion = ToolCompletion::from_result(result);
     entry.result = Some(CompletedToolOutput::new(
         &entry.call.name,
         &entry.call.id,
@@ -833,27 +813,15 @@ fn interrupt_batch(
         .count();
     tracing::debug!(unresolved_calls = unresolved, "tool batch cleanup started");
     for entry in batch.iter_mut() {
-        if let CallState::Finishing(result) = &mut entry.state {
-            let completed = result.take().and_then(|result| match result {
-                Ok(output) => Some(ToolResult {
-                    id: entry.call.id.clone(),
-                    ok: !output.is_failure(),
-                    content: output.content().to_owned(),
-                }),
-                Err(error) if error.kind() == ToolErrorKind::Cancelled => None,
-                Err(error) => Some(ToolResult {
-                    id: entry.call.id.clone(),
-                    ok: false,
-                    content: error.message().to_owned(),
-                }),
-            });
-            if let Some(result) = completed {
-                entry.result = Some(result.into());
-                entry.state = CallState::Resolved;
-            }
-        }
         if !matches!(entry.state, CallState::Resolved) {
-            entry.result = Some(interrupted_result(&entry.call).into());
+            let completed = match &mut entry.state {
+                CallState::Finishing(result) => result
+                    .take()
+                    .and_then(|result| settled(&entry.call, result)),
+                _ => None,
+            };
+            let (result, _) = completed.unwrap_or_else(|| interrupted(&entry.call));
+            entry.result = Some(result.into());
             entry.state = CallState::Resolved;
         }
     }

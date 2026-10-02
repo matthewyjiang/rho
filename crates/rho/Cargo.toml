@@ -24,7 +24,7 @@ path = "src/main.rs"
 [dependencies]
 rho-sdk = { version = "5.7.0", path = "../rho-sdk" }
 rho-providers = { version = "2.13.1", path = "../rho-providers", default-features = false }
-rho-tools = { version = "1.6.0", path = "../rho-tools", package = "rho-agent-tools" }
+rho-tools = { version = "1.7.0", path = "../rho-tools", package = "rho-agent-tools" }
 tokio = { version = "1", features = ["full"] }
 reqwest = { workspace = true }
 serde = { version = "1", features = ["derive"] }
@@ -58,6 +58,7 @@ sha2 = "0.11"
 hex = "0.4"
 digest-io = "0.1"
 starlark = "=0.14.2"
+schemars = "1"
 base64 = "0.23"
 url = "2"
 libc = "0.2"

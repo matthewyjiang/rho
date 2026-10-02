@@ -69,7 +69,7 @@ fn codemode_command_applies_and_persists_requested_mode() {
         Case {
             command: "/codemode only",
             initially: Only,
-            calls: vec![],
+            calls: vec![Only],
             saved: On,
         },
         Case {

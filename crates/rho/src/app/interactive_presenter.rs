@@ -10,6 +10,8 @@ use rho_tools::tool_card::ToolCard;
 
 #[path = "interactive_presenter_agent.rs"]
 mod agent_format;
+#[path = "interactive_presenter_codemode.rs"]
+mod codemode_format;
 #[path = "interactive_presenter_format.rs"]
 mod format;
 #[path = "interactive_presenter_message.rs"]
@@ -57,6 +59,7 @@ enum ToolKind {
     GetSearchContent,
     Questionnaire,
     Sessions,
+    Codemode,
     Mcp,
     Other,
 }
@@ -96,6 +99,7 @@ impl ToolKind {
             "get_search_content" => Self::GetSearchContent,
             "questionnaire" => Self::Questionnaire,
             "sessions" => Self::Sessions,
+            crate::tools::code_mode::CODEMODE_TOOL_NAME => Self::Codemode,
             _ => Self::Other,
         }
     }
@@ -133,6 +137,7 @@ impl ToolKind {
             | Self::GetSearchContent
             | Self::Questionnaire
             | Self::Sessions
+            | Self::Codemode
             | Self::Mcp
             | Self::Other => {
                 if arguments_len < PREVIEW_FULL_PARSE_LIMIT {
@@ -277,7 +282,7 @@ impl InteractiveToolPresenter {
             arguments: call.arguments.clone(),
             metadata: ToolMetadata::default(),
         };
-        self.finished_presentation(&view, content, ok)
+        self.finished_presentation(&view, content, ok, /*data*/ None)
     }
 
     pub(crate) fn proposed(&mut self, call: ToolCall) -> ToolPresentation {
@@ -350,29 +355,45 @@ impl InteractiveToolPresenter {
                 arguments: serde_json::Value::Object(Default::default()),
                 metadata: ToolMetadata::default(),
             });
-        let (ok, content) = match result {
-            ToolCompletion::Success(output) => {
-                if output.presentation() != &ToolMetadata::default() {
-                    view.metadata = output.presentation().clone();
-                }
-                (!output.is_failure(), output.content().to_string())
+        let mut data = None;
+        let mut completed_content = |output: rho_sdk::tool::ToolOutput| {
+            if output.presentation() != &ToolMetadata::default() {
+                view.metadata = output.presentation().clone();
             }
+            data = output.structured_content().cloned();
+            output.content().to_string()
+        };
+        let (ok, content) = match result {
+            ToolCompletion::Success(output) => (true, completed_content(output)),
+            ToolCompletion::CompletedFailure(output) => (false, completed_content(output)),
             ToolCompletion::Failure(error) => (false, error.message().to_string()),
             ToolCompletion::Unavailable => (false, "tool is unavailable".into()),
             _ => (false, "unknown tool result".into()),
         };
-        (ok, self.finished_presentation(&view, &content, ok))
+        (
+            ok,
+            self.finished_presentation(&view, &content, ok, data.as_ref()),
+        )
     }
 
+    /// `data` is the live structured output; replayed history has none.
     fn finished_presentation(
         &self,
         view: &ToolView,
         content: &str,
         ok: bool,
+        data: Option<&serde_json::Value>,
     ) -> FinishedToolPresentation {
         if let Some(message) = message_format::finished_message(view, content, ok) {
             return FinishedToolPresentation {
                 presentation: crate::presentation::Presentation::Notification(message),
+                image_asset: None,
+            };
+        }
+        if view.kind == ToolKind::Codemode {
+            let card = codemode_format::finished_card(&view.arguments, content, ok, data);
+            return FinishedToolPresentation {
+                presentation: presentation(view, card).card.into(),
                 image_asset: None,
             };
         }

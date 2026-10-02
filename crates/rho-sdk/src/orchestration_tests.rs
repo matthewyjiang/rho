@@ -30,7 +30,7 @@ use crate::{
     SelectionMode, Session, SessionId, SessionOptions, SessionState, UserInput,
 };
 
-use super::{apply_staged_steering, execute_run, tool_turn::INTERRUPTED_TOOL_RESULT_CONTENT};
+use super::{apply_staged_steering, execute_run, tool_settlement::INTERRUPTED_TOOL_RESULT_CONTENT};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 

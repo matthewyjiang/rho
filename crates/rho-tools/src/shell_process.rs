@@ -7,7 +7,7 @@
 use crate::cancellation::RunCancellation;
 use crate::process_env::apply_process_environment;
 use crate::process_stream::{capture_failure_notice, StreamKind};
-use crate::tool::{truncate, ToolError, ToolResult, ToolSpec};
+use crate::tool::{truncate, ToolError, ToolSpec};
 use rho_sdk::{ExecutableSelection, ProcessEnvironment, ProcessExecution, ProcessInvocation};
 use serde::Deserialize;
 use std::{ffi::OsString, process::Stdio, time::Duration, time::Instant};
@@ -116,18 +116,9 @@ pub(crate) trait ProcessSupervisor: Sized {
     fn kill(&mut self);
 }
 
-/// A finished shell command: the model-facing text result plus the typed
-/// outcome scripts read as structured content.
-pub(crate) struct ShellRun {
-    pub(crate) result: ToolResult,
-    pub(crate) outcome: ShellOutcome,
-}
-
-/// Typed result of a finished shell command (see [`shell_output_schema`]).
-///
-/// `stdout` and `stderr` are the retained capture, bounded together by the
-/// tool's `max_output_bytes`; `truncated` reports any dropped bytes.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+/// A finished shell command. Retained stdout and stderr share the tool's
+/// `max_output_bytes`; `truncated` reports dropped bytes.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct ShellOutcome {
     pub(crate) stdout: String,
     pub(crate) stderr: String,
@@ -137,35 +128,13 @@ pub(crate) struct ShellOutcome {
     pub(crate) wall_time_ms: u64,
 }
 
-/// JSON Schema for [`ShellOutcome`], the shell tools' structured content.
-pub(crate) fn shell_output_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "stdout": {"type": "string", "description": "Retained stdout"},
-            "stderr": {"type": "string", "description": "Retained stderr"},
-            "exit_code": {
-                "type": ["integer", "null"],
-                "description": "Exit code; null when a signal ended the command"
-            },
-            "truncated": {
-                "type": "boolean",
-                "description": "Output beyond the tool-output limit was dropped"
-            },
-            "wall_time_ms": {"type": "integer"}
-        },
-        "required": ["stdout", "stderr", "exit_code", "truncated", "wall_time_ms"]
-    })
-}
-
 /// Spawns `execution`, supervises it with `S`, and streams output updates.
 pub(crate) async fn run<S: ProcessSupervisor>(
     execution: ProcessExecution,
-    id: String,
     tool_name: &str,
     cancellation: RunCancellation,
     on_update: &mut (dyn FnMut(Vec<String>) + Send),
-) -> Result<ShellRun, ToolError> {
+) -> Result<crate::Rendered<ShellOutcome>, ToolError> {
     let mut command = build_command(&execution, tool_name)?;
     S::prepare(&mut command);
     let mut child = command.spawn()?;
@@ -224,24 +193,21 @@ pub(crate) async fn run<S: ProcessSupervisor>(
     supervisor.kill();
     let output = streams.finish().await;
     let elapsed = start.elapsed();
+    let outcome = ShellOutcome {
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        exit_code: status.code(),
+        truncated: output.truncated,
+        wall_time_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
+    };
     let result = finished_result(
-        id,
         status,
-        &output.stdout,
-        &output.stderr,
+        outcome.stdout.as_bytes(),
+        outcome.stderr.as_bytes(),
         elapsed,
         max_output_bytes,
     );
-    Ok(ShellRun {
-        result,
-        outcome: ShellOutcome {
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            exit_code: status.code(),
-            truncated: output.truncated,
-            wall_time_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
-        },
-    })
+    Ok(crate::Rendered::new(result, outcome).failed_if(!status.success()))
 }
 
 fn build_command(execution: &ProcessExecution, tool_name: &str) -> Result<Command, ToolError> {
@@ -436,19 +402,18 @@ fn running_content(stdout: &[u8], stderr: &[u8]) -> String {
 }
 
 fn finished_result(
-    id: String,
     status: std::process::ExitStatus,
     stdout: &[u8],
     stderr: &[u8],
     elapsed: Duration,
     max_output_bytes: usize,
-) -> ToolResult {
+) -> String {
     let exit_code = status
         .code()
         .as_ref()
         .map(ToString::to_string)
         .unwrap_or_else(|| "signal".into());
-    let content = truncate(
+    truncate(
         format_shell_output(
             &String::from_utf8_lossy(stdout),
             &String::from_utf8_lossy(stderr),
@@ -458,12 +423,7 @@ fn finished_result(
             },
         ),
         max_output_bytes,
-    );
-    ToolResult {
-        id,
-        ok: status.success(),
-        content,
-    }
+    )
 }
 
 fn timeout_error(

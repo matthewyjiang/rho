@@ -31,14 +31,12 @@ impl SdkWebSearch {
         context: &rho_sdk::tool::AuthorizedToolContext,
     ) -> Result<ToolOutput, ToolError> {
         let execution = self.inner.search(arguments, self.max_output_bytes);
-        let (content, structured) = tokio::select! {
+        let output = tokio::select! {
             result = execution => result,
             () = context.cancellation().cancelled() => return Err(ToolError::cancelled()),
         }
         .map_err(map_legacy_error)?;
-        Ok(ToolOutput::text(content)
-            .metadata(metadata())
-            .with_structured_content(structured))
+        output.into_tool_output(metadata())
     }
 }
 
@@ -52,7 +50,7 @@ impl Tool for SdkWebSearch {
     }
 
     fn output_schema(&self) -> Option<serde_json::Value> {
-        Some(super::adapters::web_search_output_schema())
+        Some(rho_tools::output_schema::<super::adapters::WebSearchOutput>())
     }
 
     fn prepare<'a>(

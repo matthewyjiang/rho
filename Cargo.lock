@@ -4815,7 +4815,7 @@ dependencies = [
 
 [[package]]
 name = "rho-agent-tools"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "base64 0.23.1",
  "calamine",
@@ -4823,6 +4823,7 @@ dependencies = [
  "globset",
  "ignore",
  "image",
+ "jsonschema",
  "libc",
  "lopdf",
  "pdf-inspector",
@@ -4831,6 +4832,7 @@ dependencies = [
  "regex",
  "rho-sdk",
  "same-file",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
  "similar",
@@ -4883,6 +4885,7 @@ dependencies = [
  "rustls",
  "rustls-platform-verifier",
  "same-file",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
  "serde_yaml_ng",

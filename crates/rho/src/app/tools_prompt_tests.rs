@@ -290,6 +290,64 @@ async fn deferred_mcp_connect_returns_pending_inventory_without_waiting() {
     handle.abort();
 }
 
+// Covers: transient MCP status never enters a cached prompt, and hydration
+// refreshed twice equals one assembled from the final report alone.
+// Owner: app MCP prompt assembly seam.
+#[test]
+fn deferred_mcp_catalog_replaces_startup_status() {
+    use crate::tools::mcp::report::{
+        ConnectedServerReport, McpServerReport, McpSessionReport, McpTransportSummary,
+    };
+    let cwd = tempfile::tempdir().unwrap();
+    let make_template = || {
+        crate::prompt::system_prompt_template_with_plugin_skills(&[], cwd.path(), None, Vec::new())
+    };
+    let running = crate::model_identity::PromptModel::Rho {
+        provider: "test".into(),
+        model: "test".into(),
+    };
+    let mut deferred = make_template();
+    let report = McpSessionReport {
+        servers: vec![McpServerReport::connecting(
+            "docs",
+            &stdio_server("fixture", Vec::new()),
+        )],
+        ..Default::default()
+    };
+    let before = deferred.render(&running, None);
+    deferred.replace_mcp(&report);
+    let connecting = deferred.render(&running, None);
+    assert_eq!(
+        (connecting.text, connecting.sources),
+        (before.text, before.sources)
+    );
+    let report = McpSessionReport {
+        servers: vec![McpServerReport::connected(ConnectedServerReport {
+            identity: "docs".into(),
+            transport: McpTransportSummary::Stdio {
+                command: "fixture".into(),
+                args: Vec::new(),
+            },
+            tools: Vec::new(),
+            instructions: Some("server guidance".into()),
+            live: Default::default(),
+            filtered_out_count: 0,
+            collision_skipped_count: 0,
+        })],
+        ..Default::default()
+    };
+    deferred.replace_mcp(&report);
+    deferred.replace_mcp(&report);
+    let mut immediate = make_template();
+    immediate.replace_mcp(&report);
+    let deferred = deferred.render(&running, None);
+    let immediate = immediate.render(&running, None);
+    assert_eq!(
+        (deferred.text, deferred.sources),
+        (immediate.text, immediate.sources)
+    );
+}
+
 fn stdio_server(command: &str, args: Vec<String>) -> crate::tools::mcp::config::McpServerConfig {
     use crate::tools::mcp::config::{
         McpSamplingPolicy, McpServerConfig, McpToolFilter, McpTransport,

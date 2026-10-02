@@ -18,16 +18,21 @@ use crate::{
     session::SessionCore,
     tool::{
         begin_cancellation_cleanup, tool_progress_channel, FirstCapability, ToolAccessMode,
-        ToolCancellationPolicy, ToolContext, ToolError, ToolErrorKind, ToolExecutionMode,
-        ToolExecutionPolicy, ToolInvocation, ToolOutput, ToolPreparationContext, ToolProgress,
+        ToolCancellationPolicy, ToolContext, ToolError, ToolErrorKind, ToolExecutionPolicy,
+        ToolInvocation, ToolOutput, ToolPreparationContext, ToolProgress,
     },
     CancellationToken, Error, RunEvent, ToolCallId,
 };
 
 use super::{
-    emit, pending_tool_outputs::PendingToolOutputs, run_hooks::RunHooks,
-    tool_batch::interrupted_result, Rho, RunControl,
+    emit,
+    pending_tool_outputs::PendingToolOutputs,
+    run_hooks::RunHooks,
+    tool_settlement::{interrupted, interrupted_result, settled},
+    Rho, RunControl,
 };
+
+use super::tool_turn::AsyncToolCall;
 
 pub(super) enum JobNotice {
     Progress {
@@ -72,7 +77,7 @@ struct JobCompletion {
 pub(super) struct AsyncJobSet {
     jobs: BTreeMap<ToolCallId, AsyncJob>,
     /// Proposed calls not yet represented by either a live job or a parked result.
-    unstarted: VecDeque<(ToolCallId, ToolCall)>,
+    unstarted: VecDeque<AsyncToolCall>,
     completions: mpsc::UnboundedReceiver<JobCompletion>,
     completions_tx: mpsc::UnboundedSender<JobCompletion>,
     execution_slots: Arc<Semaphore>,
@@ -111,7 +116,7 @@ impl AsyncJobSet {
 
     fn take_completion(&mut self, completion: JobCompletion) -> Option<JobNotice> {
         let job = self.jobs.remove(&completion.call_id)?;
-        Some(finished_notice(job, completion.result))
+        Some(finished_notice(completion.call_id, job, completion.result))
     }
 
     pub(super) async fn poll_event(&mut self) -> JobNotice {
@@ -146,7 +151,7 @@ impl AsyncJobSet {
 impl RunControl<'_> {
     pub(super) async fn spawn_async(
         &mut self,
-        calls: Vec<ToolCall>,
+        calls: Vec<AsyncToolCall>,
         core: &Arc<SessionCore>,
         runtime: &Rho,
     ) -> Result<(), Error> {
@@ -155,18 +160,10 @@ impl RunControl<'_> {
         let hooks = self.hooks;
         let events = self.events;
         let cancellation = self.cancellation;
-        let calls = calls
-            .into_iter()
-            .map(|call| {
-                let id = ToolCallId::from_string(call.id.clone())
-                    .expect("validated provider tool call ID is nonempty");
-                (id, call)
-            })
-            .collect::<Vec<_>>();
         if calls.is_empty() {
             return Ok(());
         }
-        for (_, call) in &calls {
+        for AsyncToolCall { call, .. } in &calls {
             if let Err(error) = emit(
                 events,
                 cancellation,
@@ -174,7 +171,7 @@ impl RunControl<'_> {
             )
             .await
             {
-                for (_, call) in &calls {
+                for AsyncToolCall { call, .. } in &calls {
                     outputs.park_finished(interrupted_result(call));
                 }
                 return Err(error);
@@ -188,7 +185,7 @@ impl RunControl<'_> {
             Arc::clone(&runtime.approval_audit),
             runtime.hooks.clone(),
             crate::workspace::AuthorizationScope {
-                session_id: Some(core.id().clone()),
+                session_id: core.id().clone(),
                 run_id: Some(hooks.run_id().clone()),
                 workspace_root: runtime
                     .workspace
@@ -200,13 +197,7 @@ impl RunControl<'_> {
                 },
             },
         ));
-        while let Some((id, call)) = jobs.unstarted.pop_front() {
-            let tool = runtime
-                .tools
-                .get(&call.name)
-                .expect("split_tool_calls only routes registered async tools");
-            // Registered tools stay registered for the run; advertisement was
-            // checked by split_tool_calls in this same step.
+        while let Some(AsyncToolCall { id, call, tool }) = jobs.unstarted.pop_front() {
             let job_cancellation = CancellationToken::new();
             let (progress, progress_receiver) = tool_progress_channel(runtime.event_capacity);
             let context = ToolContext::with_security(
@@ -369,7 +360,7 @@ impl AsyncJobSet {
         history.extend(
             std::mem::take(&mut self.unstarted)
                 .into_iter()
-                .map(|(_, call)| Message::ToolResult(interrupted_result(&call))),
+                .map(|entry| Message::ToolResult(interrupted_result(&entry.call))),
         );
         outputs.drain_interrupted(history);
         let jobs = std::mem::take(&mut self.jobs);
@@ -397,18 +388,16 @@ fn async_plan_allowed(policy: &ToolExecutionPolicy) -> bool {
     }
 }
 
-fn finished_notice(job: AsyncJob, result: Result<ToolOutput, ToolError>) -> JobNotice {
+fn finished_notice(
+    call_id: ToolCallId,
+    job: AsyncJob,
+    result: Result<ToolOutput, ToolError>,
+) -> JobNotice {
     let duration = Some(job.started.elapsed());
     let capability = job.first_capability.get().cloned();
-    let completion = match result {
-        Ok(output) => ToolCompletion::Success(output),
-        Err(error) => {
-            ToolCompletion::Failure(ToolFailure::new(error.kind(), error.message().to_owned()))
-        }
-    };
+    let completion = ToolCompletion::from_result(result);
     JobNotice::Finished(Box::new(FinishedJob {
-        call_id: ToolCallId::from_string(job.call.id.clone())
-            .expect("validated provider tool call ID is nonempty"),
+        call_id,
         name: job.name,
         completion,
         duration,
@@ -571,12 +560,7 @@ async fn settle_job(mut job: AsyncJob) -> (ToolResult, ToolCompletion) {
                 Err(_) => {
                     job.worker.abort();
                     let _ = (&mut job.worker).await;
-                    let result = interrupted_result(&job.call);
-                    let completion = ToolCompletion::Failure(ToolFailure::new(
-                        ToolErrorKind::Cancelled,
-                        result.content.clone(),
-                    ));
-                    return (result, completion);
+                    return interrupted(&job.call);
                 }
             }
         }
@@ -585,54 +569,10 @@ async fn settle_job(mut job: AsyncJob) -> (ToolResult, ToolCompletion) {
             job.worker.await
         }
     };
-    match result {
-        Ok(Ok(output)) => (
-            ToolResult {
-                id: job.call.id,
-                ok: !output.is_failure(),
-                content: output.content().to_owned(),
-            },
-            ToolCompletion::Success(output),
-        ),
-        Ok(Err(error)) if error.kind() != ToolErrorKind::Cancelled => (
-            ToolResult {
-                id: job.call.id,
-                ok: false,
-                content: error.message().to_owned(),
-            },
-            ToolCompletion::Failure(ToolFailure::new(error.kind(), error.message().to_owned())),
-        ),
-        Ok(Err(_)) | Err(_) => {
-            let result = interrupted_result(&job.call);
-            let completion = ToolCompletion::Failure(ToolFailure::new(
-                ToolErrorKind::Cancelled,
-                result.content.clone(),
-            ));
-            (result, completion)
-        }
-    }
-}
-
-pub(super) fn split_tool_calls(
-    calls: Vec<ToolCall>,
-    async_ids: &BTreeSet<String>,
-    runtime: &Rho,
-) -> (Vec<ToolCall>, Vec<ToolCall>) {
-    let mut async_calls = Vec::new();
-    let mut sync_calls = Vec::new();
-    for call in calls {
-        // Unadvertised tools route to the sync batch, which reports them
-        // unavailable instead of spawning them detached.
-        let declared_async = runtime
-            .model_callable_tool(&call.name)
-            .is_some_and(|tool| tool.execution_mode() == ToolExecutionMode::Async);
-        if async_ids.contains(&call.id) && declared_async {
-            async_calls.push(call);
-        } else {
-            sync_calls.push(call);
-        }
-    }
-    (async_calls, sync_calls)
+    result
+        .ok()
+        .and_then(|result| settled(&job.call, result))
+        .unwrap_or_else(|| interrupted(&job.call))
 }
 
 pub(super) async fn forward_job_notice(

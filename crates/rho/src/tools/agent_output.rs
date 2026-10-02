@@ -27,54 +27,47 @@ pub(super) fn format_background_start(id: &str, agent_id: &str) -> String {
     format!("agent {id} ({agent_id}) started in background\nattach: rho attach {id}")
 }
 
-/// Script-facing view of one delegated run (see [`agent_run_schema`]).
-///
-/// `result` is present only for a finished run and uses the same excerpt
-/// bound as the text, so a running run's output stays private as it does in
-/// text, and a large result cannot be read twice at full size.
-pub(super) fn structured_run(snapshot: &SubagentSnapshot) -> serde_json::Value {
-    let result = snapshot
-        .status
-        .result
-        .as_deref()
-        .filter(|result| snapshot.done && !result.is_empty())
-        .map(|result| truncate(result.to_string(), RESULT_EXCERPT_BYTES));
-    serde_json::json!({
-        "id": snapshot.id,
-        "agent_id": snapshot.agent_id,
-        "state": snapshot.status.state.as_str(),
-        "done": snapshot.done,
-        "result": result,
-        "error": snapshot.status.error,
-    })
+/// Script view of a run. Running output stays private; final answers share
+/// the model text's excerpt budget.
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(super) struct AgentRunView {
+    id: String,
+    agent_id: String,
+    state: RunState,
+    done: bool,
+    result: Option<String>,
+    error: Option<String>,
 }
 
-/// Script-facing receipt for a freshly started run.
-pub(super) fn structured_start(id: &str, agent_id: &str) -> serde_json::Value {
-    serde_json::json!({
-        "id": id,
-        "agent_id": agent_id,
-        "state": "starting",
-        "done": false,
-        "result": null,
-        "error": null,
-    })
+impl From<&SubagentSnapshot> for AgentRunView {
+    fn from(snapshot: &SubagentSnapshot) -> Self {
+        Self {
+            id: snapshot.id.clone(),
+            agent_id: snapshot.agent_id.clone(),
+            state: snapshot.status.state,
+            done: snapshot.done,
+            result: snapshot
+                .status
+                .result
+                .as_deref()
+                .filter(|result| snapshot.done && !result.is_empty())
+                .map(|result| truncate(result.to_string(), RESULT_EXCERPT_BYTES)),
+            error: snapshot.status.error.clone(),
+        }
+    }
 }
 
-/// JSON Schema for one delegated run in structured output.
-pub(super) fn agent_run_schema() -> serde_json::Value {
-    serde_json::json!({
-        "type": "object",
-        "properties": {
-            "id": {"type": "string", "description": "Run id for agents status/stop/message"},
-            "agent_id": {"type": "string"},
-            "state": {"type": "string", "enum": ["starting", "running", "ok", "error", "stopped"]},
-            "done": {"type": "boolean"},
-            "result": {"type": ["string", "null"], "description": "Final answer excerpt once done"},
-            "error": {"type": ["string", "null"]}
-        },
-        "required": ["id", "agent_id", "state", "done", "result", "error"]
-    })
+impl AgentRunView {
+    pub(super) fn started(id: String, agent_id: String) -> Self {
+        Self {
+            id,
+            agent_id,
+            state: RunState::Starting,
+            done: false,
+            result: None,
+            error: None,
+        }
+    }
 }
 
 pub(super) fn format_snapshot(snapshot: &SubagentSnapshot, format: SnapshotFormat) -> String {

@@ -2,7 +2,7 @@ use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::TempDir;
 
-use super::{grep_workspace, truncate_chars, GrepRequest, MAX_FILE_BYTES};
+use super::{grep_search, truncate_chars, GrepRequest, MAX_FILE_BYTES};
 use crate::{
     file_view::FileViewStyle,
     hashline::compute_file_hash,
@@ -15,13 +15,14 @@ fn call_grep(dir: &TempDir, args: serde_json::Value) -> Result<String, ToolError
     let request = GrepRequest::from_arguments(args)?;
     let root = resolve_path(dir.path(), &request.path);
     let display = compact_display_path(dir.path(), &request.path);
-    grep_workspace(
+    grep_search(
         &root,
         &display,
         &request,
         &|| false,
         FileViewStyle::Hashline,
     )
+    .map(|output| output.text().to_owned())
 }
 
 fn write(dir: &TempDir, relative: &str, content: &str) {
@@ -225,7 +226,10 @@ fn cancellation_stops_the_walk_and_is_reported() {
     let dir = TempDir::new().unwrap();
     write(&dir, "a.txt", "needle\n");
     let request = GrepRequest::from_arguments(json!({"pattern": "needle"})).unwrap();
-    let out = grep_workspace(dir.path(), ".", &request, &|| true, FileViewStyle::Hashline).unwrap();
+    let out = grep_search(dir.path(), ".", &request, &|| true, FileViewStyle::Hashline)
+        .unwrap()
+        .text()
+        .to_owned();
     assert_eq!(out, "no matches for 'needle' under . (cancelled)");
 }
 
@@ -338,14 +342,16 @@ fn content_mode_omits_file_tags_when_disabled() {
     let request = GrepRequest::from_arguments(json!({"pattern": "find me"})).unwrap();
     let root = resolve_path(dir.path(), &request.path);
     let display = compact_display_path(dir.path(), &request.path);
-    let content = grep_workspace(
+    let content = grep_search(
         &root,
         &display,
         &request,
         &|| false,
         FileViewStyle::Numbered,
     )
-    .unwrap();
+    .unwrap()
+    .text()
+    .to_owned();
     assert!(content.contains("src/lib.rs"), "{content}");
     assert!(!content.contains("[src/lib.rs#"), "{content}");
     assert!(content.contains("1 | find me"), "{content}");

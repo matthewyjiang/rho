@@ -1,182 +1,182 @@
-//! ToolHost bridge for Starlark code-mode.
-//!
-//! Nested calls (native **or MCP-backed**) go through [`CodeModeBridge`] so
-//! policy, approvals, and hooks stay on ToolHost. There is no in-guest MCP client.
-//!
-//! # Nested approvals (locked model)
-//!
-//! Production hosts build [`ToolHostBridge`] from a child [`ToolHost`] made with
-//! [`ToolHost::child_builder`] (see [`super::nesting`]), which inherits the
-//! parent call's workspace policy, hook gate, and approval session. Then:
-//!
-//! - A gated nested `call_tool` **blocks** inside `ToolHost::invoke` until the
-//!   session handler returns Allow*/Deny (or the run is cancelled / times out).
-//! - That pauses the Starlark thread (outer `codemode` stays in-flight).
-//! - Deny surfaces as [`BridgeError::NestedDenied`] (typed SDK kind, not text).
-//! - There is **no** second “approve codemode” prompt and no parallel approval
-//!   system — nested calls follow the session permission mode
-//!   (bypass/auto/allow_edits/plan/supervised) exactly like a direct call.
-//!
-//! See `docs/design/code-mode-starlark-v0.md`.
+//! Nested ToolHost execution with inherited authorization and parent event relay.
 
-use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::{
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Instant,
+};
 
-use super::exposure::ExposureController;
-
-use async_trait::async_trait;
-use rho_sdk::tool::{ToolContext, ToolErrorKind, ToolOutput, ToolProgress};
+use futures_util::{stream, StreamExt};
+use rho_sdk::tool::{ToolContext, ToolOutput, ToolProgress};
 use rho_sdk::{Error as SdkError, ToolHost, ToolHostCall, ToolHostEvent, ToolHostRun};
 use serde_json::Value;
 use thiserror::Error;
 
-/// Model-facing tool name (also the `/codemode on|only` command name).
-pub const CODEMODE_TOOL_NAME: &str = "codemode";
+use super::call_log::{NestedCallRecord, NestedCallStatus};
+use super::exposure::{search_entries, CodeModeSurface, ToolCatalogEntry};
 
-/// Errors from the code-mode host bridge (loud, actionable).
+pub(crate) const CODEMODE_TOOL_NAME: &str = "codemode";
+/// Existing runaway-loop tripwire; failures name the limit and requested count.
+const MAX_NESTED_CALLS: usize = 64;
+
 #[derive(Debug, Error)]
-pub enum BridgeError {
-    #[error("codemode: tool `{name}` is not on the allowlist (v0 loud limit)")]
-    NotAllowlisted { name: String },
-    #[error("codemode: refusing recursive invocation of `{name}`")]
-    Recursive { name: String },
-    #[error("codemode: nested call limit exceeded (max {max})")]
-    CallLimit { max: usize },
+pub(super) enum BridgeError {
+    #[error("codemode: parent call cancelled")]
+    Cancelled,
+    #[error("codemode: nested call budget exceeded (limit {max}, requested {requested})")]
+    CallLimit { max: usize, requested: usize },
     #[error("codemode: ToolHost error: {0}")]
     Host(#[from] SdkError),
-    #[error("codemode: nested tool `{name}` denied by session policy: {reason}")]
-    NestedDenied { name: String, reason: String },
-    #[error("codemode: {0}")]
-    Message(String),
 }
 
-/// Abstraction over ToolHost so unit tests can stub nested tools (including MCP names).
-#[async_trait]
-pub trait CodeModeBridge: Send + Sync {
-    async fn invoke_tool(&self, name: &str, arguments: Value) -> Result<ToolOutput, BridgeError>;
-}
-
-/// Allowlist + call budget wrapping any [`CodeModeBridge`].
-pub struct GuardedBridge {
-    inner: Arc<dyn CodeModeBridge>,
-    allowlist: Option<BTreeSet<String>>,
-    max_calls: usize,
-    calls: std::sync::Mutex<usize>,
-    exposure: Option<Arc<ExposureController>>,
-}
-
-impl GuardedBridge {
-    /// `allowlist = None` means all ToolHost-registered names are eligible
-    /// (still subject to ToolHost policy). `Some(...)` is a loud v0 gate for
-    /// tests / gradual rollout; include MCP tool names the same way as native.
-    #[cfg(test)]
-    pub fn new(
-        inner: Arc<dyn CodeModeBridge>,
-        allowlist: Option<BTreeSet<String>>,
-        max_calls: usize,
-    ) -> Self {
-        Self::with_exposure(inner, allowlist, max_calls, None)
-    }
-
-    pub fn with_exposure(
-        inner: Arc<dyn CodeModeBridge>,
-        allowlist: Option<BTreeSet<String>>,
-        max_calls: usize,
-        exposure: Option<Arc<ExposureController>>,
-    ) -> Self {
-        Self {
-            inner,
-            allowlist,
-            max_calls: max_calls.max(1),
-            calls: std::sync::Mutex::new(0),
-            exposure,
-        }
-    }
-
-    pub fn call_count(&self) -> usize {
-        *self.calls.lock().expect("call counter")
-    }
-
-    pub async fn call_tool(&self, name: &str, arguments: Value) -> Result<ToolOutput, BridgeError> {
-        let trimmed = name.trim();
-        if trimmed.is_empty() {
-            return Err(BridgeError::Message("tool name must not be empty".into()));
-        }
-        if trimmed == CODEMODE_TOOL_NAME {
-            return Err(BridgeError::Recursive {
-                name: trimmed.to_owned(),
-            });
-        }
-        if let Some(exposure) = &self.exposure {
-            if !exposure.is_script_callable(trimmed) {
-                return Err(BridgeError::Message(format!(
-                    "tool `{trimmed}` is hidden and unreachable from codemode"
-                )));
-            }
-        }
-        if let Some(allow) = &self.allowlist {
-            if !allow.contains(trimmed) {
-                return Err(BridgeError::NotAllowlisted {
-                    name: trimmed.to_owned(),
-                });
-            }
-        }
-        {
-            let mut calls = self.calls.lock().expect("call counter");
-            if *calls >= self.max_calls {
-                return Err(BridgeError::CallLimit {
-                    max: self.max_calls,
-                });
-            }
-            *calls += 1;
-        }
-        // Sequential v0: one nested invoke at a time from the Starlark thread.
-        // When `inner` is ToolHostBridge with a shared ApprovalSession, a gated
-        // tool blocks here until approve/deny/cancel — pausing the whole script.
-        self.inner.invoke_tool(trimmed, arguments).await
-    }
-}
-
-/// Production bridge: every nested call runs on a child [`ToolHost`]
-/// (MCP tools included when registered on the host).
-///
-/// Build the host with [`ToolHost::child_builder`] so nested gating reuses the
-/// parent's policy, hooks, and approvals without a second prompt. The bridge
-/// also keeps nested calls visible and interruptible from the parent call:
-/// - nested progress and per-call status go to the parent's progress stream,
-///   so the `codemode` card shows each nested call while the script runs
-/// - nested host-input requests are relayed through the parent call
-/// - cancelling the parent call cancels the in-flight nested call
-pub struct ToolHostBridge {
-    host: Arc<ToolHost>,
+/// Every nested call uses a child host inheriting policy, approvals, hooks and
+/// run identity. The evaluator lives on a blocking thread, so awaited progress
+/// cannot starve the parent task which drains events and answers host questions.
+pub(super) struct ToolHostBridge {
+    host: ToolHost,
     parent: ToolContext,
-    log: tokio::sync::Mutex<NestedCallLog>,
+    catalog: Vec<ToolCatalogEntry>,
+    calls: AtomicUsize,
+    /// Held while a rendered snapshot is sent, so concurrent calls cannot
+    /// deliver an older snapshot after a newer one.
+    log: tokio::sync::Mutex<Vec<NestedCallRecord>>,
 }
 
 impl ToolHostBridge {
-    /// `host` should already carry the parent call's authorization.
-    pub fn new(host: Arc<ToolHost>, parent: ToolContext) -> Self {
-        Self {
+    pub(super) fn new(
+        surface: Arc<CodeModeSurface>,
+        parent: ToolContext,
+    ) -> Result<Self, rho_sdk::tool::ToolError> {
+        let (host, catalog) = surface.snapshot(&parent)?;
+        Ok(Self {
             host,
             parent,
+            catalog,
+            calls: AtomicUsize::new(0),
             log: tokio::sync::Mutex::default(),
-        }
+        })
     }
 
-    /// Records one nested call's state and republishes the whole log.
-    ///
-    /// Progress replaces a card's body, so each update carries every nested
-    /// call so far. The log is bounded by the nested call budget.
-    ///
-    /// Awaits channel capacity. The script runs on its own blocking thread
-    /// (see [`super::tool`]), so the parent call's task keeps draining this
-    /// channel and every update, including the final restatement, arrives.
-    async fn report(&self, index: usize, state: NestedCallState) {
+    pub(super) fn search(&self, query: &str, limit: usize) -> Vec<ToolCatalogEntry> {
+        search_entries(self.catalog.iter(), query, limit)
+    }
+
+    pub(super) fn describe(&self, name: &str) -> Option<ToolCatalogEntry> {
+        self.catalog
+            .iter()
+            .find(|entry| entry.name == name)
+            .cloned()
+    }
+
+    #[cfg(test)]
+    pub(super) fn call_count(&self) -> usize {
+        self.calls.load(Ordering::Relaxed)
+    }
+
+    /// Final call records in start order, for the tool's structured output.
+    pub(super) async fn records(&self) -> Vec<NestedCallRecord> {
+        self.log.lock().await.clone()
+    }
+
+    pub(super) async fn call_tool(
+        &self,
+        name: &str,
+        arguments: Value,
+    ) -> Result<ToolOutput, BridgeError> {
+        self.reserve(1)?;
+        self.run_call(name.to_owned(), arguments).await
+    }
+
+    /// Runs independent calls concurrently and returns their results in input
+    /// order. The whole batch is checked against the call budget before any
+    /// call starts, and a cancelled parent fails the batch.
+    pub(super) async fn call_tools(
+        &self,
+        calls: Vec<(String, Value)>,
+    ) -> Result<Vec<Result<ToolOutput, BridgeError>>, BridgeError> {
+        self.reserve(calls.len())?;
+        let results: Vec<_> = stream::iter(calls)
+            .map(|(name, arguments)| self.run_call(name, arguments))
+            // Same width as a model-issued parallel tool batch.
+            .buffered(crate::app::sdk_config::parallel_tool_limit().get())
+            .collect()
+            .await;
+        if self.parent.cancellation().is_cancelled() {
+            return Err(BridgeError::Cancelled);
+        }
+        Ok(results)
+    }
+
+    fn reserve(&self, count: usize) -> Result<(), BridgeError> {
+        if self.parent.cancellation().is_cancelled() {
+            return Err(BridgeError::Cancelled);
+        }
+        let requested = self.calls.fetch_add(count, Ordering::Relaxed) + count;
+        if requested > MAX_NESTED_CALLS {
+            return Err(BridgeError::CallLimit {
+                max: MAX_NESTED_CALLS,
+                requested,
+            });
+        }
+        Ok(())
+    }
+
+    async fn run_call(&self, name: String, arguments: Value) -> Result<ToolOutput, BridgeError> {
+        if self.parent.cancellation().is_cancelled() {
+            return Err(BridgeError::Cancelled);
+        }
+        let started = Instant::now();
+        let record = NestedCallRecord::running(&name, &arguments);
+        let index = {
+            let mut log = self.log.lock().await;
+            log.push(record);
+            log.len() - 1
+        };
+        // Unknown (including recursive) names are rejected by the child host.
+        let result = match self.host.start(ToolHostCall::new(name, arguments)) {
+            Ok(run) => {
+                self.report(index, |_| {}).await;
+                self.run_nested(run, index).await.map_err(BridgeError::from)
+            }
+            Err(error) => Err(error.into()),
+        };
+        let cancelled = self.parent.cancellation().is_cancelled();
+        self.report(index, |record| {
+            record.duration_ms = Some(started.elapsed().as_millis() as u64);
+            match &result {
+                Ok(output) if !output.is_failure() => {
+                    record.status = NestedCallStatus::Ok;
+                    record.detail = None;
+                }
+                Ok(output) => {
+                    record.status = NestedCallStatus::Error;
+                    record.set_error(output.content());
+                }
+                Err(_) if cancelled => record.status = NestedCallStatus::Cancelled,
+                Err(BridgeError::Host(SdkError::Cancelled)) => {
+                    record.status = NestedCallStatus::Cancelled;
+                }
+                Err(error) => {
+                    record.status = NestedCallStatus::Error;
+                    record.set_error(&error.to_string());
+                }
+            }
+        })
+        .await;
+        result
+    }
+
+    /// Updates one record, then relays every row as the parent's progress text.
+    async fn report(&self, index: usize, update: impl FnOnce(&mut NestedCallRecord)) {
         let mut log = self.log.lock().await;
-        log.set(index, state);
-        let rendered = log.render();
-        drop(log);
-        // `false` means the host stopped listening; nothing left to inform.
+        update(&mut log[index]);
+        let rendered = log
+            .iter()
+            .map(NestedCallRecord::row)
+            .collect::<Vec<_>>()
+            .join("\n");
         let _ = self
             .parent
             .progress()
@@ -185,124 +185,27 @@ impl ToolHostBridge {
     }
 
     async fn run_nested(&self, mut run: ToolHostRun, index: usize) -> Result<ToolOutput, SdkError> {
-        let parent_cancellation = self.parent.cancellation().clone();
+        let cancellation = self.parent.cancellation().clone();
         loop {
             tokio::select! {
-                // Cancellation wins over a ready event so a cancelled parent
-                // never starts answering nested questions.
                 biased;
-                () = parent_cancellation.cancelled() => {
+                () = cancellation.cancelled() => {
                     run.cancel();
                     return run.outcome().await;
                 }
                 event = run.next_event() => match event {
                     Some(ToolHostEvent::Progress(progress)) => {
-                        self.report(index, NestedCallState::Running(progress.text().to_owned()))
-                            .await;
+                        self.report(index, |record| record.set_progress(progress.text())).await;
                     }
                     Some(ToolHostEvent::HostInputRequested(mut pending)) => {
-                        // Dropping `pending` unanswered fails the nested call.
-                        if let Ok(response) =
-                            self.parent.request_host_input(pending.request().clone()).await
-                        {
+                        if let Ok(response) = self.parent.request_host_input(pending.request().clone()).await {
                             let _ = pending.respond(response);
                         }
                     }
-                    // Future event kinds have no parent mapping yet.
                     Some(_) => {}
                     None => return run.outcome().await,
                 },
             }
         }
-    }
-}
-
-#[async_trait]
-impl CodeModeBridge for ToolHostBridge {
-    async fn invoke_tool(&self, name: &str, arguments: Value) -> Result<ToolOutput, BridgeError> {
-        // Blocks until the nested call finishes — including any approval wait
-        // on the inherited session handler. Parent cancellation interrupts it.
-        let run = self.host.start(ToolHostCall::new(name, arguments))?;
-        let index = self.log.lock().await.start(name);
-        self.report(index, NestedCallState::Running(String::new()))
-            .await;
-        let outcome = self.run_nested(run, index).await;
-        match outcome {
-            Ok(output) => {
-                // A completed call flagged as failed (nonzero shell exit)
-                // still hands the script its value, but the card says failed.
-                let state = if output.is_failure() {
-                    NestedCallState::Failed
-                } else {
-                    NestedCallState::Succeeded
-                };
-                self.report(index, state).await;
-                Ok(output)
-            }
-            Err(error) => {
-                self.report(index, NestedCallState::Failed).await;
-                Err(BridgeError::from_nested(name, error))
-            }
-        }
-    }
-}
-
-impl BridgeError {
-    /// Classifies a nested failure by its typed SDK kind, never by message text.
-    pub(super) fn from_nested(name: &str, error: SdkError) -> Self {
-        match error {
-            SdkError::Tool(tool) if tool.kind() == ToolErrorKind::PolicyDenied => {
-                Self::NestedDenied {
-                    name: name.to_owned(),
-                    reason: tool.message().to_owned(),
-                }
-            }
-            SdkError::PolicyDenied { message } => Self::NestedDenied {
-                name: name.to_owned(),
-                reason: message,
-            },
-            other => Self::Host(other),
-        }
-    }
-}
-
-enum NestedCallState {
-    Running(String),
-    Succeeded,
-    Failed,
-}
-
-/// One line per nested call, in call order.
-#[derive(Default)]
-struct NestedCallLog {
-    calls: Vec<(String, NestedCallState)>,
-}
-
-impl NestedCallLog {
-    fn start(&mut self, name: &str) -> usize {
-        self.calls
-            .push((name.to_owned(), NestedCallState::Running(String::new())));
-        self.calls.len() - 1
-    }
-
-    fn set(&mut self, index: usize, state: NestedCallState) {
-        if let Some((_, slot)) = self.calls.get_mut(index) {
-            *slot = state;
-        }
-    }
-
-    fn render(&self) -> String {
-        self.calls
-            .iter()
-            .map(|(name, state)| match state {
-                NestedCallState::Running(detail) if detail.trim().is_empty() => {
-                    format!("{name}: running")
-                }
-                NestedCallState::Running(detail) => format!("{name}: {}", detail.trim()),
-                NestedCallState::Succeeded => format!("{name}: done"),
-                NestedCallState::Failed => format!("{name}: failed"),
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
     }
 }

@@ -33,7 +33,9 @@ fn status_write_lock() -> &'static Mutex<()> {
 }
 
 /// State machine for a subagent run, persisted in the result file.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RunState {
     #[default]
