@@ -150,6 +150,12 @@ success.
 
 ## In the TUI
 
-The `codemode` card shows the script with syntax highlighting. It keeps the same
-shape while the script runs and after it finishes, when the header gains the
-nested-call count. Resumed sessions show the same card without the count.
+The `codemode` card streams the script with syntax highlighting as the model
+writes it. During execution, live rows above the script show nested calls, their
+status, and each running call's latest progress line. Updates replace the previous
+snapshot rather than accumulating duplicate output.
+
+When execution finishes, the card returns to the script with the nested-call
+count in its header and any script failure diagnostic. Resumed sessions show the
+same finished card without the count. Captured `print(...)` output and `result`
+are returned to the model; they do not replace the script in the card.

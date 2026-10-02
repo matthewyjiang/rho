@@ -68,13 +68,13 @@ pub(super) async fn intercept(
         {
             Some(concurrent_progress())
         }
-        // A batched read-only script: the card must show call rows and source.
+        // The nested progress tool holds each update until the PTY releases it.
         "fixture codemode" if tool_result(request, CODEMODE_CALL_ID).is_none() => {
             Some(completed_tool_call(
                 CODEMODE_CALL_ID,
                 "codemode",
                 serde_json::json!({
-                    "script": "hits = call_tools([(\"list_dir\", {\"path\": \".\"}), (\"glob\", {\"pattern\": \"*.md\"})])\nprint(\"codemode fixture batch\", len(hits))\nresult = [h[\"is_error\"] for h in hits]",
+                    "script": "hits = call_tools([\n    (\"list_dir\", {\"path\": \".\"}),\n    (\"tui_fixture_progress\", {\"label\": \"nested\", \"release_prefix\": \".rho-fixture-codemode\"}),\n])\nprint(\"codemode fixture batch\", len(hits))\nresult = [h[\"is_error\"] for h in hits]",
                 }),
             ))
         }

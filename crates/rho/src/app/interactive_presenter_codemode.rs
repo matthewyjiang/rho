@@ -1,8 +1,6 @@
-//! Codemode cards show the script as highlighted source: what the model ran,
-//! not what it printed. The card keeps one shape from start to finish; nested
-//! calls are usually too fast to watch, and rows that vanish on completion make
-//! the transcript jump, so the TUI ignores the bridge's progress rows (ACP and
-//! the automation protocol still forward them).
+//! Codemode cards keep the script as highlighted source. During execution,
+//! nested-call progress appears as plain facts above it, so tool output never
+//! replaces the source or gets highlighted as Starlark.
 
 use rho_tools::tool_card::{ToolBody, ToolCard, ToolFact, ToolFamily, ToolHeader, ToolStatus};
 use serde_json::Value;
@@ -34,6 +32,18 @@ pub(super) fn preview_card(
         ToolHeader::call(crate::tools::code_mode::CODEMODE_TOOL_NAME, primary),
     )
     .with_body(ToolBody::Lines(lines))
+}
+
+/// Bridge updates are complete snapshots, not deltas. Rebuild the facts each
+/// time while leaving the syntax-highlighted source in the body.
+pub(super) fn progress_card(arguments: &Value, text: &str) -> ToolCard {
+    let mut card = preview_card(arguments, ToolStatus::Running, /*primary*/ None);
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        card.push_fact(ToolFact::Meta {
+            text: line.to_owned(),
+        });
+    }
+    card
 }
 
 /// Finished card: the call count, the failure reason when the script failed,

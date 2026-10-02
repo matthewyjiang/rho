@@ -15,26 +15,6 @@ fn expected(status: ToolStatus, primary: Option<&str>, script: &[&str]) -> ToolC
     ))
 }
 
-// Covers: bridge progress rows never reach the running card, so it keeps the
-// started card's shape and nothing collapses when the script finishes.
-// Owner: codemode presenter (through the shared progress dispatch).
-#[test]
-fn running_card_ignores_call_rows() {
-    let arguments = json!({"script": "result = 1\n"});
-    let view = crate::app::interactive_presenter::ToolView {
-        kind: crate::app::interactive_presenter::ToolKind::Codemode,
-        name: "codemode".into(),
-        arguments: arguments.clone(),
-        metadata: Default::default(),
-    };
-    let rows = rho_sdk::tool::ToolProgress::message("✓ read_file a.rs 1ms\n● bash sleep 5");
-    let card = crate::app::interactive_presenter::format::progress_card(
-        Some((&view, std::path::Path::new("."))),
-        &rows,
-    );
-    assert_eq!(card, expected(ToolStatus::Running, None, &["result = 1"]));
-}
-
 // Covers: finished cards are the script with the call count, live and replayed
 // alike (replay has no count); a failed script names its error, not its prints.
 // Owner: codemode presenter.

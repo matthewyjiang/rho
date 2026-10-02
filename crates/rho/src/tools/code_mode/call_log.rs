@@ -1,5 +1,5 @@
-//! Nested-call records rendered as the codemode tool's progress text, which
-//! ACP and the automation protocol forward; the TUI card ignores it.
+//! Nested-call records rendered as the codemode tool's progress text for its
+//! live TUI card, ACP, and the automation protocol.
 
 use serde_json::Value;
 
