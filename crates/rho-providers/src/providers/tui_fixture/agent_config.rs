@@ -1,4 +1,4 @@
-//! Compare real provider requests across an agent edit, not editor chrome.
+//! Compare real provider requests across agent catalog changes, not editor chrome.
 
 use anyhow::{ensure, Context};
 use rho_sdk::{
@@ -24,7 +24,25 @@ pub(super) fn intercept(
 ) -> Option<Result<ModelResponse, ProviderError>> {
     let result = match prompt {
         "fixture agent config baseline" => capture(request),
-        "fixture agent config updated" => verify(request),
+        "fixture agent config updated" => verify(
+            request,
+            prompt,
+            &[serde_json::json!({
+                "change": "description",
+                "agent_id": "editable-fixture",
+                "previous": "fixture agent",
+                "description": "fixture agent updated",
+            })],
+        ),
+        "fixture agent config tools updated" => verify(request, prompt, &[]),
+        "fixture agent config deleted" => verify(
+            request,
+            prompt,
+            &[serde_json::json!({
+                "change": "unavailable",
+                "agent_id": "editable-fixture",
+            })],
+        ),
         _ => return None,
     };
     Some(result.map_err(|error| {
@@ -58,15 +76,19 @@ fn capture(request: &ModelRequest<'_>) -> anyhow::Result<ModelResponse> {
     )]))
 }
 
-fn verify(request: &ModelRequest<'_>) -> anyhow::Result<ModelResponse> {
+fn verify(
+    request: &ModelRequest<'_>,
+    prompt: &str,
+    expected_changes: &[serde_json::Value],
+) -> anyhow::Result<ModelResponse> {
     let snapshot: Snapshot = serde_json::from_slice(&std::fs::read(SNAPSHOT_PATH)?)?;
     ensure!(
         request.tools == snapshot.tools,
-        "saving the agent changed the original tool schemas"
+        "changing the agent catalog changed the original tool schemas"
     );
     ensure!(
         request.messages.starts_with(&snapshot.messages),
-        "saving the agent rewrote prior model history"
+        "changing the agent catalog rewrote prior model history"
     );
     let appended = &request.messages[snapshot.messages.len()..];
     ensure!(
@@ -76,18 +98,33 @@ fn verify(request: &ModelRequest<'_>) -> anyhow::Result<ModelResponse> {
             == Some(&[ContentBlock::Text(BASELINE_RESPONSE.into())][..]),
         "baseline assistant response was not preserved"
     );
-    let home = std::env::var_os("HOME").context("isolated HOME missing")?;
-    let definition = std::fs::read_to_string(
-        std::path::PathBuf::from(home).join(".rho/agents/editable-fixture.md"),
-    )?;
-    // Match the canonical file payload, not host instructional prose. A literal
-    // System entry would be hoisted ahead of history by provider adapters.
     ensure!(
-        matches!(appended, [_, Message::User(context), Message::User(_)]
-            if context.iter().any(|block| matches!(block, ContentBlock::Text(text)
-                if text.contains(&definition)))),
-        "next request did not append the saved canonical definition as host context"
+        appended.last() == Some(&Message::user_text(prompt)),
+        "next request did not preserve the verification prompt"
     );
-    completed("agent config updated: saved definition visible; schemas and history unchanged")
-        .map_err(Into::into)
+    let notices = &appended[1..appended.len() - 1];
+    if expected_changes.is_empty() {
+        ensure!(
+            notices.is_empty(),
+            "tools-only edit appended unexpected catalog context: {notices:?}"
+        );
+    } else {
+        // User-role framing keeps corrections after history instead of hoisting
+        // them into the original system prompt in provider adapters.
+        let [Message::User(content)] = notices else {
+            anyhow::bail!("expected one appended catalog notice, got {notices:?}");
+        };
+        let [ContentBlock::Text(text)] = content.as_slice() else {
+            anyhow::bail!("catalog notice must contain only its text payload");
+        };
+        let payload = text
+            .strip_prefix("[agent catalog updated]\n")
+            .context("catalog notice framing missing")?;
+        let changes: Vec<serde_json::Value> = serde_json::from_str(payload)?;
+        ensure!(
+            changes == expected_changes,
+            "catalog notice mismatch: expected {expected_changes:?}, got {changes:?}"
+        );
+    }
+    completed("agent config verified: schemas and history unchanged").map_err(Into::into)
 }

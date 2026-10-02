@@ -87,11 +87,20 @@ impl App {
         value: &str,
         target: AgentDeleteTarget,
         parent: Option<Box<UiPicker>>,
-    ) {
+    ) -> Option<(AgentCatalog, AgentCatalog)> {
         if value != "delete" {
             self.restore_agent_delete_parent(parent);
-            return;
+            return None;
         }
+        let before = match AgentCatalog::discover(&self.info.runtime.cwd) {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("could not load agents: {error}")));
+                self.restore_agent_delete_parent(parent);
+                self.set_status("agent delete failed");
+                return None;
+            }
+        };
         let cursor = parent.as_deref().map(UiPicker::cursor);
         // Re-authorize: the directory may have changed behind the prompt.
         let removed = crate::agent::authorize_existing_agent_file(
@@ -109,23 +118,33 @@ impl App {
             )));
             self.restore_agent_delete_parent(parent);
             self.set_status("agent delete failed");
-            return;
+            return None;
         }
         self.insert_entry(&Entry::Notice(format!(
             "deleted agent {}: {}",
             target.id,
             crate::paths::display(&target.path)
         )));
-        // Rebuild so the row disappears (or a shadowed definition shows). A
-        // failed reload reports itself and leaves the composer on input.
-        let _ = self.execute_agents_command();
-        let ComposerMode::Picker(picker) = self.input_ui.composer_mut() else {
-            return;
+        // Diff the effective catalog: deleting an override may reveal another
+        // definition instead of making the agent unavailable.
+        let after = match AgentCatalog::discover(&self.info.runtime.cwd) {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("could not reload agents: {error}")));
+                self.input_ui.set_composer(ComposerMode::Input);
+                self.set_status("agent reload failed");
+                return None;
+            }
         };
+        let mut picker = super::agent_picker::agent_picker(
+            after.clone(),
+            super::agent_picker::AgentModelView::from(&self.info.runtime),
+        );
         if let Some(cursor) = cursor {
             picker.restore_cursor(&cursor);
         }
         let still_listed = picker.items.iter().any(|item| item.value == target.id);
+        self.input_ui.set_composer(ComposerMode::Picker(picker));
         self.set_status(if still_listed {
             format!(
                 "deleted agent {}; another definition now applies",
@@ -134,6 +153,7 @@ impl App {
         } else {
             format!("deleted agent {}", target.id)
         });
+        Some((before, after))
     }
 
     /// Returns to the agents picker after a cancelled or failed delete.

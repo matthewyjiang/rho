@@ -579,31 +579,19 @@ impl App {
             self.set_status("agent save failed");
             return Ok(());
         }
+        let before = match AgentCatalog::discover(&self.info.runtime.cwd) {
+            Ok(catalog) => catalog,
+            Err(error) => {
+                self.insert_entry(&Entry::Error(format!("could not load agents: {error}")));
+                self.reopen_agent_field_picker(AGENT_FIELD_SAVE);
+                self.set_status("agent save failed");
+                return Ok(());
+            }
+        };
         match save_definition(&draft, &path, &original_contents) {
-            Ok(contents) => {
+            Ok(_contents) => {
                 let id = draft.id.to_string();
                 self.agent_editor_session = None;
-                // Keep the startup schema and all previous context intact. Literal
-                // system messages are hoisted into the prefix by some providers,
-                // so use the same appended host context as other runtime notices.
-                let display =
-                    format!("agent {id} updated; future delegated runs use the saved definition");
-                let model = format!(
-                    "[agent definition updated]\nAgent ID: {id}\n\
-                     The following saved definition applies to future `agent` calls for this ID. \
-                     It supersedes earlier configuration for this agent, including its description, \
-                     prompt, runtime, model, reasoning, and tools. Already-running agents are unchanged. \
-                     The original tool schema is unchanged.\n\n{contents}"
-                );
-                if let Err(error) = agent.append_user_context_with_display(model, display.clone()) {
-                    self.insert_entry(&Entry::Error(format!(
-                        "agent saved, but could not append agent update: {error}"
-                    )));
-                    self.input_ui.set_composer(ComposerMode::Input);
-                    self.set_status("agent update failed");
-                    return Ok(());
-                }
-                self.insert_entry(&Entry::Notice(display));
                 let catalog = match AgentCatalog::discover(&self.info.runtime.cwd) {
                     Ok(catalog) => catalog,
                     Err(error) => {
@@ -615,6 +603,18 @@ impl App {
                         return Ok(());
                     }
                 };
+                match agent.append_agent_catalog_changes(&before, &catalog) {
+                    Ok(Some(display)) => self.insert_entry(&Entry::Notice(display)),
+                    Ok(None) => {}
+                    Err(error) => {
+                        self.insert_entry(&Entry::Error(format!(
+                            "agent saved, but could not append agent update: {error}"
+                        )));
+                        self.input_ui.set_composer(ComposerMode::Input);
+                        self.set_status("agent update failed");
+                        return Ok(());
+                    }
+                }
                 let mut picker = crate::tui::agent_picker::agent_picker(
                     catalog,
                     AgentModelView::from(&self.info.runtime),

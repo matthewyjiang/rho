@@ -140,9 +140,9 @@ pub(super) fn setup_edit_user_agent(home: &IsolatedHome) -> Result<()> {
     Ok(())
 }
 
-// Covers: saving an agent updates the next model request without rewriting
-// original schemas or prior conversation/tool history.
-// Owner: interactive TUI; the existing tools-editor case only checks disk reload.
+// Covers: saving a description appends only its catalog correction without
+// rewriting original schemas or prior conversation/tool history.
+// Owner: interactive TUI; editor chrome cannot verify provider request payloads.
 pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
@@ -209,19 +209,32 @@ pub(super) const EDIT_USER_AGENT_STEPS: &[Step] = &[
     Step::Phase("next_request_sees_append_only_update"),
     Step::SubmitText("fixture agent config updated"),
     Step::WaitText {
-        text: "agent config updated: saved definition visible; schemas and history unchanged",
+        text: "agent config verified: schemas and history unchanged",
         timeout: STREAM,
     },
     Step::ExitCommand,
 ];
 
-/// Delete on one of your agents asks first: cancel keeps it, and confirming
-/// removes it so the filtered list comes back empty.
+/// Delete asks first: cancel keeps the agent, and confirming removes it.
+// Covers: confirmed deletion appends an unavailable catalog correction while
+// preserving original schemas and history, with no notice for canceled deletion.
+// Owner: interactive TUI; picker removal alone misses the provider catalog.
 pub(super) const DELETE_USER_AGENT_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",
         timeout: STARTUP,
+    },
+    Step::Phase("capture_original_request"),
+    Step::SubmitText("fixture tool"),
+    Step::WaitText {
+        text: "tool lifecycle complete with one result:",
+        timeout: STREAM,
+    },
+    Step::SubmitText("fixture agent config baseline"),
+    Step::WaitText {
+        text: "agent config baseline captured",
+        timeout: STREAM,
     },
     Step::SubmitText("/agents"),
     Step::WaitText {
@@ -254,6 +267,12 @@ pub(super) const DELETE_USER_AGENT_STEPS: &[Step] = &[
     },
     Step::AssertText("no matches"),
     Step::Key(Key::Esc),
+    Step::Phase("next_request_sees_unavailable_agent"),
+    Step::SubmitText("fixture agent config deleted"),
+    Step::WaitText {
+        text: "agent config verified: schemas and history unchanged",
+        timeout: STREAM,
+    },
     Step::ExitCommand,
 ];
 
@@ -297,11 +316,25 @@ pub(super) const VIEW_READ_ONLY_AGENT_PROMPT_STEPS: &[Step] = &[
 /// Starts from `tools: all`, so removing `shell` must expand the policy to the
 /// explicit built-in set minus shell; toggling `all` on and back off must
 /// return to that set rather than leave every tool on.
+// Covers: a tools-only save must not append a parent catalog correction or
+// mutate original schemas/history, since tools were never advertised there.
+// Owner: interactive TUI; disk reload alone cannot detect extra model context.
 pub(super) const EDIT_USER_AGENT_TOOLS_STEPS: &[Step] = &[
     Step::Phase("startup"),
     Step::WaitText {
         text: "gpt-5.5",
         timeout: STARTUP,
+    },
+    Step::Phase("capture_original_request"),
+    Step::SubmitText("fixture tool"),
+    Step::WaitText {
+        text: "tool lifecycle complete with one result:",
+        timeout: STREAM,
+    },
+    Step::SubmitText("fixture agent config baseline"),
+    Step::WaitText {
+        text: "agent config baseline captured",
+        timeout: STREAM,
     },
     Step::SubmitText("/agents"),
     Step::WaitText {
@@ -395,6 +428,12 @@ pub(super) const EDIT_USER_AGENT_TOOLS_STEPS: &[Step] = &[
         timeout: SETTLE,
     },
     Step::Key(Key::Esc),
+    Step::Phase("next_request_has_no_catalog_notice"),
+    Step::SubmitText("fixture agent config tools updated"),
+    Step::WaitText {
+        text: "agent config verified: schemas and history unchanged",
+        timeout: STREAM,
+    },
     Step::ExitCommand,
 ];
 

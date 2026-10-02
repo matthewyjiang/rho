@@ -50,7 +50,7 @@ fn cancelled_delete_keeps_agent() {
     let mut app = test_app();
     app.info.runtime.cwd = project.path().to_path_buf();
 
-    app.submit_delete_agent_choice(
+    let _ = app.submit_delete_agent_choice(
         "cancel",
         AgentDeleteTarget {
             id: "demo".into(),
@@ -78,7 +78,7 @@ fn delete_agent_refuses_path_outside_agent_root() {
     let mut app = test_app();
     app.info.runtime.cwd = project.path().to_path_buf();
 
-    app.submit_delete_agent_choice(
+    let _ = app.submit_delete_agent_choice(
         "delete",
         AgentDeleteTarget {
             id: "demo".into(),

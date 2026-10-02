@@ -29,7 +29,7 @@ flowchart TD
     id --> done[Completion at next safe runtime boundary]
 ```
 
-Saving an edit through `/agents` appends an agent-update notice to the conversation with the saved definition. The next model turn sees the updated configuration without rewriting prior messages, the system prompt, or the original tool schema. Each subsequent `agent` call reloads definitions from disk, so it uses the latest prompt, runtime, model, reasoning, and tool policy. Already-running delegated agents and the root session retain their existing configuration. External file edits also apply to subsequent delegated launches, but do not append a conversation notice.
+Saving or deleting an agent through `/agents` appends a correction only when the parent-facing catalog changes: an agent becomes available or unavailable, its ID changes, or its description changes. The notice contains only those changes, not the child’s prompt or full definition. The catalog deliberately omits models, reasoning, runtimes, and tool policies, so changing those fields—or saving without a catalog change—adds no parent context. Prior messages, the system prompt, and the original tool schema remain unchanged. Each subsequent `agent` call reloads definitions from disk and uses the latest child configuration. Already-running delegated agents and the root session retain their existing configuration. External file edits also apply to subsequent delegated launches, but do not append a conversation notice.
 
 ## Definition files
 

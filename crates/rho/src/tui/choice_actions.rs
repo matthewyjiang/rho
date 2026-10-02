@@ -188,7 +188,17 @@ impl App {
                 );
             }
             InlineChoicePending::DeleteAgent(target) => {
-                self.submit_delete_agent_choice(&value, target, modal.parent_picker);
+                if let Some((before, after)) =
+                    self.submit_delete_agent_choice(&value, target, modal.parent_picker)
+                {
+                    match agent.append_agent_catalog_changes(&before, &after) {
+                        Ok(Some(display)) => self.insert_entry(&super::Entry::Notice(display)),
+                        Ok(None) => {}
+                        Err(error) => self.insert_entry(&super::Entry::Error(format!(
+                            "agent deleted, but could not append agent update: {error}"
+                        ))),
+                    }
+                }
             }
             InlineChoicePending::DeleteWorkflowPlan { plan_id } => {
                 self.submit_delete_workflow_plan_choice(&value, &plan_id)?;

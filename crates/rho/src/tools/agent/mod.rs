@@ -54,15 +54,8 @@ impl AgentTool {
         let catalog = catalog.unwrap_or_else(|| {
             Arc::new(AgentCatalog::discover(cwd).expect("agent catalog was validated at startup"))
         });
-        let agent_summaries = catalog
-            .iter()
-            .filter(|entry| entry.definition.id.as_str() != "default")
-            .map(|entry| {
-                (
-                    entry.definition.id.to_string(),
-                    entry.definition.description.clone(),
-                )
-            })
+        let agent_summaries = crate::agent::advertised_agents(&catalog)
+            .into_iter()
             .collect();
         Self {
             manager,
