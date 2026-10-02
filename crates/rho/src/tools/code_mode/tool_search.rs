@@ -55,7 +55,18 @@ impl Tool for ToolSearchTool {
                     ToolError::new(ToolErrorKind::InvalidArguments, error.to_string())
                 })?;
             let hits = self.surface.search(&args.query, args.limit);
-            let text = serde_json::to_string_pretty(&hits).expect("serializable catalog");
+            // A bare `[]` reads as "this server is not connected", so a miss
+            // names the catalog size and how to browse it. `data` stays `[]`.
+            let text = if hits.is_empty() {
+                format!(
+                    "no tools matched {:?}; {} script-callable tools are available. \
+Search one keyword such as an MCP server or tool name, or call `list_tools()` in codemode.",
+                    args.query,
+                    self.surface.tool_count(),
+                )
+            } else {
+                serde_json::to_string_pretty(&hits).expect("serializable catalog")
+            };
             rho_tools::Rendered::new(text, hits).into_tool_output(Default::default())
         })
     }

@@ -118,6 +118,11 @@ impl CodeModeSurface {
         search_entries(entries.iter(), query, limit)
     }
 
+    /// Number of script-callable tools, so an empty search can say what exists.
+    pub(crate) fn tool_count(&self) -> usize {
+        self.state.read().expect("codemode surface").tools.len()
+    }
+
     pub(crate) fn mode(&self) -> CodemodeMode {
         self.state.read().expect("codemode surface").mode
     }
@@ -127,19 +132,39 @@ impl CodeModeSurface {
     }
 }
 
+/// Keyword search shared by `tool_search` and script `search_tools`.
+///
+/// Models write queries like `memorywhale remember` or `+github issue`, so the
+/// query is split into terms on anything but alphanumerics and `_`. An entry
+/// matches when any term is a substring of its name or description; entries
+/// matching more terms rank first, ties keep catalog (name) order. An empty
+/// query lists every entry.
 pub(super) fn search_entries<'a>(
     entries: impl Iterator<Item = &'a ToolCatalogEntry>,
     query: &str,
     limit: usize,
 ) -> Vec<ToolCatalogEntry> {
-    let query = query.trim().to_ascii_lowercase();
-    entries
-        .filter(|entry| {
-            entry.name.to_ascii_lowercase().contains(&query)
-                || entry.description.to_ascii_lowercase().contains(&query)
+    let query = query.to_ascii_lowercase();
+    let terms: Vec<_> = query
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|term| !term.is_empty())
+        .collect();
+    let mut hits: Vec<_> = entries
+        .filter_map(|entry| {
+            let name = entry.name.to_ascii_lowercase();
+            let description = entry.description.to_ascii_lowercase();
+            let score = terms
+                .iter()
+                .filter(|term| name.contains(*term) || description.contains(*term))
+                .count();
+            (terms.is_empty() || score > 0).then_some((score, entry))
         })
+        .collect();
+    // Stable sort keeps name order within equal scores.
+    hits.sort_by(|a, b| b.0.cmp(&a.0));
+    hits.into_iter()
         .take(limit)
-        .cloned()
+        .map(|(_, entry)| entry.clone())
         .collect()
 }
 
@@ -175,3 +200,7 @@ impl ToolVisibility for CodeModeSurface {
         ))
     }
 }
+
+#[cfg(test)]
+#[path = "exposure_tests.rs"]
+mod tests;

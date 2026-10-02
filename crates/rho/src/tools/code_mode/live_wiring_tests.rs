@@ -292,6 +292,17 @@ async fn discovery_matches_callable_siblings() {
         "returns": super::script_output::schema(/*data_schema*/ None),
     }]);
     assert_eq!(discovered.structured_content(), Some(&expected));
+    // A miss keeps empty data but must not read as a bare `[]` to the model,
+    // which took that as "MCP server not connected" and gave up.
+    let missed = host
+        .invoke(ToolHostCall::new(
+            TOOL_SEARCH_NAME,
+            json!({"query": "memorywhale"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(missed.structured_content(), Some(&json!([])));
+    assert_ne!(missed.content(), "[]");
     assert_eq!(
         script(
             &host,
