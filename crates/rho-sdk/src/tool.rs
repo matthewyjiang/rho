@@ -277,15 +277,6 @@ impl ToolProgressSender {
     pub async fn send(&self, progress: ToolProgress) -> bool {
         self.sender.send(progress).await.is_ok()
     }
-
-    /// Sends progress without waiting; drops it when the channel is full.
-    ///
-    /// For callers that cannot yield to the receiver, such as a tool that
-    /// blocks its own task while it runs, where awaiting capacity would wait
-    /// on itself. Returns `false` if the update was dropped or the host is gone.
-    pub fn try_send(&self, progress: ToolProgress) -> bool {
-        self.sender.try_send(progress).is_ok()
-    }
 }
 
 /// Receiving side of a bounded tool-progress channel.
