@@ -30,7 +30,9 @@ pub use streaming::StreamingMode;
 
 #[path = "config_internal_agent.rs"]
 mod internal_agent;
-pub use internal_agent::{InternalAgentModelConfig, InternalAgentTarget, RhoInternalAgentModel};
+pub use internal_agent::{
+    InternalAgentModelConfig, InternalAgentTarget, ModelKind, RhoInternalAgentModel,
+};
 
 #[path = "config_format.rs"]
 mod format;

@@ -87,14 +87,16 @@ fn thinking_capability_maps_to_ollama_effort_levels() {
     );
 }
 
-// Covers: embedding-only tags stay out of the coding-agent picker
+// Covers: known non-completion models stay out of the chat picker; older tags stay
 // Owner: ollama native discovery
 #[test]
-fn embedding_only_models_are_not_chat_models() {
-    let cases: [(Option<&[&str]>, bool); 4] = [
-        (None, true),
-        (Some(&["completion", "tools"]), true),
+fn known_capabilities_require_completion_for_chat_models() {
+    let cases: [(Option<&[&str]>, bool); 6] = [
+        (Some(&["decision"]), false),
         (Some(&["embedding"]), false),
+        (Some(&["completion"]), true),
+        (None, true),
+        (Some(&[]), false),
         (Some(&["embedding", "completion"]), true),
     ];
     for (input, expected) in cases {

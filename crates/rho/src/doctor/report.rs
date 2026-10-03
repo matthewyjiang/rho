@@ -73,6 +73,7 @@ pub(crate) enum DoctorCheckId {
     ModelCache { provider: String },
     ProviderEndpoint { provider: String },
     SelectedModel,
+    PermissionScreen,
     ClaudeAuth,
     ClaudeBinary,
     Cursor,
@@ -92,9 +93,10 @@ impl DoctorCheckId {
             Self::ProviderAuth { .. } | Self::KeylessProvider { .. } => {
                 DoctorSectionId::Authentication
             }
-            Self::ModelCache { .. } | Self::ProviderEndpoint { .. } | Self::SelectedModel => {
-                DoctorSectionId::Providers
-            }
+            Self::ModelCache { .. }
+            | Self::ProviderEndpoint { .. }
+            | Self::SelectedModel
+            | Self::PermissionScreen => DoctorSectionId::Providers,
             Self::ClaudeAuth | Self::ClaudeBinary | Self::Cursor | Self::Rtk | Self::Herdr => {
                 DoctorSectionId::Runtimes
             }

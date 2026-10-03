@@ -79,6 +79,8 @@ pub(super) async fn run(json: bool, cli: &Cli) -> anyhow::Result<()> {
         clipboard: &clipboard,
         mcp_report: &mcp_report,
         plugins_report: &discovery.report,
+        permission_screen: config
+            .internal_agent_model(crate::permission_classifier::DECISION_SCREEN_ID),
         probes: &probes,
     });
     let handles = probes

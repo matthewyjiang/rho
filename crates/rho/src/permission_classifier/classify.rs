@@ -2,7 +2,11 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::{anyhow, bail};
 use rho_providers::{
-    model::{models_dev::cached_model_metadata, Message},
+    model::{
+        models_dev::{cached_model_metadata, ModelMetadata},
+        Message,
+    },
+    provider::ProviderId,
     reasoning::ReasoningLevel,
 };
 use rho_sdk::model::context::estimate_text_tokens;
@@ -13,8 +17,8 @@ use rho_sdk::{
 
 use crate::{
     agent::{effective_internal_agent_reasoning, PERMISSION_CLASSIFIER_AGENT_ID},
-    config::{Config, InternalAgentTarget},
-    credential_store::build_provider,
+    config::{Config, InternalAgentTarget, ModelKind, RhoInternalAgentModel},
+    credential_store::build_provider_on,
 };
 
 use super::{
@@ -22,15 +26,15 @@ use super::{
     ClassifierVerdict, ScreenVerdict, TranscriptBudget, TranscriptOverBudget, CLASSIFIER_POLICY,
     REVIEW_QUESTION, SCREEN_QUESTION,
 };
-use crate::decision::{self, TextModel};
+use crate::decision::{self, EntryModel, TextModel};
 use rho_sdk::decision::{
     text::{questions_block, system_prompt, AnswerStyle},
     Answer, DecisionModel, DecisionRequest, Question,
 };
 
 /// Config entry, `[internal_agents.permission-classifier-screen]`, naming a
-/// decision model that answers the screen in place of the classifier's text
-/// model. It is not an agent: it has no prompt or tools.
+/// decision model or another chat model that answers the screen in place of
+/// the classifier's own model. It is not an agent: it has no prompt or tools.
 pub(crate) const DECISION_SCREEN_ID: &str = "permission-classifier-screen";
 
 /// Context reserved for the classifier's own output when sizing the transcript.
@@ -64,20 +68,35 @@ pub(crate) struct ClassifierModel {
     provider: Arc<dyn ModelProvider>,
     reasoning: ReasoningLevel,
     budget: TranscriptBudget,
-    /// Answers the screen in place of the text model, when configured.
-    screen_model: Option<Box<dyn DecisionModel>>,
+    screen: Screen,
+}
+
+/// What answers the screen, from [`DECISION_SCREEN_ID`].
+pub(super) enum Screen {
+    /// No entry: the classifier's own model, reading the review's transcript.
+    Classifier,
+    /// Another chat model, reading a transcript fitted to its own window.
+    /// `budget` is `None` when the window it serves is unknown, so it could
+    /// silently drop part of the transcript; it then escalates every request.
+    Text {
+        provider: Arc<dyn ModelProvider>,
+        budget: Option<TranscriptBudget>,
+    },
+    Decision(Box<dyn DecisionModel>),
 }
 
 /// Fails when [`DECISION_SCREEN_ID`] is configured but unusable, so a
 /// headless run can refuse to start instead of denying every request.
 pub(crate) fn check_screen_config(config: &Config) -> anyhow::Result<()> {
+    // A text model is built at classification, so only its kind and provider
+    // are checked here.
     decision::resolve(config, DECISION_SCREEN_ID).map(drop)
 }
 
 impl ClassifierModel {
     /// Builds the `[internal_agents.permission-classifier]` model.
     pub(crate) async fn resolve(config: &Config) -> anyhow::Result<Self> {
-        let screen_model = decision::resolve(config, DECISION_SCREEN_ID)?;
+        let screen = resolve_screen(config).await?;
         let model = config
             .internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID)
             .ok_or_else(|| anyhow!("{PERMISSION_CLASSIFIER_AGENT_ID} model is not configured"))?;
@@ -85,7 +104,8 @@ impl ClassifierModel {
         let InternalAgentTarget::Rho(selection) = &model.target else {
             bail!("{PERMISSION_CLASSIFIER_AGENT_ID} cannot run on Claude Code runtime");
         };
-        let provider = build_provider(
+        let provider = build_provider_on(
+        config,
             &selection.provider,
             &selection.model,
             reasoning,
@@ -107,7 +127,7 @@ impl ClassifierModel {
             provider,
             reasoning,
             budget,
-            screen_model,
+            screen,
         })
     }
 
@@ -125,7 +145,7 @@ impl ClassifierModel {
         let pending_call_id = request.pending.tool_call_id().map(|id| id.as_str());
         run_pipeline(
             self.provider.as_ref(),
-            self.screen_model.as_deref(),
+            &self.screen,
             self.reasoning,
             self.budget,
             pending_call_id,
@@ -143,13 +163,86 @@ impl ClassifierModel {
     ) -> ClassifierTrace {
         run_pipeline(
             self.provider.as_ref(),
-            self.screen_model.as_deref(),
+            &self.screen,
             self.reasoning,
             self.budget,
             Some(pending_call_id),
             &request,
         )
         .await
+    }
+}
+
+/// Builds the screen [`DECISION_SCREEN_ID`] names. A text model's build
+/// failure names the entry, since its credentials may be what is missing.
+async fn resolve_screen(config: &Config) -> anyhow::Result<Screen> {
+    let selection = match decision::resolve(config, DECISION_SCREEN_ID)? {
+        None => return Ok(Screen::Classifier),
+        Some(EntryModel::Decision(model)) => return Ok(Screen::Decision(model)),
+        Some(EntryModel::Text(selection)) => selection,
+    };
+    let provider = build_provider_on(
+        config,
+        &selection.provider,
+        &selection.model,
+        ReasoningLevel::Low,
+        &selection.auth,
+    )
+    .await
+    .map_err(|_| decision::ConfigError::TextModelUnavailable {
+        entry: DECISION_SCREEN_ID,
+        configured: rho_providers::provider::model_reference(&selection.provider, &selection.model),
+    })?;
+    let budget = text_screen_budget(
+        &selection.provider,
+        cached_model_metadata(&selection.provider, &selection.model),
+    );
+    Ok(Screen::Text { provider, budget })
+}
+
+/// Why the screen entry `selection` likely will not work as configured: its
+/// kind does not fit what was discovered, or it is a text model whose served
+/// window is unknown, so it escalates every request. For `/config` and
+/// `/doctor`.
+pub(crate) fn screen_warning(selection: &RhoInternalAgentModel) -> Option<String> {
+    decision::kind_mismatch(selection).or_else(|| {
+        let unknown_window = decision::entry_kind(selection) == ModelKind::Text
+            && text_screen_budget(
+                &selection.provider,
+                cached_model_metadata(&selection.provider, &selection.model),
+            )
+            .is_none();
+        unknown_window.then(|| {
+            format!(
+                "{} has no usable_context_window, so the screen escalates every request",
+                selection.model
+            )
+        })
+    })
+}
+
+/// The transcript budget a text screen on `provider` is fitted to, or `None`
+/// when the window it serves is unknown.
+///
+/// Ollama serves a model at the server's `num_ctx`, often far below the
+/// window the model advertises, and drops the front of a longer prompt
+/// without an error, which could leave a screen allowing a request it never
+/// read whole. So on Ollama only a measured `usable_context_window` counts.
+/// Hosted providers reject an oversize prompt, and that error escalates.
+pub(super) fn text_screen_budget(
+    provider: &str,
+    metadata: Option<ModelMetadata>,
+) -> Option<TranscriptBudget> {
+    let ollama = rho_providers::provider::provider_descriptor(provider)
+        .is_some_and(|descriptor| descriptor.id == ProviderId::Ollama);
+    if ollama {
+        metadata
+            .and_then(|metadata| metadata.usable_context_window)
+            .map(|window| transcript_budget(Some(window)))
+    } else {
+        Some(transcript_budget(
+            metadata.and_then(|metadata| metadata.display_context_window()),
+        ))
     }
 }
 
@@ -178,7 +271,7 @@ pub(crate) enum ScreenOutcome {
 #[cfg(test)]
 pub(super) async fn classify_capability_request_with_provider(
     provider: &dyn ModelProvider,
-    screen_model: Option<&dyn DecisionModel>,
+    screen: &Screen,
     reasoning: ReasoningLevel,
     budget: TranscriptBudget,
     request: ClassifyRequest<'_>,
@@ -186,7 +279,7 @@ pub(super) async fn classify_capability_request_with_provider(
     let pending_call_id = request.pending.tool_call_id().map(|id| id.as_str());
     run_pipeline(
         provider,
-        screen_model,
+        screen,
         reasoning,
         budget,
         pending_call_id,
@@ -220,9 +313,8 @@ pub(super) fn transcript_budget(context_window: Option<u64>) -> TranscriptBudget
 /// Runs the two-stage pipeline: a cheap screen, then a reasoned review.
 ///
 /// Both stages are decision requests over the rendered transcript. Stage 1
-/// answers `allow` or `escalate`, from a decision model when one is
-/// configured and otherwise from the text model directly at
-/// [`ReasoningLevel::Low`]. Only an escalation (or a stage 1 failure) pays
+/// answers `allow` or `escalate` from the [`Screen`]: a decision model, or a
+/// text model at [`ReasoningLevel::Low`]. Only an escalation (or a stage 1 failure) pays
 /// for stage 2, which the text model reasons through at the configured level.
 ///
 /// Cache-prefix layout: both stages send the same system prompt and the same
@@ -236,7 +328,7 @@ pub(super) fn transcript_budget(context_window: Option<u64>) -> TranscriptBudget
 /// hit: Anthropic invalidates message-block cache when thinking or effort change.
 async fn run_pipeline(
     provider: &dyn ModelProvider,
-    screen_model: Option<&dyn DecisionModel>,
+    screen: &Screen,
     reasoning: ReasoningLevel,
     budget: TranscriptBudget,
     pending_call_id: Option<&str>,
@@ -256,7 +348,7 @@ async fn run_pipeline(
 
     let (screen, screen_allow_probability) = match run_screen(
         provider,
-        screen_model,
+        screen,
         request,
         pending_call_id,
         &transcript,
@@ -295,34 +387,58 @@ async fn run_pipeline(
 /// Stage 1: the screen's verdict, with the model's P(allow) when it reports
 /// probabilities.
 ///
-/// The text model reads the review's `transcript` at [`ReasoningLevel::Low`].
-/// A decision model with a smaller state budget gets its own transcript
-/// fitted to it, with the oldest tool calls left out first; the review keeps
-/// its own budget, so a screen that cannot fit only escalates.
+/// The classifier's own model reads the review's `transcript`. Another
+/// model with a known window, or a decision model with a state budget, gets
+/// its own transcript fitted to it, with the oldest tool calls left out
+/// first; the review keeps its own budget, so a screen that cannot fit only
+/// escalates.
 async fn run_screen(
     provider: &dyn ModelProvider,
-    screen_model: Option<&dyn DecisionModel>,
+    screen: &Screen,
     request: &ClassifyRequest<'_>,
     pending_call_id: Option<&str>,
     transcript: &str,
 ) -> anyhow::Result<(ScreenVerdict, Option<f64>)> {
     let text_screen;
-    let model = match screen_model {
-        Some(model) => model,
-        None => {
+    let (model, budget): (&dyn DecisionModel, _) = match screen {
+        Screen::Classifier => {
             text_screen = text_model(provider, request, &SCREEN_STAGE, ReasoningLevel::Low);
-            &text_screen
+            (&text_screen, None)
         }
+        Screen::Text { provider, budget } => {
+            let Some(budget) = budget else {
+                let identity = provider.identity();
+                bail!(
+                    "text screen {} has no known served context window, so it may truncate the transcript; set usable_context_window for it in ~/.rho/models.toml",
+                    rho_providers::provider::model_reference(&identity.provider, &identity.model)
+                );
+            };
+            text_screen = text_model(
+                provider.as_ref(),
+                request,
+                &SCREEN_STAGE,
+                ReasoningLevel::Low,
+            );
+            let own = match budget {
+                TranscriptBudget::Unbounded => None,
+                TranscriptBudget::Tokens(_) => Some(*budget),
+            };
+            (&text_screen, own)
+        }
+        Screen::Decision(model) => (
+            model.as_ref(),
+            model.state_budget().map(TranscriptBudget::Tokens),
+        ),
     };
     let fitted;
-    let state = match model.state_budget() {
+    let state = match budget {
         None => transcript,
-        Some(tokens) => {
+        Some(budget) => {
             fitted = render_with_pending_call(
                 request.history,
                 request.pending,
                 pending_call_id,
-                TranscriptBudget::Tokens(tokens),
+                budget,
             )?;
             &fitted
         }

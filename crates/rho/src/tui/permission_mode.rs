@@ -180,7 +180,10 @@ impl App {
             | InternalAgentModelPickerOrigin::AdvisorConfigRow
             | InternalAgentModelPickerOrigin::AdvisorModelConfigRow
             | InternalAgentModelPickerOrigin::PermissionModeCommand
-            | InternalAgentModelPickerOrigin::PermissionModeConfigRow => {
+            | InternalAgentModelPickerOrigin::PermissionModeConfigRow
+            | InternalAgentModelPickerOrigin::PermissionScreenModelConfigRow
+            | InternalAgentModelPickerOrigin::PermissionScreenSetupConfigRow
+            | InternalAgentModelPickerOrigin::PermissionScreenSetupCommand => {
                 SELECT_CLASSIFIER_MODEL_STATUS
             }
         };

@@ -173,8 +173,7 @@ struct Report {
     model: String,
     auth: String,
     reasoning: String,
-    /// The decision model answering the screen; `None` when the classifier
-    /// model does.
+    /// The model answering the screen; `None` when the classifier model does.
     screen_model: Option<String>,
     cases: Vec<CaseReport>,
 }

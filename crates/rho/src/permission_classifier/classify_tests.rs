@@ -1,7 +1,10 @@
-use std::{path::Path, sync::Mutex};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use pretty_assertions::assert_eq;
-use rho_providers::reasoning::ReasoningLevel;
+use rho_providers::{model::models_dev::ModelMetadata, reasoning::ReasoningLevel};
 use rho_sdk::{
     decision::{
         Answer, ChoiceAnswer, DecisionError, DecisionFuture, DecisionModel, DecisionRequest,
@@ -15,7 +18,10 @@ use rho_sdk::{
 
 use super::{
     check_screen_config,
-    classify::{classify_capability_request_with_provider, ClassifyRequest},
+    classify::{
+        classify_capability_request_with_provider, text_screen_budget, transcript_budget,
+        ClassifyRequest, Screen,
+    },
     classify_capability_request, render_classifier_transcript, ClassifierVerdict, TranscriptBudget,
     TranscriptOverBudget, DECISION_SCREEN_ID, REVIEW_QUESTION,
 };
@@ -96,12 +102,12 @@ async fn run_pipeline(
     ClassifierVerdict,
     Vec<rho_sdk::provider::RecordedModelRequest>,
 ) {
-    run_pipeline_with_screener(provider, /*screen_model*/ None, reasoning, budget).await
+    run_pipeline_with_screener(provider, Screen::Classifier, reasoning, budget).await
 }
 
 async fn run_pipeline_with_screener(
     provider: &ScriptedProvider,
-    screen_model: Option<&dyn DecisionModel>,
+    screen: Screen,
     reasoning: ReasoningLevel,
     budget: TranscriptBudget,
 ) -> (
@@ -113,7 +119,7 @@ async fn run_pipeline_with_screener(
     let session_id = SessionId::new();
     let verdict = classify_capability_request_with_provider(
         provider,
-        screen_model,
+        &screen,
         reasoning,
         budget,
         ClassifyRequest {
@@ -208,7 +214,8 @@ async fn screen_result_decides_whether_review_runs() {
 struct FakeScreen {
     result: Mutex<Option<Result<Vec<Answer>, DecisionError>>>,
     state_budget: Option<u64>,
-    states: Mutex<Vec<String>>,
+    /// Shared so a test can read it after the screen is boxed.
+    states: Arc<Mutex<Vec<String>>>,
 }
 
 impl FakeScreen {
@@ -216,7 +223,7 @@ impl FakeScreen {
         Self {
             result: Mutex::new(Some(result)),
             state_budget,
-            states: Mutex::new(Vec::new()),
+            states: Arc::default(),
         }
     }
 
@@ -297,7 +304,7 @@ async fn decision_screen_skips_review_only_on_a_confident_allow() {
 
         let (verdict, requests) = run_pipeline_with_screener(
             &provider,
-            Some(&screen_model),
+            Screen::Decision(Box::new(screen_model)),
             ReasoningLevel::Medium,
             TranscriptBudget::Unbounded,
         )
@@ -311,12 +318,30 @@ async fn decision_screen_skips_review_only_on_a_confident_allow() {
     }
 }
 
-// Covers: a decision-model screen gets a transcript fitted to its smaller
-// context, keeping the user's request and the pending call, while the review
-// still reads every tool call that fits its own budget.
+/// Where a screen under test recorded the state it read.
+enum ScreenProbe {
+    Decision(Arc<Mutex<Vec<String>>>),
+    Text(Arc<ScriptedProvider>),
+}
+
+/// The transcript, the first user block, of a recorded text-model request.
+fn request_state(request: &rho_sdk::provider::RecordedModelRequest) -> String {
+    match request.messages.as_slice() {
+        [_, Message::User(blocks)] => match blocks.first() {
+            Some(ContentBlock::Text(text)) => text.clone(),
+            other => panic!("unexpected block {other:?}"),
+        },
+        other => panic!("unexpected messages {other:?}"),
+    }
+}
+
+// Covers: a screen with a smaller context than the review, a decision model
+// or another text model, reads a transcript fitted to it, keeping the user's
+// request and the pending call, while the review on the classifier's own
+// model still reads every tool call that fits its budget.
 // Owner: permission classifier two-stage pipeline
 #[tokio::test]
-async fn decision_screen_reads_a_transcript_fitted_to_its_budget() {
+async fn screen_on_another_model_reads_a_transcript_fitted_to_its_budget() {
     let mut history = sample_history();
     for index in 0..200 {
         history.push(Message::Assistant(vec![ContentBlock::ToolCall(ToolCall {
@@ -330,25 +355,153 @@ async fn decision_screen_reads_a_transcript_fitted_to_its_budget() {
             content: "done".into(),
         }));
     }
-    let screen_model = FakeScreen::new(
+    let pending = pending_write();
+    let screen_budget = TranscriptBudget::Tokens(10_500);
+    let fitted = render_classifier_transcript(&history, &pending, screen_budget).unwrap();
+    let full =
+        render_classifier_transcript(&history, &pending, TranscriptBudget::Unbounded).unwrap();
+    assert!(fitted.len() < full.len());
+
+    let decision = FakeScreen::new(
         Ok(vec![Answer::Choice(ChoiceAnswer::from_option(1))]),
         Some(10_500),
     );
+    let decision_states = decision.states.clone();
+    let text = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("screen", "api", "small"),
+        [text_turn(SCREEN_ESCALATE)],
+    ));
+    let cases = [
+        (
+            "decision",
+            Screen::Decision(Box::new(decision)),
+            ScreenProbe::Decision(decision_states),
+        ),
+        (
+            "text",
+            Screen::Text {
+                provider: text.clone(),
+                budget: Some(screen_budget),
+            },
+            ScreenProbe::Text(text),
+        ),
+    ];
+    for (name, screen, probe) in cases {
+        let provider = ScriptedProvider::new(
+            ModelIdentity::new("provider", "api", "model"),
+            [text_turn(REVIEW_ALLOW)],
+        );
+        let session_id = SessionId::new();
+
+        let verdict = classify_capability_request_with_provider(
+            &provider,
+            &screen,
+            ReasoningLevel::Low,
+            TranscriptBudget::Unbounded,
+            ClassifyRequest {
+                history: &history,
+                pending: &pending,
+                cancellation: CancellationToken::new(),
+                session_id: &session_id,
+                workspace_path: Path::new("/test/workspace"),
+                usage_recording: ProviderRequestUsageRecording::default(),
+            },
+        )
+        .await;
+
+        let screen_state = match probe {
+            ScreenProbe::Decision(states) => states.lock().unwrap().concat(),
+            ScreenProbe::Text(screen) => {
+                let requests = screen.recorded_requests();
+                assert_eq!(requests.len(), 1, "{name}: one screen request");
+                request_state(&requests[0])
+            }
+        };
+        let reviews = provider.recorded_requests();
+        assert_eq!(reviews.len(), 1, "{name}: one review request");
+        assert_eq!(
+            (verdict, screen_state, request_state(&reviews[0])),
+            (ClassifierVerdict::Allow, fitted.clone(), full.clone()),
+            "{name}"
+        );
+    }
+}
+
+// Covers: a text screen is fitted to the window its provider serves. On
+// Ollama, which silently drops the front of a prompt past `num_ctx`, only a
+// measured `usable_context_window` counts, never the advertised window, and
+// without one the window is unknown. Hosted providers reject an oversize
+// prompt, so their catalog window, or none, is enough.
+// Owner: permission classifier model resolution
+#[test]
+fn text_screen_budget_trusts_only_a_served_window() {
+    let advertised = ModelMetadata {
+        advertised_context_window: Some(262_144),
+        ..ModelMetadata::default()
+    };
+    let measured = ModelMetadata {
+        usable_context_window: Some(16_384),
+        ..advertised.clone()
+    };
+    let cases = [
+        (
+            "ollama advertised only",
+            "ollama",
+            Some(advertised.clone()),
+            None,
+        ),
+        ("ollama uncached", "ollama", None, None),
+        (
+            "ollama measured",
+            "ollama",
+            Some(measured),
+            Some(transcript_budget(Some(16_384))),
+        ),
+        (
+            "hosted",
+            "xai",
+            Some(advertised),
+            Some(transcript_budget(Some(262_144))),
+        ),
+        (
+            "hosted uncached",
+            "xai",
+            None,
+            Some(TranscriptBudget::Unbounded),
+        ),
+    ];
+    for (name, provider, metadata, expected) in cases {
+        assert_eq!(text_screen_budget(provider, metadata), expected, "{name}");
+    }
+}
+
+// Covers: a text screen with no known served window never asks its model,
+// which could answer from a truncated transcript; the review decides.
+// Owner: permission classifier two-stage pipeline
+#[tokio::test]
+async fn text_screen_without_a_served_window_leaves_the_decision_to_review() {
+    let text = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("ollama", "api", "qwen3"),
+        [text_turn(SCREEN_ALLOW)],
+    ));
+    let screen = Screen::Text {
+        provider: text.clone(),
+        budget: None,
+    };
     let provider = ScriptedProvider::new(
         ModelIdentity::new("provider", "api", "model"),
-        [text_turn(REVIEW_ALLOW)],
+        [text_turn(REVIEW_DENY)],
     );
-    let pending = pending_write();
     let session_id = SessionId::new();
 
     let verdict = classify_capability_request_with_provider(
         &provider,
-        Some(&screen_model),
+        &screen,
         ReasoningLevel::Low,
         TranscriptBudget::Unbounded,
         ClassifyRequest {
-            history: &history,
-            pending: &pending,
+            history: &sample_history(),
+            pending: &pending_write(),
             cancellation: CancellationToken::new(),
             session_id: &session_id,
             workspace_path: Path::new("/test/workspace"),
@@ -357,41 +510,41 @@ async fn decision_screen_reads_a_transcript_fitted_to_its_budget() {
     )
     .await;
 
-    let screen_state = screen_model.states.lock().unwrap().concat();
-    let review_state = match provider.recorded_requests()[0].messages.as_slice() {
-        [_, Message::User(blocks)] => match blocks.first() {
-            Some(ContentBlock::Text(text)) => text.clone(),
-            other => panic!("unexpected block {other:?}"),
-        },
-        other => panic!("unexpected messages {other:?}"),
-    };
-    let screen_budget = TranscriptBudget::Tokens(10_500);
-    let fitted = render_classifier_transcript(&history, &pending, screen_budget).unwrap();
-    let full =
-        render_classifier_transcript(&history, &pending, TranscriptBudget::Unbounded).unwrap();
-    assert_eq!(verdict, ClassifierVerdict::Allow);
-    assert!(fitted.len() < full.len());
-    assert_eq!((screen_state, review_state), (fitted, full));
+    assert_eq!(text.recorded_requests().len(), 0);
+    assert!(
+        matches!(verdict, ClassifierVerdict::Deny { .. }),
+        "{verdict:?}"
+    );
 }
 
-// Covers: a screen entry that is not on a decision-model host, or uses an auth mode
-// the screen cannot send, fails the config check naming the configured value
-// instead of being ignored, and a classification under it denies with that
-// reason.
+// Covers: a screen entry whose kind its provider cannot serve (a decision
+// model off a decision host, a text model on a decision-only host), or whose
+// auth mode the screen cannot send, fails the config check naming the
+// configured value instead of being ignored, and a classification under it
+// denies with that reason. A text model on a chat provider is valid; its
+// credentials are covered by `has_credentials`.
 // Owner: permission classifier model resolution
 #[tokio::test]
-async fn unusable_decision_screen_config_is_reported() {
+async fn unusable_screen_config_is_reported() {
+    use crate::config::ModelKind::{Decision, Text};
     let cases = [
         (None, Ok(())),
-        (Some(("ollama", "clef", "none")), Ok(())),
+        (Some(("ollama", "clef", "none", None)), Ok(())),
+        (Some(("ollama", "qwen3", "none", Some(Text))), Ok(())),
         (
-            Some(("anthropic", "claude-haiku-4-5", "none")),
+            Some(("anthropic", "claude-haiku-4-5", "anthropic-api-key", Some(Decision))),
             Err(format!(
-                "[internal_agents.{DECISION_SCREEN_ID}] must name a decision model on provider ollama or typesafe, got anthropic/claude-haiku-4-5"
+                "[internal_agents.{DECISION_SCREEN_ID}] kind `decision` needs a model on provider ollama or typesafe, got anthropic/claude-haiku-4-5"
             )),
         ),
         (
-            Some(("ollama", "clef", "codex")),
+            Some(("typesafe", "jev-latest", "typesafe-api-key", Some(Text))),
+            Err(format!(
+                "[internal_agents.{DECISION_SCREEN_ID}] kind `text` needs a chat model, got typesafe/jev-latest"
+            )),
+        ),
+        (
+            Some(("ollama", "clef", "codex", None)),
             Err(format!(
                 "[internal_agents.{DECISION_SCREEN_ID}] auth `codex` is not supported; use `none` or `ollama-api-key`"
             )),
@@ -399,13 +552,11 @@ async fn unusable_decision_screen_config_is_reported() {
     ];
     for (screen, expected) in cases {
         let mut config = Config::default();
-        if let Some((provider, model, auth)) = screen {
-            config.set_internal_agent_model(
-                DECISION_SCREEN_ID,
-                provider.into(),
-                model.into(),
-                auth.into(),
-            );
+        if let Some((provider, model, auth, kind)) = screen {
+            let mut selection =
+                InternalAgentModelConfig::new(provider.into(), model.into(), auth.into());
+            selection.expect_rho_mut().kind = kind;
+            config.set_internal_agent_model_config(DECISION_SCREEN_ID, selection);
         }
 
         let result = check_screen_config(&config).map_err(|error| error.to_string());

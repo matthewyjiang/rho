@@ -107,7 +107,10 @@ impl App {
                 | InternalAgentModelPickerOrigin::PermissionModeConfigRow
                 | InternalAgentModelPickerOrigin::PermissionModeCommand
                 | InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow
-                | InternalAgentModelPickerOrigin::PermissionModeStartup => {
+                | InternalAgentModelPickerOrigin::PermissionModeStartup
+                | InternalAgentModelPickerOrigin::PermissionScreenModelConfigRow
+                | InternalAgentModelPickerOrigin::PermissionScreenSetupConfigRow
+                | InternalAgentModelPickerOrigin::PermissionScreenSetupCommand => {
                     SELECT_ADVISOR_MODEL_STATUS
                 }
             };
@@ -161,7 +164,10 @@ impl App {
                 | InternalAgentModelPickerOrigin::PermissionModeConfigRow
                 | InternalAgentModelPickerOrigin::PermissionModeCommand
                 | InternalAgentModelPickerOrigin::PermissionClassifierModelConfigRow
-                | InternalAgentModelPickerOrigin::PermissionModeStartup => return false,
+                | InternalAgentModelPickerOrigin::PermissionModeStartup
+                | InternalAgentModelPickerOrigin::PermissionScreenModelConfigRow
+                | InternalAgentModelPickerOrigin::PermissionScreenSetupConfigRow
+                | InternalAgentModelPickerOrigin::PermissionScreenSetupCommand => return false,
             },
             None => return false,
         };

@@ -864,6 +864,38 @@ fn advisor_mode_and_model_round_trip_through_save() {
     );
 }
 
+// Covers: a screen entry's `kind`, which picks the protocol a model on
+// Ollama is asked over, survives save and reload; an unset kind stays unset
+// so the entry keeps its provider's default.
+// Owner: config persistence
+#[test]
+fn screen_model_kind_round_trips_through_save() {
+    use crate::config::ModelKind;
+    use crate::permission_classifier::DECISION_SCREEN_ID;
+    for kind in [Some(ModelKind::Text), Some(ModelKind::Decision), None] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let store = rho_providers::credentials::MemoryCredentialStore::default();
+        let mut config = Config::default();
+        let mut screen = crate::config::InternalAgentModelConfig::new(
+            "ollama".into(),
+            "gemma4:31b".into(),
+            "none".into(),
+        );
+        screen.expect_rho_mut().kind = kind;
+        config.set_internal_agent_model_config(DECISION_SCREEN_ID, screen.clone());
+
+        config.save_with_store(path.clone(), &store).unwrap();
+        let reloaded = Config::load_with_store(path, &store).unwrap();
+
+        assert_eq!(
+            reloaded.internal_agent_model(DECISION_SCREEN_ID).cloned(),
+            Some(screen),
+            "{kind:?}"
+        );
+    }
+}
+
 // Covers: a delegating advisor must survive save and reload as a delegating
 // advisor, and must not persist a Rho provider or auth it does not have.
 // Owner: config persistence

@@ -1,5 +1,8 @@
 use super::*;
 use rho_providers::auth::login_dispatch::ProviderAuthentication;
+use rho_providers::model::decision_models::{
+    lists_decision_models, refresh_decision_models_with_store,
+};
 use rho_providers::model::provider_models::ProviderModelEndpoint;
 
 pub(super) struct ProviderActivation {
@@ -183,6 +186,10 @@ impl App {
         let Some(descriptor) = provider::provider_descriptor(&target.provider) else {
             return Ok(());
         };
+        if lists_decision_models(&target.provider) {
+            self.refresh_decision_models(&target.provider, &target.auth)
+                .await?;
+        }
         if !descriptor.supports_model_refresh() {
             return Ok(());
         }
@@ -214,6 +221,44 @@ impl App {
                 self.insert_entry(&Entry::Error(format!(
                     "stored credentials for {}, but failed to refresh its model list: {err}",
                     target.provider
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Refreshes the decision models `provider` lists, for the permission
+    /// screen's picker, and reports the count or the failure. A chat host that
+    /// lists none (most Ollama servers) stays quiet.
+    pub(super) async fn refresh_decision_models(
+        &mut self,
+        provider: &str,
+        auth: &str,
+    ) -> anyhow::Result<()> {
+        let config = self.info.services.config_repository.load()?;
+        let Some(api_base) = config.resolved_provider_endpoint(provider) else {
+            return Ok(());
+        };
+        let serves_chat = provider::provider_descriptor(provider)
+            .is_some_and(|descriptor| descriptor.serves_chat());
+        match refresh_decision_models_with_store(
+            provider,
+            auth,
+            self.credential_store.as_ref(),
+            &api_base,
+        )
+        .await
+        {
+            Ok(models) if !models.is_empty() || !serves_chat => {
+                self.insert_entry(&Entry::Notice(format!(
+                    "refreshed {provider} decision models: {} models",
+                    models.len()
+                )));
+            }
+            Ok(_) => {}
+            Err(err) => {
+                self.insert_entry(&Entry::Error(format!(
+                    "could not refresh {provider} decision models: {err}"
                 )));
             }
         }

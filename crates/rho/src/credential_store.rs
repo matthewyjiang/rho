@@ -221,11 +221,24 @@ pub(crate) async fn build_provider(
     reasoning: rho_providers::reasoning::ReasoningLevel,
     auth: &str,
 ) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, rho_providers::model::ModelError> {
+    build_provider_on(&Config::default(), provider, model, reasoning, auth).await
+}
+
+/// [`build_provider`] on `base`'s `[providers]`, so a configured endpoint or
+/// custom provider reaches the model. Nothing else carries over from `base`.
+pub(crate) async fn build_provider_on(
+    base: &Config,
+    provider: &str,
+    model: &str,
+    reasoning: rho_providers::reasoning::ReasoningLevel,
+    auth: &str,
+) -> Result<Arc<dyn rho_sdk::provider::ModelProvider>, rho_providers::model::ModelError> {
     let config = Config {
         provider: provider.into(),
         model: model.into(),
         reasoning,
         auth: auth.into(),
+        providers: base.providers.clone(),
         ..Config::default()
     };
     build_provider_from_config_ensuring_catalog(&config, Arc::new(AppCredentialStore)).await

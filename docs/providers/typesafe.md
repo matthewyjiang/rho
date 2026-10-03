@@ -1,6 +1,6 @@
 # TypeSafe
 
-[TypeSafe](https://typesafe.ai/) hosts Jev, a decision model: it answers typed questions about a state with a probability for every option, rather than writing text. Rho uses TypeSafe only for decision models, such as the [permission classifier's decision-model screen](/configuration/permissions#decision-model-screen). It is not a chat provider, so `/model` does not list it, and selecting it as the chat model is an error.
+[TypeSafe](https://typesafe.ai/) hosts Jev, a decision model: it answers typed questions about a state with a probability for every option, rather than writing text. Rho uses TypeSafe only for decision models, such as the [permission classifier's screen](/configuration/permissions#screen-model). It is not a chat provider, so `/model` does not list it, and selecting it as the chat model is an error.
 
 ## Provider details
 
@@ -10,7 +10,7 @@
 | Auth | `typesafe-api-key` |
 | Environment override | `TYPESAFE_API_KEY` |
 | API base | `https://api.typesafe.ai/v1` (System One API at `/systemone`) |
-| Models | `jev-latest` |
+| Models | `jev-latest`, `jev-preview`, discovered from `/models` |
 
 Create an API key in the TypeSafe dashboard, then store it with Rho. Do not put the key in `config.toml`.
 
@@ -22,7 +22,7 @@ In the TUI, run:
 /login typesafe
 ```
 
-Then name Jev where a feature takes a decision model, for example the permission screen:
+Login discovers TypeSafe's models; **Refresh model lists** in `/config` updates them. Then pick Jev where a feature takes a decision model, for example **Permission screen model** in `/config`, or name it in config:
 
 ```toml
 [internal_agents.permission-classifier-screen]
