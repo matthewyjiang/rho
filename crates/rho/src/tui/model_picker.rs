@@ -414,11 +414,41 @@ pub(super) fn screen_model_picker(inputs: ScreenPickerInputs<'_>) -> UiPicker {
             rho_providers::provider::model_reference(provider, model)
         }
     };
-    catalog.selected = catalog
-        .items
-        .iter()
-        .position(|item| item.value == wanted)
-        .unwrap_or(0);
+    // A configured model that is not listed (an empty or logged-out decision
+    // host, a model gone from the catalog) keeps its own row, so Enter on the
+    // row the picker opens on never clears the entry.
+    let selected = match catalog.items.iter().position(|item| item.value == wanted) {
+        Some(index) => index,
+        None => {
+            let (section, label) = match &current {
+                ScreenSelection::Decision { provider, model } => (
+                    "Decision models",
+                    rho_providers::provider::model_reference(provider, model),
+                ),
+                ScreenSelection::Text { .. } | ScreenSelection::Classifier => {
+                    ("Text models", wanted.clone())
+                }
+            };
+            // Last in its section: after the decision rows, or first of the
+            // text rows.
+            let index = 1 + decision_models.len();
+            catalog.items.insert(
+                index,
+                PickerItem {
+                    section: Some(section.into()),
+                    label,
+                    detail: Some("Configured, but not listed by its provider now.".into()),
+                    preview: None,
+                    badge: selected_badge(true),
+                    value: wanted,
+                    selection_verb: None,
+                    allow_filter_completion: true,
+                },
+            );
+            index
+        }
+    };
+    catalog.selected = selected;
     catalog.into_internal_agent_models()
 }
 

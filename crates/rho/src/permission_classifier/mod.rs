@@ -5,8 +5,8 @@ mod verdict;
 
 use budget::{TranscriptBudget, TranscriptOverBudget};
 pub(crate) use classify::{
-    check_screen_config, classify_capability_request, ClassifierModel, ClassifyRequest,
-    ScreenOutcome, DECISION_SCREEN_ID,
+    check_screen_config, classify_capability_request, screen_warning, ClassifierModel,
+    ClassifyRequest, ScreenOutcome, DECISION_SCREEN_ID,
 };
 #[cfg(test)]
 pub(crate) use transcript::render_classifier_transcript;

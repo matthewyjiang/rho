@@ -235,7 +235,9 @@ fn pinned_scope_lists_only_usable_pins() {
 // Covers: the screen picker opens on the configured row, and that row's value
 // routes back to the same choice, so Enter on an open picker keeps the screen
 // as it was: the classifier row clears the entry, a decision row stays a
-// decision model, and a text row is a catalog reference.
+// decision model, and a text row is a catalog reference. A configured model
+// that is not listed still gets its own row rather than falling back to the
+// classifier row, which would clear the entry.
 // Owner: permission screen model picker
 #[test]
 fn screen_picker_opens_on_the_configured_row_and_routes_it_back() {

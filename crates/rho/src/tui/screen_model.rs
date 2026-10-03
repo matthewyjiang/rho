@@ -265,7 +265,10 @@ pub(super) fn screen_model_badge(info: &RuntimeModelView) -> PickerBadge {
             tone: PickerBadgeTone::Selected,
         };
     };
-    match configured.rho().and_then(decision::kind_mismatch) {
+    match configured
+        .rho()
+        .and_then(crate::permission_classifier::screen_warning)
+    {
         Some(mismatch) => PickerBadge {
             text: mismatch,
             tone: PickerBadgeTone::Warning,

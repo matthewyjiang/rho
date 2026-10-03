@@ -4,7 +4,7 @@ use std::{
 };
 
 use pretty_assertions::assert_eq;
-use rho_providers::reasoning::ReasoningLevel;
+use rho_providers::{model::models_dev::ModelMetadata, reasoning::ReasoningLevel};
 use rho_sdk::{
     decision::{
         Answer, ChoiceAnswer, DecisionError, DecisionFuture, DecisionModel, DecisionRequest,
@@ -18,7 +18,10 @@ use rho_sdk::{
 
 use super::{
     check_screen_config,
-    classify::{classify_capability_request_with_provider, ClassifyRequest, Screen},
+    classify::{
+        classify_capability_request_with_provider, text_screen_budget, transcript_budget,
+        ClassifyRequest, Screen,
+    },
     classify_capability_request, render_classifier_transcript, ClassifierVerdict, TranscriptBudget,
     TranscriptOverBudget, DECISION_SCREEN_ID, REVIEW_QUESTION,
 };
@@ -378,7 +381,7 @@ async fn screen_on_another_model_reads_a_transcript_fitted_to_its_budget() {
             "text",
             Screen::Text {
                 provider: text.clone(),
-                budget: screen_budget,
+                budget: Some(screen_budget),
             },
             ScreenProbe::Text(text),
         ),
@@ -422,6 +425,96 @@ async fn screen_on_another_model_reads_a_transcript_fitted_to_its_budget() {
             "{name}"
         );
     }
+}
+
+// Covers: a text screen is fitted to the window its provider serves. On
+// Ollama, which silently drops the front of a prompt past `num_ctx`, only a
+// measured `usable_context_window` counts, never the advertised window, and
+// without one the window is unknown. Hosted providers reject an oversize
+// prompt, so their catalog window, or none, is enough.
+// Owner: permission classifier model resolution
+#[test]
+fn text_screen_budget_trusts_only_a_served_window() {
+    let advertised = ModelMetadata {
+        advertised_context_window: Some(262_144),
+        ..ModelMetadata::default()
+    };
+    let measured = ModelMetadata {
+        usable_context_window: Some(16_384),
+        ..advertised.clone()
+    };
+    let cases = [
+        (
+            "ollama advertised only",
+            "ollama",
+            Some(advertised.clone()),
+            None,
+        ),
+        ("ollama uncached", "ollama", None, None),
+        (
+            "ollama measured",
+            "ollama",
+            Some(measured),
+            Some(transcript_budget(Some(16_384))),
+        ),
+        (
+            "hosted",
+            "xai",
+            Some(advertised),
+            Some(transcript_budget(Some(262_144))),
+        ),
+        (
+            "hosted uncached",
+            "xai",
+            None,
+            Some(TranscriptBudget::Unbounded),
+        ),
+    ];
+    for (name, provider, metadata, expected) in cases {
+        assert_eq!(text_screen_budget(provider, metadata), expected, "{name}");
+    }
+}
+
+// Covers: a text screen with no known served window never asks its model,
+// which could answer from a truncated transcript; the review decides.
+// Owner: permission classifier two-stage pipeline
+#[tokio::test]
+async fn text_screen_without_a_served_window_leaves_the_decision_to_review() {
+    let text = Arc::new(ScriptedProvider::new(
+        ModelIdentity::new("ollama", "api", "qwen3"),
+        [text_turn(SCREEN_ALLOW)],
+    ));
+    let screen = Screen::Text {
+        provider: text.clone(),
+        budget: None,
+    };
+    let provider = ScriptedProvider::new(
+        ModelIdentity::new("provider", "api", "model"),
+        [text_turn(REVIEW_DENY)],
+    );
+    let session_id = SessionId::new();
+
+    let verdict = classify_capability_request_with_provider(
+        &provider,
+        &screen,
+        ReasoningLevel::Low,
+        TranscriptBudget::Unbounded,
+        ClassifyRequest {
+            history: &sample_history(),
+            pending: &pending_write(),
+            cancellation: CancellationToken::new(),
+            session_id: &session_id,
+            workspace_path: Path::new("/test/workspace"),
+            usage_recording: ProviderRequestUsageRecording::default(),
+        },
+    )
+    .await;
+
+    assert_eq!(text.recorded_requests().len(), 0);
+    assert!(
+        matches!(verdict, ClassifierVerdict::Deny { .. }),
+        "{verdict:?}"
+    );
 }
 
 // Covers: a screen entry whose kind its provider cannot serve (a decision

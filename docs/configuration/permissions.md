@@ -48,6 +48,8 @@ The picker lists three groups:
 - **Decision models** discovered on the hosts below.
 - **Text models** from the chat model catalog. A text screen asks the same question as the classifier's screen, at low reasoning, over a transcript fitted to that model's own context window.
 
+Ollama serves a model at the server's `num_ctx`, often far below the window the model advertises, and silently drops the front of a longer prompt. A screen could then allow a request it never read whole. So a text screen on Ollama needs `usable_context_window` set for its model in [local model metadata](/configuration#local-model-metadata), measured against the server. Without it, the screen escalates every request to the review, and the `/config` row and `/doctor` warn. Hosted providers reject an oversize prompt, which also escalates.
+
 The picker saves `kind = "decision"` or `kind = "text"` with the entry, because Ollama serves both. Without `kind`, an entry on Ollama or TypeSafe is a decision model and an entry on any other provider is a text model.
 
 ```toml

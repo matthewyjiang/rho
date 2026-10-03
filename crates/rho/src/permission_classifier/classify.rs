@@ -2,7 +2,11 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::{anyhow, bail};
 use rho_providers::{
-    model::{models_dev::cached_model_metadata, Message},
+    model::{
+        models_dev::{cached_model_metadata, ModelMetadata},
+        Message,
+    },
+    provider::ProviderId,
     reasoning::ReasoningLevel,
 };
 use rho_sdk::model::context::estimate_text_tokens;
@@ -13,7 +17,7 @@ use rho_sdk::{
 
 use crate::{
     agent::{effective_internal_agent_reasoning, PERMISSION_CLASSIFIER_AGENT_ID},
-    config::{Config, InternalAgentTarget},
+    config::{Config, InternalAgentTarget, ModelKind, RhoInternalAgentModel},
     credential_store::build_provider_on,
 };
 
@@ -72,9 +76,11 @@ pub(super) enum Screen {
     /// No entry: the classifier's own model, reading the review's transcript.
     Classifier,
     /// Another chat model, reading a transcript fitted to its own window.
+    /// `budget` is `None` when the window it serves is unknown, so it could
+    /// silently drop part of the transcript; it then escalates every request.
     Text {
         provider: Arc<dyn ModelProvider>,
-        budget: TranscriptBudget,
+        budget: Option<TranscriptBudget>,
     },
     Decision(Box<dyn DecisionModel>),
 }
@@ -187,11 +193,57 @@ async fn resolve_screen(config: &Config) -> anyhow::Result<Screen> {
         entry: DECISION_SCREEN_ID,
         configured: rho_providers::provider::model_reference(&selection.provider, &selection.model),
     })?;
-    let budget = transcript_budget(
-        cached_model_metadata(&selection.provider, &selection.model)
-            .and_then(|metadata| metadata.display_context_window()),
+    let budget = text_screen_budget(
+        &selection.provider,
+        cached_model_metadata(&selection.provider, &selection.model),
     );
     Ok(Screen::Text { provider, budget })
+}
+
+/// Why the screen entry `selection` likely will not work as configured: its
+/// kind does not fit what was discovered, or it is a text model whose served
+/// window is unknown, so it escalates every request. For `/config` and
+/// `/doctor`.
+pub(crate) fn screen_warning(selection: &RhoInternalAgentModel) -> Option<String> {
+    decision::kind_mismatch(selection).or_else(|| {
+        let unknown_window = decision::entry_kind(selection) == ModelKind::Text
+            && text_screen_budget(
+                &selection.provider,
+                cached_model_metadata(&selection.provider, &selection.model),
+            )
+            .is_none();
+        unknown_window.then(|| {
+            format!(
+                "{} has no usable_context_window, so the screen escalates every request",
+                selection.model
+            )
+        })
+    })
+}
+
+/// The transcript budget a text screen on `provider` is fitted to, or `None`
+/// when the window it serves is unknown.
+///
+/// Ollama serves a model at the server's `num_ctx`, often far below the
+/// window the model advertises, and drops the front of a longer prompt
+/// without an error, which could leave a screen allowing a request it never
+/// read whole. So on Ollama only a measured `usable_context_window` counts.
+/// Hosted providers reject an oversize prompt, and that error escalates.
+pub(super) fn text_screen_budget(
+    provider: &str,
+    metadata: Option<ModelMetadata>,
+) -> Option<TranscriptBudget> {
+    let ollama = rho_providers::provider::provider_descriptor(provider)
+        .is_some_and(|descriptor| descriptor.id == ProviderId::Ollama);
+    if ollama {
+        metadata
+            .and_then(|metadata| metadata.usable_context_window)
+            .map(|window| transcript_budget(Some(window)))
+    } else {
+        Some(transcript_budget(
+            metadata.and_then(|metadata| metadata.display_context_window()),
+        ))
+    }
 }
 
 /// What one classification did at each stage. Production acts only on
@@ -354,6 +406,13 @@ async fn run_screen(
             (&text_screen, None)
         }
         Screen::Text { provider, budget } => {
+            let Some(budget) = budget else {
+                let identity = provider.identity();
+                bail!(
+                    "text screen {} has no known served context window, so it may truncate the transcript; set usable_context_window for it in ~/.rho/models.toml",
+                    rho_providers::provider::model_reference(&identity.provider, &identity.model)
+                );
+            };
             text_screen = text_model(
                 provider.as_ref(),
                 request,

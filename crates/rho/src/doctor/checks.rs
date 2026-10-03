@@ -313,11 +313,15 @@ pub(super) fn selected_model_check(
 pub(super) fn permission_screen_check(configured: &InternalAgentModelConfig) -> DoctorCheck {
     let id = DoctorCheckId::PermissionScreen;
     let reference = configured.display_reference();
-    match configured.rho().and_then(crate::decision::kind_mismatch) {
-        Some(mismatch) => DoctorCheck::new(id, "Permission screen model", DoctorStatus::Warn, mismatch)
-            .with_hint(format!(
-                "set kind in [internal_agents.permission-classifier-screen] or pick {reference} again in /config"
-            )),
+    match configured
+        .rho()
+        .and_then(crate::permission_classifier::screen_warning)
+    {
+        Some(warning) => {
+            DoctorCheck::new(id, "Permission screen model", DoctorStatus::Warn, warning).with_hint(
+                format!("[internal_agents.permission-classifier-screen] names {reference}"),
+            )
+        }
         None => DoctorCheck::new(id, "Permission screen model", DoctorStatus::Ok, reference),
     }
 }
