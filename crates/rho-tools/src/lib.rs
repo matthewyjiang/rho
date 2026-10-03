@@ -20,6 +20,9 @@ mod image_preview;
 mod path_glob;
 mod paths;
 mod process_env;
+#[cfg(unix)]
+#[doc(hidden)]
+pub mod process_session;
 mod process_stream;
 #[cfg(windows)]
 #[doc(hidden)]

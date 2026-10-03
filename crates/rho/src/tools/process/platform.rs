@@ -5,7 +5,7 @@ use tokio::process::{Child, Command};
 /// Isolate the child before it can execute or create descendants.
 pub(crate) fn prepare_child_command(command: &mut Command) {
     #[cfg(unix)]
-    command.process_group(0);
+    rho_tools::process_session::start_new_session(command.as_std_mut());
     #[cfg(windows)]
     rho_tools::process_supervision::WindowsJob::prepare(command);
 }

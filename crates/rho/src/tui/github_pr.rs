@@ -118,6 +118,9 @@ async fn probe(cwd: &Path) -> GithubPrProbe {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    // Runs in the background of the TUI; credential helpers must not grab the terminal.
+    #[cfg(unix)]
+    rho_tools::process_session::start_new_session(command.as_std_mut());
     let child = match command.spawn() {
         Ok(child) => child,
         Err(_) => return GithubPrProbe::Unavailable,
