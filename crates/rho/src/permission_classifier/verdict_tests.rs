@@ -1,8 +1,8 @@
 use pretty_assertions::assert_eq;
 
 use super::{
-    review_verdict, screen_verdict, verdict::SCREEN_ALLOW_THRESHOLD, ClassifierVerdict,
-    ScreenVerdict, REVIEW_QUESTION, SCREEN_QUESTION,
+    review_verdict, screen_verdict, ClassifierVerdict, ScreenVerdict, REVIEW_QUESTION,
+    SCREEN_QUESTION,
 };
 use rho_sdk::decision::{Answer, ChoiceAnswer, ChoiceOption, Question, QuestionKind};
 
@@ -44,34 +44,41 @@ fn answer_with_allow_probability(
 }
 
 // Covers: only the `allow` option skips review, and from a model that reports
-// probabilities only at the threshold; a text model's allow, which has none,
-// still allows. Anything else escalates.
+// probabilities only at or above the allow percent, inclusive at both ends of
+// its range; a text model's allow, which has none, still allows. Anything
+// else escalates. Jev reports two decimals, so 0.95 must meet 95%.
 // Owner: permission classifier screen answers.
 #[test]
 fn only_a_screen_allow_skips_review() {
+    let allow =
+        |probability| answer_with_allow_probability(&SCREEN_QUESTION, "allow", Some(probability));
     let cases = [
-        (answer(&SCREEN_QUESTION, "allow"), ScreenVerdict::Allow),
+        (answer(&SCREEN_QUESTION, "allow"), 95, ScreenVerdict::Allow),
         (
             answer(&SCREEN_QUESTION, "escalate"),
+            95,
             ScreenVerdict::Escalate,
         ),
-        (Vec::new(), ScreenVerdict::Escalate),
-        (
-            answer_with_allow_probability(&SCREEN_QUESTION, "allow", Some(SCREEN_ALLOW_THRESHOLD)),
-            ScreenVerdict::Allow,
-        ),
-        (
-            answer_with_allow_probability(&SCREEN_QUESTION, "allow", Some(0.96)),
-            ScreenVerdict::Escalate,
-        ),
+        (Vec::new(), 95, ScreenVerdict::Escalate),
+        (allow(0.95), 95, ScreenVerdict::Allow),
+        (allow(0.949), 95, ScreenVerdict::Escalate),
+        (allow(0.96), 97, ScreenVerdict::Escalate),
+        (allow(0.5), 50, ScreenVerdict::Allow),
+        (allow(1.0), 100, ScreenVerdict::Allow),
+        (allow(0.999), 100, ScreenVerdict::Escalate),
         (
             answer_with_allow_probability(&SCREEN_QUESTION, "escalate", Some(0.4)),
+            50,
             ScreenVerdict::Escalate,
         ),
     ];
 
-    for (answers, expected) in cases {
-        assert_eq!(screen_verdict(&answers), expected, "{answers:?}");
+    for (answers, allow_percent, expected) in cases {
+        assert_eq!(
+            screen_verdict(&answers, allow_percent),
+            expected,
+            "{allow_percent}% {answers:?}"
+        );
     }
 }
 

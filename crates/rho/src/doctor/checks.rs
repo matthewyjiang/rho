@@ -23,7 +23,7 @@ use super::{
 use crate::{
     claude_runtime::auth::ClaudeProbeSnapshot,
     clipboard::ClipboardDoctorReport,
-    config::InternalAgentModelConfig,
+    config::{InternalAgentModelConfig, ModelKind},
     cursor_runtime::auth::{CursorAuthError, CursorAuthStatus, CursorProbeSnapshot},
     herdr::HerdrReporter,
     plugins::{PluginLoadReport, PluginLoadSummary},
@@ -309,21 +309,37 @@ pub(super) fn selected_model_check(
 }
 
 /// Warns when the permission screen's entry asks a model as the wrong kind,
-/// judged by the decision models its provider listed at the last refresh.
+/// judged by the decision models its provider listed at the last refresh, and
+/// fails on an allow threshold out of range, which fails every screen. A
+/// decision model's summary names the threshold it allows at.
 pub(super) fn permission_screen_check(configured: &InternalAgentModelConfig) -> DoctorCheck {
     let id = DoctorCheckId::PermissionScreen;
+    let label = "Permission screen model";
     let reference = configured.display_reference();
-    match configured
-        .rho()
-        .and_then(crate::permission_classifier::screen_warning)
-    {
-        Some(warning) => {
-            DoctorCheck::new(id, "Permission screen model", DoctorStatus::Warn, warning).with_hint(
-                format!("[internal_agents.permission-classifier-screen] names {reference}"),
-            )
+    let hint = format!("[internal_agents.permission-classifier-screen] names {reference}");
+    let Some(selection) = configured.rho() else {
+        return DoctorCheck::new(id, label, DoctorStatus::Ok, reference);
+    };
+    let allow_percent = match crate::decision::entry_kind(selection) {
+        ModelKind::Decision => {
+            match crate::permission_classifier::screen_allow_percent(selection) {
+                Ok(percent) => Some(percent),
+                Err(err) => {
+                    return DoctorCheck::new(id, label, DoctorStatus::Fail, err.to_string())
+                        .with_hint(hint);
+                }
+            }
         }
-        None => DoctorCheck::new(id, "Permission screen model", DoctorStatus::Ok, reference),
+        ModelKind::Text => None,
+    };
+    if let Some(warning) = crate::permission_classifier::screen_warning(selection) {
+        return DoctorCheck::new(id, label, DoctorStatus::Warn, warning).with_hint(hint);
     }
+    let summary = match allow_percent {
+        Some(percent) => format!("{reference}, allows at P(allow) {percent}%"),
+        None => reference,
+    };
+    DoctorCheck::new(id, label, DoctorStatus::Ok, summary)
 }
 
 #[derive(Clone, Copy)]

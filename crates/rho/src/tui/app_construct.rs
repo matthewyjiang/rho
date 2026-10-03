@@ -118,6 +118,7 @@ impl App {
             diff_viewer: None,
             web_search_reload_pending: false,
             compaction_reload_pending: false,
+            classifier_config_sync_pending: false,
             usage_limits_client: std::sync::OnceLock::new(),
             usage: UsageUi::default(),
             model_metadata: None,

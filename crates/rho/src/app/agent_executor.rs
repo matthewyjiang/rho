@@ -289,8 +289,35 @@ impl AgentExecutor {
             .permission_mode = mode;
     }
 
+    /// Future delegated runs build their classifier from these, so a changed
+    /// classifier or screen setting reaches the next child too.
+    pub(crate) fn update_internal_agents(
+        &self,
+        internal_agents: &std::collections::BTreeMap<
+            String,
+            crate::config::InternalAgentModelConfig,
+        >,
+    ) {
+        self.config
+            .write()
+            .expect("delegated config lock")
+            .internal_agents
+            .clone_from(internal_agents);
+    }
+
     pub(crate) fn concurrency(&self) -> AgentConcurrency {
         self.concurrency.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn launch_internal_agents(
+        &self,
+    ) -> std::collections::BTreeMap<String, crate::config::InternalAgentModelConfig> {
+        self.config
+            .read()
+            .expect("delegated config lock")
+            .internal_agents
+            .clone()
     }
 
     #[cfg(test)]

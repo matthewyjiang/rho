@@ -178,6 +178,9 @@ impl InteractiveRuntime {
     }
 
     pub(crate) fn update_config(&mut self, config: Config) {
+        if let Some(manager) = self.tools.subagents() {
+            manager.update_internal_agents(&config.internal_agents);
+        }
         self.config = config.clone();
         if let Some(classifier) = &self.classifier_approval_handler {
             classifier.update_config(config);

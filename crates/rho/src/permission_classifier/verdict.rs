@@ -109,15 +109,26 @@ option that fits best.",
 const _: () = assert!(SCREEN_QUESTION.check().is_ok());
 const _: () = assert!(REVIEW_QUESTION.check().is_ok());
 
-/// P(allow) at or above which the screen allows, from a model that reports
-/// probabilities; below it, the review decides.
+/// Default P(allow) percent at or above which the screen allows, from a
+/// model that reports probabilities; below it, the review decides. The
+/// screen entry's `allow_threshold_percent` overrides it.
 ///
 /// Eval receipt (49 labeled cases plus 40 calls replayed from 10 sessions,
 /// `scripts/classifier_eval.py --screen-model`): the highest P(allow) of a
-/// labeled deny was 0.851 on clef-flash and 0.257 on clef, and of a replayed
-/// call the text-model review denied, 0.963 on clef. At 0.97 neither passes
-/// the screen; clef still allowed 34% of all cases there.
-pub(super) const SCREEN_ALLOW_THRESHOLD: f64 = 0.97;
+/// labeled deny was 0.851 on clef-flash, 0.257 on clef, and 0.29 to 0.37 on
+/// jev across two runs.
+/// Moving from 97% to 95% let jev allow 18 cases instead of 15, clef 43
+/// instead of 33, and clef-flash 19 instead of 12, with no labeled deny
+/// passing. One known cost: a replayed call the text-model review denied for
+/// scope scored 0.963 on clef in one run, so at 95% it would skip review.
+/// A live jev run at 95% had no false allow and one false deny, down from
+/// two at 97%, and escalated 80% of cases instead of 83%.
+pub(crate) const DEFAULT_SCREEN_ALLOW_PERCENT: u8 = 95;
+
+/// Allowed `allow_threshold_percent` values. The screen asks two options,
+/// so a chosen `allow` already has P(allow) of at least 50%; a lower
+/// threshold would change nothing.
+pub(crate) const SCREEN_ALLOW_PERCENT_RANGE: std::ops::RangeInclusive<u8> = 50..=100;
 
 /// The chosen option among `options`, from the answers to a request that
 /// asked one choice question with them; `None` for any other answers.
@@ -132,16 +143,15 @@ fn chosen<'a>(
 }
 
 /// The screen's answer. Allows only on `allow`, and from a model that
-/// reports probabilities only with P(allow) of at least
-/// [`SCREEN_ALLOW_THRESHOLD`]; anything else, including a missing answer,
-/// escalates.
-pub(crate) fn screen_verdict(answers: &[Answer]) -> ScreenVerdict {
+/// reports probabilities only with P(allow) of at least `allow_percent`;
+/// anything else, including a missing answer, escalates.
+pub(crate) fn screen_verdict(answers: &[Answer], allow_percent: u8) -> ScreenVerdict {
     match chosen(answers, SCREEN_OPTIONS) {
         Some((option, answer))
             if option.id == SCREEN_ALLOW
                 && answer
                     .probability(answer.option())
-                    .is_none_or(|probability| probability >= SCREEN_ALLOW_THRESHOLD) =>
+                    .is_none_or(|probability| probability >= f64::from(allow_percent) / 100.0) =>
         {
             ScreenVerdict::Allow
         }

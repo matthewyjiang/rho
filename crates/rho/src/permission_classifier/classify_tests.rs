@@ -23,7 +23,7 @@ use super::{
         ClassifyRequest, Screen,
     },
     classify_capability_request, render_classifier_transcript, ClassifierVerdict, TranscriptBudget,
-    TranscriptOverBudget, DECISION_SCREEN_ID, REVIEW_QUESTION,
+    TranscriptOverBudget, DECISION_SCREEN_ID, DEFAULT_SCREEN_ALLOW_PERCENT, REVIEW_QUESTION,
 };
 use crate::{
     agent::PERMISSION_CLASSIFIER_AGENT_ID,
@@ -260,13 +260,15 @@ impl DecisionModel for FakeScreen {
     }
 }
 
-// Covers: a decision-model screen allows without a text-model call only on a
-// confident allow; a less confident allow, an escalation, or a server error
-// reaches the text-model review, which alone can deny.
+// Covers: a decision-model screen allows without a text-model call only on an
+// allow at its own threshold; a less confident allow, an escalation, or a
+// server error reaches the text-model review, which alone can deny. The
+// threshold is the screen's, not the default, so a configured one applies.
 // Owner: permission classifier two-stage pipeline
 #[tokio::test]
 async fn decision_screen_skips_review_only_on_a_confident_allow() {
-    let threshold = super::verdict::SCREEN_ALLOW_THRESHOLD;
+    let allow_percent = DEFAULT_SCREEN_ALLOW_PERCENT - 10;
+    let threshold = f64::from(allow_percent) / 100.0;
     let cases = [
         (
             "confident allow",
@@ -304,7 +306,10 @@ async fn decision_screen_skips_review_only_on_a_confident_allow() {
 
         let (verdict, requests) = run_pipeline_with_screener(
             &provider,
-            Screen::Decision(Box::new(screen_model)),
+            Screen::Decision {
+                model: Box::new(screen_model),
+                allow_percent,
+            },
             ReasoningLevel::Medium,
             TranscriptBudget::Unbounded,
         )
@@ -374,7 +379,10 @@ async fn screen_on_another_model_reads_a_transcript_fitted_to_its_budget() {
     let cases = [
         (
             "decision",
-            Screen::Decision(Box::new(decision)),
+            Screen::Decision {
+                model: Box::new(decision),
+                allow_percent: DEFAULT_SCREEN_ALLOW_PERCENT,
+            },
             ScreenProbe::Decision(decision_states),
         ),
         (
@@ -518,33 +526,56 @@ async fn text_screen_without_a_served_window_leaves_the_decision_to_review() {
 }
 
 // Covers: a screen entry whose kind its provider cannot serve (a decision
-// model off a decision host, a text model on a decision-only host), or whose
-// auth mode the screen cannot send, fails the config check naming the
-// configured value instead of being ignored, and a classification under it
-// denies with that reason. A text model on a chat provider is valid; its
-// credentials are covered by `has_credentials`.
+// model off a decision host, a text model on a decision-only host), whose
+// auth mode the screen cannot send, or whose decision model has an allow
+// threshold out of range, fails the config check naming the configured value
+// instead of being ignored, and a classification under it denies with that
+// reason. A text model ignores the threshold. A text model on a chat
+// provider is valid; its credentials are covered by `has_credentials`.
 // Owner: permission classifier model resolution
 #[tokio::test]
 async fn unusable_screen_config_is_reported() {
     use crate::config::ModelKind::{Decision, Text};
+    let out_of_range = |percent| {
+        Err(format!(
+            "[internal_agents.{DECISION_SCREEN_ID}] allow_threshold_percent must be 50 to 100, got {percent}"
+        ))
+    };
     let cases = [
         (None, Ok(())),
-        (Some(("ollama", "clef", "none", None)), Ok(())),
-        (Some(("ollama", "qwen3", "none", Some(Text))), Ok(())),
+        (Some(("ollama", "clef", "none", None, None)), Ok(())),
+        (Some(("ollama", "clef", "none", None, Some(50))), Ok(())),
+        (Some(("ollama", "clef", "none", None, Some(100))), Ok(())),
         (
-            Some(("anthropic", "claude-haiku-4-5", "anthropic-api-key", Some(Decision))),
+            Some(("ollama", "clef", "none", None, Some(49))),
+            out_of_range(49),
+        ),
+        (
+            Some(("ollama", "clef", "none", None, Some(101))),
+            out_of_range(101),
+        ),
+        (Some(("ollama", "qwen3", "none", Some(Text), None)), Ok(())),
+        (Some(("ollama", "qwen3", "none", Some(Text), Some(0))), Ok(())),
+        (
+            Some((
+                "anthropic",
+                "claude-haiku-4-5",
+                "anthropic-api-key",
+                Some(Decision),
+                None,
+            )),
             Err(format!(
                 "[internal_agents.{DECISION_SCREEN_ID}] kind `decision` needs a model on provider ollama or typesafe, got anthropic/claude-haiku-4-5"
             )),
         ),
         (
-            Some(("typesafe", "jev-latest", "typesafe-api-key", Some(Text))),
+            Some(("typesafe", "jev-latest", "typesafe-api-key", Some(Text), None)),
             Err(format!(
                 "[internal_agents.{DECISION_SCREEN_ID}] kind `text` needs a chat model, got typesafe/jev-latest"
             )),
         ),
         (
-            Some(("ollama", "clef", "codex", None)),
+            Some(("ollama", "clef", "codex", None, None)),
             Err(format!(
                 "[internal_agents.{DECISION_SCREEN_ID}] auth `codex` is not supported; use `none` or `ollama-api-key`"
             )),
@@ -552,10 +583,11 @@ async fn unusable_screen_config_is_reported() {
     ];
     for (screen, expected) in cases {
         let mut config = Config::default();
-        if let Some((provider, model, auth, kind)) = screen {
+        if let Some((provider, model, auth, kind, allow_threshold_percent)) = screen {
             let mut selection =
                 InternalAgentModelConfig::new(provider.into(), model.into(), auth.into());
             selection.expect_rho_mut().kind = kind;
+            selection.expect_rho_mut().allow_threshold_percent = allow_threshold_percent;
             config.set_internal_agent_model_config(DECISION_SCREEN_ID, selection);
         }
 

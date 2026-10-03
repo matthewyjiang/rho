@@ -239,6 +239,7 @@ impl App {
     ) -> anyhow::Result<TurnOutcome> {
         self.apply_pending_web_search(agent).await?;
         self.apply_pending_compaction_config(agent)?;
+        self.apply_pending_classifier_config(agent);
         if !authorization.matches(&agent.provider_identity()) {
             if let PromptTurnRequest::Boundary(delivery) = request {
                 self.restore_turn_boundary_batch(agent, delivery.batch);

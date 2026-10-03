@@ -83,6 +83,15 @@ pub(crate) enum ConfigError {
         /// The host's auth modes, as `` `a` or `b` ``.
         supported: String,
     },
+    #[error(
+        "[internal_agents.{entry}] allow_threshold_percent must be {min} to {max}, got {percent}"
+    )]
+    AllowThresholdOutOfRange {
+        entry: &'static str,
+        percent: u8,
+        min: u8,
+        max: u8,
+    },
     #[error("[internal_agents.{entry}]: {message}")]
     MissingApiKey {
         entry: &'static str,

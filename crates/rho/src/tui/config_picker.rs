@@ -32,6 +32,7 @@ pub(super) const ADVISOR_REASONING_VALUE: &str = "advisor_reasoning";
 pub(super) const PERMISSION_CLASSIFIER_MODEL_VALUE: &str = "permission_classifier_model";
 pub(super) const PERMISSION_CLASSIFIER_REASONING_VALUE: &str = "permission_classifier_reasoning";
 pub(super) const PERMISSION_SCREEN_MODEL_VALUE: &str = "permission_screen_model";
+pub(super) const SCREEN_ALLOW_THRESHOLD_VALUE: &str = "screen_allow_threshold";
 pub(super) const AUTO_COMPACT_VALUE: &str = "auto_compact";
 pub(super) const COMPACT_THRESHOLD_PERCENT_VALUE: &str = "compact_threshold_percent";
 pub(super) const COMPACT_TARGET_PERCENT_VALUE: &str = "compact_target_percent";
@@ -371,6 +372,17 @@ pub(super) fn category_picker(
             );
             screen.badge = Some(super::screen_model::screen_model_badge(info));
             items.push(screen);
+            if let Some(badge) = super::screen_model::allow_threshold_badge(info) {
+                let mut threshold = sectioned_item(
+                    Some("Permissions"),
+                    "Screen allow threshold",
+                    "How sure the decision model must be, as P(allow), before the screen allows without the classifier's review. Lower skips more reviews; higher sends more to review. Enter edits.",
+                    None,
+                    SCREEN_ALLOW_THRESHOLD_VALUE,
+                );
+                threshold.badge = Some(badge);
+                items.push(threshold);
+            }
             items.push(sectioned_item(
                 Some("Advisor"),
                 "Advisor mode",
@@ -565,6 +577,7 @@ pub(super) fn category_for_setting(value: &str) -> Option<&'static str> {
         | PERMISSION_CLASSIFIER_MODEL_VALUE
         | PERMISSION_CLASSIFIER_REASONING_VALUE
         | PERMISSION_SCREEN_MODEL_VALUE
+        | SCREEN_ALLOW_THRESHOLD_VALUE
         | ENABLE_SUBAGENTS_VALUE
         | AGENT_CONCURRENCY_VALUE
         | QUESTIONNAIRE_TIMEOUT_VALUE

@@ -70,11 +70,25 @@ Rho discovers decision models after login and from **Refresh model lists** in `/
 
 The `/config` row and `/doctor` warn when an entry's kind does not fit: a decision entry on a provider other than Ollama or TypeSafe, a decision entry on a model its host did not list, or a text entry on a listed decision model that is not also listed as a chat model. Rho does not warn about a host that listed no decision models, since it has nothing to judge by. The picker lists decision models only on hosts with usable credentials, and a text entry without credentials for its auth stops headless `rho run` like any unusable entry.
 
-The screen allows only when the model picks `allow` with probability at least 0.97. Anything else goes to the classifier model's review as before, including errors, so the decision model can skip a review but never deny. Both hosts reject input over the model's context instead of truncating it: 16,384 tokens for Clef at Ollama's default `num_ctx`, and about 32,500 on TypeSafe. So the screen reads its own transcript, fitted to about 10,500 estimated tokens on Ollama or 20,500 on TypeSafe: the oldest earlier tool calls are left out first. A screen allow on that shorter transcript skips the review; user messages, questionnaire answers, and the pending request, which carry the user's intent, are never left out. When the screen escalates, the review reads the left-out calls, subject to its own transcript budget. If the user messages, questionnaire answers, and pending request alone do not fit, or the request body would pass Ollama's 64 KiB limit, the screen is skipped and the review decides. Run with `RHO_LOG=rho=warn` to log why.
+The screen allows only when the model picks `allow` with probability at least its allow threshold, 95% by default. Anything else goes to the classifier model's review as before, including errors, so the decision model can skip a review but never deny. Both hosts reject input over the model's context instead of truncating it: 16,384 tokens for Clef at Ollama's default `num_ctx`, and about 32,500 on TypeSafe. So the screen reads its own transcript, fitted to about 10,500 estimated tokens on Ollama or 20,500 on TypeSafe: the oldest earlier tool calls are left out first. A screen allow on that shorter transcript skips the review; user messages, questionnaire answers, and the pending request, which carry the user's intent, are never left out. When the screen escalates, the review reads the left-out calls, subject to its own transcript budget. If the user messages, questionnaire answers, and pending request alone do not fit, or the request body would pass Ollama's 64 KiB limit, the screen is skipped and the review decides. Run with `RHO_LOG=rho=warn` to log why.
+
+#### Allow threshold
+
+Set the threshold under **Agent behavior > Screen allow threshold** in `/config`, which appears when the screen is a decision model, or as `allow_threshold_percent`, a whole percent from 50 to 100. The screen asks two options, so a chosen `allow` is already at least 50%. A lower threshold skips more reviews; a higher one sends more requests to the review. A text screen reports no probabilities and ignores the setting. Changing the screen model keeps the threshold. `/doctor` reports the threshold in effect.
+
+```toml
+[internal_agents.permission-classifier-screen]
+provider = "typesafe"
+model = "jev-latest"
+kind = "decision"
+allow_threshold_percent = 95
+```
+
+The 95% default comes from an eval of 49 labeled cases and 40 calls replayed from real sessions. No case labeled deny reached 95% on Clef, Clef-flash, or Jev; the highest were 0.851 on Clef-flash, 0.257 on Clef, and 0.29 to 0.37 on Jev across two runs. Lowering the threshold from 97% let each model allow more cases without review: Jev 18 instead of 15, Clef 43 instead of 33, Clef-flash 19 instead of 12. One replayed call that the review denied as out of scope scored 0.963 on Clef in one run, so at 95% the screen would have allowed it without review. Raise the threshold to 97% if that tradeoff matters to you. Jev reports probabilities rounded to two decimals, so 95% admits any true probability of about 0.945 or more.
 
 #### Screen entry rules
 
-`[internal_agents.permission-classifier-screen]` takes the provider's auth: `none` or `ollama-api-key` on Ollama, `typesafe-api-key` on TypeSafe, and the chat provider's auth for a text model. The review still needs `[internal_agents.permission-classifier]`. An unusable screen entry stops headless `rho run` at startup. In the TUI, every classified request is denied with that error until the entry is fixed.
+`[internal_agents.permission-classifier-screen]` takes the provider's auth: `none` or `ollama-api-key` on Ollama, `typesafe-api-key` on TypeSafe, and the chat provider's auth for a text model. The review still needs `[internal_agents.permission-classifier]`. An unusable screen entry, including an allow threshold outside 50 to 100 on a decision model, stops headless `rho run` at startup. In the TUI, every classified request is denied with that error until the entry is fixed.
 
 ## Change the mode
 

@@ -113,37 +113,35 @@ struct PersistedInternalAgentModelConfig<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     kind: Option<super::ModelKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    allow_threshold_percent: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     reasoning: Option<ReasoningLevel>,
 }
 
 impl<'a> PersistedInternalAgentModelConfig<'a> {
     fn new(selection: &'a InternalAgentModelConfig, aliases: &'a ModelAliases) -> Self {
-        let (runtime, provider, model, auth, kind) = match &selection.target {
-            InternalAgentTarget::Rho(rho) => (
-                None,
-                Some(rho.provider.as_str()),
-                Some(persisted_model_reference(
+        match &selection.target {
+            InternalAgentTarget::Rho(rho) => Self {
+                runtime: None,
+                provider: Some(rho.provider.as_str()),
+                model: Some(persisted_model_reference(
                     selection.current_alias(aliases),
                     &rho.model,
                 )),
-                Some(rho.auth.as_str()),
-                rho.kind,
-            ),
-            InternalAgentTarget::ClaudeCli { model } => (
-                Some(CLAUDE_CLI_RUNTIME_KEY),
-                None,
-                model.as_deref().map(Cow::Borrowed),
-                None,
-                None,
-            ),
-        };
-        Self {
-            runtime,
-            provider,
-            model,
-            auth,
-            kind,
-            reasoning: selection.reasoning,
+                auth: Some(rho.auth.as_str()),
+                kind: rho.kind,
+                allow_threshold_percent: rho.allow_threshold_percent,
+                reasoning: selection.reasoning,
+            },
+            InternalAgentTarget::ClaudeCli { model } => Self {
+                runtime: Some(CLAUDE_CLI_RUNTIME_KEY),
+                provider: None,
+                model: model.as_deref().map(Cow::Borrowed),
+                auth: None,
+                kind: None,
+                allow_threshold_percent: None,
+                reasoning: selection.reasoning,
+            },
         }
     }
 }

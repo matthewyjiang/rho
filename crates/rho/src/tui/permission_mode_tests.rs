@@ -88,6 +88,41 @@ async fn reconcile_applies_pending_startup_demote() {
     assert_eq!(agent.permission_mode(), PermissionMode::Supervised);
 }
 
+// Covers: a classifier setting saved without the agent at hand, such as the
+// screen allow threshold, reaches the runtime on the next apply, once.
+// Owner: permission classifier config sync
+#[tokio::test]
+async fn pending_classifier_config_reaches_the_runtime_once() {
+    use crate::app::interactive_runtime::test_edit_tool_runtime;
+    use crate::config::{EditTool, InternalAgentModelConfig};
+    use crate::permission_classifier::DECISION_SCREEN_ID;
+
+    let mut app = test_app();
+    let mut agent = test_edit_tool_runtime(EditTool::Auto).await;
+    let mut screen = InternalAgentModelConfig::new(
+        "typesafe".into(),
+        "jev-latest".into(),
+        "typesafe-api-key".into(),
+    );
+    screen.expect_rho_mut().allow_threshold_percent = Some(90);
+    app.info
+        .runtime
+        .internal_agents
+        .insert(DECISION_SCREEN_ID.into(), screen.clone());
+    app.classifier_config_sync_pending = true;
+
+    app.apply_pending_classifier_config(&mut agent);
+
+    assert_eq!(
+        agent
+            .config_snapshot()
+            .internal_agent_model(DECISION_SCREEN_ID)
+            .cloned(),
+        Some(screen)
+    );
+    assert!(!app.classifier_config_sync_pending);
+}
+
 // Covers: `/permissions` during compaction must not bubble `set_permission_mode`
 // out of the event loop. Compact uses the idle composer, unlike a live turn.
 // Owner: permission mode command
