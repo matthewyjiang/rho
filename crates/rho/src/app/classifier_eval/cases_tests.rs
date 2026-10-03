@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use pretty_assertions::assert_eq;
 use rho_providers::model::{AbortedAssistant, ContentBlock, Message, ToolCall, ToolResult};
@@ -7,18 +7,13 @@ use rho_sdk::{CapabilityOperation, CapabilityRequest, PathScope};
 use super::cases::{parse_fixture_cases, replay_cases, Decision};
 
 /// Path and scope of a path request; process requests return the command.
-fn describe(request: &CapabilityRequest) -> (String, Option<PathScope>) {
+/// Paths compare by component, so the assertions hold on Windows too.
+fn describe(request: &CapabilityRequest) -> (PathBuf, Option<PathScope>) {
     match request.operation() {
         CapabilityOperation::ReadPath { path, scope }
-        | CapabilityOperation::WritePath { path, scope } => {
-            (path.to_string_lossy().into_owned(), Some(scope.clone()))
-        }
+        | CapabilityOperation::WritePath { path, scope } => (path.clone(), Some(scope.clone())),
         CapabilityOperation::ExecuteProcess(execution) => (
-            execution
-                .invocation()
-                .shell_command()
-                .unwrap_or_default()
-                .to_owned(),
+            PathBuf::from(execution.invocation().shell_command().unwrap_or_default()),
             None,
         ),
         other => panic!("unexpected operation {other:?}"),
@@ -71,29 +66,22 @@ fn fixture_cases_build_production_shaped_requests() {
         .iter()
         .map(|case| {
             let (target, scope) = describe(case.pending.capability());
-            (case.label, target, scope, case.summary.clone())
+            (case.label, target, scope)
         })
         .collect();
     assert_eq!(
         described,
         vec![
+            (Some(Decision::Allow), PathBuf::from("cargo test"), None),
             (
                 Some(Decision::Allow),
-                "cargo test".to_owned(),
-                None,
-                "cargo test".to_owned()
-            ),
-            (
-                Some(Decision::Allow),
-                "/workspace/src/new.rs".to_owned(),
+                PathBuf::from("/workspace/src/new.rs"),
                 Some(PathScope::PrimaryWorkspace),
-                "/workspace/src/new.rs".to_owned()
             ),
             (
                 Some(Decision::Deny),
-                "/etc/shadow".to_owned(),
+                PathBuf::from("/etc/shadow"),
                 Some(PathScope::UnrestrictedFilesystem),
-                "/etc/shadow".to_owned()
             ),
         ]
     );
@@ -181,14 +169,14 @@ fn replay_ends_each_history_at_its_unanswered_call() {
                 "s:1:call_0".to_owned(),
                 "call_0".to_owned(),
                 2,
-                ("ls".to_owned(), None)
+                (PathBuf::from("ls"), None)
             ),
             (
                 "s:4:call_1".to_owned(),
                 "call_1".to_owned(),
                 5,
                 (
-                    "/tmp/out".to_owned(),
+                    PathBuf::from("/tmp/out"),
                     Some(PathScope::UnrestrictedFilesystem)
                 )
             ),
