@@ -219,6 +219,8 @@ flowchart TD
 5. cancellation drops the pending future and returns a typed cancelled authorization error
 6. `AllowOnce`, `AllowForSession`, or denial completes exactly once
 
+By default the host receives one memory miss at a time per approval session, and each waiter re-checks memory after the previous answer, so concurrent identical requests prompt once. A handler that decides without a person, such as an automated classifier, can return `ApprovalConcurrency::Concurrent` from `ApprovalHandler::concurrency` to receive misses as they arrive; it then orders any prompts it shows a person itself. Tools that declare their capabilities in `Tool::prepare` are authorized before they wait for an execution slot, so concurrent approvals are not held behind an exclusive call that is running.
+
 `AllowForSession` stores only an exact structured-request rule in that session. Changing a path, scope, command, executable, argument, cwd, environment mode, limit, URL, skill, source, or capability requires another approval. Rules are not persisted, copied to another session, or allowed to override a later policy denial.
 
 `ToolContext::authorize` returns `AuthorizationOutcome` or `AuthorizationError`, including typed policy, host, and cancellation denial sources. Built-ins convert denials to `ToolErrorKind::PolicyDenied` with a useful capability-specific message. The model receives that failed tool result and can continue, while the host receives typed `ToolCompletion::Failure`.

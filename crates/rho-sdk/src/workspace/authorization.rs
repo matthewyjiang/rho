@@ -18,9 +18,9 @@ use crate::hooks::{
 
 use super::{
     approval::{
-        ApprovalAuditDecision, ApprovalAuditLog, ApprovalContext, ApprovalDecision,
-        ApprovalHandler, ApprovalRequest, AuthorizationDenialKind, AuthorizationError,
-        AuthorizationOutcome, DenyApprovals, SessionApprovals,
+        ApprovalAuditDecision, ApprovalAuditLog, ApprovalConcurrency, ApprovalContext,
+        ApprovalDecision, ApprovalHandler, ApprovalRequest, AuthorizationDenialKind,
+        AuthorizationError, AuthorizationOutcome, DenyApprovals, SessionApprovals,
     },
     CapabilityRequest, PolicyDecision, WorkspacePolicy,
 };
@@ -275,18 +275,25 @@ async fn prompt_for_approval(
         return Ok(AuthorizationOutcome::AllowedByRememberedApproval);
     }
 
-    // Serialize only the miss path so a concurrent identical waiter
-    // observes AllowForSession recorded by the first prompt. Remembered
-    // hits above stay concurrent. AllowOnce/Deny still re-prompt after
-    // the holder finishes because nothing is remembered for them.
-    let _gate = remembered.approval_gate().lock().await;
-    if remembered.contains(&request) {
-        audit.record(
-            capability,
-            ApprovalAuditDecision::AllowedByRememberedApproval,
-        );
-        return Ok(AuthorizationOutcome::AllowedByRememberedApproval);
-    }
+    // A serial handler gets only the miss path serialized, so a concurrent
+    // identical waiter observes AllowForSession recorded by the first
+    // prompt. Remembered hits above stay concurrent. AllowOnce/Deny still
+    // re-prompt after the holder finishes because nothing is remembered for
+    // them. A concurrent handler orders its own prompts.
+    let _gate = match services.approvals.concurrency() {
+        ApprovalConcurrency::Serial => {
+            let gate = remembered.approval_gate().lock().await;
+            if remembered.contains(&request) {
+                audit.record(
+                    capability,
+                    ApprovalAuditDecision::AllowedByRememberedApproval,
+                );
+                return Ok(AuthorizationOutcome::AllowedByRememberedApproval);
+            }
+            Some(gate)
+        }
+        ApprovalConcurrency::Concurrent => None,
+    };
     let approval_request = ApprovalRequest::new(request.clone(), reason)
         .with_tool_call_id(tool_call_id.cloned())
         .with_context(services.approval_context(cancellation));

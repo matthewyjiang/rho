@@ -1,15 +1,22 @@
 #[cfg(unix)]
 mod unix {
-    use std::sync::{Arc, Mutex};
+    use std::{
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        },
+        time::Duration,
+    };
 
     use pretty_assertions::assert_eq;
     use rho_sdk::{
         model::{ContentBlock, ModelIdentity, ModelResponse, ToolCall},
         provider::{ScriptedProvider, ScriptedTurn},
-        ApprovalAuditDecision, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
-        CapabilityKind, CapabilityOperation, CapabilitySource, ExecutableSelection,
-        ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits, Rho,
-        RunEvent, ScopedWorkspacePolicy, SessionOptions, ToolCompletion, UserInput, Workspace,
+        ApprovalAuditDecision, ApprovalConcurrency, ApprovalDecision, ApprovalFuture,
+        ApprovalHandler, ApprovalRequest, CapabilityKind, CapabilityOperation, CapabilitySource,
+        ExecutableSelection, ProcessEnvironment, ProcessExecution, ProcessInvocation,
+        ProcessOutputLimits, Rho, RunEvent, ScopedWorkspacePolicy, SessionOptions, ToolCompletion,
+        ToolHost, ToolHostCall, UserInput, Workspace,
     };
     use serde_json::json;
 
@@ -120,6 +127,65 @@ mod unix {
                 .collect::<Vec<_>>(),
             [(CapabilityKind::Process, ApprovalAuditDecision::AllowedOnce)]
         );
+    }
+
+    /// Concurrent approver that holds each request until both have arrived.
+    #[derive(Default)]
+    struct HoldUntilBoth {
+        requests: AtomicUsize,
+        both_arrived: tokio::sync::Notify,
+    }
+
+    impl ApprovalHandler for HoldUntilBoth {
+        fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
+            Box::pin(async move {
+                let notified = self.both_arrived.notified();
+                if self.requests.fetch_add(1, Ordering::SeqCst) + 1 == 2 {
+                    self.both_arrived.notify_waiters();
+                } else {
+                    notified.await;
+                }
+                ApprovalDecision::AllowOnce
+            })
+        }
+
+        fn concurrency(&self) -> ApprovalConcurrency {
+            ApprovalConcurrency::Concurrent
+        }
+    }
+
+    // Covers: concurrent shell calls are approved together. If the shell
+    // authorized inside its exclusive execution slot, the second approval
+    // would wait for the first command to finish and this would never
+    // complete, so a slow approver (the Auto classifier) adds up per call.
+    // Owner: shell tool adapter
+    #[tokio::test]
+    async fn concurrent_shell_calls_are_approved_before_either_runs() {
+        let root = tempfile::tempdir().unwrap();
+        let host = ToolHost::builder()
+            .workspace(Workspace::new(root.path()).unwrap())
+            .workspace_policy(
+                ScopedWorkspacePolicy::new()
+                    .allow_processes()
+                    .require_process_approval(),
+            )
+            .approval_handler(HoldUntilBoth::default())
+            .tool(SdkShellTool::bash(ShellToolOptions::new()))
+            .build()
+            .unwrap();
+        let call = |command: &str| ToolHostCall::new("bash", json!({ "command": command }));
+
+        let (first, second) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                host.invoke(call("echo first")),
+                host.invoke(call("echo second"))
+            )
+        })
+        .await
+        .expect("both approvals must be requested before either command runs");
+
+        first.expect("first command runs");
+        second.expect("second command runs");
     }
 }
 

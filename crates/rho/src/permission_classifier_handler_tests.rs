@@ -1,6 +1,10 @@
 use std::{
     collections::VecDeque,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
 };
 
 use pretty_assertions::assert_eq;
@@ -411,4 +415,72 @@ fn classifier_handler_reads_live_history() {
         None,
     );
     assert!(handler.reads_live_history());
+}
+
+/// Human approver that parks each prompt until the test releases it.
+#[derive(Default)]
+struct HoldingHuman {
+    prompts: AtomicUsize,
+    release: tokio::sync::Notify,
+}
+
+impl ApprovalHandler for HoldingHuman {
+    fn request<'a>(&'a self, _request: ApprovalRequest) -> ApprovalFuture<'a> {
+        Box::pin(async move {
+            self.prompts.fetch_add(1, Ordering::SeqCst);
+            self.release.notified().await;
+            ApprovalDecision::AllowOnce
+        })
+    }
+}
+
+// Covers: with requests arriving concurrently, escalations still reach the
+// human one at a time, and a request that waited while the human's answer
+// reset the deny budgets goes back to the classifier instead of prompting.
+// Owner: permission classifier approval handler.
+#[tokio::test]
+async fn concurrent_escalations_prompt_the_human_once() {
+    let mut outcomes: Vec<_> = (0..CONSECUTIVE_DENY_ESCALATION)
+        .map(|index| ClassifierVerdict::Deny {
+            reason: format!("deny {index}"),
+        })
+        .collect();
+    outcomes.push(ClassifierVerdict::Allow);
+    let classifier = ScriptedClassifier::new(outcomes);
+    let human = Arc::new(HoldingHuman::default());
+    let handler = handler_with(&classifier, Some(human.clone()));
+    for _ in 0..CONSECUTIVE_DENY_ESCALATION {
+        assert!(matches!(
+            handler.request(request()).await,
+            ApprovalDecision::Deny { .. }
+        ));
+    }
+
+    let decisions = tokio::time::timeout(Duration::from_secs(5), async {
+        let (first, second, ()) = tokio::join!(
+            handler.request(request()),
+            handler.request(request()),
+            async {
+                while human.prompts.load(Ordering::SeqCst) == 0 {
+                    tokio::task::yield_now().await;
+                }
+                // Both requests have been polled; only one may be prompting.
+                assert_eq!(human.prompts.load(Ordering::SeqCst), 1);
+                human.release.notify_one();
+            },
+        );
+        [first, second]
+    })
+    .await
+    .expect("the waiting request must not prompt the human again");
+
+    assert_eq!(
+        decisions,
+        [ApprovalDecision::AllowOnce, ApprovalDecision::AllowOnce]
+    );
+    assert_eq!(human.prompts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        classifier.call_count(),
+        CONSECUTIVE_DENY_ESCALATION as usize + 1
+    );
 }

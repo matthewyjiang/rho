@@ -11,11 +11,12 @@ use tempfile::TempDir;
 
 use super::{
     approval_channel, authorize, authorize_for_call, ApprovalAuditDecision, ApprovalAuditLog,
-    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest, AuthorizationServices,
-    CapabilityKind, CapabilityOperation, CapabilityRequest, CapabilitySource, DenyAllPolicy,
-    DenyApprovals, NetworkTarget, PathScope, PolicyDecision, ProcessEnvironment, ProcessExecution,
-    ProcessInvocation, ProcessOutputLimits, ScopedWorkspacePolicy, SessionApprovals, Workspace,
-    WorkspacePathErrorKind, WorkspacePathState, WorkspacePolicy,
+    ApprovalConcurrency, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
+    AuthorizationServices, CapabilityKind, CapabilityOperation, CapabilityRequest,
+    CapabilitySource, DenyAllPolicy, DenyApprovals, NetworkTarget, PathScope, PolicyDecision,
+    ProcessEnvironment, ProcessExecution, ProcessInvocation, ProcessOutputLimits,
+    ScopedWorkspacePolicy, SessionApprovals, Workspace, WorkspacePathErrorKind, WorkspacePathState,
+    WorkspacePolicy,
 };
 use crate::CancellationToken;
 
@@ -538,6 +539,17 @@ async fn no_approval_handler_returns_typed_host_denial() {
 struct HoldingApproval {
     prompts: Mutex<u32>,
     release: tokio::sync::Notify,
+    concurrency: ApprovalConcurrency,
+}
+
+impl HoldingApproval {
+    fn new(concurrency: ApprovalConcurrency) -> Arc<Self> {
+        Arc::new(Self {
+            prompts: Mutex::new(0),
+            release: tokio::sync::Notify::new(),
+            concurrency,
+        })
+    }
 }
 
 impl ApprovalHandler for HoldingApproval {
@@ -555,6 +567,10 @@ impl ApprovalHandler for HoldingApproval {
             self.release.notified().await;
             ApprovalDecision::AllowForSession
         })
+    }
+
+    fn concurrency(&self) -> ApprovalConcurrency {
+        self.concurrency
     }
 }
 
@@ -578,10 +594,7 @@ async fn concurrent_identical_requests_prompt_the_host_once() {
             .allow_processes()
             .require_process_approval(),
     );
-    let approvals = Arc::new(HoldingApproval {
-        prompts: Mutex::new(0),
-        release: tokio::sync::Notify::new(),
-    });
+    let approvals = HoldingApproval::new(ApprovalConcurrency::Serial);
     let erased: Arc<dyn ApprovalHandler> = approvals.clone();
     let remembered = Arc::new(SessionApprovals::default());
     let audit = Arc::new(ApprovalAuditLog::default());
@@ -626,10 +639,7 @@ async fn remembered_approval_stays_concurrent_while_unrelated_prompt_is_held() {
             .allow_processes()
             .require_process_approval(),
     );
-    let approvals = Arc::new(HoldingApproval {
-        prompts: Mutex::new(0),
-        release: tokio::sync::Notify::new(),
-    });
+    let approvals = HoldingApproval::new(ApprovalConcurrency::Serial);
     let erased: Arc<dyn ApprovalHandler> = approvals.clone();
     let remembered = Arc::new(SessionApprovals::default());
     let audit = Arc::new(ApprovalAuditLog::default());
@@ -682,10 +692,7 @@ async fn distinct_approval_misses_both_prompt_under_the_session_gate() {
             .allow_processes()
             .require_process_approval(),
     );
-    let approvals = Arc::new(HoldingApproval {
-        prompts: Mutex::new(0),
-        release: tokio::sync::Notify::new(),
-    });
+    let approvals = HoldingApproval::new(ApprovalConcurrency::Serial);
     let erased: Arc<dyn ApprovalHandler> = approvals.clone();
     let remembered = Arc::new(SessionApprovals::default());
     let audit = Arc::new(ApprovalAuditLog::default());
@@ -723,4 +730,52 @@ async fn distinct_approval_misses_both_prompt_under_the_session_gate() {
         super::AuthorizationOutcome::AllowedForSession
     );
     assert_eq!(prompt_count(&approvals), 2);
+}
+
+// Covers: a concurrent handler (such as an automated classifier) gets every
+// miss at once instead of queueing each behind the previous answer.
+// Owner: sdk authorization
+#[tokio::test]
+async fn concurrent_handler_receives_distinct_misses_without_the_session_gate() {
+    let policy: Arc<dyn WorkspacePolicy> = Arc::new(
+        ScopedWorkspacePolicy::new()
+            .allow_processes()
+            .require_process_approval(),
+    );
+    let approvals = HoldingApproval::new(ApprovalConcurrency::Concurrent);
+    let erased: Arc<dyn ApprovalHandler> = approvals.clone();
+    let remembered = Arc::new(SessionApprovals::default());
+    let audit = Arc::new(ApprovalAuditLog::default());
+    let services = services(&policy, &erased, &remembered, &audit);
+
+    let (first, second, ()) = tokio::join!(
+        authorize_for_call(
+            &services,
+            process_request("cargo test"),
+            None,
+            open_cancellation()
+        ),
+        authorize_for_call(
+            &services,
+            process_request("cargo clippy"),
+            None,
+            open_cancellation()
+        ),
+        async {
+            // Under the session gate the second miss never reaches the
+            // handler while the first is parked, so this bound fails.
+            tokio::time::timeout(Duration::from_secs(5), wait_until_prompts(&approvals, 2))
+                .await
+                .expect("both misses reach the handler before either is answered");
+            approvals.release.notify_waiters();
+        },
+    );
+
+    assert_eq!(
+        [first.unwrap(), second.unwrap()],
+        [
+            super::AuthorizationOutcome::AllowedForSession,
+            super::AuthorizationOutcome::AllowedForSession,
+        ]
+    );
 }

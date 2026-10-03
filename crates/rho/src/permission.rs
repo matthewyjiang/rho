@@ -500,6 +500,10 @@ impl ApprovalHandler for RememberingApprovals {
     fn reads_live_history(&self) -> bool {
         self.inner.reads_live_history()
     }
+
+    fn concurrency(&self) -> rho_sdk::ApprovalConcurrency {
+        self.inner.concurrency()
+    }
 }
 
 fn path_scope_is_workspace_rooted(scope: &PathScope) -> bool {

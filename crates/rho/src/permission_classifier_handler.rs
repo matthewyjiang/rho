@@ -9,7 +9,7 @@ use std::{
 };
 
 use rho_sdk::{
-    ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
+    ApprovalConcurrency, ApprovalDecision, ApprovalFuture, ApprovalHandler, ApprovalRequest,
     ProviderRequestUsageRecording,
 };
 
@@ -45,6 +45,10 @@ pub(crate) struct ClassificationInput {
 /// History and cancellation come from [`ApprovalRequest::context`]. The only
 /// mutable run state is the deny counters, which [`Self::isolate`] resets so
 /// concurrent workflow agents do not share them.
+///
+/// Requests arrive concurrently ([`ApprovalConcurrency::Concurrent`]), so
+/// parallel tool calls are classified at once instead of queueing behind each
+/// other's review. Escalations to the human still go one at a time.
 pub(crate) struct ClassifierApprovalHandler {
     config: RwLock<Config>,
     workspace_path: PathBuf,
@@ -54,6 +58,9 @@ pub(crate) struct ClassifierApprovalHandler {
     session_writes: Option<SessionWriteLog>,
     consecutive_denials: AtomicU32,
     total_denials: AtomicU32,
+    /// Held while a request is escalated, so the human sees one prompt at a
+    /// time and a waiter can see the budgets that answer reset.
+    escalation: tokio::sync::Mutex<()>,
 }
 
 impl ClassifierApprovalHandler {
@@ -73,6 +80,7 @@ impl ClassifierApprovalHandler {
             session_writes,
             consecutive_denials: AtomicU32::new(0),
             total_denials: AtomicU32::new(0),
+            escalation: tokio::sync::Mutex::default(),
         }
     }
 
@@ -107,6 +115,7 @@ impl ClassifierApprovalHandler {
             session_writes: None,
             consecutive_denials: AtomicU32::new(0),
             total_denials: AtomicU32::new(0),
+            escalation: tokio::sync::Mutex::default(),
         }
     }
 
@@ -161,6 +170,7 @@ impl ClassifierApprovalHandler {
             session_writes,
             consecutive_denials: AtomicU32::new(0),
             total_denials: AtomicU32::new(0),
+            escalation: tokio::sync::Mutex::default(),
         })
     }
 
@@ -211,12 +221,17 @@ impl ApprovalHandler for ClassifierApprovalHandler {
     fn request<'a>(&'a self, request: ApprovalRequest) -> ApprovalFuture<'a> {
         Box::pin(async move {
             if self.should_escalate() {
-                let decision = self.escalate_or_deny_headless(request).await;
-                if self.inner.is_some() {
-                    self.consecutive_denials.store(0, Ordering::Relaxed);
-                    self.total_denials.store(0, Ordering::Relaxed);
+                let _escalation = self.escalation.lock().await;
+                // A human answer given while this request waited reset the
+                // budgets, so it goes back to the classifier instead.
+                if self.should_escalate() {
+                    let decision = self.escalate_or_deny_headless(request).await;
+                    if self.inner.is_some() {
+                        self.consecutive_denials.store(0, Ordering::Relaxed);
+                        self.total_denials.store(0, Ordering::Relaxed);
+                    }
+                    return decision;
                 }
-                return decision;
             }
 
             let capability = request.capability().clone();
@@ -242,6 +257,10 @@ impl ApprovalHandler for ClassifierApprovalHandler {
 
     fn reads_live_history(&self) -> bool {
         true
+    }
+
+    fn concurrency(&self) -> ApprovalConcurrency {
+        ApprovalConcurrency::Concurrent
     }
 }
 
