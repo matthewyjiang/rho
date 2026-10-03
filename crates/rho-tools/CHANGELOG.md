@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.7.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.6.0...rho-agent-tools-v1.7.0) (2026-10-03)
+
+
+### Features
+
+* **tools:** Starlark code_mode scaffold (ToolHost + MCP path) ([#1365](https://github.com/matthewyjiang/rho/issues/1365)) ([c2d6771](https://github.com/matthewyjiang/rho/commit/c2d6771920172b03f957de762d316927b1282f8c))
+
+
+### Bug Fixes
+
+* **tools:** stop shell commands from suspending the tui ([#1385](https://github.com/matthewyjiang/rho/issues/1385)) ([22937d9](https://github.com/matthewyjiang/rho/commit/22937d93e96a553bbb0da8b857fbf074d80fc5e1))
+
 ## [1.6.0](https://github.com/matthewyjiang/rho/compare/rho-agent-tools-v1.5.0...rho-agent-tools-v1.6.0) (2026-09-29)
 
 
