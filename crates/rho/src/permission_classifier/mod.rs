@@ -10,8 +10,8 @@ pub(crate) use classify::{
 #[cfg(test)]
 pub(crate) use transcript::render_classifier_transcript;
 pub(crate) use verdict::{
-    parse_classifier_verdict, parse_screen_verdict, ClassifierVerdict, ScreenVerdict,
-    CLASSIFIER_PROMPT, CLASSIFIER_REVIEW_INSTRUCTION, CLASSIFIER_SCREEN_INSTRUCTION,
+    review_verdict, screen_verdict, ClassifierVerdict, ScreenVerdict, CLASSIFIER_POLICY,
+    REVIEW_QUESTION, SCREEN_QUESTION,
 };
 
 #[cfg(test)]

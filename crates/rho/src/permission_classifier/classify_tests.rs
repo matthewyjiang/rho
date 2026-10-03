@@ -12,8 +12,7 @@ use rho_sdk::{
 use super::{
     classify::{classify_capability_request_with_provider, ClassifyRequest},
     classify_capability_request, render_classifier_transcript, ClassifierVerdict, TranscriptBudget,
-    TranscriptOverBudget, CLASSIFIER_PROMPT, CLASSIFIER_REVIEW_INSTRUCTION,
-    CLASSIFIER_SCREEN_INSTRUCTION,
+    TranscriptOverBudget, REVIEW_QUESTION,
 };
 use crate::{
     agent::PERMISSION_CLASSIFIER_AGENT_ID,
@@ -60,6 +59,22 @@ fn failed_turn() -> ScriptedTurn {
     ))
 }
 
+fn deny(option_id: &str) -> ClassifierVerdict {
+    let option = REVIEW_QUESTION
+        .options
+        .iter()
+        .find(|option| option.id == option_id)
+        .unwrap();
+    ClassifierVerdict::Deny {
+        reason: option.description.into(),
+    }
+}
+
+const SCREEN_ALLOW: &str = r#"{"screen":"allow"}"#;
+const SCREEN_ESCALATE: &str = r#"{"screen":"escalate"}"#;
+const REVIEW_ALLOW: &str = r#"{"verdict":"allow"}"#;
+const REVIEW_DENY: &str = r#"{"verdict":"deny_scope_expansion"}"#;
+
 fn unavailable() -> ClassifierVerdict {
     ClassifierVerdict::Deny {
         reason: "classifier unavailable".into(),
@@ -98,62 +113,58 @@ async fn run_pipeline(
 // Owner: permission classifier two-stage pipeline
 #[tokio::test]
 async fn screen_result_decides_whether_review_runs() {
-    let deny_json = r#"{"decision":"deny","reason":"outside user intent"}"#;
     let cases: Vec<(&str, Vec<ScriptedTurn>, ClassifierVerdict, usize)> = vec![
         (
             "screen allow skips review",
-            vec![text_turn("allow")],
+            vec![text_turn(SCREEN_ALLOW)],
             ClassifierVerdict::Allow,
             1,
         ),
         (
             "screen escalate reaches review allow",
-            vec![text_turn("escalate"), text_turn(r#"{"decision":"allow"}"#)],
+            vec![text_turn(SCREEN_ESCALATE), text_turn(REVIEW_ALLOW)],
             ClassifierVerdict::Allow,
             2,
         ),
         (
             "screen escalate reaches review deny",
-            vec![text_turn("escalate"), text_turn(deny_json)],
-            ClassifierVerdict::Deny {
-                reason: "outside user intent".into(),
-            },
+            vec![text_turn(SCREEN_ESCALATE), text_turn(REVIEW_DENY)],
+            deny("deny_scope_expansion"),
             2,
         ),
         (
-            "unreadable screen output escalates",
-            vec![text_turn("hmm, maybe?"), text_turn(deny_json)],
-            ClassifierVerdict::Deny {
-                reason: "outside user intent".into(),
-            },
+            "unreadable screen output still reaches review",
+            vec![text_turn("allow"), text_turn(REVIEW_DENY)],
+            deny("deny_scope_expansion"),
             2,
         ),
         (
             "screen provider error still reaches review",
-            vec![failed_turn(), text_turn(r#"{"decision":"allow"}"#)],
+            vec![failed_turn(), text_turn(REVIEW_ALLOW)],
             ClassifierVerdict::Allow,
             2,
         ),
         (
-            "review reasoning before the verdict still parses",
+            "review reasoning before the answer still parses",
             vec![
-                text_turn("escalate"),
-                text_turn(&format!("The write is in scope.\n{deny_json}")),
+                text_turn(SCREEN_ESCALATE),
+                text_turn(&format!("The write is out of scope.\n{REVIEW_DENY}")),
             ],
-            ClassifierVerdict::Deny {
-                reason: "outside user intent".into(),
-            },
+            deny("deny_scope_expansion"),
             2,
         ),
         (
             "unparseable review fails closed",
-            vec![text_turn("escalate"), text_turn("not json")],
+            vec![
+                text_turn(SCREEN_ESCALATE),
+                text_turn(r#"{"decision":"allow"}"#),
+            ],
             unavailable(),
             2,
         ),
         (
             "review provider error fails closed",
-            vec![text_turn("escalate"), failed_turn()],
+            vec![text_turn(SCREEN_ESCALATE), failed_turn()],
             unavailable(),
             2,
         ),
@@ -172,13 +183,15 @@ async fn screen_result_decides_whether_review_runs() {
     }
 }
 
-// Covers: the screen stays at Low while the review uses configured reasoning; transcript blocks match
+// Covers: the screen stays at Low while the review uses configured reasoning,
+// and both stages share the system prompt and transcript block so the review
+// can reuse the screen's cache prefix.
 // Owner: permission classifier two-stage pipeline
 #[tokio::test]
-async fn screen_stays_low_reasoning_while_review_uses_configured_level() {
+async fn stages_share_the_cache_prefix_and_differ_in_reasoning() {
     let provider = ScriptedProvider::new(
         ModelIdentity::new("provider", "api", "model"),
-        [text_turn("escalate"), text_turn(r#"{"decision":"allow"}"#)],
+        [text_turn(SCREEN_ESCALATE), text_turn(REVIEW_ALLOW)],
     );
     let transcript = render_classifier_transcript(
         &sample_history(),
@@ -191,30 +204,28 @@ async fn screen_stays_low_reasoning_while_review_uses_configured_level() {
         run_pipeline(&provider, ReasoningLevel::High, TranscriptBudget::Unbounded).await;
 
     assert_eq!(verdict, ClassifierVerdict::Allow);
+    let [screen, review] = [&requests[0], &requests[1]].map(|request| {
+        let [Message::System(system), Message::User(blocks)] = request.messages.as_slice() else {
+            panic!("unexpected messages {:?}", request.messages);
+        };
+        let [ContentBlock::Text(state), ContentBlock::Text(questions)] = blocks.as_slice() else {
+            panic!("unexpected blocks {blocks:?}");
+        };
+        (
+            system.clone(),
+            state.clone(),
+            questions.clone(),
+            request.reasoning_level,
+            request.tools.is_empty(),
+        )
+    });
+    assert_eq!(screen.0, review.0);
+    assert_eq!((&screen.1, &review.1), (&transcript, &transcript));
+    assert_ne!(screen.2, review.2);
     assert_eq!(
-        requests[0].messages,
-        [
-            Message::System(CLASSIFIER_PROMPT.into()),
-            Message::User(vec![
-                ContentBlock::Text(transcript.clone()),
-                ContentBlock::Text(CLASSIFIER_SCREEN_INSTRUCTION.into()),
-            ]),
-        ]
+        (screen.3, screen.4, review.3, review.4),
+        (ReasoningLevel::Low, true, ReasoningLevel::High, true)
     );
-    assert_eq!(
-        requests[1].messages,
-        [
-            Message::System(CLASSIFIER_PROMPT.into()),
-            Message::User(vec![
-                ContentBlock::Text(transcript),
-                ContentBlock::Text(CLASSIFIER_REVIEW_INSTRUCTION.into()),
-            ]),
-        ]
-    );
-    assert_eq!(requests[0].reasoning_level, ReasoningLevel::Low);
-    assert_eq!(requests[1].reasoning_level, ReasoningLevel::High);
-    assert!(requests[0].tools.is_empty());
-    assert!(requests[1].tools.is_empty());
 }
 
 // Covers: a transcript that cannot fit the classifier context denies with the

@@ -90,9 +90,11 @@ static INTERNAL_AGENTS: LazyLock<Vec<InternalAgent>> = LazyLock::new(|| {
                     .expect("valid internal agent ID"),
                 description: "Internal agent that classifies pending permission requests. Reserved; cannot be overridden or delegated."
                     .to_string(),
-                prompt: PromptPolicy::Replace(
-                    crate::permission_classifier::CLASSIFIER_PROMPT.into(),
-                ),
+                // The classifier sends this per request from its decision
+                // request; the definition carries the same text.
+                prompt: PromptPolicy::Replace(crate::decision::llm::system_prompt(
+                    crate::permission_classifier::CLASSIFIER_POLICY,
+                )),
                 runtime: AgentRuntimeSpec::Rho {
                     tools: ToolPolicy::Allow(BTreeSet::new()),
                     // Unused: the permission classifier requires its own model
