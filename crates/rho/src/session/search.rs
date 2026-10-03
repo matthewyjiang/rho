@@ -12,7 +12,7 @@ use super::{search_index, workspace_scope::Workspace};
 #[path = "search_response.rs"]
 mod response;
 pub(super) use response::ensure_budget;
-use response::{Context, Excerpt, Group, Page, ReadResponse};
+use response::{Context, Excerpt, Group, Matches, Page, ReadResponse, Sessions};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
@@ -112,6 +112,26 @@ pub(crate) fn execute(
             limit,
             offset,
             ..
+        } if matches!(scope, Scope::Current) => search_current(
+            &transaction,
+            &workspace,
+            current,
+            SearchTarget {
+                query: &query,
+                scope,
+                limit,
+                offset,
+            },
+            context,
+            max_output_bytes,
+            cancellation,
+        )?,
+        Request::Search {
+            query,
+            scope,
+            limit,
+            offset,
+            ..
         } => search(
             &transaction,
             &workspace,
@@ -153,15 +173,59 @@ pub(crate) fn execute(
     Ok(output)
 }
 
+/// SQL predicate over `files f` binding ?2 to the scope value and ?3 to the
+/// current session id. Only `Current` admits the current session.
 fn scoped(scope: Scope, workspace: &Workspace) -> (&'static str, String) {
     match scope {
-        Scope::Repo => ("f.repo=?2", workspace.repo.to_string_lossy().into_owned()),
+        Scope::Repo => (
+            "f.repo=?2 and f.id<>?3",
+            workspace.repo.to_string_lossy().into_owned(),
+        ),
         Scope::Worktree => (
-            "f.worktree=?2",
+            "f.worktree=?2 and f.id<>?3",
             workspace.worktree.to_string_lossy().into_owned(),
         ),
-        Scope::All => ("?2=''", String::new()),
+        Scope::All => ("?2='' and f.id<>?3", String::new()),
+        Scope::Current => ("?2='' and f.id=?3", String::new()),
     }
+}
+
+/// Literal AND terms, not an FTS expression supplied by a caller. Quoting
+/// preserves identifier punctuation without allowing operators/injection.
+fn fts_query(query: &str) -> String {
+    query
+        .split_whitespace()
+        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
+const EXCERPT_SQL: &str =
+    "select e.anchor,e.role,e.text,highlight(evidence_fts,0,char(30),char(31)),e.omitted
+     from evidence_fts join evidence e on e.rowid=evidence_fts.rowid
+     where evidence_fts.rowid=?1 and evidence_fts match ?2";
+
+/// One median-sized message is already too much per hit: show half that,
+/// centered on the first match, and return a read offset. Reads `EXCERPT_SQL` rows.
+fn excerpt(row: &rusqlite::Row<'_>) -> rusqlite::Result<Excerpt> {
+    let text: String = row.get(2)?;
+    let highlighted: String = row.get(3)?;
+    let position = highlighted
+        .find('\u{1e}')
+        .map(|index| highlighted[..index].chars().count())
+        .unwrap_or(0);
+    let start = position.saturating_sub(80);
+    let excerpt: String = text.chars().skip(start).take(320).collect();
+    let end = start + excerpt.chars().count();
+    Ok(Excerpt {
+        anchor: row.get(0)?,
+        role: row.get(1)?,
+        start,
+        end,
+        total_chars: text.chars().count(),
+        text: excerpt,
+        omitted_blocks: row.get(4)?,
+    })
 }
 
 struct SearchTarget<'a> {
@@ -186,20 +250,14 @@ fn search(
         limit,
         offset,
     } = target;
-    // Literal AND terms, not an FTS expression supplied by a caller. Quoting
-    // preserves identifier punctuation without allowing operators/injection.
-    let query = query
-        .split_whitespace()
-        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
-        .collect::<Vec<_>>()
-        .join(" AND ");
+    let query = fts_query(query);
     let (predicate, scope_value) = scoped(scope, workspace);
     let sql = format!(
         "with matches as materialized (
             select e.rowid, e.session, bm25(evidence_fts) as score, f.worktree=?4 as local
             from evidence_fts join evidence e on e.rowid=evidence_fts.rowid
             join files f on f.key=e.session
-            where evidence_fts match ?1 and {predicate} and f.id<>?3
+            where evidence_fts match ?1 and {predicate}
          ), leaders as (
             select session, min(score) as best, max(local) as local,
                    count(*) as matching_messages, count(*) over() as total_sessions
@@ -231,7 +289,7 @@ fn search(
             &format!(
                 "select count(distinct e.session) from evidence_fts
              join evidence e on e.rowid=evidence_fts.rowid join files f on f.key=e.session
-             where evidence_fts match ?1 and {predicate} and f.id<>?3"
+             where evidence_fts match ?1 and {predicate}"
             ),
             params![query, scope_value, current],
             |row| row.get(0),
@@ -239,12 +297,8 @@ fn search(
     } else {
         0
     };
-    let mut page = Page::new(context, scope, offset, total, limit, budget);
-    let mut excerpts = connection.prepare(
-        "select e.anchor,e.role,e.text,highlight(evidence_fts,0,char(30),char(31)),e.omitted
-             from evidence_fts join evidence e on e.rowid=evidence_fts.rowid
-             where evidence_fts.rowid=?1 and evidence_fts match ?2",
-    )?;
+    let mut page = Page::new(Sessions, context, scope, offset, total, limit, budget);
+    let mut excerpts = connection.prepare(EXCERPT_SQL)?;
     while let Some(current_row) = row {
         anyhow::ensure!(!cancellation.is_cancelled(), "sessions lookup cancelled");
         let mut group = Group {
@@ -259,29 +313,7 @@ fn search(
             .into_iter()
             .flatten()
         {
-            let excerpt = excerpts.query_row(params![rowid, query], |row| {
-                let text: String = row.get(2)?;
-                let highlighted: String = row.get(3)?;
-                let position = highlighted
-                    .find('\u{1e}')
-                    .map(|index| highlighted[..index].chars().count())
-                    .unwrap_or(0);
-                // One median-sized message is already too much per hit: show
-                // half that, centered on the match, and return a read offset.
-                let start = position.saturating_sub(80);
-                let excerpt: String = text.chars().skip(start).take(320).collect();
-                let end = start + excerpt.chars().count();
-                let total_chars = text.chars().count();
-                Ok(Excerpt {
-                    anchor: row.get(0)?,
-                    role: row.get(1)?,
-                    start,
-                    end,
-                    total_chars,
-                    text: excerpt,
-                    omitted_blocks: row.get(4)?,
-                })
-            })?;
+            let excerpt = excerpts.query_row(params![rowid, query], excerpt)?;
             if !group
                 .excerpts
                 .iter()
@@ -292,6 +324,84 @@ fn search(
         }
         group.omitted_matches = group.matching_messages - group.excerpts.len();
         if !page.push(group)? {
+            break;
+        }
+        row = rows.next()?;
+    }
+    page.finish()
+}
+
+/// Pages the current session's matching messages rather than session groups:
+/// there is only one session, so a two-excerpt group would hide the rest.
+/// Identical role/text evidence (repeated across records) is listed once.
+fn search_current(
+    connection: &Connection,
+    workspace: &Workspace,
+    current: &str,
+    target: SearchTarget<'_>,
+    context: Context,
+    budget: usize,
+    cancellation: &CancellationToken,
+) -> anyhow::Result<String> {
+    let SearchTarget {
+        query,
+        scope,
+        limit,
+        offset,
+    } = target;
+    let query = fts_query(query);
+    let (predicate, scope_value) = scoped(scope, workspace);
+    let mut statement = connection.prepare(&format!(
+        "with matches as materialized (
+            select e.rowid, e.session, e.role, e.text, bm25(evidence_fts) as score
+            from evidence_fts join evidence e on e.rowid=evidence_fts.rowid
+            join files f on f.key=e.session
+            where evidence_fts match ?1 and {predicate}
+         ), distinct_matches as (
+            select min(rowid) as rowid, session, min(score) as score
+            from matches group by session, role, text
+         ) select rowid, session, count(*) over() from distinct_matches
+           order by score, rowid limit ?4 offset ?5"
+    ))?;
+    let mut rows = statement.query(params![
+        query,
+        scope_value,
+        current,
+        i64::try_from(limit)?,
+        i64::try_from(offset)?
+    ])?;
+    let mut row = rows.next()?;
+    let (session, total) = match row {
+        Some(row) => (row.get(1)?, row.get(2)?),
+        None if offset > 0 => connection
+            .query_row(
+                &format!(
+                    "select e.session, count(*) over() from evidence_fts
+                 join evidence e on e.rowid=evidence_fts.rowid join files f on f.key=e.session
+                 where evidence_fts match ?1 and {predicate}
+                 group by e.session, e.role, e.text limit 1"
+                ),
+                params![query, scope_value, current],
+                |row| Ok((Some(row.get(0)?), row.get(1)?)),
+            )
+            .optional()?
+            .unwrap_or((None, 0)),
+        None => (None, 0),
+    };
+    let mut page = Page::new(
+        Matches { session },
+        context,
+        scope,
+        offset,
+        total,
+        limit,
+        budget,
+    );
+    let mut excerpts = connection.prepare(EXCERPT_SQL)?;
+    while let Some(match_row) = row {
+        anyhow::ensure!(!cancellation.is_cancelled(), "sessions lookup cancelled");
+        let rowid: i64 = match_row.get(0)?;
+        if !page.push(excerpts.query_row(params![rowid, query], excerpt)?)? {
             break;
         }
         row = rows.next()?;
@@ -324,7 +434,7 @@ fn read(
     let sql = format!(
         "select e.rowid,e.role,e.text,e.omitted
          from evidence e join files f on f.key=e.session
-         where e.session=?1 and {predicate} and f.id<>?3 and e.anchor=?4"
+         where e.session=?1 and {predicate} and e.anchor=?4"
     );
     let row = connection.query_row(&sql, params![session,scope_value,current,anchor], |row| {
         Ok((row.get::<_,i64>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,usize>(3)?))

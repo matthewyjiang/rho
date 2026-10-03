@@ -34,21 +34,31 @@ pub(super) fn finished_card(arguments: &Value, content: &str, ok: bool) -> Optio
     let (summary, index) = match arguments.get("action")?.as_str()? {
         "search" => {
             let result: SearchResult = serde_json::from_str(content).ok()?;
-            let count = result.sessions.len();
-            let noun = if result.total_sessions == 1 {
-                "session"
-            } else {
-                "sessions"
+            let (count, total, noun) = match &result.listing {
+                SearchListing::Sessions {
+                    total_sessions,
+                    sessions,
+                } => (
+                    sessions.len(),
+                    *total_sessions,
+                    plural(*total_sessions, "session"),
+                ),
+                SearchListing::Matches {
+                    total_matches,
+                    matches,
+                    ..
+                } => (
+                    matches.len(),
+                    *total_matches,
+                    plural(*total_matches, "message"),
+                ),
             };
-            let mut summary = if result.total_sessions == 0 {
-                format!("no matching sessions · {}", result.scope)
-            } else if count == result.total_sessions {
+            let mut summary = if total == 0 {
+                format!("no matching {noun} · {}", result.scope)
+            } else if count == total {
                 format!("{count} matching {noun} · {}", result.scope)
             } else {
-                format!(
-                    "{count} of {} matching {noun} · {}",
-                    result.total_sessions, result.scope
-                )
+                format!("{count} of {total} matching {noun} · {}", result.scope)
             };
             if let Some(offset) = result.next_offset {
                 summary.push_str(" · more results available");
@@ -57,41 +67,39 @@ pub(super) fn finished_card(arguments: &Value, content: &str, ok: bool) -> Optio
             if let Some(budget) = result.output_budget_bytes {
                 summary.push_str(&format!(" · output limited to {budget} bytes"));
             }
-            for group in result.sessions {
-                if !lines.is_empty() {
-                    lines.push(String::new());
-                }
-                lines.push(format!("session {} · {}", group.id, group.workspace));
-                lines.push(format!("handle: {}", group.session));
-                let suffix = if group.matching_messages == 1 {
-                    ""
-                } else {
-                    "s"
-                };
-                lines.push(format!(
-                    "{} matching message{suffix}",
-                    group.matching_messages
-                ));
-                for excerpt in group.excerpts {
-                    lines.push(String::new());
-                    lines.push(format!(
-                        "{} · {} · chars {}–{} of {}",
-                        excerpt.role,
-                        excerpt.anchor,
-                        excerpt.start,
-                        excerpt.end,
-                        excerpt.total_chars
-                    ));
-                    lines.extend(excerpt.text.lines().map(str::to_owned));
-                    if excerpt.omitted_blocks > 0 {
-                        lines.push(format!("{} blocks omitted", excerpt.omitted_blocks));
+            match result.listing {
+                SearchListing::Sessions { sessions, .. } => {
+                    for group in sessions {
+                        if !lines.is_empty() {
+                            lines.push(String::new());
+                        }
+                        lines.push(format!("session {} · {}", group.id, group.workspace));
+                        lines.push(format!("handle: {}", group.session));
+                        lines.push(format!(
+                            "{} matching {}",
+                            group.matching_messages,
+                            plural(group.matching_messages, "message")
+                        ));
+                        for excerpt in group.excerpts {
+                            push_excerpt(&mut lines, excerpt);
+                        }
+                        if group.omitted_matches > 0 {
+                            lines.push(format!(
+                                "{} more matching messages not included",
+                                group.omitted_matches
+                            ));
+                        }
                     }
                 }
-                if group.omitted_matches > 0 {
-                    lines.push(format!(
-                        "{} more matching messages not included",
-                        group.omitted_matches
-                    ));
+                SearchListing::Matches {
+                    session, matches, ..
+                } => {
+                    if let Some(session) = session {
+                        lines.push(format!("handle: {session}"));
+                    }
+                    for excerpt in matches {
+                        push_excerpt(&mut lines, excerpt);
+                    }
                 }
             }
             (summary, result.index)
@@ -139,14 +147,49 @@ pub(super) fn finished_card(arguments: &Value, content: &str, ok: bool) -> Optio
     Some(card)
 }
 
+fn plural(count: usize, noun: &str) -> String {
+    if count == 1 {
+        noun.to_owned()
+    } else {
+        format!("{noun}s")
+    }
+}
+
+fn push_excerpt(lines: &mut Vec<String>, excerpt: Excerpt) {
+    lines.push(String::new());
+    lines.push(format!(
+        "{} · {} · chars {}–{} of {}",
+        excerpt.role, excerpt.anchor, excerpt.start, excerpt.end, excerpt.total_chars
+    ));
+    lines.extend(excerpt.text.lines().map(str::to_owned));
+    if excerpt.omitted_blocks > 0 {
+        lines.push(format!("{} blocks omitted", excerpt.omitted_blocks));
+    }
+}
+
 #[derive(Deserialize)]
 struct SearchResult {
     index: IndexReport,
     scope: String,
-    total_sessions: usize,
     next_offset: Option<usize>,
     output_budget_bytes: Option<usize>,
-    sessions: Vec<SessionGroup>,
+    #[serde(flatten)]
+    listing: SearchListing,
+}
+
+/// Prior-session scopes list session groups; scope `current` lists messages.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SearchListing {
+    Sessions {
+        total_sessions: usize,
+        sessions: Vec<SessionGroup>,
+    },
+    Matches {
+        session: Option<String>,
+        total_matches: usize,
+        matches: Vec<Excerpt>,
+    },
 }
 
 #[derive(Deserialize)]

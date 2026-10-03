@@ -19,7 +19,7 @@ use crate::sqlite_support::{OwnerOnlySqlite, ParentDirectoryPrivacy};
 
 use super::{
     layout::{self, SessionUnit},
-    search_evidence::extract,
+    search_evidence::Extractor,
     workspace_scope::Workspace,
 };
 
@@ -52,7 +52,7 @@ pub(super) fn open(root: &Path) -> anyhow::Result<Connection> {
     Ok(connection)
 }
 
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, thiserror::Error)]
 enum OpenError {
@@ -101,9 +101,10 @@ fn migrate(connection: &mut Connection) -> Result<(), OpenError> {
              insert into evidence_fts(evidence_fts,rowid,text) values('delete',old.rowid,old.text);
          end;",
     )?;
-    if version == 1 {
-        // Version 1 anchors identified positions without binding their contents.
-        // Discard the derived evidence and cursor to rebuild content-bound anchors.
+    if version > 0 {
+        // Version 1 anchors identified positions without binding their contents;
+        // version 2 indexed the sessions tool's own calls and results. Discard
+        // the derived evidence and cursor to rebuild with current extraction.
         transaction.execute_batch("delete from files; delete from cursor; delete from pending;")?;
     }
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -424,6 +425,7 @@ fn index_file(
     )?;
     let mut offset = header_bytes;
     let mut omitted = 0;
+    let mut extractor = Extractor::default();
     let mut insert = connection
         .prepare("insert into evidence(session,anchor,role,text,omitted) values(?1,?2,?3,?4,?5)")?;
     loop {
@@ -439,7 +441,7 @@ fn index_file(
         }
         match serde_json::from_str(&line) {
             Ok(record) => {
-                for evidence in extract(&record, offset) {
+                for evidence in extractor.extract(&record, offset) {
                     insert.execute(params![
                         key,
                         evidence.anchor,

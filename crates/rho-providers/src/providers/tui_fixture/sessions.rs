@@ -26,6 +26,10 @@ pub(super) fn intercept(
             "fixture-sessions-error",
             json!({"action": "search", "query": " "}),
         ),
+        "current" => (
+            "fixture-sessions-current",
+            json!({"action": "search", "query": "search complete", "scope": "current"}),
+        ),
         "read" | "read partial" => {
             let id = if action == "read" {
                 "fixture-sessions-read"
