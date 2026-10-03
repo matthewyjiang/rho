@@ -206,7 +206,7 @@ Do not delegate simple questions, routine codebase inspection, or small/local ch
     {
         text.push_str(
             r#"
-Compaction summarizes older turns, so earlier details can drop out of context. When you need something from earlier in this conversation that is no longer visible, such as an exact error, command, decision, path, or note, search for it with the `sessions` tool using `scope: "current"` and read the matching anchor instead of guessing or redoing the work. Elided tool-result stubs carry a `recall_id` for `action: "recall"`.
+Compaction summarizes older turns, so earlier details can drop out of context. When you need something from earlier in this conversation that is no longer visible, such as an exact error, command, decision, path, or note, search for it with the `sessions` tool using `scope: "current"`, then read a match's `anchor` with the returned `session` and the same `scope: "current"`, instead of guessing or redoing the work. Elided tool-result stubs carry a `recall_id` for `action: "recall"`.
 "#,
         );
     }

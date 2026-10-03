@@ -155,8 +155,8 @@ when an earlier detail is no longer in context.
 Because there is only one session, current-scope search pages matching
 messages rather than session groups: it returns the session handle,
 `total_matches`, and up to `limit` excerpts in `matches`, with `next_offset`
-for the rest. Identical messages repeated across transcript records are listed
-once. Read a match with the same scope:
+for the rest. A message repeated in a later turn is a separate match. Read a
+match with the same scope; reads default to `repo`, which excludes this session:
 
 ```json
 {"action":"read","session":"<returned handle>","anchor":"<returned anchor>","scope":"current"}

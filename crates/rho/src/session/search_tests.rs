@@ -474,7 +474,7 @@ fn scope_and_current_exclusion_apply_to_search_and_read() {
 
 // Covers: scope current must reach only this session's saved turns (e.g. ones
 // compaction summarized away), page its matching messages rather than one
-// two-excerpt group, list repeated evidence once, and allow focused reads.
+// two-excerpt group, keep a repeated turn as its own hit, and allow reads.
 // Owner: session search contract.
 #[test]
 fn current_scope_pages_only_this_sessions_messages() {
@@ -485,9 +485,10 @@ fn current_scope_pages_only_this_sessions_messages() {
         .append_message(&Message::user_text("noteword prior"))
         .unwrap();
     let current = Session::create_in_root(root.path(), cwd.path()).unwrap();
-    let notes = ["noteword one", "noteword two", "noteword three"];
-    for note in notes.iter().chain(&notes[..1]) {
-        current.append_message(&Message::user_text(*note)).unwrap();
+    // The last note repeats the first in a later turn.
+    let notes = ["noteword one", "noteword two", "noteword one"];
+    for note in notes {
+        current.append_message(&Message::user_text(note)).unwrap();
     }
     let search = |offset: usize| {
         run(

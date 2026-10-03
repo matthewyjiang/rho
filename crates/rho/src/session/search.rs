@@ -331,7 +331,7 @@ fn search(
 
 /// Pages the current session's matching messages rather than session groups:
 /// there is only one session, so a two-excerpt group would hide the rest.
-/// Identical role/text evidence (repeated across records) is listed once.
+/// Each saved display message is one hit; repeated text is a repeated turn.
 fn search_current(
     connection: &Connection,
     current: &str,
@@ -355,16 +355,14 @@ fn search_current(
             |row| row.get(0),
         )
         .optional()?;
-    // Materialized so SQLite cannot flatten bm25() into the aggregate.
-    let distinct_matches = "with matches as materialized (
-            select e.rowid, e.role, e.text, bm25(evidence_fts) as score
+    // Materialized so SQLite cannot flatten bm25() into the window query.
+    let matches = "with matches as materialized (
+            select e.rowid, bm25(evidence_fts) as score
             from evidence_fts join evidence e on e.rowid=evidence_fts.rowid
             where evidence_fts match ?1 and e.session=?2
-        ), distinct_matches as (
-            select min(rowid) as rowid, min(score) as score from matches group by role, text
         )";
     let mut statement = connection.prepare(&format!(
-        "{distinct_matches} select rowid, count(*) over() from distinct_matches
+        "{matches} select rowid, count(*) over() from matches
          order by score, rowid limit ?3 offset ?4"
     ))?;
     let mut rows = statement.query(params![
@@ -377,7 +375,7 @@ fn search_current(
     let total = match row {
         Some(row) => row.get(1)?,
         None if offset > 0 => connection.query_row(
-            &format!("{distinct_matches} select count(*) from distinct_matches"),
+            &format!("{matches} select count(*) from matches"),
             params![query, session],
             |row| row.get(0),
         )?,
@@ -433,7 +431,7 @@ fn read(
     );
     let row = connection.query_row(&sql, params![session,scope_value,current,anchor], |row| {
         Ok((row.get::<_,i64>(0)?,row.get::<_,String>(1)?,row.get::<_,String>(2)?,row.get::<_,usize>(3)?))
-    }).optional()?.ok_or_else(|| anyhow::anyhow!("session anchor not found in requested scope; search again if the transcript changed"))?;
+    }).optional()?.ok_or_else(|| anyhow::anyhow!("session anchor not found in requested scope; read with the scope the search used, or search again if the transcript changed"))?;
     let (rowid, role, text, omitted) = row;
     // SQLite text length/substr stop at NUL. Rust windows preserve raw tool
     // errors containing NUL and use the same Unicode offsets as search.
