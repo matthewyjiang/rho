@@ -19,7 +19,9 @@ use crate::{
     agent::PERMISSION_CLASSIFIER_AGENT_ID,
     cli::{ClassifierEvalArgs, Cli},
     config::{Config, InternalAgentModelConfig},
-    permission_classifier::{ClassifierModel, ClassifierVerdict, ClassifyRequest, ScreenOutcome},
+    permission_classifier::{
+        ClassifierModel, ClassifierVerdict, ClassifyRequest, ScreenOutcome, DECISION_SCREEN_ID,
+    },
 };
 
 #[path = "classifier_eval/cases.rs"]
@@ -28,12 +30,15 @@ mod cases;
 use cases::{CaseSource, Decision, EvalCase};
 
 /// Bump when the report shape changes.
-const REPORT_SCHEMA_VERSION: u32 = 1;
+const REPORT_SCHEMA_VERSION: u32 = 2;
 
 pub(super) async fn run(args: &ClassifierEvalArgs, cli: &Cli) -> anyhow::Result<()> {
     let mut config = load_eval_config(cli)?;
     if let Some(reference) = &args.model {
-        select_classifier_model(&mut config, reference)?;
+        select_model(&mut config, PERMISSION_CLASSIFIER_AGENT_ID, reference)?;
+    }
+    if let Some(reference) = &args.screen_model {
+        select_model(&mut config, DECISION_SCREEN_ID, reference)?;
     }
     let model = ClassifierModel::resolve(&config).await?;
     let auth = config
@@ -77,6 +82,9 @@ pub(super) async fn run(args: &ClassifierEvalArgs, cli: &Cli) -> anyhow::Result<
         model: rho_providers::provider::model_reference(&identity.provider, &identity.model),
         auth,
         reasoning: model.reasoning().to_string(),
+        screen_model: config
+            .internal_agent_model(DECISION_SCREEN_ID)
+            .map(InternalAgentModelConfig::display_reference),
         cases: reports,
     };
     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -86,9 +94,11 @@ pub(super) async fn run(args: &ClassifierEvalArgs, cli: &Cli) -> anyhow::Result<
 /// Points the classifier at `reference`, keeping any configured reasoning
 /// override, and the configured auth when the provider stays the same, so a
 /// model comparison changes one thing at a time.
-fn select_classifier_model(config: &mut Config, reference: &str) -> anyhow::Result<()> {
+/// Points the `entry` config table at `reference`, keeping the entry's auth
+/// and reasoning when the provider stays the same.
+fn select_model(config: &mut Config, entry: &str, reference: &str) -> anyhow::Result<()> {
     let (provider, model) = split_reference(reference)?;
-    let current = config.internal_agent_model(PERMISSION_CLASSIFIER_AGENT_ID);
+    let current = config.internal_agent_model(entry);
     let reasoning = current.and_then(|selection| selection.reasoning);
     let auth = current
         .and_then(InternalAgentModelConfig::rho)
@@ -97,7 +107,7 @@ fn select_classifier_model(config: &mut Config, reference: &str) -> anyhow::Resu
         .unwrap_or_else(|| default_auth(config, provider));
     let mut selection = InternalAgentModelConfig::new(provider.into(), model.into(), auth);
     selection.reasoning = reasoning;
-    config.set_internal_agent_model_config(PERMISSION_CLASSIFIER_AGENT_ID, selection);
+    config.set_internal_agent_model_config(entry, selection);
     Ok(())
 }
 
@@ -127,12 +137,17 @@ async fn classify(model: &ClassifierModel, case: &EvalCase) -> CaseReport {
         label: case.label,
         pending: case.summary.clone(),
         input_digest: input_digest(case),
-        screen: match trace.screen {
+        screen: match &trace.screen {
             ScreenOutcome::Skipped => "skipped",
             ScreenOutcome::Allowed => "allow",
             ScreenOutcome::Escalated => "escalate",
-            ScreenOutcome::Failed => "failed",
+            ScreenOutcome::Failed(_) => "failed",
         },
+        screen_error: match trace.screen {
+            ScreenOutcome::Failed(error) => Some(error),
+            ScreenOutcome::Skipped | ScreenOutcome::Allowed | ScreenOutcome::Escalated => None,
+        },
+        screen_allow_probability: trace.screen_allow_probability,
         verdict,
         reason,
         error,
@@ -158,6 +173,9 @@ struct Report {
     model: String,
     auth: String,
     reasoning: String,
+    /// The decision model answering the screen; `None` when the classifier
+    /// model does.
+    screen_model: Option<String>,
     cases: Vec<CaseReport>,
 }
 
@@ -170,6 +188,10 @@ struct CaseReport {
     pending: String,
     input_digest: String,
     screen: &'static str,
+    /// Why the screen failed, when it did; the review then decided.
+    screen_error: Option<String>,
+    /// A decision-model screen's P(allow), from which its threshold is set.
+    screen_allow_probability: Option<f64>,
     /// `None` when classification failed; production then denies.
     verdict: Option<Decision>,
     reason: Option<String>,
@@ -180,3 +202,7 @@ struct CaseReport {
 #[cfg(test)]
 #[path = "classifier_eval/cases_tests.rs"]
 mod cases_tests;
+
+#[cfg(test)]
+#[path = "classifier_eval/select_tests.rs"]
+mod select_tests;

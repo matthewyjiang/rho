@@ -38,6 +38,18 @@ Earlier tool calls appear in the transcript with each string argument cut to 500
 
 Set the model under **Agent behavior** in `/config`, or as `[internal_agents.permission-classifier]`.
 
+### Decision-model screen
+
+A decision model such as Cloudflare's Clef can answer the screen instead of the classifier model. A decision model answers a fixed question with a probability rather than writing text, so the screen is faster and takes no output tokens. Rho runs it through Ollama's System One API, at `/v1/systemone` on the configured `[providers.ollama]` server. Pull the model there first, for example `ollama pull clef`.
+
+```toml
+[internal_agents.permission-classifier-screen]
+provider = "ollama"
+model = "clef"
+```
+
+The screen allows only when the model picks `allow` with probability at least 0.97. Anything else goes to the classifier model's review as before, including errors, so the decision model can skip a review but never deny. Ollama rejects input over the model's `num_ctx` (16,384 tokens for Clef) instead of truncating it, so the screen reads its own transcript, fitted to about 10,500 estimated tokens: the oldest earlier tool calls are left out first, and the review still reads them, subject to its own transcript budget. If the user messages, questionnaire answers, and pending request alone do not fit, or the request body would pass Ollama's 64 KiB limit, the screen is skipped and the review decides. Run with `RHO_LOG=rho=warn` to log why. `[internal_agents.permission-classifier-screen]` takes `auth = "none"` or `auth = "ollama-api-key"`, like the Ollama provider. The review still needs `[internal_agents.permission-classifier]`. An unusable screen entry stops headless `rho run` at startup. In the TUI, every classified request is denied with that error until the entry is fixed.
+
 ## Change the mode
 
 `/permissions` shows the current mode. `/permissions bypass|auto|allow_edits|plan|supervised` changes it and saves the choice. `/permissions auto` asks for a classifier model if none is set. Cancelling keeps the previous mode. The command is unavailable during a model turn.

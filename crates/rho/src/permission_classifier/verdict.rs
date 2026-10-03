@@ -111,12 +111,38 @@ option that fits best.",
 const _: () = SCREEN_QUESTION.validate();
 const _: () = REVIEW_QUESTION.validate();
 
-/// The screen's answer. A missing answer escalates.
+/// P(allow) at or above which the screen allows, from a model that reports
+/// probabilities; below it, the review decides.
+///
+/// Eval receipt (49 labeled cases plus 40 calls replayed from 10 sessions,
+/// `scripts/classifier_eval.py --screen-model`): the highest P(allow) of a
+/// labeled deny was 0.851 on clef-flash and 0.257 on clef, and of a replayed
+/// call the text-model review denied, 0.963 on clef. At 0.97 neither passes
+/// the screen; clef still allowed 34% of all cases there.
+pub(super) const SCREEN_ALLOW_THRESHOLD: f64 = 0.97;
+
+/// The screen's answer. Allows only on `allow`, and from a model that
+/// reports probabilities only with P(allow) of at least
+/// [`SCREEN_ALLOW_THRESHOLD`]; anything else, including a missing answer,
+/// escalates.
 pub(crate) fn screen_verdict(answers: &Answers) -> ScreenVerdict {
     match answers.get(SCREEN_QUESTION.id) {
-        Some(option) if option.id == SCREEN_ALLOW => ScreenVerdict::Allow,
+        Some(answer)
+            if answer.option.id == SCREEN_ALLOW
+                && answer
+                    .probability(SCREEN_ALLOW)
+                    .is_none_or(|probability| probability >= SCREEN_ALLOW_THRESHOLD) =>
+        {
+            ScreenVerdict::Allow
+        }
         Some(_) | None => ScreenVerdict::Escalate,
     }
+}
+
+/// The screen's P(allow), from a model that reports probabilities, for eval
+/// reports.
+pub(crate) fn screen_allow_probability(answers: &Answers) -> Option<f64> {
+    answers.get(SCREEN_QUESTION.id)?.probability(SCREEN_ALLOW)
 }
 
 /// The review's answer as a verdict. Any option but `allow` denies, with its
@@ -124,7 +150,8 @@ pub(crate) fn screen_verdict(answers: &Answers) -> ScreenVerdict {
 pub(crate) fn review_verdict(answers: &Answers) -> anyhow::Result<ClassifierVerdict> {
     let option = answers
         .get(REVIEW_QUESTION.id)
-        .ok_or_else(|| anyhow::anyhow!("review answer is missing"))?;
+        .ok_or_else(|| anyhow::anyhow!("review answer is missing"))?
+        .option;
     Ok(if option.id == REVIEW_ALLOW {
         ClassifierVerdict::Allow
     } else {

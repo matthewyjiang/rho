@@ -10,11 +10,70 @@
 //! option ID: the whole response, or its final line after reasoning. Anything
 //! else is an error, never a default answer, so a caller can fail closed.
 
+use std::path::Path;
+
 use anyhow::Context;
-use rho_providers::model::ContentBlock;
+use futures_util::future::BoxFuture;
+use rho_providers::{model::ContentBlock, reasoning::ReasoningLevel};
+use rho_sdk::{
+    provider::ModelProvider, CancellationToken, ProviderRequestUsageRecording, SessionId,
+};
 use serde::{de::MapAccess, Deserialize, Deserializer};
 
-use super::{Answers, ChoiceQuestion, DecisionRequest};
+use super::{Answer, Answers, ChoiceQuestion, DecisionModel, DecisionRequest};
+use crate::agent::{
+    internal_definition, run_one_shot_with_provider, OneShotAgentRequest, PromptPolicy,
+};
+
+/// A text model as a [`DecisionModel`]: each request is one one-shot call
+/// run as an internal agent, laid out as this module describes. It reports
+/// no probabilities and leaves sizing the state to the caller.
+pub(crate) struct TextModel<'a> {
+    pub provider: &'a dyn ModelProvider,
+    /// Internal agent whose definition the call runs with; the request's
+    /// instructions replace its prompt.
+    pub agent_id: &'static str,
+    pub usage_purpose: &'static str,
+    pub reasoning: ReasoningLevel,
+    pub style: AnswerStyle,
+    pub session_id: &'a SessionId,
+    pub workspace_path: &'a Path,
+    pub usage_recording: ProviderRequestUsageRecording,
+}
+
+impl DecisionModel for TextModel<'_> {
+    fn decide<'a>(
+        &'a self,
+        request: DecisionRequest<'a>,
+        cancellation: &'a CancellationToken,
+    ) -> BoxFuture<'a, anyhow::Result<Answers>> {
+        Box::pin(async move {
+            let mut definition = internal_definition(self.agent_id).clone();
+            definition.prompt = PromptPolicy::Replace(system_prompt(request.instructions));
+            let result = run_one_shot_with_provider(
+                self.provider,
+                OneShotAgentRequest {
+                    definition: &definition,
+                    usage_purpose: self.usage_purpose,
+                    reasoning: Some(self.reasoning),
+                    input: input(request, self.style),
+                    cancellation: cancellation.clone(),
+                    session_id: self.session_id,
+                    workspace_path: self.workspace_path,
+                },
+                self.usage_recording.clone(),
+                /*updates*/ None,
+            )
+            .await?;
+            parse_answers(&result.texts.join("\n"), request.questions, self.style)
+                .context("text model returned an invalid decision response")
+        })
+    }
+
+    fn state_budget(&self) -> Option<u64> {
+        None
+    }
+}
 
 /// How the text model reads every decision request, ahead of the request's
 /// own instructions.
@@ -103,8 +162,10 @@ pub(crate) fn parse_answers(
         AnswerStyle::Reasoned => final_line(text),
     }
     .context("response does not end with a JSON answer line")?;
-    let object: AnswerObject =
-        serde_json::from_str(answer).context("answer line is not a JSON answer object")?;
+    // A parse error quotes the response, so it is replaced, not kept as the
+    // source: a response may repeat secrets from the state.
+    let object: AnswerObject = serde_json::from_str(answer)
+        .map_err(|_| anyhow::anyhow!("answer line is not a JSON answer object"))?;
     anyhow::ensure!(
         object.0.len() == questions.len(),
         "answer object must answer exactly the {} question(s) asked",
@@ -123,8 +184,16 @@ pub(crate) fn parse_answers(
                 .options
                 .iter()
                 .find(|option| option.id == chosen)
-                .with_context(|| format!("`{chosen}` is not an option of `{}`", question.id))?;
-            Ok((question.id, option))
+                .with_context(|| {
+                    format!("the answer to `{}` is not one of its options", question.id)
+                })?;
+            Ok((
+                question.id,
+                Answer {
+                    option,
+                    probabilities: None,
+                },
+            ))
         })
         .collect()
 }
@@ -167,9 +236,7 @@ impl<'de> Deserialize<'de> for AnswerObject {
                 let mut entries: Vec<(String, String)> = Vec::new();
                 while let Some((key, value)) = map.next_entry::<String, String>()? {
                     if entries.iter().any(|(seen, _)| *seen == key) {
-                        return Err(serde::de::Error::custom(format!(
-                            "question `{key}` answered twice"
-                        )));
+                        return Err(serde::de::Error::custom("a question is answered twice"));
                     }
                     entries.push((key, value));
                 }

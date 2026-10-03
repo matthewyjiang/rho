@@ -5,13 +5,14 @@ mod verdict;
 
 use budget::{TranscriptBudget, TranscriptOverBudget};
 pub(crate) use classify::{
-    classify_capability_request, ClassifierModel, ClassifyRequest, ScreenOutcome,
+    check_screen_config, classify_capability_request, ClassifierModel, ClassifyRequest,
+    ScreenOutcome, DECISION_SCREEN_ID,
 };
 #[cfg(test)]
 pub(crate) use transcript::render_classifier_transcript;
 pub(crate) use verdict::{
-    review_verdict, screen_verdict, ClassifierVerdict, ScreenVerdict, CLASSIFIER_POLICY,
-    REVIEW_QUESTION, SCREEN_QUESTION,
+    review_verdict, screen_allow_probability, screen_verdict, ClassifierVerdict, ScreenVerdict,
+    CLASSIFIER_POLICY, REVIEW_QUESTION, SCREEN_QUESTION,
 };
 
 #[cfg(test)]

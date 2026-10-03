@@ -1,38 +1,62 @@
 use pretty_assertions::assert_eq;
 
 use super::{
-    review_verdict, screen_verdict, ClassifierVerdict, ScreenVerdict, REVIEW_QUESTION,
-    SCREEN_QUESTION,
+    review_verdict, screen_verdict, verdict::SCREEN_ALLOW_THRESHOLD, ClassifierVerdict,
+    ScreenVerdict, REVIEW_QUESTION, SCREEN_QUESTION,
 };
-use crate::decision::Answers;
+use crate::decision::{Answer, Answers};
 
 fn answer(
     question_id: &'static str,
     option_id: &str,
     options: &'static [crate::decision::ChoiceOption],
 ) -> Answers {
+    answer_with_allow_probability(question_id, option_id, options, /*allow*/ None)
+}
+
+fn answer_with_allow_probability(
+    question_id: &'static str,
+    option_id: &str,
+    options: &'static [crate::decision::ChoiceOption],
+    allow: Option<f64>,
+) -> Answers {
     let option = options
         .iter()
         .find(|option| option.id == option_id)
         .unwrap();
-    Answers::from([(question_id, option)])
+    let probabilities = allow.map(|allow| [("allow", allow)].into());
+    Answers::from([(
+        question_id,
+        Answer {
+            option,
+            probabilities,
+        },
+    )])
 }
 
-// Covers: only the `allow` option skips review; anything else escalates.
+// Covers: only the `allow` option skips review, and from a model that reports
+// probabilities only at the threshold; a text model's allow, which has none,
+// still allows. Anything else escalates.
 // Owner: permission classifier screen answers.
 #[test]
 fn only_a_screen_allow_skips_review() {
-    let options = SCREEN_QUESTION.options;
+    let (id, options) = (SCREEN_QUESTION.id, SCREEN_QUESTION.options);
     let cases = [
+        (answer(id, "allow", options), ScreenVerdict::Allow),
+        (answer(id, "escalate", options), ScreenVerdict::Escalate),
+        (Answers::new(), ScreenVerdict::Escalate),
         (
-            answer(SCREEN_QUESTION.id, "allow", options),
+            answer_with_allow_probability(id, "allow", options, Some(SCREEN_ALLOW_THRESHOLD)),
             ScreenVerdict::Allow,
         ),
         (
-            answer(SCREEN_QUESTION.id, "escalate", options),
+            answer_with_allow_probability(id, "allow", options, Some(0.96)),
             ScreenVerdict::Escalate,
         ),
-        (Answers::new(), ScreenVerdict::Escalate),
+        (
+            answer_with_allow_probability(id, "escalate", options, Some(1.0)),
+            ScreenVerdict::Escalate,
+        ),
     ];
 
     for (answers, expected) in cases {
