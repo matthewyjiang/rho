@@ -247,6 +247,25 @@ fn screen_picker_opens_on_the_configured_row_and_routes_it_back() {
             ScreenSelection::Classifier,
             InternalAgentModelRow::Conversation,
         ),
+        // Not listed: the host listed nothing or is logged out.
+        (
+            ScreenSelection::Decision {
+                provider: "ollama".into(),
+                model: "clef-flash:latest".into(),
+            },
+            InternalAgentModelRow::Decision {
+                provider: "ollama".into(),
+                model: "clef-flash:latest".into(),
+            },
+        ),
+        // Not listed: gone from the catalog.
+        (
+            ScreenSelection::Text {
+                provider: "xai".into(),
+                model: "grok-retired".into(),
+            },
+            InternalAgentModelRow::RhoModel("xai/grok-retired".into()),
+        ),
         (
             ScreenSelection::Decision {
                 provider: "typesafe".into(),
