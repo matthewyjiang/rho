@@ -1,9 +1,3 @@
-/// How long host rails keep serving a just-finished row.
-///
-/// Process and subagent managers both use this. UI linger windows must stay
-/// below it so a row can fade before the manager forgets it.
-pub(crate) use crate::app::subagent_manager::RAIL_TERMINAL_RETENTION;
-
 pub mod advisor;
 pub mod agent;
 mod agent_output;

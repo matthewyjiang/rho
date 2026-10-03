@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 
-use crate::{keys::Key, scenario::Step};
+use crate::{harness::WaitTimeout, keys::Key, scenario::Step};
 
 use super::{SETTLE, STARTUP, STREAM};
 
@@ -59,6 +59,13 @@ pub(super) const BACKGROUND_AGENT_AUTO_DELIVERY_STEPS: &[Step] = &[
     Step::WaitText {
         text: "background agent completion received with delegated result (delivery 1)",
         timeout: STREAM,
+    },
+    // The finished rail row leaves in the repaint that lands the result card,
+    // so it is already gone once the parent replies. The short budget only
+    // absorbs a partially read frame; a timed linger would outlast it.
+    Step::WaitTextGone {
+        text: "✓ done",
+        timeout: WaitTimeout::millis(300, "finished rail row left with delivery"),
     },
     Step::WaitQuiet {
         quiet_for: Duration::from_millis(250),

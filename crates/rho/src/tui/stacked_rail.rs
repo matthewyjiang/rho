@@ -1,9 +1,8 @@
-//! Shared linger, overflow, and pointer machine for stacked activity rails.
-
-use std::{
-    collections::{HashMap, HashSet},
-    time::{Duration, Instant},
-};
+//! Shared overflow and pointer machine for stacked activity rails.
+//!
+//! The rail has no clock. A finished row stays exactly while its host keeps
+//! serving it, and hosts stop serving it when its result is delivered, so the
+//! row leaves in the same repaint that lands the result in the transcript.
 
 use ratatui::layout::{Position, Rect};
 
@@ -13,7 +12,6 @@ pub(super) trait RailItem {
     fn id(&self) -> &str;
     fn is_live(&self) -> bool;
     fn is_failure(&self) -> bool;
-    fn linger(&self) -> Duration;
 }
 
 /// What a pointer hit on a capped rail means.
@@ -26,26 +24,24 @@ pub(super) enum RailHit {
 /// Which rows accept hover, press, and activate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum RailPointerPolicy {
-    /// Lingering rows stay clickable. Overflow is display-only.
-    LiveOrLinger,
+    /// Finished, undelivered rows stay clickable. Overflow is display-only.
+    LiveOrFinished,
     /// Only live rows activate. Overflow uses `overflow_id`.
     LiveAndOverflow { overflow_id: &'static str },
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct LingerRail<T> {
+pub(super) struct StackedRail<T> {
     items: Vec<T>,
-    terminal_seen: HashMap<String, Instant>,
     hovered_id: Option<String>,
     pressed_id: Option<String>,
     pointer: RailPointerPolicy,
 }
 
-impl<T> LingerRail<T> {
+impl<T> StackedRail<T> {
     pub(super) fn new(pointer: RailPointerPolicy) -> Self {
         Self {
             items: Vec::new(),
-            terminal_seen: HashMap::new(),
             hovered_id: None,
             pressed_id: None,
             pointer,
@@ -96,30 +92,10 @@ impl<T> LingerRail<T> {
     }
 }
 
-impl<T: RailItem + PartialEq> LingerRail<T> {
-    pub(super) fn ingest(&mut self, items: Vec<T>, now: Instant) -> bool {
-        let incoming: HashSet<String> = items.iter().map(|item| item.id().to_owned()).collect();
-        self.terminal_seen.retain(|id, _| incoming.contains(id));
-        let items = items
-            .into_iter()
-            .filter(|item| self.keep(item, now))
-            .collect();
-        self.replace(items)
-    }
-
-    fn keep(&mut self, item: &T, now: Instant) -> bool {
-        if item.is_live() {
-            self.terminal_seen.remove(item.id());
-            return true;
-        }
-        let first_seen = *self
-            .terminal_seen
-            .entry(item.id().to_owned())
-            .or_insert(now);
-        activity::linger_active(first_seen, now, item.linger())
-    }
-
-    fn replace(&mut self, items: Vec<T>) -> bool {
+impl<T: RailItem + PartialEq> StackedRail<T> {
+    /// Replace the rows with the host's current snapshot. Returns whether
+    /// anything changed.
+    pub(super) fn ingest(&mut self, items: Vec<T>) -> bool {
         if self.items == items {
             return false;
         }
@@ -143,7 +119,7 @@ impl<T: RailItem + PartialEq> LingerRail<T> {
 
     fn pointer_active(&self, id: &str) -> bool {
         match self.pointer {
-            RailPointerPolicy::LiveOrLinger => self.items.iter().any(|item| item.id() == id),
+            RailPointerPolicy::LiveOrFinished => self.items.iter().any(|item| item.id() == id),
             RailPointerPolicy::LiveAndOverflow { overflow_id } => {
                 (id == overflow_id && self.overflow_active())
                     || self
@@ -159,7 +135,7 @@ impl<T: RailItem + PartialEq> LingerRail<T> {
     }
 }
 
-impl<T: RailItem> LingerRail<T> {
+impl<T: RailItem> StackedRail<T> {
     pub(super) fn live_count(&self) -> usize {
         self.items.iter().filter(|item| item.is_live()).count()
     }
@@ -168,12 +144,8 @@ impl<T: RailItem> LingerRail<T> {
         self.items.iter().filter(|item| item.is_live())
     }
 
-    pub(super) fn highlighted_row(
-        &self,
-        height: usize,
-        now: Instant,
-    ) -> Option<(usize, RailRowState)> {
-        let (rows, hidden) = self.visible(height, now);
+    pub(super) fn highlighted_row(&self, height: usize) -> Option<(usize, RailRowState)> {
+        let (rows, hidden) = self.visible(height);
         let row_for = |id: &str| {
             rows.iter()
                 .position(|item| item.id() == id)
@@ -195,22 +167,16 @@ impl<T: RailItem> LingerRail<T> {
             .map(|row| (row, RailRowState::Hovered))
     }
 
-    pub(super) fn hit_at(
-        &self,
-        area: Rect,
-        column: u16,
-        row: u16,
-        now: Instant,
-    ) -> Option<RailHit> {
+    pub(super) fn hit_at(&self, area: Rect, column: u16, row: u16) -> Option<RailHit> {
         if !area.contains(Position { x: column, y: row }) || area.height == 0 {
             return None;
         }
         let index = row.saturating_sub(area.y) as usize;
-        let (rows, hidden) = self.visible(area.height as usize, now);
+        let (rows, hidden) = self.visible(area.height as usize);
         if index < rows.len() {
             let item = rows[index];
             return match self.pointer {
-                RailPointerPolicy::LiveOrLinger => Some(RailHit::Item(item.id().to_owned())),
+                RailPointerPolicy::LiveOrFinished => Some(RailHit::Item(item.id().to_owned())),
                 RailPointerPolicy::LiveAndOverflow { .. } if item.is_live() => {
                     Some(RailHit::Item(item.id().to_owned()))
                 }
@@ -220,26 +186,24 @@ impl<T: RailItem> LingerRail<T> {
         if hidden.is_some() && index == rows.len() {
             return match self.pointer {
                 RailPointerPolicy::LiveAndOverflow { .. } => Some(RailHit::Overflow),
-                RailPointerPolicy::LiveOrLinger => None,
+                RailPointerPolicy::LiveOrFinished => None,
             };
         }
         None
     }
 
-    pub(super) fn visible(&self, height: usize, now: Instant) -> (Vec<&T>, Option<usize>) {
-        let items: Vec<&T> = self
-            .items
-            .iter()
-            .filter(|item| self.row_visible(item, now))
-            .collect();
+    pub(super) fn visible(&self, height: usize) -> (Vec<&T>, Option<usize>) {
         let (indices, hidden) = activity::select_capped_rail_rows(
-            &items,
+            &self.items,
             height,
             |item| item.is_live(),
             |item| item.is_failure(),
         );
         (
-            indices.into_iter().map(|index| items[index]).collect(),
+            indices
+                .into_iter()
+                .map(|index| &self.items[index])
+                .collect(),
             hidden,
         )
     }
@@ -262,16 +226,7 @@ impl<T: RailItem> LingerRail<T> {
             RailPointerPolicy::LiveAndOverflow { overflow_id } => {
                 self.row_state(overflow_id, /*live*/ true)
             }
-            RailPointerPolicy::LiveOrLinger => RailRowState::Idle,
+            RailPointerPolicy::LiveOrFinished => RailRowState::Idle,
         }
-    }
-
-    fn row_visible(&self, item: &T, now: Instant) -> bool {
-        if item.is_live() {
-            return true;
-        }
-        self.terminal_seen
-            .get(item.id())
-            .is_some_and(|first| activity::linger_active(*first, now, item.linger()))
     }
 }

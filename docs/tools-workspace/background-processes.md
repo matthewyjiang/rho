@@ -11,8 +11,9 @@ Rho owns these processes only while that instance is alive. Shutdown cleans
 them up. Records do not survive a restart. The interactive TUI shows live
 jobs in the activity rail as command, freshness (`running`, or `quiet …`
 after 60s of silence), and elapsed time. It does not show the short process
-id. Finished jobs linger briefly with an exit verdict, longer on failure.
-Click a live or lingering row to open a read-only peek of captured stdout
+id. A finished job keeps its exit verdict until its result reaches the
+transcript, then leaves in the same repaint as the result card. Click a live
+or finished row to open a read-only peek of captured stdout
 and stderr; it does not stop the job. That host view is not a `process`
 tool `list` action.
 

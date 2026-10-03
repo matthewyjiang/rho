@@ -2,6 +2,7 @@
 //! Owner: interactive UX. The fixture waits on the process manager's exit signal.
 use super::{STARTUP, STREAM};
 use crate::{
+    harness::WaitTimeout,
     pty::PtySize,
     scenario::{Scenario, Step},
 };
@@ -37,6 +38,13 @@ pub(super) const SCENARIO: Scenario = Scenario::new(
         Step::WaitText {
             text: "Failed (exit 7) · exit 7",
             timeout: STREAM,
+        },
+        // The finished rail row leaves with delivery, so it is already gone
+        // once the card shows. The short budget only absorbs a partially read
+        // frame; a timed linger would outlast it.
+        Step::WaitTextGone {
+            text: "⚙ exit 7",
+            timeout: WaitTimeout::millis(300, "finished process row left with delivery"),
         },
         Step::ExitCommand,
     ],

@@ -22,11 +22,10 @@ use {
 
 pub(crate) use super::subagent_messaging::ValidatedMessage;
 
-/// How long host rails keep serving a just-finished row.
-///
-/// Process and subagent managers both use this. UI linger windows must stay
-/// below it so a row can fade before the manager forgets it.
-pub(crate) const RAIL_TERMINAL_RETENTION: Duration = Duration::from_secs(10);
+/// How long the host rail keeps a finished run that the current parent session
+/// will never receive (another or no parent session). Rows it will receive
+/// leave on delivery instead.
+const RAIL_TERMINAL_RETENTION: Duration = Duration::from_secs(10);
 
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -351,10 +350,15 @@ impl SubagentManager {
         })
     }
 
-    /// Live runs plus terminals with a recent `finished_at` stamp.
+    /// Live runs plus finished runs whose result has not been delivered yet.
+    ///
+    /// A finished row leaves once its result is observed, so the rail drops it
+    /// in the same repaint that lands the result in the transcript. Until then
+    /// runs owned by `session_id` keep showing their verdict. Runs it will never
+    /// receive (other or no parent session) keep a recent `finished_at` window.
     ///
     /// Host UI only. `list()` stays the full agent-facing registry.
-    pub(crate) fn rail_summaries(&self) -> Vec<SubagentSnapshot> {
+    pub(crate) fn rail_summaries(&self, session_id: &str) -> Vec<SubagentSnapshot> {
         let now = subagent::unix_now_secs();
         let retention = RAIL_TERMINAL_RETENTION.as_secs();
         let entries = self.inner.lock().expect("delegated registry lock");
@@ -363,6 +367,12 @@ impl SubagentManager {
             .filter_map(|(id, entry)| {
                 let snapshot = entry.snapshot(id);
                 if snapshot.done {
+                    if entry.observed {
+                        return None;
+                    }
+                    if entry.session_id.as_deref() == Some(session_id) {
+                        return Some(snapshot);
+                    }
                     let finished_at = snapshot.status.finished_at?;
                     if now.saturating_sub(finished_at) >= retention {
                         return None;

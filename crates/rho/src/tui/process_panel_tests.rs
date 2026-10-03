@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use pretty_assertions::assert_eq;
 use ratatui::{layout::Rect, text::Line};
 
@@ -51,18 +49,14 @@ fn activity_span_style(line: &Line<'_>, activity: &str) -> ratatui::style::Style
 #[test]
 fn desired_height_caps_at_two_and_overflow_summarizes() {
     let mut panel = ProcessPanel::default();
-    let now = Instant::now();
-    assert!(panel.ingest(
-        vec![
-            summary("aaaaaaaa-1111", "sleep 1", 3),
-            summary("bbbbbbbb-2222", "sleep 2", 2),
-            summary("cccccccc-3333", "sleep 3", 1),
-        ],
-        now,
-    ));
+    assert!(panel.ingest(vec![
+        summary("aaaaaaaa-1111", "sleep 1", 3),
+        summary("bbbbbbbb-2222", "sleep 2", 2),
+        summary("cccccccc-3333", "sleep 3", 1),
+    ]));
 
     assert_eq!(panel.desired_height(), 2);
-    let lines = panel.lines(80, 8, /*continues_below*/ false, now);
+    let lines = panel.lines(80, 8, /*continues_below*/ false);
     assert_eq!(lines.len(), 2);
     assert!(line_text(&lines[0]).contains("sleep 1"));
     assert!(line_text(&lines[1]).contains("2 more jobs"));
@@ -73,10 +67,9 @@ fn desired_height_caps_at_two_and_overflow_summarizes() {
 #[test]
 fn identical_summaries_do_not_mark_the_panel_dirty() {
     let mut panel = ProcessPanel::default();
-    let now = Instant::now();
     let processes = vec![summary("aaaaaaaa-1111", "sleep 60", 4)];
-    assert!(panel.ingest(processes.clone(), now));
-    assert!(!panel.ingest(processes, now));
+    assert!(panel.ingest(processes.clone()));
+    assert!(!panel.ingest(processes));
 }
 
 // Covers: a multiline command occupies one rail identity field and omits the id.
@@ -85,16 +78,12 @@ fn identical_summaries_do_not_mark_the_panel_dirty() {
 fn process_row_uses_first_command_line_without_id() {
     assert_eq!(command_identity("sleep 60\necho still running"), "sleep 60");
     let mut panel = ProcessPanel::default();
-    let now = Instant::now();
-    panel.ingest(
-        vec![summary(
-            "550e8400-e29b-41d4-a716-446655440000",
-            "sleep 60\necho still running",
-            4,
-        )],
-        now,
-    );
-    let text = line_text(&panel.lines(80, 8, /*continues_below*/ false, now)[0]);
+    panel.ingest(vec![summary(
+        "550e8400-e29b-41d4-a716-446655440000",
+        "sleep 60\necho still running",
+        4,
+    )]);
+    let text = line_text(&panel.lines(80, 8, /*continues_below*/ false)[0]);
     assert!(text.contains("sleep 60"));
     assert!(text.contains(activity::PROCESS_GLYPH));
     assert!(!text.contains("550e8400"));
@@ -151,65 +140,22 @@ fn process_activity_styles_match_state() {
     );
 }
 
-// Covers: terminal process rows linger until the deadline, then drop in one update.
-// Owner: pure unit (process linger)
-#[test]
-fn process_linger_keeps_then_drops_around_deadline() {
-    let mut panel = ProcessPanel::default();
-    let t0 = Instant::now();
-    let ok = LiveProcessSummary {
-        process_id: "ok".into(),
-        command: "true".into(),
-        state: State::Exited,
-        elapsed_seconds: 3,
-        quiet_seconds: None,
-        exit_code: Some(0),
-    };
-    assert!(panel.ingest(vec![ok.clone()], t0));
-    assert_eq!(panel.live_count(), 0);
-    assert!(panel.is_active());
-    let kept = line_text(&panel.lines(80, 8, /*continues_below*/ false, t0)[0]);
-    assert!(kept.contains("✓ exit 0"));
-
-    assert!(!panel.ingest(
-        vec![ok.clone()],
-        t0 + activity::LINGER_OK - Duration::from_millis(1)
-    ));
-    assert_eq!(
-        panel
-            .lines(
-                80,
-                8,
-                /*continues_below*/ false,
-                t0 + activity::LINGER_OK
-            )
-            .len(),
-        0
-    );
-    assert!(panel.ingest(vec![ok], t0 + activity::LINGER_OK));
-    assert!(!panel.is_active());
-}
-
-// Covers: spinner job count ignores lingering rows.
+// Covers: spinner job count ignores finished, undelivered rows.
 // Owner: pure unit (live_count)
 #[test]
-fn live_count_excludes_lingering_rows() {
+fn live_count_excludes_finished_rows() {
     let mut panel = ProcessPanel::default();
-    let now = Instant::now();
-    panel.ingest(
-        vec![
-            summary("live", "sleep", 1),
-            LiveProcessSummary {
-                process_id: "done".into(),
-                command: "true".into(),
-                state: State::Exited,
-                elapsed_seconds: 2,
-                quiet_seconds: None,
-                exit_code: Some(0),
-            },
-        ],
-        now,
-    );
+    panel.ingest(vec![
+        summary("live", "sleep", 1),
+        LiveProcessSummary {
+            process_id: "done".into(),
+            command: "true".into(),
+            state: State::Exited,
+            elapsed_seconds: 2,
+            quiet_seconds: None,
+            exit_code: Some(0),
+        },
+    ]);
     assert_eq!(panel.live_count(), 1);
     assert_eq!(panel.desired_height(), 2);
 }
@@ -221,19 +167,15 @@ fn process_verdict_styles_paint_on_wide_rows() {
     let _guard = theme::theme_test_lock();
     Theme::apply_committed("one-half-dark");
     let mut panel = ProcessPanel::default();
-    let now = Instant::now();
-    panel.ingest(
-        vec![LiveProcessSummary {
-            process_id: "ok".into(),
-            command: "true".into(),
-            state: State::Exited,
-            elapsed_seconds: 3,
-            quiet_seconds: None,
-            exit_code: Some(0),
-        }],
-        now,
-    );
-    let line = &panel.lines(80, 8, /*continues_below*/ false, now)[0];
+    panel.ingest(vec![LiveProcessSummary {
+        process_id: "ok".into(),
+        command: "true".into(),
+        state: State::Exited,
+        elapsed_seconds: 3,
+        quiet_seconds: None,
+        exit_code: Some(0),
+    }]);
+    let line = &panel.lines(80, 8, /*continues_below*/ false)[0];
     assert_eq!(
         activity_span_style(line, "✓ exit 0"),
         Theme::activity_rail().patch(Theme::activity_rail_success())
@@ -241,49 +183,39 @@ fn process_verdict_styles_paint_on_wide_rows() {
     Theme::apply_committed("terminal");
 }
 
-// Covers: peek hits live and lingering rows, never the overflow summary or
+// Covers: peek hits live and finished rows, never the overflow summary or
 // a point outside the rail.
 // Owner: pure unit (process peek hit-test)
 #[test]
 fn peek_target_hits_rows_and_skips_summary_and_outside() {
     let mut panel = ProcessPanel::default();
-    let now = Instant::now();
-    panel.ingest(
-        vec![
-            summary("live-1", "sleep 1", 3),
-            summary("live-2", "sleep 2", 2),
-            summary("live-3", "sleep 3", 1),
-        ],
-        now,
-    );
+    panel.ingest(vec![
+        summary("live-1", "sleep 1", 3),
+        summary("live-2", "sleep 2", 2),
+        summary("live-3", "sleep 3", 1),
+    ]);
     let area = Rect::new(2, 4, 80, 2);
     assert_eq!(
-        panel.peek_target_at(area, 3, 4, now),
+        panel.peek_target_at(area, 3, 4),
         Some(ProcessPeekTarget {
             process_id: "live-1".into(),
         })
     );
-    assert_eq!(panel.peek_target_at(area, 3, 5, now), None);
-    assert_eq!(panel.peek_target_at(area, 1, 4, now), None);
-    assert_eq!(
-        panel.peek_target_at(Rect::new(2, 4, 80, 0), 3, 4, now),
-        None
-    );
+    assert_eq!(panel.peek_target_at(area, 3, 5), None);
+    assert_eq!(panel.peek_target_at(area, 1, 4), None);
+    assert_eq!(panel.peek_target_at(Rect::new(2, 4, 80, 0), 3, 4), None);
 
-    let mut linger = ProcessPanel::default();
-    linger.ingest(
-        vec![LiveProcessSummary {
-            process_id: "done".into(),
-            command: "true".into(),
-            state: State::Exited,
-            elapsed_seconds: 3,
-            quiet_seconds: None,
-            exit_code: Some(0),
-        }],
-        now,
-    );
+    let mut finished = ProcessPanel::default();
+    finished.ingest(vec![LiveProcessSummary {
+        process_id: "done".into(),
+        command: "true".into(),
+        state: State::Exited,
+        elapsed_seconds: 3,
+        quiet_seconds: None,
+        exit_code: Some(0),
+    }]);
     assert_eq!(
-        linger.peek_target_at(Rect::new(0, 0, 80, 1), 1, 0, now),
+        finished.peek_target_at(Rect::new(0, 0, 80, 1), 1, 0),
         Some(ProcessPeekTarget {
             process_id: "done".into(),
         })
@@ -295,57 +227,27 @@ fn peek_target_hits_rows_and_skips_summary_and_outside() {
 #[test]
 fn hover_trailing_keeps_elapsed() {
     let mut panel = ProcessPanel::default();
-    let now = Instant::now();
-    panel.ingest(vec![summary("live-1", "sleep 60", 4)], now);
+    panel.ingest(vec![summary("live-1", "sleep 60", 4)]);
     panel.set_hovered(Some("live-1"));
-    let text = line_text(&panel.lines(80, 8, /*continues_below*/ false, now)[0]);
+    let text = line_text(&panel.lines(80, 8, /*continues_below*/ false)[0]);
     assert!(text.contains("⏎ peek · 4s"));
     assert_eq!(
-        panel.highlighted_row(8, now),
+        panel.highlighted_row(8),
         Some((0, crate::tui::activity::RailRowState::Hovered))
     );
 }
 
 // Covers: highlight index must use the painted height, not the rail cap.
-// Owner: pure unit (linger rail selection)
+// Owner: pure unit (stacked rail selection)
 #[test]
 fn highlight_uses_painted_height_not_cap() {
     let mut panel = ProcessPanel::default();
-    let now = Instant::now();
-    panel.ingest(
-        vec![summary("a", "sleep 1", 1), summary("b", "sleep 2", 2)],
-        now,
-    );
+    panel.ingest(vec![summary("a", "sleep 1", 1), summary("b", "sleep 2", 2)]);
     panel.set_hovered(Some("a"));
-    assert_eq!(panel.lines(80, 1, /*continues_below*/ false, now).len(), 1);
-    assert_eq!(panel.highlighted_row(1, now), None);
+    assert_eq!(panel.lines(80, 1, /*continues_below*/ false).len(), 1);
+    assert_eq!(panel.highlighted_row(1), None);
     assert_eq!(
-        panel.highlighted_row(2, now),
+        panel.highlighted_row(2),
         Some((0, crate::tui::activity::RailRowState::Hovered))
-    );
-}
-
-// Covers: linger expiry must agree between paint and hit-test.
-// Owner: pure unit (process peek hit-test clock)
-#[test]
-fn peek_target_uses_injected_now() {
-    let mut panel = ProcessPanel::default();
-    let t0 = Instant::now();
-    panel.ingest(
-        vec![LiveProcessSummary {
-            process_id: "done".into(),
-            command: "true".into(),
-            state: State::Exited,
-            elapsed_seconds: 3,
-            quiet_seconds: None,
-            exit_code: Some(0),
-        }],
-        t0,
-    );
-    let area = Rect::new(0, 0, 80, 1);
-    assert!(panel.peek_target_at(area, 1, 0, t0).is_some());
-    assert_eq!(
-        panel.peek_target_at(area, 1, 0, t0 + activity::LINGER_OK),
-        None
     );
 }

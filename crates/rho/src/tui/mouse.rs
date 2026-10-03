@@ -225,7 +225,7 @@ impl App {
                 self.input_ui
                     .set_hovered_composer_copy(composer_copy.is_some());
                 let rail_target =
-                    self.session_rail_pointer(layout.subagents, layout.processes, column, row, now);
+                    self.session_rail_pointer(layout.subagents, layout.processes, column, row);
                 if let Some(target) = rail_target {
                     self.input_ui.clear_selection();
                     self.input_ui.cancel_pointer_click_sequence();
@@ -393,7 +393,7 @@ impl App {
                 self.history.set_scrollbar_drag(None);
                 self.update_history_scrollbar_hover(layout.history_scrollbar, column, row);
                 let released_rail =
-                    self.session_rail_pointer(layout.subagents, layout.processes, column, row, now);
+                    self.session_rail_pointer(layout.subagents, layout.processes, column, row);
                 self.subagent_panel.set_pressed(None);
                 self.process_panel.set_pressed(None);
                 self.set_rail_hover(released_rail.as_ref());
@@ -522,7 +522,7 @@ impl App {
                 self.history.set_hovered_code_block_copy(hovered);
                 self.set_hovered_composer_copy_at(screen, column, row);
                 let rail_hover =
-                    self.session_rail_pointer(layout.subagents, layout.processes, column, row, now);
+                    self.session_rail_pointer(layout.subagents, layout.processes, column, row);
                 self.set_rail_hover(rail_hover.as_ref());
             }
             MouseEventKind::Down(MouseButton::Right) => {
@@ -548,19 +548,15 @@ impl App {
         processes: Rect,
         column: u16,
         row: u16,
-        now: Instant,
     ) -> Option<SessionRailPointer> {
         if !matches!(self.input_ui.composer(), ComposerMode::Input) {
             return None;
         }
-        if let Some(target) = self
-            .subagent_panel
-            .attach_target_at(subagents, column, row, now)
-        {
+        if let Some(target) = self.subagent_panel.attach_target_at(subagents, column, row) {
             return Some(SessionRailPointer::Subagent(target));
         }
         self.process_panel
-            .peek_target_at(processes, column, row, now)
+            .peek_target_at(processes, column, row)
             .map(SessionRailPointer::Process)
     }
 

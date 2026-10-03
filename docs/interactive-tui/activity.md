@@ -18,7 +18,7 @@ A process peek replaces the session with that job's captured stdout and stderr. 
 
 Process freshness is `running` while output is recent, then `quiet 4m 12s` after 60 seconds of silence. Past five minutes of silence the elapsed column tints as a warning.
 
-Finished rows linger with a verdict, then the rail shrinks in one repaint. Success holds a few seconds. Failures hold longer so a failing background process does not vanish.
+Finished rows show a verdict until their result reaches the transcript. The row leaves in the same repaint as the result card, so a verdict, including a failure, never vanishes before you can read it.
 
 | Kind | Verdicts |
 | --- | --- |

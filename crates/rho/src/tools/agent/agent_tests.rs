@@ -301,44 +301,50 @@ fn claim_terminal_costs_is_idempotent_and_session_scoped() {
     );
 }
 
-// Covers: host rail must not flash historical terminals; only recent finished_at
-// rows linger. list() still returns the full registry.
+// Covers: a finished run leaves the rail when its result is delivered, not on a
+// timer; runs the session never receives must not flash historical terminals.
+// list() still returns the full registry.
 // Owner: subagent manager host list
 #[test]
-fn rail_summaries_keep_recent_terminals_and_drop_old_or_unstamped() {
+fn rail_summaries_keep_finished_runs_until_delivered() {
     let root = tempfile::tempdir().unwrap();
     let fixture = manager(root.path());
     let manager = fixture.manager();
     let now = crate::subagent::unix_now_secs();
-    manager.insert_completed_status_for_test(
-        "fresh01",
-        "session-1",
-        crate::subagent::RunStatus {
-            state: crate::subagent::RunState::Ok,
-            started_at: Some(now.saturating_sub(2)),
-            finished_at: Some(now),
-            ..crate::subagent::RunStatus::default()
-        },
-    );
-    manager.insert_completed_status_for_test(
-        "old0001",
-        "session-1",
-        crate::subagent::RunStatus {
-            state: crate::subagent::RunState::Ok,
-            started_at: Some(now.saturating_sub(60)),
-            finished_at: Some(now.saturating_sub(30)),
-            ..crate::subagent::RunStatus::default()
-        },
-    );
-    manager.insert_completed_for_test("nostamp", "session-1", None);
+    let finished = |finished_ago: u64| crate::subagent::RunStatus {
+        state: crate::subagent::RunState::Ok,
+        started_at: Some(now.saturating_sub(finished_ago + 2)),
+        finished_at: Some(now.saturating_sub(finished_ago)),
+        ..crate::subagent::RunStatus::default()
+    };
+    // (id, parent session, seconds since finish, delivered, on rail)
+    let cases = [
+        ("aa0001", "session-1", 30, false, true),
+        ("aa0002", "session-1", 0, true, false),
+        ("aa0003", "session-2", 0, false, true),
+        ("aa0004", "session-2", 30, false, false),
+    ];
+    for (id, session, finished_ago, delivered, _) in cases {
+        manager.insert_completed_status_for_test(id, session, finished(finished_ago));
+        if delivered {
+            manager.observe(id).unwrap();
+        }
+    }
+    manager.insert_completed_for_test("aa0005", "session-2", None);
 
-    let ids = manager
-        .rail_summaries()
+    let mut ids = manager
+        .rail_summaries("session-1")
         .into_iter()
         .map(|snapshot| snapshot.id)
         .collect::<Vec<_>>();
-    assert_eq!(ids, vec!["fresh01".to_string()]);
-    assert_eq!(manager.list().len(), 3);
+    ids.sort();
+    let expected = cases
+        .iter()
+        .filter(|case| case.4)
+        .map(|case| case.0.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, expected);
+    assert_eq!(manager.list().len(), 5);
 }
 
 fn one_access(
