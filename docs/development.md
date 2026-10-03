@@ -316,6 +316,16 @@ The script prints false allows, false denies, errors, allow and screen-escalatio
 
 Each line in the case file holds `id`, `label` (`allow` or `deny`), `category`, a `note` that explains the label, a `history` of `{"user": ...}`, `{"call": {"id", "name", "arguments"}}`, and `{"result": {"id", "content", "ok"}}` entries, and a `pending` request: `{"kind": "process", "command": ...}`, `{"kind": "write", "path": ..., "content": ...}`, or `{"kind": "read", "path": ...}`. Paths resolve against `/workspace`, and a path outside it is an unrestricted request. The eval appends the pending call as the last assistant message.
 
+### Batched review
+
+`--batched` evaluates requests the agent made at once, such as parallel tool calls. Each member is screened alone, as in production. The members that need a review are then reviewed twice: once each alone, and once together in a single request that asks one question per member. The report gives both verdicts per member, so the script can list every verdict batching flips. It highlights a labeled deny that is denied alone but allowed in the batch, because a risky call hidden among routine siblings is what batching could break. It also compares total review time alone with batched review time. `--review-all` also reviews members the screen allowed, so every labeled member tests the review.
+
+```bash
+python3 scripts/classifier_eval.py --batched --review-all --variant current=
+```
+
+Labeled batches live in `crates/rho/src/app/classifier_eval/batches.jsonl`. Each line holds `id`, `category`, `note`, `history`, and a `pending` list of at least two members. Each member is a case file `pending` request plus `id` and `label`. The eval appends every member's call to one assistant message. With `--session`, each assistant message with two or more replayable calls becomes an unlabeled batch, and `--per-session` caps batches per session.
+
 Replayed sessions contain your code and secrets. They go only to the classifier models the variants configure, and reports under `--out` (default `/tmp/rho-classifier-eval`, private permissions) quote commands and paths. Keep reports local and never commit them. Eval requests do not reach the usage ledger.
 
 ## Provider identity and auth modes

@@ -29,7 +29,7 @@ use crate::{
 };
 
 /// Workspace root every fixture case runs in.
-const FIXTURE_WORKSPACE: &str = "/workspace";
+pub(super) const FIXTURE_WORKSPACE: &str = "/workspace";
 /// Call ID of the pending call appended to fixture histories.
 const FIXTURE_PENDING_CALL_ID: &str = "pending";
 
@@ -161,7 +161,7 @@ pub(super) fn replay_cases(
 /// tracked files usually pass the Allow edits gate, so `str_replace` and
 /// friends are not replayed. Calls whose arguments the tool rejects before
 /// asking for approval are skipped.
-fn replay_request(call: &ToolCall, cwd: &Path) -> Option<(CapabilityRequest, String)> {
+pub(super) fn replay_request(call: &ToolCall, cwd: &Path) -> Option<(CapabilityRequest, String)> {
     let arguments = call.arguments.clone();
     match call.name.as_str() {
         "bash" => {
@@ -194,7 +194,7 @@ struct ReplayedWrite {
 }
 
 /// Up to `count` indexes into `len` items, spread evenly from first to last.
-fn spread_evenly(len: usize, count: usize) -> Vec<usize> {
+pub(super) fn spread_evenly(len: usize, count: usize) -> Vec<usize> {
     if len <= count {
         return (0..len).collect();
     }
@@ -313,7 +313,7 @@ impl FixtureCase {
 /// tool result.
 #[derive(Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
-enum FixtureEntry {
+pub(super) enum FixtureEntry {
     User(String),
     Call {
         id: String,
@@ -333,7 +333,7 @@ fn result_ok_default() -> bool {
 }
 
 impl FixtureEntry {
-    fn into_message(self) -> Message {
+    pub(super) fn into_message(self) -> Message {
         match self {
             Self::User(text) => Message::User(vec![ContentBlock::Text(text)]),
             Self::Call {
@@ -353,7 +353,7 @@ impl FixtureEntry {
 /// The call under review. Paths resolve against the fixture workspace.
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-enum FixturePending {
+pub(super) enum FixturePending {
     Process {
         command: String,
     },
@@ -369,7 +369,10 @@ enum FixturePending {
 
 impl FixturePending {
     /// Tool name, call arguments, capability request, and report summary.
-    fn into_request(self, workspace: &Path) -> (&'static str, Value, CapabilityRequest, String) {
+    pub(super) fn into_request(
+        self,
+        workspace: &Path,
+    ) -> (&'static str, Value, CapabilityRequest, String) {
         match self {
             Self::Process { command } => (
                 "bash",

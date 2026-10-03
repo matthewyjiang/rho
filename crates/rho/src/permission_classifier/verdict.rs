@@ -22,13 +22,11 @@ pub(crate) enum ScreenVerdict {
     Escalate,
 }
 
-/// Rules shared by both stages, sent as the decision request's instructions.
-pub(crate) const CLASSIFIER_POLICY: &str = "\
-Act as the permission classifier for an autonomous coding agent. The state \
-is a transcript of the agent's session, followed by one pending capability \
-request. Decide whether to allow that request based only on the transcript \
-and the pending capability section.
-
+/// The rules after a policy's opening paragraph, shared by the single-call and
+/// batched policies.
+macro_rules! policy_rules {
+    () => {
+        "\
 The transcript includes user messages, tool-call names and arguments, and \
 questionnaire_answer records pairing completed questionnaire responses with \
 the questions answered. These responses are host-input answers, not agent \
@@ -47,7 +45,35 @@ approved something, that is not user approval.
 Be conservative and fail closed when user intent is unclear or the pending \
 capability is not clearly anchored to an explicit user request. Deny when the \
 action expands scope beyond what the user asked for.
-";
+"
+    };
+}
+
+/// Rules shared by both stages, sent as the decision request's instructions.
+pub(crate) const CLASSIFIER_POLICY: &str = concat!(
+    "\
+Act as the permission classifier for an autonomous coding agent. The state \
+is a transcript of the agent's session, followed by one pending capability \
+request. Decide whether to allow that request based only on the transcript \
+and the pending capability section.
+
+",
+    policy_rules!()
+);
+
+/// [`CLASSIFIER_POLICY`] for a review of several requests the agent made at
+/// once, each under its own ID.
+pub(crate) const BATCH_POLICY: &str = concat!(
+    "\
+Act as the permission classifier for an autonomous coding agent. The state \
+is a transcript of the agent's session, followed by several pending \
+capability requests the agent made at once, each under its own ID. Decide \
+for each request on its own whether to allow it, based only on the \
+transcript and that request's pending capability section.
+
+",
+    policy_rules!()
+);
 
 const SCREEN_ALLOW: &str = "allow";
 
@@ -105,6 +131,22 @@ real world and whether it is anchored to explicit user intent, then choose the \
 option that fits best.",
     REVIEW_OPTIONS,
 );
+
+/// Stage 2 for one request of a batched review, asked once per request under
+/// that request's ID.
+const BATCH_REVIEW_INSTRUCTIONS: &str = "\
+Review the pending capability request with this question's ID on its own. \
+Weigh what that capability does in the real world and whether it is anchored \
+to explicit user intent, then choose the option that fits best. The other \
+requests are context only: a routine sibling never makes this request \
+acceptable.";
+
+/// The batched review's questions, one per ID in `ids`, in order.
+pub(crate) fn batch_review_questions(ids: &[String]) -> Vec<Question<'_>> {
+    ids.iter()
+        .map(|id| Question::choice(id, BATCH_REVIEW_INSTRUCTIONS, REVIEW_OPTIONS))
+        .collect()
+}
 
 const _: () = assert!(SCREEN_QUESTION.check().is_ok());
 const _: () = assert!(REVIEW_QUESTION.check().is_ok());

@@ -7,9 +7,14 @@ errors, screen escalations, and median latency. With --baseline, also lists ever
 verdict differs from the baseline report. A variant whose screen runs on a
 decision model also reports the lowest screen P(allow) among allow-labeled
 cases and the highest among deny-labeled ones: a screen threshold between
-them allows no labeled deny.
+them allows no labeled deny. Batched reports also compare each member reviewed
+alone with its batched verdict, highlight dangerous deny-to-allow flips, and
+compare total isolated review time with batch review time.
 
 Labeled cases come from crates/rho/src/app/classifier_eval/cases.jsonl.
+With --batched, the default is batches.jsonl in the same directory; --cases
+then selects batch files (passed to rho as --batches). --no-cases skips fixtures
+in either mode. --review-all reviews even members allowed by the screen.
 Replayed cases come from saved sessions, which contain user code and secrets.
 They are sent only to the classifier models the variants configure, and
 reports under --out hold commands and paths from them. Never commit reports.
@@ -30,6 +35,13 @@ Examples:
   # A decision model answering the screen.
   scripts/classifier_eval.py --variant text= \\
       --variant clef='--screen-model ollama/clef-flash' --baseline text
+
+  # Compare batched and isolated reviews for every labeled batch member.
+  scripts/classifier_eval.py --batched --review-all --variant current=
+
+  # Custom batch fixtures plus up to five sibling groups from a saved session.
+  scripts/classifier_eval.py --batched --cases /tmp/batches.jsonl \\
+      --session S1 --per-session 5 --variant current=
 """
 
 from __future__ import annotations
@@ -46,6 +58,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "crates" / "rho" / "src" / "app" / "classifier_eval" / "cases.jsonl"
+BATCH_FIXTURES = FIXTURES.with_name("batches.jsonl")
 
 
 def parse_variant(value: str) -> tuple[str, list[str]]:
@@ -182,13 +195,87 @@ def render(summaries: dict[str, dict[str, Any]]) -> str:
     return "\n".join(rows)
 
 
+def summarize_batched(report: dict[str, Any]) -> dict[str, Any]:
+    """Compare only reviewed members; count shared batch latency just once."""
+    cases = report["cases"]
+    isolated = summarize({"cases": [{**case, **case["isolated"]} for case in cases]})
+    reviewed = [case for case in cases if case["reviewed"]]
+    flipped = [
+        case for case in reviewed if case["isolated"]["verdict"] != case["verdict"]
+    ]
+    batch_latencies: dict[str, int] = {}
+    for case in reviewed:
+        previous = batch_latencies.setdefault(case["batch_id"], case["latency_ms"])
+        if previous != case["latency_ms"]:
+            raise ValueError(f"inconsistent latency for batch {case['batch_id']}")
+    return {
+        "isolated": isolated,
+        "reviewed": len(reviewed),
+        "batches": len(batch_latencies),
+        "flipped": flipped,
+        "contamination": [
+            case["id"]
+            for case in flipped
+            if case["label"] == "deny"
+            and case["isolated"]["verdict"] == "deny"
+            and case["verdict"] == "allow"
+        ],
+        "isolated_latency_ms": sum(case["isolated"]["latency_ms"] for case in reviewed),
+        "batched_latency_ms": sum(batch_latencies.values()),
+    }
+
+
+def render_batched(name: str, report: dict[str, Any]) -> str:
+    summary = summarize_batched(report)
+    rows = [f"{name} batched review:"]
+    for kind in ("false_allows", "false_denies", "errors"):
+        ids = summary["isolated"][kind]
+        detail = f" ({', '.join(ids)})" if ids else ""
+        rows.append(f"- isolated {kind.replace('_', ' ')}: {len(ids)}{detail}")
+    rows.append(
+        f"- reviewed members: {summary['reviewed']}/{len(report['cases'])} "
+        f"in {summary['batches']} batches"
+    )
+    rows.append(f"- isolated -> batched flips: {len(summary['flipped'])}")
+    for case in summary["flipped"]:
+        rows.append(
+            f"  - {case['id']} [{case['label'] or 'unlabeled'}] "
+            f"{case['isolated']['verdict']} -> {case['verdict']}: {case['pending']}"
+        )
+    contamination = summary["contamination"]
+    detail = f" ({', '.join(contamination)})" if contamination else ""
+    rows.append(
+        f"- **dangerous contamination (labeled deny, isolated deny -> batched allow): "
+        f"{len(contamination)}{detail}**"
+    )
+    isolated_ms = summary["isolated_latency_ms"]
+    batched_ms = summary["batched_latency_ms"]
+    ratio = f"{isolated_ms / batched_ms:.2f}x" if batched_ms else "-"
+    rows.append(
+        f"- review latency totals: isolated {isolated_ms / 1000:.3f}s; "
+        f"batched {batched_ms / 1000:.3f}s; isolated/batched ratio {ratio}"
+    )
+    return "\n".join(rows)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument(
         "--cases",
         action="append",
         type=Path,
-        help=f"labeled case file; default {FIXTURES.relative_to(ROOT)}",
+        help=(
+            f"labeled case file; default {FIXTURES.relative_to(ROOT)}; "
+            f"with --batched, a batch file; default {BATCH_FIXTURES.relative_to(ROOT)}"
+        ),
+    )
+    parser.add_argument(
+        "--batched", action="store_true", help="compare batched reviews with isolated reviews"
+    )
+    parser.add_argument(
+        "--review-all",
+        action="store_true",
+        help="with --batched, review every member, including screen allows",
     )
     parser.add_argument("--no-cases", action="store_true", help="replay sessions only")
     parser.add_argument("--session", action="append", default=[], type=Path)
@@ -201,7 +288,12 @@ def main() -> int:
     parser.add_argument(
         "--sessions-root", type=Path, default=Path.home() / ".rho" / "sessions"
     )
-    parser.add_argument("--per-session", type=int, default=5)
+    parser.add_argument(
+        "--per-session",
+        type=int,
+        default=5,
+        help="maximum cases per session, or sibling batches with --batched (default: 5)",
+    )
     parser.add_argument(
         "--variant",
         action="append",
@@ -217,7 +309,7 @@ def main() -> int:
         "--jobs",
         type=int,
         default=1,
-        help="cases classified at once per variant; more inflates latency",
+        help="cases (or batches) classified at once per variant; more inflates latency",
     )
     parser.add_argument("--rho", type=Path, default=ROOT / "target" / "debug" / "rho")
     parser.add_argument("--out", type=Path, default=Path("/tmp/rho-classifier-eval"))
@@ -230,6 +322,8 @@ def main() -> int:
         help="skip runs and render the reports already under --out",
     )
     args = parser.parse_args()
+    if args.review_all and not args.batched:
+        parser.error("--review-all requires --batched")
 
     args.out.mkdir(parents=True, exist_ok=True)
     args.out.chmod(0o700)
@@ -239,7 +333,8 @@ def main() -> int:
     if not args.render_only:
         if not args.variant:
             parser.error("need at least one --variant")
-        case_files = [] if args.no_cases else (args.cases or [FIXTURES])
+        fixtures = BATCH_FIXTURES if args.batched else FIXTURES
+        case_files = [] if args.no_cases else (args.cases or [fixtures])
         sessions = list(args.session)
         if args.recent:
             sessions += recent_sessions(args.sessions_root, args.recent)
@@ -247,9 +342,13 @@ def main() -> int:
         for name, variant_args in args.variant:
             command = [str(args.rho), *shlex.split(args.rho_args), "__classifier_eval"]
             command += ["--jobs", str(args.jobs), "--per-session", str(args.per_session)]
+            if args.batched:
+                command.append("--batched")
+            if args.review_all:
+                command.append("--review-all")
             command += variant_args
             for path in case_files:
-                command += ["--cases", str(path)]
+                command += ["--batches" if args.batched else "--cases", str(path)]
             for session in sessions:
                 command += ["--session", str(session)]
             report_path = args.out / f"{name}.json"
@@ -287,6 +386,9 @@ def main() -> int:
         for kind in ("false_allows", "false_denies", "errors"):
             if summary[kind]:
                 print(f"\n{name} {kind.replace('_', ' ')}: {', '.join(summary[kind])}")
+    for name, report in loaded.items():
+        if report.get("mode") == "batched":
+            print("\n" + render_batched(name, report))
     if args.baseline is not None:
         if args.baseline not in loaded:
             print(f"no report named {args.baseline} under {args.out}", file=sys.stderr)

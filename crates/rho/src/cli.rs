@@ -293,16 +293,29 @@ Run rho model-prompt edit --help for editor setup, saving, and reload behavior."
 #[derive(clap::Args, Debug)]
 pub struct ClassifierEvalArgs {
     /// Labeled case file (JSON Lines).
-    #[arg(long = "cases", value_name = "PATH")]
+    #[arg(long = "cases", value_name = "PATH", conflicts_with = "batched")]
     pub cases: Vec<PathBuf>,
     /// Saved session transcript (`session.jsonl`) or its session folder.
-    /// Its `bash` and `write` calls replay as unlabeled cases.
+    /// Its `bash` and `write` calls replay as unlabeled cases; with
+    /// `--batched`, assistant messages with two or more of them replay as
+    /// unlabeled batches.
     #[arg(long = "session", value_name = "PATH")]
     pub sessions: Vec<PathBuf>,
-    /// Replayed calls per session, spread evenly through its whole active
-    /// path, including turns after a compaction.
+    /// Replayed calls, or batches with `--batched`, per session, spread
+    /// evenly through its whole active path, including turns after a
+    /// compaction.
     #[arg(long, value_name = "N", default_value = "5")]
     pub per_session: NonZeroUsize,
+    /// Evaluate requests made at once: review each batch's members together
+    /// and alone, and report both verdicts.
+    #[arg(long)]
+    pub batched: bool,
+    /// Labeled batch file (JSON Lines), for `--batched`.
+    #[arg(long = "batches", value_name = "PATH", requires = "batched")]
+    pub batches: Vec<PathBuf>,
+    /// With `--batched`, review members the screen allowed too.
+    #[arg(long, requires = "batched")]
+    pub review_all: bool,
     /// Classifier model as `provider/model`. Default:
     /// `[internal_agents.permission-classifier]`, whose reasoning is kept,
     /// and whose auth is kept when the provider matches.
